@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +7,21 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasCpgTaint } from '../src/index.mjs';
 
-const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = (name) => mintFixtureDirectory(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('taint-root'); const artifacts = dir('taint-artifacts'); mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);
   const atlas = new AtlasCpgTaint({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxGraphBytes: 512 * 1024, maxResultBytes: 512 * 1024, maxDepth: 16, maxPaths: 32, maxReachDefPairs: 4096, maxScopes: 128, maxScopeDepth: 32, maxBindings: 512, maxBindingOccurrences: 4096, ...opts });

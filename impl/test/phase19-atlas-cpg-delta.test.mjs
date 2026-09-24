@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -6,7 +8,21 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { AtlasCpgDelta } from '../src/index.mjs';
 
-const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = (name) => mintFixtureDirectory(join(tmpdir(), `baton-${name}-`));
 function write(root, path, content) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), content); }
 function fixture(before, after, opts = {}) {
   const beforeRoot = dir('cpg-before'); const afterRoot = dir('cpg-after'); const artifacts = dir('cpg-delta-artifacts');

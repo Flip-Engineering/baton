@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +7,21 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { AtlasBehaviorFingerprint } from '../src/index.mjs';
 
-const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = (name) => mintFixtureDirectory(join(tmpdir(), `baton-${name}-`));
 const write = (root, path, source) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), source); };
 function make(opts = {}) {
   return new AtlasBehaviorFingerprint({ artifactRoot: dir('behavior-artifacts'), maxSourceBytes: 64 * 1024, maxCorpusCases: 16, maxInputBytes: 16 * 1024, maxOutputBytes: 64 * 1024, maxArtifactBytes: 128 * 1024, timeoutMs: 1000, ...opts });

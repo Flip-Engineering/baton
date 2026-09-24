@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -13,6 +15,20 @@ import { buildClaudeSessionArgs } from '../src/claude-session.mjs';
 import { withGrokModelArgs } from '../src/grok-acp.mjs';
 import { WebNorthbound, validateWebCommandEnvelope } from '../src/web-northbound.mjs';
 import { createDriver } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const card = (efforts = ['low', 'high']) => ({
   harness: 'codex', version: '2',
@@ -33,7 +49,7 @@ const until = async (fn, timeoutMs = 2000) => {
   throw new Error('timed out');
 };
 function repo() {
-  const dir = mkdtempSync(join(tmpdir(), 'baton-rt-repo-'));
+  const dir = mintFixtureDirectory(join(tmpdir(), 'baton-rt-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['config', 'user.email', 'baton@test.invalid'], { cwd: dir });
   execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: dir });
@@ -70,7 +86,7 @@ function sharedHarnessAdapter(model, calls = []) {
   return adapter;
 }
 function system(adapters, route, hooks = {}) {
-  const log = hooks.log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-rt-log-')));
+  const log = hooks.log ?? new Log(mintFixtureDirectory(join(tmpdir(), 'baton-rt-log-')));
   const coordination = hooks.coordination ?? coordinationForLog(log);
   const captureOpts = hooks.captureOpts ?? [];
   const coordinator = new Coordinator({
@@ -225,7 +241,7 @@ test('RT11.1/3/9: assembled direct and web auto routing dispatch only cards surv
   const high = stubAdapter('high-harness', ['high'], highCalls);
   const repoRoot = repo();
   const { coordinator } = createDriver({
-    repoRoot, logDir: mkdtempSync(join(tmpdir(), 'baton-rt-driver-log-')), adapters: { low, high },
+    repoRoot, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-rt-driver-log-')), adapters: { low, high },
     stopDeadlineMs: 100,
   });
   const direct = await coordinator.spawn('auto', brief(), {

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -5,7 +7,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AtlasStructuralDelta } from '../src/index.mjs';
 
-const dir = () => mkdtempSync(join(tmpdir(), 'baton-atlas-'));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = () => mintFixtureDirectory(join(tmpdir(), 'baton-atlas-'));
 function fixture(before, after, ext = 'mjs', opts = {}) {
   const root = dir(); const left = join(root, 'left'); const right = join(root, 'right'); const artifacts = join(root, 'artifacts');
   mkdirSync(left); mkdirSync(right); writeFileSync(join(left, `subject.${ext}`), before); writeFileSync(join(right, `subject.${ext}`), after);
