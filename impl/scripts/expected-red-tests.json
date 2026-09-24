@@ -1033,10 +1033,6 @@
       "reason": "#146"
     },
     {
-      "key": "test/stall-watchdog-red.test.mjs :: C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here",
-      "reason": "#67"
-    },
-    {
       "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",
       "reason": "S-G11"
     },
@@ -1789,6 +1785,10 @@
     {
       "file": "test/semantic-progress-red.test.mjs",
       "reason": "#10"
+    },
+    {
+      "file": "test/stall-watchdog-red.test.mjs",
+      "reason": "#67"
     },
     {
       "file": "test/suite-hygiene-red.test.mjs",
