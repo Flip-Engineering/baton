@@ -29,6 +29,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
@@ -82,7 +83,7 @@ async function until(probe, { timeoutMs = SETTLE_MS, label = 'condition' } = {})
 // docs/42 §7: a served host's socket is the ONE path the kernel bounds (103 bytes of `sun_path`), so
 // the fixture mints the socket root directly under the short system root — never under the ambient
 // TMPDIR a parallel gate hands the file (65..69 bytes, which the resident's own validator refuses).
-const socketRoot = mkdtempSync('/tmp/bt483-');
+const socketRoot = mkdtempSync(join(tmpdir(), 'bt483-'));
 const roots = [socketRoot];
 process.env.TMPDIR = socketRoot;
 test.after(() => {

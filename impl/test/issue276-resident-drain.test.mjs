@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -19,7 +20,7 @@ const ROUTE = '{ harness: \'codex\', model: \'gpt-5.6-sol\', effort: \'high\' }'
 // The resident protocol bounds a socket path to sun_path (103 bytes), and the suite root on this
 // host is deep — resident fixtures live under a short top-level root.
 function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt276-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt276-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
