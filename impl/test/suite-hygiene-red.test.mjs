@@ -15,6 +15,7 @@ import {
   addedFixtureDirectories, snapshotFixtureDirectories, sweepStaleSuiteRoots,
   writeSuiteOwnerReceipt,
 } from '../scripts/suite-hygiene.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 function deadPid() {
   // A real, provably dead pid: spawn a trivial process and wait for it to exit.
@@ -72,6 +73,32 @@ test('SH5 (#571): fixture snapshots are limited to a suite-owned per-file temp d
   ]);
   assert.equal(snapshotFixtureDirectories(tmpdir(), suiteRoot), null,
     'a shared temp directory outside the suite root is not inspected');
+});
+
+test('SH7 (#571): the socket-fixture root stays contained when it fits and falls back to the short system root when the ambient root is too deep', (t) => {
+  const previous = process.env.TMPDIR;
+  t.after(() => { process.env.TMPDIR = previous; });
+
+  // A short ambient root by construction (not the ambient one, which a seat runtime or a gate
+  // can make arbitrarily deep).
+  const short = mkdtempSync('/tmp/bat571-sh-');
+  t.after(() => rmSync(short, { recursive: true, force: true }));
+  process.env.TMPDIR = short;
+  const contained = fixtureSocketRoot('bt571-pin-');
+  t.after(() => rmSync(contained, { recursive: true, force: true }));
+  assert.ok(contained.startsWith(`${short}/`),
+    'a root whose socket path fits is minted under the ambient TMPDIR');
+
+  // A root deep enough that '<root>/bt571-pin-XXXXXX/resident.sock' passes the 103-byte bound.
+  const deep = join(short, 'd'.repeat(103));
+  mkdirSync(deep, { recursive: true });
+  process.env.TMPDIR = deep;
+  const fellBack = fixtureSocketRoot('bt571-pin-');
+  t.after(() => rmSync(fellBack, { recursive: true, force: true }));
+  assert.ok(fellBack.startsWith('/tmp/'),
+    'a root whose socket path would overflow falls back to the short system root');
+  assert.ok(Buffer.byteLength(join(fellBack, 'resident.sock')) <= 103,
+    'the fallback path fits the sun_path bound');
 });
 
 test('SH6 (#571): the runner fails and reaps a timed-out file that leaves a fixture directory', (t) => {
