@@ -252,8 +252,9 @@ test('T1 a recruited participant deliberately shares one live checkout as its ow
   assert.equal(builderWorker.sessionRequest.mode, 'new', 'adoption is a fresh session, never a resume');
   assert.deepEqual(builderWorker.sessionRequest, { mode: 'new' });
   assert.equal(builderWorker.sessionRef, null);
-  assert.equal(driver.coordinator.pausedTurns({ workerId: builderWorker.id }).length, 1,
-    'the adopted participant runs its own live turn');
+  assert.equal(driver.coordinator.pausedTurns({ workerId: builderWorker.id }).length, 0);
+  assert.equal(driver.coordinator._tasks.get(builderWorker.taskId).status, 'working',
+    'the adopted participant remains available after reporting its turn');
 
   // The live attachment the swarm resolves for a third party is this same checkout.
   const attachment = driver.coordinator.workspaceAttachment(leadWorker.id);
