@@ -104,13 +104,13 @@ class AtomicPausableAdapter {
     return { ok: true, terminal: true };
   }
   /** End the in-flight turn exactly as the provider would: one `turn_completed` frame. */
-  completeTurn(worker, { output = 'checkpoint', status = 'completed' } = {}) {
+  completeTurn(worker, { output = 'checkpoint', status = 'completed', summary } = {}) {
     const session = this.turns.get(worker);
     assert.ok(session?.inFlight, 'completeTurn requires an in-flight turn');
     session.inFlight = false;
     this.emit({
       worker, harness: 'mock@1.0.0', turnEpoch: session.epoch,
-      kind: 'lifecycle.turn_completed', actor: 'worker', payload: { status, output },
+      kind: 'lifecycle.turn_completed', actor: 'worker', payload: { status, output, ...(summary === undefined ? {} : { summary }) },
     });
   }
   epoch(worker) { return this.turns.get(worker)?.epoch ?? 0; }
@@ -222,20 +222,22 @@ test('a completed swarm turn wakes its parent with the report and remains availa
   assert.equal(frame.participantId, 'builder');
 });
 
-test('the root wake carries the report, identity, and completion declaration', async (t) => {
+test('the root wake carries the ask and the report wake preserves full turn identity', async (t) => {
   const f = await fixture(t);
   const child = await f.recruit('builder');
-  f.adapter.completeTurn(child.id, { output: 'Root review needed' });
+  f.adapter.completeTurn(child.id, { output: 'Root review needed', summary: 'Root review needed' });
   await flush();
   const owed = f.events('swarm.root_attention_owed');
   assert.equal(owed.length, 1);
   const frame = deriveWakeFrame(owed[0]);
   assert.equal(frame.wakeClass, 'root_owed');
-  assert.equal(frame.turnReport.workerId, child.id);
-  assert.equal(frame.turnReport.assignmentDone, false);
+  assert.equal(frame.turnReport.text, 'Root review needed');
+  const reportFrame = deriveWakeFrame(f.events('swarm.turn_reported')[0]);
+  assert.equal(reportFrame.turnReport.workerId, child.id);
+  assert.equal(reportFrame.turnReport.assignmentDone, false);
   assert.match(frame.turnReport.text, /Root review needed/);
   assert.equal(frame.turnReport.omittedBytes, 0);
-  assert.equal(frame.turnReport.reportSeq, f.events('swarm.turn_reported')[0].seq);
+  assert.equal(reportFrame.turnReport.reportSeq, f.events('swarm.turn_reported')[0].seq);
 });
 
 test('a declared completion runs verification and closes the worker', async (t) => {
@@ -276,10 +278,11 @@ test('a failed parent delivery addresses the root once and preserves the report 
   await flush();
   const report = f.events('swarm.turn_reported')[0];
   assert.equal(f.events('swarm.root_attention_owed').length, 1);
+  assert.equal(f.events('swarm.root_attention_owed')[0].payload.ask, 'delivery_refused');
   const result = await f.runtime.reportTurnEnd({ ...report.payload, report: { output: 'Changed on retry' } });
   assert.equal(result.delivery.state, 'root_addressed');
   assert.equal(f.events('swarm.root_attention_owed').length, 1);
-  assert.match(f.events('swarm.root_attention_owed')[0].payload.turnReport.text, /Preserved report/);
+  assert.equal(f.events('swarm.turn_reported').at(-1).payload.report.output, 'Preserved report');
 });
 
 test('a turn crash reports failure and the following exit does not report twice', async (t) => {
@@ -315,7 +318,7 @@ test('an oversized report has a bounded wake preview and a complete named-partic
   const output = 'Result 😀 '.repeat(2000);
   f.adapter.completeTurn(child.id, { output });
   await flush();
-  const frame = deriveWakeFrame(f.events('swarm.root_attention_owed')[0]);
+  const frame = deriveWakeFrame(f.events('swarm.turn_reported')[0]);
   assert.ok(frame.turnReport.omittedBytes > 0);
   assert.equal(Buffer.byteLength(frame.turnReport.text) + frame.turnReport.omittedBytes,
     Buffer.byteLength(JSON.stringify({ status: 'completed', output })));
@@ -417,4 +420,96 @@ test('a refused non-swarm parent delivery records one root report and replay pre
   assert.equal(attempts, 1);
   assert.match(rows[0].payload.turnReport.text, /Report for root/);
   assert.equal(rows[0].payload.turnReport.parentFailure.workerId, parent.id);
+});
+
+test('a producer-first root report replays under the wake reconciler identity', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  const input = { swarmId: 'turns', participantId: 'builder', workerId: child.id,
+    turnSeq: 901, turnEpoch: 1, report: { summary: 'Ready for root review' } };
+  await f.runtime.reportTurnEnd(input);
+  const key = `swarm-turn-report-owed:turns:builder:${child.id}:1:901`;
+  const payload = { swarmId: 'turns', participantId: 'builder', owed: 'turn_reported',
+    ask: 'Ready for root review', next: { command: 'swarm.view', swarmId: 'turns' } };
+  const owed = f.events('swarm.root_attention_owed');
+  assert.equal(owed.length, 1);
+  assert.deepEqual(owed[0].payload, { kind: 'swarm.root_attention_owed', ...payload });
+  assert.equal(f.store.priorCoordinationEvent(key).seq, owed[0].seq);
+  const replay = f.store.recordDriver('swarm.root_attention_owed', payload, { actor: 'wake-reconciler', key });
+  assert.equal(replay.event.seq, owed[0].seq);
+  await f.runtime.reportTurnEnd(input);
+  assert.equal(f.events('swarm.turn_reported').length, 1);
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+  assert.equal(f.store.priorCoordinationEvent(`swarm-turn-report:turns:builder:${child.id}:1:901:root-owed`), null);
+});
+
+test('reportTurnEnd invokes an available reconciler and retries a failed owed append', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  let calls = 0;
+  f.runtime._reconcileTurnReportedRows = (swarm, actor) => {
+    assert.equal(swarm.swarmId, 'turns');
+    assert.equal(f.events('swarm.turn_reported').length, 1);
+    assert.equal(f.events('swarm.turn_reported')[0].payload.parentId, null);
+    calls += 1;
+    if (calls === 1) throw new Error('owed append unavailable');
+    return f.store.recordDriver('swarm.root_attention_owed', {
+      swarmId: 'turns', participantId: 'builder', owed: 'turn_reported', ask: 'Ready',
+      next: { command: 'swarm.view', swarmId: 'turns' },
+    }, { actor, key: `swarm-turn-report-owed:turns:builder:${child.id}:2:902` });
+  };
+  const input = { swarmId: 'turns', participantId: 'builder', workerId: child.id,
+    turnSeq: 902, turnEpoch: 2, report: 'Ready' };
+  await assert.rejects(f.runtime.reportTurnEnd(input), /owed append unavailable/);
+  assert.equal(f.events('swarm.root_attention_owed').length, 0);
+  await f.runtime.reportTurnEnd(input);
+  await f.runtime.reportTurnEnd(input);
+  assert.equal(calls, 2);
+  assert.equal(f.events('swarm.turn_reported').length, 1);
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+});
+
+test('the fallback root ask follows the reconciler report precedence and keeps previews bounded', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  const text = 'Root report 😀 '.repeat(2000);
+  const reports = [text, { summary: 'A summary' }, { summary: '' }, null];
+  for (const [i, report] of reports.entries()) {
+    await f.runtime.reportTurnEnd({ swarmId: 'turns', participantId: 'builder', workerId: child.id,
+      turnSeq: 910 + i, turnEpoch: 1, report });
+  }
+  const owed = f.events('swarm.root_attention_owed');
+  assert.deepEqual(owed.map((event) => event.payload.ask), [text, 'A summary', null, null]);
+  const frame = deriveWakeFrame(owed[0]);
+  assert.ok(frame.turnReport.omittedBytes > 0);
+  assert.equal(Buffer.byteLength(frame.turnReport.text) + frame.turnReport.omittedBytes, Buffer.byteLength(text));
+  assert.equal(frame.turnReport.text.includes('\uFFFD'), false);
+  assert.deepEqual(frame.turnReport.read.args, { swarmId: 'turns', participantId: 'builder' });
+});
+
+test('retry repairs a refused-parent root report without delivering to that parent again', async (t) => {
+  const f = await fixture(t);
+  const parent = await f.recruit('lead');
+  const child = await f.recruit('builder', parent);
+  let guides = 0;
+  f.coordinator.guideParticipant = async () => {
+    guides += 1;
+    return { ok: false, result: 'delivery_refused' };
+  };
+  const record = f.store.recordDriver.bind(f.store);
+  let failOwed = true;
+  f.store.recordDriver = (kind, ...args) => {
+    if (kind === 'swarm.root_attention_owed' && failOwed) throw new Error('owed append unavailable');
+    return record(kind, ...args);
+  };
+  const input = { swarmId: 'turns', participantId: 'builder', workerId: child.id,
+    turnSeq: 920, turnEpoch: 1, report: { summary: 'Original report' } };
+  await assert.rejects(f.runtime.reportTurnEnd(input), /owed append unavailable/);
+  failOwed = false;
+  await f.runtime.reportTurnEnd({ ...input, report: { summary: 'Changed on retry' } });
+  assert.equal(guides, 1);
+  assert.equal(f.events('swarm.turn_reported').length, 2);
+  assert.equal(f.events('swarm.turn_reported').at(-1).payload.parentId, null);
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+  assert.equal(f.events('swarm.root_attention_owed')[0].payload.ask, 'Original report');
 });

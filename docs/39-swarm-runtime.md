@@ -106,7 +106,8 @@ must not be collapsed into a success flag inferred from process terminality or r
 
 At each swarm turn end, Baton records the result and delivers it to the nearest live parent
 orchestrator. Reports addressed to the root produce a `root_owed` wake with a bounded preview
-and the ledger reference for the full report. The `turn_reported` wake marks the turn boundary.
+of the report string, summary, or delivery failure and a participant read for the full report.
+The `turn_reported` wake carries the report preview, turn identity, and report sequence.
 The assignment remains available for orchestrator guidance. A participant declares its assignment
 complete with `swarm.participant_left` and reason `completed`; its final turn then proceeds
 through verification and worker cleanup. Historical checkpoint records remain readable through

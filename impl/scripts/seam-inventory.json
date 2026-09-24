@@ -14051,9 +14051,10 @@
         {
           "name": "reportTurnEnd",
           "ordinal": 0,
-          "size": 90,
-          "seam": "admission",
+          "size": 100,
+          "seam": "recovery",
           "evidence": [
+            "recovery:reconcile_call",
             "observation:record_name",
             "admission:swarm_refusal"
           ]

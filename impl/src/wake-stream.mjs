@@ -544,6 +544,24 @@ function servedHeader(value) {
   return Object.freeze({ commit, behind: Number.isSafeInteger(value.behind) ? value.behind : null });
 }
 
+function turnReportPreview(event) {
+  const payload = event.payload ?? {};
+  if (payload.owed === 'turn_report' && payload.turnReport) return Object.freeze({ ...payload.turnReport });
+  const reported = payload.kind === 'swarm.turn_reported';
+  const rootAsk = payload.kind === 'swarm.root_attention_owed' && payload.owed === 'turn_reported';
+  if (!reported && !rootAsk) return null;
+  const content = reported ? JSON.stringify(payload.report) ?? 'null' : payload.ask ?? '';
+  const bytes = Buffer.from(content);
+  let end = Math.min(bytes.length, FRAME_LIMITS['swarm.notify.body'].value);
+  while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return Object.freeze({
+    ...(reported ? { reportSeq: event.seq, workerId: payload.workerId, turnSeq: payload.turnSeq,
+      turnEpoch: payload.turnEpoch, assignmentDone: payload.assignmentDone } : {}),
+    read: { command: 'swarm.view', args: { swarmId: payload.swarmId, participantId: payload.participantId } },
+    text: bytes.subarray(0, end).toString('utf8'), omittedBytes: bytes.length - end,
+  });
+}
+
 /** One wake frame from one coordination ledger row. `attribution` maps a run id, worker id, or
  * task id to the swarm and participant that own it, so a run-scoped row arrives carrying the swarm
  * coordinates a consumer actually acts on. `served` is the deployment's served-commit header (the
@@ -553,6 +571,7 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
   const row = wakeClassFor(event);
   if (row === null) return null;
   const payload = event.payload ?? {};
+  const turnReport = turnReportPreview(event);
   const owner = attribution.get(stringField(payload.runId) ?? '')
     ?? attribution.get(stringField(payload.worker) ?? '')
     ?? attribution.get(stringField(payload.taskId) ?? '') ?? null;
@@ -578,8 +597,7 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     actor: event.actor ?? null,
     subject: payload.kind === 'run.root_attention_owed' || payload.kind === 'run.turn_reported'
       ? { kind: 'worker', id: workerId } : subjectOf(row, payload),
-    ...(payload.owed === 'turn_report' && payload.turnReport
-      ? { turnReport: Object.freeze({ ...payload.turnReport }) } : {}),
+    ...(turnReport ? { turnReport } : {}),
     next: payload.kind === 'run.root_attention_owed' || payload.kind === 'run.turn_reported'
       ? (runId ? `baton run view ${runId}` : null) : renderNext(row, coordinates),
     observation: false,
