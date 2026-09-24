@@ -1879,7 +1879,7 @@ export function createDriver(opts) {
   // Issue #351 lane 3: coordinationOpened is the deferred async replay's promise — non-null
   // only on the deployment open path (coordinationAsyncOpen); it must be awaited before the
   // store's first read, and it rejects typed when the replay refuses.
-  return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, routingExcludedHarnesses: opts.routingExcludedHarnesses ?? [], ready, close, closeAsync, drainAndClose, standingLaws,
+  return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, routingExcludedHarnesses: opts.routingExcludedHarnesses ?? [], routingAllowedModels: opts.routingAllowedModels ?? {}, ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
     repoRoot: opts.repoRoot,

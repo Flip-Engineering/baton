@@ -365,6 +365,7 @@ test('CDW7: the declared routing exclusion reaches the driver the swarm runtime 
     repoRoot: repository, repoId: 'repo-wiring-routing', logDir,
     adapters: { mock: mock() }, verificationRuntime: RUNTIME_POLICY,
     routingExcludedHarnesses: ['codex'],
+    routingAllowedModels: { codex: ['gpt-6-*'] },
   });
   const undeclared = createDriver({
     repoRoot: repository, repoId: 'repo-wiring-routing-none', logDir: undeclaredLogDir,
@@ -380,8 +381,12 @@ test('CDW7: the declared routing exclusion reaches the driver the swarm runtime 
 
   assert.deepEqual(driver.routingExcludedHarnesses, ['codex'],
     'the declared exclusion must ride the driver object the swarm runtime reads it from');
+  assert.deepEqual(driver.routingAllowedModels, { codex: ['gpt-6-*'] },
+    'the declared model allow rule must ride the same driver object');
   assert.deepEqual(undeclared.routingExcludedHarnesses, [],
     'an undeclared deployment carries the member as the empty array that excludes nothing');
+  assert.deepEqual(undeclared.routingAllowedModels, {},
+    'and the empty map that constrains no harness');
 });
 
 // The composition root's option surface is a closed set, and this file must say which options it
@@ -394,6 +399,7 @@ const EXERCISED_OPTIONS = Object.freeze({
   goalPlanAuthority: 'CDW2',
   integrationPublishRemote: 'CDW6',
   knowledgeBriefingProvider: 'CDW4',
+  routingAllowedModels: 'CDW7',
   routingExcludedHarnesses: 'CDW7',
   verificationRuntime: 'CDW1',
 });
