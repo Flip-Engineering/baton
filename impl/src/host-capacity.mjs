@@ -231,6 +231,27 @@ export function hostDiskObservation({ path = tmpdir(), statfs = statfsSync } = {
     return Object.freeze({ diskTotalBytes: null, diskFreeBytes: null });
   }
 }
+
+/** #561: the resident-set bytes every live process group holds, as a Map of process-group id to
+ * total bytes — ONE `ps` read for the whole table, so a fleet's measurement is one exec however
+ * many seats it carries. A worker's weight is its group sum: the seat's own process plus every
+ * child it spawned. Empty when the table cannot be read (a missed sample is a lag, never a
+ * fabricated zero). Never throws. */
+export function hostProcessGroupBytes({
+  ps = () => execFileSync('ps', ['-A', '-o', 'pid=,pgid=,rss='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
+} = {}) {
+  const groups = new Map();
+  let table;
+  try { table = ps(); } catch { return groups; }
+  for (const line of table.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/u.exec(line);
+    if (!match) continue;
+    const groupId = Number(match[2]);
+    const bytes = Number(match[3]) * 1024;
+    groups.set(groupId, (groups.get(groupId) ?? 0) + bytes);
+  }
+  return groups;
+}
 /** Measure available memory the platform's own way; `os.freemem()` is the fallback where no
  * platform report exists or the report cannot be read. Never throws. */
 export function hostAvailableMemoryBytes({
