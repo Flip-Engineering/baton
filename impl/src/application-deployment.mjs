@@ -6328,6 +6328,18 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     || residentOptions.pollMs > residentOptions.commandTimeoutMs) {
     throw deploymentError('advanced resident configuration is invalid');
   }
+  // Issues #572/#574: the operator's declared routing rule — harnesses no seat may be routed
+  // onto. A declaration, never an inference: the closed set keeps the field list known, the
+  // entries are non-empty harness names normalized case-insensitively at the ONE eligibility
+  // predicate, and an absent declaration excludes nothing.
+  const rawRouting = advanced.routing ?? {};
+  closed(rawRouting, ['excludeHarnesses'], 'advanced routing');
+  const routingExcludedHarnesses = Object.freeze((rawRouting.excludeHarnesses ?? []).map((harness) => {
+    if (typeof harness !== 'string' || harness.trim().length === 0) {
+      throw deploymentError('advanced routing.excludeHarnesses entries must be non-empty harness names');
+    }
+    return harness.toLowerCase();
+  }));
   const capacity = normalizeCapacity(advanced.capacity);
   const configuredRoutes = advanced.routes === undefined ? locallyConfiguredRoutes(repository.root) : null;
   const routes = normalizeRoutes(advanced.routes
@@ -6708,6 +6720,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
     hostCapacity: hostCapacityAuthority,
+    routingExcludedHarnesses,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,

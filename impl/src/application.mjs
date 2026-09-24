@@ -2327,6 +2327,10 @@ export class BatonApplication {
       // #297: the host-wide capacity authority every resident shares (driver-built); recruits
       // admit through it and the view carries the deployment summary beside the queue.
       hostCapacity: this.driver.hostCapacity ?? null,
+      // Issues #572/#574: the operator's declared routing rule — harnesses no seat may be routed
+      // onto. The reroute candidate derivation, the recruit selection and the `recruitable` flag
+      // all read it through the ONE eligibility predicate.
+      routingExcludedHarnesses: this.driver.routingExcludedHarnesses ?? [],
       deploymentSummary: this.deploymentSummary,
       authorize: (command, args, principal) => this._authorize(command, principal, null, {
         swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,
