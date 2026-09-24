@@ -33,6 +33,12 @@ import { bindBaton, createDriver } from '../src/index.mjs';
 import { createWave } from '../src/wave.mjs';
 import { STORE_MODULE_FILES } from './seam-member-source.mjs';
 
+// The suite runner spawns a test file with cwd = `impl/`, so a path written relative to the
+// checkout root must resolve against THIS file, never the cwd — otherwise every read below
+// opens `impl/impl/src/...` and the row dies of ENOENT before it can measure its subject.
+// `application-observation.test.mjs` resolves the same way.
+const repoRead = (relative) => readFileSync(new URL('../../' + relative, import.meta.url), 'utf8');
+
 const repoId = 'repo-kg-activation';
 const dirs = [];
 function dir(label) {
@@ -371,9 +377,9 @@ test('KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no a
   // observation bucket and the admission bucket — and the admit gate's own body moved into the
   // admission module. The gate is still one body reached through one delegate.
   const storeSrc = STORE_MODULE_FILES
-    .map((file) => readFileSync(join('impl', 'src', file), 'utf8')).join('\n');
-  const coordSrc = readFileSync(join('impl', 'src', 'coordinator.mjs'), 'utf8');
-  const admissionSrc = readFileSync(join('impl', 'src', 'coordination-admission.mjs'), 'utf8');
+    .map((file) => repoRead(`impl/src/${file}`)).join('\n');
+  const coordSrc = repoRead('impl/src/coordinator.mjs');
+  const admissionSrc = repoRead('impl/src/coordination-admission.mjs');
 
   // The lease binding check + each refusal class are still present, unchanged, in the gate.
   assert.match(storeSrc, /leaseRecord\.status !== 'active'[\s\S]*?workflow_admit_lease_invalid/u, 'the active-lease binding is the gate authority');
@@ -397,12 +403,12 @@ test('KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no a
 
   // NO auto-admit path exists: admitWorkflowFinding is reachable ONLY from the gate's own callers
   // (the store delegate, its body in the admission module, and the single orchestrator wrapper).
-  const srcDir = join('impl', 'src');
+  const srcDirUrl = new URL('../../impl/src/', import.meta.url);
   const offenders = [];
-  for (const name of readdirSync(srcDir)) {
+  for (const name of readdirSync(srcDirUrl)) {
     if (!name.endsWith('.mjs')) continue;
     if (STORE_MODULE_FILES.includes(name) || name === 'coordinator.mjs') continue;
-    const text = readFileSync(join(srcDir, name), 'utf8');
+    const text = readFileSync(new URL(name, srcDirUrl), 'utf8');
     if (/\badmitWorkflowFinding\b/u.test(text)) offenders.push(name);
   }
   assert.deepEqual(offenders, [], 'no src surface outside the gate calls admitWorkflowFinding — there is no auto-promotion path');

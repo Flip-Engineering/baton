@@ -536,6 +536,10 @@ test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi ro
   writeFileSync(join(isolatedHome, '.codex', 'auth.json'), '{}\n', { mode: 0o600 });
   mkdirSync(join(isolatedHome, '.kimi-code', 'credentials'), { recursive: true });
   mkdirSync(join(isolatedHome, '.kimi-code', 'oauth'), { recursive: true });
+  mkdirSync(join(isolatedHome, '.kimi-code', 'bin'), { recursive: true });
+  const kimiExecutable = join(isolatedHome, '.kimi-code', 'bin', 'kimi');
+  writeFileSync(kimiExecutable, '#!/bin/sh\nexit 0\n');
+  chmodSync(kimiExecutable, 0o700);
   writeFileSync(join(isolatedHome, '.kimi-code', 'config.toml'), '[auth]\nmethod = "oauth"\n');
   writeFileSync(join(isolatedHome, '.kimi-code', 'device_id'), 'phase90-device\n', { mode: 0o600 });
   writeFileSync(join(isolatedHome, '.kimi-code', 'oauth', 'kimi-code'), '');
@@ -554,7 +558,10 @@ test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi ro
   ].join('\n');
   const observed = JSON.parse(execFileSync(process.execPath, [
     '--input-type=module', '--eval', script,
-  ], { encoding: 'utf8', env: { ...process.env, HOME: isolatedHome } }));
+  ], {
+    encoding: 'utf8',
+    env: { ...batonModule.defaultVerificationRuntime().environment, HOME: isolatedHome },
+  }));
   assert.equal(observed.routes.some((route) => route.harness === 'kimi-code'), true);
   const kimi = observed.readiness.routes.filter((route) => route.harness === 'kimi-code');
   assert.equal(kimi.length, 3);

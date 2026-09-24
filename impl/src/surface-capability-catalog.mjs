@@ -7,7 +7,6 @@ import {
 import {
   APPLICATION_UNIFIED_COMMAND_REGISTRY,
   ambiguousLegacyAliases,
-  resolveUnifiedSurfaceCommand,
 } from './control-surface-unification.mjs';
 import { BatonControlError, digestValue } from './holistic-runtime.mjs';
 import {
@@ -196,17 +195,6 @@ function applicationRow(row) {
   });
 }
 
-function resolvesApplicationTool(name) {
-  try {
-    resolveUnifiedSurfaceCommand('mcp', name);
-    return true;
-  } catch (error) {
-    if (error?.code === 'command_alias_ambiguous') return true;
-    if (error?.code === 'command_unknown') return false;
-    throw error;
-  }
-}
-
 function nativeMode(name) {
   return /[._](?:read|list|view|status|progress|compile|receipt|watch|recall|horizon|cite|result|capabilities|wait|episode|follow|inspect|workstreams)$/u.test(name)
     ? 'query' : 'effect';
@@ -340,11 +328,17 @@ const META_ROWS = Object.freeze([
 })));
 
 const APPLICATION_ROWS = Object.freeze(APPLICATION_UNIFIED_COMMAND_REGISTRY.rows().map(applicationRow));
+const APPLICATION_CLAIMED_NAMES = new Set(APPLICATION_ROWS.flatMap((row) => [
+  ...Object.values(row.names ?? {}),
+  ...Object.values(row.aliases ?? {}).flat(),
+]).filter((name) => typeof name === 'string' && name.length > 0));
 const NATIVE_MCP_ROWS = Object.freeze(combinedMcpNames
-  // Advertised dotted MCP names are executable command identities, not transport spellings.
-  // Keep them when the semantic registry has no row with that exact key; a compatibility alias
-  // resolving to a broader semantic operation does not own or erase the live command.
-  .filter((name) => !semanticKeys.has(name) && (name.includes('.') || !resolvesApplicationTool(name)))
+  // Advertised MCP tool names are executable command identities, not transport spellings.
+  // Keep every served name no application row claims — an exact semantic key, a declared
+  // transport name, or a registered alias correction owns its name; a compatibility alias
+  // that merely resolves through a broader operation never erases the live command
+  // (issue #555 core-closure adjudication).
+  .filter((name) => !semanticKeys.has(name) && !APPLICATION_CLAIMED_NAMES.has(name))
   .map(nativeMcpRow));
 const NATIVE_CLI_ROWS = Object.freeze((nativeManifest.cliNative ?? []).map(nativeCliRow));
 const ALL_ROWS = Object.freeze([...APPLICATION_ROWS, ...NATIVE_MCP_ROWS, ...NATIVE_CLI_ROWS, ...META_ROWS]);

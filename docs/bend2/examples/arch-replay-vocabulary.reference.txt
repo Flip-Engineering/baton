@@ -1,5 +1,5 @@
-RESULT|vocabulary-full|rows=16|admitted=16|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=13|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=na
-RESULT|vocabulary-rerun|rows=16|admitted=16|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=13|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=true
-RESULT|vocabulary-forged-kind|rows=16|admitted=6|decode_stop=7|decode_code=unknown_event_kind|fold_stop=0|fold_code=none|caller_rows=3|fp=pa2,gr1,wo1,cl0,as0,pr0,cx0,co0,rv0,cp1,po0|rerun_identical=na
-RESULT|vocabulary-missing-field|rows=16|admitted=10|decode_stop=11|decode_code=invalid_payload|fold_stop=0|fold_code=none|caller_rows=7|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co0,rv0,cp1,po0|rerun_identical=na
-RESULT|vocabulary-driver-row|rows=16|admitted=16|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=12|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po0|rerun_identical=na
+RESULT|vocabulary-full|rows=30|admitted=30|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=15|fp=pa3,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=na
+RESULT|vocabulary-rerun|rows=30|admitted=30|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=15|fp=pa3,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=true
+RESULT|vocabulary-forged-kind|rows=30|admitted=6|decode_stop=7|decode_code=unknown_event_kind|fold_stop=0|fold_code=none|caller_rows=3|fp=pa2,gr1,wo1,cl0,as0,pr0,cx0,co0,rv0,cp1,po0|rerun_identical=na
+RESULT|vocabulary-missing-field|rows=30|admitted=10|decode_stop=11|decode_code=invalid_payload|fold_stop=0|fold_code=none|caller_rows=7|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co0,rv0,cp1,po0|rerun_identical=na
+RESULT|vocabulary-driver-row|rows=30|admitted=30|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=14|fp=pa3,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=na

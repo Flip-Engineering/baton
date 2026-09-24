@@ -3,19 +3,12 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { availableParallelism, tmpdir } from 'node:os';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { lintDefaultTestDirectory } from './fixture-clock-lint.mjs';
-import { collectSurfaceInventory } from './surface-audit.mjs';
-import {
-  checkEnumStrings,
-  checkLedgerMonotone,
-  classifySurfaces,
-} from './surface-conformance.mjs';
 import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
-import { runSurfaceGate } from './surface-gate.mjs';
 import {
   computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
   loadExpectedRed, planExpectedRedRewrite, reasonClassOf, verdictDocument, writeExpectedRed,
@@ -24,6 +17,88 @@ import {
   deriveSuiteCoverage, renderSuiteCoverageNote, renderSuiteVerdictHeadline,
 } from '../src/verification-presentation.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
+
+// Issue #77: the load-aware suite calibration. One record per run — measured at start, or
+// injected verbatim through the BATON_RG_CALIBRATION observation seam (a nested gate under
+// test injects its record because a gate probing the exact load the suite governs must never
+// measure real host load) — is printed once on stderr and handed to every test child as
+// BATON_SUITE_CALIBRATION, so a flake report cites the load context its row ran under
+// (RG-01/RG-02/RG-07). A measurement that cannot be taken refuses the run (RG-10, fail-closed).
+const { deriveTestConcurrency, measureCalibration } = await import(
+  new URL('./suite-calibration.mjs', import.meta.url).href
+);
+
+let suiteCalibration;
+try {
+  suiteCalibration = process.env.BATON_RG_CALIBRATION !== undefined
+    ? JSON.parse(process.env.BATON_RG_CALIBRATION)
+    : null;
+} catch (error) {
+  process.stderr.write(`baton suite calibration refused (${error?.code ?? 'error'}): ${error?.message ?? error}\n`);
+  process.exit(1);
+}
+
+// D3.1: the file-level concurrency this run declares — max(1, ceil((cores - 1) / factor)); an
+// idle run (factor 1) preserves node's os.availableParallelism() - 1 default.
+// BATON_SUITE_TEST_CONCURRENCY is the operator's explicit override that replaces the
+// derivation (contract-fold.md hole 4). Without an injected record the thin re-executing
+// parent derives from the idle default — the factor scales a row against a RECORDED baseline
+// and this runner loads none, so the real measurement (below, in the runner proper) cannot
+// move the posture the flag declares.
+const overrideConcurrency = Number.parseInt(process.env.BATON_SUITE_TEST_CONCURRENCY ?? '', 10);
+const suiteConcurrency = Number.isInteger(overrideConcurrency) && overrideConcurrency > 0
+  ? overrideConcurrency
+  : deriveTestConcurrency(availableParallelism(), suiteCalibration?.factor ?? 1);
+
+// The derived value rides the runner's OWN command line: a test file's direct parent is this
+// runner process, so the flag observed there is the concurrency posture this run actually
+// carries, and a caller's earlier --test-concurrency is overridden by the derivation (D3.1
+// precedence). A run whose argv does not already end in the derived value re-executes itself
+// once with the flag appended and forwards the verdict; the re-executed runner is the real one.
+const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
+if (lastArgValue('--test-concurrency') !== String(suiteConcurrency)) {
+  // The thin parent forwards the operator's stop signals to the real runner below, so a
+  // SIGTERM/SIGINT reaches the lanes exactly as it did before the hop, and the forwarded exit
+  // code is the runner's own verdict (TF2/TF3).
+  let real = null;
+  process.on('SIGTERM', () => real?.kill('SIGTERM'));
+  process.on('SIGINT', () => real?.kill('SIGINT'));
+  const forwarded = await new Promise((doneForward) => {
+    const child = spawn(process.execPath, [...process.argv.slice(1), '--test-concurrency', String(suiteConcurrency)], {
+      detached: false, stdio: 'inherit', env: process.env,
+    });
+    real = child;
+    child.once('error', (error) => doneForward({ error }));
+    child.once('close', (code, signal) => doneForward({ code, signal }));
+  });
+  if (forwarded.error) {
+    process.stderr.write(`baton test runner could not re-execute with its derived concurrency: ${forwarded.error.message}\n`);
+    process.exit(1);
+  }
+  process.exit(forwarded.signal ? (signalStatus[forwarded.signal] ?? 1) : (forwarded.code ?? 1));
+}
+
+// The runner proper carries the ONE real measurement — the load read and the K-sample
+// event-loop-gap probe — for the record it prints and hands to every test child. A measurement
+// that cannot be taken refuses the run (RG-10, fail-closed), never a silent factor 1.
+if (suiteCalibration === null) {
+  try {
+    suiteCalibration = await measureCalibration();
+  } catch (error) {
+    process.stderr.write(`baton suite calibration refused (${error?.code ?? 'error'}): ${error?.message ?? error}\n`);
+    process.exit(1);
+  }
+}
+const suiteCalibrationJson = JSON.stringify(suiteCalibration);
+process.stderr.write(`baton suite calibration: ${suiteCalibrationJson}\n`);
+
+/** The value of the LAST occurrence of `flag` in this process's own argv, or null. */
+function lastArgValue(flag) {
+  for (let index = process.argv.length - 2; index >= 2; index -= 1) {
+    if (process.argv[index] === flag) return process.argv[index + 1] ?? null;
+  }
+  return null;
+}
 
 // 2026-09-14 audit R-1: the prerequisites a run needs from ITS MACHINE are derived from the ONE
 // declaration the deployment doctor and route readiness use — the served route registry and the
@@ -54,6 +129,7 @@ const {
   acquireSuiteVerifyLease, formatSuiteAdmissionRefusal, formatSuiteDegradedWarning,
   formatSuitePlan, SUITE_VERIFY_LEASE_ENV, suiteLeaseTokenDigest,
 } = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
+
 
 /** The machine-local prerequisites this run observed, named by the readiness declaration. */
 function suiteEnvironment(repoRootPath) {
@@ -89,6 +165,13 @@ try {
   process.stderr.write(`surface-conformance: could not read divergence ledger: ${error.message}\n`);
   process.exit(1);
 }
+
+// The surface machinery loads here, in the runner proper: the thin re-executing parent (#77)
+// exits before this line and never pays these modules' load cost.
+const { collectSurfaceInventory } = await import(new URL('./surface-audit.mjs', import.meta.url).href);
+const { checkEnumStrings, checkLedgerMonotone, classifySurfaces } = await import(
+  new URL('./surface-conformance.mjs', import.meta.url).href
+);
 const inventory = collectSurfaceInventory();
 const surfaceFindings = classifySurfaces(inventory, currentLedger).novel;
 const enumFindings = checkEnumStrings(inventory.phaseLiterals, currentLedger).novel;
@@ -101,6 +184,8 @@ if (surfaceFindings.length > 0 || enumFindings.length > 0) process.exit(1);
 
 // Issue #262: the surface gate (grammar lint, artifact/doc/parity staleness, MCP dispatch
 // resolvability) runs before any test so a surface change is refused when it is made.
+const { runSurfaceGate } = await import(new URL('./surface-gate.mjs', import.meta.url).href);
+
 const gateFindings = await runSurfaceGate();
 for (const finding of gateFindings) process.stderr.write(`surface-gate: ${finding}\n`);
 if (gateFindings.length > 0) {
@@ -166,7 +251,6 @@ process.once('exit', cleanup);
 
 const detached = process.platform !== 'win32';
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
 
 // Issue #260: the runner schedules every test FILE as its own in-process run (the file executed
 // directly with the verdict reporter attached), never through `node --test`'s parent/child TAP
@@ -191,7 +275,7 @@ if (reasonClassOf(expectedRedReason) === 'credential'
   process.stderr.write('baton test runner: --expected-red-reason credential names an environment-class row, so it needs the prerequisite the row depends on — pass --expected-red-prerequisite <registry-route-key> (the route key the suite environment line prints, e.g. omp/deepseek/deepseek-flash or claude-code:claude/claude-opus-4-6); a row with a bare class keeps the global behaviour only until it is attributed\n');
   process.exit(1);
 }
-const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason', '--expected-red-prerequisite']);
+const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason', '--expected-red-prerequisite', '--test-concurrency']);
 // #300: `--changed <paths…>` selects the affected test files through the import graph
 // (verification-selection.mjs) instead of naming files by hand. The paths are the capture's
 // changedPaths — the flag's INPUT, never passthrough file names — and the selection itself is
@@ -209,6 +293,7 @@ if (changedFlagIndex !== -1) {
 const passthroughArgs = process.argv.slice(2).filter((arg, index, argv) => (
   !runnerFlags.has(arg) && !(index > 0 && argv[index - 1] === '--expected-red-reason')
   && !(index > 0 && argv[index - 1] === '--expected-red-prerequisite')
+  && !(index > 0 && argv[index - 1] === '--test-concurrency')
   && !changedFlagArgs.has(index + 2)
 ));
 const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
@@ -317,7 +402,11 @@ function laneFiles(changedSelection = null) {
   const runnable = [];
   const skipped = [];
   for (const file of requested) {
-    if (fileImportsTestFramework(resolve(implRootPath, file))) runnable.push(file);
+    // The #508 classification guards the suite's own territory: a file under impl/ that never
+    // imports `node:test` is not a runnable test. A file outside the suite root kept its
+    // absolute path (relativeTestPath) because it is a fixture the caller owns, and it runs
+    // as named.
+    if (isAbsolute(file) || fileImportsTestFramework(resolve(implRootPath, file))) runnable.push(file);
     else skipped.push({ file, reason: 'no test-framework import' });
   }
   return {
@@ -451,6 +540,8 @@ function childEnv(summaryFile) {
     BATON_TEST_SUITE_ROOT: suiteRoot,
     BATON_SUITE_WATCHDOG: '1',
     BATON_SUITE_WATCHDOG_PPID: String(process.pid),
+    // #77: the run's calibration record — identical to the stderr line — rides to every child.
+    BATON_SUITE_CALIBRATION: suiteCalibrationJson,
     // #297: a test file's deployments run UNWIRED from the host-wide capacity throttle. The
     // throttle is a production multi-resident mechanism; a suite host runs nine parallel files
     // and is oversubscribed BY DESIGN, so its real load observation would queue every fixture
@@ -518,7 +609,11 @@ async function runFile(file) {
     failed.push({ file, name: `(file hung: no test event for ${job.hung.idleMs} ms after ${job.hung.lastEvent ?? 'start'})`, failureType: 'fileHung', message: 'hung' });
   } else if (terminal.error) {
     failed.push({ file, name: '(file could not start)', failureType: 'fileCrashed', message: terminal.error.message });
-  } else if (summary === null) {
+  } else if (summary === null && !(isAbsolute(file) && terminal.code === 0)) {
+    // A file outside the suite root is a fixture the caller owns (relativeTestPath keeps its
+    // absolute path): it is judged by its exit code, because only a file that registers with
+    // node:test produces the report the verdict reads. A clean exit names no failure row; a
+    // failing caller fixture still does.
     failed.push({ file, name: `(file exited ${terminal.code ?? terminal.signal} without reporting)`, failureType: 'fileCrashed', message: stderr.split('\n').filter(Boolean).slice(-3).join(' | ') });
   }
   return { file, passed, failed, groupReaped, error: terminal.error, signal: terminal.signal };
@@ -564,7 +659,7 @@ function finish(code, signal, spawnError = null, groupReaped = true) {
 if (legacyPassthrough) {
   // Legacy passthrough (node --test options such as --watch or --test-name-pattern): node's own
   // orchestration, its own output, no verdict.
-  const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', '--test-force-exit', ...passthroughArgs], {
+  const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', '--test-force-exit', ...passthroughArgs, '--test-concurrency', String(suiteConcurrency)], {
     detached, stdio: 'inherit', env: childEnv(null),
   });
   const job = { file: '(legacy)', child, trackedGroup: new Map() };

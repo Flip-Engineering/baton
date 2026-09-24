@@ -29,7 +29,9 @@ import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 // five-verb allowlist forced every harness to hand-roll a BatonWebClient proxy. The wire card
 // (doctor.application.commands) is the authority: every listed command EXCEPT shutdown
 // (never proxied — host-side lifecycle only).
-const ORDINARY_COMMANDS = Object.freeze([
+// Exported for the surface audit (#533): the audit row derives from THIS constant — the one
+// table the bridge admits by — instead of re-scraping this file's text and pinning a stale copy.
+export const ORDINARY_COMMANDS = Object.freeze([
   'application.help',
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
@@ -43,6 +45,14 @@ const ORDINARY_COMMANDS = Object.freeze([
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
   'waves.stop', 'waves.run', 'waves.compile',
 ]);
+// SA4 (#227): the CONSTRUCTOR floor is the REGISTRY's own remote_bridge projection — the closed
+// operation set (docs/36 §8.3 L8 / D8, R-OP-15b) the registry itself says a remote bridge
+// forwards — never a second hand-kept copy. A genuine resident's wire card advertises it in
+// whatever spellings and supersets the deployment grows; the wire card
+// (doctor.application.commands) stays the per-command admission authority (#227).
+const BRIDGE_FLOOR_COMMANDS = Object.freeze(
+  Object.keys(APPLICATION_SEMANTIC_REGISTRY.operations),
+);
 const MUTATIONS = new Set([
   'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve', 'run.feedback',
   'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
@@ -500,7 +510,7 @@ export class BatonWebApplicationFacade {
       || !applicationCard || typeof applicationCard !== 'object' || Array.isArray(applicationCard)
       || typeof applicationCard.repoId !== 'string' || applicationCard.repoId !== client.repoId
       || !Array.isArray(applicationCard.commands)
-      || ORDINARY_COMMANDS.some((command) => !applicationCard.commands.includes(command))
+      || BRIDGE_FLOOR_COMMANDS.some((command) => !applicationCard.commands.includes(command))
       || !session?.identity || !SAFE_RUN_ID.test(session.identity.userId ?? '')
       || !SAFE_RUN_ID.test(session.identity.sessionId ?? '')
       || !Array.isArray(session.identity.capabilities) || !session.identity.capabilities.includes('observe')
@@ -557,9 +567,10 @@ export class BatonWebApplicationFacade {
   principal() { return Object.freeze(clone(this._principal)); }
 
   /** #227's authority, applied: the resident's wire card admits a command, not a hand-kept list.
-   * ORDINARY_COMMANDS stays the floor the constructor requires of every card; anything else the
-   * card advertises (the swarm family, and whatever the registry grows next) is forwarded the
-   * same way. shutdown is host-side lifecycle and is never proxied. */
+   * BRIDGE_FLOOR_COMMANDS (the registry's remote_bridge projection) is the floor the constructor
+   * requires of every card; anything else the card advertises (the ordinary family, the swarm
+   * family, and whatever the registry grows next) is forwarded the same way. shutdown is
+   * host-side lifecycle and is never proxied. */
   _admits(name) {
     return typeof name === 'string' && name !== 'application.shutdown'
       && (ORDINARY_COMMANDS.includes(name) || this._card.commands.includes(name));
@@ -730,7 +741,8 @@ export class BatonWebApplicationFacade {
   }
 
   /** The rediscovery must answer THIS deployment's resident: a client and a card that still
-   * carries the ordinary floor the open path required of the card it bound. */
+   * carries the registry floor (BRIDGE_FLOOR_COMMANDS) the open path required of the card it
+   * bound. */
   _bindsDeployment(opened) {
     const client = opened?.client ?? null;
     const card = opened?.card ?? null;
@@ -738,7 +750,7 @@ export class BatonWebApplicationFacade {
       && typeof client.doctor === 'function' && typeof client.session === 'function'
       && card !== null && typeof card === 'object' && !Array.isArray(card)
       && card.repoId === this.repoId && Array.isArray(card.commands)
-      && ORDINARY_COMMANDS.every((command) => card.commands.includes(command));
+      && BRIDGE_FLOOR_COMMANDS.every((command) => card.commands.includes(command));
   }
 
   /**

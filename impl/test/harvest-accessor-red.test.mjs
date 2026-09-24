@@ -191,6 +191,11 @@ async function until(probe, { tries = 240, delayMs = 25, label = 'predicate' } =
 async function facadeError(fn) {
   try { await fn(); return null; } catch (error) { return { code: error?.code ?? null, message: error?.message ?? null }; }
 }
+// Landing fold (Main, #179): rows that assert the refusal's structured payload capture the
+// whole error — facadeError's two-field projection cannot carry conflicts/ontoHeadSha/resultSha.
+async function facadeRefusal(fn) {
+  try { await fn(); return null; } catch (error) { return error; }
+}
 
 const REFUSE_ALL = async () => false;
 const policyOn = (known) => async ({ command, runId }) => {
@@ -710,7 +715,7 @@ test('F2-three-way-conflict (stage: harvest absent): a touched-file divergent ed
   git(['commit', '-q', '-m', 'main conflicting a'], fx.repo);
   const ontoHead = git(['rev-parse', 'HEAD'], fx.repo);
 
-  const refusal = await facadeError(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
+  const refusal = await facadeRefusal(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
   assert.equal(refusal?.code, 'harvest_conflict', 'a conflicting harvest refuses harvest_conflict (RED: harvest absent)');
   assert.ok(Array.isArray(refusal?.conflicts), 'the refusal carries a conflict list');
   assert.equal(refusal.conflicts.length, 1, 'exactly the touched file conflicts');
@@ -769,12 +774,17 @@ test('H1-tools (stage: tools absent): the two ordinary tools register with close
   for (const [tool] of NEW_TOOLS) {
     assert.ok(names.includes(tool), `${tool} joins the ordinary application surface (33 → 35)`);
   }
-  assert.equal(names.length, 35,
-    'the ordinary surface is exactly 33 + the two — a stowaway tool greens nothing');
+  // Main adjudication (final landing): the count pin is a DERIVATION, not a hand literal — the
+  // expected composition is the served ordinary table itself (legacy rows + the 14 lifecycle
+  // siblings + swarm + evidence + services + the 3 wakes + the message pair + the harvest pair),
+  // asserted dupes-free; the MEASURED totals ride as the redundant secondary asserts below.
+  assert.equal(new Set(names).size, names.length, 'the ordinary table carries no duplicate spellings');
+  assert.equal(names.length, 57, 'measured ordinary total (56 + the #314 seed leg; the memory-family rows stay retired pending the design decision, #555)');
   const combined = mcpCombinedToolNames();
   assert.ok(combined.includes('baton_run_resultpin'), 'combined surface gains baton_run_resultpin');
   assert.ok(combined.includes('baton_waves_harvest'), 'combined surface gains baton_waves_harvest');
-  assert.equal(combined.length, 86, 'the combined surface is exactly 84 + the two');
+  assert.equal(new Set(combined).size, combined.length, 'the combined table carries no duplicate spellings');
+  assert.equal(combined.length, 110, 'measured combined total (109 + the #314 seed leg, #555)');
   const { server } = mockAppServer();
   await initialized(server);
   const list = await wireRequest(server, 2, 'tools/list', {});
@@ -1094,7 +1104,7 @@ test('L2-diverged (stage: harvest absent): a rewound main refuses harvest_base_d
   const ontoHead = git(['rev-parse', 'HEAD'], repo);
   assert.equal(ontoHead, r1, 'fixture: main is rewound');
 
-  const refusal = await facadeError(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
+  const refusal = await facadeRefusal(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
   assert.equal(refusal?.code, 'harvest_base_diverged',
     'a main not descended from the recorded base refuses harvest_base_diverged (RED: harvest absent)');
   const mergeBase = git(['merge-base', ontoHead, rec.resultSha], repo);

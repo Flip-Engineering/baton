@@ -364,6 +364,39 @@ test('MP10: baton_deployment_doctor is quota-free, fresh per call, and carries z
   assert.doesNotMatch(resultText(first) + resultText(second), /sk-live/i, 'zero secret material');
 });
 
+// Issue #202 / D5 (contract-launch-2026-08-14/redrive3, PIN-L7): a doctor lane that produces a
+// NON-RECORD readiness refuses typed `deployment_readiness_invalid` at the sanitize seam — the
+// bare-text degrade class must never ride the `{result: <string>}` envelope again. The pin drives
+// ARBITRARY non-records through the seam (never the incident's literal string alone), and a
+// record producer keeps the closed-record (schemaVersion-carrying) answer.
+test('MP10b: a non-record doctor readiness refuses typed deployment_readiness_invalid — never a verbatim pass-through', async () => {
+  for (const produced of ['arbitrary producer text', 42, false]) {
+    const { server } = setup({});
+    Object.defineProperty(server, 'doctorReadiness', { value: async () => produced, configurable: true });
+    await initialized(server);
+    const response = await call(server, 2, 'baton_deployment_doctor', { repoId: REPO_ID });
+    assert.equal(response.result.isError, true, `a ${typeof produced} readiness must refuse: ${resultText(response)}`);
+    const refusal = response.result.structuredContent?.error;
+    assert.equal(refusal?.code, 'deployment_readiness_invalid', `typed refusal, never a fallthrough: ${JSON.stringify(refusal)}`);
+    assert.deepEqual(refusal?.detail, { actual: typeof produced }, 'the closed refusal shape names the actual typeof (contract §3)');
+    assert.equal(refusal?.retryable, false, 'an upstream producer shape fault is permanent — never the transient fallthrough verdict');
+    assert.equal(typeof refusal?.action, 'string', 'the refusal states its remedy (U-F3)');
+    if (typeof produced === 'string') {
+      assert.doesNotMatch(resultText(response), /arbitrary producer text/, 'the bare value never reaches the wire verbatim');
+      assert.equal(Object.hasOwn(response.result.structuredContent ?? {}, 'result'), false, 'never the {result: <string>} envelope');
+    }
+  }
+  const readiness = { schemaVersion: 1, routes: [{ harness: 'mock', model: 'model-a', effort: 'low', state: 'ready' }], workspace: { state: 'ready' } };
+  const { server } = setup({});
+  Object.defineProperty(server, 'doctorReadiness', { value: async () => readiness, configurable: true });
+  await initialized(server);
+  const good = await call(server, 2, 'baton_deployment_doctor', { repoId: REPO_ID });
+  assert.equal(good.result.isError, false, `a record readiness still answers: ${resultText(good)}`);
+  assert.equal(good.result.structuredContent?.schemaVersion, 1, 'the closed record carries its schemaVersion');
+  assert.equal(Object.hasOwn(good.result.structuredContent, 'result'), false, 'a record producer is never re-wrapped');
+});
+
+
 // ===========================================================================
 // PKG-1 — the declarative descriptor (stage: parser missing)
 // ===========================================================================

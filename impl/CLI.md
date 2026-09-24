@@ -37,6 +37,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.message.receipt` | `ordinary` | `baton run message receipt` | `baton run message receipt MESSAGE_ID` |
 | `run.message.send` | `ordinary` | `baton run message send` | `baton run message send RUN_ID --kind inform --body TEXT` |
 | `run.recover` | `ordinary` | `baton run recover` | `baton run recover RUN_ID` |
+| `run.resultpin` | `ordinary` | `baton run resultpin` | `baton run resultpin run:1` |
 | `run.resume` | `ordinary` | `baton run resume` | `baton run resume RUN_ID --reason R` |
 | `run.retry` | `ordinary` | `baton run retry` | `baton run retry RUN_ID --reason R` |
 | `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
@@ -63,6 +64,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `swarm.watch` | `ordinary` | `baton swarm watch` | `baton swarm watch SWARM_ID` |
 | `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
 | `waves.compile` | `ordinary` | `baton waves compile` | `baton waves compile path/to/spec.dsl` |
+| `waves.harvest` | `ordinary` | `baton waves harvest` | `baton waves harvest run:1 --onto /srv/checkout` |
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |
 | `waves.progress` | `ordinary` | `baton waves progress` | `baton waves progress WAVE_ID --cursor 0` |
 | `waves.run` | `ordinary` | `baton waves run` | `baton waves run path/to/spec.json` |
@@ -446,6 +448,7 @@ The zero-assembly deployment registers these route families (`baton doctor` for 
 | Harness | Model(s) | Efforts | Ready when |
 |---|---|---|---|
 | `codex` | `gpt-5.6-sol` | minimal/low/medium/high/xhigh | `~/.codex/auth.json` present |
+| `codex` | `gpt-6-astra` | minimal/low/medium/high/xhigh | `~/.codex/auth.json` present |
 | `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present with a ready authentication state |
 | `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present with a ready authentication state |
 | `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + auth status probes |

@@ -55,7 +55,7 @@
 // condition it claims, so a vacuous pass is impossible (blue-team findings 1, 3, 5, 8a, 8b, 9).
 //
 // ── NUL DISCIPLINE (§8) ────────────────────────────────────────────────────────────────────
-// application.mjs and coordination-store.mjs carry NUL bytes. This suite cites their anchors in
+// application.mjs and coordination-store.mjs carried NUL bytes until #215. This suite cites their anchors in
 // comments only (verified by the contract at HEAD dc569eaa… / 4758d8fa…); source scans target the
 // NUL-free inventories (application-deployment.mjs, application-cli.mjs, mcp-northbound.mjs,
 // wave-driver.mjs, the resolved detection home).
