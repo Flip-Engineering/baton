@@ -780,6 +780,12 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
         reconciliations.push(coordinator._trackStartupCleanup(
           () => coordinator._runtimeScopes.reconcile(expectedWorkers),
           'worker_processes',
+          // Issue #542: a scratch scope this pass cannot remove yet is retried BY NAME, never by
+          // repeating the sweep — a scope a worker admitted since startup created for itself is
+          // not in this set and is never removed by a retry.
+          typeof coordinator._runtimeScopes.retryPendingScopes === 'function'
+            ? { retryScopes: (workerIds) => coordinator._runtimeScopes.retryPendingScopes(workerIds) }
+            : {},
         ));
       }
       if (absentRecoveredProcessHandles.length > 0) {
@@ -923,10 +929,92 @@ export function _startupReconcilerObservation(coordinator, recorder, caught, rec
     });
   }
 
-export function _trackStartupCleanup(coordinator, recorder, operation, reconciler = null) {
+/** Issue #542: the scope-removal failures a start DEFERS. The runtime-scope reconciler reports the
+ * exact scopes it could not remove on `pending`; a scope whose child is still tearing down is a
+ * pending removal, never a startup refusal. An injected reconciler that supplies no retry, or one
+ * that names a live owner in `observed`, keeps the #384 fail-closed refusal. */
+function deferrableScopeRemovals(error, reconciler, retryScopes) {
+    if (retryScopes === null || reconciler !== 'worker_processes') return [];
+    if (error?.code !== 'runtime_cleanup_failed' || error?.observed?.alive === true) return [];
+    const rows = Array.isArray(error.pending) ? error.pending : [];
+    return rows.filter((row) => typeof row?.workerId === 'string' && row.workerId.length > 0);
+  }
+
+/** Issue #542: each scope a start cannot remove yet is recorded as a pending removal — one durable
+ * `host.cleanup_pending` row per scope plus the coordinator's own deferred read — and the start
+ * proceeds. Those exact scopes are reconciled AGAIN in the background until they are absent, each
+ * attempt landing one `host.cleanup_completed` row per scope it reached absence for. The loop is
+ * unbounded (a retry count that then refused would be the same brick), its timer is unref'd and
+ * nothing awaits it, so startup admission, the drain and close never wait on a scope a child is
+ * still releasing. A retry never re-runs the sweep: it removes only the scopes named here, so a
+ * scope a worker admitted since startup created for itself is safe. */
+function deferScopeRemovals(coordinator, recorder, reconciler, error, rows, retryScopes) {
+    const at = new Date().toISOString();
+    const facts = new Map(rows.map((row) => [row.workerId, {
+      record: row.workerId, code: error.code, reconciler,
+      observed: row.observed ?? null, since: at, attempts: 0,
+    }]));
+    const publish = () => {
+      for (const fact of facts.values()) {
+        coordinator._startupCleanupDeferred.set(fact.record, Object.freeze({ ...fact }));
+      }
+    };
+    for (const fact of facts.values()) {
+      try {
+        recorder.recordDriver('host.cleanup_pending', {
+          code: fact.code, reconciler, record: fact.record, observed: fact.observed,
+        }, `host.cleanup_pending:${reconciler}:${fact.record}`);
+      } catch { /* the pending scope still rides the coordinator's own deferred read */ }
+    }
+    publish();
+    const retry = (async () => {
+      while (!coordinator._closed) {
+        await new Promise((resolveDelay) => {
+          const timer = coordinator._setTimeout(resolveDelay, KILL_ESCALATION_GRACE_MS);
+          timer?.unref?.();
+        });
+        if (coordinator._closed) return;
+        let refused;
+        try { refused = await retryScopes([...facts.keys()]); }
+        catch (error) { refused = [error]; }
+        if (!Array.isArray(refused) || refused.length === 0) {
+          for (const fact of facts.values()) {
+            coordinator._startupCleanupDeferred.delete(fact.record);
+            try {
+              recorder.recordDriver('host.cleanup_completed', {
+                reconciler, record: fact.record, attempts: fact.attempts,
+              }, `host.cleanup_completed:${reconciler}:${fact.record}`);
+            } catch { /* absence is the fact; the row is only its record */ }
+          }
+          return;
+        }
+        for (const row of refused) {
+          const fact = facts.get(row?.record);
+          if (!fact) continue;
+          fact.attempts += 1;
+          if (typeof row?.code === 'string') fact.code = row.code;
+          if (row?.observed && typeof row.observed === 'object') fact.observed = row.observed;
+        }
+        publish();
+      }
+    })();
+    // Observational only: nothing awaits this loop, and a rejection can only come from the retry
+    // seam itself — the durable pending row is the fact either way.
+    retry.catch(() => { /* the pending row stays as the fact */ });
+  }
+
+export function _trackStartupCleanup(coordinator, recorder, operation, reconciler = null, opts = {}) {
+    const retryScopes = typeof opts.retryScopes === 'function' ? opts.retryScopes : null;
+    const defer = (error) => {
+      const rows = deferrableScopeRemovals(error, reconciler, retryScopes);
+      if (rows.length === 0) return false;
+      deferScopeRemovals(coordinator, recorder, reconciler, error, rows, retryScopes);
+      return true;
+    };
     let source;
     try { source = operation(); }
     catch (error) {
+      if (defer(error)) return Promise.resolve();
       if (!coordinator._startupCleanupError) coordinator._startupCleanupError = coordinator._startupCleanupIncomplete(error, reconciler);
       return Promise.resolve();
     }
@@ -936,6 +1024,7 @@ export function _trackStartupCleanup(coordinator, recorder, operation, reconcile
     if (!source || typeof source.then !== 'function') return Promise.resolve(source);
     coordinator._startupCleanupPending += 1;
     const tracked = Promise.resolve(source).catch((error) => {
+      if (defer(error)) return;
       if (!coordinator._startupCleanupError) coordinator._startupCleanupError = coordinator._startupCleanupIncomplete(error, reconciler);
     }).finally(() => { coordinator._startupCleanupPending -= 1; });
     coordinator._startupCleanupPromises.push(tracked);
@@ -946,6 +1035,15 @@ export async function startupReady(coordinator, recorder) {
     await Promise.all(coordinator._startupCleanupPromises);
     if (coordinator._startupCleanupError) throw coordinator._startupCleanupError;
     return true;
+  }
+
+/** Issue #542: the scratch runtime scopes this incarnation could not remove yet, one bounded row
+ * per scope — the state behind the durable `host.cleanup_pending` rows. Empty means the deferred
+ * removals reached absence (or none was ever pending). */
+export function startupCleanupDeferred(coordinator, recorder) {
+    const facts = coordinator._startupCleanupDeferred;
+    if (!(facts instanceof Map) || facts.size === 0) return Object.freeze([]);
+    return Object.freeze([...facts.values()]);
   }
 
 export function beginStartupRecovery(coordinator, recorder, authority) {

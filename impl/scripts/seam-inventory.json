@@ -207,6 +207,17 @@
           ]
         },
         {
+          "name": "startupCleanupDeferred",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb",
+            "recovery:recovery_port"
+          ]
+        },
+        {
           "name": "startupReady",
           "ordinal": 0,
           "size": 3,
@@ -20776,7 +20787,7 @@
         {
           "name": "_startupReconstructionPasses",
           "ordinal": 0,
-          "size": 297,
+          "size": 303,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -20808,9 +20819,27 @@
           ]
         },
         {
+          "name": "deferrableScopeRemovals",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "deferScopeRemovals",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_trackStartupCleanup",
           "ordinal": 0,
-          "size": 18,
+          "size": 27,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
@@ -20818,6 +20847,16 @@
         },
         {
           "name": "startupReady",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "startupCleanupDeferred",
           "ordinal": 0,
           "size": 5,
           "seam": "recovery",
@@ -23241,7 +23280,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 513,
+          "size": 516,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
