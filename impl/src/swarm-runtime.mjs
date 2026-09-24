@@ -26,7 +26,7 @@ import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from '.
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
 import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
-import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
+import { hostCapacityShortfall, hostProcessGroupBytes, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
 // pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
 // run takes the host verify lease through the suite runner's seam.
@@ -1727,6 +1727,11 @@ export class SwarmRuntime {
    * without them refuses the verbs it cannot serve or omits the facts it cannot derive. */
   constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
     hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null, lastCrash = null,
+    // Issue #561: how the runtime measures what each running worker actually holds — a probe
+    // answering a Map of process-group id to resident-set bytes (production: one `ps` table read;
+    // a fixture stages its own). Null keeps the fleet unmeasured (the first worker stays
+    // weight-free, the honest fallback).
+    workerBytesProbe = null,
     // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
     // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
     // `swarm_command_unavailable` rather than pretending.
@@ -1741,6 +1746,14 @@ export class SwarmRuntime {
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
     this.deploymentSummary = deploymentSummary;
+    this.workerBytesProbe = workerBytesProbe;
+    // #561: the lease tokens this incarnation's admitted workers hold, holder → token, so the
+    // measurement loop can land each seat's measured bytes on ITS lease (observeWorkerBytes is
+    // exact: holder + nonce). Entries are pruned when the seat leaves the live set — the lease
+    // itself is returned by the holder-keyed reconciliation (releaseWorkersExcept).
+    this._workerLeaseTokens = new Map();
+    this._workerMeasureTimer = null;
+    this._workerMeasureRunning = false;
     this.pending = new Map();
     this.watchController = new AbortController();
     // Issue #438: the ONE change-driven workspace observation cache every workspace row derives
@@ -1881,6 +1894,62 @@ export class SwarmRuntime {
     if (!this.hostCapacity || typeof this.hostCapacity.releaseWorkersExcept !== 'function') return;
     this.hostCapacity.releaseWorkersExcept(this._activeWorkerHolders())
       .catch(() => { /* a busy host lock is retried by the next reconciliation */ });
+    // #561: the same event freshens the fleet's measured weights.
+    this._measureWorkerBytes();
+  }
+
+  /** Issue #561: land each live worker's MEASURED footprint on its host lease — the memory each
+   * running worker actually holds, read through the runtime's ONE probe (production: the `ps`
+   * process-group table; a fixture stages its own). A seat's weight is its process GROUP's sum:
+   * its own process plus every child it spawned. A worker whose group reads nothing keeps its
+   * lease unmeasured; a holder that left the live set has its token pruned (the lease itself is
+   * the reconciliation's to release). Re-entrancy-guarded, never throws: a missed sample is a
+   * lag the next pass catches, never a failure. */
+  async _measureWorkerBytes() {
+    if (this._workerMeasureRunning) return;
+    if (!this.hostCapacity || typeof this.hostCapacity.observeWorkerBytes !== 'function') return;
+    if (this._workerLeaseTokens.size === 0) return;
+    this._workerMeasureRunning = true;
+    try {
+      const probe = this.workerBytesProbe ?? hostProcessGroupBytes;
+      const groups = await probe();
+      if (!(groups instanceof Map) || groups.size === 0) return;
+      const workers = this.coordinator.list();
+      const live = new Set(this._activeWorkerHolders());
+      for (const holder of [...this._workerLeaseTokens.keys()]) {
+        if (!live.has(holder)) this._workerLeaseTokens.delete(holder);
+      }
+      for (const swarm of this.store.swarms()) {
+        for (const participant of Object.values(swarm.participants ?? {})) {
+          const holder = `participant:${swarm.swarmId}:${participant.participantId}`;
+          const token = this._workerLeaseTokens.get(holder);
+          if (!token || !live.has(holder)) continue;
+          const workerId = participant.bindings?.at(-1)?.workerId ?? null;
+          const worker = workerId ? workers.find((row) => row.id === workerId) : null;
+          const groupId = worker?.processRef?.processGroupId ?? worker?.processRef?.pid ?? null;
+          if (!Number.isSafeInteger(groupId)) continue;
+          const bytes = groups.get(groupId) ?? 0;
+          if (!Number.isSafeInteger(bytes) || bytes <= 0) continue;
+          try { await this.hostCapacity.observeWorkerBytes(holder, token.nonce, bytes); }
+          catch { /* a stale token is pruned on the next pass */ }
+        }
+      }
+    } catch { /* a missed sample is a lag, never a failure */ } finally {
+      this._workerMeasureRunning = false;
+    }
+  }
+
+  /** #561: the measurement loop's poll — started with the first admitted worker lease, unref'd
+   * so it never holds the process open, cleared at close. The cadence is the authority's own
+   * slow observation (shedPollMs): often enough that a growing fleet's weight is counted before
+   * the next admission asks. */
+  _ensureWorkerMeasureLoop() {
+    if (this._workerMeasureTimer !== null) return;
+    if (!this.hostCapacity || typeof this.hostCapacity.observeWorkerBytes !== 'function') return;
+    const intervalMs = Number.isSafeInteger(this.hostCapacity.shedPollMs)
+      ? this.hostCapacity.shedPollMs : 5_000;
+    this._workerMeasureTimer = setInterval(() => { this._measureWorkerBytes(); }, intervalMs);
+    if (typeof this._workerMeasureTimer.unref === 'function') this._workerMeasureTimer.unref();
   }
 
   /** Issue #364: the restart reconciliation. The coordinator captured the workers THIS incarnation
@@ -6685,6 +6754,9 @@ export class SwarmRuntime {
         throw error;
       }
       workerLease = admitted.token;
+      // #561: the seat's lease rides the measurement loop — its measured weight lands on it.
+      this._workerLeaseTokens.set(`participant:${args.swarmId}:${participant.participantId}`, workerLease);
+      this._ensureWorkerMeasureLoop();
       if (queuedRow) {
         try {
           this.store.recordDriver('swarm.admission_admitted', {
