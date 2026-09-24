@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // U-F14 (issue #313, the #288 web2 leftover): an idempotency conflict on the Run control lane
 // used to be ONE refusal for seven different facts — a retrying agent could not tell a changed
 // message from a changed session. The web layer has named the moved axis since #288
@@ -12,7 +14,21 @@ import test from 'node:test';
 
 import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-f14-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-f14-${name}-`));
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-f14', mandatory: true, approvalTtlMs: 3_600_000,
   riskClasses: ['low', 'medium', 'high', 'critical'],
