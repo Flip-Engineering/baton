@@ -1683,8 +1683,10 @@ export class WebNorthbound {
     }
     this._wakeConnections = new Set();
     // Issue #564: the resident's root delivery is one internal consumer of the SAME deployment
-    // wake stream every external attachment reads. Construction captures the stream head before
-    // returning, so every later root_owed append is delivered without a separate poller.
+    // wake stream every external attachment reads. It consumes that stream from the ledger's
+    // start, so an owed row recorded while the resident was down — or one whose earlier attempt
+    // failed — is delivered on the next pass; the durable per-wake receipts make that pass a
+    // duplicate for every wake that already reached the root.
     this._rootWakeDelivery = opts.rootWakeDelivery === undefined || opts.rootWakeDelivery === null
       ? null
       : attachRootWakeDelivery({
