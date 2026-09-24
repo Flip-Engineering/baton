@@ -338,16 +338,18 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   // participant rows), never caller-submittable; the derivation keeps no state, so a replay
   // re-derives the same rows under the same idempotency keys and records each trigger once.
   'swarm.root_attention_owed': Object.freeze({
-    summary: Object.freeze('work that waits on the root — a contribution no other active seat can review, or a needsFromOthers item addressed to the root'),
+    summary: Object.freeze('a contribution, request, or turn report addressed to the root'),
     fields: Object.freeze({
-      swarmId: STRING('the swarm the contribution belongs to'),
-      participantId: STRING('the seat whose contribution waits — the contribution\'s own author'),
-      contributionId: STRING('the contribution the attention comes from'),
-      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission), needs_root (a needsFromOthers item whose text is addressed to the root), turn_report (a seat\'s turn-end report has no live orchestrator — #572; the row rides this kind and carries no contributionId), or continuation_failed (a recovered successor failed to start). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root, turn_report, continuation_failed', example: 'needs_root' },
+      swarmId: STRING('the swarm the work belongs to'),
+      participantId: STRING('the participant the work belongs to'),
+      contributionId: STRING('the contribution the attention comes from', { required: false }),
+      turnReport: { type: 'json', required: false, description: 'The turn report preview, original report sequence, worker and turn identity, completion declaration, and omitted byte count' },
+      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission), needs_root (a needsFromOthers item whose text is addressed to the root), turn_report (a seat\'s turn-end report has no live orchestrator — #572; the row rides this kind and carries no contributionId). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root, turn_report', example: 'needs_root' },
       ask: { type: 'string|null', description: 'the addressed needsFromOthers item text, bounded — null on a review_owed row', expectation: 'the item text as addressed, or null', example: 'the root: restart the resident with the publish remote declared' },
       next: { type: 'json', description: 'the act that answers the row, in the attention projection\'s shape', expectation: 'an object naming a command and its identity arguments', example: Object.freeze({ command: 'swarm.check', swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1' }) },
     }),
     example: Object.freeze({
+      turnReport: null,
       swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1',
       owed: 'needs_root', ask: 'the root: restart the resident with the publish remote declared',
       next: Object.freeze({ command: 'swarm.view', swarmId: 'swarm-40e643e96fd1edcd' }),
@@ -367,7 +369,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       participantId: STRING('the seat whose turn ended'),
       parentId: STRING('the orchestrator the report was addressed to — null when the root is', { type: 'string|null' }),
       workerId: STRING('the worker incarnation that ran the turn'),
-      turnSeq: { type: 'number', description: 'the ledger seq of the terminal event this report answers', expectation: 'a non-negative integer', example: 812 },
+      turnSeq: { type: 'number', description: 'the worker-ledger sequence of the terminal event this report answers', expectation: 'a non-negative integer', example: 812 },
       turnEpoch: { type: 'number', description: 'the turn epoch the terminal event rode', expectation: 'a non-negative integer', example: 3 },
       report: JSON_VALUE('the turn\'s own result — the WorkerResult for a completed turn, or the terminal payload with status failed for a crash or exit'),
       assignmentDone: { type: 'boolean', description: 'the seat declared its assignment complete (swarm.participant_left with reason completed) before this turn ended', example: false },
@@ -387,7 +389,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       swarmId: STRING('the swarm the reporting seat belongs to'),
       participantId: STRING('the seat whose turn ended'),
       parentId: STRING('the orchestrator that took the report'),
-      turnSeq: { type: 'number', description: 'the ledger seq of the terminal event the report answers', expectation: 'a non-negative integer', example: 812 },
+      turnSeq: { type: 'number', description: 'the worker-ledger sequence of the terminal event the report answers', expectation: 'a non-negative integer', example: 812 },
       reportSeq: { type: 'number', description: 'the seq of the swarm.turn_reported row this delivery settles', expectation: 'a non-negative integer', example: 900 },
       guidanceSeq: { type: 'number', description: 'the seq of the swarm.guidance_sent row the delivery rode', expectation: 'a non-negative integer', example: 901 },
     }),

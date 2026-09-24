@@ -104,15 +104,13 @@ Checks are observations about identified work under identified conditions. "Requ
 being accepted, integration succeeding, and resources being closed are also distinct facts. They
 must not be collapsed into a success flag inferred from process terminality or report existence.
 
-A turn ending, a session pausing, and a work claim being adjudicated are three different facts.
-When a harness declares that its turns are pausable, the coordinator parks the checkpoint and
-stops there: it does not prompt the participant on its own behalf, does not arm a timer whose
-expiry would stand in for adjudication, and does not treat a resumed turn, an elapsed window,
-repeated assertions of completion, or any other count of events as evidence about the work. The
-draft claim stays on the checkpoint as its attributed origin, visible to the orchestrator, and an
-authorized caller decides it explicitly — running the existing verification, or asking for a real
-continuation. Whether a run has a registered driver or not changes nothing about that ownership:
-completion authority is never transferred to a timer or to the coordinator's own prompt.
+At each swarm turn end, Baton records the result and delivers it to the nearest live parent
+orchestrator. Reports addressed to the root produce a `root_owed` wake with a bounded preview
+and the ledger reference for the full report. The `turn_reported` wake marks the turn boundary.
+The assignment remains available for orchestrator guidance. A participant declares its assignment
+complete with `swarm.participant_left` and reason `completed`; its final turn then proceeds
+through verification and worker cleanup. Historical checkpoint records remain readable through
+the checkpoint APIs. Non-swarm runs still use the legacy checkpoint admission path.
 
 Acceptance conditions may evolve as the task becomes understood; changes retain their authority
 and history. An accepted result need not close the whole group or terminate its participants.
@@ -872,7 +870,7 @@ runtime side (`swarm.guide`, `impl/src/swarm-runtime.mjs`) states four rules; th
 old shape answered `null` for the most common case — a guide to a paused seat rides `nudgeTurn`,
 which writes no `message.sent` lane row — so the sender could not tell a delivered guide from a
 dropped one. `sentAt` IS the row's own instant (the row is the send). The receipt's `next` NAMES
-THE OBSERVATION: the seat's next turn boundary (`wake class paused`), or, for a park, the
+THE OBSERVATION: the seat's next turn boundary (`wake class turn_reported`), or, for a park, the
 `guidance_delivered` row that clears it. The line an operator reads from the CLI renders the seat,
 the priority and where it landed (`impl/src/application-cli.mjs`, `swarmGuideRendering`).
 

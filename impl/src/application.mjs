@@ -2376,11 +2376,7 @@ export class BatonApplication {
         // deployment service; existing recursive Run leases retain their own admission checks.
         const applicationContext = context?.applicationContext ?? null;
         const delegated = context?.runId || principal.principalId.startsWith('worker:');
-        // Issue #572: the runtime's own continuations (a legacy recovered successor, an automatic
-        // reroute) arrive under the baton-runtime principal and start through the dispatcher.
-        const starter = principal.principalId === 'baton-runtime'
-          ? this.principals.dispatcher
-          : applicationContext || !delegated ? principal : this.principals.dispatcher;
+        const starter = applicationContext || !delegated ? principal : this.principals.dispatcher;
         // The swarm resolved a live shared checkout for this Run before membership was written;
         // admission here only refuses a shape this deployment cannot honor.
         if (request.workspace) this._admitWorkspaceAttachment(request.runId, request.workspace);
