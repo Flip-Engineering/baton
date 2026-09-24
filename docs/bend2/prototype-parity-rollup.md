@@ -10,9 +10,8 @@ real-code divergence with its status. The divergence ledger is
 
 ## Method, revisions and environment
 
-- Lane worktree cut from `origin/bend2-rewrite` at `2fc5fdaf`; the four corpora of that branch were
-  read and run there. `arch-replay-vocabulary` is on `baton/bend2-vocab10` at `926f64e2` (accepted
-  corpus, landing pending); it was read and run in a detached scratch worktree at that commit.
+- Lane worktree cut from `origin/bend2-rewrite` at `a01b9713`; all five corpora are on that branch
+  and were read and run there.
 - Host: Darwin 27.0.0, arm64 (Apple M4); Node v25.8.0; `bend 2.0.25` (the language pin
   `bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868`), binary from the pinned toolchain
   install under `node_modules/.bend`. `bend version` printed `bend 2.0.25` before the runs.
@@ -155,16 +154,15 @@ runs byte-for-byte.
 
 ## arch-replay-vocabulary
 
-Source: `baton/bend2-vocab10` at `926f64e2` (accepted contribution, landing onto `bend2-rewrite`
-pending). All measurements below ran at that commit.
-
-**Claim** (`arch-replay-vocabulary.evidence.md`): a frozen sixteen-row swarm trace — every
-caller-submittable event kind at least once over one seeded swarm — answers the same required
-logical behaviour in the pure Bend2 model and in the branch's real durable fold
-(`impl/src/swarm-state.mjs`, `impl/src/swarm-contract.mjs`): the whole trace decodes and folds into
-its collections, a kind no vocabulary admits refuses decode at its own row with the prefix before
-it retained, a payload missing a required field refuses decode the same way, a runtime-composed row
-the contract set excludes still folds, and folding the same trace twice yields one projection.
+**Claim** (`arch-replay-vocabulary.evidence.md`): a frozen thirty-row swarm trace — twelve of the
+thirteen caller-submittable event kinds (the thirteenth, `swarm.holder_released`, is an operation
+the runtime expands into assignment releases before anything folds) and all twenty-five kinds the
+durable vocabulary holds, over one seeded swarm — answers the same required logical behaviour in
+the pure Bend2 model and in the branch's real durable fold (`impl/src/swarm-state.mjs`,
+`impl/src/swarm-contract.mjs`): the whole trace decodes and folds into its collections, a kind no
+vocabulary admits refuses decode at its own row with the prefix before it retained, a payload
+missing a required field refuses decode the same way, a runtime-composed row the contract set
+excludes still folds, and folding the same trace twice yields one projection.
 
 **Requirement and contract rows**: the corpus is derived from the contract directly — `CS-01`
 (closed event vocabulary, `unknown_event_kind`), `CS-07` (required payload fields,
@@ -172,12 +170,12 @@ the contract set excludes still folds, and folding the same trace twice yields o
 excludes the runtime-composed bypass row), `AB-06` (handoff and release rewrite their rows in
 place), and migration rule 3 (phase-boundary decode with preserved history).
 
-**Parity verdict, this run** (`--compare` at `926f64e2`): 5 cases compared, 0 disagreements.
-`vocabulary-full` and `vocabulary-rerun` fold all sixteen rows (thirteen caller rows, fingerprint
-`pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1`, `rerun_identical=true`). `vocabulary-forged-kind`
+**Parity verdict, this run** (`--compare` at `a01b9713`): 5 cases compared, 0 disagreements.
+`vocabulary-full` and `vocabulary-rerun` fold all thirty rows (fifteen caller rows, fingerprint
+`pa3,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1`, `rerun_identical=true`). `vocabulary-forged-kind`
 stops decode at row 7 with `unknown_event_kind`, retaining the six-row prefix.
 `vocabulary-missing-field` stops decode at row 11 with `invalid_payload`, retaining the ten-row
-prefix. `vocabulary-driver-row` folds the composed bypass row while the caller set reads twelve
+prefix. `vocabulary-driver-row` folds the composed bypass row while the caller set reads fourteen
 rows. Both halves' committed result files match the live runs byte-for-byte.
 
 **Open explained real-code divergences**: none. The corpus records one structural fact beside the
@@ -205,8 +203,8 @@ refused cases. No other open divergence appears in any of the five corpora.
 
 The gate is decision rule 6 of `go-no-go.md` (line 100): *Phase 1 produces zero unexplained
 differences across the frozen corpus, extracted laws, closed validation mutations, replay
-prefixes, and wake projections.* Measured against that sentence at `2fc5fdaf` (vocabulary at
-`926f64e2`), the gate still owes:
+prefixes, and wake projections.* Measured against that sentence at `a01b9713`, the gate still
+owes:
 
 1. **Implementation of `ARCH-CLOSE-11`.** The six reproduced case-level differences —
    classification on four stop/basis cases plus quarantine on the corrupt row, classification plus
@@ -215,9 +213,8 @@ prefixes, and wake projections.* Measured against that sentence at `2fc5fdaf` (v
    (`rewrite-plan.md`, Phase 1) requires a regression fixture before each correction; the five
    corpora's `expect` files are those fixtures, and the Bend2 halves already state the required
    behaviour on every one.
-2. **The vocabulary corpus landed.** `arch-replay-vocabulary` reaches the gate only once
-   `baton/bend2-vocab10` (`926f64e2`) lands on `bend2-rewrite`; until then the target branch
-   carries four of the five corpora.
+2. **The vocabulary corpus landed.** `arch-replay-vocabulary` landed on `bend2-rewrite` as
+   `a01b9713`; the target branch carries all five corpora.
 3. **The proving test assembled.** `phase1-shadow-parity.test.mjs` — every Phase 0 fixture plus
    generated mutations through both implementations, deterministic repeated runs, identical replay
    projections at every fixture cursor — exists on neither branch at the measured revisions. The
