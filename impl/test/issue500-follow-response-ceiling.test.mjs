@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,6 +20,20 @@ import { FRAME_LIMITS } from '../src/limits.mjs';
 // registry row is admitted as a follow ceiling, and one byte over it refuses typed.
 // The sourcing itself is pinned by the frame-economics F1 ratchet: its exemption for
 // the old literal is removed, so a re-declared 512 * 1024 fails the suite.
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const RUN_VIEW_BYTES = FRAME_LIMITS['view.run.bytes'].value;
 const repoId = 'repo-issue500-follow';
@@ -56,7 +72,7 @@ function profile(maxResponseBytes) {
 }
 
 async function applicationWith(t, maxResponseBytes) {
-  const root = mkdtempSync(join(tmpdir(), 'baton-500-follow-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-500-follow-'));
   mkdirSync(join(root, 'export'), { recursive: true, mode: 0o700 });
   const repo = join(root, 'repo');
   mkdirSync(repo, { recursive: true });

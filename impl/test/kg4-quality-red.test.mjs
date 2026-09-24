@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // KG-4 graph-quality red suite (issue #27, docs/34 §3 rules 12–14, contract kg34-decisions.md v2).
 // Auto-link restricted to Supports/Refines/Cites with per-type thresholds and a deterministic
 // idempotency key (edges carry NO grounding); Contradicts/Supersedes are refused by the store
@@ -12,7 +14,21 @@ import test from 'node:test';
 
 import { CoordinationStore } from '../src/index.mjs';
 
-const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-kg4-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name = 'root') => mintFixtureDirectory(join(tmpdir(), `baton-kg4-${name}-`));
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-recall', reservedWorkerId: `w-${id}` });
 function clock(start = '2026-07-22T00:00:00.000Z') { let now = Date.parse(start); return () => new Date(now++).toISOString(); }
 

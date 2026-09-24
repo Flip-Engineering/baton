@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +30,20 @@ import { checkSurfaceDocs } from '../scripts/render-surface-docs.mjs';
 // admitted identity being the spelling used), cuts the C8 serialization pin and the generated doc
 // blocks, and burns the final mcp/web name rows from the divergence ledger — all at a fixed clock.
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const NOW = Date.parse('2026-07-24T12:00:00.000Z');
 const REGISTRY = APPLICATION_SEMANTIC_REGISTRY;
 const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
@@ -45,7 +61,7 @@ function webFixture() {
       return { schemaVersion: 1, runId: args.runId, phase: 'running', depth: 'outline', outline: { phase: 'running', actions: [] } };
     },
   };
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-m4b-web-')), {
+  const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-m4b-web-')), {
     clock: () => new Date(NOW).toISOString(),
   });
   const web = new WebNorthbound({
@@ -127,7 +143,7 @@ function mcpFixture() {
       return { schemaVersion: 1, operation: name, arguments: args };
     },
   };
-  const coordination = new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-m4b-mcp-')), 'c'), {
+  const coordination = new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-m4b-mcp-')), 'c'), {
     clock: () => new Date(NOW).toISOString(),
   });
   const server = new McpFleetServer({
@@ -224,7 +240,7 @@ test('M4B-7: the kernel and authoring surface tables are byte-unchanged (C9 stay
   const { server } = mcpFixture();
   const advanced = new McpFleetServer({
     coordinator: { async wait() { return { events: [], cursor: 0, more: false }; } },
-    coordination: new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-m4b-adv-')), 'c'), {
+    coordination: new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-m4b-adv-')), 'c'), {
       clock: () => new Date(NOW).toISOString(),
     }),
     surface: 'advanced',

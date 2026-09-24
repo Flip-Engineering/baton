@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +17,21 @@ import { PublicSupplyChainOracle } from '../src/index.mjs';
 // end: a 300-component scan completes over the real batching and replay seams, and a
 // manifest past the new default still refuses at admission.
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-499-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-499-${name}-`));
 const response = (value) => {
   const raw = Buffer.from(JSON.stringify(value));
   return { ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => raw };

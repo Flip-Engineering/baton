@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Issue #325 — goal/plan replay under the RECORDED policy digest.
 //
 // The incident: `_applyGoalPlanEvent` re-normalised every recorded goal/plan under the
@@ -23,9 +25,23 @@ import { coordinationReplayFailure, quarantineCoordinationLedgerEvent } from '..
 import { normalizeGoalPlanPolicy } from '../src/goal-plan.mjs';
 import { findTokenShaped, fixtureCeilingBytes } from '../scripts/ledger-extract.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const CORPUS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ledgers-goal-plan');
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-issue325-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-issue325-${name}-`));
 const canonical = (value) => {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
