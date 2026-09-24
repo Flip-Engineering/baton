@@ -135,6 +135,22 @@ function gitFile(args, cwd, opts = {}, extraEnv = {}) {
   return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: localGitEnv(extraEnv) });
 }
 
+/** Issue #573: the environment for a REMOTE-directed git call — the landing's pre-flight probe,
+ * fetch, push and read-back. `localGitEnv` blanks the global config so a local-only git call
+ * stays deterministic, but the credential helper the deployment owner configured for the
+ * declared remote lives in exactly that config, so a call that talks to the remote drops the
+ * GIT_CONFIG_GLOBAL override while keeping the GIT_* strip and the system-config exemption.
+ * Local-only git calls keep `gitFile`'s blanked config. */
+function publishGitEnv(extra = {}) {
+  const env = localGitEnv(extra);
+  delete env.GIT_CONFIG_GLOBAL;
+  return env;
+}
+
+function gitRemote(args, cwd, opts = {}, extraEnv = {}) {
+  return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: publishGitEnv(extraEnv) });
+}
+
 function isClean(dir) {
   return sh('git', ['status', '--porcelain'], dir) === '';
 }
@@ -2251,17 +2267,17 @@ export async function landContribution(repoRoot, request) {
   // cannot publish to cost the whole derived gate run before the landing learned it — and the
   // report was a bare git tail. Reads prove nothing here: a public-read remote lists refs to an
   // anonymous fetch and still refuses the push, so the pre-flight is a `git push --dry-run` —
-  // the same command as the landing's own push, in the SAME hermetic environment (localGitEnv,
-  // prompts disabled), naming a THROWAWAY ref (`--dry-run` writes nothing anywhere; the ref
-  // never exists on the remote). It runs before the scratch checkout exists and before any gate
-  // file runs, and the refusal names which of the two failed: the destination does not exist or
-  // cannot be reached, or it answered but this environment holds no credential it accepts. The
-  // push itself, its rollback and the #558 refusal keep their places: a remote that breaks
-  // between pre-flight and push still refuses `integrate_publish_failed` and rolls the local
-  // move back.
+  // the same command as the landing's own push, in the SAME publish environment (publishGitEnv:
+  // the deployment owner's configured credentials, prompts disabled), naming a THROWAWAY ref
+  // (`--dry-run` writes nothing anywhere; the ref never exists on the remote). It runs before
+  // the scratch checkout exists and before any gate file runs, and the refusal names which of
+  // the two failed: the destination does not exist or cannot be reached, or it answered but
+  // this environment holds no credential it accepts. The push itself, its rollback and the #558
+  // refusal keep their places: a remote that breaks between pre-flight and push still refuses
+  // `integrate_publish_failed` and rolls the local move back.
   if (!dryRun && publishRemote !== null) {
     try {
-      gitFile(['push', '--dry-run', publishRemote, `${targetHeadBefore}:refs/heads/${PUBLISH_AUTH_PROBE_REF}`], repoRoot,
+      gitRemote(['push', '--dry-run', publishRemote, `${targetHeadBefore}:refs/heads/${PUBLISH_AUTH_PROBE_REF}`], repoRoot,
         { stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
     } catch (error) {
       const unauthenticated = GIT_REMOTE_AUTH_FAILURE.test(gitStepTail(error));
@@ -2281,8 +2297,9 @@ export async function landContribution(repoRoot, request) {
   // Issue #570: the local target ref can drift behind the declared remote (the resident's own
   // master sat commits behind the published tip), and a squash built on the stale head pushes as
   // a non-fast-forward and rolls the landing back. A real landing with a declared remote
-  // therefore fetches the remote's target branch FIRST — one git call, in the same hermetic
-  // environment as the push — and gates on that tip: the landing requires the local ref to be an
+  // therefore fetches the remote's target branch FIRST — one git call, in the same publish
+  // environment as the push (#573) — and gates on that tip: the landing requires the local ref
+  // to be an
   // ancestor of the fetched tip and refuses typed, naming both heads, when the pair has
   // diverged, builds the squash on the fetched tip, and the compare-and-swap below brings the
   // local ref from its stale head to the landed squash in the same step. A remote that does not
@@ -2294,7 +2311,7 @@ export async function landContribution(repoRoot, request) {
     let fetchedTip = null;
     let fetched = false;
     try {
-      gitFile(['fetch', '--no-tags', publishRemote, ref], repoRoot,
+      gitRemote(['fetch', '--no-tags', publishRemote, ref], repoRoot,
         { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
       fetched = true;
     } catch (error) {
@@ -2305,7 +2322,8 @@ export async function landContribution(repoRoot, request) {
       // after the fetch failed, refuses typed.
       let absent = false;
       try {
-        absent = sh('git', ['ls-remote', '--heads', publishRemote, ref], repoRoot) === '';
+        absent = String(gitRemote(['ls-remote', '--heads', publishRemote, ref], repoRoot,
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' })).trim() === '';
       } catch { absent = false; }
       if (!absent) {
         throw Object.assign(
@@ -2499,12 +2517,13 @@ export async function landContribution(repoRoot, request) {
       // Issue #558: publish the landed ref to the declared remote. The push names the declared
       // value itself, never a remote name, so no local remote configuration the resident holds
       // can redirect it — a landing published to the wrong destination is the same failure as
-      // never publishing. GIT_TERMINAL_PROMPT=0 so a remote that wants a credential fails typed
-      // instead of hanging the landing on a prompt. A failed push rolls the local move back, so
-      // the target holds no unpublished squash. Neither step checks out a branch: a detached
-      // main checkout stays detached.
+      // never publishing. The push runs under publishGitEnv (#573): the deployment owner's
+      // configured credential helper answers the remote, and GIT_TERMINAL_PROMPT=0 so a remote
+      // that wants an interactive credential fails typed instead of hanging the landing on a
+      // prompt. A failed push rolls the local move back, so the target holds no unpublished
+      // squash. Neither step checks out a branch: a detached main checkout stays detached.
       try {
-        gitFile(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
+        gitRemote(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
           { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
         // Issue #556: read the DECLARED destination back. A push reports success against whatever
         // its URL resolved to, so a landing could publish somewhere else — an intermediate
@@ -2599,7 +2618,7 @@ function gitStepTail(error) {
  * read names the same value the push named, so a rewrite that redirects only the push — a
  * pushInsteadOf rule, a mirror that drops the ref — lands here as a mismatch. */
 function publishedTip(repoRoot, remote, ref) {
-  const out = gitFile(['ls-remote', remote, ref], repoRoot,
+  const out = gitRemote(['ls-remote', remote, ref], repoRoot,
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
   const line = String(out).split('\n').map((row) => row.trim()).find((row) => row.length > 0) ?? null;
   return line === null ? null : line.split(/\s+/u)[0] ?? null;
