@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // [attempt: 4b19d324-91d7-4f4f-86af-aa156a744331 row-plan-effects]
 // row-plan-effects attempt 4b19d324-91d7-4f4f-86af-aa156a744331 — #240 red-first pin: the
 // wave coordinator (verification) seat's plan must not REQUIRE repository_edit.
@@ -32,11 +34,25 @@ import { createDriver } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const REPO = 'repo-coordinator-plan-effects-240';
 const WAVE_ID = 'wave:0123456789abcdef0123456789abcdef';
 
 const principal = (id) => ({ actor: `plan-effects:${id}`, principalId: id, sessionId: `${id}-session` });
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 // The deployment-profile shape the coordinator seat actually mints from: effects declares
 // repository_edit AND requiredEffects requires it (application-deployment.mjs:947-948).

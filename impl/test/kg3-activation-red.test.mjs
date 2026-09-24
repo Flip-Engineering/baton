@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // KG-3 activation red suite (issue #26, docs/34 §3 rules 8–11, contract kg34-decisions.md v2).
 // recallPreview: non-evented, cached to the KG project-horizon fence, fail-open with an explicit
 // briefingUnavailable marker, seed pre-filter (seedsDropped), composite ranking with deployment
@@ -15,7 +17,21 @@ import { CoordinationStore } from '../src/index.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { boundedAttentionText, createBrief, renderBriefing } from '../src/messages.mjs';
 
-const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-kg3-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name = 'root') => mintFixtureDirectory(join(tmpdir(), `baton-kg3-${name}-`));
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-recall', reservedWorkerId: `w-${id}` });
 function clock(start = '2026-07-22T00:00:00.000Z') { let now = Date.parse(start); return () => new Date(now++).toISOString(); }
 const store = (name) => new CoordinationStore(root(name), { clock: clock() });

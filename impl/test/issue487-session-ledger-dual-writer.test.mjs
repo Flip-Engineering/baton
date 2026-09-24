@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Issue #487 — the resident session ledger is written by TWO incarnations across a handoff.
 //
 // The live evidence (2026-09-18, the primary's clone): `resident/sessions/sessions.jsonl` carried a
@@ -37,8 +39,22 @@ import { join } from 'node:path';
 
 import { WebSessionIntegrityError, WebSessionStore } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const now = Date.parse('2026-09-18T12:00:00.000Z');
-const root = () => mkdtempSync(join(tmpdir(), 'baton-session-487-'));
+const root = () => mintFixtureDirectory(join(tmpdir(), 'baton-session-487-'));
 const bearer = (value) => ({ headers: { authorization: `Bearer ${value}` } });
 const ISSUE = Object.freeze({
   userId: 'local-owner', authMethod: 'bearer', capabilities: ['observe', 'control'], repoIds: ['repo-487'], ttlMs: 60_000,

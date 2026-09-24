@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -16,10 +18,24 @@ import { MockAdapter } from '../src/adapter.mjs';
 // coordinates: harness 'omp' and a provider-path model 'deepseek/deepseek-v4-flash'. RED =
 // approval completes but no task is ever dispatched. GREEN = the dispatch mints.
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const REPO = 'repo-dispatch-seam-pin';
 
 const principal = (id) => ({ actor: `pin:${id}`, principalId: id, sessionId: `${id}-session` });
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 function ompShapedAdapter() {
   const instance = new MockAdapter({ harness: 'omp', scenario: {

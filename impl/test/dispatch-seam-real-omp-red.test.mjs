@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -20,9 +22,23 @@ import { OmpRpcCli } from '../src/omp-rpc.mjs';
 // GREEN = dispatch admission mints task.created with vendor 'omp' (adapter spawn lifecycle
 //         is out of scope here — admission is the seam that dies in the resident).
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const REPO = 'repo-dispatch-real-pin';
 const principal = (id) => ({ actor: `pin:${id}`, principalId: id, sessionId: `${id}-session` });
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 async function buildFixture() {
   const repo = root('dispatch-real-repo');
