@@ -134,6 +134,12 @@ test('500-caps-A: the open publishes the declared capacity and stop-envelope def
   assert.deepEqual(driverOptions.drainPolicy, { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     'the drain: 64 workers, a 90 s window, a 10 ms poll');
   assert.deepEqual(driverOptions.budgetPolicy, { terminalGraceMs: 2_000 }, 'the budget terminal grace');
+  // #561: the constructed host capacity authority must reach the driver — a production open
+  // that drops it leaves every admission unwired (`authority: 'unwired'` on a wired host).
+  const hostAdmissionDisabled = process.env.BATON_TEST_SUITE_ROOT !== undefined
+    || process.env.BATON_HOST_CAPACITY_DISABLED === '1';
+  assert.equal(driverOptions.hostCapacity === null || driverOptions.hostCapacity === undefined, hostAdmissionDisabled,
+    'the open hands the driver its host capacity authority unless host admission is disabled');
   assert.deepEqual(driverOptions.toolchainProjection.limits, {
     maxMappings: 128, maxFiles: 1_000_000, maxDirectories: 250_000,
     maxBytes: 2 * 1024 * 1024 * 1024, maxFileBytes: 512 * 1024 * 1024,
