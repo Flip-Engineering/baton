@@ -344,10 +344,11 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
 test('273-f: the CLI usage teaches --priority and --in-reply-to, and the parse hands them on typed', async () => {
   const row = swarmCliCommand('guide');
   assert.deepEqual(row.flags.map((entry) => entry.flag), ['--priority', '--in-reply-to', '--view']);
-  const priorityFlags = `[--priority ${SWARM_GUIDANCE_PRIORITIES.join('|')}] [--in-reply-to VALUE]`;
-  assert.ok(row.usage.includes(priorityFlags));
+  // Issue #567: a closed-set flag renders its admitted values from the same table the validator
+  // judges against (swarmClosedSetAdmitted), never a bare VALUE that only a refusal decodes.
+  assert.match(row.usage, /\[--priority next_boundary\|now\] \[--in-reply-to VALUE\]/u);
   const help = batonCliHelp('swarm.guide');
-  assert.ok(help.includes(`baton swarm guide <SWARM-ID> <PARTICIPANT-ID> <MESSAGE> ${priorityFlags}`));
+  assert.match(help, /baton swarm guide <SWARM-ID> <PARTICIPANT-ID> <MESSAGE> \[--priority next_boundary\|now\] \[--in-reply-to VALUE\]/u);
 
   const parsed = parseBatonCli(['swarm', 'guide', 'baton', 'builder', 'Hold the shape.',
     '--priority', 'now', '--in-reply-to', '12']);

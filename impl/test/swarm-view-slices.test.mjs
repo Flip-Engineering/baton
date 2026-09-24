@@ -142,7 +142,9 @@ test('every projection answers its own slice, keeps the frame, and the default s
 test('the projection argument is exposed by the CLI and MCP surfaces from the one contract row', () => {
   const cli = SWARM_CLI_COMMANDS.find((row) => row.command === 'swarm.view');
   assert.deepEqual(cli.flags.find((entry) => entry.field === 'projection'), { field: 'projection', flag: '--projection', switch: false });
-  assert.ok(cli.usage.includes(`[--projection ${SWARM_VIEW_PROJECTION_NAMES.join('|')}]`));
+  // Issue #567: the usage line renders the closed set from the same table the validator judges
+  // against, so the reader learns the admitted values without a refusal.
+  assert.match(cli.usage, new RegExp(`\\[--projection ${SWARM_VIEW_PROJECTION_NAMES.join('\\|')}\\]`, 'u'));
   const mcp = SWARM_MCP_TOOL_DEFINITIONS.find((row) => row.command === 'swarm.view');
   assert.deepEqual(mcp.properties.projection.enum, SWARM_VIEW_PROJECTION_NAMES);
   assert.match(mcp.description, /projection names the slice/u);
