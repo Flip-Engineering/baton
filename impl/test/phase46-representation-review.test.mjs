@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -8,7 +10,21 @@ import test from 'node:test';
 
 import { AtlasRepresentationReview, WebNorthbound, createDriver } from '../src/index.mjs';
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..'); const HEAD = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(); const root = (name) => mkdtempSync(join(tmpdir(), `baton-representation-review-${name}-`)); const limits = { maxArtifactBytes: 128 * 1024, maxFileBytes: 512 * 1024, maxFiles: 27, maxRows: 7 }; const make = (overrides = {}) => new AtlasRepresentationReview({ repoRoot: REPO, artifactRoot: root('artifacts'), limits, ...overrides }); const ctx = { actor: 'orchestrator', budgetTokens: 20_000 };
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..'); const HEAD = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(); const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-representation-review-${name}-`)); const limits = { maxArtifactBytes: 128 * 1024, maxFileBytes: 512 * 1024, maxFiles: 27, maxRows: 7 }; const make = (overrides = {}) => new AtlasRepresentationReview({ repoRoot: REPO, artifactRoot: root('artifacts'), limits, ...overrides }); const ctx = { actor: 'orchestrator', budgetTokens: 20_000 };
 
 test('RP1-RP3: fixed packet attests every representation rung with honest closed status', async () => {
   const result = await make().invoke('representation.review', { treeSha: HEAD }, ctx); assert.equal(result.status, 'ok'); assert.deepEqual(result.payload.map((row) => row.rung), ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7']); assert.deepEqual(result.payload.map((row) => row.status), ['shipped_proposal', 'shipped_bounded', 'shipped_bounded', 'decision_ceiling_r3', 'shipped_observational', 'shipped_structured', 'decision_retired_native']); assert.ok(result.payload.every((row) => row.sources.length > 0 && row.sources.every((source) => /^[a-f0-9]{64}$/.test(source.digest)))); const encoded = JSON.stringify(result); assert.equal(encoded.includes('equivalence_proven'), false); assert.equal(encoded.includes('compiler_ir_built'), false);

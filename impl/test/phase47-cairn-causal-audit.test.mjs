@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,7 +10,21 @@ import test from 'node:test';
 
 import { CairnRunScorecard, CoordinationIntegrityError, CoordinationStore, McpFleetServer, WebNorthbound, createDriver } from '../src/index.mjs';
 
-const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-phase47-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name = 'root') => mintFixtureDirectory(join(tmpdir(), `baton-phase47-${name}-`));
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-audit', reservedWorkerId: `w-${id}` });
 const limits = (overrides = {}) => ({

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,7 +9,21 @@ import test from 'node:test';
 
 import { CairnRunScorecard, CoordinationIntegrityError, CoordinationStore, McpFleetServer, WebNorthbound, createDriver } from '../src/index.mjs';
 
-const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-phase49-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name = 'root') => mintFixtureDirectory(join(tmpdir(), `baton-phase49-${name}-`));
 const task = (id) => ({ id, brief: { goal: `SECRET brief ${id}` }, deps: [], refines: null, taskType: 'promotion', reservedWorkerId: `w-${id}` });
 const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 1024, maxNodes: 256, maxEdges: 512, maxEvidenceRefs: 1024, maxAuditSamples: 128, maxTraceDepth: 8, maxTraceRows: 512, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
 const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, maxScanEvents: 1024, maxCandidates: 128, maxCandidateBytes: 256 * 1024, maxEvidenceRefs: 1024, maxBatchBytes: 512 * 1024, maxResultBytes: 128 * 1024, ...overrides });

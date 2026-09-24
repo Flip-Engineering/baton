@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -7,8 +9,22 @@ import test from 'node:test';
 
 import { AtlasCpgDelta, AtlasCpgSlice, AtlasCpgTaint, CapabilityRegistry } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const MODEL = 'atlas-js-lexical-bindings-v1';
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase54-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase54-${name}-`));
 const limits = Object.freeze({
   maxSourceBytes: 64 * 1024,
   maxArtifactBytes: 512 * 1024,
