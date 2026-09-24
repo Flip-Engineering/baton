@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 70 PS5-PS7 — the unified coordinate-free resume_work application cascade over preserved
 // progress (spec/phase70/preserved-stop-and-resumable-work.md). Drives the ordinary
 // BatonApplication surface: a worker is stopped mid-progress, its checkpoint is preserved, the
@@ -18,7 +20,21 @@ import {
 } from '../src/index.mjs';
 import { batonCliHelp } from '../src/application-cli.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase70-resume-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase70-resume-${name}-`));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 

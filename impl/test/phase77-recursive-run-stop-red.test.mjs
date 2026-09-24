@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 77 follow-on RED gate — recursive Run subtree stop snapshot and effect fence.
 //
 // This file is intentionally separate from the lease/lineage slice. It proves only the durable
@@ -12,6 +14,20 @@ import test from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
@@ -19,7 +35,7 @@ function canonical(value) {
 }
 const digest = (value) => createHash('sha256')
   .update(JSON.stringify(canonical(value))).digest('hex');
-const root = (label) => mkdtempSync(join(tmpdir(), `baton-phase77-subtree-stop-${label}-`));
+const root = (label) => mintFixtureDirectory(join(tmpdir(), `baton-phase77-subtree-stop-${label}-`));
 const repoId = 'repo-phase77-subtree-stop';
 const policy = Object.freeze({
   schemaVersion: 1, maxDepth: 4, maxChildrenPerRun: 4,

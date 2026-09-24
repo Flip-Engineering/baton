@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -16,6 +18,20 @@ import {
   WebNorthbound,
 } from '../src/index.mjs';
 import { northboundCapabilityToken } from '../src/northbound-capability-authority.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -51,7 +67,7 @@ function prototypeApplication() {
   application.authorize = async () => true;
   return application;
 }
-function tempRoot(prefix) { return mkdtempSync(join(tmpdir(), prefix)); }
+function tempRoot(prefix) { return mintFixtureDirectory(join(tmpdir(), prefix)); }
 
 test('SA1/SA3: every semantic action kind has canonical capability authority and replay fails closed', async () => {
   const application = prototypeApplication();
