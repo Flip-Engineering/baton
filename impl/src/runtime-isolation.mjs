@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectCredentialTree } from './credential-projection.mjs';
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 import { seatLinkedWorktreeOwnershipPath } from './worktree.mjs';
 
 const SECRET_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
@@ -154,7 +155,7 @@ function linkedWorktreeOwnershipProjection(repoRoot, checkout) {
   const value = normalizedCheckout(checkout);
   if (value === null) return null;
   const physicalOwnerId = basename(value);
-  if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)) return null;
+  if (!isPhysicalWorkspaceId(physicalOwnerId)) return null;
   const expected = join(repoRoot, '.baton', 'wt', physicalOwnerId);
   let observed = value; let expectedObserved = expected;
   try { observed = realpathSync(value); } catch { /* the checkout may not exist yet */ }
