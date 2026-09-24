@@ -672,11 +672,18 @@ export class Coordinator {
     return runtimeRecovery._trackStartupCleanup(this, this._recorder, operation, reconciler, opts);
   }
 
-  /** Issue #542: the scratch runtime scopes this incarnation could not remove yet — the state
-   * behind the durable `host.cleanup_pending` rows, one bounded row per scope. Empty means the
-   * deferred removals reached absence (or none was ever pending). */
-  startupCleanupDeferred() {
-    return runtimeRecovery.startupCleanupDeferred(this, this._recorder);
+  /** Issue #542: the runtime scopes this incarnation could not remove yet — the state behind the
+   * durable `host.cleanup_pending` rows, one bounded row per scope, written by the startup pass and
+   * by the drain's historical reconcile. Empty means the deferred removals reached absence (or none
+   * was ever pending). */
+  cleanupDeferred() {
+    return runtimeRecovery.cleanupDeferred(this, this._recorder);
+  }
+
+  /** Issue #542 (the drain half): the drain's historical runtime-scope reconcile, with a scope the
+   * resident cannot remove yet recorded as a pending removal and retried in the background. */
+  _reconcileDrainRuntimeScopes() {
+    return runtimeRecovery._reconcileDrainRuntimeScopes(this, this._recorder);
   }
 
   async startupReady() {
@@ -1389,7 +1396,10 @@ export class Coordinator {
           if (!this._drainHistoricalReconcilePromise) {
             const reconciliations = [];
             if (this._worktrees && typeof this._worktrees.reconcile === 'function') reconciliations.push(this._worktrees.reconcile([]));
-            if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') reconciliations.push(this._runtimeScopes.reconcile([]));
+            // Issue #542: the runtime scopes reconcile through a seam that records a scope it
+            // cannot remove YET as a pending removal instead of failing this drain. It contributes
+            // nothing when the deployment serves no runtime-scope authority.
+            reconciliations.push(this._reconcileDrainRuntimeScopes());
             const reconciliation = Promise.all(reconciliations);
             this._drainHistoricalReconcilePromise = reconciliation;
             reconciliation.catch(() => {

@@ -558,9 +558,9 @@ export function constructor(coordinator, opts) {
     coordinator._startupCleanupPromises = [];
     coordinator._startupCleanupPending = 0;
     coordinator._startupCleanupError = null;
-    // Issue #542: the scratch runtime scopes a start could not remove yet, by scope id — the state
-    // behind the durable `host.cleanup_pending` rows and the read `startupCleanupDeferred()`.
-    coordinator._startupCleanupDeferred = new Map();
+    // Issue #542: the runtime scopes a start or a drain could not remove yet, by scope id — the
+    // state behind the durable `host.cleanup_pending` rows and the read `cleanupDeferred()`.
+    coordinator._cleanupDeferred = new Map();
     const budgetPolicy = opts.budgetPolicy ?? {};
     const budgetPolicyKeys = new Set(['hardStopAt', 'terminalGraceMs', 'thresholds']);
     if (!budgetPolicy || typeof budgetPolicy !== 'object' || Array.isArray(budgetPolicy)
