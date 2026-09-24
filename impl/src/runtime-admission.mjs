@@ -251,30 +251,9 @@ export class SupervisedProcesses {
     };
     const deadline = timeoutMs === null ? null : setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
     if (deadline !== null && typeof deadline.unref === 'function') deadline.unref();
-    // Issue #577: settle on the child's EXIT, with a drain grace for the tails. `close` alone is not
-    // enough — it waits for every writer of the captured pipes, and one leaked descendant that
-    // inherited them keeps the event from ever firing. `close` still wins when the pipes do close
-    // first, so a normal run reads back exactly what it always did.
-    const drainMs = 250;
     const settled = await new Promise((resolve) => {
-      let finished = false;
-      let exited = null;
-      let drain = null;
-      const settle = (facts) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(drain);
-        resolve(facts);
-      };
-      const factsFrom = (code, signal) => ({ status: code === 0 ? 'ok' : 'failed', code, signal });
-      child.once('error', (error) => settle({ status: 'failed', code: null, signal: null, error: `${error?.message ?? error}` }));
-      child.once('exit', (code, signal) => {
-        exited = { code: code ?? null, signal: signal ?? null };
-        drain = setTimeout(() => settle(factsFrom(exited.code, exited.signal)), drainMs);
-        if (typeof drain.unref === 'function') drain.unref();
-      });
-      child.once('close', (code, signal) => settle(factsFrom(
-        code ?? exited?.code ?? null, signal ?? exited?.signal ?? null)));
+      child.once('error', (error) => resolve({ status: 'failed', code: null, signal: null, error: `${error?.message ?? error}` }));
+      child.once('close', (code, signal) => resolve({ status: code === 0 ? 'ok' : 'failed', code, signal }));
     });
     clearTimeout(deadline);
     this._live.delete(id);
