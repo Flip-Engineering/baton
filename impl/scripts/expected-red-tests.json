@@ -1847,6 +1847,10 @@
       "reason": "#10"
     },
     {
+      "file": "test/issue136-runs-list-cursor-red.test.mjs",
+      "reason": "#136"
+    },
+    {
       "file": "test/issue144-lsp-pool-red.test.mjs",
       "reason": "#144"
     },
@@ -1857,6 +1861,18 @@
     {
       "file": "test/issue314-mcp-core-surface-red.test.mjs",
       "reason": "#314"
+    },
+    {
+      "file": "test/issue386-recovery-wall-clock-red.test.mjs",
+      "reason": "#386"
+    },
+    {
+      "file": "test/issue393-session-additive-red.test.mjs",
+      "reason": "#393"
+    },
+    {
+      "file": "test/issue41-cli-error-leak-red.test.mjs",
+      "reason": "#41"
     },
     {
       "file": "test/issue441-reading-half-red.test.mjs",
