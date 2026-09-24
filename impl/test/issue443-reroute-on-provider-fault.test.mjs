@@ -92,6 +92,13 @@ const closedSubscriptionRow = () => usageRow(CLOSED_SUBSCRIPTION, {
 });
 const openSubscriptionRow = () => usageRow(OPEN_SUBSCRIPTION, { billing: 'subscription', turns: 2 });
 const openApiRow = () => usageRow(OPEN_API, { billing: 'api', turns: 1, intelligence: 55 });
+// The 2026-09-24 shape the operator ruled on: a codex route whose measured quality ranks it
+// FIRST among the ready candidates, and the operator rule that no seat may be routed onto it.
+const CODEX = Object.freeze({ harness: 'codex', model: 'gpt-6-astra', effort: 'high' });
+const codexRow = () => usageRow(CODEX, { billing: 'subscription', turns: 1, intelligence: 60 });
+const quotaExhaustedRow = () => usageRow(OPEN_API, {
+  code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT,
+});
 
 /** The death the coordinator's own seam recorded (#442): the typed fault, the exact route, the
  * provider's reset answer and the checkpoint the stop preserved. */
@@ -105,7 +112,7 @@ function deathRow(workerId, seq) {
 /** ONE swarm runtime over a real store, with a coordinator that answers the two facts the
  * deployment's own seams publish: the provider-fault death of a bound worker, and the checkout a
  * seat is attached to. */
-function world(t, { rows, label: tag = 'w' }) {
+function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [] }) {
   const dir = mkdtempSync(join(tmpdir(), `baton-issue443-${tag}-`));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, 'repo');
@@ -129,6 +136,7 @@ function world(t, { rows, label: tag = 'w' }) {
     store, coordinator, authorize: async () => {},
     deploymentSummary: () => ({ workspace: null, hostCapacity: null, served: null, routeUsage: rows }),
     situationGit: { repoRoot: repo, head: () => null, commitsSince: () => [] },
+    routingExcludedHarnesses,
     prepareRun: async (request) => ({ ...request, route: request.options?.exact ?? null }),
     startRun: async (request) => {
       starts.push(request);
@@ -150,8 +158,8 @@ function world(t, { rows, label: tag = 'w' }) {
 
 /** One swarm holding a faulted seat: `base` holds the checkout, `alpha` works in it (the same
  * physical workspace), and alpha's provider then kills its worker. */
-async function faultedSwarm(t, { rows, policy = null, tag = 'w' } = {}) {
-  const w = world(t, { rows, label: tag });
+async function faultedSwarm(t, { rows, policy = null, tag = 'w', routingExcludedHarnesses } = {}) {
+  const w = world(t, { rows, label: tag, routingExcludedHarnesses });
   await w.call('create', { swarmId: SWARM, purpose: 'Re-route after a provider fault' });
   // The policy is declared the ONE way a swarm-level policy is declared (#443): a policy row on
   // the swarm, before any death.
@@ -308,6 +316,46 @@ test('443-a3: with no declared policy the defaults are auto — a fault death pe
   assert.equal(rowsOf(w.store, 'swarm.resume_decision_requested')
     .filter((row) => row.payload.participantId === successorId).length, 0,
     'no continuation question is recorded under the auto default');
+});
+
+test('443-a4: the operator routing rule excludes a harness — a fault never reroutes onto it (#574)', async (t) => {
+  // The 2026-09-24 ruling: no seat may be routed onto codex (the operator's ChatGPT usage), and
+  // the day's proposals ranked codex FIRST. The declared exclusion removes the harness from the
+  // derivation BEFORE ranking, names it in the excluded rows, and the performed resume lands on
+  // the best candidate the rule still allows; a route whose quota is exhausted is never a
+  // candidate either.
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), codexRow(), openSubscriptionRow(), quotaExhaustedRow(), openApiRow()],
+    tag: 'a4', routingExcludedHarnesses: ['codex'],
+  });
+  const view = await w.call('view', { swarmId: SWARM });
+  const proposal = rowsOf(w.store, 'swarm.reroute_proposed')[0].payload;
+  assert.deepEqual(proposal.candidates.map((row) => label(row)),
+    [label(OPEN_SUBSCRIPTION), label(OPEN_API)],
+    'the excluded harness and the quota-exhausted route are never candidates');
+  const codexExcluded = proposal.excluded.find((row) => label(row) === label(CODEX));
+  assert.ok(codexExcluded, 'the excluded harness is named, never dropped in silence');
+  assert.equal(codexExcluded.reason, 'excluded_by_operator', 'the row names the operator rule that kept it out');
+
+  assert.equal(view.policy.rerouteOnProviderFault, 'auto', 'no policy declared: the default is auto (#574)');
+  const rerouted = rowsOf(w.store, 'swarm.rerouted');
+  assert.equal(rerouted.length, 1, 'the runtime performed the resume');
+  const successor = w.store.swarm(SWARM).participants[rerouted[0].payload.successor];
+  assert.deepEqual({ ...successor.route }, { ...OPEN_SUBSCRIPTION },
+    'the successor landed on the best candidate the rule allows — never the excluded harness');
+
+  // A recruit that names the excluded harness itself refuses typed, before any queue — the
+  // recruit side honours the same declaration the derivation honours.
+  await assert.rejects(
+    w.call('recruit', { swarmId: SWARM, participantId: 'beta', objective: 'work',
+      options: { exact: { ...CODEX } } }),
+    (error) => {
+      assert.equal(error.code, 'route_exhausted');
+      assert.equal(error.detail?.reason, 'excluded_by_operator');
+      return true;
+    },
+    'the recruit honours the exclusion the derivation honours',
+  );
 });
 
 // ── (b) the policy, and the auto resume through the same recruit path ───────────────────────────
