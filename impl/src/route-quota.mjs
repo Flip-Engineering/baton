@@ -10,8 +10,11 @@
 //   - the coordinator never re-drives a turn in the quota class on the same route.
 //
 // The block expires by DERIVATION from the recorded instant — `blockFor(route, now)` compares the
-// two. There is no timer, no poll, and no re-probe: when the recorded reset passes, the route
-// reads ready again because the fact that blocked it is in the past.
+// two. The recorded instant is the provider's own reset when it named one; a block whose provider
+// named nothing ends at the declared fault-probe bound (`details.derivedResetAt`, the same
+// derivation the degrade episode's probe instant rides), so a zone-less answer cannot hold a route
+// off forever (#575). There is no timer and no poll here: the expiry is checked as the block is
+// read, and a fresh observation starts a fresh block.
 
 import { PROVIDER_FAULT_CODES, normalizeProviderRoute, routeQuotaScope } from './provider-faults.mjs';
 
@@ -57,10 +60,16 @@ export class ProviderQuotaAuthority {
     if (prior && recordedAt < prior.observedAt) {
       return Object.freeze({ ...prior, observedCount: prior.observedCount + 1 });
     }
+    const derivedResetAt = typeof details.derivedResetAt === 'string' && Number.isFinite(Date.parse(details.derivedResetAt))
+      ? new Date(Date.parse(details.derivedResetAt)).toISOString() : null;
     const row = {
       key: scope, scope, route: exact,
       code: PROVIDER_FAULT_CODES.quota,
       resetAt,
+      // #575: the instant the block ends when the provider named no reset of its own — the
+      // declared fault-probe bound, carried beside the honest `resetAt: null` so a reader never
+      // mistakes a derived bound for the provider's own answer.
+      derivedResetAt,
       observedAt: recordedAt,
       observedCount: (prior?.observedCount ?? 0) + 1,
       workerId: typeof details.workerId === 'string' && details.workerId.length > 0 ? details.workerId : null,
@@ -75,23 +84,22 @@ export class ProviderQuotaAuthority {
     }
     return this.blockFor(route, this._now());
   }
-
   /** The live block for one route, or null. An expired block is dropped as it is read — the
-   * expiry is derived from the recorded instant, never from a polling constant. */
+   * expiry is derived from the recorded instant, never from a polling constant: the provider's
+   * own reset when it named one, else the declared fault-probe bound (#575). */
   blockFor(route, now = this._now()) {
     const scope = routeQuotaScope(route);
     if (scope === null) return null;
     const row = this._blocks.get(scope);
     if (!row) return null;
-    if (row.resetAt !== null && Date.parse(row.resetAt) <= now) {
+    const end = row.resetAt ?? row.derivedResetAt ?? null;
+    if (end !== null && Date.parse(end) <= now) {
       this._blocks.delete(scope);
       return null;
     }
     return Object.freeze({ state: 'blocked', ...row });
   }
 
-  // A block whose provider named no reset instant is retained (fail-closed) until a later
-  // observation names one: the durable `provider.quota_exhausted` row and the run-level attention
-  // row both carry it, and the refusal says the reset time was not reported. There is deliberately
-  // no timer and no polling reader here — only the recorded instant can end a block.
+  // The durable `provider.quota_exhausted` row and the run-level attention row carry the block
+  // beside the provider's own words, and the refusal says when the reset time was not reported.
 }

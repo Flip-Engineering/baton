@@ -23,6 +23,8 @@ export const CANONICAL_RUN_PHASES = Object.freeze([
   'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
   'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
   'denied', 'stopping',
+  // #102 Decision 6: the cell's quorum-reached partial rest is canonical terminal truth.
+  'degraded',
 ]);
 export const CANONICAL_MEMBER_STATES = Object.freeze([
   'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
@@ -104,9 +106,13 @@ export function serializeAttentionKind(kind) {
 const PROVIDER_SETTLED_CANONICAL = new Set([
   'result_ready', 'awaiting_selection', 'result_selected',
   'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+  // #102 Decision 6: the degraded quorum terminal is settled and terminal canonical truth.
+  'degraded',
 ]);
 const APPLICATION_TERMINAL_CANONICAL = new Set([
   'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+  // #102 Decision 6: the degraded quorum terminal is settled and terminal canonical truth.
+  'degraded',
 ]);
 export function providerSettled(phase) {
   return PROVIDER_SETTLED_CANONICAL.has(canonicalRunPhase(phase));
@@ -1648,6 +1654,31 @@ const CANONICAL_OPERATION_SPECS = [
     authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
     liveMethod: 'settlementLease',
   }],
+  // Issue #66 (D4): answer or dismiss one raised doubt. Embedded-only like its settlement
+  // siblings; the resolve authority is the server-re-derived run-orchestrator lease — never a
+  // caller field — so the row's serverDerived names the session fields alone.
+  ['knowledge.promote_doubt', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, doubtId: id, disposition: { type: 'string', enum: ['answered', 'dismissed'] },
+      resolution: { type: 'string', maxLength: FRAME_LIMITS['doubt.resolution.bytes'].value },
+      dismissalReason: { type: 'string', enum: ['deferred', 'duplicate', 'out_of_scope', 'unfounded'] },
+    }, ['runId', 'doubtId', 'disposition']),
+    authorityFields: ['disposition', 'doubtId', 'runId'], serverDerived: ['actor', 'principalId', 'sessionId'],
+    liveMethod: 'resolveDoubt',
+  }],
+  // Issue #66 (D3): the orchestrator-addressed open-doubts read. Embedded-only, wave-scoped;
+  // the liveMethod is deliberately not pinned — the read dispatches through the direct-port
+  // branch and projects the store's folded doubt records, it never auto-routes to a gate.
+  ['knowledge.doubts', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'observe', capabilities: ['observe'],
+    outputView: 'section', helpTopic: 'run', inputSchema: objectSchema({
+      waveId: id, state: { type: 'string', enum: ['reviewed', 'answered', 'dismissed', 'carried'] },
+      before: { type: 'object' },
+      limit: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['view.open_doubts.items'].value },
+    }, ['waveId']),
+    authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
+  }],
   ['knowledge.recall', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
     capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
@@ -1705,8 +1736,19 @@ const CANONICAL_OPERATION_SPECS = [
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
+          // #102 Decision 1: a member names EITHER its own exact route OR a closed group seat.
+          // The schema advertises both forms; the XOR itself is the wave admission's own typed
+          // refusal (application.mjs _normalizeWaveStart), so this row stays honest without a
+          // second enforcement copy.
+          group: objectSchema({
+            seat: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
+            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
+            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            strict: { type: 'boolean' },
+            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+          }, ['seat', 'size']),
           scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
-        }, ['role', 'objective', 'exact']),
+        }, ['role', 'objective']),
       },
     }, ['idempotencyKey', 'members']),
   }],
@@ -1787,6 +1829,25 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['observe'], outputView: 'index', helpTopic: 'connection',
     example: 'baton doctor --check',
     inputSchema: objectSchema({ depth: { type: 'string', enum: ['outline', 'connection', 'profile', 'evidence'] }, check: { type: 'boolean' } }, []),
+  }],
+  // Issue #99/#179 (harvest-accessor contract Decisions 1-5): the result-materialization
+  // accessor's two canonical operations. Direct ports (never APPLICATION_COMMAND_DEFINITIONS
+  // keys); the one-derivation naming law resolves every surface spelling from the key.
+  ['run.resultpin', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run resultpin run:1',
+    inputSchema: objectSchema({ runId: id }, ['runId']),
+  }],
+  ['waves.harvest', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'waves_harvest',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves harvest run:1 --onto /srv/checkout',
+    inputSchema: objectSchema({
+      onto: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['waves.harvest.onto'].value },
+      resultSha: { type: 'string', pattern: '^[a-f0-9]{40}' + String.fromCharCode(36) },
+      runId: id,
+    }, []),
   }],
   // Issue #306 (the wiring half): the in-place reincarnation verb — the RUNNING resident starts a
   // successor over the same deployment, hands the published connection over, and exits 0 through
@@ -2125,6 +2186,13 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.member.view', 'mcp.baton', 'baton_run_workstreams'],
   ['run.view', 'mcp.baton', 'baton_run_episode'],
   ['run.view', 'mcp.baton', 'baton_run_inspect'],
+  // Issue #156 D4 item 1: the five non-canonical ops are NOT canonicalOperations keys, so their
+  // baton_run_* siblings resolve through these rows plus the renderer's canonical-miss fallback.
+  ['run.status', 'mcp.baton', 'baton_run_status'],
+  ['run.follow', 'mcp.baton', 'baton_run_follow'],
+  ['run.wait', 'mcp.baton', 'baton_run_wait'],
+  ['run.resume_work', 'mcp.baton', 'baton_run_resume_work'],
+  ['run.retry_verification', 'mcp.baton', 'baton_run_retry_verification'],
   ['run.adopt', 'mcp.fleet', 'fleet_run_adopt'],
   ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
   ['run.approve', 'mcp.fleet', 'fleet_run_approve'],
@@ -2143,6 +2211,10 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.view', 'mcp.fleet', 'fleet_run_status'],
   ['run.view', 'mcp.fleet', 'fleet_run_wait'],
   ['run.watch', 'mcp.fleet', 'fleet_run_follow'],
+  // Issue #156 D2: the two new fleet definitions' spellings resolve here like the rest of the
+  // run family, so the conformance classifier never sees them as novel mcp.fleet names.
+  ['run.resume_work', 'mcp.fleet', 'fleet_run_resume_work'],
+  ['run.retry_verification', 'mcp.fleet', 'fleet_run_retry_verification'],
   ['run.do', 'web', 'run_act'],
   ['run.list', 'web', 'runs_list'],
   ['run.member.send', 'web', 'run_workstream_notify'],

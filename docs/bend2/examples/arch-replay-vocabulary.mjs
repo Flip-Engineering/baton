@@ -2,16 +2,15 @@
 // work-bend2-architecture, review track 1: "run the same admission/fold/projection cases through
 // both implementations").
 //
-// The corpus freezes one sixteen-row swarm trace that exercises the durable event vocabulary end
-// to end — eleven of the thirteen caller-submittable kinds the contract admits at the fold
-// (swarm.participant_left stays unexercised) and thirteen of the twenty-five kinds the fold
-// vocabulary holds, plus the runtime seeds — and then replays it under four mutations: as frozen,
-// with row 7 replaced by a
-// kind no vocabulary admits, with row 11 carrying one field its payload shape does not admit, and
-// with row 13 replaced by a runtime-composed row the fold knows and the contract set does not. One
-// case folds the frozen trace twice and compares the projections byte for byte. A refusal stops the
-// replay at its row: every row before it stays retained, which is the preserved-history fact the
-// phase-boundary rule needs.
+// The corpus freezes one thirty-row swarm trace that exercises the durable event vocabulary end
+// to end — twelve of the thirteen caller-submittable kinds the contract admits at the fold and
+// all twenty-five kinds the fold vocabulary holds, plus the runtime seeds and the runtime-composed
+// rows — and then replays it under four mutations: as frozen, with row 7 replaced by a kind no
+// vocabulary admits, with row 11 carrying one field its payload shape does not admit, and with
+// row 13 replaced by a runtime-composed row the fold knows and the contract set does not. One
+// case folds the frozen trace twice and compares the projections byte for byte. A refusal stops
+// the replay at its row: every row before it stays retained, which is the preserved-history fact
+// the phase-boundary rule needs.
 import { SWARM_EVENT_KINDS as CALLER_KIND_LIST } from '../../../impl/src/swarm-contract.mjs';
 const CALLER_KINDS = new Set(CALLER_KIND_LIST);
 //   node docs/bend2/examples/arch-replay-vocabulary.mjs --emit-ledger  write the frozen trace
@@ -36,12 +35,17 @@ const SWARM_ID = 'sw-vocab';
 const CLOCK_ISO = '2026-09-23T00:00:00.000Z';
 const WORKSPACE = 'ws-0f1e2d3c4b5a69788796a5b4c3d2e1f0';
 
-/** The frozen trace. Sixteen rows: the two runtime seeds, then eleven of the thirteen
- * caller-submittable kinds the contract admits at the fold (claim_updated twice — its second row
- * is the handoff that rewrites the holder in place; swarm.participant_left stays unexercised),
- * then the close. The contract's own holder_released operation
- * is not among them: it is an operation kind the runtime expands into assignment releases before
- * anything is folded, so the fold itself never sees it. */
+/** The frozen trace. Thirty rows: the two runtime seeds; the caller-submittable kinds the
+ * contract admits at the fold — claim_updated twice, its second row the handoff that rewrites
+ * the holder in place, and policy_updated twice, the second setting the auto mode the re-route
+ * rows answer under — and swarm.participant_left, the caller-submittable kind whose row settles
+ * the departed seat; the runtime-composed kinds the contract set excludes — the binding, the
+ * revision, the landing receipt, the writer bypass, the runtime loss, the provider fault, the
+ * re-route proposal, the successor's join, the workspace carry, the performed re-route, the
+ * resume question and its answer; then the close. Every kind the fold vocabulary holds appears
+ * once the trace is whole. The contract's own holder_released operation is not among them: it is
+ * an operation kind the runtime expands into assignment releases before anything is folded, so
+ * the fold itself never sees it. */
 const FROZEN = [
   { kind: 'swarm.created', payload: { swarmId: SWARM_ID, purpose: 'the event-vocabulary corpus', baseCommit: '31f356b2b1cd5a32a241116c52aa96ea7133fc4a' } },
   { kind: 'swarm.participant_joined', payload: { swarmId: SWARM_ID, participantId: 'p1', role: 'lead', workspaceId: WORKSPACE } },
@@ -67,6 +71,28 @@ const FROZEN = [
   { kind: 'swarm.policy_updated', payload: { swarmId: SWARM_ID, rerouteOnProviderFault: 'manual' } },
   { kind: 'swarm.claim_updated', payload: { swarmId: SWARM_ID, claimId: 'claim-vocab', participantId: 'p1', handoffTo: 'p2' } },
   { kind: 'swarm.assignment_updated', payload: { swarmId: SWARM_ID, assignmentId: 'as-vocab', participantId: 'p1', workId: 'w-vocab', status: 'released' } },
+  { kind: 'swarm.participant_bound', payload: { swarmId: SWARM_ID, participantId: 'p1', workerId: 'wk-p1', taskId: 'tk-p1', sessionId: 's-p1', workspaceId: WORKSPACE } },
+  { kind: 'swarm.contribution_revision_attached', payload: { swarmId: SWARM_ID, contributionId: 'c1', participantId: 'p1', sha: '1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a', ref: 'refs/retain/sw-vocab/c1', workspaceId: WORKSPACE, observedHead: '2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b', mergeBase: '3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c' } },
+  { kind: 'swarm.contribution_integrated', payload: { swarmId: SWARM_ID, contributionId: 'c1', participantId: 'p1', base: '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d', targetHeadBefore: '5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e', targetHeadAfter: '6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f', squashSha: '7070707070707070707070707070707070707070', target: 'bend2-rewrite', changedPaths: ['docs/bend2/examples/arch-replay-vocabulary.mjs'], gates: { files: ['docs/bend2/examples/arch-replay-vocabulary.mjs'], verdictLine: 'cases compared: 5; disagreements: 0' }, issue: 539 } },
+  { kind: 'swarm.coupling_writer_bypassed', payload: { swarmId: SWARM_ID, couplingId: 'c-writer', workspaceId: WORKSPACE, writer: 'p1', by: 'p2', sha: '8181818181818181818181818181818181818181', at: CLOCK_ISO } },
+  { kind: 'swarm.participant_runtime_lost', payload: { swarmId: SWARM_ID, participantId: 'p2', workerId: 'wk-p2', incarnation: 0, at: CLOCK_ISO } },
+  { kind: 'swarm.policy_updated', payload: { swarmId: SWARM_ID, rerouteOnProviderFault: 'auto' } },
+  { kind: 'swarm.participant_faulted', payload: { swarmId: SWARM_ID, participantId: 'p1', workerId: 'wk-p1', code: 'provider_quota', route: { harness: 'omp', model: 'glm-5.3-flash', effort: 'high' }, resetAtText: 'quota resets 2026-09-23T01:00:00.000Z', snapshotSha: '9292929292929292929292929292929292929292' } },
+  {
+    kind: 'swarm.reroute_proposed', payload: {
+      swarmId: SWARM_ID, participantId: 'p1', workerId: 'wk-p1',
+      from: { harness: 'omp', model: 'glm-5.3-flash', effort: 'high' },
+      code: 'provider_quota', policy: 'auto',
+      candidates: [{ harness: 'omp', model: 'deepseek-v4-pro', effort: 'high', billing: 'api', reason: 'api_fallback' }],
+      carry: { snapshotSha: '9292929292929292929292929292929292929292', checkpoint: { sha: '3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c', ref: 'refs/checkpoint/p1' } },
+    },
+  },
+  { kind: 'swarm.participant_joined', payload: { swarmId: SWARM_ID, participantId: 'p3', role: 'worker', resumeFrom: 'p1' } },
+  { kind: 'workspace.carried_from', payload: { swarmId: SWARM_ID, participantId: 'p3', workspaceId: WORKSPACE, predecessor: 'p1', paths: ['docs/bend2'], how: 'bound' } },
+  { kind: 'swarm.rerouted', payload: { swarmId: SWARM_ID, successor: 'p3', carriedFrom: 'p1', from: { harness: 'omp', model: 'glm-5.3-flash', effort: 'high' }, to: { harness: 'omp', model: 'deepseek-v4-pro', effort: 'high' }, proposalSeq: 23 } },
+  { kind: 'swarm.resume_decision_requested', payload: { swarmId: SWARM_ID, participantId: 'p3', predecessor: 'p1', carry: { how: 'bound', workspaceId: WORKSPACE, snapshotSha: null } } },
+  { kind: 'swarm.resume_decision_answered', payload: { swarmId: SWARM_ID, participantId: 'p3', predecessor: 'p1', guidance: { seq: 28, messageId: 'g-resume-p3' } } },
+  { kind: 'swarm.participant_left', payload: { swarmId: SWARM_ID, participantId: 'p1', reason: 'the provider fault settled by the performed re-route' } },
   { kind: 'swarm.closed', payload: { swarmId: SWARM_ID, reason: 'the frozen vocabulary trace is complete' } },
 ];
 

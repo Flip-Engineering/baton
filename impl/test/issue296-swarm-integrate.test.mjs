@@ -77,7 +77,7 @@ const ITEMS = [
  */
 async function world(t, {
   subject = 'Lane scope guard holds on shared checkouts',
-  targetMoves = null, rebase = false, accept = true, purpose = 'land the lane',
+  targetMoves = null, rebase = false, accept = true, purpose = 'land the lane', detach = null,
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue296-'));
   const repo = join(directory, 'repo');
@@ -121,6 +121,25 @@ async function world(t, {
   }
   const rebasedTip = git(repo, 'rev-parse', 'baton/lane-1');
 
+  // The deployment checkout's detached shapes (the served checkout is one): the verb derives an
+  // omitted target from THIS checkout, and a detached one names no branch. 'at-branch-tip'
+  // detaches at the one local branch whose tip is the checkout commit; 'unbranched' detaches at a
+  // commit no branch names; 'ambiguous' detaches at a commit TWO local branches name.
+  if (detach === 'at-branch-tip') {
+    git(repo, 'checkout', '-q', '--detach', 'master');
+  } else if (detach === 'unbranched') {
+    git(repo, 'checkout', '-q', '--detach', 'master');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'detached work no branch names');
+  } else if (detach === 'ambiguous') {
+    git(repo, 'branch', 'elsewhere');
+    git(repo, 'checkout', '-q', '--detach', 'master');
+  }
+
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
+
   const store = new CoordinationStore(join(directory, 'ledger'));
   const runtime = new SwarmRuntime({
     store,
@@ -135,6 +154,7 @@ async function world(t, {
     // The fixture's regenerator writes a real file, so "folded into the ONE commit" is provable.
     integration: {
       repoRoot: repo,
+      publishRemote,
       regenerate: async (dir) => { write(dir, 'impl/scripts/seam-inventory.json', '{}\n'); },
       runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
     },
@@ -274,6 +294,38 @@ test('296d: a conflicting path refuses typed, naming the files and the landed co
   assert.equal(w.store.swarms().length, 1);
 });
 
+// ── (d2) a receipt that moved nothing is never named as a landed contribution ──────────────────
+
+test('296i: a prior receipt that records no moved target is not named as the landed contribution', needsGit, async (t) => {
+  const w = await world(t, { targetMoves: 'same-file' });
+  // The same conflict as 296d, with the prior receipt recording no commit for the target AFTER it:
+  // the fold admits dryRun false beside a null targetHeadAfter, so this row holds a receipt that
+  // claims a landing while naming no target move. The refusal still crosses as the git conflict it
+  // is — and it names no landed contribution, because none covers these paths.
+  w.store.recordSwarm('swarm.contribution_recorded', {
+    swarmId: 's1', contributionId: 'contribution:0', participantId: 'lane-a', workId: 'w1', body: 'prior',
+  }, { actor: principal.actor, key: 'i296i:prior' });
+  w.store.recordSwarm('swarm.contribution_integrated', {
+    swarmId: 's1', contributionId: 'contribution:0', participantId: 'lane-a',
+    base: w.observedHead, target: 'master',
+    targetHeadBefore: w.observedHead, targetHeadAfter: null,
+    squashSha: w.targetHead, changedPaths: ['impl/src/coordinator.mjs'],
+    gates: { files: [], verdictLine: 'green', unexpected: [] }, regenerated: [], conflicts: [],
+    issue: null, dryRun: false,
+  }, { actor: principal.actor, key: 'i296i:prior-receipt' });
+
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses');
+  assert.equal(error.code, 'integrate_conflict');
+  assert.deepEqual(error.detail.paths, ['impl/src/coordinator.mjs'], 'the conflicting files are still named');
+  assert.equal(error.detail.otherContributionId, null,
+    'a receipt that records no commit for the target after it is not a landed contribution');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
+});
+
 // ── (e) dry run ──────────────────────────────────────────────────────────────────────────────────
 
 test('296e: --dry-run prepares and verifies, records dryRun: true, and leaves the target alone', needsGit, async (t) => {
@@ -339,7 +391,7 @@ test('296g: the view carries integration on the contribution row and the watch w
 
   // The refusal codes the verb raises are in the family's ONE closed set.
   for (const code of ['integrate_contribution_not_accepted', 'integrate_commit_unreachable',
-    'integrate_conflict', 'integrate_gates_red', 'integrate_target_moved']) {
+    'integrate_conflict', 'integrate_gates_red', 'integrate_target_moved', 'integrate_target_undetermined']) {
     assert.ok(Object.hasOwn(SWARM_REFUSAL_CODES, code), `${code} is declared in the closed refusal set`);
   }
 });
@@ -398,4 +450,63 @@ test('296: a contribution whose commit is not in the repository refuses typed by
   assert.equal(error.detail.sha, phantom, 'the refusal names the sha the root must recover');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
   assert.equal(w.store.swarm('s1').contributions['contribution:phantom'].integration, undefined);
+});
+
+// ── the omitted target on a detached deployment checkout (the served checkout's own shape) ───────
+
+test('296: an omitted target on a detached checkout lands on the local branch at the checkout commit', needsGit, async (t) => {
+  const w = await world(t, { detach: 'at-branch-tip' });
+  assert.equal(git(w.repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD',
+    'the fixture checkout is detached, as the deployment\'s served checkout is');
+  assert.deepEqual(
+    git(w.repo, 'for-each-ref', '--format=%(refname:short)', '--points-at', 'HEAD', 'refs/heads').split('\n'),
+    ['master'], 'exactly one local branch names the checkout commit');
+  const before = Number(git(w.repo, 'rev-list', '--count', 'master'));
+
+  const answer = await w.integrate({ target: undefined });
+
+  assert.equal(answer.integration.target, 'master',
+    'the derived target is the branch at the checkout\'s own commit');
+  assert.equal(Number(git(w.repo, 'rev-list', '--count', 'master')), before + 1, 'the lane landed on it');
+  assert.equal(git(w.repo, 'show', '--format=', 'master:impl/src/coordinator.mjs'), 'export const lane = 2;',
+    'the whole lane delta is on the derived branch');
+  assert.equal(w.foldRow().integration.squashSha, answer.integration.squashSha,
+    'the receipt is folded onto the contribution row as always');
+});
+
+test('296: an omitted target on a detached checkout no branch names refuses typed, naming the fix', needsGit, async (t) => {
+  const w = await world(t, { detach: 'unbranched' });
+  const detachedHead = git(w.repo, 'rev-parse', 'HEAD');
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate({ target: undefined }).then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the derivation cannot name a target, so the landing refuses');
+  assert.equal(error.code, 'integrate_target_undetermined');
+  assert.match(error.message, new RegExp(`detached at ${detachedHead}`),
+    'the refusal names the detached checkout');
+  assert.match(error.message, /no single local branch names that commit/u);
+  assert.match(error.message, /pass the landing target explicitly/u, 'the refusal names its own fix');
+  assert.deepEqual(error.detail.candidates, [], 'no branch names the checkout commit');
+  assert.equal(error.detail.head, detachedHead);
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+  assert.equal(w.foldRow().integration, undefined, 'no receipt was recorded');
+});
+
+test('296: an omitted target on a detached checkout two branches name refuses with the candidates named', needsGit, async (t) => {
+  const w = await world(t, { detach: 'ambiguous' });
+  const detachedHead = git(w.repo, 'rev-parse', 'HEAD');
+  const masterBefore = git(w.repo, 'rev-parse', 'master');
+  const elsewhereBefore = git(w.repo, 'rev-parse', 'elsewhere');
+
+  const error = await w.integrate({ target: undefined }).then(() => null, (thrown) => thrown);
+
+  assert.equal(error.code, 'integrate_target_undetermined');
+  assert.deepEqual(error.detail.candidates, ['elsewhere', 'master'],
+    'the refusal\'s detail names every branch that would have to be guessed between');
+  assert.equal(error.detail.head, detachedHead);
+  assert.match(error.message, /no single local branch names that commit/u);
+  assert.equal(git(w.repo, 'rev-parse', 'master'), masterBefore, 'master did not move');
+  assert.equal(git(w.repo, 'rev-parse', 'elsewhere'), elsewhereBefore, 'elsewhere did not move');
+  assert.equal(w.foldRow().integration, undefined, 'no receipt was recorded');
 });

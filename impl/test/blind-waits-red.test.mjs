@@ -166,14 +166,19 @@ const ORIGIN = 'https://blind-waits.test';
 const REPO = 'repo-blind-waits-164';
 
 // The closed literal sets and waitingOn vocabulary, in ACTUAL order (A9). These are the byte-stable
-// invariants the fail-loud landing rides — a landed impl must leave them untouched.
+// invariants the fail-loud landing rides — a landed impl must leave them untouched, and every
+// literal that joins them does so through a recorded exception in this table, in the same commit.
 const PINNED_PROVIDER_SETTLED = [
   'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed',
-  'inconclusive', 'cancelled', 'denied', 'stopped',
+  'inconclusive', 'cancelled', 'denied', 'stopped', 'degraded',
 ];
 // Issue #334 extends the closed phase vocabulary: a baseline-owned inconclusive verdict reads
 // the terminal phase 'inconclusive', so both sets carry it beside 'failed'.
-const PINNED_APPLICATION_TERMINAL = ['completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped'];
+// Issue #102 Decision 6 is the second recorded exception, owned by the wave lane as its own
+// vocabulary amendment: a quorum-reached partial cell rest is settled provider truth and the
+// degraded quorum terminal is canonical terminal truth, so both sets carry 'degraded'.
+// WAITING_ON_KINDS stays the closed five — the waitingOn vocabulary is untouched.
+const PINNED_APPLICATION_TERMINAL = ['completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped', 'degraded'];
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -1211,9 +1216,9 @@ test('P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauth
 
 test('A9 GREEN: the terminal/settled literal sets and WAITING_ON_KINDS stay byte-unchanged (additive-only law)', () => {
   assert.deepEqual([...PROVIDER_EXECUTION_SETTLED_PHASES].sort(), [...PINNED_PROVIDER_SETTLED].sort(),
-    'PROVIDER_EXECUTION_SETTLED_PHASES is the pinned closed set (application.mjs:190) — #334 is the recorded exception that adds the inconclusive phase literal; anything else still adds the wait-local predicate, never a literal');
+    'PROVIDER_EXECUTION_SETTLED_PHASES is the pinned closed set (application.mjs:190) — #334 is the recorded exception that adds the inconclusive phase literal, and #102 Decision 6 is the second, the wave lane own degraded quorum terminal; anything else still adds the wait-local predicate, never a literal');
   assert.deepEqual([...APPLICATION_RUN_TERMINAL_PHASES].sort(), [...PINNED_APPLICATION_TERMINAL].sort(),
-    'APPLICATION_RUN_TERMINAL_PHASES is the pinned closed set (application.mjs:193) — #334 adds inconclusive');
+    'APPLICATION_RUN_TERMINAL_PHASES is the pinned closed set (application.mjs:193) — #334 adds inconclusive, and #102 Decision 6 adds the degraded quorum terminal');
   assert.deepEqual([...WAITING_ON_KINDS].sort(), ['capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning'].sort(),
     'WAITING_ON_KINDS stays the closed five (application-semantics.mjs:59-61) — "stopping" is NEVER admitted to the waitingOn vocabulary');
   assert.equal(PROVIDER_EXECUTION_SETTLED_PHASES.has('stopping'), false, 'stopping stays outside the settled set');

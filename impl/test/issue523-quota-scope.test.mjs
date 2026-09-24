@@ -225,7 +225,11 @@ test('523-d: a provider.degraded episode degrades every route of its scope and a
   const { deployment, driverOptions, adapter } = await openDeployment(t, 'degrade-scope', routes);
   const log = new Log(driverOptions.logDir);
 
-  // The durable episode the coordinator's fold lands for deaths on @high.
+  // The durable episode the coordinator's fold lands for deaths on @high. #575: an episode the
+  // provider answered with no instant derives its probe instant (the registry's fault-probe row
+  // after the last death), so the episode below is LIVE — a recent death — and the refusal half
+  // of this test reads a route that has not reached its probe instant yet.
+  const faultAt = new Date(Date.now() - 60 * MIN).toISOString();
   log.append({
     worker: 'w-1', harness: 'omp@1.0.0', turnEpoch: 1,
     kind: 'provider.degraded', actor: 'policy',
@@ -234,7 +238,7 @@ test('523-d: a provider.degraded episode degrades every route of its scope and a
       route: Object.freeze({ ...GLM_HIGH }),
       faultClass: 'provider_quota_exhausted',
       participants: Object.freeze(['w-1']),
-      window: Object.freeze({ from: new Date(T0).toISOString(), to: new Date(T0).toISOString() }),
+      window: Object.freeze({ from: faultAt, to: faultAt }),
       count: 1,
       next: Object.freeze({ action: 'pause_recruits_until_probe', route: Object.freeze({ ...GLM_HIGH }) }),
       resetAt: null, resetAtText: null,

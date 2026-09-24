@@ -50,7 +50,8 @@ test('CK8: direct Coordinator construction refuses an optional coordination side
 test('CK1: append failure is fatal and leaves event/task projections unchanged', () => {
   const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('disk full'); } });
   assert.throws(() => store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' }), /disk full/);
-  assert.deepEqual(store.snapshot(), { tasks: [], runs: [], artifacts: [], reuseDecisions: [], reuseRiskGuards: [], reusePolicy: { heads: [], transitions: [] }, evidence: [], scratch: { facts: [], claims: [], reads: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, scratchpad: { entries: [], elevations: [], reaps: [], fences: [], scratchpadReapsTruncated: false }, lastSeq: 0 });
+  // Issue #66 (D3): knowledge carries the folded `doubts` projection (empty on a fresh store).
+  assert.deepEqual(store.snapshot(), { tasks: [], runs: [], artifacts: [], reuseDecisions: [], reuseRiskGuards: [], reusePolicy: { heads: [], transitions: [] }, evidence: [], scratch: { facts: [], claims: [], reads: [] }, knowledge: { doubts: [], nodes: [], edges: [], reads: [], contamination: [] }, scratchpad: { entries: [], elevations: [], reaps: [], fences: [], scratchpadReapsTruncated: false }, lastSeq: 0 });
 });
 
 test('CK8/CK9: public spawn poisons before publishing any handle when task creation cannot append', async () => {

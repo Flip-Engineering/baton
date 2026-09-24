@@ -529,6 +529,76 @@ async function runRecipe(baton, rawRecipe, invocation) {
   return startRun(baton, manifest, opts, merged);
 }
 
+// The manifest's attempt line, as renderObjective appended it. A re-drive re-renders the SAME
+// preserved inputs under a NEW salt, so the line is rewritten rather than re-composed: the
+// wrapper stays the sole salt owner (rule 2) and the objective's body is byte-unchanged.
+function reSaltObjective(objective, role, previousSalt, nextSalt) {
+  const suffix = `[attempt: ${previousSalt} ${role}]`;
+  if (typeof objective !== 'string' || !objective.endsWith(suffix)) {
+    throw recipeError(
+      `redriveMembers cannot re-salt the ${role} objective: it does not carry the source manifest's attempt line`,
+      'recipe_redrive_invalid',
+    );
+  }
+  return `${objective.slice(0, objective.length - suffix.length)}[attempt: ${nextSalt} ${role}]`;
+}
+
+// Issue #59 (D3/GT5) — the manifest-based re-drive surface (composition-decisions v2 rule 4 and
+// R-DC-2's manifest repair). A re-drive takes the role subset it is re-driving, re-renders those
+// members from the manifest's PRESERVED inputs under ONE new salt, and returns a fresh manifest
+// whose waveId derives from the new idempotency key — the same work, a new identity. The optional
+// `carryForward` ({sourceRunId, scopes}) is the closed option the coordinator's continuity
+// admission consumes; it is carried on the manifest verbatim and this function never invents one
+// (the carry is per-re-drive opt-in, never a default).
+export function redriveMembers(manifest, roles, { newIdempotencyKey, carryForward = null } = {}) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)
+    || !Array.isArray(manifest.renderedMembers) || manifest.renderedMembers.length === 0) {
+    throw recipeError('redriveMembers requires a manifest carrying its rendered members', 'recipe_redrive_invalid');
+  }
+  if (!Array.isArray(roles) || roles.length === 0
+    || roles.some((role) => typeof role !== 'string' || role.length === 0)
+    || new Set(roles).size !== roles.length) {
+    throw recipeError('redriveMembers "roles" must be a non-empty array of distinct role names', 'recipe_redrive_invalid');
+  }
+  if (typeof newIdempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(newIdempotencyKey)) {
+    throw recipeError('redriveMembers "newIdempotencyKey" is invalid', 'recipe_idempotency_invalid');
+  }
+  if (carryForward !== null && (typeof carryForward !== 'object' || Array.isArray(carryForward))) {
+    throw recipeError('redriveMembers "carryForward" must be a {sourceRunId, scopes} object or null', 'recipe_redrive_invalid');
+  }
+  const byRole = new Map(manifest.renderedMembers.map((member) => [member.role, member]));
+  const missing = roles.filter((role) => !byRole.has(role));
+  if (missing.length > 0) {
+    throw recipeError(
+      `redriveMembers role(s) ${missing.join(', ')} are not members of manifest ${manifest.waveId ?? 'unidentified'}`,
+      'recipe_redrive_invalid',
+    );
+  }
+  const salt = randomUUID();
+  const renderedMembers = roles.map((role) => {
+    const member = byRole.get(role);
+    return Object.freeze({
+      ...member,
+      objective: reSaltObjective(member.objective, role, manifest.salt, salt),
+    });
+  });
+  const redriven = {
+    schemaVersion: 1,
+    waveId: waveIdFor(newIdempotencyKey),
+    idempotencyKey: newIdempotencyKey,
+    recipeDigest: manifest.recipeDigest ?? null,
+    salt,
+    renderedMembers,
+    redrivenFrom: {
+      waveId: manifest.waveId ?? null,
+      idempotencyKey: manifest.idempotencyKey ?? null,
+      roles: [...roles],
+    },
+  };
+  if (carryForward !== null) redriven.carryForward = carryForward;
+  return redriven;
+}
+
 // The `implementContract` preset — one red-first implementation seat. This is the shape the bespoke
 // run-impl-wave.mjs scripts hand-copied; as data it is `baton.recipes.implementContract(...)`.
 const IMPLEMENT_TASK_TEMPLATE = 'Implement the assigned contract rung. The task that follows is your sole work authority.\n\n{task}';
