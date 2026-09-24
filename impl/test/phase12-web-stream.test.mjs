@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -9,10 +11,24 @@ import { join } from 'node:path';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { WebEventStream } from '../src/web-stream.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 let clock = Date.parse('2026-07-11T12:00:00.000Z');
 const principal = (overrides = {}) => ({ userId: 'u', sessionId: 's', credentialId: 'c', expiresAt: '2099-01-01T00:00:00.000Z', capabilities: ['observe'], repoIds: ['repo-a'], ...overrides });
 const fixture = (opts = {}) => {
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-stream-')));
+  const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-stream-')));
   const stream = new WebEventStream({ coordination, allowedOrigins: ['https://control.test'], repoIds: ['repo-a'], now: () => clock, pollMs: 5, ...opts });
   return { coordination, stream };
 };
