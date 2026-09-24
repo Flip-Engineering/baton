@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -13,6 +15,20 @@ import {
 import { CoordinationIntegrityError, CoordinationRefusal, CoordinationStore, migrateCanonicalOrderLedger } from '../src/coordination-store.mjs';
 import { createDriver, MockAdapter } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..', 'src');
 
@@ -26,7 +42,7 @@ test('canonical request identity preserves prototype-named JSON fields', () => {
   assert.notEqual(JSON.stringify(a), JSON.stringify(b));
 });
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase63-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase63-${name}-`));
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const policy = Object.freeze({
   maxLedgerBytes: 1024 * 1024, maxEventBytes: 64 * 1024,

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Run-show verification verdict (issue #334): `baton run show RUN_ID` at the default
 // (outline) depth carries the worker-verdict-surface projection beside retry_verification
 // for a failed or inconclusive verification, with the bounded sanitized failure tail.
@@ -35,6 +37,20 @@ import {
   createDriver,
 } from '../src/index.mjs';
 import * as applicationNs from '../src/application.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
@@ -135,7 +151,7 @@ test('V4: settled or unverified runs project null; an unmappable code escalates 
 const repoId = 'repo-run-show-verdict';
 
 function gitRepo(name) {
-  const repo = mkdtempSync(join(tmpdir(), `baton-rsv-${name}-repo-`));
+  const repo = mintFixtureDirectory(join(tmpdir(), `baton-rsv-${name}-repo-`));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'run-show-verdict@example.invalid'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'Run Show Verdict'], { cwd: repo });
@@ -207,7 +223,7 @@ function adapter() {
 
 function fixture(name, runtimePolicy, contract = verificationContract()) {
   const repo = gitRepo(name);
-  const logDir = mkdtempSync(join(tmpdir(), `baton-rsv-${name}-log-`));
+  const logDir = mintFixtureDirectory(join(tmpdir(), `baton-rsv-${name}-log-`));
   const driver = createDriver({
     repoRoot: repo, repoId, logDir,
     adapters: { mock: adapter() },
@@ -229,7 +245,7 @@ function fixture(name, runtimePolicy, contract = verificationContract()) {
 // An existing, deployment-shaped bin directory that simply lacks `node`: the pinned
 // command spawn is `unavailable` — the inconclusive lever (phase69 VR6 precedent).
 function brokenRuntimePolicy() {
-  return { schemaVersion: 1, pathEntries: [mkdtempSync(join(tmpdir(), 'baton-rsv-empty-bin-'))], constants: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC' } };
+  return { schemaVersion: 1, pathEntries: [mintFixtureDirectory(join(tmpdir(), 'baton-rsv-empty-bin-'))], constants: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC' } };
 }
 
 async function inspectOutline(application, runId) {
@@ -297,7 +313,7 @@ test('V6: the outline verdict never leaks paths or the checkpoint ref', async (t
 test('V7: a candidate-owned exit mismatch reads as its own closed code on run show', async (t) => {
   // The pinned command fails on the candidate (exit 3 against expectExit 0) while node
   // itself spawns: the referee owns the mismatch verdict, never the route.
-  const binDir = mkdtempSync(join(tmpdir(), 'baton-rsv-fixed-bin-'));
+  const binDir = mintFixtureDirectory(join(tmpdir(), 'baton-rsv-fixed-bin-'));
   symlinkSync(process.execPath, join(binDir, 'node'));
   const contract = {
     ...verificationContract(),

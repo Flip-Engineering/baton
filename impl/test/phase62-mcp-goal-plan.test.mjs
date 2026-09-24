@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -7,8 +9,22 @@ import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer, MockAdapter, createDriver } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const NOW = Date.parse('2026-07-13T18:00:00.000Z');
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase62-mcp-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase62-mcp-${name}-`));
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-phase62-mcp', mandatory: true, approvalTtlMs: 60 * 60 * 1000,
   riskClasses: ['low', 'medium', 'high', 'critical'], effectClasses: ['repository_edit', 'provider_call'], capabilityClasses: ['code', 'test'],

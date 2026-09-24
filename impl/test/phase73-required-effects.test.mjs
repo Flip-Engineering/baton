@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -12,7 +14,21 @@ import {
 } from '../src/goal-plan.mjs';
 import { projectTypedTerminalCause } from '../src/application-semantics.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase73-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase73-${name}-`));
 const policy = normalizeGoalPlanPolicy({
   schemaVersion: 1,
   repoId: 'repo-phase73',

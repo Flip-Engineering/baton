@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -14,8 +16,22 @@ import {
   validateApplicationCommandArgs,
 } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const REPO_ID = 'repo-phase66-export';
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase66-export-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase66-export-${name}-`));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 

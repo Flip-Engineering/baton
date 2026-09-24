@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
@@ -9,11 +11,25 @@ import test from 'node:test';
 
 import * as batonModule from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const { DEFAULT_WORKER_POLICY_REQUEST, MockAdapter } = batonModule;
 const factoryAvailable = typeof batonModule.openBaton === 'function';
 
 function repository(name) {
-  const root = mkdtempSync(join(tmpdir(), `baton-phase78-${name}-`));
+  const root = mintFixtureDirectory(join(tmpdir(), `baton-phase78-${name}-`));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'phase78@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Phase 78'], { cwd: root });
@@ -86,7 +102,7 @@ function advanced(name, selectedRoutes = routes) {
     adapters[key] = exactAdapter(route.harness, route.model, [route.effort]);
   }
   return {
-    deploymentRoot: mkdtempSync(join(tmpdir(), `baton-phase78-${name}-deployment-`)),
+    deploymentRoot: mintFixtureDirectory(join(tmpdir(), `baton-phase78-${name}-deployment-`)),
     adapters,
     routes: selectedRoutes,
     verification: { command: 'node', arguments: ['--test'] },
@@ -488,7 +504,7 @@ test('DF10: default route inventory retains configured Claude routes for explici
   const repo = repository('isolated-home-inventory');
   writeFileSync(join(repo, 'glm_key.json'), '{"glm_key":"phase78-fixture-key"}\n');
   chmodSync(join(repo, 'glm_key.json'), 0o600);
-  const isolatedHome = mkdtempSync(join(tmpdir(), 'baton-phase78-isolated-home-'));
+  const isolatedHome = mintFixtureDirectory(join(tmpdir(), 'baton-phase78-isolated-home-'));
   const closedEnvironment = batonModule.defaultVerificationRuntime().environment;
   assert.equal(Object.hasOwn(closedEnvironment, 'HOME'), false);
   const moduleHref = new URL('../src/index.mjs', import.meta.url).href;
@@ -531,7 +547,7 @@ test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi ro
   skip: !factoryAvailable,
 }, () => {
   const repo = repository('tombstoned-kimi-inventory');
-  const isolatedHome = mkdtempSync(join(tmpdir(), 'baton-phase90-tombstoned-kimi-home-'));
+  const isolatedHome = mintFixtureDirectory(join(tmpdir(), 'baton-phase90-tombstoned-kimi-home-'));
   mkdirSync(join(isolatedHome, '.codex'), { recursive: true });
   writeFileSync(join(isolatedHome, '.codex', 'auth.json'), '{}\n', { mode: 0o600 });
   mkdirSync(join(isolatedHome, '.kimi-code', 'credentials'), { recursive: true });

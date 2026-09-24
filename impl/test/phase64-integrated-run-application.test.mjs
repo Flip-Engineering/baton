@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -12,7 +14,21 @@ import {
 } from '../src/index.mjs';
 import { applicationCardCommands } from '../scripts/surface-truth.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase64-${name}-`));
 const canonical = (value) => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object'
     ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
