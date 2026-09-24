@@ -1744,6 +1744,25 @@ export function parseRoutingExcludeHarnesses(value) {
   return harnesses;
 }
 
+/** Issues #549/#574: the config-less serve's declaration of the per-harness model allow rule —
+ * `BATON_ROUTING_ALLOWED_MODELS=codex=gpt-6-*,kimi=k3` (comma-separated `harness=pattern` pairs,
+ * `*` the wildcard). `undefined` when unset or blank; a pair without `=` refuses. The serve leg
+ * feeds the answer to the open as `advanced.routing.allowedModels`. */
+export function parseRoutingAllowedModels(value) {
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  const rules = {};
+  for (const pair of value.split(',')) {
+    const separator = pair.indexOf('=');
+    const harness = separator === -1 ? '' : pair.slice(0, separator).trim().toLowerCase();
+    const pattern = separator === -1 ? '' : pair.slice(separator + 1).trim();
+    if (harness.length === 0 || pattern.length === 0) {
+      throw new Error('BATON_ROUTING_ALLOWED_MODELS pairs must be harness=model-pattern — declare comma-separated pairs, or unset it');
+    }
+    (rules[harness] ??= []).push(pattern);
+  }
+  return rules;
+}
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -1763,13 +1782,18 @@ export class SwarmRuntime {
     // harnesses no seat may be routed onto (recruit selection, the `recruitable` flag, and the
     // re-route candidate derivation all read the ONE predicate). Null entries are normalized
     // case-insensitively; the deployment owns the declaration, never an inference.
-    integration = null, routingExcludedHarnesses = [] }) {
+    integration = null, routingExcludedHarnesses = [], routingAllowedModels = {} }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
       integration,
     });
     this._excludedHarnesses = new Set((Array.isArray(routingExcludedHarnesses) ? routingExcludedHarnesses : [])
       .map((harness) => String(harness).toLowerCase()));
+    // Issue #549: the per-harness model allow rule — for a harness the map names, a route's model
+    // must match at least one pattern (`*` the wildcard) to be eligible; harnesses the map does
+    // not name are unconstrained.
+    this._allowedModels = new Map(Object.entries(routingAllowedModels ?? {})
+      .map(([harness, patterns]) => [String(harness).toLowerCase(), Array.isArray(patterns) ? patterns : []]));
     // #297: the host-wide capacity authority recruits admit through (null = admission is not
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
@@ -2959,14 +2983,29 @@ export class SwarmRuntime {
     return typeof harness === 'string' && this._excludedHarnesses.has(harness.toLowerCase());
   }
 
+  /** Issue #549: whether the row's model satisfies the harness's declared allow rule — for a
+   * harness the rule names, the model must match at least one pattern (`*` the wildcard,
+   * case-insensitive); harnesses the rule does not name are unconstrained. */
+  _modelAllowed(row) {
+    const harness = row?.route?.harness;
+    const model = row?.route?.model;
+    if (typeof harness !== 'string' || typeof model !== 'string') return true;
+    const patterns = this._allowedModels.get(harness.toLowerCase());
+    if (!patterns || patterns.length === 0) return true;
+    return patterns.some((pattern) => new RegExp(
+      `^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'iu',
+    ).test(model));
+  }
+
   /** Whether a usage row names a route a recruit could be admitted on right now: ready, not
-   * exhausted on the quota axis, not degraded by its provider, and not on a harness the operator
-   * excluded. A blocked row is never chosen — its `code` says who refused it — and a degraded one
-   * is the route #316 keeps recruits off until a probe succeeds. */
+   * exhausted on the quota axis, not degraded by its provider, not on a harness the operator
+   * excluded, and matching the harness's model allow rule where one is declared. A blocked row is
+   * never chosen — its `code` says who refused it — and a degraded one is the route #316 keeps
+   * recruits off until a probe succeeds. */
   _routeEligible(row) {
     return row?.state !== 'blocked' && row?.state !== 'degraded'
       && row?.degraded == null && row?.quota?.state !== 'exhausted'
-      && !this._harnessExcluded(row);
+      && !this._harnessExcluded(row) && this._modelAllowed(row);
   }
 
   /** #316 (a): the degrade episode a recruit's own selection lands on, or null when none of the
@@ -3018,6 +3057,7 @@ export class SwarmRuntime {
     if (considered.some((row) => this._routeEligible(row))) return null;
     const representative = considered[0];
     const reason = this._harnessExcluded(representative) ? 'excluded_by_operator'
+      : !this._modelAllowed(representative) ? 'model_not_allowed'
       : representative?.quota?.state === 'exhausted' ? 'quota_exhausted'
       : representative?.state === 'blocked' ? 'blocked' : 'ineligible';
     return Object.freeze({
@@ -3258,11 +3298,13 @@ export class SwarmRuntime {
         state: row.state ?? null, resetAt: row.resetAt ?? null,
         profile: row.profile ?? null,
       });
-      // An operator-excluded harness is NAMED in the excluded rows (with its own reason) rather
-      // than dropped in silence: the decision's audit trail shows the rule that kept the route
-      // out, not just the route that is missing (#574).
+      // Operator rules are NAMED in the excluded rows (with their own reasons) rather than
+      // dropped in silence: the decision's audit trail shows the rule that kept the route out,
+      // not just the route that is missing (#574 the harness exclusion, #549 the model allow).
       if (this._harnessExcluded(row) && !routeEquals(row.route, from)) {
         excluded.push(shape('excluded_by_operator'));
+      } else if (!this._modelAllowed(row) && !routeEquals(row.route, from)) {
+        excluded.push(shape('model_not_allowed'));
       } else if (this._routeEligible(row)) {
         eligible.push({ row, shape: shape(billing === 'subscription' ? 'subscription_headroom' : 'api_fallback') });
       } else if (this._routeWindowClosed(row) && !routeEquals(row.route, from)) {
@@ -6656,13 +6698,15 @@ export class SwarmRuntime {
       if (exhaustion) {
         const ready = this._readyRouteLabels();
         const excluded = exhaustion.reason === 'excluded_by_operator';
+        const modelRefused = exhaustion.reason === 'model_not_allowed';
         refuse(
           `route ${this._routeLabel(exhaustion.route)} is ${excluded ? 'excluded by the operator\'s routing rule' : exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
           + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
-          + (excluded ? ': the routing rule governs the deferred start, so it cannot be admitted'
+          + (modelRefused ? ': the harness\'s allowed-model rule governs the deferred start, so it cannot be admitted'
+            : excluded ? ': the routing rule governs the deferred start, so it cannot be admitted'
             : ': every route the selection names is ineligible, so the deferred start cannot be admitted')
           + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
-          excluded ? 'route_excluded' : 'route_exhausted',
+          modelRefused ? 'route_model_not_allowed' : excluded ? 'route_excluded' : 'route_exhausted',
           {
             route: exhaustion.route, reason: exhaustion.reason,
             code: exhaustion.code, resetAt: exhaustion.resetAt,
@@ -8522,13 +8566,15 @@ export class SwarmRuntime {
         if (exhaustion) {
           const ready = this._readyRouteLabels();
           const excluded = exhaustion.reason === 'excluded_by_operator';
+          const modelRefused = exhaustion.reason === 'model_not_allowed';
           refuse(
             `route ${this._routeLabel(exhaustion.route)} is ${excluded ? 'excluded by the operator\'s routing rule' : exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
             + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
-            + (excluded ? ': the routing rule governs recruits, so the recruit cannot be admitted onto it'
+            + (modelRefused ? ': the harness\'s allowed-model rule governs recruits, so the recruit cannot be admitted onto it'
+              : excluded ? ': the routing rule governs recruits, so the recruit cannot be admitted onto it'
               : ': every route the selection names is ineligible, so the recruit cannot be admitted')
             + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
-            excluded ? 'route_excluded' : 'route_exhausted',
+            modelRefused ? 'route_model_not_allowed' : excluded ? 'route_excluded' : 'route_exhausted',
             {
               route: exhaustion.route, reason: exhaustion.reason,
               code: exhaustion.code, resetAt: exhaustion.resetAt,

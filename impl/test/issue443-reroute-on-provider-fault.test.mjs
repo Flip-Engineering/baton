@@ -31,7 +31,7 @@ import { join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { PROVIDER_FAULT_CODES } from '../src/provider-faults.mjs';
-import { parseRoutingExcludeHarnesses, SwarmRuntime } from '../src/swarm-runtime.mjs';
+import { parseRoutingAllowedModels, parseRoutingExcludeHarnesses, SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { SWARM_EVENT_KINDS, foldSwarmEvent, swarmSnapshot } from '../src/swarm-state.mjs';
 import { deriveWakeFrame, parseWakeFilter, wakeClassFor, wakeMatches } from '../src/wake-stream.mjs';
 
@@ -96,6 +96,8 @@ const openApiRow = () => usageRow(OPEN_API, { billing: 'api', turns: 1, intellig
 // FIRST among the ready candidates, and the operator rule that no seat may be routed onto it.
 const CODEX = Object.freeze({ harness: 'codex', model: 'gpt-6-astra', effort: 'high' });
 const codexRow = () => usageRow(CODEX, { billing: 'subscription', turns: 1, intelligence: 60 });
+const GPT56 = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
+const gpt56Row = () => usageRow(GPT56, { billing: 'subscription', turns: 1, intelligence: 70 });
 const quotaExhaustedRow = () => usageRow(OPEN_API, {
   code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT,
 });
@@ -112,7 +114,7 @@ function deathRow(workerId, seq) {
 /** ONE swarm runtime over a real store, with a coordinator that answers the two facts the
  * deployment's own seams publish: the provider-fault death of a bound worker, and the checkout a
  * seat is attached to. */
-function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [] }) {
+function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [], routingAllowedModels = {} }) {
   const dir = mkdtempSync(join(tmpdir(), `baton-issue443-${tag}-`));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, 'repo');
@@ -136,7 +138,7 @@ function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [] }) {
     store, coordinator, authorize: async () => {},
     deploymentSummary: () => ({ workspace: null, hostCapacity: null, served: null, routeUsage: rows }),
     situationGit: { repoRoot: repo, head: () => null, commitsSince: () => [] },
-    routingExcludedHarnesses,
+    routingExcludedHarnesses, routingAllowedModels,
     prepareRun: async (request) => ({ ...request, route: request.options?.exact ?? null }),
     startRun: async (request) => {
       starts.push(request);
@@ -158,8 +160,8 @@ function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [] }) {
 
 /** One swarm holding a faulted seat: `base` holds the checkout, `alpha` works in it (the same
  * physical workspace), and alpha's provider then kills its worker. */
-async function faultedSwarm(t, { rows, policy = null, tag = 'w', routingExcludedHarnesses } = {}) {
-  const w = world(t, { rows, label: tag, routingExcludedHarnesses });
+async function faultedSwarm(t, { rows, policy = null, tag = 'w', routingExcludedHarnesses, routingAllowedModels } = {}) {
+  const w = world(t, { rows, label: tag, routingExcludedHarnesses, routingAllowedModels });
   await w.call('create', { swarmId: SWARM, purpose: 'Re-route after a provider fault' });
   // The policy is declared the ONE way a swarm-level policy is declared (#443): a policy row on
   // the swarm, before any death.
@@ -374,6 +376,55 @@ test('443-a5: the config-less serve declares the rule from the environment, vali
     /names no harness between commas/u, 'an empty comma slot refuses instead of excluding nothing');
   assert.throws(() => parseRoutingExcludeHarnesses(','),
     /names no harness between commas/u);
+});
+
+test('443-a6: the model allow rule keeps gpt-5.6 off codex — refused on recruit, never picked by reroute (#549)', async (t) => {
+  // The 2026-09-24 operator rule, refined: codex seats are allowed again, but ONLY the gpt-6
+  // series. The declared allow pattern removes the gpt-5.6 routes from the derivation before
+  // ranking, names them in the excluded rows, and an exact recruit onto one refuses by name.
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), codexRow(), gpt56Row(), openSubscriptionRow()],
+    tag: 'a6', routingAllowedModels: { codex: ['gpt-6-*'] },
+  });
+  // The entry that observes the fault records the proposal; the next one performs the resume.
+  const view = await w.call('view', { swarmId: SWARM });
+  assert.equal(view.policy.rerouteOnProviderFault, 'auto', 'no policy declared: the default is auto (#574)');
+  const proposal = rowsOf(w.store, 'swarm.reroute_proposed')[0].payload;
+  assert.deepEqual(proposal.candidates.map((row) => label(row)),
+    [label(CODEX), label(OPEN_SUBSCRIPTION)],
+    'the allowed gpt-6 candidate ranks first; the gpt-5.6 route is never a candidate');
+  const gpt56Excluded = proposal.excluded.find((row) => label(row) === label(GPT56));
+  assert.ok(gpt56Excluded, 'the disallowed model is named, never dropped in silence');
+  assert.equal(gpt56Excluded.reason, 'model_not_allowed', 'the row names the allow rule that kept it out');
+
+  const rerouted = rowsOf(w.store, 'swarm.rerouted');
+  assert.equal(rerouted.length, 1, 'the runtime performed the resume under the default auto posture');
+  const successor = w.store.swarm(SWARM).participants[rerouted[0].payload.successor];
+  assert.deepEqual({ ...successor.route }, { ...CODEX },
+    'the gpt-6 codex route is admitted — the rule bans gpt-5.6, not codex itself');
+
+  await assert.rejects(
+    w.call('recruit', { swarmId: SWARM, participantId: 'beta', objective: 'work',
+      options: { exact: { ...GPT56 } } }),
+    (error) => {
+      assert.equal(error.code, 'route_model_not_allowed');
+      assert.equal(error.detail?.reason, 'model_not_allowed');
+      return true;
+    },
+    'the exact recruit onto the disallowed model refuses by its own named refusal',
+  );
+});
+
+test('443-a7: the config-less serve declares the model allow rule from the environment', async (t) => {
+  assert.equal(parseRoutingAllowedModels(undefined), undefined);
+  assert.equal(parseRoutingAllowedModels(''), undefined);
+  assert.deepEqual(parseRoutingAllowedModels('codex=gpt-6-*'), { codex: ['gpt-6-*'] });
+  assert.deepEqual(parseRoutingAllowedModels(' codex = gpt-6-* , kimi=k3 '), { codex: ['gpt-6-*'], kimi: ['k3'] },
+    'pairs are trimmed and repeated harnesses accumulate their patterns');
+  assert.throws(() => parseRoutingAllowedModels('nonsense'),
+    /harness=model-pattern/u, 'a pair without the separator refuses');
+  assert.throws(() => parseRoutingAllowedModels('codex='),
+    /harness=model-pattern/u, 'an empty pattern refuses');
 });
 
 // ── (b) the policy, and the auto resume through the same recruit path ───────────────────────────

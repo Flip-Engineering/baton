@@ -2331,6 +2331,9 @@ export class BatonApplication {
       // onto. The reroute candidate derivation, the recruit selection and the `recruitable` flag
       // all read it through the ONE eligibility predicate.
       routingExcludedHarnesses: this.driver.routingExcludedHarnesses ?? [],
+      // Issue #549: the per-harness model allow rule — the same predicate reads it, so a model
+      // the rule does not admit is refused on recruit and never picked by a reroute.
+      routingAllowedModels: this.driver.routingAllowedModels ?? {},
       deploymentSummary: this.deploymentSummary,
       authorize: (command, args, principal) => this._authorize(command, principal, null, {
         swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,

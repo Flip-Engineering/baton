@@ -100,7 +100,7 @@ export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'commen
 // the exclusion reason is the one way a route leaves the decision without being a candidate.
 export const SWARM_REROUTE_MODES = Object.freeze(['manual', 'auto']);
 export const SWARM_REROUTE_CANDIDATE_REASONS = Object.freeze(['subscription_headroom', 'api_fallback']);
-export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed', 'excluded_by_operator']);
+export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed', 'excluded_by_operator', 'model_not_allowed']);
 /** The billing bases a route's own profile publishes (#429): `api` pays per token, `subscription`
  * is a flat plan. A route whose deployment publishes no measured profile carries none — absence is
  * never a guessed basis. */

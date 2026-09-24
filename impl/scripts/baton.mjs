@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { SwarmRuntime, lastCrashOf, parseRoutingExcludeHarnesses } from '../src/swarm-runtime.mjs';
+import { SwarmRuntime, lastCrashOf, parseRoutingAllowedModels, parseRoutingExcludeHarnesses } from '../src/swarm-runtime.mjs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -325,15 +325,21 @@ async function serveCheckout() {
   // config-less serve — BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok — validated and handed to the
   // open as advanced.routing.excludeHarnesses, the rule the recruit and the reroute both honour.
   let excludeHarnesses;
+  let allowedModels;
   try {
     excludeHarnesses = parseRoutingExcludeHarnesses(process.env.BATON_ROUTING_EXCLUDE_HARNESSES);
+    allowedModels = parseRoutingAllowedModels(process.env.BATON_ROUTING_ALLOWED_MODELS);
   } catch (error) {
     throw Object.assign(new Error(error.message), { code: 'application_config_invalid' });
   }
   try {
+    const routing = {
+      ...(excludeHarnesses === undefined ? {} : { excludeHarnesses }),
+      ...(allowedModels === undefined ? {} : { allowedModels }),
+    };
     const advanced = {
       ...(publishRemote === undefined ? {} : { integration: { publishRemote } }),
-      ...(excludeHarnesses === undefined ? {} : { routing: { excludeHarnesses } }),
+      ...(Object.keys(routing).length > 0 ? { routing } : {}),
     };
     deployment = await openBaton({
       repo: process.cwd(),
