@@ -1,12 +1,10 @@
 # CLAIM: at pin bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868 with bend 2.0.25, a pure
 # Bend2 decision model reads the same case file the reference half reads and answers the required
-# logical behaviour of every event-vocabulary case: the frozen sixteen-row trace folds whole and
+# logical behaviour of every event-vocabulary case: the frozen thirty-row trace folds whole and
 # lands each row in its own collection, a kind no vocabulary admits refuses decode at its own row
 # and retains the prefix before it, a payload missing a required field refuses decode the same way,
 # a runtime-composed row the contract set excludes still folds, and folding the same trace twice
 # yields one projection. It models the decision; it opens no ledger and writes no file.
-#
-# Evidence: arch-replay-vocabulary.evidence.md (exact commands and observed output).
 
 import Base
 
@@ -91,11 +89,15 @@ def row13(tag: Tag) -> Row:
     case Missing{}:
       Row{Po{}, True{}}
 
-# The frozen sixteen-row composition in ledger order (arch-replay-vocabulary.ledger.jsonl). Rows
+# The frozen thirty-row composition in ledger order (arch-replay-vocabulary.ledger.jsonl). Rows
 # 1-3 are the runtime seeds the contract set excludes; the proposal row arrives its plan, so the
-# work and claim counts grow by it; the handoff and the release rewrite their rows in place.
-# `Driver` replaces the policy row with the runtime-composed bypass row: no collection count
-# changes, the policy stays unset, and the row leaves the caller set.
+# work and claim counts grow by it; the handoff and the release rewrite their rows in place. Rows
+# 16-28 are the runtime-composed kinds the contract set excludes: each annotates a row an earlier
+# kind created, so the only collection that grows is the participant row the successor's join adds
+# at row 24. A policy row sets the swarm's policy, it never stacks — the two policy rows (13 and
+# 21) count one policy. Row 29 is the caller-submittable leave: the seat's row stays, only its
+# group membership goes. `Driver` replaces the first policy row with the runtime-composed bypass
+# row; the second policy row keeps the swarm's policy declared.
 def composition(tag: Tag) -> +List<Row>:
   Row{NoneC{}, False{}} <>
   Row{Pa{}, False{}} <>
@@ -111,6 +113,20 @@ def composition(tag: Tag) -> +List<Row>:
   Row{Rv{}, True{}} <>
   row13(tag) <>
   Row{NoneC{}, True{}} <>
+  Row{NoneC{}, True{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{Po{}, True{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{Pa{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
+  Row{NoneC{}, False{}} <>
   Row{NoneC{}, True{}} <>
   Row{NoneC{}, True{}} <>
   []
@@ -138,6 +154,8 @@ def succ(n: Nat) -> Nat:
   1n+n
 
 
+# Collection counts over a retained prefix. A policy row SETS the swarm's policy, so the Po arm
+# writes 1n whatever earlier policy rows did; every other arm adds one key to its collection.
 def counts(rows: +List<Row>, pa: Nat, gr: Nat, wo: Nat, cl: Nat, asn: Nat, pr: Nat, cx: Nat, co: Nat, rv: Nat, cp: Nat, po: Nat) -> (Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat & Nat):
   match rows:
     case Nil{}:
@@ -167,7 +185,7 @@ def counts(rows: +List<Row>, pa: Nat, gr: Nat, wo: Nat, cl: Nat, asn: Nat, pr: N
         case Row{Cp{}, q}:
           counts(t, pa, gr, wo, cl, asn, pr, cx, co, rv, 1n+cp, po)
         case Row{Po{}, q}:
-          counts(t, pa, gr, wo, cl, asn, pr, cx, co, rv, cp, 1n+po)
+          counts(t, pa, gr, wo, cl, asn, pr, cx, co, rv, cp, 1n)
 
 def count_caller(rows: +List<Row>) -> Nat:
   match rows:
@@ -183,6 +201,7 @@ def count_caller(rows: +List<Row>) -> Nat:
               count_caller(t)
 
 # The word for a collection count. The frozen composition bounds every count by two.
+# The word for a count the cases reach: rows and admitted reach 30, caller_rows reach 15 and 14.
 def num(n: Nat) -> String:
   match n:
     case 0n:
@@ -197,24 +216,26 @@ def num(n: Nat) -> String:
       "10"
     case 11n:
       "11"
-    case 12n:
-      "12"
-    case 13n:
-      "13"
-    case 16n:
-      "16"
+    case 14n:
+      "14"
+    case 15n:
+      "15"
+    case 30n:
+      "30"
     case rest:
       "?"
 
+# A word for a collection count. The frozen composition bounds every count by three.
 def word(n: Nat) -> String:
   match n:
     case 0n:
       "0"
     case 1n:
       "1"
+    case 3n:
+      "3"
     case rest:
       "2"
-
 # A kind no vocabulary admits refuses decode at its own row: the replay retains the prefix before
 # it. A payload missing a required field refuses decode the same way at row 11. The frozen trace
 # and the driver case fold whole.
@@ -225,10 +246,9 @@ def admitted(tag: Tag) -> Nat:
     case Missing{}:
       10n
     case Full{}:
-      16n
+      30n
     case Driver{}:
-      16n
-
+      30n
 def decode_stop(tag: Tag) -> Nat:
   match tag:
     case Forged{}:
@@ -281,7 +301,7 @@ def rerun_word(replays: String) -> String:
 def line(name: String, +tag: Tag, rer: String) -> String:
   String.concat([
     "RESULT|", name,
-    "|rows=16", "|admitted=", num(admitted(tag)),
+    "|rows=30", "|admitted=", num(admitted(tag)),
     "|decode_stop=", num(decode_stop(tag)),
     "|decode_code=", decode_code(tag),
     "|fold_stop=0", "|fold_code=none",
