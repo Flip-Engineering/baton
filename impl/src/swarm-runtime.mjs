@@ -7,6 +7,7 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   swarmEncodedReportBody } from './swarm-contract.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
+import { routeQuotaScope } from './provider-faults.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   contributionContractConflict,
@@ -109,6 +110,24 @@ function boundedStderrTail(raw) {
   return crashedStderrTail(session);
 }
 
+/** The per-file rows a gate run STREAMED before it died (#546, option a): each "# file <path>
+ * (N ms)" block the runner printed is a real result — pass/fail counts and all — so an
+ * interrupted run names what it judged beside what its death left unreported, instead of
+ * leaving the landing a blank timeout with verdictLine null. */
+function partialFilesJudged(stream) {
+  const marks = [...stream.matchAll(/# file (\S+) \((\d+) ms[^)]*\)/g)];
+  return marks.map((mark, index) => {
+    const from = mark.index + mark[0].length;
+    const to = index + 1 < marks.length ? marks[index + 1].index : stream.length;
+    const block = stream.slice(from, to);
+    return {
+      file: mark[1],
+      pass: Number((block.match(/# pass (\d+)/) ?? [])[1] ?? 0),
+      fail: Number((block.match(/# fail (\d+)/) ?? [])[1] ?? 0),
+    };
+  });
+}
+
 /** The default regenerators: the three the repository always runs, each told to WRITE.
  *
  * Issue #459: each one is an out-of-process child of the resident's supervised pool — never a
@@ -166,13 +185,28 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       // same bounded, redacted derivation the regenerator refusal carries (issue #451). No
       // resident-side wall clock arms on this child (#546): a landing waits for the runner's
       // verdict — its own per-file progress deadline is the judged liveness law that guarantees
-      // one arrives — so an unjudged gate run can only mean the runner exited without verdict.
+      // one arrives — so an unjudged run is either a clean exit without a verdict file
+      // (suite-did-not-judge) or a runner that lost its process mid-flight; the latter reports
+      // a NAMED PARTIAL verdict (root decision on #546, option a): the per-file rows the runner
+      // streamed before it died are real results, so the record names them and the files its
+      // death left unreported, with a partial verdictLine — never suite-timed-out with
+      // verdictLine null.
+      const interrupted = result.signal !== null && result.signal !== undefined;
+      const filesJudged = interrupted ? partialFilesJudged(`${result.stdout}\n${result.stderr}`) : [];
+      const reported = new Set(filesJudged.map((row) => row.file));
       return {
         files,
-        verdictLine: null,
+        verdictLine: interrupted
+          ? `partial — interrupted by ${result.signal}; ${filesJudged.length} of ${files.length} file(s) reported before the run died`
+          : null,
         unexpected: [{
-          row: 'suite-did-not-judge',
+          row: interrupted ? 'gate-run-interrupted' : 'suite-did-not-judge',
           script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
+          ...(interrupted ? {
+            signal: result.signal,
+            filesJudged,
+            filesUnreported: files.filter((file) => !reported.has(file)),
+          } : {}),
           stderrTail,
         }],
         stderrTail, exit,
@@ -316,6 +350,10 @@ function foldGuidanceRows(events) {
         state: payload.kind === 'swarm.guidance_parked'
           ? (cleared === null ? 'parked' : 'delivered')
           : payload.delivery?.state ?? 'delivered',
+        // #557: the durable row records whether this park can ever clear; the fold CARRIES that
+        // fact rather than recomputing it, so the receipt, this row and a seat brief all derive
+        // it from the one place it is written.
+        ...(payload.delivery?.terminal === true ? { terminal: true } : {}),
         lane: payload.delivery?.lane ?? null,
         reason: payload.delivery?.reason ?? payload.reason ?? null,
         deliveredTo: cleared?.payload?.deliveredTo ?? null,
@@ -488,7 +526,7 @@ const ROUTE_PROBE_DEADLINE_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 
 /** The route identity the probe rows are keyed by — the exact coordinates, JSON-spelled, so no
  * label spelling can make two routes collide. */
-const routeProbeRouteKey = (route) => JSON.stringify([route.harness, route.model, route.effort]);
+const routeProbeScopeKey = (route) => routeQuotaScope(route) ?? JSON.stringify([route.harness, route.model, route.effort]);
 
 /** #475: the episode one degrade row is a fact about — the instant it clears (the provider's own
  * reset, else the probe instant its fault's window derived), or the instant it OPENED when it
@@ -513,7 +551,7 @@ const routeProbeEpisodeAt = (degrade) => {
  * dead seat hold the window forever. Keyed, the fact survives a runtime restart: the next recruit
  * reads it and refuses. */
 const routeProbeAdmissionKey = (route, episodeAt, attempt = 1) => {
-  const base = `route.probe_admitted:${hash([routeProbeRouteKey(route), episodeAt])}`;
+  const base = `route.probe_admitted:${hash([routeProbeScopeKey(route), episodeAt])}`;
   return attempt === 1 ? base : `${base}:${attempt}`;
 };
 
@@ -836,6 +874,49 @@ const boundedCarryText = (value) => {
   const text = typeof value === 'string' ? value : '';
   return text.length <= CARRY_REASON_BYTES ? text : text.slice(-CARRY_REASON_BYTES);
 };
+// Issue #564: the ADDRESS form a needsFromOthers item must open with to wake the root — the item
+// hands work TO the root ("the root: restart the resident", "root: land the queue"); prose that
+// merely contains the word ("root cause: …", "the root of the issue …") is not addressed to it.
+const ROOT_ADDRESSED_NEED = /^(?:the\s+)?root\s*:/i;
+
+/** Issue #564: the root-addressed wake rows one recorded contribution owes, derived from what is
+ * present — the contribution's own body and the swarm fold's participant rows — and nothing else.
+ * No state is kept: each row is a pure function of its trigger, so a replay re-derives the same
+ * rows under the same idempotency keys and the ledger holds each trigger once. At most one
+ * `review_owed` row — no OTHER active seat holds the review permission at that moment (the
+ * author's own permission never reviews its own work) — and one `needs_root` row per addressed
+ * item, its ask bounded by the ONE role-head bound every rendered row rides. The trigger rides
+ * `owed`, never `kind` (the name the reporting half reads): the ledger's driver container records `{kind, ...payload}`
+ * (coordination-ledger.mjs recordDriver), so a payload field named `kind` would overwrite the
+ * row's own operational identity and the row would never wake its class. */
+function rootAttentionRowPayloads(swarm, contribution) {
+  const authorId = contribution?.participantId ?? null;
+  const reviewHeld = Object.values(swarm?.participants ?? {}).some((seat) => seat?.status === 'active'
+    && seat?.participantId !== authorId
+    && Array.isArray(seat?.permissions) && seat.permissions.includes('review'));
+  const rows = [];
+  if (!reviewHeld) {
+    rows.push({
+      swarmId: swarm.swarmId, participantId: authorId, contributionId: contribution.contributionId,
+      owed: 'review_owed', ask: null,
+      next: { command: 'swarm.check', swarmId: swarm.swarmId, participantId: authorId,
+        contributionId: contribution.contributionId },
+    });
+  }
+  const body = contribution?.body ?? null;
+  const needs = body !== null && typeof body === 'object' && !Array.isArray(body)
+    && Array.isArray(body.needsFromOthers) ? body.needsFromOthers : [];
+  for (const item of needs) {
+    if (typeof item !== 'string' || !ROOT_ADDRESSED_NEED.test(item)) continue;
+    rows.push({
+      swarmId: swarm.swarmId, participantId: authorId, contributionId: contribution.contributionId,
+      owed: 'needs_root', ask: sliceUtf8(item, FRAME_LIMITS['view.role.head'].value),
+      next: { command: 'swarm.view', swarmId: swarm.swarmId },
+    });
+  }
+  return rows;
+}
+
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
@@ -909,6 +990,25 @@ const targetFactsOf = (repoRoot, memo) => {
   const facts = Object.freeze({ targetRef, targetCommit: gitRead(['rev-parse', targetRef], repoRoot) });
   if (memo) memo.set(repoRoot, facts);
   return facts;
+};
+/** The integrate verb's ONE omitted-target derivation, over `targetRefOf`'s answer: the branch
+ * when the checkout has one; on a DETACHED checkout — where `targetRefOf` can only answer the
+ * literal 'HEAD', which names no branch — the local branch whose tip is the checkout's own commit.
+ * No branch, or several, name that commit: the derivation cannot pick, so it refuses
+ * `integrate_target_undetermined`, naming the detached checkout and its candidates, and the caller
+ * names the target. The #438 view facts read `targetRefOf` itself and never move with this. */
+const landingTargetOf = (repoRoot) => {
+  const branch = targetRefOf(repoRoot);
+  if (branch !== 'HEAD') return branch;
+  const head = gitRead(['rev-parse', 'HEAD'], repoRoot);
+  if (head === null) return 'HEAD';
+  const named = gitRead(
+    ['for-each-ref', '--format=%(refname:short)', '--points-at', head, 'refs/heads'], repoRoot);
+  const candidates = named === null ? [] : named.split('\n');
+  if (candidates.length === 1) return candidates[0];
+  refuse(`the deployment's checkout is detached at ${head} and no single local branch names that`
+    + ' commit — pass the landing target explicitly', 'integrate_target_undetermined',
+  { repoRoot, head, candidates, rule: 'one-branch-at-detached-head' });
 };
 /** A participant's base, derived from the repository at read time (issue #301): the commit its
  * checkout shows, the deployment target that checkout is measured against, and how many target
@@ -1630,6 +1730,8 @@ export class SwarmRuntime {
     // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
     // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
     // `swarm_command_unavailable` rather than pretending.
+    // Issue #558: `publishRemote` rides the same authority — the deployment's DECLARED shared
+    // remote, null when it declares none (a real landing then refuses instead of staying local).
     integration = null }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
@@ -1845,6 +1947,16 @@ export class SwarmRuntime {
         }
         changed = true;
       }
+      // Issue #564: reconcile, never only derive at the departure write. The per-seat loop above
+      // skips seats this pass already settled (an earlier pass wrote their fault row), so a
+      // reviewer-loss append that faulted in that earlier pass would otherwise never be repaired.
+      // Every pass therefore re-derives the swarm's owed rows from the fresh fold under the same
+      // deterministic keys — the guard inside makes a healthy pass a fold read, and the repair
+      // lands on the first observation after the fault. Best-effort: an observation is a read;
+      // a faulting append leaves the rows to the next pass rather than failing the caller.
+      try {
+        this._reconcileReviewerLossRows(this.store.swarm(swarm.swarmId), 'baton-runtime');
+      } catch { /* the next observation re-derives under the same keys */ }
     }
     if (changed) this._reconcileHostCapacity();
   }
@@ -2302,6 +2414,46 @@ export class SwarmRuntime {
     return this._mutationResult('swarm.update', args, [write], principal, context,
       { kind: 'note', participantId: payload.participantId });
   }
+  /** Issue #564: record already-derived root-addressed wake rows, one driver row per trigger
+   * under a deterministic idempotency key — the replay-safety the stateless derivation needs: a
+   * replayed write (or a re-derivation after an append fault) skips what already landed and
+   * records exactly the rows still missing. Returns the writes the caller folds into the
+   * mutation receipt. */
+  _recordRootAttentionRows(swarm, rows, actor) {
+    return rows.map((row) => {
+      const event = this.store.recordDriver('swarm.root_attention_owed', row,
+        { actor,
+          key: `swarm-root-attention:${hash([row.swarmId, row.contributionId, row.owed, row.ask ?? null])}` }).event;
+      return { kind: 'driver.recorded', payload: event.payload,
+        seq: event.seq, ts: event.ts, actor: event.actor };
+    });
+  }
+
+  /** Issue #564: RECONCILE the swarm's reviewer-loss rows — not a fire-once-per-departure hook.
+   * Every path that can observe the state (the stop effect, a participant_left update, the
+   * provider-fault observation) runs this: a contribution still unreviewed (no settling review —
+   * the same reads the contribution ledger applies) with no remaining active reviewer other than
+   * its own author is re-addressed to the root, and the deterministic keys make a re-run the
+   * REPAIR of a faulted earlier attempt — the missing rows land, the landed ones replay as
+   * no-ops — so a departure whose owed append faulted is never lost forever just because its
+   * departure row already exists. The cheap guard first: nothing unreviewed, or a remaining
+   * reviewer for every unreviewed contribution, reads no further and writes nothing.
+   * needsFromOthers needs are not reconciled here: their trigger is the contribution's own
+   * recording, not the roster. */
+  _reconcileReviewerLossRows(swarm, actor) {
+    const seats = Object.values(swarm.participants ?? {});
+    const unreviewed = Object.values(swarm.contributions ?? {})
+      .filter((contribution) => !(swarm.reviews?.[contribution.contributionId] ?? [])
+        .some((review) => review.decision !== 'comment'));
+    const owed = unreviewed.filter((contribution) => !seats.some((seat) => seat?.status === 'active'
+      && seat?.participantId !== contribution.participantId
+      && Array.isArray(seat?.permissions) && seat.permissions.includes('review')));
+    if (owed.length === 0) return [];
+    return this._recordRootAttentionRows(swarm,
+      owed.flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
+        .filter((row) => row.owed === 'review_owed'), actor);
+  }
+
 
   /** #373: the recruit mode one participant was started under, read from its durable join —
    * the join carries `mode` for a read_only seat, and a change recruit writes no field, so
@@ -2510,17 +2662,24 @@ export class SwarmRuntime {
    * runtime CLOSED (the probe's own turn answered it) is not a live degrade, so the row reads ready
    * with the quota axis back to `ok`. Exactly the episode is matched — the clearing names the
    * admission, the admission names the episode — so a route the provider faulted AGAIN (a new
-   * episode, a new probe instant) reads degraded until ITS probe answers. A row the deployment
-   * derives as `blocked` keeps its own verdict: a refusal of its own is not a probe's to clear. */
+   * episode, a new probe instant) reads degraded until ITS probe answers. #575: the answer speaks
+   * for the provider-fault blocks the row carries too (the quota axis included) — a probe that
+   * turned on the route is the fact a block whose provider named no instant was waiting for —
+   * while a block that names no provider fault (a static readiness refusal) keeps its own
+   * verdict. */
   _withRouteRecovery(row) {
     const degraded = row?.degraded ?? null;
-    if (degraded === null || row.state !== 'degraded') return row;
+    if (degraded === null) return row;
+    const providerFacted = row.state === 'degraded'
+      || row?.quota?.state === 'exhausted'
+      || (typeof row?.code === 'string' && row.code.startsWith('provider_'));
+    if (!providerFacted) return row;
     const route = swarmRouteShape(row.route ?? null);
     const episodeAt = routeProbeEpisodeAt(degraded);
     if (route === null || episodeAt === null) return row;
     if (!this._routeProbeEpisodeRecovered(route, episodeAt)) return row;
     return Object.freeze({
-      ...row, state: 'ready', resetAt: null, reason: null,
+      ...row, state: 'ready', resetAt: null, reason: null, code: null,
       quota: Object.freeze({ state: 'ok', resetAt: null }), degraded: null,
     });
   }
@@ -2529,9 +2688,9 @@ export class SwarmRuntime {
    * index the entry keeps (`_readRouteProbeLedger`), so a route read costs no ledger walk. */
   _routeProbeEpisodeRecovered(route, episodeAt) {
     this._readRouteProbeLedger();
-    const routeKey = routeProbeRouteKey(route);
+    const routeKey = routeProbeScopeKey(route);
     for (const [, recovery] of this._routeProbeLedger.recovered) {
-      if (recovery.episodeAt === episodeAt && routeProbeRouteKey(recovery.route) === routeKey) {
+      if (recovery.episodeAt === episodeAt && routeProbeScopeKey(recovery.route) === routeKey) {
         return true;
       }
     }
@@ -2590,7 +2749,7 @@ export class SwarmRuntime {
     // recruit that admitted it indexes it directly) is never counted twice by the next delta read —
     // which would mint a phantom second attempt for one probe.
     if (ledger.probesByKey.has(row.key)) return;
-    const routeKey = routeProbeRouteKey(row.route);
+    const routeKey = routeProbeScopeKey(row.route);
     const siblings = ledger.probes.get(routeKey) ?? [];
     const indexed = Object.freeze({
       ...row, attempt: siblings.filter((probe) => probe.episodeAt === row.episodeAt).length + 1,
@@ -2674,7 +2833,7 @@ export class SwarmRuntime {
 
   /** #475: the probes the ledger holds for one route's episode, oldest first. */
   _routeProbeAttempts(route, episodeAt) {
-    const rows = this._routeProbeLedger.probes.get(routeProbeRouteKey(route)) ?? [];
+    const rows = this._routeProbeLedger.probes.get(routeProbeScopeKey(route)) ?? [];
     return rows.filter((probe) => probe.episodeAt === episodeAt);
   }
 
@@ -2736,7 +2895,7 @@ export class SwarmRuntime {
    * the route failed on its own, and the new episode's own `resetAt` rides beside it. */
   _routeProbeFailure(route) {
     this._readRouteProbeLedger();
-    const attempts = this._routeProbeLedger.probes.get(routeProbeRouteKey(route)) ?? [];
+    const attempts = this._routeProbeLedger.probes.get(routeProbeScopeKey(route)) ?? [];
     const latest = attempts.at(-1) ?? null;
     if (latest === null) return null;
     const seat = this._probeSeatState(latest);
@@ -2919,16 +3078,25 @@ export class SwarmRuntime {
     this._readRouteProbeLedger();
     const ledger = this._routeProbeLedger;
     if (ledger.probesByKey.size === 0) return;
-    const retired = rows === null ? null
-      : new Map(rows.map((row) => [routeProbeRouteKey(row.route), row]));
+    // #545-A keys the probe lane by its account SCOPE, so several published routes share one key —
+    // and they can disagree: a sibling that reads ready while the probed row still carries the
+    // episode. The episode belongs to the scope, so ONE row reporting it keeps it open. A map that
+    // kept the last row would let a healthy sibling clear an episode nothing has answered, and the
+    // clearing it minted would then stand as the evidence of a turn that never ran.
+    const degradedScopes = rows === null ? null : new Map();
+    if (rows !== null) {
+      for (const row of rows) {
+        const key = routeProbeScopeKey(row.route);
+        degradedScopes.set(key, (degradedScopes.get(key) ?? false) || row.degraded != null);
+      }
+    }
     for (const [probeKey, probe] of ledger.probesByKey) {
       if (ledger.recovered.has(probeKey)) continue;
       const answer = this._probeAnswer(probe);
       if (answer !== null) { this._recordRouteRecovered(probe, answer); continue; }
-      if (retired === null) continue;
-      const row = retired.get(routeProbeRouteKey(probe.route)) ?? null;
-      // Still degraded (or the route table does not answer for it): nothing has been settled.
-      if (row === null || row.degraded != null) continue;
+      if (degradedScopes === null) continue;
+      // Still degraded, or the route table does not answer for the scope at all: nothing settled.
+      if (degradedScopes.get(routeProbeScopeKey(probe.route)) !== false) continue;
       this._recordRouteRecovered(probe, { at: new Date().toISOString() });
     }
   }
@@ -4384,6 +4552,38 @@ export class SwarmRuntime {
         cadence: { crossedBy: 'swarm.participant_joined', seq: crossing },
         next: { command: 'swarm.check', swarmId: swarm.swarmId,
           participantId: contribution.participantId, contributionId: contribution.contributionId } });
+    }
+    // Issue #564: a root-addressed wake that reached no session is attention this view reports.
+    // The owed row is durable (`swarm.root_attention_owed`, recorded where the runtime observes
+    // work waiting on the root); a delivery attempt is durable too, keyed by the SAME wake
+    // identity — the ledger seq of the owed row the frame came from. Nothing here is stored: the
+    // read joins the two row sets, so a later delivery clears the row on the next read and a
+    // failed delivery keeps it, naming the code the attempt failed under.
+    const rootWakeDelivered = new Set();
+    const rootWakeFailed = new Map();
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.swarmId !== swarm.swarmId || !Number.isSafeInteger(payload.seq)) continue;
+      if (payload.kind === 'wake.root_delivered') rootWakeDelivered.add(payload.seq);
+      else if (payload.kind === 'wake.root_undelivered') {
+        rootWakeFailed.set(payload.seq, typeof payload.code === 'string' ? payload.code : null);
+      }
+    }
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.kind !== 'swarm.root_attention_owed' || payload.swarmId !== swarm.swarmId) continue;
+      if (rootWakeDelivered.has(event.seq)) continue;
+      const nextAct = payload.next;
+      organization.push({ kind: 'root_wake_undelivered',
+        participantId: typeof payload.participantId === 'string' ? payload.participantId : null,
+        contributionId: typeof payload.contributionId === 'string' ? payload.contributionId : null,
+        owed: typeof payload.owed === 'string' ? payload.owed : null,
+        ask: typeof payload.ask === 'string' ? payload.ask : null,
+        seq: event.seq,
+        delivery: rootWakeFailed.has(event.seq)
+          ? { state: 'failed', code: rootWakeFailed.get(event.seq) }
+          : { state: 'none', code: null },
+        ...(nextAct !== null && typeof nextAct === 'object' && !Array.isArray(nextAct) ? { next: nextAct } : {}) });
     }
     for (const row of participants) {
       if (row.status !== 'active') continue;
@@ -6298,7 +6498,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot' }), message };
+      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
@@ -6315,7 +6515,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason }), message };
+      guidance, { state: 'parked', lane: null, reason, ...(reason === 'harness_one_shot' ? { terminal: true } : {}) }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
@@ -6599,6 +6799,17 @@ export class SwarmRuntime {
     // CAN deliver keeps the delivery path below, whatever the delivery itself answers.
     if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
       return this._parkGuidance(swarmId, participant, message, principal, args, guidance);
+    }
+    // Issue #534: a lane that answers worker_not_active has nobody home — the seat's worker
+    // is idle, exited, or between incarnations. Recording a refused delivery drops the
+    // message on a seat that WILL act again (its next exec, or its resume-from successor's
+    // brief), so the guidance parks durably under the lane's own reason — the #337 guarantee
+    // extended past the one-shot harness (and past the null-worker park above) to every seat
+    // that is momentarily not there. Any other lane refusal keeps the refused delivery: the
+    // lane took nothing and said why.
+    if (guided?.ok !== true && guided?.result === 'worker_not_active') {
+      return this._parkGuidanceWithReason(swarmId, participant, message, principal, args,
+        guidance, 'worker_not_active');
     }
     // The lane receipt is durable coordination log, not process state: deliveries are serialized
     // per worker, so the newest nudge/steer row for this binding past the pre-call cursor is the
@@ -7350,11 +7561,15 @@ export class SwarmRuntime {
 
   /** The landed contribution whose own receipt already covers any of `paths`, or null. Two paths
    * overlap the way the fold's claims do: equal, or one a `/`-boundary prefix of the other — so a
-   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. */
+   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. A receipt that records
+   * no commit for the target AFTER it is skipped: it moved no ref, so it names a change the target
+   * never received. The `targetHeadAfter` it holds decides that, never the `dryRun` claim beside
+   * it — the fold admits the two disagreeing. */
   _landedBy(swarm, paths) {
     const overlaps = (left, right) => left === right
       || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
     for (const row of Object.values(swarm.contributions ?? {})) {
+      if ((row?.integration?.targetHeadAfter ?? null) === null) continue;
       const landed = row?.integration?.changedPaths;
       if (!Array.isArray(landed)) continue;
       if (paths.some((path) => landed.some((other) => overlaps(path, other)))) return row.contributionId;
@@ -7394,6 +7609,9 @@ export class SwarmRuntime {
     if (typeof error.script === 'string') detail.script = error.script;
     if (Number.isSafeInteger(error.exit)) detail.exit = error.exit;
     if (typeof error.stderrTail === 'string' && error.stderrTail.length > 0) detail.stderrTail = error.stderrTail;
+    // Issue #558: whether the failed publish rolled the local fast-forward back — the fact that
+    // tells a reader whether the target holds an unpublished squash.
+    if (typeof error.rolledBack === 'boolean') detail.rolledBack = error.rolledBack;
     // Issue #459: the gate run could not take the host verify lease. The queue facts and the holder
     // the wait was behind are the whole actionable content of that refusal.
     if (error.detail && typeof error.detail === 'object' && !Array.isArray(error.detail)) {
@@ -7443,6 +7661,14 @@ export class SwarmRuntime {
       // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
       case 'integrate_gates_busy':
         refuse(message, 'integrate_gates_busy', detail); break;
+      // Issue #558: the landing cannot publish — the deployment declares no shared remote, or
+      // the declared remote was unreachable or refused the push (the local move is rolled back,
+      // so the target holds no unpublished squash). A landing that cannot publish never reports
+      // a local success.
+      case 'integrate_publish_undeclared':
+        refuse(message, 'integrate_publish_undeclared', detail); break;
+      case 'integrate_publish_failed':
+        refuse(message, 'integrate_publish_failed', detail); break;
       case 'integrate_target_moved':
         refuse(message, 'integrate_target_moved', detail); break;
       case 'integrate_change_invalid':
@@ -7522,11 +7748,13 @@ export class SwarmRuntime {
         command: 'swarm.integrate', rule: 'integration-authority',
       });
     }
-    // Issue #43 AX (2026-09-21): `target` is optional at every surface now — omitted, the
-    // landing targets the deployment's own branch (the branch its checkout has current, the
-    // ONE derivation the #438 target facts read), which is what every receipt already names.
+    // Issue #43 AX (2026-09-21): `target` is optional at every surface now — omitted, the landing
+    // targets the deployment's own checkout: its branch (targetRefOf), or — the checkout being
+    // detached, where targetRefOf can only answer the literal 'HEAD' — the local branch at the
+    // checkout's own commit (landingTargetOf, the ONE derivation this verb reads). The #438 view
+    // facts keep reading targetRefOf itself, so what they report never moves with this.
     const target = typeof args.target === 'string' && args.target.length > 0
-      ? args.target : targetRefOf(authority.repoRoot);
+      ? args.target : landingTargetOf(authority.repoRoot);
     const contract = this._contributionContract(contribution);
     const subject = typeof contract?.subject === 'string' && contract.subject.length > 0
       ? contract.subject
@@ -7575,6 +7803,9 @@ export class SwarmRuntime {
         target,
         commitSha: tip,
         message,
+        // Issue #558: the deployment's declared shared remote — the landing publishes the landed
+        // ref to it after the fast-forward, and refuses typed when it cannot.
+        publishRemote: authority.publishRemote ?? null,
         // Issue #451: the SAME dependency directories the deployment configures for lane
         // worktrees. Omitted, the worktree authority derives them from where the installs
         // actually sit — the integration checkout never guesses at a root-only `node_modules`.
@@ -8058,15 +8289,37 @@ export class SwarmRuntime {
         payload.releasedBy = actor;
       }
       const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
+      // Issue #564: the root-addressed fact is written DURABLY BEFORE the operation is completed,
+      // so an operation that reads completed can never be missing its owed row. The contribution
+      // (or leave) row above is already durable when this runs; a crash or append fault here
+      // faults the mutation with its completion unwritten, and a replay under the same
+      // idempotency key re-derives the missing rows — the deterministic keys skip what already
+      // landed — before completing. The derivation itself is a pure read of the fold; only the
+      // appends can fault, and they are never swallowed.
+      let rootAttention = [];
+      if (args.event === 'swarm.contribution_recorded') {
+        const recordedSwarm = this._swarm(args.swarmId);
+        const recordedContribution = recordedSwarm.contributions?.[payload.contributionId] ?? null;
+        if (recordedContribution !== null) {
+          rootAttention = this._recordRootAttentionRows(recordedSwarm,
+            rootAttentionRowPayloads(recordedSwarm, recordedContribution), principal.actor);
+        }
+      } else if (args.event === 'swarm.participant_left') {
+        // The departure is also a review loss: every contribution still unreviewed that no
+        // remaining active seat can review is re-addressed to the root from the fold — the
+        // trigger is the reviewer's departure, not the contribution's write instant.
+        rootAttention = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
+      }
       this._recordOperationCompleted(command, args, principal, context);
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
       if (args.event === 'swarm.coupling_updated') this._settleCheckoutWriterState();
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
-        return this._mutationResult(command, args, [recorded], principal, context,
+        return this._mutationResult(command, args, [recorded, ...rootAttention].filter(Boolean),
+          principal, context,
           { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
       }
-      return this._mutationResult(command, args, [externalJoin, recorded].filter(Boolean), principal, context,
-        contributionStatus === null ? {} : { status: contributionStatus });
+      return this._mutationResult(command, args, [externalJoin, recorded, ...rootAttention].filter(Boolean),
+        principal, context, contributionStatus === null ? {} : { status: contributionStatus });
     }
     if (swarm.status !== 'open' && command === 'swarm.recruit') refuse('Swarm recruitment is closed', 'swarm_closed');
     if (command === 'swarm.recruit') {
@@ -8954,9 +9207,7 @@ export class SwarmRuntime {
     if (command === 'swarm.guide') {
       const result = await this._once(command, args, principal, async () => {
         // Issue #273: the provenance is resolved BEFORE anything is sent — the relationship the
-        // sender has in THIS swarm (the coordinator's ONE namespace derivation plus the seat's
-        // standing here) and the row this guidance answers (a seq the swarm must hold). A guide
-        // that answers a row this swarm does not hold refuses here, having sent nothing.
+        // sender has in THIS swarm and the row this guidance answers.
         const guidance = {
           from: guidanceFromRelationship(this._swarm(args.swarmId), principal.actor),
           priority: args.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,
@@ -9001,6 +9252,12 @@ export class SwarmRuntime {
         const leave = seat.status === 'active' ? this._write('swarm.participant_left', {
           swarmId: args.swarmId, participantId: participant.participantId, reason: leaveReason,
         }, principal, `${operationKey}:leave`) : null;
+        // Issue #564: the stop RECONCILES the reviewer-loss rows whether or not THIS call wrote
+        // the departure row: a first stop whose owed append faulted left the departure durable
+        // and the row missing, so a later stop (leave would be null for the settled seat) is
+        // the repair. The reconciler's deterministic keys keep a healthy re-run a no-op, and a
+        // fault here still faults the mutation with its completion unwritten.
+        const reviewerLoss = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
         this._reconcileHostCapacity();
         // Issue #469: the receipt a stop answers with IS the row the operation lane records
         // (`_once` writes the effect's own result), so projecting it HERE is what keeps both the
@@ -9008,7 +9265,7 @@ export class SwarmRuntime {
         // the text the join row already holds.
         return { participantId: participant.participantId,
           result: objectiveReferencedReceipt(stopped, seat),
-          leaveReason, writes: leave ? [leave] : [] };
+          leaveReason, writes: [...(leave ? [leave] : []), ...reviewerLoss] };
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, result: result.result, leftReason: result.leaveReason ?? null });

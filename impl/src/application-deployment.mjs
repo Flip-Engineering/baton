@@ -200,11 +200,19 @@ export function deepseekCredentialProjection(repoRoot) {
   });
 }
 
+const CODEX_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']);
+const CODEX_MODELS = Object.freeze([
+  { model: 'gpt-5.6-sol', aaSlug: 'gpt-5-6-sol', openRouterId: 'openai/gpt-5.6-sol' },
+  { model: 'gpt-6-astra', aaSlug: 'gpt-6-astra', openRouterId: 'openai/gpt-6-astra' },
+]);
+const codexRoutes = () => CODEX_MODELS.flatMap(({ model, aaSlug, openRouterId }) => (
+  CODEX_EFFORTS.map((effort) => Object.freeze({
+    harness: 'codex', model, effort, aaSlug, billing: 'subscription', openRouterId,
+  }))
+));
+
 const DEFAULT_ROUTES = Object.freeze([
-  ...['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => Object.freeze({
-    harness: 'codex', model: 'gpt-5.6-sol', effort,
-    aaSlug: 'gpt-5-6-sol', billing: 'subscription', openRouterId: 'openai/gpt-5.6-sol',
-  })),
+  ...codexRoutes(),
   ...['low', 'high', 'max'].map((effort) => Object.freeze({
     harness: 'kimi-code', model: 'kimi-code/k3', effort,
     aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
@@ -232,6 +240,22 @@ const DEFAULT_ROUTES = Object.freeze([
 
 function deploymentError(message) {
   return Object.assign(new TypeError(message), { code: 'deployment_config_invalid' });
+}
+
+/** Issue #558: the deployment's DECLARED shared remote for landings — the value
+ * `advanced.integration.publishRemote` names. A declaration, never an inference: it is not read
+ * from `origin` (a resident origin has pointed at a local checkout instead of the shared
+ * remote) and not derived from repoId (a hash of the local git dir path, distinct per clone).
+ * Null when the deployment declares none, in which case a real landing refuses
+ * `integrate_publish_undeclared` instead of reporting a local success. Malformed declarations
+ * refuse here, at open, never first at landing time. */
+export function normalizeIntegrationPublishRemote(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048
+    || value.includes('\0') || /[\r\n]/u.test(value)) {
+    throw deploymentError('advanced integration publishRemote must be one non-empty remote URL or path');
+  }
+  return value;
 }
 
 function deploymentPreflightError(message) {
@@ -2663,9 +2687,14 @@ function deriveRouteDegrades({ log, routes, refusals = null }) {
         resetAt,
         resetAtText: typeof payload.resetAtText === 'string' && payload.resetAtText.length > 0
           ? payload.resetAtText : null,
+        // #456 item 2: the probe instant of a provider-QUOTA degrade whose provider named no
+        // reset — the fault's own window when its words named one, else the registry's
+        // fault-probe row (`degradeProbeAfter`). A quota window is a usage-window fact, so the
+        // bound is a quota fact (#575). A stall or socket episode names no next instant of its
+        // own: its recovery is the evidence — a later successful turn, or the operator's
+        // routeProbe override the refusal names — never a clock.
         probeAfter: resetAt === null && faultClass === PROVIDER_FAULT_CODES.quota
           ? degradeProbeAfter(to, quotaRefusalText(observed, eventKey)) : null,
-        probeFromText: quotaRefusalText(observed, eventKey) !== null,
       }));
     }
   }
@@ -2675,14 +2704,29 @@ function deriveRouteDegrades({ log, routes, refusals = null }) {
     const scope = routeQuotaScope(route);
     if (key === null || scope === null) continue;
     const episode = scopeEpisodes.get(scope);
-    if (episode) episodes.set(key, episode);
+    // #575: the episode carries the SERVED route beside its own ledger spelling, so the live
+    // block a recruit reads names coordinates the route table admits, and the advice row's
+    // route matches them too.
+    if (episode) {
+      episodes.set(key, Object.freeze({
+        ...episode,
+        servedRoute: Object.freeze({ ...route }),
+        next: episode.next === null ? null : Object.freeze({
+          ...episode.next,
+          route: Object.freeze({ ...route }),
+        }),
+      }));
+    }
   }
   return episodes;
 }
-
 /** The live degrade block for one route, or null: an episode no later successful turn and no
  * later verified probe has retired. `success`/`probeVerifiedAt` are the two readings the caller
- * owns; both are instants, and the later one wins. */
+ * owns; both are instants, and the later one wins. The block names the SERVED route's coordinates
+ * (`episode.servedRoute`, the row the episode is attached to), never the ledger event's own
+ * spelling — a degrade recorded under a version-suffixed harness label is still a fact about the
+ * served route (#575), and a block that published the ledger spelling would pin a probe recruit
+ * to a route the route table refuses. */
 function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, now = null } = {}) {
   const retired = [successAt, probeVerifiedAt].filter((at) => typeof at === 'string');
   for (const at of retired) {
@@ -2696,15 +2740,18 @@ function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, n
   // no instant) keeps waiting for the probe its `next` asks for.
   if (episode.resetAt !== null && Number.isFinite(now) && Date.parse(episode.resetAt) <= now) return null;
   return Object.freeze({
-    state: 'degraded', scope: episode.scope ?? null, route: episode.route, since: episode.window.from,
+    state: 'degraded', scope: episode.scope ?? null,
+    route: episode.servedRoute ?? episode.route, since: episode.window.from,
     reason: episode.faultClass, faultClass: episode.faultClass,
     resetAt: episode.resetAt, resetAtText: episode.resetAtText,
     // #456 item 2: the row never sits degraded with no next step — it names the instant the route
-    // clears (`clearsAt`: the provider's own reset when it named one, else the probe instant) and,
-    // for a provider that named none, the instant ONE probe recruit is admitted at (`probeAfter`).
+    // clears (`clearsAt`: the provider's own reset when it named one, else the probe instant the
+    // fault's own window derived) and, for a provider that named none, the instant ONE probe
+    // recruit is admitted at (`probeAfter`). #575: the probe instant clears the episode whether
+    // the fault's window was read from the provider's words or from the registry's fault-probe
+    // row — a clear gated on the words alone never expired, and the route sat degraded forever.
     probeAfter: episode.probeAfter ?? null,
-    clearsAt: episode.resetAt
-      ?? (episode.probeFromText === true ? episode.probeAfter : null) ?? null,
+    clearsAt: episode.resetAt ?? episode.probeAfter ?? null,
     participants: episode.participants,
     window: episode.window, count: episode.count, next: episode.next,
   });
@@ -3422,7 +3469,11 @@ class BatonDeployment {
     this.waves = Object.freeze({
       start: (options = {}) => {
         for (const member of options?.members ?? []) {
-          this.#assertRouteReady(member?.exact ? { exact: member.exact } : member);
+          // #102 Decision 1: a member's readiness route is its own `exact` or its group's seat —
+          // the same XOR the wave admission enforces. Resolving it here keeps a blocked route a
+          // deployment verdict BEFORE any effect, never a wave_member_invalid afterwards.
+          const route = member?.exact ?? member?.group?.seat ?? null;
+          this.#assertRouteReady(route === null ? member : { exact: route });
         }
         return this.#baton.waves.start(options);
       },
@@ -3835,6 +3886,9 @@ class BatonDeployment {
       let turns = 0;
       let tokens = 0;
       let usd = 0;
+      // #545: the LAST rate-limit answer this route's provider gave, read on the walk that already
+      // visits every token row of the route — the provider's own statement about the account.
+      let rateLimits = null;
       if (log) {
         for (const worker of log.workers()) {
           for (const ev of log.byKind(worker, 'lifecycle.turn_started')) {
@@ -3844,6 +3898,9 @@ class BatonDeployment {
             if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) {
               tokens += typeof ev.payload?.tokens === 'number' ? ev.payload.tokens : 0;
               usd += typeof ev.payload?.usd === 'number' ? ev.payload.usd : 0;
+              if (ev.payload?.source === 'rateLimit' && record(ev.payload.rateLimits)) {
+                rateLimits = { limits: ev.payload.rateLimits, at: ev.ts };
+              }
             }
           }
         }
@@ -3878,13 +3935,24 @@ class BatonDeployment {
       const quotaWindow = declaredUsage === null ? null : Object.freeze({
         kind: declaredUsage.windowKind ?? 'unknown', periodMs: declaredUsage.windowMs,
       });
+      // #545: the provider's OWN remaining usage rides the quota axis, so a route whose account was
+      // measured says how much is left in the window the provider itself reported, and when. A
+      // route nothing measured carries remaining: null — the absence is stated rather than left
+      // for a reader to read as an unqualified 'ready'. The percent is derived from the provider's
+      // own usedPercent, never from a token count this side invents.
+      const primary = record(rateLimits?.limits?.primary) ? rateLimits.limits.primary : null;
+      const quotaObservations = Object.freeze({
+        remaining: primary !== null && Number.isFinite(primary.usedPercent)
+          ? Math.max(0, 100 - primary.usedPercent) : null,
+        observedAt: typeof rateLimits?.at === 'string' ? rateLimits.at : null,
+      });
       const quota = quotaRefused
         ? Object.freeze({
-          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt,
+          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt, ...quotaObservations,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         })
         : Object.freeze({
-          state: 'ok', resetAt: null,
+          state: 'ok', resetAt: null, ...quotaObservations,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         });
       const occupancy = this.#occupancyFor(route);
@@ -6212,7 +6280,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  // Issue #558: the declared shared remote landings publish to, validated at open.
+  const rawIntegration = advanced.integration ?? {};
+  closed(rawIntegration, ['publishRemote'], 'advanced integration');
+  const integrationPublishRemote = normalizeIntegrationPublishRemote(rawIntegration.publishRemote);
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -6627,6 +6699,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     routeQuotaAuthority: routeQuota,
     repoRoot: repository.root,
     repoId: repository.repoId,
+    // Issue #558: the declared shared remote, carried to the landing authority (null when the
+    // deployment declares none — a real landing then refuses instead of staying local).
+    ...(integrationPublishRemote === null ? {} : { integrationPublishRemote }),
     deploymentBaseSha: snapshot.sha,
     logDir: stateRoot,
     adapters,

@@ -22,6 +22,7 @@ import {
 import { createHash, randomBytes } from 'node:crypto';
 import { ToolchainProjectionError } from './toolchain-projection.mjs';
 import { compareCanonicalStrings, foldCanonicalCase } from './canonical-order.mjs';
+import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 // Issue #428: the one custody predicate — a second inline opinion about whether cleanup may
 // destroy a shared checkout is exactly the drift the surface gate refuses.
 import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
@@ -2184,6 +2185,11 @@ export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.b
  * @param {string[]} [request.dependencyDirs] the deployment's own dependency directories, when it
  *   configures them; omitted, the scratch checkout derives them from the repository (#451)
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
+ * @param {string|null} [request.publishRemote] the deployment's DECLARED shared remote (a URL or
+ *   path from `advanced.integration.publishRemote`): the landed ref is pushed to it after the
+ *   fast-forward, naming the declared value itself, never a remote name. Null on a dry run or a
+ *   deployment that declares none — a real landing without one refuses
+ *   `integrate_publish_undeclared` before anything moves.
  * @param {boolean} [request.dryRun]
  * @param {object} [request.log]
  * @param {(info: {dir: string, target: string}) => Promise<void>} [request.started] the caller's
@@ -2265,7 +2271,11 @@ export async function landContribution(repoRoot, request) {
         .split('\n').filter((line) => line.length > 0).sort();
       // Every changed module must at least parse before a regenerator reads it — a generator that
       // consumed a syntactically broken module would write an artifact describing a broken tree.
+      // The changed list names deletions too, and a deleted path has no content to parse: its
+      // absence IS the change landing (#575, found landing the wake union's retired stall-stop
+      // suite), so only content the squash still carries is checked.
       for (const path of changedBeforeRegeneration.filter((entry) => entry.endsWith('.mjs'))) {
+        if (!existsSync(join(checkout.dir, path))) continue;
         try {
           execFileSync(process.execPath, ['--check', join(checkout.dir, path)], {
             cwd: checkout.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
@@ -2337,6 +2347,18 @@ export async function landContribution(repoRoot, request) {
       );
     }
     const dryRun = request.dryRun === true;
+    // Issue #558: the declared shared remote — a deployment configuration value, never `origin`
+    // (a resident origin has pointed at a local checkout instead of the shared remote) and never
+    // derived from repoId (a hash of the local git dir path, distinct per clone). A real landing
+    // without one refuses BEFORE anything moves: a landing that cannot publish never reports a
+    // local success. A dry run lands nothing, so it publishes nothing either.
+    const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
+      && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+    if (!dryRun && publishRemote === null) {
+      throw mergeError(
+        `the deployment declares no shared remote for landings (advanced.integration.publishRemote), so ${target} cannot be published`,
+        'integrate_publish_undeclared');
+    }
     if (!dryRun) {
       // One atomic compare-and-swap: if anything moved the target after the gates, this fails
       // rather than landing a squash computed against a head the branch no longer has.
@@ -2344,6 +2366,32 @@ export async function landContribution(repoRoot, request) {
         gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
       } catch (error) {
         throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: error });
+      }
+      // Issue #558: publish the landed ref to the declared remote. The push names the declared
+      // value itself, never a remote name, so no local remote configuration the resident holds
+      // can redirect it — a landing published to the wrong destination is the same failure as
+      // never publishing. GIT_TERMINAL_PROMPT=0 so a remote that wants a credential fails typed
+      // instead of hanging the landing on a prompt. A failed push rolls the local move back, so
+      // the target holds no unpublished squash. Neither step checks out a branch: a detached
+      // main checkout stays detached.
+      try {
+        gitFile(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
+          { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
+      } catch (error) {
+        let rolledBack = false;
+        try {
+          gitFile(['update-ref', ref, targetHeadBefore, squashSha], repoRoot, { stdio: 'pipe' });
+          rolledBack = true;
+        } catch { /* the refusal below still answers; rolledBack: false names the state */ }
+        throw Object.assign(
+          mergeError(`the declared shared remote could not publish ${target}; declare a reachable remote with advanced.integration.publishRemote`, 'integrate_publish_failed'),
+          {
+            script: 'git push',
+            ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+            stderrTail: redactPushTail(gitStepTail(error)),
+            rolledBack,
+          },
+        );
       }
     }
     logEvent(request, 'worktree', 'worktree.contribution_landed', {
@@ -2389,17 +2437,29 @@ export function workspaceExists(repoRoot, taskId) {
   return existsSync(dir);
 }
 
-/** #453: the bounded cause of a failed snapshot carry — the git stderr tail (the #326 discipline:
- * a readable line, never a raw `Command failed` dump) — kept on the error so the refusal that
- * answers it names the reason instead of swallowing it into an empty carry. */
-const SNAPSHOT_CARRY_TAIL_BYTES = 480;
-function snapshotCarryFailure(cwd, error) {
+/** The bounded tail of a git step's stderr (the #326 discipline: a readable line, never a raw
+ * `Command failed` dump) — the ONE bound every post-effect git failure this module reports. */
+const GIT_STEP_TAIL_BYTES = 480;
+function gitStepTail(error) {
   const stderr = Buffer.isBuffer(error?.stderr) ? error.stderr.toString('utf8') : String(error?.stderr ?? '');
   const text = stderr.trim().length > 0 ? stderr.trim() : String(error?.message ?? error);
-  const tail = text.slice(-SNAPSHOT_CARRY_TAIL_BYTES);
+  return text.slice(-GIT_STEP_TAIL_BYTES);
+}
+
+/** #453: the bounded cause of a failed snapshot carry — kept on the error so the refusal that
+ * answers it names the reason instead of swallowing it into an empty carry. */
+function snapshotCarryFailure(cwd, error) {
+  const tail = gitStepTail(error);
   return Object.assign(new Error(`snapshot carry into ${cwd} failed: ${tail}`), {
     code: 'snapshot_carry_failed', detail: tail, cause: error,
   });
+}
+
+/** The bounded, redacted tail of a failed publish push: the shared sanitizer's vocabulary plus a
+ * URL-userinfo mask it carries no row for, so a declared remote with embedded credentials never
+ * crosses into a recorded refusal verbatim. */
+function redactPushTail(tail) {
+  return sanitizeVerifierDiagnosticText(tail).text.replace(/:\/\/[^/\s]+@/gu, '://***@');
 }
 
 /** Apply the diff between baseSha and snapshotSha from the repository into a target worktree.

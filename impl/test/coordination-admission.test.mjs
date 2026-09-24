@@ -196,7 +196,7 @@ test('CA2: the committed map, the delegates, the exports and the store imports a
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':admission_port'))) moved.set(`${member.name}\u0000${member.ordinal}`, member.name);
   }
-  assert.equal(moved.size, 172, 'the map must show the admission bucket — every store member whose body left');
+  assert.equal(moved.size, 173, 'the map must show the admission bucket — every store member whose body left');
   const movedNames = new Set(moved.values());
   const wired = delegates();
   const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('\u0000')[0]));
@@ -207,7 +207,7 @@ test('CA2: the committed map, the delegates, the exports and the store imports a
   }
   const helpers = [...wired.values()].map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per admission helper');
-  assert.equal(helpers.length, 172, 'the port carries one helper per moved member');
+  assert.equal(helpers.length, 173, 'the port carries one helper per moved member');
   const moduleRows = map.files.find((file) => file.file === MAP_MODULE_FILE).members;
   for (const name of new Set(helpers)) {
     assert.equal(moduleRows.filter((member) => member.name === name).length, 1,
@@ -344,8 +344,9 @@ test('CA4: the store reaches every moved member through its own delegate, with i
   ['reverifyKnowledgeContradictionResolution', 6], ['_validateContradictionResolution', 1],
   ['_validateKnowledgeInvalidation', 2], ['_validateContaminationRecord', 2],
   ['_validateKnowledgeRecallPayload', 2], ['_validateKnowledgeRecallAssessmentPayload', 2],
+  ['admitReplFanout', 2],
   ];
-  assert.equal(MOVED.length, 172, 'the admission bucket is 172 members');
+  assert.equal(MOVED.length, 173, 'the admission bucket is 173 members');
   const wired = delegates();
   for (const [name, arity] of MOVED) {
     assert.ok(wired.has(name), `${name}: the class must still delegate it`);
@@ -356,7 +357,7 @@ test('CA4: the store reaches every moved member through its own delegate, with i
     assert.ok(descriptor, `${name}: the store must still answer on ${name}`);
     assert.equal(descriptor.value?.length ?? descriptor.get?.length, arity, `${name}: the signature must not move with the body`);
   }
-  assert.equal(wired.size, 172, 'the admission port carries exactly the admission bucket');
+  assert.equal(wired.size, 173, 'the admission port carries exactly the admission bucket');
 });
 
 test('CA5: the store keeps its exact decisions across the move, and a moved member is still dispatched through the class', () => {
@@ -385,7 +386,9 @@ test('CA5: the store keeps its exact decisions across the move, and a moved memb
       '9bbb02a1dcbea7f50474a8a54d7162b01236f761c7be17e219becb0d93d1b962',
       'the durable bytes are the ones the pre-move store wrote for the same fixture');
     const before = createHash('sha256').update(JSON.stringify(store.snapshot())).digest('hex');
-    assert.equal(before, '84cc51b61594ef9dec990893f9b51c4e83c21196895a26a7a19ca2989d4538f7',
+    // Issue #66 (D3): snapshot().knowledge carries the folded `doubts` projection — the golden
+    // moves with it; replay still reconstructs the identical bytes (asserted below).
+    assert.equal(before, '673b1dc47bb3039600e35ff5188af45482fc5d993980891b4f931bd05e2fb967',
       'the projection the moved admission builds is the one the pre-move store built');
     const restarted = new CoordinationStore(root, { clock });
     assert.equal(restarted.healthCheck(), true);

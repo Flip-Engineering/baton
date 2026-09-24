@@ -127,6 +127,9 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // commitments, and bounded prose-free reap receipts are one ledger projection.
   '_scratchpadEntries', '_scratchpadEntriesByScope', '_scratchpadFences',
   '_scratchpadElevations', '_scratchpadReaps',
+  // Issue #66: the folded doubt review records (doubtId → the state its latest doubt_* event
+  // folded), replay-derived like the scratchpad projection beside them.
+  '_doubtRecords',
   // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
   '_projectionInputFence',
   // Issue #465(4): the runs a `steering.registered` row folded — read by run/wave admission, and
@@ -235,6 +238,19 @@ export function promotionActor(value) { return value === 'orchestrator' || (type
 export function recallBody(value) { return typeof value === 'string' ? value : JSON.stringify(canonical(value ?? '')); }
 
 export function replFenceKey(runId, scope) { return JSON.stringify([runId, scope]); }
+
+/** The citation grammar, declared ONCE (REPL-2/REPL-3, docs/reference/evidence/repl-kg-wave-
+ * 2026-07-22/repl23-decisions.md Part A rule 2): `repl:<scope>:<name>@<version>`. The regex is
+ * stateless (no `g` flag), so a `.exec` never carries an index between calls. */
+export const REPL_CITATION = /^repl:(shared|worker:[A-Za-z0-9._:-]{1,256}):([A-Za-z0-9._-]{1,128})@([1-9][0-9]*)$/u;
+
+/** A citation's own coordinates, or null when it is unparseable. A serving-path consumer uses
+ * this to check WHERE a citation points (the D3 addressing law) BEFORE it resolves anything. */
+export function parseReplCitation(citation) {
+  const match = typeof citation === 'string' ? REPL_CITATION.exec(citation) : null;
+  if (!match) return null;
+  return freeze({ scope: match[1], name: match[2], bindingVersion: Number(match[3]) });
+}
 
 export function scratchpadScopeKey(runId, scope) { return JSON.stringify([runId, scope]); }
 

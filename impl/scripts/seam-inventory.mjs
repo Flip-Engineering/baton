@@ -211,6 +211,15 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/application-observation.mjs', className: null, receiver: 'application',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Issue #59's module target: the re-drive continuity seam (the carry admission, the closed
+  // serializer, and the composed-block read). Its members are plain exported functions at module
+  // scope, so the target reads the module scope and names the coordinator receiver its first
+  // parameter carries — the same convention the brief seam above uses. Without this target the
+  // three delegates' bodies would leave the map the moment they crossed the module boundary.
+  Object.freeze({
+    file: 'impl/src/runtime-redrive.mjs', className: null, receiver: 'coordinator',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -305,6 +314,11 @@ const AUTHORITY_RULES = Object.freeze([
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.
   { seam: 'admission', id: 'admission_port', weight: 3, call: /\bcoordinationAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted admission module (coordination-admission.mjs)' },
+  // Issue #59 extends the port rules to the re-drive continuity seam: a member whose body is a
+  // delegate into runtime-redrive.mjs keeps the observation seam its body has there — the carry
+  // admission resolves records and refuses typed, and the serializer that serves the composed
+  // block projects durable state, exactly as the brief seam's own port does.
+  { seam: 'observation', id: 'redrive_port', weight: 3, call: /\bruntimeRedrive\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted re-drive continuity seam (runtime-redrive.mjs)' },
 
   // ── the swarm family (issue #284 item S-G4) ─────────────────────────────────
   // SwarmRuntime speaks its own refusal and replay dialects, and both are evidence a name rule

@@ -74,6 +74,8 @@ const CLI_CARD_LEDGERED_PORTS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
   'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
   'waves.compile',
+  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
+  'run.resultpin', 'waves.harvest',
 ]);
 export const CLI_WEB_COMMANDS = new Set(CLI_DISPATCH_TRANSPORTS.filter((name) => (
   (Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, name)
@@ -4147,6 +4149,28 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
+    // Issue #99/#179 (harvest-accessor contract Decision 5): `baton waves harvest
+    // RESULT_SHA|RUN_ID [--onto PATH]` → waves.harvest. The resultSha XOR runId source law is
+    // enforced at parse (exactly one positional source); a 40-hex source is the resultSha, any
+    // other valid id is the runId — the facade's closed shape remains the second gate.
+    if (action === 'harvest') {
+      const source = args.length > 0 && !args[0].startsWith('--') ? args.shift() : null;
+      const onto = take(args, '--onto');
+      noRemainder(args);
+      const isSha = typeof source === 'string' && /^[a-f0-9]{40}$/u.test(source);
+      if (source === null
+        || (!isSha && (typeof source !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/u.test(source)))) {
+        throw cliError('waves harvest requires exactly one result sha or run id source', 'cli_invalid');
+      }
+      return {
+        kind: 'command', command: 'waves.harvest', name: 'waves.harvest',
+        args: {
+          ...(isSha ? { resultSha: source } : { runId: source }),
+          ...(onto === null ? {} : { onto }),
+        },
+        idempotencyKey,
+      };
+    }
     if (action !== 'attach') {
       throw cliError('expected waves list, progress, start, send, stop, attach, run, or compile', 'cli_command_unavailable');
     }
@@ -4396,6 +4420,7 @@ export function parseBatonCli(rawArgs) {
   }
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
+    'resultpin',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
   // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
@@ -4414,6 +4439,13 @@ export function parseBatonCli(rawArgs) {
     return parseStart(args, action, idempotencyKey, 'change');
   }
   const runId = id(args.shift(), 'Run ID');
+  // Issue #99/#179 (harvest-accessor contract Decision 5): the read lane's single-token run verb —
+  // `baton run resultpin RUN_ID` → command run.resultpin. The occupied episode spelling
+  // `baton run result RUN_ID` is UNTOUCHED (the branch below keeps topic='result').
+  if (action === 'resultpin') {
+    noRemainder(args);
+    return { kind: 'command', name: 'run.resultpin', args: { runId }, idempotencyKey };
+  }
   if (action === 'episode' || action === 'result') {
     const topic = action === 'result' ? 'result'
       : args[0] && !args[0].startsWith('--') ? args.shift() : 'outline';
@@ -4755,8 +4787,10 @@ export class BatonWebClient {
       || origin.protocol !== 'https:' || origin.username || origin.password
       || origin.pathname !== '/' || origin.search || origin.hash
       || !id(options.repoId, 'repository ID') || !nonempty(options.token)
-      || !Number.isSafeInteger(options.commandTimeoutMs) || options.commandTimeoutMs <= 0
-      || !Number.isSafeInteger(options.pollMs) || options.pollMs <= 0 || options.pollMs > options.commandTimeoutMs
+      || !(options.commandTimeoutMs === null
+        || (Number.isSafeInteger(options.commandTimeoutMs) && options.commandTimeoutMs > 0))
+      || !Number.isSafeInteger(options.pollMs) || options.pollMs <= 0
+      || (options.commandTimeoutMs !== null && options.pollMs > options.commandTimeoutMs)
       || typeof options.fetchImpl !== 'function' || typeof options.clock !== 'function' || typeof options.sleep !== 'function') {
       throw cliCauseRefusal('client_configuration_invalid');
     }
@@ -4774,9 +4808,13 @@ export class BatonWebClient {
     this.commandTimeoutMs = options.commandTimeoutMs;
     this.pollMs = options.pollMs;
     // #226 (operator ruling): NO silent cap on caller patience. The request ceiling IS the
-    // caller's commandTimeoutMs; the old ~45s floor (min with DEFAULT_APPLICATION_WAIT_MS +
-    // slack) broke bridge/CLI opens under fleet load. Per-command waits that legitimately
-    // need longer than a plain GET derive their own bound in _requestTimeoutForCommand.
+    // caller's commandTimeoutMs — OPERATOR-DECLARED (env or advanced) or null. #541 sweep: an
+    // undeclared bound is NULL, and a null bound never arms — the client waits for the
+    // deployment's answer, because a wall clock on an admitted command is a cutoff on the
+    // caller's control flow, and the deployment answering is the fact that makes waiting safe
+    // (the #288 pending receipt exists for callers who DECLARE a bound). Per-command waits that
+    // legitimately need longer than a plain GET derive their own bound in
+    // _requestTimeoutForCommand, which also returns null when no bound is declared.
     this.requestTimeoutMs = options.commandTimeoutMs;
     // Operator ruling (2026-09-17, #356): NO response ceiling on the client. The old 2 MB
     // maxJsonResponseBytes anticipated the size of the resident's answer, which nothing can — a
@@ -4787,18 +4825,19 @@ export class BatonWebClient {
     this.sleep = options.sleep;
     this.frameFor = options.frameFor ?? null;
   }
-
   _headers(json = false) {
     return { authorization: `Bearer ${this.#token}`, origin: this.origin, ...(json ? { 'content-type': 'application/json' } : {}) };
   }
 
   async _json(path, options = {}, requestTimeoutMs = this.requestTimeoutMs, signal = null) {
-    if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0
-      || requestTimeoutMs > (24 * 60 * 60 * 1_000) + WEB_WAIT_TRANSPORT_SLACK_MS) {
+    if (requestTimeoutMs !== null
+      && (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0
+        || requestTimeoutMs > (24 * 60 * 60 * 1_000) + WEB_WAIT_TRANSPORT_SLACK_MS)) {
       throw cliCauseRefusal('request_timeout_invalid', { observed: `requestTimeoutMs ${observedValue(requestTimeoutMs)}` });
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    // A null request bound arms no abort — the fetch waits for the deployment's answer (#541).
+    const timeout = requestTimeoutMs === null ? null : setTimeout(() => controller.abort(), requestTimeoutMs);
     // Issue #365: a follow leg's caller signal rides the SAME controller as the request bound,
     // so an aborted wait destroys the in-flight fetch (no dangling long-poll) instead of racing it.
     const abortWait = () => controller.abort();
@@ -5147,6 +5186,7 @@ export class BatonWebClient {
   }
 
   _requestTimeoutForCommand(name, args) {
+    if (this.requestTimeoutMs === null) return null;
     let serverWaitMs = 0;
     if (['run.follow', 'run.wait'].includes(name)) serverWaitMs = args.timeoutMs;
     if (name === 'swarm.watch') serverWaitMs = args.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS;
@@ -5188,14 +5228,16 @@ export class BatonWebClient {
       requiredCapabilities: Object.freeze([...authority.requiredCapabilities]),
     });
   }
-
-  /** Read the durable web command record until it settles. When THIS caller's bound expires
-   * first, the pending refusal keeps the record addressable (its commandId) beside the row
-   * that will carry the verdict (the command's observation route, e.g. the recruit's seat
-   * row — never a bare "retry later"), so the command stays observable instead of lost. */
+  /** Read the durable web command record until it settles. When THIS caller declared a bound
+   * and it expires first, the pending refusal keeps the record addressable (its commandId)
+   * beside the row that will carry the verdict (the command's observation route, e.g. the
+   * recruit's seat row — never a bare "retry later"), so the command stays observable instead
+   * of lost. With no declared bound (#541) there is no expiry: the loop ends when the command
+   * settles or the caller's own signal fires. */
   async reconcile(commandId, context = {}, signal = null) {
     id(commandId, 'command ID');
-    const deadline = this.clock() + this.commandTimeoutMs;
+    const deadline = this.commandTimeoutMs === null
+      ? Number.POSITIVE_INFINITY : this.clock() + this.commandTimeoutMs;
     while (this.clock() < deadline) {
       const body = await this._json(
         `/v1/commands/${encodeURIComponent(commandId)}`, { headers: this._headers() }, undefined, signal,
@@ -5328,10 +5370,11 @@ export async function connectBaton({
     origin: connection.origin,
     repoId: connection.repoId,
     token: connection.token,
-    // A normal `run.inspect` continuation may use the deployment's 30-second wait policy.
-    // Reconciliation must outlive that server-owned wait plus admission/completion publication;
-    // otherwise an ordinary `--follow` command deterministically races its own timeout.
-    commandTimeoutMs: advanced.commandTimeoutMs ?? 90_000,
+    // #541 sweep: an operator-declared bound is honored (and arms the cli_command_pending
+    // receipt); undeclared, the client waits — the server's own wait policies (run.inspect's
+    // 30-second continuation wait, a follow's leg bound) answer on their own, and a wall clock
+    // between this client and those answers only ever cut an admitted command off.
+    commandTimeoutMs: advanced.commandTimeoutMs ?? null,
     pollMs: advanced.pollMs ?? 100,
     fetchImpl,
     clock: advanced.clock ?? Date.now,
