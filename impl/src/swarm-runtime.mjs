@@ -7900,6 +7900,9 @@ export class SwarmRuntime {
     if (Array.isArray(error.unexpected)) {
       detail.unexpected = error.unexpected;
       detail.verdictLine = error.verdictLine ?? null;
+      // Issue #570: a red gate verdict names the base commit it judged, so the refusal shows
+      // which base produced it.
+      if (typeof error.baseSha === 'string') detail.baseSha = error.baseSha;
     }
     if (typeof error.path === 'string') detail.path = error.path;
     if (typeof error.sha === 'string') detail.sha = error.sha;

@@ -62,7 +62,7 @@ const ITEMS = [
  * `advanceRemote` pushes one commit to the bare remote that the local ref lacks (the #570 drift);
  * `advanceLocal` commits one local-only commit on the target (the divergence case).
  */
-async function world(t, { advanceRemote = false, advanceLocal = false } = {}) {
+async function world(t, { advanceRemote = false, advanceLocal = false, gatesRed = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue570-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
@@ -122,7 +122,9 @@ async function world(t, { advanceRemote = false, advanceLocal = false } = {}) {
       repoRoot: repo,
       publishRemote: remote,
       regenerate: async () => {},
-      runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
+      runGates: async (dir, files) => (gatesRed
+        ? { files, verdictLine: `red — 1 unexpected row(s)`, unexpected: [{ test: 'pinned-unexpected', location: 'impl/test/issue570.fixture:1:1' }] }
+        : { files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
     },
   });
   t.after(() => {
@@ -169,6 +171,8 @@ test('570a: a landing whose local target ref is behind the declared remote lands
     'the declared remote holds the landed squash the moment the landing returns');
   assert.equal(answer.integration.targetHeadBefore, w.targetHead,
     'the receipt names the head the local ref held before the landing');
+  assert.equal(answer.integration.gates.baseSha, w.remoteTip,
+    'the gate verdict names the base it judged — the fetched remote tip the squash descends from');
   // The squash descends from the fetched tip: the landing based the change on the remote's head.
   execFileSync('git', ['merge-base', '--is-ancestor', w.remoteTip, answer.integration.squashSha], {
     cwd: w.repo, env: { ...process.env, ...QUIET_GIT_ENV },
@@ -188,6 +192,24 @@ test('570b: a target diverged from the declared remote refuses typed naming both
   assert.equal(error.detail.localSha, w.localHead, 'the refusal names the local head');
   assert.equal(error.detail.fetchedSha, w.remoteTip, 'the refusal names the fetched remote tip');
   assert.equal(git(w.repo, 'rev-parse', 'master'), w.localHead, 'the local target is untouched');
+  assert.equal(w.remoteMaster(), w.remoteTip, 'the remote tip is untouched');
+  assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
+});
+
+// ── (c) a red gate verdict names the base commit it judged ───────────────────────────────────
+
+test('570c: a red gate set refuses integrate_gates_red naming the base the verdict judged', needsGit, async (t) => {
+  const w = await world(t, { advanceRemote: true, gatesRed: true });
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'a red gate set refuses the landing');
+  assert.equal(error.code, 'integrate_gates_red');
+  assert.equal(error.detail.baseSha, w.remoteTip,
+    'the refusal names the base commit the gate judged — the fetched remote tip, not the stale local ref');
+  assert.ok(Array.isArray(error.detail.unexpected) && error.detail.unexpected.length === 1,
+    'the refusal keeps the unexpected rows the runner reported');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), w.targetHead, 'the local target is untouched');
   assert.equal(w.remoteMaster(), w.remoteTip, 'the remote tip is untouched');
   assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
 });
