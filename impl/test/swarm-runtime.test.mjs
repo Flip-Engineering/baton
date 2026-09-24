@@ -383,6 +383,29 @@ test('a guide to a one-shot seat parks durably and answers with its own row', as
   }]);
 });
 
+// Issue #557 on the peer channel: a `swarm.notify` to a one-shot seat parks durably, and the
+// notification row now carries the same terminal mark the guide park carries, so a sender reading
+// `state: parked` can tell a delivery that can never clear from one that has not cleared yet.
+test('a notify to a one-shot seat carries the terminal mark its receipt and later reads both show', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Parked notify' });
+  await f.recruit('builder');
+  f.workers[0].vendor = 'mock-oneshot';
+  f.ports.coordinator.guideParticipant = async () => ({ ok: false, reason: 'nudge unsupported on one-shot muse' });
+
+  const sent = await f.call('notify', { participantId: 'builder', message: 'Check the pipeline read.' });
+  assert.equal(sent.receipt.event.kind, 'swarm.notification_sent');
+  assert.equal(sent.notify.state, 'parked');
+  assert.equal(sent.notify.reason, 'harness_one_shot');
+  assert.equal(sent.notify.terminal, true,
+    'a park that can never clear says so on the receipt the sender reads');
+  assert.equal(sent.notify.read, null);
+
+  const read = await f.runtime.command('swarm.notifications', { swarmId: 'baton' }, owner);
+  const row = read.notifications.find((entry) => entry.receiptId === sent.notify.receiptId);
+  assert.equal(row.terminal, true, 'and on every later read of the row');
+});
+
 // Issue #337 × #273 × #534: a harness that CAN deliver mid-turn keeps the delivery path — and
 // when the lane itself answers worker_not_active, nobody home took the message, so the guidance
 // parks durably under the lane's own reason: the seat's next exec composes it, and a resume-from
