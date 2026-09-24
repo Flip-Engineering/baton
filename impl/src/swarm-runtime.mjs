@@ -3248,18 +3248,21 @@ export class SwarmRuntime {
     };
   }
 
-  /** Issue #443: the swarm-level policy a provider-fault re-route follows, with its DEFAULTS
-   * resolved — `manual` (a proposal for a human orchestrator) and no billing preference. The fold
-   * stores only what an orchestrator DECLARED, so the defaults live here, in the ONE derivation
-   * the view and the observation both read. */
+  /** Issues #572/#574: the swarm-level policies a provider-fault re-route and a resume-from
+   * recruit follow, with their DEFAULTS resolved — `auto` performs the recovery itself (the
+   * re-route recruits the successor onto the first candidate; a resume-from recruit continues in
+   * the same command) and no billing preference. `manual` stays available as a DECLARED operator
+   * posture: it stops the re-route at the proposal and parks a resume for the orchestrator's
+   * guide-or-stop answer. The fold stores only what an orchestrator DECLARED, so the defaults
+   * live here, in the ONE derivation the view and the observation both read. */
   _policyOf(swarm) {
     const policy = swarm?.policy ?? null;
     const mode = policy?.rerouteOnProviderFault ?? null;
     const resumeMode = policy?.resumeContinuation ?? null;
     return Object.freeze({
-      rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'manual',
+      rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'auto',
       reroutePreferApi: policy?.reroutePreferApi === true,
-      resumeContinuation: SWARM_RESUME_CONTINUATION_MODES.includes(resumeMode) ? resumeMode : 'manual',
+      resumeContinuation: SWARM_RESUME_CONTINUATION_MODES.includes(resumeMode) ? resumeMode : 'auto',
     });
   }
 

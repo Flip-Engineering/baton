@@ -9,9 +9,9 @@
 //       workerId, from, code, resetAt, candidates, carry}` recorded at the fault observation, with
 //       candidates ranked by the SAME comparison a recruit performs (#341/#429), each saying why it
 //       ranked, and the row waking the root under the new closed wake class `reroute_proposed`;
-//   (b) the per-swarm policy `rerouteOnProviderFault: manual | auto` — `manual` (the default) stops
-//       at the proposal, `auto` performs the resume itself onto the first candidate through the
-//       SAME recruit path the root uses (#385's `workspace.carried_from`, #337's parked guidance),
+//   (b) the per-swarm policy `rerouteOnProviderFault: auto | manual` — `auto` (the default since
+//       #574) performs the resume itself onto the first candidate through the SAME recruit path
+//       the root uses (#385's `workspace.carried_from`, #337's parked guidance),
 //       recording `swarm.rerouted {from, to, successor, carriedFrom, proposalSeq}`; the successor's
 //       brief carries `## Re-routed`;
 //   (c) subscription awareness: a route whose window is closed is excluded and named with its
@@ -179,6 +179,7 @@ const participantRow = (view, participantId) =>
 test('443-a1: a provider-fault death records ONE reroute_proposed row naming the ranked candidates, and the view projects it', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'a1',
+    policy: { rerouteOnProviderFault: 'manual' },
   });
   const view = await w.call('view', { swarmId: SWARM });
 
@@ -226,9 +227,10 @@ test('443-a1: a provider-fault death records ONE reroute_proposed row naming the
   }, 'the row names the exact recruit that answers it');
 });
 
-test('443-a2: the proposal wakes the new closed wake class, and carries no roll-forward without a policy', async (t) => {
+test('443-a2: the proposal wakes the new closed wake class, and a declared manual posture carries no roll-forward', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'a2',
+    policy: { rerouteOnProviderFault: 'manual' },
   });
   const startedBefore = w.starts.length;
   await w.call('view', { swarmId: SWARM });
@@ -244,12 +246,13 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
   assert.equal(wakeMatches(frame, parseWakeFilter({ kinds: ['dead'] })), false,
     'and the class is its own, never a second name for dead');
 
-  // `manual` is the default: the policy says nothing, so NO successor is spawned by the runtime.
+  // `manual` is declared here, so the policy says a proposal pages an orchestrator and NO
+  // successor is spawned by the runtime; the resume default resolves beside it.
   const view = await w.call('view', { swarmId: SWARM });
   assert.equal(w.starts.length, startedBefore, 'a manual swarm never spawns on its own');
   assert.deepEqual(view.policy,
-    { rerouteOnProviderFault: 'manual', reroutePreferApi: false, resumeContinuation: 'manual' },
-    'the view renders the policy with its defaults resolved');
+    { rerouteOnProviderFault: 'manual', reroutePreferApi: false, resumeContinuation: 'auto' },
+    'the view renders the declared policy with the undeclared default resolved');
 
   // The policy is a closed vocabulary, enforced in the lane that knows best: the contract refuses
   // an unknown payload FIELD before any effect (naming the fields the kind has), and the fold
@@ -266,6 +269,7 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
     },
     'an unknown policy field never reaches the fold',
   );
+  const declaredPolicyRows = rowsOf(w.store, 'swarm.policy_updated').length;
   for (const payload of [{ rerouteOnProviderFault: 'sometimes' }, { reroutePreferApi: 'yes' }, {}]) {
     await assert.rejects(
       w.call('update', { swarmId: SWARM, event: 'swarm.policy_updated', payload }),
@@ -273,8 +277,37 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
       `a policy row refuses: ${JSON.stringify(payload)}`,
     );
   }
+  assert.equal(rowsOf(w.store, 'swarm.policy_updated').length, declaredPolicyRows,
+    'a refused policy leaves the swarm exactly as it was');
+});
+
+test('443-a3: with no declared policy the defaults are auto — a fault death performs the resume itself (#574)', async (t) => {
+  // #574: recoverability is the DEFAULT posture. A swarm that declares no policy resolves
+  // `rerouteOnProviderFault: auto` (with `resumeContinuation: auto` beside it), so the death the
+  // observation folds is answered by the runtime's own recruit without an orchestrator in the
+  // loop — the shape the 2026-09-24 Kimi window closings needed.
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'a3',
+  });
+  const view = await w.call('view', { swarmId: SWARM });
+  assert.deepEqual(view.policy,
+    { rerouteOnProviderFault: 'auto', reroutePreferApi: false, resumeContinuation: 'auto' },
+    'the undeclared policy resolves to the auto recovery posture');
   assert.equal(rowsOf(w.store, 'swarm.policy_updated').length, 0,
-    'and a refused policy leaves the swarm exactly as it was');
+    'no policy row was declared — the default lives in the derivation');
+
+  const rerouted = rowsOf(w.store, 'swarm.rerouted');
+  assert.equal(rerouted.length, 1, 'the runtime performed the resume onto the first candidate');
+  const successorId = rerouted[0].payload.successor;
+  const successor = w.store.swarm(SWARM).participants[successorId];
+  assert.equal(successor.status, 'active', 'the successor is a member');
+  assert.deepEqual({ ...successor.route }, { ...OPEN_SUBSCRIPTION },
+    'admitted on the first candidate, exactly');
+  assert.equal(w.starts.some((row) => row.runId === successor.runId), true,
+    'the auto continuation started the successor without a question (#572 default)');
+  assert.equal(rowsOf(w.store, 'swarm.resume_decision_requested')
+    .filter((row) => row.payload.participantId === successorId).length, 0,
+    'no continuation question is recorded under the auto default');
 });
 
 // ── (b) the policy, and the auto resume through the same recruit path ───────────────────────────
@@ -334,6 +367,7 @@ test('443-b1: `auto` performs the resume onto the first candidate, carrying the 
 test('443-b2: a hand-typed resume of a faulted seat still says why the successor exists', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'b2',
+    policy: { rerouteOnProviderFault: 'manual', resumeContinuation: 'manual' },
   });
   await w.call('view', { swarmId: SWARM });
   assert.deepEqual(rowsOf(w.store, 'swarm.rerouted'), [],
@@ -360,13 +394,13 @@ test('443-b2: a hand-typed resume of a faulted seat still says why the successor
   assert.ok(brief.includes('## Inheritance from alpha'));
 });
 
-test('443-b3: an auto-rerouted successor under the default continuation policy pends for the answer', async (t) => {
+test('443-b3: an auto-rerouted successor under a declared manual continuation policy pends for the answer', async (t) => {
   // The two policies compose independently (docs/52 D5): `auto` lets the runtime PERFORM the
-  // resume, while the default `manual` continuation still makes the recovered seat wait for its
+  // resume, while the DECLARED `manual` continuation still makes the recovered seat wait for its
   // orchestrator's decision — the recovery is automated, the question is not skipped.
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
-    policy: { rerouteOnProviderFault: 'auto' }, tag: 'b3',
+    policy: { rerouteOnProviderFault: 'auto', resumeContinuation: 'manual' }, tag: 'b3',
   });
   const view = await w.call('view', { swarmId: SWARM });
   const successorId = rowsOf(w.store, 'swarm.rerouted')[0]?.payload.successor ?? null;
