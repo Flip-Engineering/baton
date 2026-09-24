@@ -265,7 +265,7 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/coordinator.mjs': 436,
   'impl/src/application.mjs': 243,
   'impl/src/coordination-store.mjs': 608,
-  'impl/src/swarm-runtime.mjs': 167,
+  'impl/src/swarm-runtime.mjs': 168,
   'impl/src/coordination-internals.mjs': 123,
   'impl/src/coordination-replay.mjs': 62,
   'impl/src/runtime-briefing.mjs': 1,
@@ -281,7 +281,7 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/application-observation.mjs': 176,
   'impl/src/runtime-event-handlers/dispatcher.mjs': 1,
   'impl/src/runtime-event-handlers/process-lifecycle.mjs': 4,
-  'impl/src/runtime-event-handlers/turn-terminal.mjs': 3,
+  'impl/src/runtime-event-handlers/turn-terminal.mjs': 4,
   'impl/src/runtime-event-handlers/interaction.mjs': 6,
   'impl/src/runtime-event-handlers/observation-events.mjs': 9,
   // Issue #59: the re-drive continuity seam's own target (6 exported seams and the 16 module-scope

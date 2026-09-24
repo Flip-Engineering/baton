@@ -152,7 +152,7 @@ test('#302 every swarm mutation answers with a receipt, and only view:true carri
   assert.equal(guided.guide.seq, guided.receipt.event.seq, 'the receipt event IS the guide\'s row');
   assert.equal(guided.guide.delivery.state, 'delivered');
   assert.deepEqual(guided.next, { command: 'swarm.watch', args: { swarmId: 'baton' },
-    observation: { wakeClass: 'paused', participantId: 'builder' } },
+    observation: { wakeClass: 'turn_reported', participantId: 'builder' } },
   'next names the seat\'s next turn boundary');
 
   // capture

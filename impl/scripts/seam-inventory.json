@@ -4507,7 +4507,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 111,
+          "size": 119,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -13624,7 +13624,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1134,
+          "size": 1144,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -14036,6 +14036,16 @@
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reportTurnEnd",
+          "ordinal": 0,
+          "size": 89,
+          "seam": "admission",
+          "evidence": [
+            "observation:record_name",
+            "admission:swarm_refusal"
           ]
         },
         {
@@ -24715,9 +24725,18 @@
       "class": null,
       "members": [
         {
+          "name": "reportTurn",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "turnCompleted",
           "ordinal": 0,
-          "size": 87,
+          "size": 88,
           "seam": "effect",
           "evidence": [
             "admission:authority_check",
@@ -24728,7 +24747,7 @@
         {
           "name": "crashed",
           "ordinal": 0,
-          "size": 71,
+          "size": 78,
           "seam": "effect",
           "evidence": [
             "effect:event_handlers_port"
@@ -24737,7 +24756,7 @@
         {
           "name": "exited",
           "ordinal": 0,
-          "size": 20,
+          "size": 24,
           "seam": "effect",
           "evidence": [
             "effect:event_handlers_port"

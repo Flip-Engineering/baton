@@ -563,6 +563,14 @@ and the swarm section of `impl/MCP.md`. This block is generated — do not hand-
 
 <!-- END GENERATED: swarm-family -->
 
+Swarm turn completion (#572) records `swarm.turn_reported` with the participant, worker,
+turn identity, result, and assignment completion declaration. The runtime delivers it to the
+nearest live parent through guidance. A report addressed to the root produces a
+`swarm.root_attention_owed` wake carrying a bounded preview, omitted byte count, and report
+sequence. `swarm.view` with the reporting `participantId` returns the full `turnReports`.
+The assignment remains available for guidance. A participant that declares
+`swarm.participant_left` with reason `completed` proceeds through verification and worker cleanup.
+
 ---
 
 ## 8. The framework

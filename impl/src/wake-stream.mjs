@@ -280,6 +280,13 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'incarnation', kind: 'resident', fallback: { field: 'deploymentId', kind: 'deployment' } },
   }),
   wakeRow({
+    wakeClass: 'turn_reported', scope: 'swarm', terminal: true,
+    next: 'baton swarm view {swarmId}',
+    summary: 'a participant turn ended and its report was recorded for the orchestrator',
+    rows: [operationalKind('swarm.turn_reported')],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
     next: 'baton swarm guide {swarmId} {participantId}',
     summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
@@ -307,7 +314,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // the row names the act (run the check, read the view), and the acknowledgement is that act.
     wakeClass: 'root_owed', scope: 'deployment', terminal: true,
     next: 'baton swarm view {swarmId}',
-    summary: 'a contribution waits on the root — a check no other active seat can review, or a needsFromOthers item addressed to the root',
+    summary: 'a contribution, request, or turn report needs the root orchestrator',
     rows: [operationalKind('swarm.root_attention_owed')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
@@ -570,6 +577,8 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     runId,
     actor: event.actor ?? null,
     subject: subjectOf(row, payload),
+    ...(payload.owed === 'turn_report' && payload.turnReport
+      ? { turnReport: Object.freeze({ ...payload.turnReport }) } : {}),
     next: renderNext(row, coordinates),
     observation: false,
     served: servedHeader(served),

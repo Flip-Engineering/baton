@@ -494,11 +494,10 @@ export function swarmReceiptNext(command, args = {}, outcome = null) {
       return { command: 'swarm.guide', args: { swarmId, participantId: args.participantId ?? null } };
     }
     case 'swarm.guide': {
-      // The seat's next turn boundary is the `paused` class (a turn paused and staying paused IS
-      // the boundary a queued guide lands on); a park is cleared by the delivery that composes it.
+      // A delivered guide is followed by the seat's turn report. Queued guidance has its own delivery wake.
       const parked = outcome?.delivery?.state === 'parked';
       return { command: 'swarm.watch', args: { swarmId },
-        observation: { wakeClass: parked ? 'guidance_delivered' : 'paused',
+        observation: { wakeClass: parked ? 'guidance_delivered' : 'turn_reported',
           participantId: args.participantId ?? null } };
     }
     case 'swarm.capture':
