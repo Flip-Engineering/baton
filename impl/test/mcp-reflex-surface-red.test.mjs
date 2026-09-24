@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // MCP reflex surface red suite (Slice 1), binding contract: docs/reference/evidence/
 // mcp-reflex-live-2026-07-22/mcp-reflex-surface-decisions.md (v2 FINAL, de68345).
 //
@@ -22,8 +24,22 @@ import test from 'node:test';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const NOW = Date.parse('2026-07-22T00:00:00.000Z');
-const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-reflex-'));
+const root = () => mintFixtureDirectory(join(tmpdir(), 'baton-mcp-reflex-'));
 const REPO_ID = 'repo-reflex';
 
 // The card's commands derive from the command table (surface-truth.mjs).

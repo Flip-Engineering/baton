@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // #287 U-E1/U-G10 (2026-09-14 audit): the documented descriptor quickstart authenticates.
 //
 // RED-state facts verified at the pre-fix HEAD (2026-09-14 run):
@@ -23,7 +25,21 @@ import { createMcpServerFromDescriptor } from '../src/mcp-descriptor.mjs';
 import { McpFleetServer } from '../src/index.mjs';
 import { wrapProductionMcpServer } from '../src/production-mcp-complete.mjs';
 
-const REPO = mkdtempSync(join(tmpdir(), 'baton-mcp-descriptor-auth-'));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const REPO = mintFixtureDirectory(join(tmpdir(), 'baton-mcp-descriptor-auth-'));
 const DESCRIPTOR_PATH = join(REPO, 'descriptor.json');
 const ROUTE = { harness: 'mock', model: 'model-a', effort: 'low' };
 
@@ -105,7 +121,7 @@ function serverWithPrincipal(principalOverrides = {}) {
   // Each server gets its OWN deployment root: sharing one coordination directory across
   // servers would turn audit writes into contention refusals (temporarily_unavailable),
   // which is transport noise, not the guard semantics under test.
-  const repo = mkdtempSync(join(tmpdir(), 'baton-mcp-descriptor-auth-srv-'));
+  const repo = mintFixtureDirectory(join(tmpdir(), 'baton-mcp-descriptor-auth-srv-'));
   const descriptor = {
     repo,
     deploymentRoot: join(repo, '.baton', 'srv'),
