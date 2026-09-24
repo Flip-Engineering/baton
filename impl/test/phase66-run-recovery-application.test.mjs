@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -17,6 +19,20 @@ import {
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
@@ -27,7 +43,7 @@ function digest(value) {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase66-run-recovery-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase66-run-recovery-${name}-`));
 const repoId = 'repo-phase66-run-recovery';
 const runId = 'run-phase66-run-recovery';
 const workerId = 'worker-phase66-run-recovery';
