@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +13,20 @@ import {
 import { bindBaton } from '../src/application-client.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const route = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'low' });
 
 function resolver(routes = [route], defaults = undefined) {
@@ -21,7 +37,7 @@ function resolver(routes = [route], defaults = undefined) {
 }
 
 function connectionFixture({ linked = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'baton-connection-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-connection-'));
   const repo = join(root, 'repo');
   const common = linked ? join(root, 'common.git') : join(repo, '.git');
   const gitDir = linked ? join(common, 'worktrees', 'repo') : common;

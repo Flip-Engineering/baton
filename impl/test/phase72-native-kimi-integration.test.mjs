@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -10,6 +12,20 @@ import { FenceTable } from '../src/fence.mjs';
 import { KimiAcpCli } from '../src/kimi-acp.mjs';
 import { Log } from '../src/log.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
 const BASE = '1'.repeat(40);
@@ -34,7 +50,7 @@ const brief = () => ({
 });
 
 function sourceFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'baton-native-kimi-source-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-native-kimi-source-'));
   mkdirSync(join(root, 'credentials'), { mode: 0o700 });
   mkdirSync(join(root, 'oauth'), { mode: 0o700 });
   writeFileSync(join(root, 'config.toml'), 'default_model = "kimi-code/k3"\n', { mode: 0o600 });
@@ -53,7 +69,7 @@ function sourceSnapshot(root) {
 }
 
 test('KC1/KC4/KC5: public native route uses private subscription state, redacts output, and preserves before exact reap', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-native-kimi-integrated-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-native-kimi-integrated-'));
   const worktree = join(root, 'worktree');
   mkdirSync(worktree);
   const sourceRoot = sourceFixture();
@@ -117,7 +133,7 @@ test('KC1/KC4/KC5: public native route uses private subscription state, redacts 
 // ---------------------------------------------------------------------------
 
 test('A-E2/A-I3: a stop of an idle worker converges on control.interrupt_confirmed, never on the stop deadline', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-native-kimi-idle-stop-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-native-kimi-idle-stop-'));
   const worktree = join(root, 'worktree');
   mkdirSync(worktree);
   const sourceRoot = sourceFixture();

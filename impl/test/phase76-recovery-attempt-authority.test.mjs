@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 76 — durable, two-phase recovery-attempt authority.
 //
 // Recovery is an external effect. Before a harness is asked to attach, the CoordinationStore
@@ -17,6 +19,20 @@ import {
   CoordinationStore,
 } from '../src/coordination-store.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
@@ -27,7 +43,7 @@ function digest(value) {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
 
-const root = (label) => mkdtempSync(join(tmpdir(), `baton-phase76-recovery-attempt-${label}-`));
+const root = (label) => mintFixtureDirectory(join(tmpdir(), `baton-phase76-recovery-attempt-${label}-`));
 const repoId = 'repo-phase76-recovery-attempt';
 const runId = 'run-phase76-recovery-attempt';
 const workerId = 'worker-phase76-recovery-attempt';

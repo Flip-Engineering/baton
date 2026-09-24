@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -14,8 +16,22 @@ import {
   createDriver,
 } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase67-signal-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase67-signal-${name}-`));
 const principal = (id) => ({ actor: `signal:${id}`, principalId: id, sessionId: `${id}-session` });
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
