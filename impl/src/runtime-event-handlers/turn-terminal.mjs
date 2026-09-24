@@ -45,11 +45,11 @@ export function turnCompleted(coordinator, recorder, ctx) {
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
         coordinator._clearWatchdog(ctx.handle);
-        if (turnWasReported) return;
         if (!sealVerdict.ok) {
           coordinator._failTerminalProviderGovernance(ctx.handle, terminalEvent, sealVerdict.code);
           return
         }
+        if (turnWasReported) return;
         if (sealVerdict.seal) {
           ctx.handle.providerTerminalSeal = sealVerdict.seal;
           if (ctx.handle.providerTurn) ctx.handle.providerTurn.sealed = true;
