@@ -72,6 +72,8 @@ const ADMISSION = Object.freeze({
   'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission', refusalCode: 'spill_body_exceeded' },
   'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission', refusalCode: 'spill_body_exceeded' },
   'wave.run.spec_path': { lane: 'wave.run.spec_path', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'waves.run admission (the semantic-registry input schema; the interpreter containment re-checks)', refusalCode: 'workflow_spec_invalid' },
+  'waves.harvest.onto': { lane: 'waves.harvest.onto', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'the harvest accessor (registry schema, facade shape normalizer, MCP tool schema)', refusalCode: 'application_waves_harvest_invalid' },
+  'view.resultpin.page': { lane: 'view.resultpin.page', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   'decision.question': { lane: 'decision.question', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest / coordinator decision seam', refusalCode: 'decision_question_exceeded' },
   'decision.need': { lane: 'decision.need', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_need_exceeded' },
   'decision.rationale': { lane: 'decision.rationale', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_rationale_exceeded' },
@@ -79,6 +81,8 @@ const ADMISSION = Object.freeze({
   'steering.focus': { lane: 'steering.focus', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordinator steering policy injection', refusalCode: 'steering_focus_exceeded' },
   'board.title': { lane: 'board.title', class: 'admission', value: 160, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.postBoardItem', refusalCode: 'board_title_exceeded' },
   'board.detail': { lane: 'board.detail', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.postBoardItem', refusalCode: 'board_detail_exceeded' },
+  // Issue #66 (D7): the resolve act's own admission bound, enforced at coordinator.resolveDoubt.
+  'doubt.resolution.bytes': { lane: 'doubt.resolution.bytes', class: 'admission', value: 4096, unit: 'bytes', graceful: 'refused', enforcedAt: 'coordinator.resolveDoubt', refusalCode: 'doubt_resolution_exceeded' },
   'board.report.body': { lane: 'board.report.body', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.submitBoardReport', refusalCode: 'board_report_exceeded' },
   'run.legacy_send.body': { lane: 'run.legacy_send.body', class: 'admission', value: 16384, unit: 'bytes', graceful: null, enforcedAt: 'application run.workstream.notify / run.act send / coordination-store run control', refusalCode: 'run_legacy_send_exceeded' },
   'decision.option.label': { lane: 'decision.option.label', class: 'admission', value: 160, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest option label', refusalCode: 'decision_option_label_exceeded' },
@@ -176,11 +180,15 @@ const SUBSTRATE = Object.freeze({
   // nothing about the provider, so it never blocks the route).
   'route.probe_capture': { lane: 'route.probe_capture', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
   'route.probe_deadline_ms': { lane: 'route.probe_deadline_ms', class: 'substrate', value: 120_000, unit: 'ms', graceful: null },
-  // #456 (item 2): the probe instant of a provider-quota degrade whose provider named no reset. The
-  // route row publishes `probeAfter` = the fault's own window (this row when the fault named none)
-  // after the last death of the episode, so no route sits degraded with no next step: one recruit is
-  // admitted as a probe at that instant, and its turn either clears the episode or re-arms it.
-  'route.fault_probe_ms': { lane: 'route.fault_probe_ms', class: 'substrate', value: FAULT_PROBE_WINDOW_MS, unit: 'ms', graceful: null, enforcedAt: 'application-deployment.mjs deriveRouteDegrades (the probe instant a null-reset degrade publishes)' },
+  // #456 (item 2), #575: the probe instant of a provider-QUOTA degrade whose provider named no
+  // reset. The route row publishes `probeAfter` = the fault's own window (this row when the fault
+  // named none) after the last death of the episode, so the quota episode always names its next
+  // step: one recruit is admitted as a probe at that instant, and its turn either clears the
+  // episode or re-arms it. The same row bounds a quota block the provider answered without a
+  // reset instant (`derivedResetAt`), so the block and the episode end together. A stall or
+  // socket episode derives no instant: its recovery is a later successful turn or the operator's
+  // probe override, never a clock (#316-a3).
+  'route.fault_probe_ms': { lane: 'route.fault_probe_ms', class: 'substrate', value: FAULT_PROBE_WINDOW_MS, unit: 'ms', graceful: null, enforcedAt: 'application-deployment.mjs deriveRouteDegrades (the probe instant a null-reset quota degrade publishes) and runtime-observation.mjs _recordProviderQuotaBlock (the derived end of a resetless quota block)' },
   // Issue #394: the web transport's wait ceiling — ONE row for the bound BOTH wait arms draw
   // (the application `run.wait` arm, which refused above it, and the legacy coordinator `wait`
   // arm, which silently clamped to it). The derivation is the transport's own default per-command
@@ -259,6 +267,11 @@ const VIEW = Object.freeze({
   'view.run.bytes': { lane: 'view.run.bytes', class: 'view', value: 524288, unit: 'bytes', graceful: 'shed-flagged' },
   'view.review_source.bytes': { lane: 'view.review_source.bytes', class: 'view', value: 4194304, unit: 'bytes', graceful: 'shed-flagged' },
   'view.attention_text.bytes': { lane: 'view.attention_text.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #66 (D7): the doubt review surface. The open-doubts read sheds at the same item
+  // bound as the knowledge slice it extends; the byte row is the honest render bound for one
+  // answered record (question + context + resolution + wrappers), a shed flag, never a wire cap.
+  'view.open_doubts.items': { lane: 'view.open_doubts.items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
+  'view.open_doubts.bytes': { lane: 'view.open_doubts.bytes', class: 'view', value: 8192, unit: 'bytes', graceful: 'shed-flagged' },
   // OMP's historical final-message slice counts JavaScript string units, not UTF-8 bytes.
   'view.omp.final_summary': { lane: 'view.omp.final_summary', class: 'view', value: 4096, unit: 'code_units', graceful: null },
   // Issue #79 (D2): the worker-delivery push bounds. The ITEM count is the wire bound (8 = the
@@ -266,6 +279,19 @@ const VIEW = Object.freeze({
   // row is a RENDER-side shed flag (OQ1), never a wire cap.
   'view.attention_push.items': { lane: 'view.attention_push.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
   'view.attention_push.bytes': { lane: 'view.attention_push.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #69 (D2/D7): the cited-REPL-object section's bounds, declared independently of the #79
+  // rows above so a fold-order change in that lane can never renumber these. The ITEM row is the
+  // serve bound (8 = the knowledge-slice precedent); its overflow is a digest-cited spill, never a
+  // truncation. The BYTE row is a RENDER-side shed flag — the boundary entry's leaf is cut with a
+  // `(truncated)` marker and the full text stays reachable by citation.
+  'view.repl_object.items': { lane: 'view.repl_object.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
+  'view.repl_object.bytes': { lane: 'view.repl_object.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #59 (D1): the re-drive continuity block's own bounds. The ITEM count is the block's
+  // wire bound (8, the #79/#69 precedent); overflow degrades to a digest-cited spill, never a
+  // truncation. The BYTE row is a RENDER-side shed flag (the full carried text rides the spill),
+  // exactly as `view.attention_push.bytes` sheds for #79.
+  'view.continuity.items': { lane: 'view.continuity.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
+  'view.continuity.bytes': { lane: 'view.continuity.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
   'view.blocked_interaction_summary.bytes': { lane: 'view.blocked_interaction_summary.bytes', class: 'view', value: 160, unit: 'bytes', graceful: 'shed-flagged' },
   'view.knowledge_slice.items': { lane: 'view.knowledge_slice.items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
   'view.knowledge_slice.bytes': { lane: 'view.knowledge_slice.bytes', class: 'view', value: 2048, unit: 'bytes', graceful: 'shed-flagged' },
@@ -435,7 +461,7 @@ const COUNTS = Object.freeze({
  * graceful, enforcedAt?, refusalCode?}. */
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION, ...COUNTS });
 
-export const FRAME_LIMITS_VERSION = '1.3.0';
+export const FRAME_LIMITS_VERSION = '1.4.0';
 
 /** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
  * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's

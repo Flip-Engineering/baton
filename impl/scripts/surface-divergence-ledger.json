@@ -51,6 +51,14 @@
     },
     {
       "surface": "cli",
+      "name": "run.resultpin",
+      "canonical": "run.resultpin",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #99, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
       "name": "run.scratchpad.elevate",
       "canonical": "run.scratchpad.elevate",
       "dimension": "name",
@@ -72,6 +80,14 @@
       "dimension": "name",
       "retiresIn": "M5",
       "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
+    },
+    {
+      "surface": "cli",
+      "name": "waves.harvest",
+      "canonical": "waves.harvest",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #99, web-refused until #87 lands"
     }
   ],
   "cliLocalToolingCodes": [
