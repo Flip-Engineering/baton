@@ -135,7 +135,7 @@ async function pausedRun(name, runId, fixtureOpts = {}) {
   const proposed = await application.start(intent(runId), principal('owner'));
   await application.approve(runId, proposed.plan.digest, principal('approver'));
   await until(
-    async () => (await application.status(runId, principal('owner'))).phase === 'paused',
+    async () => (await application.status(runId, principal('owner'))).attention.some((row) => row.kind === 'turn_checkpoint'),
     'task pause',
   );
   const view = await application.status(runId, principal('owner'));
@@ -199,7 +199,7 @@ test('wait_turn receipts the checkpoint without consuming it: the SAME nudge_tur
   for (const kind of ['nudge_turn', 'wait_turn', 'claim_turn']) {
     assert.ok(kindsAfter.includes(kind), `${kind} must still be advertised after a wait receipt`);
   }
-  assert.equal(driver.coordination.task(taskId).status, 'paused');
+  assert.equal(driver.coordination.task(taskId).status, 'working');
   assert.equal(driver.coordinator._pausedTurns.get(pauseId).state, 'pending');
   const receipts = driver.coordinator._log.read(workerId).filter((event) => event.kind === 'turn.wait_noted');
   assert.equal(receipts.length, 1);

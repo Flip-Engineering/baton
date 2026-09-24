@@ -11,13 +11,15 @@ import {
 /** Report a swarm turn through its registered runtime extension under terminal authority. */
 function reportTurn(coordinator, ctx, event, report) {
   const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
-  if (typeof participantRuntime?.onTurnCompleted !== 'function') return;
-  coordinator._trackAuthorityPromise(() => Promise.resolve().then(() => participantRuntime.onTurnCompleted({
-    workerId: ctx.workerId, turnSeq: event.seq, turnEpoch: ctx.turnEpoch, report,
-    assignmentDone: participantRuntime.isDone?.() === true,
-  })), true).catch((error) => coordinator._recordOperationFailure(
-    'swarm.turn_report_delivery_failed', ctx.handle, 'turn_report_delivery_failed', error,
-    { turnSeq: event.seq }));
+  const deliver = typeof participantRuntime?.onTurnCompleted === 'function'
+    ? () => participantRuntime.onTurnCompleted({ workerId: ctx.workerId,
+      turnSeq: event.seq, turnEpoch: ctx.turnEpoch, report,
+      assignmentDone: participantRuntime.isDone?.() === true })
+    : () => coordinator._reportRunTurn(ctx.handle, event, report);
+  coordinator._trackAuthorityPromise(() => Promise.resolve().then(deliver), true)
+    .catch((error) => coordinator._recordOperationFailure(
+      'turn.report_delivery_failed', ctx.handle, 'turn_report_delivery_failed', error,
+      { turnSeq: event.seq }));
 }
 
 export function turnCompleted(coordinator, recorder, ctx) {
@@ -41,6 +43,7 @@ export function turnCompleted(coordinator, recorder, ctx) {
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
         coordinator._clearWatchdog(ctx.handle);
+        if (ctx.turnWasTerminal) return;
         if (!sealVerdict.ok) {
           coordinator._failTerminalProviderGovernance(ctx.handle, terminalEvent, sealVerdict.code);
           return
@@ -82,13 +85,13 @@ export function turnCompleted(coordinator, recorder, ctx) {
         // for guidance. A declared completion proceeds to verification and worker cleanup.
         if (typeof participantRuntime?.onTurnCompleted === 'function'
           && participantRuntime.isDone?.() !== true) return;
-        // Non-swarm callers retain the checkpoint admission path.
+        // Non-swarm turn reports keep a continuation record for explicit nudge and claim acts.
         {
           const task = coordinator._tasks.get(ctx.handle.taskId);
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)
             && participantRuntime?.isDone?.() !== true
             && coordinator._turnCompletionOf(ctx.handle) === 'pausable') {
-            const settled = coordinator._admitPauseRecord(ctx.handle, task, terminalEvent, wr, ctx.appendAttributed);
+            const settled = coordinator._admitTurnReport(ctx.handle, task, terminalEvent, wr, ctx.appendAttributed);
             if (!settled) return;
           }
         }

@@ -193,7 +193,9 @@ function sameIdentity(payload, frame) {
   return (payload?.kind === 'wake.root_delivered' || payload?.kind === 'wake.root_undelivered')
     && payload.seq === frame.seq
     && payload.wakeClass === frame.wakeClass
-    && payload.swarmId === frame.swarmId;
+    && (payload.swarmId ?? null) === (frame.swarmId ?? null)
+    && (frame.swarmId != null || ((payload.runId ?? null) === (frame.runId ?? null)
+      && (payload.workerId ?? null) === (frame.workerId ?? null)));
 }
 
 function alreadyRecorded(store, frame) {
@@ -203,8 +205,8 @@ function alreadyRecorded(store, frame) {
 function validateIdentity(frame) {
   if (!Number.isSafeInteger(frame?.seq) || frame.seq <= 0
     || typeof frame?.wakeClass !== 'string' || frame.wakeClass.length === 0
-    || typeof frame?.swarmId !== 'string' || frame.swarmId.length === 0) {
-    throw refusal('wake frame identity requires seq, wakeClass, and swarmId', 'wake_frame_identity_invalid');
+    || ![frame?.swarmId, frame?.runId, frame?.workerId].some((id) => typeof id === 'string' && id.length > 0)) {
+    throw refusal('wake frame identity requires seq, wakeClass, and a swarm, Run, or worker identity', 'wake_frame_identity_invalid');
   }
 }
 
@@ -229,7 +231,8 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
   if (store === null || (typeof store !== 'object' && typeof store !== 'function')) {
     throw refusal('wake delivery store is required', 'wake_delivery_store_invalid');
   }
-  const identity = [frame.swarmId, frame.wakeClass, frame.seq];
+  const identity = frame.swarmId != null ? [frame.swarmId, frame.wakeClass, frame.seq]
+    : [null, frame.runId ?? null, frame.workerId ?? null, frame.wakeClass, frame.seq];
   const identityKey = JSON.stringify(identity);
   if (alreadyRecorded(store, frame)) return Object.freeze({ delivered: false, duplicate: true });
 
@@ -249,7 +252,8 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
     const wakeCapability = harnessWakeCapability(harness);
     const mechanism = wakeCapability?.mechanism ?? 'none';
     const base = {
-      seq: frame.seq, wakeClass: frame.wakeClass, swarmId: frame.swarmId,
+      seq: frame.seq, wakeClass: frame.wakeClass, swarmId: frame.swarmId ?? null,
+      ...(frame.runId ? { runId: frame.runId } : {}), ...(frame.workerId ? { workerId: frame.workerId } : {}),
       harness: typeof harness === 'string' && harness.length > 0 ? harness : 'unknown',
       mechanism,
     };

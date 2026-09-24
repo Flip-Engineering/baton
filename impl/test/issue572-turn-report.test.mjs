@@ -11,6 +11,7 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { deriveWakeFrame } from '../src/wake-stream.mjs';
+import { deliverRootWakeOnce } from '../src/wake-delivery.mjs';
 
 const dirs = [];
 function tmpDir() {
@@ -333,4 +334,53 @@ test('report replay after restart preserves a root address even if a parent beco
   assert.equal(result.delivery.state, 'root_addressed');
   assert.equal(f.adapter.calls.prompt.length, 0);
   assert.equal(f.events('swarm.root_attention_owed').length, 1);
+});
+
+test('a non-swarm turn addresses the root with its report and preserves explicit continuation', async (t) => {
+  const adapter = new AtomicPausableAdapter();
+  const f = setup({ adapter, capture: withDiff });
+  const handle = await f.coordinator.spawn('mock', makeBrief(), { runId: 'run-nonswarm' });
+  t.after(() => f.coordinator.stopRunTargets([handle.id], 'orchestrator'));
+  adapter.completeTurn(handle.id, { output: 'Non-swarm result' });
+  await flush();
+  const task = f.coordinator._tasks.get(handle.taskId);
+  assert.equal(task.status, 'working');
+  assert.equal(f.log.read(handle.id).some((e) => e.kind === 'turn.paused'), false);
+  const owed = f.store.eventsView().filter((e) => e.payload?.kind === 'run.root_attention_owed');
+  assert.equal(owed.length, 1);
+  const frame = deriveWakeFrame(owed[0]);
+  assert.equal(frame.wakeClass, 'root_owed');
+  assert.equal(frame.swarmId, null);
+  assert.equal(frame.runId, 'run-nonswarm');
+  assert.equal(frame.next, 'baton run view run-nonswarm');
+  assert.match(frame.turnReport.text, /Non-swarm result/);
+  const deliveries = [];
+  const input = { store: f.store, frame, target: { harness: 'claude-code', sessionId: 'root' },
+    deliver: async ({ frame: delivered }) => { deliveries.push(delivered); return { delivered: true }; } };
+  await deliverRootWakeOnce(input);
+  await deliverRootWakeOnce(input);
+  assert.equal(deliveries.length, 1);
+  const [continuation] = f.coordinator.pausedTurns({ workerId: handle.id });
+  assert.equal((await f.coordinator.nudgeTurn(continuation.pauseId, 'Continue the investigation')).ok, true);
+  assert.equal(adapter.epoch(handle.id), 2);
+});
+
+test('a non-swarm child report wakes its Run-lineage parent with the result', async (t) => {
+  const adapter = new AtomicPausableAdapter();
+  const f = setup({ adapter, capture: withDiff });
+  const parent = await f.coordinator.spawn('mock', makeBrief(), { runId: 'run-parent' });
+  const child = await f.coordinator.spawn('mock', makeBrief(), { runId: 'run-child' });
+  t.after(() => f.coordinator.stopRunTargets([parent.id, child.id], 'orchestrator'));
+  f.store.runLineage = (runId) => runId === 'run-child'
+    ? { parentRunId: 'run-parent', parent: { workerId: parent.id } } : null;
+  adapter.completeTurn(parent.id, { output: 'Ready for child' });
+  await flush();
+  adapter.completeTurn(child.id, { output: 'Child finding' });
+  await flush();
+  assert.equal(adapter.calls.prompt.length, 1);
+  assert.equal(adapter.calls.prompt[0].worker, parent.id);
+  assert.match(adapter.calls.prompt[0].content, /Child finding/);
+  assert.equal(adapter.epoch(parent.id), 2);
+  assert.equal(f.store.eventsView().filter((e) => e.payload?.kind === 'run.turn_report_delivered').length, 1);
+  assert.equal(f.coordinator._tasks.get(child.taskId).status, 'working');
 });

@@ -935,6 +935,14 @@ export class Coordinator {
    *   gate from a checkpoint. `claim_turn` (the real verifier), `nudge_turn` (a continuation),
    *   and `wait_turn` are the only dispositions, and each is an explicit caller act.
    */
+    _admitTurnReport(handle, task, terminalEvent, wr, appendAttributed) {
+    return runtimeAdmission._admitTurnReport(this, this._recorder, handle, task, terminalEvent, wr, appendAttributed);
+  }
+
+    _reportRunTurn(handle, event, report) {
+    return runtimeObservation._reportRunTurn(this, this._recorder, handle, event, report);
+  }
+
     _admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed) {
     return runtimeAdmission._admitPauseRecord(this, this._recorder, handle, task, terminalEvent, wr, appendAttributed);
   }
@@ -1131,8 +1139,9 @@ export class Coordinator {
       ...this._routeAttribution(handle, task),
       payload: { actor, basis: 'nudge', pauseId },
     });
-    this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
-      this._coordMapEvent(settledEvent), actor);
+    const evidence = this._coordMapEvent(settledEvent);
+    if (!record.reported) this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      evidence, actor);
     task.status = 'working';
     handle.status = 'working';
     handle.turnTerminalObserved = false;

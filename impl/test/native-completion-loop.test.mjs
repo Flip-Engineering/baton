@@ -1,31 +1,4 @@
-// native-completion-loop.test.mjs — the repaired pause seam, proven end to end against the
-// adapter family that produced the live finding.
-//
-// THE FINDING. A real native Claude self-build completed its change, emitted
-// `lifecycle.turn_completed {status:'completed'}` on a `pausable` card, and the coordinator
-// armed its bounded policy steering cycle. The nudge it sent BEGAN the next turn (the atomic
-// pipe starts a turn synchronously inside `prompt()`); that `turn_started` answered the cycle;
-// the completed turn then armed another cycle. 570 provider turns, no verdict, the model
-// reporting "Complete, no remaining work" throughout.
-//
-// THE RULE NOW. The pause seam parks and decides nothing: `_admitPauseRecord` mints the durable
-// checkpoint and returns — no policy prompt, no window, no expiry verdict, no gate dispatch.
-// Native turn completion alone never mints a claim, and no elapsed time, repetition, count, or
-// prose ever decides a paused task. Completion authority belongs to the autonomous orchestrator,
-// which acts explicitly: `claim_turn` runs the EXISTING verifier/trust gate against a fresh
-// capture; `nudge_turn` admits a real continuation; `wait_turn` notes intent. Those three acts
-// and the cancellation paths are the whole decision surface, and they are unchanged.
-//
-// THE TESTS. The adapter below is the ATOMIC pipe (claude-session's CS7/E2 semantics: `spawn`
-// begins the bootstrap turn, and an idle session begins a turn synchronously inside `prompt`).
-// That shape is deliberate — it is the shape the old design fed itself with, so "zero prompts"
-// and "the turn epoch never advances" are the strongest available proofs that the coordinator
-// no longer re-awakens a native session. Required focuses, row by row:
-//   * visible pending checkpoint (N1, N3),
-//   * no automatic prompt under any elapsed time (N2, N3),
-//   * explicit continuation (N4),
-//   * explicit verification claim (N5),
-//   * cancellation is not resurrected (N6).
+// Non-swarm turn reports retain continuation and verification controls while the task stays active.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -215,10 +188,10 @@ async function nativeCheckpoint({ capture }) {
 // §A — The visible checkpoint, and no automatic prompt under any elapsed time
 // ===========================================================================
 
-test('N1: a native completion parks a VISIBLE checkpoint — no prompt, no verdict, no second turn', async () => {
+test('N1: a native completion records a turn report — no prompt, no verdict, no second turn', async () => {
   const { coordinator, adapter, handle, task, rows } = await nativeCheckpoint({ capture: withDiff });
 
-  assert.equal(task.status, 'paused', 'the native completion parks the task');
+  assert.equal(task.status, 'working', 'the completed turn keeps the task active');
   assert.equal(rows.length, 1, 'exactly one pending checkpoint is projected for the orchestrator');
   const [row] = rows;
   assert.equal(row.state, 'pending');
@@ -239,7 +212,7 @@ test('N1: a native completion parks a VISIBLE checkpoint — no prompt, no verdi
 
   // The durable origin still records the worker's own completion claim — the orchestrator's
   // claim decision reads it; the coordinator does not act on it.
-  const origin = coordinator._log.read(handle.id).find((event) => event.kind === 'turn.paused')?.payload?.origin;
+  const origin = coordinator._log.read(handle.id).find((event) => event.kind === 'turn.reported')?.payload?.origin;
   assert.equal(origin?.kind, 'turn_completed');
   assert.equal(origin?.resultStatus, 'completed');
 });
@@ -254,7 +227,7 @@ test('N2: no automatic prompt under ANY elapsed time — the pause seam uses no 
   assert.equal(settledWith(coordinator, handle.id, 'steering_expired'), undefined, 'expiry never decides work');
   assert.equal(verifyRuns(coordinator, handle.id), 0, 'no timed verdict');
   assert.equal(gateEvents(coordinator, handle.id).length, 0);
-  assert.equal(task.status, 'paused', 'the checkpoint is still parked');
+  assert.equal(task.status, 'working', 'the reported turn remains available');
   assert.equal(pauseRows(coordinator, task.id).map((r) => r.pauseId).join(), rows[0].pauseId,
     'and it is still the same claimable record');
   assert.equal(adapter.calls.kill.length, 0, 'elapsed time kills nothing');
@@ -284,7 +257,7 @@ test('N3: the reported loop cannot reproduce — repeated completions and wire n
   assert.equal(adapter.epoch(handle.id), 1, 'the coordinator never re-awakened the native session');
   assert.equal(verifyRuns(coordinator, handle.id), 0, 'native turn completion alone mints no policy claim');
   assert.equal(gateEvents(coordinator, handle.id).length, 0, 'and no verdict');
-  assert.equal(task.status, 'paused', 'the task stays parked, visibly awaiting its owner');
+  assert.equal(task.status, 'working', 'the task stays active for its orchestrator');
   assert.ok(pauseRows(coordinator, task.id).length >= 1, 'the checkpoint remains projected and claimable');
   assert.equal(adapter.calls.kill.length, 0, 'no unconditional process kill');
 });
@@ -310,8 +283,8 @@ test('N4: an orchestrator nudge is a real continuation — a fresh turn on the S
   // When that continuation ends, it parks as an ORDINARY checkpoint again — with no prompt.
   adapter.completeTurn(handle.id, { output: 'second checkpoint' });
   await flush();
-  assert.equal(task.status, 'paused');
-  assert.equal(pauseRows(coordinator, task.id).length, 1, 'a new visible checkpoint');
+  assert.equal(task.status, 'working');
+  assert.equal(pauseRows(coordinator, task.id).length, 1, 'a new turn report');
   assert.equal(adapter.calls.prompt.length, 1, 'parking sends no prompt — no loop back into the policy');
   assert.equal(adapter.epoch(handle.id), 2, 'and starts no further turn');
 });
