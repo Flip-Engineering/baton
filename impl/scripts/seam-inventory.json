@@ -4518,7 +4518,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 123,
+          "size": 127,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -12761,7 +12761,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 54,
+          "size": 60,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13251,9 +13251,18 @@
           ]
         },
         {
-          "name": "_routeEligible",
+          "name": "_harnessExcluded",
           "ordinal": 0,
           "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeEligible",
+          "ordinal": 0,
+          "size": 5,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13271,7 +13280,7 @@
         {
           "name": "_routeExhaustedFor",
           "ordinal": 0,
-          "size": 29,
+          "size": 30,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -13380,7 +13389,7 @@
         {
           "name": "_rerouteCandidates",
           "ordinal": 0,
-          "size": 37,
+          "size": 42,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -14080,7 +14089,7 @@
         {
           "name": "_performDeferredStart",
           "ordinal": 0,
-          "size": 219,
+          "size": 221,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -14302,7 +14311,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1245,
+          "size": 1247,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

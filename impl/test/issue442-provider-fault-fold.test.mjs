@@ -170,7 +170,8 @@ async function untilSettled(driver, workerId) {
 /** One seat, one provider answer, one policy kill — the observed 2026-09-18 sequence. */
 async function faultedSeat(f, { label, text = quotaText(RESET_AT) } = {}) {
   const row = swarmWorld(f, { label });
-  await row.call('create', { swarmId: 'sw', purpose: 'Provider fault truth' });
+  await row.call('create', { swarmId: 'sw', purpose: 'Provider fault truth',
+    policy: { resumeContinuation: 'manual' } });
   await row.call('recruit', { swarmId: 'sw', participantId: 'alpha', objective: 'work alpha' });
   const bound = row.driver.coordination.swarm('sw').participants.alpha;
   const workerId = bound.bindings.at(-1).workerId;

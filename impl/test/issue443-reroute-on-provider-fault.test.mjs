@@ -9,9 +9,9 @@
 //       workerId, from, code, resetAt, candidates, carry}` recorded at the fault observation, with
 //       candidates ranked by the SAME comparison a recruit performs (#341/#429), each saying why it
 //       ranked, and the row waking the root under the new closed wake class `reroute_proposed`;
-//   (b) the per-swarm policy `rerouteOnProviderFault: manual | auto` — `manual` (the default) stops
-//       at the proposal, `auto` performs the resume itself onto the first candidate through the
-//       SAME recruit path the root uses (#385's `workspace.carried_from`, #337's parked guidance),
+//   (b) the per-swarm policy `rerouteOnProviderFault: auto | manual` — `auto` (the default since
+//       #574) performs the resume itself onto the first candidate through the SAME recruit path
+//       the root uses (#385's `workspace.carried_from`, #337's parked guidance),
 //       recording `swarm.rerouted {from, to, successor, carriedFrom, proposalSeq}`; the successor's
 //       brief carries `## Re-routed`;
 //   (c) subscription awareness: a route whose window is closed is excluded and named with its
@@ -31,7 +31,7 @@ import { join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { PROVIDER_FAULT_CODES } from '../src/provider-faults.mjs';
-import { SwarmRuntime } from '../src/swarm-runtime.mjs';
+import { parseRoutingExcludeHarnesses, SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { SWARM_EVENT_KINDS, foldSwarmEvent, swarmSnapshot } from '../src/swarm-state.mjs';
 import { deriveWakeFrame, parseWakeFilter, wakeClassFor, wakeMatches } from '../src/wake-stream.mjs';
 
@@ -92,6 +92,13 @@ const closedSubscriptionRow = () => usageRow(CLOSED_SUBSCRIPTION, {
 });
 const openSubscriptionRow = () => usageRow(OPEN_SUBSCRIPTION, { billing: 'subscription', turns: 2 });
 const openApiRow = () => usageRow(OPEN_API, { billing: 'api', turns: 1, intelligence: 55 });
+// The 2026-09-24 shape the operator ruled on: a codex route whose measured quality ranks it
+// FIRST among the ready candidates, and the operator rule that no seat may be routed onto it.
+const CODEX = Object.freeze({ harness: 'codex', model: 'gpt-6-astra', effort: 'high' });
+const codexRow = () => usageRow(CODEX, { billing: 'subscription', turns: 1, intelligence: 60 });
+const quotaExhaustedRow = () => usageRow(OPEN_API, {
+  code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT,
+});
 
 /** The death the coordinator's own seam recorded (#442): the typed fault, the exact route, the
  * provider's reset answer and the checkpoint the stop preserved. */
@@ -105,7 +112,7 @@ function deathRow(workerId, seq) {
 /** ONE swarm runtime over a real store, with a coordinator that answers the two facts the
  * deployment's own seams publish: the provider-fault death of a bound worker, and the checkout a
  * seat is attached to. */
-function world(t, { rows, label: tag = 'w' }) {
+function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [] }) {
   const dir = mkdtempSync(join(tmpdir(), `baton-issue443-${tag}-`));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, 'repo');
@@ -129,6 +136,7 @@ function world(t, { rows, label: tag = 'w' }) {
     store, coordinator, authorize: async () => {},
     deploymentSummary: () => ({ workspace: null, hostCapacity: null, served: null, routeUsage: rows }),
     situationGit: { repoRoot: repo, head: () => null, commitsSince: () => [] },
+    routingExcludedHarnesses,
     prepareRun: async (request) => ({ ...request, route: request.options?.exact ?? null }),
     startRun: async (request) => {
       starts.push(request);
@@ -150,8 +158,8 @@ function world(t, { rows, label: tag = 'w' }) {
 
 /** One swarm holding a faulted seat: `base` holds the checkout, `alpha` works in it (the same
  * physical workspace), and alpha's provider then kills its worker. */
-async function faultedSwarm(t, { rows, policy = null, tag = 'w' } = {}) {
-  const w = world(t, { rows, label: tag });
+async function faultedSwarm(t, { rows, policy = null, tag = 'w', routingExcludedHarnesses } = {}) {
+  const w = world(t, { rows, label: tag, routingExcludedHarnesses });
   await w.call('create', { swarmId: SWARM, purpose: 'Re-route after a provider fault' });
   // The policy is declared the ONE way a swarm-level policy is declared (#443): a policy row on
   // the swarm, before any death.
@@ -179,6 +187,7 @@ const participantRow = (view, participantId) =>
 test('443-a1: a provider-fault death records ONE reroute_proposed row naming the ranked candidates, and the view projects it', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'a1',
+    policy: { rerouteOnProviderFault: 'manual' },
   });
   const view = await w.call('view', { swarmId: SWARM });
 
@@ -226,9 +235,10 @@ test('443-a1: a provider-fault death records ONE reroute_proposed row naming the
   }, 'the row names the exact recruit that answers it');
 });
 
-test('443-a2: the proposal wakes the new closed wake class, and carries no roll-forward without a policy', async (t) => {
+test('443-a2: the proposal wakes the new closed wake class, and a declared manual posture carries no roll-forward', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'a2',
+    policy: { rerouteOnProviderFault: 'manual' },
   });
   const startedBefore = w.starts.length;
   await w.call('view', { swarmId: SWARM });
@@ -244,12 +254,13 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
   assert.equal(wakeMatches(frame, parseWakeFilter({ kinds: ['dead'] })), false,
     'and the class is its own, never a second name for dead');
 
-  // `manual` is the default: the policy says nothing, so NO successor is spawned by the runtime.
+  // `manual` is declared here, so the policy says a proposal pages an orchestrator and NO
+  // successor is spawned by the runtime; the resume default resolves beside it.
   const view = await w.call('view', { swarmId: SWARM });
   assert.equal(w.starts.length, startedBefore, 'a manual swarm never spawns on its own');
   assert.deepEqual(view.policy,
-    { rerouteOnProviderFault: 'manual', reroutePreferApi: false, resumeContinuation: 'manual' },
-    'the view renders the policy with its defaults resolved');
+    { rerouteOnProviderFault: 'manual', reroutePreferApi: false, resumeContinuation: 'auto' },
+    'the view renders the declared policy with the undeclared default resolved');
 
   // The policy is a closed vocabulary, enforced in the lane that knows best: the contract refuses
   // an unknown payload FIELD before any effect (naming the fields the kind has), and the fold
@@ -266,6 +277,7 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
     },
     'an unknown policy field never reaches the fold',
   );
+  const declaredPolicyRows = rowsOf(w.store, 'swarm.policy_updated').length;
   for (const payload of [{ rerouteOnProviderFault: 'sometimes' }, { reroutePreferApi: 'yes' }, {}]) {
     await assert.rejects(
       w.call('update', { swarmId: SWARM, event: 'swarm.policy_updated', payload }),
@@ -273,8 +285,95 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
       `a policy row refuses: ${JSON.stringify(payload)}`,
     );
   }
+  assert.equal(rowsOf(w.store, 'swarm.policy_updated').length, declaredPolicyRows,
+    'a refused policy leaves the swarm exactly as it was');
+});
+
+test('443-a3: with no declared policy the defaults are auto — a fault death performs the resume itself (#574)', async (t) => {
+  // #574: recoverability is the DEFAULT posture. A swarm that declares no policy resolves
+  // `rerouteOnProviderFault: auto` (with `resumeContinuation: auto` beside it), so the death the
+  // observation folds is answered by the runtime's own recruit without an orchestrator in the
+  // loop — the shape the 2026-09-24 Kimi window closings needed.
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'a3',
+  });
+  const view = await w.call('view', { swarmId: SWARM });
+  assert.deepEqual(view.policy,
+    { rerouteOnProviderFault: 'auto', reroutePreferApi: false, resumeContinuation: 'auto' },
+    'the undeclared policy resolves to the auto recovery posture');
   assert.equal(rowsOf(w.store, 'swarm.policy_updated').length, 0,
-    'and a refused policy leaves the swarm exactly as it was');
+    'no policy row was declared — the default lives in the derivation');
+
+  const rerouted = rowsOf(w.store, 'swarm.rerouted');
+  assert.equal(rerouted.length, 1, 'the runtime performed the resume onto the first candidate');
+  const successorId = rerouted[0].payload.successor;
+  const successor = w.store.swarm(SWARM).participants[successorId];
+  assert.equal(successor.status, 'active', 'the successor is a member');
+  assert.deepEqual({ ...successor.route }, { ...OPEN_SUBSCRIPTION },
+    'admitted on the first candidate, exactly');
+  assert.equal(w.starts.some((row) => row.runId === successor.runId), true,
+    'the auto continuation started the successor without a question (#572 default)');
+  assert.equal(rowsOf(w.store, 'swarm.resume_decision_requested')
+    .filter((row) => row.payload.participantId === successorId).length, 0,
+    'no continuation question is recorded under the auto default');
+});
+
+test('443-a4: the operator routing rule excludes a harness — a fault never reroutes onto it (#574)', async (t) => {
+  // The 2026-09-24 ruling: no seat may be routed onto codex (the operator's ChatGPT usage), and
+  // the day's proposals ranked codex FIRST. The declared exclusion removes the harness from the
+  // derivation BEFORE ranking, names it in the excluded rows, and the performed resume lands on
+  // the best candidate the rule still allows; a route whose quota is exhausted is never a
+  // candidate either.
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), codexRow(), openSubscriptionRow(), quotaExhaustedRow(), openApiRow()],
+    tag: 'a4', routingExcludedHarnesses: ['codex'],
+  });
+  const view = await w.call('view', { swarmId: SWARM });
+  const proposal = rowsOf(w.store, 'swarm.reroute_proposed')[0].payload;
+  assert.deepEqual(proposal.candidates.map((row) => label(row)),
+    [label(OPEN_SUBSCRIPTION), label(OPEN_API)],
+    'the excluded harness and the quota-exhausted route are never candidates');
+  const codexExcluded = proposal.excluded.find((row) => label(row) === label(CODEX));
+  assert.ok(codexExcluded, 'the excluded harness is named, never dropped in silence');
+  assert.equal(codexExcluded.reason, 'excluded_by_operator', 'the row names the operator rule that kept it out');
+
+  assert.equal(view.policy.rerouteOnProviderFault, 'auto', 'no policy declared: the default is auto (#574)');
+  const rerouted = rowsOf(w.store, 'swarm.rerouted');
+  assert.equal(rerouted.length, 1, 'the runtime performed the resume');
+  const successor = w.store.swarm(SWARM).participants[rerouted[0].payload.successor];
+  assert.deepEqual({ ...successor.route }, { ...OPEN_SUBSCRIPTION },
+    'the successor landed on the best candidate the rule allows — never the excluded harness');
+
+  // A recruit that names the excluded harness itself refuses typed, before any queue — the
+  // recruit side honours the same declaration the derivation honours.
+  await assert.rejects(
+    w.call('recruit', { swarmId: SWARM, participantId: 'beta', objective: 'work',
+      options: { exact: { ...CODEX } } }),
+    (error) => {
+      assert.equal(error.code, 'route_excluded');
+      assert.equal(error.detail?.reason, 'excluded_by_operator');
+      return true;
+    },
+    'the recruit honours the exclusion the derivation honours',
+  );
+});
+
+test('443-a5: the config-less serve declares the rule from the environment, validated like its sibling declarations', async (t) => {
+  // `baton serve` reads no deployment config module, so the operator declares the rule on the
+  // environment the way BATON_PUBLISH_REMOTE is: comma-separated harness names, blanks refused,
+  // and an unset or blank variable declares nothing.
+  assert.equal(parseRoutingExcludeHarnesses(undefined), undefined);
+  assert.equal(parseRoutingExcludeHarnesses(''), undefined);
+  assert.equal(parseRoutingExcludeHarnesses('   '), undefined, 'a blank declaration names nothing');
+  assert.deepEqual(parseRoutingExcludeHarnesses('codex'), ['codex']);
+  assert.deepEqual(parseRoutingExcludeHarnesses(' codex , grok '), ['codex', 'grok'],
+    'the entries are trimmed around the commas');
+  assert.deepEqual(parseRoutingExcludeHarnesses('Codex,GROK'), ['Codex', 'GROK'],
+    'the spelling is preserved here; the eligibility predicate compares case-insensitively');
+  assert.throws(() => parseRoutingExcludeHarnesses('codex,,grok'),
+    /names no harness between commas/u, 'an empty comma slot refuses instead of excluding nothing');
+  assert.throws(() => parseRoutingExcludeHarnesses(','),
+    /names no harness between commas/u);
 });
 
 // ── (b) the policy, and the auto resume through the same recruit path ───────────────────────────
@@ -334,6 +433,7 @@ test('443-b1: `auto` performs the resume onto the first candidate, carrying the 
 test('443-b2: a hand-typed resume of a faulted seat still says why the successor exists', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'b2',
+    policy: { rerouteOnProviderFault: 'manual', resumeContinuation: 'manual' },
   });
   await w.call('view', { swarmId: SWARM });
   assert.deepEqual(rowsOf(w.store, 'swarm.rerouted'), [],
@@ -360,13 +460,13 @@ test('443-b2: a hand-typed resume of a faulted seat still says why the successor
   assert.ok(brief.includes('## Inheritance from alpha'));
 });
 
-test('443-b3: an auto-rerouted successor under the default continuation policy pends for the answer', async (t) => {
+test('443-b3: an auto-rerouted successor under a declared manual continuation policy pends for the answer', async (t) => {
   // The two policies compose independently (docs/52 D5): `auto` lets the runtime PERFORM the
-  // resume, while the default `manual` continuation still makes the recovered seat wait for its
+  // resume, while the DECLARED `manual` continuation still makes the recovered seat wait for its
   // orchestrator's decision — the recovery is automated, the question is not skipped.
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
-    policy: { rerouteOnProviderFault: 'auto' }, tag: 'b3',
+    policy: { rerouteOnProviderFault: 'auto', resumeContinuation: 'manual' }, tag: 'b3',
   });
   const view = await w.call('view', { swarmId: SWARM });
   const successorId = rowsOf(w.store, 'swarm.rerouted')[0]?.payload.successor ?? null;

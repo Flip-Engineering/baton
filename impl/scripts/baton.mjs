@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { SwarmRuntime, lastCrashOf, parseRoutingExcludeHarnesses } from '../src/swarm-runtime.mjs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -321,10 +321,23 @@ async function serveCheckout() {
   let deployment;
   const publishRemote = typeof process.env.BATON_PUBLISH_REMOTE === 'string'
     && process.env.BATON_PUBLISH_REMOTE.length > 0 ? process.env.BATON_PUBLISH_REMOTE : undefined;
+  // Issues #572/#574: the same declaration channel for the operator routing rule on a
+  // config-less serve — BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok — validated and handed to the
+  // open as advanced.routing.excludeHarnesses, the rule the recruit and the reroute both honour.
+  let excludeHarnesses;
   try {
+    excludeHarnesses = parseRoutingExcludeHarnesses(process.env.BATON_ROUTING_EXCLUDE_HARNESSES);
+  } catch (error) {
+    throw Object.assign(new Error(error.message), { code: 'application_config_invalid' });
+  }
+  try {
+    const advanced = {
+      ...(publishRemote === undefined ? {} : { integration: { publishRemote } }),
+      ...(excludeHarnesses === undefined ? {} : { routing: { excludeHarnesses } }),
+    };
     deployment = await openBaton({
       repo: process.cwd(),
-      ...(publishRemote === undefined ? {} : { advanced: { integration: { publishRemote } } }),
+      ...(Object.keys(advanced).length > 0 ? { advanced } : {}),
     });
   } finally { openSignals.release(); }
   await serveDeployment(deployment, openSignals.pendingTrigger());
