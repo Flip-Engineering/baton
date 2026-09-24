@@ -77,7 +77,8 @@ const WAVE_DIRECT_PORT_VERBS = Object.freeze([
 
 /** The web-admitted card projection, sorted: the table's web-admitted command names plus the six
  * wave direct ports — today's web.bus profile (41 names), byte-stable against the committed
- * artifact's `profiles['web.bus']`. */
+ * artifact's `profiles['web.bus']`. The #99/#179 accessor pair rides the web bus WITHOUT being
+ * carded (registry-operation direct ports — see the R7 third arm, #566). */
 export function webCardCommands() {
   return [
     ...commandKeys().filter((name) => APPLICATION_COMMAND_DEFINITIONS[name].web),
