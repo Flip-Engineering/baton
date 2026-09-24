@@ -39,6 +39,7 @@ import {
 import { parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
 import { FRAME_LIMITS, WEB_WAIT_DEFAULT_MS } from '../src/limits.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const REPO = 'repo-issue445';
 const SWARM_ID = 's-445';
@@ -53,7 +54,7 @@ test.after(() => { for (const root of roots) rmSync(root, { recursive: true, for
 function scratch() {
   // A Unix socket path is bounded (sun_path, 104 bytes) and this deployment's tmpdir alone is 75
   // bytes deep, so the fixture mints its directory directly under /tmp.
-  const directory = mkdtempSync(join(tmpdir(), 'baton-445-'));
+  const directory = fixtureSocketRoot('baton-445-');
   roots.push(directory);
   return directory;
 }

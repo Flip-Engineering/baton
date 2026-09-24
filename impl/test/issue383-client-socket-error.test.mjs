@@ -16,13 +16,14 @@ import {
   APPLICATION_COMMAND_DEFINITIONS, APPLICATION_SEMANTIC_REGISTRY, BatonWebHost, CoordinationStore,
   WebNorthbound, WebSessionStore, createLocalAuthenticatedWebServer,
 } from '../src/index.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const REPO = 'repo-issue383';
 const ORIGIN = 'https://baton.local';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function fixture(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'bt383-'));
+  const directory = fixtureSocketRoot('bt383-');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const coordination = new CoordinationStore(join(directory, 'coordination'));
   const sessions = new WebSessionStore(join(directory, 'sessions'));
@@ -100,7 +101,7 @@ test('#383 (c): the host starts with zero client socket errors and the counter i
 
 test('#383 (d): the wake binding is a second server the host owns — its accepted sockets carry the same guard', async (t) => {
   // The third EPIPE of 2026-09-18 came through the wake server, not the local transport.
-  const directory = mkdtempSync(join(tmpdir(), 'bt383-wake-'));
+  const directory = fixtureSocketRoot('bt383-wake-');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const coordination = new CoordinationStore(join(directory, 'coordination'));
   const sessions = new WebSessionStore(join(directory, 'sessions'));

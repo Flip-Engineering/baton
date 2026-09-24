@@ -35,6 +35,7 @@ import { WebNorthbound, createLocalAuthenticatedWebServer } from '../src/web-nor
 import { WebSessionStore } from '../src/web-auth.mjs';
 import { BatonWebHost } from '../src/application-host.mjs';
 import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
 
@@ -303,9 +304,10 @@ const residentPrincipal = (id) => ({ actor: `direct:${id}`, principalId: id, ses
 
 /** A real resident deployment: the real BatonApplication over a driver + MockAdapter, behind the
  * real authenticated Web host on an owner-only socket, driven by the real CLI client. The socket
- * root stays short because the host refuses a bound path over 103 bytes. */
+ * root goes through the measure-then-fall-back derivation (fixture-root.mjs) because the host
+ * refuses a bound path over 103 bytes. */
 async function residentDeployment(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'baton-evidence-resident-'));
+  const directory = fixtureSocketRoot('baton-evidence-resident-');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
