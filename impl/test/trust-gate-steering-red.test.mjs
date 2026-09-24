@@ -193,7 +193,7 @@ test('T5: an unsolicited native turn boundary does not consume a checkpoint', as
   const task = coordinator._tasks.get(handle.taskId);
   assert.notEqual(task.status, 'failed');
   assert.notEqual(task.status, 'completed', 'the checkpoint itself is never accepted');
-  assert.equal(task.status, 'paused', 'a native boundary does not adjudicate work');
+  assert.equal(task.status, 'working', 'a native boundary does not adjudicate work');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the checkpoint still awaits a steering act');
   assert.equal(adapter.calls.kill.length, 0);
 });
@@ -209,7 +209,7 @@ test('T6: useful scratchpad work preserves the independent checkpoint', async ()
   await sleep(60); // past the retired policy window
   await flush(20);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'paused', 'a scratchpad receipt is not a completion decision');
+  assert.equal(task.status, 'working', 'a scratchpad receipt is not a completion decision');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
     'the checkpoint remains available to its orchestrator');
   assert.equal(adapter.calls.kill.length, 0);
@@ -224,7 +224,7 @@ test('T7: repeated scratchpad receipts do not manufacture completion authority',
   for (let index = 0; index < 6; index += 1) emitScratchWrite(adapter, handle, `t7-dup-${index}`, 'x');
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'paused', 'receipt content and repetition do not decide work');
+  assert.equal(task.status, 'working', 'receipt content and repetition do not decide work');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the original checkpoint remains pending');
 });
 
@@ -236,7 +236,7 @@ test('T7b: elapsed time never turns an unanswered checkpoint into a verdict', as
   await flush(40);
   await sleep(60);
   await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working');
   assert.equal(coordinator.pausedTurns({ taskId: handle.taskId }).length, 1);
   assert.equal(adapter.calls.kill.length, 0);
   assert.equal(adapter.calls.prompt.length, 0);
@@ -280,7 +280,7 @@ test('T8b: a pending question and checkpoint survive the retired window', async 
   await sleep(60); // the retired policy window cannot decide either question or work
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'paused', 'an unanswered question does not authorize a work verdict');
+  assert.equal(task.status, 'working', 'an unanswered question does not authorize a work verdict');
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
     && event.payload?.code === 'required_effect_absent');
   assert.equal(verdictEvent, undefined, 'there is no automatic gate verdict');
@@ -298,7 +298,7 @@ test('T9: a drivered run gets NO policy cycle (the driver\'s claim cadence owns 
   await flush(60);
   assert.equal(adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length, 0,
     'no policy nudge when a driver is registered');
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'the pause pends for the driver claim');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'the pause pends for the driver claim');
   void log;
 });
 
@@ -503,7 +503,7 @@ test('T17: a registered orchestrator claim runs the full gate', async () => {
     { actor: 'orchestrator', key: `driver.recorded:steering.registered:${task.runId}` });
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working');
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId, 'the pause record pends');
   await coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});

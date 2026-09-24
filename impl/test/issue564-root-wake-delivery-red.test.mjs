@@ -224,10 +224,10 @@ test('root wake delivery records a typed failure and no delivered row', async ()
 
 test('root delivery receipt schemas are discoverable runtime driver rows', () => {
   assert.deepEqual(Object.keys(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS['wake.root_delivered'].fields), [
-    'seq', 'wakeClass', 'swarmId', 'harness', 'mechanism', 'sessionId', 'at',
+    'seq', 'wakeClass', 'swarmId', 'runId', 'workerId', 'harness', 'mechanism', 'sessionId', 'at',
   ]);
   assert.deepEqual(Object.keys(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS['wake.root_undelivered'].fields), [
-    'seq', 'wakeClass', 'swarmId', 'harness', 'mechanism', 'code', 'at',
+    'seq', 'wakeClass', 'swarmId', 'runId', 'workerId', 'harness', 'mechanism', 'code', 'at',
   ]);
 });
 

@@ -461,13 +461,23 @@
           ]
         },
         {
-          "name": "_admitPauseRecord",
+          "name": "_admitTurnReport",
           "ordinal": 0,
           "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
             "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_reportRunTurn",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -607,7 +617,7 @@
         {
           "name": "_nudgeReservedTurn",
           "ordinal": 0,
-          "size": 86,
+          "size": 87,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -14041,7 +14051,7 @@
         {
           "name": "reportTurnEnd",
           "ordinal": 0,
-          "size": 89,
+          "size": 90,
           "seam": "admission",
           "evidence": [
             "observation:record_name",
@@ -21191,7 +21201,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 1012,
+          "size": 1014,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -21853,7 +21863,7 @@
         {
           "name": "_claimReservedTurn",
           "ordinal": 0,
-          "size": 51,
+          "size": 52,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -22156,6 +22166,15 @@
           "seam": "admission",
           "evidence": [
             "delegates:admission"
+          ]
+        },
+        {
+          "name": "_reportRunTurn",
+          "ordinal": 0,
+          "size": 61,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
@@ -23407,9 +23426,9 @@
           ]
         },
         {
-          "name": "_admitPauseRecord",
+          "name": "_admitTurnReport",
           "ordinal": 0,
-          "size": 64,
+          "size": 43,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -24727,7 +24746,7 @@
         {
           "name": "reportTurn",
           "ordinal": 0,
-          "size": 10,
+          "size": 12,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -24736,7 +24755,7 @@
         {
           "name": "turnCompleted",
           "ordinal": 0,
-          "size": 88,
+          "size": 89,
           "seam": "effect",
           "evidence": [
             "admission:authority_check",

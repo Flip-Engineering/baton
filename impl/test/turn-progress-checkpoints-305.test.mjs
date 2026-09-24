@@ -128,7 +128,7 @@ async function pausedKit() {
       verification: { command: 'true', claimedExit: 0 }, openQuestions: [], budgetUsed: { tokens: 1, usd: 0.01 },
     },
   });
-  await until(() => kit.coordination.task(task.id).status === 'paused');
+  await until(() => kit.coordinator.pausedTurns({ taskId: task.id }).length > 0);
   return { ...kit, task };
 }
 

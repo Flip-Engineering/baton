@@ -370,7 +370,7 @@ async function driveredPause({ adapter, capture, brief = makeBrief(), coordinato
   if (stage) await stage(adapter, handle, coordinator);
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'the drivered pause pends for the claim');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'the drivered pause pends for the claim');
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId, 'the pause record exists');
   return { coordinator, handle, task, pauseId };
@@ -1185,7 +1185,7 @@ test('PS-STRIP (RED): waitingOn.provider_stalled transitions never move the wave
 test('D9-INVARIANT (PIN): a drivered paused task reads the three raw spawn flags false', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, handle } = await driveredPause({ adapter });
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'PIN: the drivered pause pends');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'PIN: the drivered pause pends');
   const raw = coordinator._workers.get(handle.id);
   assert.ok(raw, 'PIN: the raw handle exists');
   assert.equal(raw.worktreeCreationPending, false, 'PIN: a paused task is never mid-worktree');

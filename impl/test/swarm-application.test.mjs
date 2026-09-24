@@ -95,8 +95,9 @@ async function paused(driver, runId) {
   const deadline = Date.now() + 5000;
   for (;;) {
     const worker = driver.coordinator.list().find((row) => row.runId === runId);
-    if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length) return worker;
-    if (Date.now() >= deadline) throw new Error(`Participant did not remain paused: ${JSON.stringify(driver.coordinator.list())}`);
+    if (worker && driver.coordination.eventsView().some((event) => event.payload?.kind === 'swarm.turn_reported'
+        && event.payload.workerId === worker.id)) return worker;
+    if (Date.now() >= deadline) throw new Error(`Participant did not report a completed turn: ${runId}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -112,7 +113,7 @@ test('real application supports delegated recruitment and continuing native turn
   const leadWorker = await paused(driver, lead.runId);
   // The default MockAdapter claims task completion. Swarm membership must override that protocol
   // before the very first turn, while preserving ordinary non-swarm adapter semantics.
-  assert.equal(driver.coordination.task(leadWorker.taskId).status, 'paused');
+  assert.equal(driver.coordination.task(leadWorker.taskId).status, 'working');
   const leadClient = bindBaton(app, { actor: `worker:${leadWorker.id}`, principalId: `worker:${leadWorker.id}`, sessionId: 'lead-session' });
   const delegated = leadClient.swarms.open(swarm.id);
   const builder = await delegated.recruit('builder', 'Implement the next contribution', selection);
@@ -130,7 +131,7 @@ test('real application supports delegated recruitment and continuing native turn
   const help = await app.command('application.help', { topic: 'swarm', depth: 'content' }, principal('orchestrator'));
   assert.ok(help.content.commands.some((usage) => usage.includes('swarm recruit')));
   await delegated.close();
-  assert.equal(driver.coordination.task(builderWorker.taskId).status, 'paused', 'closing a group must not terminate participants');
+  assert.equal(driver.coordination.task(builderWorker.taskId).status, 'working', 'closing a group must not terminate participants');
 });
 
 

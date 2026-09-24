@@ -255,13 +255,13 @@ test('TW-R1: an un-driven pausable checkpoint PARKS — durable record, visible 
   const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
 
   const entries = coordinator._log.read(handle.id);
-  const pausedEntry = entries.find((event) => event.kind === 'turn.paused');
+  const pausedEntry = entries.find((event) => event.kind === 'turn.reported');
   assert.ok(pausedEntry, 'turn.paused is appended to the per-worker log');
   assert.equal(pausedEntry.actor, 'worker');
   assert.deepEqual(Object.keys(pausedEntry.payload).sort(),
     ['changedPathsDigest', 'origin', 'taskId', 'turnEpoch'],
     'the durable pause payload keeps its four-field contract');
-  assert.equal(task.status, 'paused', 'the task parks in the `paused` state');
+  assert.equal(task.status, 'working', 'the task parks in the `paused` state');
   assert.ok(row, 'the checkpoint is visible to the orchestrator on pausedTurns()');
   assert.equal(row.state, 'pending');
   assert.equal(row.consumer, null);
@@ -289,7 +289,7 @@ test('TW-R2: no automatic prompt under ANY elapsed time — the pause seam uses 
   assert.equal(adapter.calls.prompt.length, 0, 'no prompt after six windows');
   assert.equal(settledWith(coordinator, handle.id, 'steering_expired'), undefined, 'no expiry ever fires');
   assert.equal(verifyRuns(coordinator, handle.id), 0, 'no timed verdict');
-  assert.equal(task.status, 'paused', 'the checkpoint is still parked');
+  assert.equal(task.status, 'working', 'the checkpoint is still parked');
   assert.equal(coordinator._pausedTurns.get(row.pauseId)?.state, 'pending', 'the record is still claimable');
   assert.equal(adapter.calls.kill.length, 0, 'elapsed time kills nothing');
 });
@@ -323,7 +323,7 @@ test('TW-R3: worker wire activity is not a claim — provider calls, content, an
 test('TW-R4: claim_turn runs the existing verifier and completes an in-scope claim', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, handle, task, row } = await parked({ adapter, capture: withDiff });
-  assert.equal(task.status, 'paused');
+  assert.equal(task.status, 'working');
 
   const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
   assert.equal(claimed.ok, true);
@@ -378,7 +378,7 @@ test('TW-R6: nudge_turn is a real continuation — fresh turn on the SAME task, 
   // The continuation completing is an ordinary new checkpoint: it PARKS again, with no prompt.
   emitTurnCompleted(adapter, handle, nudged.turnEpoch, 'second checkpoint');
   await flush();
-  assert.equal(task.status, 'paused', 'the continuation\'s completion parks as a new checkpoint');
+  assert.equal(task.status, 'working', 'the continuation\'s completion parks as a new checkpoint');
   const rows = coordinator.pausedTurns({ taskId: task.id });
   assert.equal(rows.length, 1, 'exactly one fresh record');
   assert.equal(adapter.calls.prompt.length, 1, 'parking a checkpoint sends no prompt — the loop is impossible');
@@ -394,7 +394,7 @@ test('TW-R7: wait_turn is a receipt — the record stays claimable and a later c
   assert.equal(waited.result, 'wait_noted');
   assert.equal(waited.state, 'pending');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'waiting never consumes the record');
-  assert.equal(task.status, 'paused');
+  assert.equal(task.status, 'working');
 
   const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
   assert.equal(claimed.ok, true, 'wait -> claim succeeds on the SAME record');
@@ -426,7 +426,7 @@ test('TW-R8: a `claim`-carded turn (the default) is untouched — it reaches the
 test('TW-R9: cancellation — a parked checkpoint is not resurrected by a late completion', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, handle, task, row } = await parked({ adapter, capture: withDiff });
-  assert.equal(task.status, 'paused');
+  assert.equal(task.status, 'working');
 
   await coordinator.stopRunTargets([handle.id], 'orchestrator');
   assert.equal(task.status, 'cancelled', 'the explicit stop closes the parked task');

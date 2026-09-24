@@ -162,7 +162,7 @@ async function pausedKit(options = {}) {
     { runId: task.runId ?? null, driverKind: 'wave', actor: 'orchestrator' },
     `run.steering_registered:${task.runId ?? 'null'}`, 'orchestrator');
   completeTurn(kit, handle);
-  await until(() => kit.coordination.task(task.id).status === 'paused');
+  await until(() => kit.coordinator.pausedTurns({ taskId: task.id }).length > 0);
   const pauseId = [...kit.coordinator._pausedTurns.keys()].at(-1);
   return { ...kit, handle, task, pauseId };
 }
@@ -316,7 +316,7 @@ test('B3: `_deliverFollowUp` is unreachable for a paused task\'s worker — the 
   + 'gate is keyed on TERMINAL_TASK_STATUSES and `paused` is deliberately non-terminal', async () => {
   const kit = await pausedKit();
   const { coordinator, handle, task } = kit;
-  assert.equal(task.status, 'paused');
+  assert.equal(task.status, 'working');
   // The gate: a non-terminal task is not a reusable follow-up, so an idle-or-parked worker's
   // `send(mode:'turn')` refuses BEFORE any admission bundle can run.
   const inner = coordinator._workers.get(handle.id);
@@ -570,7 +570,7 @@ test('E3: `lifecycle.turn_completed` CLEARS the watchdog for a pausable card (it
   const generationBefore = handle.watchdogGeneration;
 
   completeTurn(kit, handle);
-  await until(() => kit.coordination.task(task.id).status === 'paused');
+  await until(() => kit.coordinator.pausedTurns({ taskId: task.id }).length > 0);
 
   // `_clearWatchdog` bumps the generation; `_resetWatchdogTurn` would ALSO have reset the
   // per-turn action set and orientation state, which the turn-completed handler never does.

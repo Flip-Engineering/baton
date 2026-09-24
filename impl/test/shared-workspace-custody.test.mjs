@@ -167,7 +167,7 @@ async function paused(driver, runId) {
   const deadline = Date.now() + 8_000;
   for (;;) {
     const worker = workerFor(driver, runId);
-    if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length > 0) return worker;
+    if (worker && driver.coordination.eventsView().some((event) => event.payload?.kind === 'swarm.turn_reported' && event.payload.workerId === worker.id)) return worker;
     if (Date.now() >= deadline) {
       throw new Error(`Participant did not remain paused: ${JSON.stringify(driver.coordinator.list().map((row) => ({
         id: row.id, status: row.status, runId: row.runId,

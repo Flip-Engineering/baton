@@ -280,10 +280,10 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'incarnation', kind: 'resident', fallback: { field: 'deploymentId', kind: 'deployment' } },
   }),
   wakeRow({
-    wakeClass: 'turn_reported', scope: 'swarm', terminal: true,
+    wakeClass: 'turn_reported', scope: 'deployment', terminal: true,
     next: 'baton swarm view {swarmId}',
     summary: 'a participant turn ended and its report was recorded for the orchestrator',
-    rows: [operationalKind('swarm.turn_reported')],
+    rows: [operationalKind('swarm.turn_reported'), operationalKind('run.turn_reported')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
@@ -315,7 +315,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     wakeClass: 'root_owed', scope: 'deployment', terminal: true,
     next: 'baton swarm view {swarmId}',
     summary: 'a contribution, request, or turn report needs the root orchestrator',
-    rows: [operationalKind('swarm.root_attention_owed')],
+    rows: [operationalKind('swarm.root_attention_owed'), operationalKind('run.root_attention_owed')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
@@ -576,10 +576,12 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     workerId,
     runId,
     actor: event.actor ?? null,
-    subject: subjectOf(row, payload),
+    subject: payload.kind === 'run.root_attention_owed' || payload.kind === 'run.turn_reported'
+      ? { kind: 'worker', id: workerId } : subjectOf(row, payload),
     ...(payload.owed === 'turn_report' && payload.turnReport
       ? { turnReport: Object.freeze({ ...payload.turnReport }) } : {}),
-    next: renderNext(row, coordinates),
+    next: payload.kind === 'run.root_attention_owed' || payload.kind === 'run.turn_reported'
+      ? (runId ? `baton run view ${runId}` : null) : renderNext(row, coordinates),
     observation: false,
     served: servedHeader(served),
     // The bounded row identity: what woke the consumer, never a copy of a 60 KiB view (the wake

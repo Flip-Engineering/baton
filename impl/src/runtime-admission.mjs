@@ -934,7 +934,7 @@ export function _resolvePauseAuthority(coordinator, recorder, pauseId, record, c
     record.consumer = consumer;
   }
 
-export function _admitPauseRecord(coordinator, recorder, handle, task, terminalEvent, wr, appendAttributed) {
+export function _admitTurnReport(coordinator, recorder, handle, task, terminalEvent, wr, appendAttributed) {
     const workerId = handle.id;
     const turnEpoch = terminalEvent?.turnEpoch ?? coordinator._safeTurnEpoch(handle);
     const changedPathsDigest = coordinator._pauseChangedPathsDigest(handle, task);
@@ -953,14 +953,15 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
     // Same `appendAttributed` durability tier and per-worker stream as question.asked /
     // approval.requested / decision.requested. `workerId` rides the envelope's own `worker`
     // field and is deliberately NOT duplicated into the payload — the interaction-family shape.
-    const pausedEvent = appendAttributed({
+    appendAttributed({
       worker: workerId, harness: terminalEvent?.harness, turnEpoch,
-      kind: 'turn.paused', actor: 'worker',
+      kind: 'turn.reported', actor: 'worker',
       payload: { taskId: task.id, turnEpoch, changedPathsDigest, origin },
     });
     const pauseId = `pause:${task.id}:${terminalEvent.seq}`;
     const record = {
       state: 'pending', resolution: null, consumer: null, worker: workerId,
+      reported: true,
       taskId: task.id, turnEpoch, changedPathsDigest, mintedEvent: terminalEvent.seq,
       // 31-b Part D rule 8: `claim` RE-RUNS the live trust gate, and `_runTrustGate(handle,
       // workerResult)` needs the turn's own worker result as its second argument. The record
@@ -971,31 +972,9 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
       // and replay share one shape (replay seeds origin from the event payload).
       origin,
     };
-    // Issue #59 (D4/GT8): a member whose re-drive carried a dead attempt's state parks on this
-    // checkpoint with that carry as the evidence to answer — its own distinct scratchpad receipt
-    // resolves the park (armSteeringCycle arms only a member that actually carries something).
+    // Issue #59: retain the carried attempt evidence for the member's steering reply.
     armSteeringCycle(coordinator, workerId, record);
     coordinator._pausedTurns.set(pauseId, record);
-    coordinator._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
-      recorder.mapEvent(pausedEvent), 'policy');
-    // `_coordTransition` never writes in-memory status; every existing call site carries its own
-    // explicit assignment. P2-3: `handle.status` deliberately stays 'working' — no 31-a-owned
-    // projection reads it to decide whether a task is paused.
-    task.status = 'paused';
-
-    // Pause ownership (revised 2026-09-12, native-completion-loop finding). The checkpoint is a
-    // VISIBLE park, never a self-driving one: the coordinator sends no policy progress nudge,
-    // arms no window, and never lets elapsed time decide the claim. The retired automatic cycle
-    // made the policy's own nudge start the next turn, read that boundary as the answer, and arm
-    // another cycle for the completed turn — so the policy renewed its own work indefinitely
-    // (570 provider turns on a real native self-build while the model kept reporting "Complete,
-    // no remaining work").
-    //
-    // Completion authority belongs to the autonomous orchestrator, not to this seam, and it is
-    // identical for a driven and an un-driven run. The record stays pending and is projected by
-    // `pausedTurns()`; an explicit `claim_turn` runs the existing verifier/trust gate,
-    // `nudge_turn` admits a real continuation, and `wait_turn` notes intent. `false` parks the
-    // turn: no gate dispatch, no settle, no prompt, no timer.
     return false;
   }
 
