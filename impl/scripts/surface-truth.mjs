@@ -22,7 +22,6 @@ import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs'
 import { SWARM_COMMAND_NAMES } from '../src/swarm-contract.mjs';
 import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { mcpCombinedToolNames, McpFleetServer } from '../src/mcp-northbound.mjs';
-import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
 
 /** The byte-stable insertion-order key list of APPLICATION_COMMAND_DEFINITIONS (docs/36 §9 M3:
  * the swarm verbs lead, then the legacy set — a reorder, drop, or addition of a table row moves
