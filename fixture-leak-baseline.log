@@ -1,0 +1,24 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":90.28076171875,"five":105.689453125,"one":55.28125},"measuredAt":"2026-09-24T21:00:40.408Z","probeMs":1.2392499999999984,"schemaVersion":1}
+baton test runner: plan — 1 file(s) in the whole suite: 1 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 4763959296 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/credential-projection.test.mjs (359 ms)
+ok 1 - credential projection copies only allow-listed files privately and redacts nested frames
+ok 2 - credential projection refuses symlinks and source mutation
+ok 3 - credential projection refuses traversal and unsafe source directories
+ok 4 - OMP model YAML keeps routing metadata visible while redacting decoded keys and headers
+ok 5 - malformed model YAML is refused without leaking parser source excerpts
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 68.868
+# tests 5
+# pass 5
+# fail 0
+baton suite verdict (SUBSET 1 of 733 files): RED — 5 passed, 0 expected red (0 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 1 unexpected failure(s), 0 stale expectation(s), 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+  unexpected failure: test/credential-projection.test.mjs :: (file leaked fixture directories: baton-credential-source-0pUTr2, baton-credential-source-dzYcTu, baton-credential-source-froDQB, baton-credential-target-3JPiuF, baton-credential-target-XWAMLR, baton-credential-target-xikBCO) — baton-credential-source-0pUTr2, baton-credential-source-dzYcTu, baton-credential-source-froDQB, baton-credential-target-3JPiuF, baton-credential-target-XWAMLR, 
+baton suite verdict note: SUBSET verdict (1 of 733 files) — not the canonical-suite acceptance.
