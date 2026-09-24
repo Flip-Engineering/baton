@@ -50,7 +50,7 @@ import { inspectToolchainProjection } from './toolchain-projection.mjs';
 import { DEFAULT_WORKER_POLICY_REQUEST, resolveWorkerPolicy } from './worker-policy.mjs';
 import { modelProfileReader } from './model-profile.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
-import { ensureBatonExcluded } from './worktree.mjs';
+import { SNAPSHOT_COMMIT_EMAIL, ensureBatonExcluded } from './worktree.mjs';
 import { WebSessionStore } from './web-auth.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import {
@@ -475,9 +475,9 @@ function repositorySnapshot(repoRoot, stateRoot, providerKeyFiles = DEFAULT_OMP_
   const gitEnv = {
     GIT_INDEX_FILE: indexPath,
     GIT_AUTHOR_NAME: `baton ${batonVersion} (deployment snapshot)`,
-    GIT_AUTHOR_EMAIL: 'baton-snapshot@localhost',
+    GIT_AUTHOR_EMAIL: SNAPSHOT_COMMIT_EMAIL,
     GIT_COMMITTER_NAME: `baton ${batonVersion} (deployment snapshot)`,
-    GIT_COMMITTER_EMAIL: 'baton-snapshot@localhost',
+    GIT_COMMITTER_EMAIL: SNAPSHOT_COMMIT_EMAIL,
     GIT_AUTHOR_DATE: timestamp,
     GIT_COMMITTER_DATE: timestamp,
   };
