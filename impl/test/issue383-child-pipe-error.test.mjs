@@ -47,7 +47,11 @@ test('#383 child (b): OmpRpcProcess guards its child at start and reports the pi
     onTransportStall: (row) => stalls.push(row),
   });
   client.start();
-  await sleep(150);
+  // #586: the child exits on its own (process.exit(0)) and the emit below is only meaningful
+  // once that exit has landed — a wall-clock guess at boot-plus-exit time raced it one run in
+  // three. The exit event is the receipt this waits for.
+  await new Promise((resolve) => client._child.once('exit', resolve));
+  await sleep(20);
   let uncaught = null;
   const onUncaught = (error) => { uncaught = error; };
   process.once('uncaughtException', onUncaught);

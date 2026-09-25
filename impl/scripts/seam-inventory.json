@@ -4518,7 +4518,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 123,
+          "size": 130,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -12761,7 +12761,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 56,
+          "size": 67,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13263,9 +13263,27 @@
           ]
         },
         {
-          "name": "_routeEligible",
+          "name": "_harnessExcluded",
           "ordinal": 0,
           "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_modelAllowed",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeEligible",
+          "ordinal": 0,
+          "size": 5,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13283,7 +13301,7 @@
         {
           "name": "_routeExhaustedFor",
           "ordinal": 0,
-          "size": 29,
+          "size": 31,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -13392,7 +13410,7 @@
         {
           "name": "_rerouteCandidates",
           "ordinal": 0,
-          "size": 37,
+          "size": 44,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -14092,7 +14110,7 @@
         {
           "name": "_performDeferredStart",
           "ordinal": 0,
-          "size": 219,
+          "size": 223,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -14314,7 +14332,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1249,
+          "size": 1253,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -19437,7 +19455,7 @@
         {
           "name": "_assertContextSessionCurrent",
           "ordinal": 0,
-          "size": 66,
+          "size": 76,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"

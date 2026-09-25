@@ -143,7 +143,9 @@ responsible-party derivation, the subtree-scoped attention projection, and the
 guidance-from-`lead` provenance (#273 rule four) all resolve to the sub-orchestrator at any tree
 depth with no new machinery.
 
-**D5 — The posture is a policy field; the default is to ask.** `swarm.policy_updated` gains one
+**D5 — The posture is a policy field; the default is to ask.** (#572 amendment: the DEFAULT is
+now `auto` — a swarm that declares nothing continues without the question; `manual` remains a
+declared posture that asks.) `swarm.policy_updated` gains one
 field beside the #443 pair: `resumeContinuation: 'manual' | 'auto'`, default `manual`. It rides
 every seam the reroute policy already rides: `SWARM_POLICY_FIELDS` (swarm-state.mjs:104), the
 fold's closed-set validation (swarm-state.mjs:756-770), `swarmCreatePolicy`

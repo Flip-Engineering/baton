@@ -350,6 +350,45 @@ test('CDW6: the declared shared remote reaches the driver the landing authority 
     'an undeclared deployment must still carry the member, as the null that declares none');
 });
 
+// Issues #572/#574 follow-up, the CDW6 shape one authority over: the operator's declared routing
+// rule (harnesses no seat may be routed onto) is validated at the deployment open
+// (advanced.routing.excludeHarnesses), handed through the driver options, and READ BACK OFF the
+// object createDriver returns (`this.driver.routingExcludedHarnesses`) by the swarm runtime the
+// application assembles. A returned object that omits the member makes that read undefined and
+// the rule silently inert, so both values are asserted: the normalized declaration, and the
+// empty array an undeclared deployment gets.
+test('CDW7: the declared routing exclusion reaches the driver the swarm runtime reads', async (t) => {
+  const repository = repo();
+  const logDir = root('routing-log');
+  const undeclaredLogDir = root('routing-none-log');
+  const driver = createDriver({
+    repoRoot: repository, repoId: 'repo-wiring-routing', logDir,
+    adapters: { mock: mock() }, verificationRuntime: RUNTIME_POLICY,
+    routingExcludedHarnesses: ['codex'],
+    routingAllowedModels: { codex: ['gpt-6-*'] },
+  });
+  const undeclared = createDriver({
+    repoRoot: repository, repoId: 'repo-wiring-routing-none', logDir: undeclaredLogDir,
+    adapters: { mock: mock() }, verificationRuntime: RUNTIME_POLICY,
+  });
+  t.after(async () => {
+    await driver.drainAndClose('wiring-cdw7').catch(() => {});
+    await undeclared.drainAndClose('wiring-cdw7-none').catch(() => {});
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+    rmSync(undeclaredLogDir, { recursive: true, force: true });
+  });
+
+  assert.deepEqual(driver.routingExcludedHarnesses, ['codex'],
+    'the declared exclusion must ride the driver object the swarm runtime reads it from');
+  assert.deepEqual(driver.routingAllowedModels, { codex: ['gpt-6-*'] },
+    'the declared model allow rule must ride the same driver object');
+  assert.deepEqual(undeclared.routingExcludedHarnesses, [],
+    'an undeclared deployment carries the member as the empty array that excludes nothing');
+  assert.deepEqual(undeclared.routingAllowedModels, {},
+    'and the empty map that constrains no harness');
+});
+
 // The composition root's option surface is a closed set, and this file must say which options it
 // exercises. A new `opts.<name>` read inside createDriver — an authority that arrives through the
 // factory and is consulted by the runtime it builds — is a wiring the driver-level suite would
@@ -360,6 +399,8 @@ const EXERCISED_OPTIONS = Object.freeze({
   goalPlanAuthority: 'CDW2',
   integrationPublishRemote: 'CDW6',
   knowledgeBriefingProvider: 'CDW4',
+  routingAllowedModels: 'CDW7',
+  routingExcludedHarnesses: 'CDW7',
   verificationRuntime: 'CDW1',
 });
 // Options the factory reads that no case here exercises yet. Each row is a debt a reader can act
