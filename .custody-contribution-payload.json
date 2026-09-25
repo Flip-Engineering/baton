@@ -1,0 +1,46 @@
+{
+ "event": "swarm.contribution_recorded",
+ "payload": {
+  "body": {
+   "subject": "Issue #582 custody slice: the four pending files import the shared-workspace-custody helper instead of inline shape copies",
+   "base": {
+    "observedHead": "cd26b9b25ec6fa0f2d3ece53dcb7dd1011187c70",
+    "rebasedOnto": "a18ed3ed0889420f2598387987f53755cba80df9"
+   },
+   "commit": {
+    "sha": "658c02f2edd7513f695c1c3dfe61b0ef8988c2f8",
+    "branch": "baton/ws-d6d7f9e86291d290912b02577cbb0273"
+   },
+   "items": [
+    {
+     "id": "custody-sweep",
+     "status": "delivered",
+     "change": "Every inline copy of the ws-<32 hex> shape in application.mjs, index.mjs, swarm-state.mjs and worktree.mjs now calls isPhysicalWorkspaceId from shared-workspace-custody.mjs; the two worktree.mjs receipt-filename patterns derive from the newly exported PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE, so the definition file spells the token once and no other file spells it at all.",
+     "files": [
+      "impl/src/application.mjs",
+      "impl/src/index.mjs",
+      "impl/src/swarm-state.mjs",
+      "impl/src/worktree.mjs",
+      "impl/src/shared-workspace-custody.mjs"
+     ],
+     "test": "node --test --test-concurrency 2 test/issue428-worktree-custody-on-stop.test.mjs test/issue364-runtime-lost-on-restart.test.mjs test/shared-workspace-custody.test.mjs test/issue286-custody-predicate.test.mjs",
+     "evidence": "issue428/issue364/shared-workspace-custody 20/20 green and issue286-custody-predicate 5/5 green on the committed tree; the custody gate row reports 0 findings; 138/138 green over the worktree, reconcile, resume, coupling and driver-wiring batch; node --check clean on all five files; the two derived receipt-name patterns were compared against the removed literals over a 19-name corpus with identical captures and match positions."
+    }
+   ],
+   "verification": {
+    "targeted": true,
+    "gates": [],
+    "fullSuite": false,
+    "environmentRed": [
+     "impl/test/issue360-drain-releases-settled.test.mjs :: 360b the drain releases and names the capacity reservation a stopped seat left behind — fails on the clean target cd26b9b2 as well, at load average above 20 with three sibling suites running",
+     "impl/test/phase56-drain-and-close.test.mjs :: DC4 drain convergence deadline — fails on the clean target cd26b9b2 as well"
+    ]
+   },
+   "carriedForward": [
+    "The five files landed inside the mcp-lead13 composite commit 658c02f2 rather than a commit of their own: a peer committed the shared checkout while this slice was uncommitted, so the commit subject is the composite one.",
+    "The test path this slice brief named, test/issue364-worktree-custody-on-stop.test.mjs, does not exist; test/issue428-worktree-custody-on-stop.test.mjs is the custody-on-stop file and test/issue364-runtime-lost-on-restart.test.mjs is the #364 file."
+   ],
+   "needsFromOthers": []
+  }
+ }
+}
