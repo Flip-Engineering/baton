@@ -296,9 +296,10 @@ Status: proposed 2026-09-25. The encoding is checked at the pin and its controls
 required. The external law review of 2026-09-25
 ([reviews/astra-law-review-r11-r12.md](reviews/astra-law-review-r11-r12.md), verdict revise)
 re-verified the encoding at the pin and reproduced every recorded control. On 2026-09-25 the
-operator adopted the refined statement below; encoding is pending. Not part of the operative set.
+operator adopted the refined statement below; it is encoded in `examples/laws-no-ledger.bend`
+and checked at the pin. Not part of the operative set.
 
-**Adopted statement (operator, 2026-09-25; encoding pending).** A gate decides from observed
+**Adopted statement (operator, 2026-09-25; encoded at the pin).** A gate decides from observed
 runs only; no gate, test or check reads a hand-maintained record of expected results in place of
 running the software: no expected-failure allowance, no converged declaration, no count or
 census pin. A judged landing blocks when a failure with the change has no matching failure
@@ -352,20 +353,23 @@ and two laws: `gate_reads_only_observations` (per test, proved by splitting ever
   no failure until the pin is updated.
 - C: no comparison with the target. It blocks a failure the target shares.
 
-The pending encoding of the adopted statement adds failure identity, unjudged-verdict
-reporting, invocation accounting, and controls for forged outcomes, empty selection, mismatched
-failure kinds, missing verdicts and test selection. Selection and test-contract changes do not
-authorize omission of their own failures; the repository test-policy clause is enforced
-separately.
+The adopted statement is encoded: `examples/laws-no-ledger.bend` adds the failure identity, the
+unjudged-verdict reporting, the invocation accounting, and the controls for forged outcomes,
+empty selection, mismatched failure kinds, missing verdicts and test selection, and discharges
+twelve laws over them; `examples/laws-no-ledger.evidence.md` records the controls. Selection
+and test-contract changes do not authorize omission of their own failures; the repository
+test-policy clause is enforced separately.
 
 **Review outcome (2026-09-25).** The review answered the four questions the proposal raised:
 the two equalities are laws of the model, and the repository-wide ban needs the composition
 above; `Outcome` forgery from an importing module is expressible at the pin (`private type` is
 rejected, an open datatype is fillable, an empty one is vacuous) while a scoped abstract
 consumer constrains its own side and the trusted provider, execution, freshness and invocation
-identity remain obligations; the model carries no failure identity and no unjudged verdict, so
-the JavaScript gate's cases (new file, file-level failure, absent verdict) are not represented;
-and Failed/Failed admits a change that makes a failing test fail differently. The operator
+identity remain obligations; the reviewed model carried no failure identity and no unjudged
+verdict, so the JavaScript gate's cases (new file, file-level failure, absent verdict) were not
+represented and Failed/Failed admitted a change that made a failing test fail differently; the
+adopted encoding adds the failure identity, the unjudged-verdict reporting and the accounting.
+The operator
 adopted the comparison policy above in response.
 
 ---
@@ -377,8 +381,10 @@ required. The external law review of 2026-09-25
 ([reviews/astra-law-review-r11-r12.md](reviews/astra-law-review-r11-r12.md), verdict revise)
 checked every submitted model, reproduced every recorded negative control, and demonstrated
 adversarial implementations that satisfy each checked equality while violating the entry's
-broader wording. On 2026-09-25 the operator adopted the refined statements below; encoding is
-pending. The checked model equalities stand as explicitly limited results. Not part of the
+broader wording. On 2026-09-25 the operator adopted the refined statements below; they are
+encoded in the examples `laws.bend` imports and checked at the pin (`laws-check.py` reports
+24 rows, 0 failed at this revision). The checked model equalities stand as explicitly limited
+results. Not part of the
 operative set.
 
 The operator asked for the banned patterns to be codified as laws. The table maps each operator
@@ -400,7 +406,7 @@ adopted the corrected table on 2026-09-25.
 
 ### G1. Record independence for all work decisions
 
-**Adopted statement (operator, 2026-09-25; encoding pending).** For the same validated semantic
+**Adopted statement (operator, 2026-09-25; encoded at the pin).** For the same validated semantic
 request, authenticated authority, observed resources and external events, changing
 administrative annotations about work cannot change the runtime's selected checks, derived
 decision inputs, admission, refusal, management permissions, required prerequisites, or
@@ -415,14 +421,18 @@ authenticated grants or reviews are records with semantic force. The semantic co
 which records are administrative annotations, and their producers are covered by the proof or
 declared as host assumptions. The review's model probe proves, for six work-act constructors,
 that the decision is unchanged by every record (`decide(act, observed_allowed, notes) ==
-decide(act, observed_allowed, 0n)`), and records two limits that shape the pending encoding: an
+decide(act, observed_allowed, 0n)`), and records two limits that the encoding answers: an
 always-refusing runtime discharges record independence, so each domain keeps a positive
 behavior law; and a caller that computes the observed value from the record satisfies the same
 law, so decision-input provenance must be specified.
 
+`examples/laws-annotation-independence.bend` encodes the adopted statement over the decision
+composition and discharges four laws, including the positive behavior law and the provenance
+laws; `examples/laws-annotation-independence.evidence.md` records the controls.
+
 ### G2. No administrative prerequisite for admission or continuation
 
-**Adopted statement (operator, 2026-09-25; encoding pending).** For a valid authorized work
+**Adopted statement (operator, 2026-09-25; encoded at the pin).** For a valid authorized work
 request with its required semantic inputs, the runtime imposes no agent-maintained status,
 census, convergence or completion declaration as a prerequisite for admission or continued
 execution. A blocked continuation names the actual missing resource, authority, semantic input,
@@ -442,9 +452,14 @@ classification law, so a prerequisite needs its actual enabling effect, or an au
 grant and scope. A temporal progress claim carries stated scheduler and host assumptions; an
 external party may never supply an input.
 
+`examples/laws-prerequisite-enabling.bend` encodes the adopted statement with six laws,
+including the enabling-effect law, the no-bookkeeping-prerequisite law and the
+actual-missing-need law; `examples/laws-prerequisite-enabling.evidence.md` records the
+controls.
+
 ### 12a. No ceiling and no clock on requested work (revises M-10)
 
-**Adopted statement (operator, 2026-09-25; encoding pending).** For valid supported requests
+**Adopted statement (operator, 2026-09-25; encoded at the pin).** For valid supported requests
 under valid authority, the runtime admits work when its measured resources are available and
 retains it pending while those resources are unavailable. Administrative magnitude or
 elapsed-time bounds cannot reject, truncate, discard, or terminalize that work. Measured
@@ -481,7 +496,7 @@ protection, connected to M-4, M-5 and M-17.
 which equates it with `expected(authorized, available)` for every size and elapsed time.
 `examples/laws-no-ceiling.evidence.md` records three controls that fail as required: a size
 ceiling, a deadline on waiting work, and a ceiling derived from a physical resource. The
-pending encoding constrains the transitions as well as the scalar decision: terminal
+encoding constrains the transitions as well as the scalar decision: terminal
 transitions (completion, cancellation, external failure) bind to actual events, attempts are
 modelled separately from the durable work request so a transport timeout leaves the attempt
 unresolved, and a production law preserves work disposition while telemetry and retry
@@ -489,7 +504,7 @@ scheduling change.
 
 ### 12b. Served catalogs follow observation
 
-**Adopted statement (operator, 2026-09-25; encoding pending).** For a successfully observed
+**Adopted statement (operator, 2026-09-25; encoded at the pin).** For a successfully observed
 harness/credential catalog, the served route set equals the complete set supported by that
 harness and credential state after applying the authenticated operator's route policy.
 Programmer-maintained availability tables cannot add routes, restrict discovery, alter
@@ -508,14 +523,15 @@ derives fixture credentials from routes the test declares.
 **Shape in the rewrite.** `examples/laws-derived-catalog.bend` models `served(provided, listed,
 excluded)` and the law `served_follows_observation`, which equates it with `expected(provided,
 excluded)` for every value of `listed`. Two controls fail as required: a hand-kept table and a
-hand-kept allowlist over observation. The pending encoding defines route identity, adapter
-support, discovery completeness, credential scope and policy provenance, and distinguishes
-advertised routes from temporary scheduling eligibility and exhausted quota; observing the
-harness is a host effect and a stated assumption.
+hand-kept allowlist over observation. The encoding defines route identity, discovery
+completeness and policy provenance, and reports failed discovery explicitly; adapter support,
+credential scope and the distinction between advertised routes and temporary scheduling
+eligibility or exhausted quota remain open application obligations; observing the harness is a
+host effect and a stated assumption.
 
 ### 12c. An orchestrator holds every management act over its delegated scope
 
-**Adopted statement (operator, 2026-09-25; encoding pending).** A valid orchestrator delegation
+**Adopted statement (operator, 2026-09-25; encoded at the pin).** A valid orchestrator delegation
 carries every management capability needed for its delegated work scope, including recruit,
 guide, stop, review, integrate and resume. The runtime derives that scope and actor
 relationship from authenticated current authority and enforces it at dispatch and effect.
@@ -533,17 +549,20 @@ its orchestrator stops it, which requires the orchestrator to hold stop.
 **Shape in the rewrite.** `examples/laws-orchestrator-authority.bend` models `granted(rel, act)`
 and the law `orchestrator_holds_management` over all eighteen relation and act cases. Two
 controls fail as required: the grant observed on 2026-09-25 (no stop) and landing reserved to
-the root. The pending encoding defines each action's target and the full management-action
-universe, covers prospective recruits, the lead's own work, authorized reviewers and the root,
-and derives prospective scope for recruitment. Full capability keeps each action's semantic
-preconditions, such as an independently verified landing; those preconditions satisfy G1 and
-G2.
+the root. The encoding derives the delegation scope and enforces it at dispatch and effect: a
+stale grant confers no authority, the caller cannot supply the relation, the effect rechecks
+the current authority, no second permission follows a lawful grant, a current delegation holds
+every management act, and a seat stops itself. Each action's target and the management-action
+universe, prospective recruits, authorized reviewers and the root, and the prospective
+recruitment scope remain open application obligations. Full capability keeps each action's
+semantic preconditions, such as an independently verified landing; those preconditions satisfy
+G1 and G2.
 
 **Review outcome (2026-09-25).** The review answered the six questions the proposal raised:
 each submitted equality is a law of its model at the pin; the refined 12a handles measured
 resource requirements, actual provider and host failures, explicit cancellation, revoked
 authority and the work's own stopping condition; an ignored time parameter does not exclude an
-independent timer, so the pending encoding constrains transitions; an operator exclusion and a
+independent timer, so the encoding constrains transitions; an operator exclusion and a
 hand-kept table need source identity, which the refined 12b supplies; full orchestrator
 authority coexists with M-8 as a scoped, time-of-effect authority rule; and the table above
 carries the review's corrections, with the whole-mandate question retained as unresolved under
