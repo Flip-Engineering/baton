@@ -72,6 +72,32 @@ export function detachSharedWorkspace(coordinator, recorder, handle, remainingHo
   }));
 }
 
+/** Issue #595: release one processless handle's hold on its checkout to the successor now working in
+ * it (reason `custody_transferred`), durably and without removing anything. The worker-log row is
+ * appended first; only a durable row changes the handle, so a failed append leaves the hold exactly
+ * as it was. Startup replay applies the same row, so a restart never restores the hold. The checkout,
+ * its receipt, branch and capacity reservation are untouched. */
+export function releaseProcesslessHold(coordinator, recorder, handle, successorWorkerId) {
+  const reason = 'custody_transferred';
+  const physicalOwnerId = handle.sessionContext?.ownerTaskId ?? null;
+  const event = recorder.log.append({
+    worker: handle.id, harness: coordinator._harnessOf(handle.vendor),
+    turnEpoch: coordinator._safeTurnEpoch(handle),
+    kind: 'worktree.holder_released', actor: 'policy', ...coordinator._routeAttribution(handle),
+    payload: {
+      physicalOwnerId, reason, successorWorkerId,
+      generation: Number.isSafeInteger(handle.processRef?.generation) ? handle.processRef.generation : null,
+    },
+  });
+  recorder.mapEvent(event);
+  handle.worktree = null;
+  handle.ownedWorktreeAuthority = false;
+  handle.workspaceOwnerProcessAuthorityValid = false;
+  handle.physicalWorkspaceCleanupCompleted = false;
+  handle.workspaceCleanupDeferred = reason;
+  return event;
+}
+
 export function completeDurableRecoveryAttempt(recorder, attempt, state, actor) {
   if (!attempt || attempt.state !== 'pending') return attempt ?? null;
   const completion = createRecoveryAttemptCompletion({

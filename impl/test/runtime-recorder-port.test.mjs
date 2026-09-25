@@ -9,6 +9,7 @@ import {
   createRecorderPort,
   detachSharedWorkspace,
   completeDurableRecoveryAttempt,
+  releaseProcesslessHold,
 } from '../src/runtime-recorder-port.mjs';
 import { MockAdapter, createDriver } from '../src/index.mjs';
 
@@ -149,6 +150,44 @@ test('RP3: the effect proof consumer (_detachSharedWorkspace) records a log even
 
   assert.equal(coordination.mapped.length, 1, 'exactly one coordination map must follow the log append');
   assert.equal(coordination.mapped[0].event.seq, event.seq);
+});
+
+test('RP3b: releaseProcesslessHold records worktree.holder_released and clears the hold only after the row is durable', () => {
+  const fakeCoordinator = {
+    _harnessOf: () => 'mock@rp-1',
+    _safeTurnEpoch: () => 7,
+    _routeAttribution: () => ({ taskId: 't1', runId: 'r1' }),
+  };
+  const handle = () => ({
+    id: 'worker-dead', vendor: 'mock', sessionContext: { ownerTaskId: 'ws-1' },
+    processRef: { state: 'closed', generation: 3 }, worktree: '/some/path',
+    ownedWorktreeAuthority: true, workspaceOwnerProcessAuthorityValid: true,
+    physicalWorkspaceCleanupCompleted: false, workspaceCleanupDeferred: null,
+  });
+
+  const log = fakeLog();
+  const coordination = fakeCoordination();
+  const dead = handle();
+  releaseProcesslessHold(fakeCoordinator, createRecorderPort({ log, coordination, route: null }), dead, 'worker-next');
+  assert.equal(log.appended.length, 1);
+  const event = log.appended[0];
+  assert.equal(event.kind, 'worktree.holder_released');
+  assert.equal(event.actor, 'policy');
+  assert.deepEqual(event.payload, {
+    physicalOwnerId: 'ws-1', reason: 'custody_transferred', successorWorkerId: 'worker-next', generation: 3,
+  });
+  assert.equal(coordination.mapped.length, 1);
+  assert.equal(dead.worktree, null);
+  assert.equal(dead.ownedWorktreeAuthority, false);
+  assert.equal(dead.workspaceOwnerProcessAuthorityValid, false);
+  assert.equal(dead.workspaceCleanupDeferred, 'custody_transferred');
+
+  const failing = { append() { throw new Error('log unavailable'); } };
+  const kept = handle();
+  assert.throws(() => releaseProcesslessHold(fakeCoordinator,
+    createRecorderPort({ log: failing, coordination: fakeCoordination(), route: null }), kept, 'worker-next'));
+  assert.equal(kept.worktree, '/some/path', 'a failed append leaves the hold as it was');
+  assert.equal(kept.workspaceCleanupDeferred, null);
 });
 
 // ── RP4: _completeDurableRecoveryAttempt records through the port ─────────

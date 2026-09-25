@@ -1910,6 +1910,39 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
   );
 });
 
+test('issue #595: a released workspace hold stays released across restart and the released worker cannot be recovered into it', async () => {
+  const dir = tmpDir();
+  const logDir = join(dir, 'log');
+  const coordinatorFor = (log, coordination) => new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { mock: new ScriptableAdapter() },
+    worktrees: new SpyWorktreeManager(), referee: passingReferee(), route: fixedRoute('mock'), now: () => 0,
+  });
+  const log1 = new Log(logDir);
+  const coordination1 = coordinationForLog(log1);
+  const coordinator1 = coordinatorFor(log1, coordination1);
+  const handle = await coordinator1.spawn('mock', makeBrief(), { runId: 'run-595-release' });
+  const live = coordinator1._workers.get(handle.id);
+  assert.equal(typeof live.worktree, 'string');
+  coordinator1._releaseProcesslessHold(live, 'w-successor');
+  assert.equal(live.worktree, null);
+  const released = log1.read(handle.id).filter((event) => event.kind === 'worktree.holder_released');
+  assert.equal(released.length, 1);
+  assert.equal(released[0].payload.reason, 'custody_transferred');
+  assert.equal(released[0].payload.successorWorkerId, 'w-successor');
+  coordination1.releaseWriterLease();
+
+  const log2 = new Log(logDir);
+  const coordination2 = coordinationForLog(log2);
+  const coordinator2 = coordinatorFor(log2, coordination2);
+  await coordinator2.startupReady();
+  const replayed = coordinator2._workers.get(handle.id);
+  assert.equal(replayed.worktree, null, 'the replayed handle names no checkout');
+  assert.equal(replayed.workspaceCleanupDeferred, 'custody_transferred');
+  const recovered = await coordinator2.recover(handle.id);
+  assert.deepEqual(recovered, { ok: false, result: 'workspace_hold_released' });
+  coordination2.releaseWriterLease();
+});
+
 test('replayed Run stop durably closes an absent historical process group without signaling a reusable PID', async () => {
   const dir = tmpDir();
   const logDir = join(dir, 'log');
