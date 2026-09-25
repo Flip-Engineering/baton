@@ -112,7 +112,7 @@ function fixture(t) {
     base: { observedHead: baseSha, rebasedOnto: baseSha },
     commit: null,
     items: [{ id: 'item-1', status: 'delivered', change: 'Derive the root attention rows',
-      files: ['impl/src/swarm-runtime.mjs'], test: 'node scripts/run-suite.mjs test/issue564-root-wake-addressing-red.test.mjs',
+      files: ['impl/src/swarm-runtime.mjs'], test: 'node scripts/run-suite.mjs test/issue564-root-wake-addressing.test.mjs',
       evidence: 'targeted suite green' }],
     verification: { targeted: true, gates: [], fullSuite: false, environmentRed: [] },
     carriedForward: [],
