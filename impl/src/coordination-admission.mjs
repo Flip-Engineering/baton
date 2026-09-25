@@ -2354,6 +2354,7 @@ export function _assertContextSessionCurrent(store, session, integrity = false) 
     || dispatch?.binding?.planVersion !== plan.version
     || dispatch?.binding?.planDigest !== plan.digest
     || dispatch?.binding?.nodeKey !== node.key) {
+    process.stderr.write('A390TRACE ' + JSON.stringify({ taskStatus: task?.status ?? null, taskVersion: task?.version ?? null, expectedVersion: manifest.workflow.task.version, dispatch: dispatch?.binding?.planId ?? null }) + '\n');
     store._contextFailure('Context session node or claimed task authority is stale',
       integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
   }
