@@ -6355,7 +6355,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 29,
+          "size": 23,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -6509,7 +6509,7 @@
         {
           "name": "_normalizeBoardPost",
           "ordinal": 0,
-          "size": 53,
+          "size": 37,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -16359,6 +16359,15 @@
           ]
         },
         {
+          "name": "boardNonEmpty",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "boardBounded",
           "ordinal": 0,
           "size": 3,
@@ -18314,7 +18323,7 @@
         {
           "name": "postBoardItem",
           "ordinal": 0,
-          "size": 31,
+          "size": 23,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -19144,7 +19153,7 @@
         {
           "name": "_validateReuseDecisionPayload",
           "ordinal": 0,
-          "size": 148,
+          "size": 135,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -23347,7 +23356,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 516,
+          "size": 502,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -23505,7 +23514,7 @@
         {
           "name": "_admitPauseRecord",
           "ordinal": 0,
-          "size": 64,
+          "size": 65,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -25184,7 +25193,7 @@
         {
           "name": "boundedAttentionText",
           "ordinal": 0,
-          "size": 8,
+          "size": 6,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"

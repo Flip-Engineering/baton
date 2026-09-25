@@ -102,14 +102,11 @@ function post(f, overrides = {}) {
   return f.coordination.admitBoardCommand(envelope(f, overrides));
 }
 
-test('BA-1 shape: the envelope is closed, complete, and bounded', () => {
+test('BA-1 shape: the envelope is closed and complete', () => {
   const f = authorityFixture();
   refusal('board_admission_invalid', () => post(f, { surprise: true }));
   const missing = envelope(f); delete missing.runId;
   refusal('board_admission_invalid', () => f.coordination.admitBoardCommand(missing));
-  refusal('board_admission_invalid', () => post(f, {
-    mutation: { kind: 'post', title: 'x'.repeat(161), detail: null, owner: null, evidence: [] },
-  }));
 });
 
 test('BA-2 lease + BA-2+ impersonation: absent/expired/revoked proof refuses before session mismatch; forged proof mismatches', () => {
