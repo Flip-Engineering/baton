@@ -6346,7 +6346,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 24,
+          "size": 29,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -12761,7 +12761,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 54,
+          "size": 56,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12817,7 +12817,7 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 57,
+          "size": 62,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -13047,6 +13047,18 @@
           ]
         },
         {
+          "name": "_reconcileTurnReportedRows",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
           "name": "_recruitMode",
           "ordinal": 0,
           "size": 10,
@@ -13143,7 +13155,7 @@
         {
           "name": "_readRouteProbeLedger",
           "ordinal": 0,
-          "size": 13,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "observation:read_name",
@@ -14302,7 +14314,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1245,
+          "size": 1249,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

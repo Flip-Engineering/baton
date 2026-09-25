@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
+import { harnessWakeCapabilityForHarnesses } from './wake-delivery.mjs';
 import { bindBaton } from './application-client.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
@@ -56,6 +57,7 @@ import {
   KILL_ESCALATION_GRACE_MS, processGroupAlive, reapOwnedProcessGroup,
 } from './process-lifecycle.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from './web-northbound.mjs';
+import { normalizeRootWakeTarget } from './wake-delivery.mjs';
 
 const DEFAULT_BUDGET = Object.freeze({
   // The default notification envelope for goal/node budgets — never a stop (issue #258). The
@@ -3336,6 +3338,8 @@ class BatonDeployment {
   // documents through (`package.admit`); null for a deployment that serves no context runtime,
   // and the port then refuses `context_source_unavailable` instead of inventing a store.
   #contextSourceAdmit = null;
+  // Issue #564: the operator-owned session this resident starts on a root_owed wake.
+  #rootWakeTarget = null;
   // #306 (2): the revision this deployment serves, frozen at open.
   #served = null;
   #claudeCredentialProbe = null;
@@ -3420,6 +3424,7 @@ class BatonDeployment {
     // capacity rule (see `#watchHostExhaustion`). Null on a host the suite left unwired.
     this.#hostCapacity = deployment.hostCapacity ?? null;
     this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
+    this.#rootWakeTarget = deployment.rootWakeTarget ?? null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
@@ -3647,6 +3652,12 @@ class BatonDeployment {
     const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
       ...this.#readiness, ready, routes, routeUsage,
+      // Issue #564: the per-harness turn-starting capability of this deployment's served routes.
+      // The doctor names, for each harness this deployment can run, how a root-addressed wake
+      // starts a turn in an idle session of it, or that no channel exists: the served
+      // BATONDeployment.doctorReadiness is the surface `deployment.doctor` and the resident facade
+      // read, so the rows must ride THIS base, never only the bare application's.
+      wakeDelivery: harnessWakeCapabilityForHarnesses(routes.map((route) => route.harness)),
       // #317 (docs/50 D5): the services section rides the doctor beside routeUsage — present only
       // when the deployment declares services, so the composed document's shape is unchanged for
       // a deployment without the section (D7).
@@ -4259,6 +4270,9 @@ class BatonDeployment {
       // The stream reads it once at publish and refreshes it on its observation cadence, so the
       // drift is visible where the deaths appear without a git read per frame.
       served: () => this.wakeServedFact(),
+      ...(this.#rootWakeTarget === null ? {} : {
+        rootWakeDelivery: { target: this.#rootWakeTarget },
+      }),
       // #441 lane A: the ONE context-CAS writer (`bench.admitSource`) the package.admit port mints
       // branch documents through — the resident wiring the lane handed back in needsFromOthers.
       ...(this.#contextSourceAdmit === null ? {} : { contextSourceAdmit: this.#contextSourceAdmit }),
@@ -6281,11 +6295,14 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'rootWake', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #558: the declared shared remote landings publish to, validated at open.
   const rawIntegration = advanced.integration ?? {};
   closed(rawIntegration, ['publishRemote'], 'advanced integration');
   const integrationPublishRemote = normalizeIntegrationPublishRemote(rawIntegration.publishRemote);
+  // Issue #564: a configured root target is admitted only when the closed harness capability row
+  // names a channel that starts an idle operator turn. The option remains null when undeclared.
+  const rootWakeTarget = normalizeRootWakeTarget(advanced.rootWake);
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -6969,6 +6986,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // publication contract publishes at the flip. openStartedAtMs is stamped at entry.
       startupElapsedMs: Date.now() - openStartedAtMs,
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
+      rootWakeTarget,
       refusals: routeRefusals, degrades: routeDegrades,
       services: providerServices, serviceClients,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,

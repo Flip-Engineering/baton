@@ -17,12 +17,26 @@ one.
 
 ## No bookkeeping ledgers in place of function
 
-Do not model code changes or test outcomes as entries in a hand-maintained ledger. That means no
-checked-in list of expected test failures, no "converged" declarations, no census file, and no test
-that pins counts or line numbers of other code. A landing gate answers one question: does this change
-break something that works on the target? It runs the selected tests on the target and on the
-change, and blocks only on a test that passes on the target and fails with the change. Known breakage
-lives in the issue tracker. The existing expected-red manifest is being removed (#580); do not add to it.
+Do not require hand-maintained records to accompany functional changes. That means no checked-in
+list of expected test failures, no "converged" declarations, no census file, no test that pins
+counts or line numbers of other code, and no author-written declaration of a fact the runtime or
+tooling can derive directly (for example, a change declaration that must match a structural scan).
+Tests assert independently specified behavior, and that includes protocol constants and functional
+fixtures. An inventory that tooling uses is derived from its sources when it is used. A count in a
+review record is a measurement at a commit and creates no requirement to keep it in step with later
+changes. Known breakage lives in the issue tracker.
+
+A landing gate answers one question: does this change break something that works on the target? It
+runs the selected tests with the change and re-runs the failing files on the target. A failure
+blocks when the target has no failure with the same identity (file, test, and failure type); a test
+that is new with the change has no match on the target, so its failure blocks. A run that produced
+no verdict cannot authorize a landing, and every selected file must be accounted for.
+
+In the runtime, a decision about agent work (check selection, admission, refusal, permissions,
+prerequisites, continuation) must not change when such records change, and no status, census or
+completion declaration may be a prerequisite for continuing work. The Bend2 laws state this as G1
+and G2 (docs/bend2/laws-proposed.md on bend2-rewrite, revisions 11 and 12). The expected-red
+manifest is removed by #580, and the remaining instances are listed in #582.
 
 # Writing rules
 
