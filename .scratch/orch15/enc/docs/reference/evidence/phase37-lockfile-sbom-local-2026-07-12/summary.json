@@ -1,0 +1,24 @@
+{
+  "at": "2026-07-12T11:30:32.808Z",
+  "lockfileDigest": "1115bd851ccf9dcb2aaf94181de60d56aa485b5ef623e31214b99b842e1a99be",
+  "artifactDigest": "7906216d4095ef4db7475b5f8e6b64bf715aff8f43f0e18dc15297afdebcdcf4",
+  "componentCount": 10,
+  "unresolvedEdges": [],
+  "astGrep": {
+    "name": "@ast-grep/napi",
+    "version": "0.44.1",
+    "purl": "pkg:npm/%40ast-grep/napi@0.44.1"
+  },
+  "checks": {
+    "actualGrounding": true,
+    "exactPinnedDependency": true,
+    "integrityPresent": true,
+    "cyclonedx": true,
+    "proposedSeparated": true,
+    "componentBound": true,
+    "refTyped": true,
+    "reverified": true,
+    "audited": true
+  },
+  "pass": true
+}

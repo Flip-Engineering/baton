@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-06T23:39:37.245Z",
+  "salt": "fx20260806233937",
+  "role": "fix-10-regression",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-802ce92003e3b92be4b0ab520b5d321a"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fix-10-regression",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fix-10-regression": {
+      "pin": "a0d055ffa8911e33acd3bcc0dcfca85d681b4a6e",
+      "paths": [
+        "impl/src/coordinator.mjs",
+        "impl/src/application.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 336,
+  "verdict": "FIX-10-OK"
+}

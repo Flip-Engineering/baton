@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "projectionDigest": "ec1308206f5cf72531a5b35ef0204bb6de16d9dbcf8cfaf961adc87f2e739839",
+  "source": {
+    "generatedBy": "impl/test/issue518-plan-budget-replay.test.mjs issue #518 corpus (the reported ledger's own head)",
+    "ledger": "the clone checkout's coordination ledger, rows 1-20 verbatim (<git-common-dir>/baton/application-v3/state/coordination/events.jsonl)",
+    "reportedRow": 20,
+    "recordedPolicyDigest": "d732b81a26c0a29b9e43c37b3dec337056a7526fa0f4f2c12efa6758290e90d4"
+  },
+  "settlement": {
+    "taskId": "baton-4907d6c684e49792d48e16a5-work",
+    "binding": {
+      "goalId": "goal:f9abcaa356df76f1af8332bf0c652d10c56add99a5268627612bffc6788c1957",
+      "planId": "plan:a64956d103540bab4ae004864389a6daf75c0bc9c11e94eef4ad2380abe7a2b4",
+      "nodeKey": "work"
+    },
+    "terminalEvent": 19,
+    "operational": {
+      "worker": "w-1",
+      "throughSeq": 4,
+      "prefixDigest": "c3997b2b2e14c91d6fc87603d79cb8e56b67e543311a264e0299fb1b211691e9"
+    },
+    "receiptDigest": "0179565f86757c5f227f83d5d3fe856d70f1889dff0e1d96b50f2feeb3c287f6"
+  }
+}

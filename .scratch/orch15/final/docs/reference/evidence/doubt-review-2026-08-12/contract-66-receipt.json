@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-12T19:44:20.129Z",
+  "salt": "ch20260812194420",
+  "role": "contract-66",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-38c34ae0feb0f5e9b7c1f9d4befbc0e9"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-66",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-66": {
+      "pin": "6017ed7052e22e3ef8849b31274aca9c67210d35",
+      "paths": [
+        "docs/reference/evidence/doubt-review-2026-08-12/doubt-review-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 404,
+  "verdict": "CONTRACT-66-OK"
+}

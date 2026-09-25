@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T07:17:21.107Z",
+  "salt": "sa20260807071721",
+  "role": "suite-59",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-05da64deb1c1749ec8c0d608e61e9f27"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-59",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-59": {
+      "pin": "535105e44703bd2200bec3a1a3f624c9fd337be0",
+      "paths": [
+        "impl/test/redrive-continuity-red.test.mjs",
+        "docs/reference/evidence/redrive-continuity-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 380,
+  "verdict": "SUITE-59-OK"
+}

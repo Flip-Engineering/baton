@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:28:09.181Z",
+  "members": [
+    "s1-redteam-deepseek"
+  ],
+  "outcomes": [
+    {
+      "role": "s1-redteam-deepseek",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "0045e06ebf5065b865db60576d45e0d54498f0a2"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "s1-redteam-deepseek",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "s1-redteam-deepseek",
+      "requestId": "pause:baton-82b7c435b3c6b389d39a2dc5-work:148",
+      "at": "2026-07-31T22:36:10.721Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "s1-redteam-deepseek",
+      "requestId": "pause:baton-82b7c435b3c6b389d39a2dc5-work:172",
+      "at": "2026-07-31T22:37:10.786Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

@@ -1,0 +1,59 @@
+{
+  "at": "2026-07-12T11:23:25.853Z",
+  "package": {
+    "ecosystem": "npm",
+    "system": "NPM",
+    "package": "@ast-grep/napi",
+    "version": "0.44.1"
+  },
+  "recommendation": "borrow_candidate",
+  "policy": {
+    "hash": "fad90d78fe318007ff86b21ff23fbb8a340fecb19f3f6a41c741898c233d54b2",
+    "license": "allow",
+    "blocked": [],
+    "unknown": []
+  },
+  "advisoryIds": [],
+  "usage": {
+    "status": "import_observed",
+    "claim": "repository_import_observation_only"
+  },
+  "sourceDigests": [
+    {
+      "source": "deps.dev",
+      "operation": "GetVersion",
+      "handle": "art:sha256:71dce5830d8caaaa346b13093f0a1f9fd41f77039c11df29c4ba9980ea535c14",
+      "digest": "71dce5830d8caaaa346b13093f0a1f9fd41f77039c11df29c4ba9980ea535c14",
+      "bytes": 863
+    },
+    {
+      "source": "osv.dev",
+      "operation": "QueryVersion",
+      "handle": "art:sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "bytes": 2
+    },
+    {
+      "source": "deps.dev",
+      "operation": "GetProject",
+      "handle": "art:sha256:5f31a65d6b37a0c8a5f5bdb5cfd00341e3787787df9a6d7469cc0014184bf29e",
+      "digest": "5f31a65d6b37a0c8a5f5bdb5cfd00341e3787787df9a6d7469cc0014184bf29e",
+      "bytes": 260
+    }
+  ],
+  "fetchCalls": 3,
+  "artifactDigest": "a264948d6e93a91819ea54505138dbb59054e24298fc1b60e76c6759d0d9bc51",
+  "checks": {
+    "exactCoordinate": true,
+    "officialSources": true,
+    "sourceDigests": true,
+    "boundedVerdict": true,
+    "importObserved": true,
+    "noReachabilityClaim": true,
+    "noAuthority": true,
+    "cacheHit": true,
+    "snapshotReverified": true,
+    "audited": true
+  },
+  "pass": true
+}

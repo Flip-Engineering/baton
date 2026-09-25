@@ -1,0 +1,66 @@
+{
+  "attempt": "2026-08-06T22:19:10.400Z",
+  "salt": "dd20260806221910",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-8d53c7b5cfd6d7c4450675426e31cd2b",
+          "run-3561addb3722d98406f96e4764cb7d65",
+          "run-a743d30378504a1d6bc2720f54b31abc",
+          "run-c736613c56a2d7f319adbea1fcb6e6cb"
+        ]
+      }
+    },
+    {
+      "step": "terminal:capabilities-deep",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:git-archaeology",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:docs-deep",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:spec-deep",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "spec-deep": {
+      "pin": "177cd24bbdaf05a1c13a6c190bdd2d49faa7b98f",
+      "bytes": 18516
+    },
+    "docs-deep": {
+      "pin": "377075b7cd74e1d8954b94160fd5281466a2b584",
+      "bytes": 24338
+    },
+    "git-archaeology": {
+      "pin": "a61f21f4442bd5bbed14b6f88cea6ce4ba2c1f8a",
+      "bytes": 24744
+    },
+    "capabilities-deep": {
+      "pin": "4cd3a74511e80ce753050d4cd6597c82c939862c",
+      "bytes": 27243
+    }
+  },
+  "verdict": "DIVE-OK"
+}

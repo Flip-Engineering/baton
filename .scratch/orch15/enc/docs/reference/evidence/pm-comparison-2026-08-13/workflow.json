@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "pm-comparison-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/pm-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/pm-comparison-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/pm-comparison-2026-08-13/pm-qa.md"
+    },
+    {
+      "role": "row-pm-kg",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/pm-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/pm-comparison-2026-08-13/row-pm-kg.md",
+      "report": "docs/reference/evidence/pm-comparison-2026-08-13/pm-kg.md"
+    },
+    {
+      "role": "row-pm-dag",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/pm-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/pm-comparison-2026-08-13/row-pm-dag.md",
+      "report": "docs/reference/evidence/pm-comparison-2026-08-13/pm-dag.md"
+    },
+    {
+      "role": "row-pm-agent",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/pm-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/pm-comparison-2026-08-13/row-pm-agent.md",
+      "report": "docs/reference/evidence/pm-comparison-2026-08-13/pm-agent.md"
+    },
+    {
+      "role": "row-pm-redteam",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/pm-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/pm-comparison-2026-08-13/row-pm-redteam.md",
+      "report": "docs/reference/evidence/pm-comparison-2026-08-13/pm-redteam.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the comparison — cite both sides, verdict per candidate, the vetoes are law. Write your report incrementally; publish to shared when complete (or record the refusal)." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md + pm-digest/README.md in the same directory. The .rs files in pm-digest are authoritative; the prose docs are stale-risk. Your [attempt:] line goes verbatim in your report's first five lines. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["row-pm-kg", "row-pm-dag", "row-pm-agent", "row-pm-redteam"], "message": { "kind": "result", "body": "All four rows settled (you are the remaining member — pinned #175 semantics). Verify on disk per the #174 law, then merge + apply the rubric and write pm-qa.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/pm-comparison-2026-08-13/pm-qa.md", "mustContain": "PM-QA v1" },
+      { "path": "docs/reference/evidence/pm-comparison-2026-08-13/pm-kg.md", "mustContain": "pm-kg" },
+      { "path": "docs/reference/evidence/pm-comparison-2026-08-13/pm-dag.md", "mustContain": "pm-dag" },
+      { "path": "docs/reference/evidence/pm-comparison-2026-08-13/pm-agent.md", "mustContain": "pm-agent" },
+      { "path": "docs/reference/evidence/pm-comparison-2026-08-13/pm-redteam.md", "mustContain": "pm-redteam" }
+    ]
+  }
+}

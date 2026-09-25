@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:49:37.194Z",
+  "members": [
+    "semantic-progress-redteam-deepseek"
+  ],
+  "outcomes": [
+    {
+      "role": "semantic-progress-redteam-deepseek",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "e8d33689e39d1098244fda780c66941c35e74b4d"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "semantic-progress-redteam-deepseek",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "semantic-progress-redteam-deepseek",
+      "requestId": "pause:baton-1bce52c7f8c922a945813079-work:252",
+      "at": "2026-07-31T22:59:58.779Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "semantic-progress-redteam-deepseek",
+      "requestId": "pause:baton-1bce52c7f8c922a945813079-work:264",
+      "at": "2026-07-31T23:00:18.891Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

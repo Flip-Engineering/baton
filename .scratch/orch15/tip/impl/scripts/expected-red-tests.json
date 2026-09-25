@@ -1,0 +1,2342 @@
+{
+  "schemaVersion": 2,
+  "rows": [
+    {
+      "key": "test/adapter-card-contract.test.mjs :: A-G10 RED: the legacy subprocess tier publishes cards no gate can consume (reason A-G10)",
+      "reason": "A-G10"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A1-a RED: run.wait({until:\"terminal\"}) on a durably-stopped run burns the clock instead of returning the projected terminal truth",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A1-b RED: run.wait settle-block on a durably-stopped run burns the clock too — the durable-stop predicate must extend to the settle-block loop",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A2-a RED: MCP fleet_run_wait refuses a mid-wait revocation with unauthenticated AND names the renewal path",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A2-b RED: MCP fleet_run_follow refuses a mid-wait revocation with unauthenticated AND names the renewal path",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A2-c RED: MCP fleet_run_episode refuses a mid-wait revocation with unauthenticated AND names the renewal path (A2/D2 fold — B3)",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A2-d RED: MCP fleet_run_workstreams refuses a mid-wait revocation with unauthenticated AND names the renewal path (A2/D2 fold — B3)",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A3-a RED: web run_wait refuses a mid-wait expiry with 401 unauthenticated AND names /v1/auth/refresh",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A3-b RED: web run_follow refuses a mid-wait expiry with 401 unauthenticated AND names /v1/auth/refresh",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: A4 RED: the driver pump loop L5/D10 catch blanket-swallows status failures — no auth-stop guard in the CODE (the #148 instance's shape)",
+      "reason": "#148"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauthorized AND names the app-layer renewal — never the transport /v1/auth/refresh lane (D1.2(a))",
+      "reason": "#164"
+    },
+    {
+      "key": "test/blind-waits-red.test.mjs :: P-MCP RED: the MCP post-dispatch recheck list must extend to fleet_run_episode/fleet_run_workstreams (fold-164 B3)",
+      "reason": "#164"
+    },
+    {
+      "key": "test/bridge-idempotency-344.test.mjs :: 344: read tools carry no idempotencyKey",
+      "reason": "#566"
+    },
+    {
+      "key": "test/canonical-naming-233-red.test.mjs :: CLOSED SET: MCP application dispatch names equal exactly the ONE derivation",
+      "reason": "#566"
+    },
+    {
+      "key": "test/control-conflict-axis.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/coordinator-plan-effects-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/credential-projection.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R1: the descriptor accepts the closed knowledge:{primaryRoot} field (RED — no knowledge field)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R2: an unknown key under knowledge refuses at open (RED — no knowledge field)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R3: a primaryRoot escaping the repo root refuses at open (RED — no knowledge field)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R4: a primaryRoot symlinking out of the repo refuses at open (RED — no knowledge field)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R5: a primaryRoot not resolving to a deployment root of this repo refuses at open (RED — no knowledge field)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A2-R1: run.knowledge.seed (addKnowledgeNode) refuses knowledge_primary_conflict on a non-primary deployment (RED — no primary check)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A2-R2: the verified_task_outcome auto-promotion (promoteKnowledgeNode) refuses knowledge_primary_conflict (RED — no primary check)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A2-R3: knowledge.promote (coordinator admitWorkflowFinding) refuses knowledge_primary_conflict at the seam (RED — no primary check)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A3-R1: a non-primary deployment's project read serves the primary's promoted node (RED — no projection)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A3-R2: the project read carries {epochLag, sourceRoot}, event-seq anchored (RED — no source/epoch vocabulary)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A4-R1: the projected slice is the endpoint-closure of fold outputs — the task:<taskId> endpoint cited by a promotion edge is replicated (RED — no projection)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A4-R2: a projection whose primary holds a workflow_admitted node severs the candidate-citing DerivedFrom edge — a strict read refuses knowledge_cross_root_denied (RED — no cross-root denial)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: A5-R1: a NON-strict recall on a non-primary serves the primary's node with {epochLag, sourceRoot} and appends nothing to the consumer ledger (RED — no projection)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: K-R1: the 4-code federation refusal family is surface-constant in ACTUAL sorted order (RED — family absent)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: K-R2: knowledge_cross_root_denied fires typed for a #63 admission with a foreign candidate (RED — no cross-root denial)",
+      "reason": "#63"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: K-R3: a strict read past the deployment-owned ceiling refuses knowledge_projection_stale (RED — no staleness posture)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: K-R4: a strict read with an unreadable primary ledger refuses knowledge_primary_unreachable (RED — no unreachable posture)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: R-R1: the projection is primary-seq anchored and never merges into the consumer ledger (RED — no projection)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: R-R2: re-projecting the same primary events dedups by idempotencyKey — each node exactly once (RED — no projection)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: R-R3: the strict-prefix gap law refuses knowledge_primary_unreachable, never a silent skip (RED — no replay law)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: S-R1: the split-brain discriminator is declared-path-vs-this-root, never repoId equality (RED — no primary check)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/cross-deployment-knowledge-red.test.mjs :: S-R2: two self-declared primaries are honestly surfaced — each project read names its own sourceRoot (RED — no source/epoch vocabulary)",
+      "reason": "#70"
+    },
+    {
+      "key": "test/deployment-omp-dispatch-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/dispatch-seam-omp-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/dispatch-seam-real-omp-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: P8 (PIN): S2 — the coaching branch refuses secret-shaped summary/message (application_workflow_feedback_invalid)",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R1 (RED): forged verdict with no gate referent refuses typed gate-unbound (stage: expect_typed_refusal)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R2 (RED): validated-or-replaced — a verdict with a REAL gate referent is derived:true, seq-bound (stage: expect_derived_record)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R3 (RED): coaching feedback is recorded derived:false / gateEventSeq:null (stage: expect_coaching_derived_false)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R4 (RED): consumer safety — a verdict packet in the revision set must not crash select/revise (stage: select_candidate_no_crash)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R5 (RED): B2 one derived-flag model — the projection literal is the 12-field closed set (stage: literal_12_field_closed)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R6 (RED): B5 per-record degradation — a PERSISTED pre-hardening gate-shaped record is excluded per-record while later records project (stage: expect_pre_hardening_record_excluded)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R7 (RED): S1 — the referent boundary is candidate-scoped: run-2 same-shaped submission is not bound by run-1 gate (stage: expect_second_run_refused)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: R8 (RED): M3 — D4 surface constancy: gate_unbound is typed in application.mjs and preserved verbatim through web/MCP facades (stage: expect_gate_unbound_typed)",
+      "reason": "#73"
+    },
+    {
+      "key": "test/frame-economics-red.test.mjs :: F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs",
+      "reason": "#566"
+    },
+    {
+      "key": "test/glm-session.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/grammar-m4b-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/grammar-m4b-red.test.mjs :: M4B-3: a canonical MCP tool executes beside the legacy tool, reaching one operation",
+      "reason": "#566"
+    },
+    {
+      "key": "test/grammar-m5-red.test.mjs :: M5-1: the divergence ledger is empty and the M4 retirement is pinned",
+      "reason": "#159"
+    },
+    {
+      "key": "test/issue10-blocked-interaction-red.test.mjs :: AX1-F: a burst of provider tool-call/message telemetry does not advance lastProgress while a run is otherwise idle",
+      "reason": "#10"
+    },
+    {
+      "key": "test/issue150-coaching-passthrough.test.mjs :: 150-CP1: validation-path coaching refusal carries cap, actual, unit, gracefulPath on the MCP wire",
+      "reason": "#566"
+    },
+    {
+      "key": "test/issue150-coaching-passthrough.test.mjs :: 150-CP2: at-cap message is admitted, cap+1 refuses with the coaching triple",
+      "reason": "#566"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: the attention coverage envelope not landed): attention carries its coverage — examined seats are named",
+      "reason": "#268"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: the root participant row not landed): the root is a participant row and its acts render attributed",
+      "reason": "#268"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #364 RED (stage: SWARM_PARTICIPANT_RUNTIME_STATES not exported): the closed runtime state set is exported and every surface reads the ONE derivation",
+      "reason": "#364"
+    },
+    {
+      "key": "test/issue28-wire-degrade-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue325-goal-plan-replay.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue343-swarm-view-narrowing.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue357-worktree-stash-isolation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue487-session-ledger-dual-writer.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue499-scan-component-ceiling.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue499-schema-counts.test.mjs :: 499-M1: each schema file carries exactly one surviving bare 64 (the triaged entryIds batch)",
+      "reason": "#566"
+    },
+    {
+      "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
+      "reason": "#460"
+    },
+    {
+      "key": "test/issue500-follow-response-ceiling.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue518-plan-budget-replay.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
+      "reason": "#24"
+    },
+    {
+      "key": "test/kg-settlement-red.test.mjs :: KS5: a crash between candidacy posts resolves exactly-once on re-drive",
+      "reason": "#63"
+    },
+    {
+      "key": "test/kg3-activation-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/kg4-quality-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/kimi-acp.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A1 (stage[d1a-directory-refused]): the driver refuses a directory --targets before waves.start",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A2 (stage[d2a-coverage-refused]): a brief deliverable absent from --targets refuses exit 2 naming the uncovered set",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A3 (stage[d2-grammar-prose]): a prose line inside ## Deliverables refuses deliverables_malformed naming the line",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A3-nearmiss (stage[d2-grammar-nearmiss-heading]): a `### Deliverables` heading with no ## Deliverables section refuses deliverables_malformed",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A4 (stage[d1b-admission-directory]): a string harvest.paths entry naming a launch-tree directory refuses workflow_harvest_invalid AT ADMISSION",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A4-object (stage[d1b-admission-directory-object]): the {path, mustContain} harvest entry form refuses a directory the same way",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A5 (stage[d3-transport-code-survival]): the directory-harvest refusal code reaches waves.run on CLI, MCP, AND web — no transport-side re-spelling",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: A7 (stage[d2b-objective-render-coverage]): a member objectiveRef brief declaring a deliverable absent from harvest.paths refuses workflow_harvest_invalid AT THE OBJECTIVE RENDER",
+      "reason": "#165"
+    },
+    {
+      "key": "test/launch-validation-red.test.mjs :: S1 (stage[static-launch-refusal-tokens]): the four driver launch-refusal tokens exist in the driver source",
+      "reason": "#165"
+    },
+    {
+      "key": "test/mcp-descriptor-auth.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/mcp-packaging-red.test.mjs :: MP7: the four settlement tools register on MCP and promote requires the sessionAuthority envelope",
+      "reason": "#566"
+    },
+    {
+      "key": "test/mcp-packaging-red.test.mjs :: MP9: knowledge_settlement_lease requires the settlement capability on the principal",
+      "reason": "#566"
+    },
+    {
+      "key": "test/mcp-reflex-surface-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/mcp-reflex-surface-red.test.mjs :: Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table",
+      "reason": "#261"
+    },
+    {
+      "key": "test/mcp-refusals-named.test.mjs :: a missing required argument is named by the refusal",
+      "reason": "#566"
+    },
+    {
+      "key": "test/mcp-refusals-named.test.mjs :: an unknown tool name answers with the nearest advertised tool and the full tool set",
+      "reason": "#566"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH child profile + token",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R2 RED (stage: connection-projection-missing): RuntimeIsolation.create projects the child connection onto the posture",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R3 RED (stage: xdg-delete-missing): the child runtime env scrubs XDG_CONFIG_HOME",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R4 RED (stage: runstop-carveout-missing): transport run_stop admits a lease-bound child on its OWN subtree",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R5 RED (stage: legacy-refusal-missing): worker:-prefixed principals refuse the legacy operator set per family",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R6 RED (stage: lane-scope-binding-missing): the six workflow lanes refuse foreign runs with the one constant",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R7 RED (stage: terminal-revoke-missing): revokeChildAuthority revokes the child lease + session on a terminal parent",
+      "reason": "#12"
+    },
+    {
+      "key": "test/nested-orchestration-red.test.mjs :: R8 RED (stage: orphan-sweep-missing): sweepChildOrphans revokes orphaned child authorities on startup",
+      "reason": "#12"
+    },
+    {
+      "key": "test/omp-false-stall-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/omp-runtime-isolation-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: A1: a row member reads its OWN task and transitions it to done — admitted",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: A2: a row member writing a sibling task refuses plan_authority_forbidden",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: A3: a coordinator writes its subtree (ownedBy.wave/run match) — admitted",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: A4: a coordinator writing outside its subtree refuses coordinator_authority_forbidden",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: A5: the orchestrator (plan:*) mints/upserts/transitions any task — admitted",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L1: two tasks cannot be doing simultaneously within a wave subtree",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L2: two tasks doing in DIFFERENT wave subtrees are admitted (the law is per-wave-subtree)",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L3: a verified task is marked done immediately and stays done",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L4: a done task re-opened by any non-review principal refuses plan_reopen_forbidden",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L5: the review authority's reviewed-reject re-open (done → todo, H4.2) is admitted",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L6: focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: L7: plan.focus_upserted sets the bounded focus window with a plan-version CAS (stale → plan_stale_version)",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: M1: plan.write with plan.minted mints the plan and plan.read round-trips it",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: M2: a retry of the same mint key + content returns the prior event — exactly-once",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: M3: changed content under the same mint key refuses plan_replay_conflict",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: M4: update asserted — upsert v1 then v2 with expectedTaskVersion=2 goes green (taskVersion becomes 2)",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: M5: upsert v2 with expectedTaskVersion=1 (stale) refuses plan_stale_version",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: N1: plan.read naming an unminted plan refuses plan_not_found",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: N2: a mutation naming a task absent from the plan refuses plan_task_not_found",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: O1: plan.read at the orchestrator seat returns the campaign todo as the plan projection",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: Q1: a #74 coordinator member's plan.write (task_upserted) writes its subtree's row tasks with ownedBy binding",
+      "reason": "#74"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: Q2: the interpreter gates a member on its plan task's state — blocked → dispatch_pending, done → settleable",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S1: a task missing a closed field (no title) refuses plan_task_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S2: a task carrying an unknown field refuses plan_task_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S3: a non-canonical task key order refuses plan_task_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S4: a blockedBy self-edge refuses plan_topology_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S5: a blockedBy dangling edge refuses plan_topology_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S6: a blockedBy cycle refuses plan_topology_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S7: a non-closed status refuses plan_task_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: S8: plan.read returns tasks with the canonical sorted key order",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: W1: at wave.closed the review authority reviews the wave's plan tasks",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: W2: reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomplete task never reads done",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X1: baton plan read PLAN_ID parses to plan.read",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X2: baton plan write PLAN_ID --mutation JSON parses to plan.write; a malformed body refuses cli_invalid",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X3: CLI_WEB_COMMANDS admits plan.read AND plan.write",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X4: the plan.* web surface is refused AND ledgered in surface-divergence-ledger.json (#159 D3 #3)",
+      "reason": "#159"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X5: MCP tools baton_plan_read/baton_plan_write exist with repoId leading required (H3.1)",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X6: the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.write (D3.1)",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-plan-object-red.test.mjs :: X7: the generated CLI.md/MCP.md blocks contain the plan rows (D3.5)",
+      "reason": "#161"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: ACTIONS-SLICE (§I H6/F6): the wake actions builder slices the ACTIONS operand to MAX_ATTENTION and spills the head+digest",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: ANSWER-FROM-WAKE (§B D2.2/W-3): answering the wake item receipts applied",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: AUTHORITY-RUN-SCOPED (§E D3/F5): a live lease on run A never authorizes run B's wake",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: BLOCKING-ESCALATES (§F W-5): a blocking question escalates as an answer_question actionable item",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: CANDIDACY-HONEST-EMPTY (§D D1.3/B2): with a live candidacy queue the honest empty is REACHABLE",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: CANDIDACY-REFRESH (§D B2): a queue-count change refreshes the SAME candidacy_review in place",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: CANDIDACY-WAKE (§D D1.2/B2): a board-close candidacy wakes the review authority",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: CLI-GRAMMAR (§H D4): baton run attention wait parses the wake verb with both cursors",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: CURSOR-SHAPE (§C B1): storeCursor and reasonsCursor are distinct continuation tokens",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: DECISION-FIRST-SHAPE (§B D2.1): actions[0] mirrors projectDecisionAttention plus the answer address",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: DECISION-PARK-WAKES (§B D2/W-1): a decision park wakes a waiter registered before the park",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: MCP-ALLOWLIST (§K H8): the stateFailureCode allowlist carries attention_wait_invalid",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: MCP-CEILING (§H D4/F3): the wake tool joins the TIGHT ceiling guard beside invalid_run_wait",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: MCP-SCHEMA-CAPABILITY (§H D4): the wake tool carries the split-cursor schema and the observe capability",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: MCP-TOOL (§H D4): the ordinary MCP tool row advertises baton_attention_wait",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: OVERSIZE-REFUSAL (§I D6): a wake whose serialized payload exceeds the frame cap refuses the pinned code",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: REASONS-ALONE (§C D1.3): a reason wake is reason-only, and the honest-empty continuation echoes the cursors",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: REPLY-NO-WAKE (§F W-5): a reply hop advances the store but the wake honest-empties",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: RETURN-TRIP (§C B1/D1.6): a return-trip orchestrator still sees member_terminal with the prior cursors",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: REVALIDATED (§B D2.3/F4): a decision answered between delivery trips is never re-delivered (stale-payload revalidation)",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: TWO-WAITERS (§E D3): the wave-owner and a lease holder both wake; no claim-on-read",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-DISPATCH (§A): attention.wait dispatches; malformed closures refuse attention_wait_invalid before state",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-HONEST-EMPTY (§A D1.3): a quiet run honest-empties with both cursors unchanged, and the wake HELD a waitAfter",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-INVALID (§K D6): the NEW attention_wait_invalid code is refused by name, never a generic code",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-PLAN-APPROVAL (§A D2.1): a plan awaiting approval wakes the waiter with plan_approval",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WAKE-ABORT (§H H7/F3): an in-flight wake aborted by the transport settles the wake-cancelled receipt",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WAKE-REASONS-SET (§G W-6): the closed wake-reason set is the frozen ACTUAL-sorted eight",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WEB-CEILING (§H D4): a web wake past the 30s ceiling refuses by the pinned code",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WEB-ENVELOPE (§H D4): the web command envelope admits attention_wait",
+      "reason": "#71"
+    },
+    {
+      "key": "test/orchestrator-wake-red.test.mjs :: WORKER-REFUSED (§E D3/F5): a worker principal cannot call the wake — even claiming an orchestrator class",
+      "reason": "#71"
+    },
+    {
+      "key": "test/phase10.1-reconciliation.test.mjs :: SC18: timeoutMs is enforced by every session adapter",
+      "reason": "A-N5"
+    },
+    {
+      "key": "test/phase11-acceptance-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-control-integrity.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-coordination-store.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-coordination-store.test.mjs :: CK8/CK9: public driver exposes coordination and queued DAG survives restart before dispatch",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase11-model-selection.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-persistent-sessions.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-persistent-sessions.test.mjs :: NR1/NR3: recovery attaches without provider work, commits its refinement and intent, then prompts",
+      "reason": "#81"
+    },
+    {
+      "key": "test/phase11-persistent-sessions.test.mjs :: NR3/NR5: refused recovery continuation fails the refinement and kills/reaps the attached transport",
+      "reason": "#81"
+    },
+    {
+      "key": "test/phase12-browser-oidc.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-auth.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-command-status.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-edge.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-northbound.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-northbound.test.mjs :: UA5/WN: malformed Run intent, inconsistent Run identity, and capability refusal occur before application admission",
+      "reason": "#160"
+    },
+    {
+      "key": "test/phase12-web-northbound.test.mjs :: WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission",
+      "reason": "#160"
+    },
+    {
+      "key": "test/phase12-web-operator.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-session-lifecycle.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-stream.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase13-atlas-index.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase13-atlas-structural.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase14-route-tuple.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase16-mcp-northbound.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase17-atlas-structural-rewrite.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase18-atlas-cpg.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase19-atlas-cpg-delta.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase20-atlas-cpg-taint.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase22-atlas-cpg-path-sensitive.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase24-atlas-representation-ceiling.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase25-atlas-behavior-fingerprint.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase26-structured-merge.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase27-atlas-egraph-evaluation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase29-capability-invocation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase31-cairn-scorecard.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase32-cartographer-quartermaster.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase36-quartermaster-external.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase37-lockfile-sbom.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase38-reuse-decision.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase39-reuse-invalidation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase40-proposed-install-graph.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase41-advisory-scanner.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase41-transitive-advisory-projection.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase42-policy-invalidation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase43-hmac-webhook.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase43-provider-receipts.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase43-provider-reconciliation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase44-cairn-route-stats.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase45-session-auto-rejoin.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase46-representation-review.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase47-cairn-causal-audit.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase48-cairn-recall.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase49-cairn-promotion.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase50-cairn-scratch-correction.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase52-cairn-recall-assessment.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase53-cairn-contradictions.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase54-atlas-cpg-lexical-bindings.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase56-drain-and-close.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-acceptance-revocation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-adversarial-governance.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-provider-callback-integrity.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-provider-governance.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-provider-turn-release.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase58-driver-sparse-projection.test.mjs :: Phase 58: createDriver composes worker/verify sparse views with projected node_modules and drain reaps every owned residue",
+      "reason": "#460"
+    },
+    {
+      "key": "test/phase59-worktree-capacity-authority.test.mjs :: P92.2-PO2/WC32: internal post-add failure remains intact until capacity-first outer rollback",
+      "reason": "#460"
+    },
+    {
+      "key": "test/phase60-coordination-recovery.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-atlas-index-source-contract.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-atlas-structural-cpg-source-contract.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-representation-producer.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-representation-store.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-goal-plan-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-goal-plan-replay-reds.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-mcp-goal-plan.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-web-goal-plan.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-web-goal-plan.test.mjs :: GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures refuse safely",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase63-canonical-order-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase64-integrated-run-application.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase64-result-finalization-store.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase65-run-semantic-review-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-materialized-result-export.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-plan-authorized-recovery.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-result-export-projection-reds.test.mjs :: CE11: Web registry dispatches strict run_export parity and rejects server path fields",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase66-run-continuation-export.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-run-recovery-application.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase67-change-aware-inspect.test.mjs :: inspect derives its bounded wait from deployment policy when continuation omits machinery",
+      "reason": "#6"
+    },
+    {
+      "key": "test/phase67-change-aware-inspect.test.mjs :: inspect marks timeout and returns terminal state immediately",
+      "reason": "#6"
+    },
+    {
+      "key": "test/phase67-change-aware-inspect.test.mjs :: inspect waits once on durable notification and returns changed bounded outline",
+      "reason": "#6"
+    },
+    {
+      "key": "test/phase67-change-aware-inspect.test.mjs :: inspect waits through another Run notification until this Run durably changes",
+      "reason": "#6"
+    },
+    {
+      "key": "test/phase67-progressive-agent-experience.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase67-self-describing-continuation.test.mjs :: ordinary outline exposes one registry-derived, callable, bounded continuation without coordinates",
+      "reason": "U-E7"
+    },
+    {
+      "key": "test/phase67-self-describing-continuation.test.mjs :: terminal inspect omits continuation and contextual help recommends it",
+      "reason": "U-E7"
+    },
+    {
+      "key": "test/phase67-signal-reap.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase68-unified-agent-entrypoint.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase69-verifier-retry-cascade.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase70-resumable-work.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase71-kimi-session.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed",
+      "reason": "#289"
+    },
+    {
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
+      "reason": "#289"
+    },
+    {
+      "key": "test/phase72-native-kimi-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase73-required-effects.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase75-task-topology.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase76-recovery-attempt-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase76-recovery-attempt-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase77-recursive-run-lineage.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase77-recursive-run-stop-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase78-bound-run-group-red.test.mjs :: RG5: the repository deployment forwards startMany and close drains all active group workers",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home",
+      "reason": "#228"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: DF3: exact route cards are self-described and multi-route start has no effort fallback",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: DF6: deployment close joins callers, drains ownership, and remains idempotent",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: DF7: worker worktrees materialize the effective caller tree without importing credentials or mutating the caller",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: P92-DF10b: default readiness retains a configured rejected-refresh Kimi route as blocked",
+      "reason": "credential",
+      "prerequisite": "kimi-code/kimi-code/k3"
+    },
+    {
+      "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-3: an over-capacity Workflow wave refuses all candidates before task, worktree, or provider effects",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-4: whole-Workflow stop reaps an active Wave and leaves no owned process or worktree",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-5: operator-selected join preserves and selects a verified survivor after a sibling failure",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-6: role-addressed member stop is durable, exact, and leaves a sibling Attempt running",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-7: a post-ledger Wave launch failure compensates every admitted member before rejection",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase80-application-revision-red.test.mjs :: AR80-1: selected Candidate feedback proposes one successor Plan pre-effect and replays both rounds",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase80-application-revision-red.test.mjs :: AR80-2: a second feedback round appends Plan v3 and replays from its durable definition",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase80-application-revision-red.test.mjs :: AR80-3: repeated feedback and explicit contradiction pause recursion without a Plan effect",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase80-application-revision-red.test.mjs :: AR80-4: the bound deployment round ceiling pauses without exposing a caller loop knob",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase80-revision-restart-stop-red.test.mjs :: AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery",
+      "reason": "#460"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-1: ordinary Workflow Context is source-grounded, credential-excluding, and restart-readable",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-2: Run stop fences and reaps an in-flight owned Context execution",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-3: shutdown closes Context admission before an authorized action can register late",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-6: provider-secret sentinels are absent in owned execution and its Git child",
+      "reason": "#210"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-7: a public runtime map cannot forge private source-attestation capability",
+      "reason": "#210"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-8: invented paths and path or blob substitutions lack producer authority",
+      "reason": "#210"
+    },
+    {
+      "key": "test/phase83-context-runtime-red.test.mjs :: CR83-9: narrow write scope retains deployment-authorized repository Context read scope",
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W1: map prebinds Plan v2 with zero new provider calls, then approval launches one real parallel Wave and stop reaps it",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W2: restart after call/Plan prebinding replays one identity and approval dispatches only the missing successor Wave",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W3: Context call ledger substitution fails typed replay before provider effect",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W4: terminal children attach once to a durable ContextValue/evidence settlement and replay exactly",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W5: a self-consistent forged successor Plan still lacks admitted Context-call authority",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W7: restart after descendant reap but before settlement converges through the same cleanup authority",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM85-E1: one advertised context_eval compiles the pure AST and rejects effects pre-cell",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM85-F1: accepted, failed, and cancelled children settle durably after exact release without aggregate output",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase84-context-map-wave-red.test.mjs :: CM85-L1: a replayed v2 root maps through one exact v3 catalog upgrade",
+      "reason": "design"
+    },
+    {
+      "key": "test/phase87-semantic-action-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase88-plan-route-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase89-resident-application-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase90-run-control-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase91-semantic-interrupt-preservation-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase92-route-discovery-red.test.mjs :: P92-RD1: CLI-observed Claude login is ready without a credentials file and Kimi-through-Claude is explicitly unconfigured",
+      "reason": "#293"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-1 (stage: warning surface missing): catalog closure + closed row schema in ACTUAL code-unit order; localeCompare banned (§4.1, §4.4, B8)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-10 (stage: W6 missing): resident-not-published fires while the authority outline is private; the diagnosis reports the resident-starting state; the #137 create_profile misdirection on setupBatonConnection is closed (§4.1 W6, §4.2, B.2, findings 1a/1b/1c)",
+      "reason": "#137"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-11 (stage: W7 missing): the route last-auth-failure detection fires on the HIGHEST-eventSeq failed auth result — order-discriminating fixtures prove a per-route max accessor, not a last-element read (§4.1 W7, finding 3)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-12 (stage: detection source missing): no warning mints an elapsed-time wall-clock control beyond the pre-existing honest reads (§3, §4.1, B5)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-13 (stage: warning surface missing): every detection is FAIL-OPEN — a throwing detection omits its warning and never throws, byte-identical to the warning-free fixture (§4.1, §4.2, B3)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-2 (stage: warning surface missing): warnings NEVER block — blocking codes never appear in warnings; the preflight consumer does not read warnings in v1 (§4.2)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-3 (stage: warning surface missing): surface compose, not duplicate — ONE named warnings field, non-enumerable sibling, byte-stable serialize on the REAL doctorReadiness surface, identical rows across the served web card, and the local-depth subset (§4.2, B4, OQ1, #103 D6, findings 2/6/7/10)",
+      "reason": "#103"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-4 (stage: warning surface missing): every warning next is non-empty, references a real verb/command/named doc anchor, and reduces the cause; the ghost verb and ghost git verb are rejected (§4.3, B1, B7, #136, finding 4)",
+      "reason": "#136"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-5 (stage: W1 missing): the ghost-worktree census fires on unregistered residue, applies the live-owner discriminator, honors the reserved-fraction disjunct, and is quiet on a clean tree (§4.1 W1, precision law, findings 5/8a)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-6 (stage: W2 missing): the stale-writer-lease detection fires on a dead pid and a pidStart mismatch, and is quiet on a live lease (§4.1 W2, B6)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-7 (stage: W3 missing): credential TTL is metadata-only — claude stale and the grok early-invalidation window fire; a fresh credential is quiet; no token material is emitted (§4.1 W3, B5, §3)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-8 (stage: W4 missing): the disk-floor approach band fires above the floor; below the floor the block fires and the warning is SUPPRESSED; at/above the band neither (§4.1 W4, B2)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/prescriptive-doctor-red.test.mjs :: PT-9 (stage: W5 missing): the result-pin census fires above the configured bound across BOTH namespaces and is quiet below it (§4.1 W5, B7, finding 8b)",
+      "reason": "#72"
+    },
+    {
+      "key": "test/quiescence-activity-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A1b (stage: roster honest projection): the fleet_roster row carries the same {verdict, probedAt} projection — the liveness class is not a private sibling (D2 shape)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A1c (stage: northbound re-add): the operator wire surfaces — /v1/application-card, the CLI doctor read, deployment.doctor — re-add verdict + probedAt so a JSON round-trip cannot strip them (D2 wire law, blocker 3)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A2 (stage: on-demand forced probe): baton doctor --check forces exactly one fresh probe per stale route through the OPERATOR path — baton.mjs → BatonWebClient.doctor() → a /v1/application-card forced-probe parameter (D1 trigger 3, blocker 2)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A3 (stage: typed refusal vocabulary): provider_unreachable, probe_content_mismatch, probe_oversize, and provider_quota each have a PROVIDER_TERMINAL_GUIDANCE row with {category, summary, remediation, retryable} — and a probe verdict never collapses to the generic (G6, refusal vocabulary)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A4 (stage: quota/capacity death class): a probe whose output carries the quota/capacity wire — HTTP 402 / insufficient_quota — classifies to the typed provider_quota verdict, distinct from provider_unreachable and probe_content_mismatch, and excludes the automatic re-probe cadence (D1, refusal vocabulary, OQ3)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A5 (stage: honest-projection refusal): a failed verdict refuses wave preflight with wave_driver_route_unready BEFORE any member spawn, and the driver never substitutes a route (D3)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A6 (stage: spawn-gate coverage): #livenessGate is consulted on every provider-spawn surface — run, startMany, workflow, explore, review — before any real turn, exactly as assertRouteReady already is (D1 trigger 1, blocker 4)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: V-stale (stage: lapsed-window verdict): the honest verdict follows the staleness law — a lapsed verified window reads verdict unverified, NEVER stale probe-verified, with probedAt retaining the last recorded measurement (D2 staleness law, P-stale twin)",
+      "reason": "#167"
+    },
+    {
+      "key": "test/run-show-verification-verdict.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/run-show-verification-verdict.test.mjs :: V7: a candidate-owned exit mismatch reads as its own closed code on run show",
+      "reason": "#460"
+    },
+    {
+      "key": "test/runtime-isolation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A1-2 stage[cli-append-json-shape-missing]: the non-note JSON body path parses into the closed per-kind shape (H2.3)",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A10-1 stage[append-admission-incoherent]: the append verb is coherently admitted — parser + CLI_WEB_COMMANDS + web four-table + MCP + semantic registry, with no surface advertised-but-dead",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A2-1 stage[mcp-append-tool-missing]: baton_run_scratchpad_append is advertised — capabilities, mcpApplicationToolNames, and tools/list",
+      "reason": "#566"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A2-2 stage[mcp-append-dispatch-branch-missing]: tools/call for a valid append dispatch is routed, never the absent-tool protocolError",
+      "reason": "#566"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A2-3 stage[mcp-append-admission-missing]: TOOL_DEFINITIONS + ORDINARY_EXPLICIT_TOOLS + the _dispatch chain all reference the tool",
+      "reason": "#566"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A4-1 stage[append-restrictor-missing]: a member append to a sibling worker:<other> partition refuses at the _authorize seam — no entry is minted",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A4-2 stage[own-run-predicate-missing]: the restrictor ENFORCES the own-run predicate — a member append to shared/worker:<ownId> of a run other than its own refuses (H1.1)",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A5-1 stage[review-authority-append-missing]: local-owner/service-* append to shared ONLY — never a member partition; the deployment installs the restrictor",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A8-1 stage[append-replay-scope-missing]: exact retry replays idempotent; changed binding refuses scratchpad_write_conflict; a same-key different-scope retry lands DISTINCT (H3.1)",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A9-1 stage[bare-scratchpad-teaching-missing]: bare `baton run scratchpad` refuses with the closed-set teaching read|elevate|append — never `unexpected argument undefined`",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A9-2 stage[unknown-subverb-teaching-missing]: an unknown subverb names the unknown AND restates the closed set (D4)",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: P-A1 PIN: the read/elevate half of the parity table stays served — CLI parser + CLI_WEB_COMMANDS + MCP + registry all agree (the substrate the write completes)",
+      "reason": "#566"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable seats array, one closed D1 atom per readiness route in route order, observedAtEventSeq, and the card inherits seats (D2.4)",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A10 (stage: doctor-seats-missing): routes[i].occupancy.inFlight === seats[i].inFlight for every readiness route — matched (same numbers) and auto-ambiguous (same null)",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A11 (stage: inFlightRevision-missing): the live inFlight component carries a per-atom inFlightRevision — the vendor's incarnation-local handle-revision counter, never a clock",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A2 (stage: capacity-deferred-missing): a ceiling-skipped wave member reads deferred === 1 on the wave capacity atom, deduped by route key — the §D5 Arm-1 aggregate, never the mint-time-frozen inFlight",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A3 (stage: waves-capacity-missing): object-roster waves render the capacity block via _runWaveRoute; run-less legacy string-roster waves render capacity: [] — the honest object-roster answer",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A4 (stage: doctor-seats-missing): an auto route with >1 eligible candidate, or 0 eligible (saturated), reads all-null — never a fabricated number",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A5 (stage: seats-freshness-label-missing): seats-bearing reads carry observedAtEventSeq = a ledger event seq (never wall time); the source surfaces carry no marker at HEAD",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A6 (stage: doctor-seats-missing): two routes resolving to the same adapter read IDENTICAL counts — the record never claims per-route independence",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A7 (stage: surface-teaching-missing): baton_deployment_doctor names seats + the split staleness; baton_waves_list names capacity; the CLI doctor helps with the closed field set",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A8 (stage: doctor-seats-missing): the doctor's enumerable route rows stay the DP5 closed set while seats/observedAtEventSeq land as additive siblings, and the occupancy VALUE for an auto-ambiguous route corrects numeric → null",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A9-1 (stage: capacity-inflight-missing): a wave member dispatched with vendorRequested X reads the counts of X via _resolveExplicitRoute — never adapterFor, never a different vendor",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A9-2 (stage: doctor-seats-missing): doctor/generic path — an auto route with >1 eligible candidate reads all-null (the router pick is unpredictable from route identity alone)",
+      "reason": "#146"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: A9-3 (stage: doctor-seats-missing): doctor/generic path — an auto route with exactly ONE eligible candidate reads that candidate's counts",
+      "reason": "#146"
+    },
+    {
+      "key": "test/stall-watchdog-red.test.mjs :: C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here",
+      "reason": "#67"
+    },
+    {
+      "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",
+      "reason": "S-G11"
+    },
+    {
+      "key": "test/swarm-gap-red.test.mjs :: S-G5 RED (stage: scoped-view-context-unscoped): a scoped view projects only the context its subtree owns",
+      "reason": "S-G5"
+    },
+    {
+      "key": "test/swarm-mcp-dispatch.test.mjs :: every canonical swarm.* dot twin dispatches on the combined surface",
+      "reason": "#566"
+    },
+    {
+      "key": "test/swarm-wake.test.mjs :: a real resident wakes a real `baton swarm watch --follow` child on guidance, contribution, and close",
+      "reason": "#320"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: D1 depth1[cell-mate-task-tier-read-missing]: a cell member's CONTEXT_READ resolves the cell's task tiers",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: D2 depth2[direct-shared-write-missing]: a cell member may write the shared tier directly with the cell's nonce",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: D3 depth3[cell-reply-visibility-missing]: a member's reply is visible to its cell-mates",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: D4 depth4[shared-worktree-option-missing]: group.worktree:'shared' is admitted and one tree is captured",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-06 cell-spawn[cell-spawn-refusal-missing]: a refused individual spawn is recorded cell_spawn_refused, never aborts the run",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-08 grant[per-worker-grant-mint-missing]: a waves.send claimGrant to a cell runId mints size grants",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-09 waves.send[cell-broadcast-receipt-missing]: a cell send routes the C5 runId fan-out and receipts targetCount=size",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-10 delivery[partial-delivery-honesty-missing]: a cell send with a dead member receipts delivered < size, targetCount=size, no throw",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-15 collector[collector-result-law-missing]: the collective result is the collector's capture, siblings checkpoint-only",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-15b collector[collector-result-law-behavioral-missing]: the outcome resultSha is the COLLECTOR capture, not the first completer's",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-19 loop[cell-end-to-end-loop-missing]: the WHOLE #74 loop is executable — mint, size grants, broadcast, worker-attributed claim/report, one collective result",
+      "reason": "#74"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-22 grant[per-member-mint-key-missing]: size mints under one send key derive per-member caller keys",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-23a trust[cell-editing-division-missing]: group.editing divides the gate — non-listed members carry analysis:true",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-24 delivery[cell-delivery-mode-gate-missing]: a cell target admits nudge ONLY — now|turn refuse wave_cell_delivery_unsupported",
+      "reason": "#102"
+    },
+    {
+      "key": "test/tight-cell-red.test.mjs :: TC-25 quiescence[quiescence-ordering-missing]: a quorum terminal mints with a LIVE member — its grant is revoked, its worktree captured checkpoint-only, the whole-run stop reaps the remainder",
+      "reason": "#102"
+    },
+    {
+      "key": "test/transport-liveness-235-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/unified-cli-surface.test.mjs :: CLI generic invocation resolves exact canonical names before compatibility aliases",
+      "reason": "#566"
+    },
+    {
+      "key": "test/wave-observability-red.test.mjs :: A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",
+      "reason": "#566"
+    },
+    {
+      "key": "test/wave-settle-error-surfacing-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/wire-settle-detach-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/worker-policy.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
+      "reason": "#79"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D1 (RED): a boundary-commit deployment never ships the no-commit line — the worktreeHarvestPolicy read (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D10 (RED): the served block is FROZEN for the run — a mid-run policy change does not retro-edit the admitted block the worker received (stage: live-composition-missing / epoch-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D11 (RED): a served line carries the LIVE input value — the exact pathScope, profile digest, workflow/result sources, and the profile-constraints line ship (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D12 (RED): the composed block drives the REAL recipe objective render seam — the no-commit line ships/absents in the worker-facing objective text by harvest policy, and the static list is retired (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D2 (RED): the applicationProfile schema declares the worktreeHarvestPolicy field (stage: worktree-harvest-policy-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D3 (RED): an orchestrator-harvest deployment ships the no-commit line under its named source (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D4 (RED): an underrived requested line refuses objective_constraint_underrived and is never printed (stage: live-composition-missing / underrived-refusal-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D5 (RED): a line naming a bound the deployment does not enforce refuses objective_constraint_unenforced (stage: live-composition-missing / unenforced-refusal-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D6 (RED): the wire_frame line is lane-conditional — it ships IFF the size census over the served scope shows a file over ~1500 lines (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D7 (RED): the composed block is a pure function of live policy, frozen at admission — two composes derive the same block and a suppression record carrying the epoch (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D8 (RED): the [attempt:] line is a per-attempt discriminator, never a constraint line (stage: live-composition-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/worker-verdict-surface-red.test.mjs :: D9 (RED): the suppression epoch DERIVES from the profile digest and the admission SHA — different inputs derive different epochs, never a hardcoded constant (stage: live-composition-missing / epoch-missing)",
+      "reason": "#61"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-14-dispatch (stage: tools absent): each tool dispatches its facade command with the CONNECTION-derived principal",
+      "reason": "#460"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
+      "reason": "#87"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-15 (stage: tools + wire mapping absent): every newly projected refusal reaches the wire AS ITSELF",
+      "reason": "#566"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-19 (GUARD, green today): the settlement plane is byte-identical — the six new tools need no settlement class",
+      "reason": "#566"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands — boards facade-explicit",
+      "reason": "#566"
+    }
+  ],
+  "converged": [
+    {
+      "file": "test/async-lock-wait-285-red.test.mjs",
+      "reason": "#285"
+    },
+    {
+      "file": "test/atlas-orientation-red.test.mjs",
+      "reason": "#81"
+    },
+    {
+      "file": "test/best-effort-catch-policy-red.test.mjs",
+      "reason": "#278"
+    },
+    {
+      "file": "test/bidirectional-driver-red.test.mjs",
+      "reason": "#51"
+    },
+    {
+      "file": "test/bidirectional-v3-red.test.mjs",
+      "reason": "#75"
+    },
+    {
+      "file": "test/board-authority-red.test.mjs",
+      "reason": "#78"
+    },
+    {
+      "file": "test/board-workerhalf-red.test.mjs",
+      "reason": "#78"
+    },
+    {
+      "file": "test/briefing-pack-red.test.mjs",
+      "reason": "#103"
+    },
+    {
+      "file": "test/browser-use-red.test.mjs",
+      "reason": "#85"
+    },
+    {
+      "file": "test/capacity-refusal-visibility-red.test.mjs",
+      "reason": "#35"
+    },
+    {
+      "file": "test/checkpoint-deferred-229-red.test.mjs",
+      "reason": "#229"
+    },
+    {
+      "file": "test/claim-preflight-red.test.mjs",
+      "reason": "#88"
+    },
+    {
+      "file": "test/claude-credential-projection-red.test.mjs",
+      "reason": "#11"
+    },
+    {
+      "file": "test/cli-dead-paths-red.test.mjs",
+      "reason": "#289"
+    },
+    {
+      "file": "test/cli-silent-start-red.test.mjs",
+      "reason": "#566"
+    },
+    {
+      "file": "test/cli-truthfulness-red.test.mjs",
+      "reason": "#36"
+    },
+    {
+      "file": "test/cli-wave-fidelity-red.test.mjs",
+      "reason": "#566"
+    },
+    {
+      "file": "test/control-surface-truth-red.test.mjs",
+      "reason": "#289"
+    },
+    {
+      "file": "test/credential-growth-red.test.mjs",
+      "reason": "#245"
+    },
+    {
+      "file": "test/decision-gate-trust-gate-red.test.mjs",
+      "reason": "#16"
+    },
+    {
+      "file": "test/deepseek-routes-red.test.mjs",
+      "reason": "#228"
+    },
+    {
+      "file": "test/diagnostics-red.test.mjs",
+      "reason": "#53"
+    },
+    {
+      "file": "test/doc-truth-conformance-red.test.mjs",
+      "reason": "#566"
+    },
+    {
+      "file": "test/doubt-review-red.test.mjs",
+      "reason": "#66"
+    },
+    {
+      "file": "test/durable-retry-red.test.mjs",
+      "reason": "#201"
+    },
+    {
+      "file": "test/error-actionability-red.test.mjs",
+      "reason": "#160"
+    },
+    {
+      "file": "test/event-log-read-scaling-red.test.mjs",
+      "reason": "#6"
+    },
+    {
+      "file": "test/find-run-narrow-229-red.test.mjs",
+      "reason": "#229"
+    },
+    {
+      "file": "test/fixture-clock-lint-red.test.mjs",
+      "reason": "#42"
+    },
+    {
+      "file": "test/frame-bounded-250-red.test.mjs",
+      "reason": "#250"
+    },
+    {
+      "file": "test/git-batch-216-red.test.mjs",
+      "reason": "#216"
+    },
+    {
+      "file": "test/goalplan-narrow-210-red.test.mjs",
+      "reason": "#210"
+    },
+    {
+      "file": "test/grammar-m1-red.test.mjs",
+      "reason": "#43"
+    },
+    {
+      "file": "test/grammar-m2-red.test.mjs",
+      "reason": "#43"
+    },
+    {
+      "file": "test/grammar-m3-red.test.mjs",
+      "reason": "#261"
+    },
+    {
+      "file": "test/harvest-accessor-red.test.mjs",
+      "reason": "#99"
+    },
+    {
+      "file": "test/harvest-recovery-red.test.mjs",
+      "reason": "#241"
+    },
+    {
+      "file": "test/issue10-waiting-vocabulary-red.test.mjs",
+      "reason": "#10"
+    },
+    {
+      "file": "test/issue144-lsp-pool-red.test.mjs",
+      "reason": "#144"
+    },
+    {
+      "file": "test/issue306-reincarnation-red.test.mjs",
+      "reason": "#306"
+    },
+    {
+      "file": "test/issue314-mcp-core-surface-red.test.mjs",
+      "reason": "#314"
+    },
+    {
+      "file": "test/issue441-reading-half-red.test.mjs",
+      "reason": "#441"
+    },
+    {
+      "file": "test/issue45-startup-reconcile-red.test.mjs",
+      "reason": "#45"
+    },
+    {
+      "file": "test/issue53-run-debug-red.test.mjs",
+      "reason": "#53"
+    },
+    {
+      "file": "test/issue55-stall-liveness-red.test.mjs",
+      "reason": "#55"
+    },
+    {
+      "file": "test/issue564-root-wake-addressing-red.test.mjs",
+      "reason": "#564"
+    },
+    {
+      "file": "test/issue564-root-wake-delivery-red.test.mjs",
+      "reason": "#564"
+    },
+    {
+      "file": "test/issue564-root-wake-undelivered-attention-red.test.mjs",
+      "reason": "#564"
+    },
+    {
+      "file": "test/issue62-write-failure-red.test.mjs",
+      "reason": "#62"
+    },
+    {
+      "file": "test/kg12-decisions-red.test.mjs",
+      "reason": "#24"
+    },
+    {
+      "file": "test/lastseq-cursor-210-red.test.mjs",
+      "reason": "#210"
+    },
+    {
+      "file": "test/lease-foreign-identity-reap-red.test.mjs",
+      "reason": "#330"
+    },
+    {
+      "file": "test/lease-zombie-reap-red.test.mjs",
+      "reason": "#238"
+    },
+    {
+      "file": "test/ledger-compaction-223-red.test.mjs",
+      "reason": "#223"
+    },
+    {
+      "file": "test/log-archival-285-red.test.mjs",
+      "reason": "#285"
+    },
+    {
+      "file": "test/mcp-profile-parity-red.test.mjs",
+      "reason": "#156"
+    },
+    {
+      "file": "test/mcp-reflex-board-package-red.test.mjs",
+      "reason": "#78"
+    },
+    {
+      "file": "test/mcp-surface-widening-red.test.mjs",
+      "reason": "#227"
+    },
+    {
+      "file": "test/mcp-tool-map-red.test.mjs",
+      "reason": "#233"
+    },
+    {
+      "file": "test/mcp-web-local-resident-red.test.mjs",
+      "reason": "#288"
+    },
+    {
+      "file": "test/member-wedge-boundary-red.test.mjs",
+      "reason": "#278"
+    },
+    {
+      "file": "test/omp-answer-red.test.mjs",
+      "reason": "#243"
+    },
+    {
+      "file": "test/omp-first-turn-red.test.mjs",
+      "reason": "#230"
+    },
+    {
+      "file": "test/omp-policy-attest-red.test.mjs",
+      "reason": "#236"
+    },
+    {
+      "file": "test/omp-rpc-red.test.mjs",
+      "reason": "#228"
+    },
+    {
+      "file": "test/omp-turn-in-flight-red.test.mjs",
+      "reason": "#230"
+    },
+    {
+      "file": "test/omp-turn-verdict-red.test.mjs",
+      "reason": "#236"
+    },
+    {
+      "file": "test/orientation-red.test.mjs",
+      "reason": "#81"
+    },
+    {
+      "file": "test/orphan-resume-red.test.mjs",
+      "reason": "#201"
+    },
+    {
+      "file": "test/phase66-export-lifecycle-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase66-retained-export-delivery-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase77-recursive-application-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase77-recursive-authority-visibility-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase77-recursive-transport-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase78-deployment-capacity-red.test.mjs",
+      "reason": "credential"
+    },
+    {
+      "file": "test/phase78-deployment-readiness-red.test.mjs",
+      "reason": "#47"
+    },
+    {
+      "file": "test/phase79-plan-wave-replay-red.test.mjs",
+      "reason": "#161"
+    },
+    {
+      "file": "test/phase79-workflow-definition-authority-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase81-context-program-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase82-context-durability-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase83-context-application-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase84-context-map-application-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase84-context-map-plan-binding-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase84-context-map-schema-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-call-envelope-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-call-generation-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-effect-admission-red.test.mjs",
+      "reason": "credential"
+    },
+    {
+      "file": "test/phase85-context-eval-application-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-lineage-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-result-capsule-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-result-lineage-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-role-catalog-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-coordination-projection-poison-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase85-workflow-activity-replay-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase89-resident-host-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase92-episode-attribution-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase92-episode-workstream-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase92-linear-replay-red.test.mjs",
+      "reason": "#89"
+    },
+    {
+      "file": "test/phase92-read-only-result-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase92-replay-verifier-red.test.mjs",
+      "reason": "G-7"
+    },
+    {
+      "file": "test/phase92-resident-authority-red.test.mjs",
+      "reason": "U-E13"
+    },
+    {
+      "file": "test/phase92-web-observation-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase92.2-physical-workspace-owner-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase93a-canonical-identity-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase93a-context-purity-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase93a-control-grammar-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase93a-schema-values-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/phase93a-source-schema-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/provider-fault-death-red.test.mjs",
+      "reason": "#295"
+    },
+    {
+      "file": "test/provider-fault-typing-red.test.mjs",
+      "reason": "#295"
+    },
+    {
+      "file": "test/provider-quota-readiness-red.test.mjs",
+      "reason": "#295"
+    },
+    {
+      "file": "test/quiescence-completion-red.test.mjs",
+      "reason": "#163"
+    },
+    {
+      "file": "test/read-lane-229-red.test.mjs",
+      "reason": "#229"
+    },
+    {
+      "file": "test/readiness-credentials-red.test.mjs",
+      "reason": "#47"
+    },
+    {
+      "file": "test/readiness-honesty-234-red.test.mjs",
+      "reason": "#230"
+    },
+    {
+      "file": "test/reap-on-terminal-red.test.mjs",
+      "reason": "#223"
+    },
+    {
+      "file": "test/recipes-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/redrive-continuity-red.test.mjs",
+      "reason": "#59"
+    },
+    {
+      "file": "test/reflex1-decision-requests-red.test.mjs",
+      "reason": "#16"
+    },
+    {
+      "file": "test/reflex2-boards-red.test.mjs",
+      "reason": "#17"
+    },
+    {
+      "file": "test/reflex3-packages-red.test.mjs",
+      "reason": "#18"
+    },
+    {
+      "file": "test/reflex4-context-eval-red.test.mjs",
+      "reason": "#19"
+    },
+    {
+      "file": "test/repl-realization-red.test.mjs",
+      "reason": "#69"
+    },
+    {
+      "file": "test/repl1-kind-inventory-red.test.mjs",
+      "reason": "#21"
+    },
+    {
+      "file": "test/repl1-manifest-red.test.mjs",
+      "reason": "#21"
+    },
+    {
+      "file": "test/repl23-bindings-red.test.mjs",
+      "reason": "#22"
+    },
+    {
+      "file": "test/replay-progress-285-red.test.mjs",
+      "reason": "#285"
+    },
+    {
+      "file": "test/reply-chains-red.test.mjs",
+      "reason": "#105"
+    },
+    {
+      "file": "test/resident-convergence-wiring-red.test.mjs",
+      "reason": "#239"
+    },
+    {
+      "file": "test/route-usage-341-red.test.mjs",
+      "reason": "#341"
+    },
+    {
+      "file": "test/run-admission-readiness-red.test.mjs",
+      "reason": "#324"
+    },
+    {
+      "file": "test/run-debug-surface-red.test.mjs",
+      "reason": "#53"
+    },
+    {
+      "file": "test/scratchpad-33-red.test.mjs",
+      "reason": "#33"
+    },
+    {
+      "file": "test/scratchpad-write-158-red.test.mjs",
+      "reason": "#158"
+    },
+    {
+      "file": "test/segment-adopt-skip-fold-285-red.test.mjs",
+      "reason": "#285"
+    },
+    {
+      "file": "test/semantic-progress-red.test.mjs",
+      "reason": "#10"
+    },
+    {
+      "file": "test/suite-hygiene-red.test.mjs",
+      "reason": "#40"
+    },
+    {
+      "file": "test/suite-resource-governance-red.test.mjs",
+      "reason": "#77"
+    },
+    {
+      "file": "test/surface-conformance-red.test.mjs",
+      "reason": "#43"
+    },
+    {
+      "file": "test/surface-parity-191-red.test.mjs",
+      "reason": "#191"
+    },
+    {
+      "file": "test/surfacing-matrix-red.test.mjs",
+      "reason": "#289"
+    },
+    {
+      "file": "test/tg3-window-red.test.mjs",
+      "reason": "#80"
+    },
+    {
+      "file": "test/trust-gate-steering-red.test.mjs",
+      "reason": "#64"
+    },
+    {
+      "file": "test/turn-checkpoints-31a-red.test.mjs",
+      "reason": "#31"
+    },
+    {
+      "file": "test/turn-checkpoints-31b-red.test.mjs",
+      "reason": "#31"
+    },
+    {
+      "file": "test/turn-checkpoints-31b5-surface-red.test.mjs",
+      "reason": "#31"
+    },
+    {
+      "file": "test/wave-attach-red.test.mjs",
+      "reason": "design"
+    },
+    {
+      "file": "test/wave-driver-policy-red.test.mjs",
+      "reason": "#46"
+    },
+    {
+      "file": "test/wave-driver-red.test.mjs",
+      "reason": "#82"
+    },
+    {
+      "file": "test/wave-grammar-red.test.mjs",
+      "reason": "#43"
+    },
+    {
+      "file": "test/wave-index-memo-229-red.test.mjs",
+      "reason": "#229"
+    },
+    {
+      "file": "test/waves-list-scaling-red.test.mjs",
+      "reason": "#6"
+    },
+    {
+      "file": "test/waves-run-detach-red.test.mjs",
+      "reason": "#173"
+    },
+    {
+      "file": "test/web-client-handshake-patience-red.test.mjs",
+      "reason": "#226"
+    },
+    {
+      "file": "test/web-client-typed-errors-red.test.mjs",
+      "reason": "#231"
+    },
+    {
+      "file": "test/wire-card-coverage-red.test.mjs",
+      "reason": "#227"
+    },
+    {
+      "file": "test/worker-delivery-push-red.test.mjs",
+      "reason": "#79"
+    },
+    {
+      "file": "test/worker-orchestrated-swarm-red.test.mjs",
+      "reason": "#74"
+    },
+    {
+      "file": "test/workflow-as-data-red.test.mjs",
+      "reason": "#114"
+    },
+    {
+      "file": "test/workflow-dsl-package-red.test.mjs",
+      "reason": "#183"
+    },
+    {
+      "file": "test/workflow-dsl-red.test.mjs",
+      "reason": "#170"
+    }
+  ]
+}

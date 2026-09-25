@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:0b0e772a09ab3a61a88b941b3150700e",
+  "idempotencyKey": "kg-settlement-test-redteam-2026-08-01",
+  "recipeDigest": "3e6fe6d429bd00b862ca1f0a9aa9f53b5a174351447e498dfa76115ae7f4bbd9",
+  "salt": "94c2086e-f1dc-456d-a455-86334583a4cb",
+  "renderedMembers": [
+    {
+      "role": "false-green-hunter",
+      "objective": "Adversarially red-team the KG settlement RED-FIRST TEST SUITE (false-green angle). Suite: impl/test/kg-settlement-red.test.mjs. Contract: docs/reference/evidence/ kg-settlement-2026-08-01/kg-settlement-decisions.md (v1.0). Ground every claim in file:line. Hunt: (1) rows that PASS with a WRONG implementation (vacuous or under-specified assertions — e.g. KS3 only checks the error code is not application_command_unavailable: what wrong implementations still satisfy it?). (2) Fixture-authority bugs: does settlementFixture prove anything the implementation could fake (the lease/candidate are hand-built — could an implementation pass the rows without the real wiring)? (3) KS5 re-drive: does the second ritualWave call actually exercise a second hook pass, or does it dedup upstream and prove nothing? (4) KS7: does the row distinguish the command doing the teardown from the test doing it? (5) Any row whose red-failure today is for a DIFFERENT reason than the contract gap it names (staged-red contamination). For each: VERDICT VACUOUS / STAGED-RED / SOUND + the concrete fix (assertion, fixture, or row).\nRed-team the KG settlement red-first test suite\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion; the trust gate kills no-diff workers.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: 94c2086e-f1dc-456d-a455-86334583a4cb false-green-hunter]",
+      "exact": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/kg-settlement-2026-08-01/**"
+      ],
+      "report": "docs/reference/evidence/kg-settlement-2026-08-01/test-redteam-falsegreen.md"
+    },
+    {
+      "role": "coverage-mapper",
+      "objective": "Adversarially red-team the KG settlement RED-FIRST TEST SUITE (coverage angle). Suite: impl/test/kg-settlement-red.test.mjs. Contract: docs/reference/evidence/ kg-settlement-2026-08-01/kg-settlement-decisions.md (v1.0) + the two red-team reports (redteam-authority.md, redteam-lifecycle.md). Map EVERY v1.0 decision point (D1 closed shape + hub-fixed objective + waveId-pinned ids + replay; D2 four commands + session-derived lease + XB enforcement + resumable teardown + liveMethod fix + structural embedded-only gate; D3 sweep + store-status gating + full-text detail + pinned keys + no-settle-at-close + receipt surfacing + honest-empty + default-on; D4 note+plan vs doubt+link lanes; D5 non-goals) to the row(s) covering it. List every decision point with NO row or a row too weak to fail under a partial implementation. Also: refusal-code precision (are the exact codes from _activeRunOrchestratorLease :1670-1690 asserted?), and the acceptance criteria in the contract — is each one testable as written? Verdict per gap: MISSING-ROW / WEAK-ROW / COVERED + the row text to add.\nRed-team the KG settlement red-first test suite\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion; the trust gate kills no-diff workers.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: 94c2086e-f1dc-456d-a455-86334583a4cb coverage-mapper]",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/kg-settlement-2026-08-01/**"
+      ],
+      "report": "docs/reference/evidence/kg-settlement-2026-08-01/test-redteam-coverage.md"
+    }
+  ]
+}

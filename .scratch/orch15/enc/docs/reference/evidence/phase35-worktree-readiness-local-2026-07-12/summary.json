@@ -1,0 +1,32 @@
+{
+  "at": "2026-07-12T11:07:05.953Z",
+  "repoHead": "b401ff4fa81c9f4cb07456525d74bc78fbe4feb8",
+  "workerId": "w-1",
+  "outcome": "failed",
+  "crash": {
+    "kind": "lifecycle.crashed",
+    "actor": "orchestrator",
+    "payload": {
+      "error": "worktree unavailable",
+      "phase": "worktree",
+      "code": "worktree_unavailable"
+    },
+    "taskId": "phase35-readiness-dogfood",
+    "runId": "phase35-worktree-readiness"
+  },
+  "checks": {
+    "dirtyPrerequisitePresent": true,
+    "failedTerminal": true,
+    "oneCrash": true,
+    "typedPhase": true,
+    "fixedMessage": true,
+    "noWorkerTurn": true,
+    "noWorkerEdit": true,
+    "noRawFailure": true,
+    "worktreeGone": true,
+    "metadataGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "pass": true
+}

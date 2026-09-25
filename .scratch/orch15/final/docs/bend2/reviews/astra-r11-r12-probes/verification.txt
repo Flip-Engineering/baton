@@ -1,0 +1,205 @@
+Compiler SHA256: 3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ledger.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ledger.bend
+no-ledger: the gate reads only observations; both laws checked.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ceiling.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ceiling.bend
+no-ceiling: the decision ignores magnitude and clock; law checked.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/no-ceiling-control-1.bend --check-only
+Error:
+- expected : Refused{}
+- observed : Admitted{}
+Context:
+- s : Nat
+Location: decision_ignores_magnitude_and_clock
+74 |               match available:
+75>|                 case True{}: {==}
+76 |                 case False{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/no-ceiling-control-2.bend --check-only
+Error:
+- expected : Refused{}
+- observed : Waiting{}
+Context:
+- e : Nat
+Location: decision_ignores_magnitude_and_clock
+67 |                 case True{}: {==}
+68>|                 case False{}: {==}
+69 |             case False{}:
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/no-ceiling-control-3.bend --check-only
+Error:
+- expected : Refused{}
+- observed : Admitted{}
+Context:
+- t : Nat
+Location: decision_ignores_magnitude_and_clock
+113 |                   match available:
+114>|                     case True{}: {==}
+115 |                     case False{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-derived-catalog.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-derived-catalog.bend
+derived-catalog: served routes follow observation; law checked.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/derived-catalog-control-1.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Location: served_follows_observation
+53 |             case True{}: {==}
+54>|             case False{}: {==}
+55 |     case False{}:
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/derived-catalog-control-2.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Location: served_follows_observation
+54 |             case True{}: {==}
+55>|             case False{}: {==}
+56 |     case False{}:
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-orchestrator-authority.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-orchestrator-authority.bend
+orchestrator-authority: an orchestrator holds every management act; law checked.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/orchestrator-authority-control-1.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Location: orchestrator_holds_management
+71 |         case Guide{}: {==}
+72>|         case Stop{}: {==}
+73 |         case Review{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/orchestrator-authority-control-2.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Location: orchestrator_holds_management
+72 |         case Review{}: {==}
+73>|         case Integrate{}: {==}
+74 |         case Resume{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/a-inputs.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/a-inputs.bend
+[../../examples/laws-no-ceiling.Admitted{}, ../../examples/laws-no-ceiling.Refused{}, ../../examples/laws-no-ceiling.Waiting{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/a-timer.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/a-timer.bend
+[../../examples/laws-no-ceiling.Waiting{}, ../../examples/laws-no-ceiling.Refused{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/a-transition.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/a-transition.bend
+Pending{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/b-exclusion.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/b-exclusion.bend
+[True{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/b-discovery.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/b-discovery.bend
+[[0n, 1n], [0n]]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/c-relation.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/c-relation.bend
+[False{}, True{}, False{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/c-dispatch.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/c-dispatch.bend
+[True{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g1.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g1.bend
+True{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g1-always-deny.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g1-always-deny.bend
+False{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g1-smuggle.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g1-smuggle.bend
+[True{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g2.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g2.bend
+NoAct{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g2-label.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g2-label.bend
+g2.Resource{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g2-orchestrator-wait.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/g2-orchestrator-wait.bend
+[True{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/g1-control.bend --check-only
+Error:
+- expected : False{}
+- observed : observed_allowed
+Context:
+- act              : Act
+- observed_allowed : Bool
+- n                : Nat
+Location: annotation_independence
+25 |     case 0n: {==}
+26>|     case 1n+n: {==}
+27 |
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/g2-control.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Context:
+- record : Nat
+Location: no_administrative_precondition
+23 | def no_administrative_precondition(record):
+24>|   {==}
+25 |
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-r12-probes/.work/a-transition-control.bend --check-only
+Error:
+- expected : ExternalFailed{}
+- observed : Pending{}
+Location: tick_preserves_state
+28 |   match state:
+29>|     case Pending{}: {==}
+30 |     case Finished{}: {==}
+exit=1

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T02:54:21.443Z",
+  "salt": "i220260807025421",
+  "role": "impl-114",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-c27774292ec0bd7523eb4680ddb7b658"
+        ]
+      }
+    },
+    {
+      "step": "dead:impl-114",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "impl-114": {
+      "pin": "a8667fbaac3a1e4adac96db03959ae3459411a57",
+      "paths": [
+        "impl/src/workflow-interpreter.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 351,
+  "verdict": "IMPL-114-OK"
+}

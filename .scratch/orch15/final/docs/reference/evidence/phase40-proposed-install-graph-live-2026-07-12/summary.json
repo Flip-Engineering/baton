@@ -1,0 +1,79 @@
+{
+  "at": "2026-07-12T22:44:36.621Z",
+  "package": {
+    "lockfilePath": "package-lock.json",
+    "ecosystem": "npm",
+    "package": "is-number",
+    "version": "7.0.0"
+  },
+  "refs": [
+    {
+      "kind": "proposed-install-plan",
+      "handle": "art:sha256:e0094673ed1ae86845a8115df7cbe4b15d4994fd143c568542da23bbf0ea6508",
+      "digest": "e0094673ed1ae86845a8115df7cbe4b15d4994fd143c568542da23bbf0ea6508",
+      "bytes": 4574,
+      "path": "artifacts/e0094673ed1ae86845a8115df7cbe4b15d4994fd143c568542da23bbf0ea6508.json",
+      "mediaType": "application/vnd.baton.proposed-install-plan+json"
+    },
+    {
+      "kind": "proposed-lockfile",
+      "mediaType": "application/vnd.npm.package-lock+json",
+      "handle": "art:sha256:d4b42647bd04ab7e1136d64945e8dc6e5562e8fb5fe4989acf11a3d24834fbc6",
+      "digest": "d4b42647bd04ab7e1136d64945e8dc6e5562e8fb5fe4989acf11a3d24834fbc6",
+      "bytes": 590,
+      "path": "artifacts/d4b42647bd04ab7e1136d64945e8dc6e5562e8fb5fe4989acf11a3d24834fbc6.blob"
+    },
+    {
+      "kind": "proposed-sbom",
+      "mediaType": "application/vnd.cyclonedx+json",
+      "handle": "art:sha256:16955b591bfa99a8f72c675695a6747e0d4bee17777b711a9d435690677bd222",
+      "digest": "16955b591bfa99a8f72c675695a6747e0d4bee17777b711a9d435690677bd222",
+      "bytes": 1023,
+      "path": "artifacts/16955b591bfa99a8f72c675695a6747e0d4bee17777b711a9d435690677bd222.blob"
+    },
+    {
+      "kind": "proposal-execution-receipt",
+      "mediaType": "application/vnd.baton.resolver-receipt+json",
+      "handle": "art:sha256:d0850c526c3fee8f1b55e64385e2cd38d328fce654e5714be71e9acd6c03c675",
+      "digest": "d0850c526c3fee8f1b55e64385e2cd38d328fce654e5714be71e9acd6c03c675",
+      "bytes": 2195,
+      "path": "artifacts/d0850c526c3fee8f1b55e64385e2cd38d328fce654e5714be71e9acd6c03c675.blob"
+    },
+    {
+      "kind": "install-graph-delta",
+      "mediaType": "application/vnd.baton.install-graph-delta+json",
+      "handle": "art:sha256:7224627d0ff25d2f7b5afda181beba7d6609cd61cd22683157c3c9fd1da44af8",
+      "digest": "7224627d0ff25d2f7b5afda181beba7d6609cd61cd22683157c3c9fd1da44af8",
+      "bytes": 935,
+      "path": "artifacts/7224627d0ff25d2f7b5afda181beba7d6609cd61cd22683157c3c9fd1da44af8.blob"
+    }
+  ],
+  "findings": [
+    "clean_addition"
+  ],
+  "reverified": {
+    "ok": true,
+    "observedDigest": "e0094673ed1ae86845a8115df7cbe4b15d4994fd143c568542da23bbf0ea6508",
+    "snapshot": {
+      "grounding": "proposed_not_installed",
+      "baseLockfileDigest": "ed1542ffd929f133ae8b1be1bd821aabb236165d779b9fc71b12a312e669cc3c",
+      "proposedLockfileDigest": "d4b42647bd04ab7e1136d64945e8dc6e5562e8fb5fe4989acf11a3d24834fbc6",
+      "deltaDigest": "7224627d0ff25d2f7b5afda181beba7d6609cd61cd22683157c3c9fd1da44af8",
+      "installAuthority": false
+    }
+  },
+  "checks": {
+    "exactCoordinate": true,
+    "proposedNotInstalled": true,
+    "exactAddition": true,
+    "separateArtifacts": true,
+    "offlineReverify": true,
+    "sourceTreeClean": true,
+    "noSourceInstall": true,
+    "invocationReaped": true,
+    "sandboxEnforced": true,
+    "exactRegistryProxy": true,
+    "supervisorLeaseReleased": true
+  },
+  "pass": true
+}

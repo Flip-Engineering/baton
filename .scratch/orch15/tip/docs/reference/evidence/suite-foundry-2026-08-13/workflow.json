@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "suite-foundry-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/suite-foundry-2026-08-13/**", "docs/reference/evidence/cli-wave-fidelity-2026-08-13/**", "docs/reference/evidence/scratchpad-write-2026-08-13/**", "docs/reference/evidence/doc-truth-conformance-2026-08-13/**", "docs/reference/evidence/error-actionability-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/suite-foundry-2026-08-13/suite-qa.md"
+    },
+    {
+      "role": "row-suite-157",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/**", "docs/reference/evidence/cli-wave-fidelity-2026-08-13/**", "docs/reference/evidence/suite-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13/row-suite-157.md",
+      "report": "docs/reference/evidence/cli-wave-fidelity-2026-08-13/suite-draft-notes.md"
+    },
+    {
+      "role": "row-suite-158",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/**", "docs/reference/evidence/scratchpad-write-2026-08-13/**", "docs/reference/evidence/suite-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13/row-suite-158.md",
+      "report": "docs/reference/evidence/scratchpad-write-2026-08-13/suite-draft-notes.md"
+    },
+    {
+      "role": "row-suite-159",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/**", "docs/reference/evidence/doc-truth-conformance-2026-08-13/**", "docs/reference/evidence/suite-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13/row-suite-159.md",
+      "report": "docs/reference/evidence/doc-truth-conformance-2026-08-13/suite-draft-notes.md"
+    },
+    {
+      "role": "row-suite-160",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/**", "docs/reference/evidence/error-actionability-2026-08-13/**", "docs/reference/evidence/suite-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13/row-suite-160.md",
+      "report": "docs/reference/evidence/error-actionability-2026-08-13/suite-draft-notes.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue your suite drive — every capability row red at a named stage, every PIN green, run twice and record both splits, publish when done." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the suite law binds you). The contract-fold is your row inventory. Publish your notes to `shared` when done. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "result", "body": "All rows settled — verify the four suites per your brief and write suite-qa.md." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/suite-foundry-2026-08-13/suite-qa.md", "mustContain": "SUITE-QA v1" },
+      { "path": "impl/test/cli-wave-fidelity-red.test.mjs", "mustContain": "cli-wave-fidelity" },
+      { "path": "impl/test/scratchpad-write-red.test.mjs", "mustContain": "scratchpad" },
+      { "path": "impl/test/doc-truth-conformance-red.test.mjs", "mustContain": "conformance" },
+      { "path": "impl/test/error-actionability-red.test.mjs", "mustContain": "actionability" }
+    ]
+  }
+}

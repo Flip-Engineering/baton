@@ -1,0 +1,73 @@
+{
+  "at": "2026-07-13T05:09:16.223Z",
+  "scenario": {
+    "exactRoutes": 2,
+    "restart": true,
+    "cairnAdvice": true,
+    "policy": {
+      "mode": "auto",
+      "halfLifeMs": 604800000,
+      "explorationConstant": 0.5,
+      "seedDiscount": 0.5,
+      "minSamplesForAdaptive": 1,
+      "defaultPriorSuccessRate": 0.5
+    }
+  },
+  "facts": {
+    "routes": [
+      {
+        "taskId": "live-route-alpha",
+        "routeKey": "[\"fixture-alpha\",\"1\",\"fixture-alpha-model\",\"low\",\"fixture-alpha-family\",\"implementation\"]",
+        "modelFamily": "fixture-alpha-family",
+        "verifiedWin": true,
+        "eventSeq": 9
+      },
+      {
+        "taskId": "live-route-beta",
+        "routeKey": "[\"fixture-beta\",\"1\",\"fixture-beta-model\",\"low\",\"fixture-beta-family\",\"implementation\"]",
+        "modelFamily": "fixture-beta-family",
+        "verifiedWin": false,
+        "eventSeq": 19
+      }
+    ],
+    "terminals": {
+      "alpha": "completed",
+      "beta": "failed",
+      "alphaReady": true,
+      "betaReady": true
+    },
+    "advice": {
+      "mode": "adaptive",
+      "selectedRouteKey": "[\"fixture-alpha\",\"1\",\"fixture-alpha-model\",\"low\",\"fixture-alpha-family\",\"implementation\"]",
+      "rows": [
+        {
+          "routeKey": "[\"fixture-alpha\",\"1\",\"fixture-alpha-model\",\"low\",\"fixture-alpha-family\",\"implementation\"]",
+          "count": 1,
+          "rate": 1,
+          "reason": "highest_adaptive_score"
+        },
+        {
+          "routeKey": "[\"fixture-beta\",\"1\",\"fixture-beta-model\",\"low\",\"fixture-beta-family\",\"implementation\"]",
+          "count": 1,
+          "rate": 0,
+          "reason": "lower_adaptive_score"
+        }
+      ]
+    },
+    "selectedByPick": "[\"fixture-alpha\",\"1\",\"fixture-alpha-model\",\"low\",\"fixture-alpha-family\",\"implementation\"]"
+  },
+  "checks": {
+    "twoExactRoutes": true,
+    "hubOutcomesOnly": true,
+    "atomicGraph": true,
+    "firstWriterReleased": true,
+    "restartHydratedExactly": true,
+    "durableEvidenceRoutes": true,
+    "adviceReadOnly": true,
+    "noReplayDoubleCount": true,
+    "finalWriterReleased": true,
+    "fullReap": true
+  },
+  "fatal": null,
+  "pass": true
+}

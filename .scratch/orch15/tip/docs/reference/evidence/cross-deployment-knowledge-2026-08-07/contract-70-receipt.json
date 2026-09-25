@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T08:49:27.851Z",
+  "salt": "cc20260807084927",
+  "role": "contract-70",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-44278c79c8e85dcadada1859b6fc83e0"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-70",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-70": {
+      "pin": "e8723fb700c8bd529f003711067cbf7f407e162d",
+      "paths": [
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/cross-deployment-knowledge-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 388,
+  "verdict": "CONTRACT-70-OK"
+}

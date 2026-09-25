@@ -1,0 +1,35 @@
+{
+  "at": "2026-07-12T10:56:36.875Z",
+  "repoHead": "7463e37c21f27c96c33c7e187f2568041e8f041c",
+  "atlasEpoch": "451eb579ec25db4602fc0746bf0a04a7b5a21dcc41a798ca023c02d292af9871",
+  "workerId": "w-1",
+  "violation": {
+    "path": "docs/drift.md",
+    "observedPath": "docs/drift.md",
+    "action": "orient",
+    "refresh": "scheduled",
+    "mechanical": true
+  },
+  "sliceDigest": "8f4a778cac27d58d5802df65b72dbeadae482d4600e1468e628d915b1786d232",
+  "stopped": {
+    "ok": true,
+    "result": "confirmed",
+    "emulated": false
+  },
+  "checks": {
+    "mechanicalViolation": true,
+    "automaticPolicyActor": true,
+    "exactAddress": true,
+    "typedFocusDelivered": true,
+    "driftInNote": true,
+    "hostPathWithheld": true,
+    "oneRefresh": true,
+    "noFalseRefusal": true,
+    "killConfirmed": true,
+    "worktreeGone": true,
+    "metadataGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "pass": true
+}

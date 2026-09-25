@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T03:17:11.729Z",
+  "salt": "u220260813031711",
+  "role": "blueteam-70",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-13ec7704a1aaa493c2d536abc9f570c0"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blueteam-70",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blueteam-70": {
+      "pin": "53208b4b9c154faf672a331dfb3691ec216164f0",
+      "paths": [
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 442,
+  "verdict": "BLUE-70-OK"
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T02:22:33.044Z",
+  "salt": "c620260813022233",
+  "role": "contract-61",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-883139c5059a076eab05a445acbfd4ae"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-61",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-61": {
+      "pin": "60fc5e1230b37e986549b14e7932099cb8a8a518",
+      "paths": [
+        "docs/reference/evidence/worker-verdict-surface-2026-08-12/worker-verdict-surface-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 432,
+  "verdict": "CONTRACT-61-OK"
+}

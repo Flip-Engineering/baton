@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T03:06:37.249Z",
+  "salt": "s620260807030637",
+  "role": "suite-67",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2904462221b896108df3c82d071752fa"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-67",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-67": {
+      "pin": "4cf42e5119c6aba66dcde9000018ea9cd538ea96",
+      "paths": [
+        "impl/test/stall-watchdog-red.test.mjs",
+        "docs/reference/evidence/stall-watchdog-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 352,
+  "verdict": "SUITE-67-OK"
+}

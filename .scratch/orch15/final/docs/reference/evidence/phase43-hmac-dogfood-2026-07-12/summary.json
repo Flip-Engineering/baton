@@ -1,0 +1,66 @@
+{
+  "at": "2026-07-13T02:08:10.831Z",
+  "repoHead": "cdae0e522f20d7f17a8e090b44d244016d7d6838",
+  "runId": "phase43-hmac-review",
+  "credentialPosture": {
+    "glm": "project-local ignored file loaded only by GlmSessionCli",
+    "codex": "explicit private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase43-glm-hmac-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase43-glm-hmac-review.md",
+      "workerId": "w-1",
+      "pid": 15016,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 81854,
+        "usd": 0.5293669999999999
+      },
+      "verifyAccept": true,
+      "reportCaptured": true
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-glm-hmac-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "allHarnessesAdmitted": true,
+    "distinctNativePids": true,
+    "concurrentTurns": true,
+    "exactRoutes": true,
+    "freshVerified": true,
+    "reportsCaptured": true,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T02:06:38.947Z",
+  "salt": "f820260813020638",
+  "role": "fold-144",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-ee7c617e254907cf1961164adb313171"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-144",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-144": {
+      "pin": "8387f30f6f5cb15ee0f098134b95e5ff16d61b5e",
+      "paths": [
+        "docs/reference/evidence/lsp-support-2026-08-13/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 430,
+  "verdict": "FOLD-144-OK"
+}

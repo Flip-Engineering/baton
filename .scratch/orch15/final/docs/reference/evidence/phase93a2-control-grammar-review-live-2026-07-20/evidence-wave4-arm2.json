@@ -1,0 +1,382 @@
+{
+  "schemaVersion": 1,
+  "arm": "heterogeneous",
+  "chain": [
+    {
+      "role": "A-claims",
+      "resultSha": "7c5246eea5c46e6baee706f89dcf29630e18bb85"
+    },
+    {
+      "role": "B-verification",
+      "resultSha": "d53eccddee2310dd56295a0d4e4990ce7aba0dba"
+    },
+    {
+      "role": "C-synthesis",
+      "resultSha": "281f887f0371bfb82aad698de7e41ab096471325"
+    },
+    {
+      "role": "D-successor",
+      "exact": {
+        "harness": "kimi-code",
+        "model": "kimi-code/k3",
+        "effort": "high"
+      },
+      "runId": "run-fd20315e166b5789ffc2c2fcd4edee2e",
+      "terminal": {
+        "phase": "work_completed",
+        "narrative": "0 worker(s) active, 1 done."
+      },
+      "resultSha": "4e3813c499d9db71aa8fae71c0d1f7439d3262a1",
+      "materialized": "docs/reference/evidence/phase93a2-control-grammar-review-live-2026-07-20/chain-D-successor.md"
+    }
+  ],
+  "steering": [],
+  "dynamicTopology": [
+    {
+      "decidedAt": "2026-07-21T07:13:21.120Z",
+      "residueCount": 0,
+      "mode": "clean-verdict-refutation"
+    }
+  ],
+  "stops": [
+    {
+      "role": "D-successor",
+      "runId": "run-fd20315e166b5789ffc2c2fcd4edee2e",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "progress": [
+    {
+      "at": "2026-07-21T07:13:38.716Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:13:53.813Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:14:08.907Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:14:24.003Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:14:39.088Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:14:54.196Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:15:09.306Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:15:24.418Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:15:39.512Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:15:54.598Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:16:09.706Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:16:24.807Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:16:39.903Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:16:55.022Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:17:10.106Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:17:25.206Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:17:40.284Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:17:55.366Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:18:10.471Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:18:25.567Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:18:40.669Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:18:55.769Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:19:10.865Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:19:25.976Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:19:41.075Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:19:56.173Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:20:11.262Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:20:26.372Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:20:41.467Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:20:56.559Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:21:11.652Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:21:26.760Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:21:41.857Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:21:56.960Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:22:12.070Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:22:27.166Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:22:42.261Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:22:57.372Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:23:12.471Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:23:27.572Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:23:42.674Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:23:57.768Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:24:12.848Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:24:27.950Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:24:43.036Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:24:58.127Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:25:13.223Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:25:28.326Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:25:43.435Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:25:58.556Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:26:13.654Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:26:28.749Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:26:43.830Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:26:58.962Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:27:14.046Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:27:29.135Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:27:44.221Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:27:59.310Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:28:14.434Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:28:29.535Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:28:44.627Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:28:59.723Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:29:14.814Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:29:29.904Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:29:45.020Z",
+      "role": "D-successor",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:30:00.109Z",
+      "role": "D-successor",
+      "phase": "work_completed"
+    }
+  ],
+  "failure": null
+}

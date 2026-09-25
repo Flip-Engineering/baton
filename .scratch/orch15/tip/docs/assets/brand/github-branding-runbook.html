@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Baton — GitHub branding runbook (the Flip PFP + the org rename)</title>
+<style>
+  :root {
+    --bg: #0A0A14; --panel: #10101E; --ink: #EAEAEA; --dim: #9a9aa8;
+    --pink: #FF8FA3; --gold: #E5B45C; --teal: #83C8BF; --line: #26263340;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.65 system-ui, -apple-system, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 28px 96px; }
+  header { display: flex; gap: 24px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 28px; }
+  header img { width: 108px; height: 108px; border-radius: 24px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: 0.5px; }
+  h2 { font-size: 19px; margin: 40px 0 10px; color: var(--gold); }
+  h3 { font-size: 15.5px; margin: 26px 0 6px; color: var(--teal); }
+  p, li { color: var(--ink); }
+  .sub { color: var(--dim); margin: 0; }
+  code, kbd { background: #1b1b2b; border: 1px solid #2c2c40; border-radius: 6px; padding: 1px 7px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--teal); }
+  ol, ul { padding-left: 22px; }
+  li { margin: 7px 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; margin: 16px 0; }
+  .warn { border-left: 4px solid var(--gold); }
+  .ok { border-left: 4px solid var(--teal); }
+  .face { font-size: 18px; }
+  a { color: var(--pink); }
+  .step-no { display: inline-block; min-width: 26px; height: 26px; border-radius: 50%;
+    background: var(--pink); color: #141420; font-weight: 700; text-align: center; line-height: 26px; margin-right: 8px; }
+  footer { margin-top: 56px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="flip-avatar.png" alt="Flip, conducting — the baton avatar"/>
+    <div>
+      <h1>GitHub branding runbook</h1>
+      <p class="sub">The Flip PFP on the dogfood committer + the org rename. ~10 minutes, all web UI.
+      The avatar file is already in the repo: <code>docs/assets/brand/flip-avatar.png</code> (460×460, this page's header image).</p>
+    </div>
+  </header>
+
+  <h2>Part 1 — the <code>baton-dogfood</code> bot account + Flip PFP</h2>
+
+  <div class="card ok">
+    <p><strong>Why:</strong> the campaign's commits land as <code>baton 0.1.0 &lt;baton-dogfood@localhost&gt;</code>.
+    GitHub links commits to accounts by email; a <code>localhost</code> email links nowhere and shows a
+    generic identicon. A real (bot) account gives the committer a face — Flip with the conductor's baton.</p>
+  </div>
+
+  <h3>1. Create the account</h3>
+  <ol>
+    <li><span class="step-no">1</span>In a fresh browser profile (or signed-out window), go to
+      <a href="https://github.com/signup">github.com/signup</a>.</li>
+    <li><span class="step-no">2</span>Username: <code>baton-dogfood</code> (if taken: <code>baton-dogfood-bot</code>).</li>
+    <li><span class="step-no">3</span>Email: a real mailbox you control (e.g. <code>baton-dogfood@yourdomain</code> or a
+      plus-address like <code>you+baton-dogfood@gmail.com</code>). GitHub requires verification — the account
+      can't take actions until verified.</li>
+    <li><span class="step-no">4</span>Complete signup; skip the onboarding surveys (any answer is fine).</li>
+  </ol>
+
+  <h3>2. Set the Flip avatar</h3>
+  <ol>
+    <li><span class="step-no">1</span>Log in as the bot → top-right avatar → <strong>Settings</strong>.</li>
+    <li><span class="step-no">2</span><strong>Profile</strong> → <strong>Profile picture</strong> → <em>Upload a photo…</em></li>
+    <li><span class="step-no">3</span>Choose <code>docs/assets/brand/flip-avatar.png</code> from this repo
+      (crop is already square 1:1 — just confirm). Save.</li>
+  </ol>
+
+  <h3>3. Connect the commit identity</h3>
+  <div class="card">
+    <p>GitHub noreply email format: <code>&lt;username&gt;@users.noreply.github.com</code>. Once the handle exists,
+    tell kimi the username (or hand it this line):</p>
+    <p><code>git config user.name "baton 0.1.0"</code><br/>
+    <code>git config user.email "&lt;USERNAME&gt;@users.noreply.github.com"</code></p>
+    <p>kimi will then sweep the campaign's commit identity (every wave/driver commit uses
+    <code>-c user.name/-c user.email</code>) so new commits link to the bot and the Flip PFP shows in the
+    history, the contributors graph, and PRs.</p>
+  </div>
+
+  <h3>4. (Optional) make the bot a real collaborator</h3>
+  <ol>
+    <li><span class="step-no">1</span>Repo → <strong>Settings</strong> → <strong>Collaborators and teams</strong> → <em>Add people</em> → the bot's handle (Read is enough for display; Write if it should ever push PRs itself).</li>
+    <li><span class="step-no">2</span>Accept the invite from the bot account (it lands in the bot's email / notifications).</li>
+  </ol>
+
+  <h2>Part 2 — rename the org (<code>Flip-Devs</code> → <code>Flip-Engineering</code>)</h2>
+
+  <div class="card warn">
+    <p><strong>Read-first caveats (GitHub's own semantics):</strong></p>
+    <ul>
+      <li>Web requests to the old org URL <em>redirect</em> to the new one — but git operations over
+        <strong>HTTPS/SSH remotes are not guaranteed to redirect forever</strong>; update local remotes
+        promptly (<code>git remote set-url origin git@github.com:Flip-Engineering/&lt;repo&gt;.git</code>).</li>
+      <li>The <strong>old org name becomes available for anyone to claim</strong> after the rename. If you
+        care about squatting/phishing, register <code>Flip-Devs</code> as an empty placeholder org immediately after.</li>
+      <li>Org rename does not move/retitle issues, projects, or teams — they carry over. GitHub Pages sites
+        under <code>flip-devs.github.io</code> change hostname; external links to raw/Pages content may break.</li>
+      <li>OAuth Apps / GitHub Apps / Actions secrets keep working; any third-party integration keyed on the
+        org <em>name</em> (rather than the immutable org ID) should be re-checked.</li>
+    </ul>
+  </div>
+
+  <h3>The rename (owner account, ~2 minutes)</h3>
+  <ol>
+    <li><span class="step-no">1</span>As an org <strong>owner</strong>: open the org → <strong>Settings</strong> → <strong>General</strong>.</li>
+    <li><span class="step-no">2</span>Scroll to the <strong>Danger Zone</strong> → <strong>Rename organization</strong>.</li>
+    <li><span class="step-no">3</span>Enter <code>Flip-Engineering</code>, confirm the modal, done. Repeat per repo:
+      nothing — repos follow the org automatically.</li>
+    <li><span class="step-no">4</span>Update local clones:
+      <code>git remote set-url origin git@github.com:Flip-Engineering/&lt;repo&gt;.git</code>
+      (verify with <code>git remote -v</code>).</li>
+    <li><span class="step-no">5</span>(Recommended) register the old <code>Flip-Devs</code> name as an empty org so nobody else can.</li>
+  </ol>
+
+  <div class="card ok">
+    <p><span class="face">✦(◕‿◕)✦</span> <strong>That's it.</strong> After Part 1 step 3, every future
+    <code>baton 0.1.0</code> commit renders Flip at the conductor's stand. The org rename is instant and
+    reversible (same flow, other direction).</p>
+  </div>
+
+  <footer>
+    baton · brand runbook v1 · 2026-08-13 · avatar source: <code>docs/assets/brand/flip-avatar.svg</code> ·
+    persona docs: <code>docs/38-flip-experience.md</code>
+  </footer>
+</main>
+</body>
+</html>

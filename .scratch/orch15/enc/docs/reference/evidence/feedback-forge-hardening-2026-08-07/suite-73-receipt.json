@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T02:27:38.724Z",
+  "salt": "s820260813022738",
+  "role": "suite-73",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-64eddaf1dc7b8c9cda25c761b41dac82"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-73",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-73": {
+      "pin": "c67df19630c11e1f26c5ba40676409a98ff168e0",
+      "paths": [
+        "impl/test/feedback-forge-hardening-red.test.mjs",
+        "docs/reference/evidence/feedback-forge-hardening-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 432,
+  "verdict": "SUITE-73-OK"
+}

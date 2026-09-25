@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:bac06fbe2efee59d522c0b2def43ef0c",
+  "idempotencyKey": "kg-activation-2026-08-01",
+  "recipeDigest": "6a5be01ae44b16d71f6d4af975ef69bf5f468590005da000b2d85434dc418e9b",
+  "salt": "adf136d4-5917-4414-af3b-6a80499ca9e0",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the KG activation contract v1: docs/reference/evidence/kg-activation-2026-07-31/kg-activation-decisions.md — all five rules + the KG-A1..KG-A5 red battery. Ambient knowledge serving into briefs (bounded, provenance-wrapped, honest-empty), the first-class candidacy queue projection, ritual hooks (candidacy counts in receipts/terminal outlines), horizon digests in wave rows, gate honesty (NO auto-promotion — the orchestrator-admit gate stays the only promotion path). COORDINATES (pre-digested): renderBrief (the serving seam): adapter.mjs:96-117. recallKnowledge: coordinator.mjs:9555 (+ recallKnowledgeBounded store :14865). The candidate-minting paths to READ from (never extend): board close :13430-13448, package admit, scratchpad settle. admitWorkflowFinding (the gate, untouched): store :14253-14285 + coordinator wrapper :9788-9795. The horizons + fence-tuple cache: coordinator.mjs:9823-9907. The wave member row to extend: wave.mjs:300-322. The terminal outline + receipt hook points: application.mjs:7256 (view assembly) + impl/src/wave-driver.mjs receipt. Validity windows on nodes: store :14286+ validation. The S-3 knowledge rows (surfacing, landed): knowledge.recall/horizon canonical ops. METHOD (red-first, skeleton FIRST): (1) your FIRST file action writes impl/test/kg-activation-red.test.mjs with the KG-A1..KG-A5 rows exactly as the contract pins them (ambient serving bounded + provenance + honest-empty + expired-never-serves + byte cap; candidacy queue per source kind + admit-removes + capped ordered; receipt/terminal candidacy counts incl. zero; horizon digest changes on admit not on unrelated state; the gate lease binding + refusal taxonomy unchanged source-scan + no auto-admit path exists source-scan). Run it; watch it fail for the right reasons. (2) Implement until green — additive projections and brief serving only. (3) VERIFY: node --test impl/test/kg-activation-red.test.mjs impl/test/reflex2-boards-red.test.mjs impl/test/reflex3-packages-red.test.mjs and node impl/scripts/run-suite.mjs FROM THE REPO ROOT — all green.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\n[attempt: adf136d4-5917-4414-af3b-6a80499ca9e0 implementer]",
+      "exact": {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**"
+      ]
+    }
+  ]
+}

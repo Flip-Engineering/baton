@@ -1,0 +1,427 @@
+#!/usr/bin/env node
+
+// docs/36 §9 M4 (M4b) + control-surface contract v2 CS-1 — generated documentation surface.
+// CLI.md / MCP.md inventory blocks render from *executable* reference-profile inventories
+// (never grammar intent alone, never hand lists).
+//
+//   node impl/scripts/render-surface-docs.mjs           # rewrite generated blocks in place
+//   node impl/scripts/render-surface-docs.mjs --check   # fail (exit 1) if a committed block drifted
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
+import { CLI_TOP_LEVEL_VERBS, CLI_WEB_COMMANDS, HOST_CLI_VERBS } from '../src/application-cli.mjs';
+import { CORE_TOOL_VERBS, coreToolDefinitions } from '../src/mcp-core-tools.mjs';
+import {
+  formatSurfaceResolutionFinding,
+  resolveOperationSurfaces,
+} from '../src/surface-resolution.mjs';
+// #293: the fleet-routes table renders from the SERVED route registry — the same module that
+// owns the one readiness derivation, so the table cannot disagree with what the deployment
+// serves or gates.
+import {
+  DEFAULT_BATON_DEPLOYMENT_ROUTES,
+  KIMI_THROUGH_CLAUDE_ROUTE,
+  routeReadinessContract,
+} from '../src/application-deployment.mjs';
+// 2026-09-14 audit S-G1: the swarm family (§7.4 of docs/36) renders from the contract that
+// declares it — the command/kind tables in impl/src/swarm-contract.mjs, the payload schemas in
+// impl/src/swarm-event-schemas.mjs, and the permission set the runtime admits callers under. A
+// verb or kind added to a contract module without this section goes red in the surface gate.
+import {
+  SWARM_COMMAND_DEFINITIONS, SWARM_DRIVER_EVENT_KINDS, SWARM_EVENT_KINDS,
+  SWARM_OPERATION_KINDS,
+} from '../src/swarm-contract.mjs';
+import { swarmEventAgentRequiredFields } from '../src/swarm-event-schemas.mjs';
+import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
+
+// Issue #314 lane 4 (docs/49 §10): the migration table's ONE owner is docs/49 §7 — "the migration
+// table | docs/49 §7, pinned executable in the red file". MCP.md's copy is therefore RENDERED from
+// that section, never restated by hand: a mapping moved in the design and not here is refused by
+// the byte comparison, and a design whose table loses its shape refuses to render at all (never an
+// empty table that would let the section drift silently).
+const MIGRATION_DOC = new URL('../../docs/49-mcp-primary-surface.md', import.meta.url);
+const MIGRATION_HEADING = '## 7. The migration table';
+
+const CLI_DOC = new URL('../CLI.md', import.meta.url);
+const MCP_DOC = new URL('../MCP.md', import.meta.url);
+const GRAMMAR_DOC = new URL('../../docs/36-unified-control-grammar.md', import.meta.url);
+export const CLI_INVENTORY_MARKER = 'cli-verb-inventory';
+export const CLI_FLEET_ROUTES_MARKER = 'cli-fleet-routes';
+export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
+export const MCP_MIGRATION_MARKER = 'mcp-migration-table';
+export const CLI_HOST_VERBS_MARKER = 'cli-host-verb-inventory';
+export const CLI_TOP_LEVEL_VERBS_MARKER = 'cli-top-level-verbs';
+export const SWARM_FAMILY_MARKER = 'swarm-family';
+
+function beginMarker(marker) { return `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`; }
+function endMarker(marker) { return `<!-- END GENERATED: ${marker} -->`; }
+
+// Host-local CLI operations (parse + in-process dispatch; no web-client whitelist entry).
+const HOST_LOCAL_CLI_KEYS = new Set(['run.debug']);
+
+/**
+ * Ordinary CLI principal inventory: the canonical operation keys the CLI's dispatch surface
+ * reaches — the web-client transport projection (its own key, an `application.commands` alias, or
+ * its legacy dispatch alias) plus the host-local port and the semantic-action verb the contract
+ * pins as served.
+ *
+ * 2026-09-14 audit (U-N2/U-G5): the old filter silently DROPPED any registry row that claimed the
+ * cli surface but had no dispatch path, so the doc could never disagree with the registry and
+ * could never report the lie. Every cli-claiming row is now resolved first (surface-resolution
+ * probes the parser, the dispatch whitelist and the host-local ports); a row whose claim does not
+ * resolve is a hard failure of this renderer, and the gate refuses rather than hiding it.
+ */
+export function servedCliOrdinaryKeys() {
+  const findings = [];
+  for (const operation of APPLICATION_SEMANTIC_REGISTRY.canonicalOperations) {
+    if (!operation.surfaces.includes('cli')) continue;
+    findings.push(...resolveOperationSurfaces(operation).findings);
+  }
+  if (findings.length > 0) {
+    throw new Error(
+      `declared-but-undispatchable CLI rows: ${findings.map(formatSurfaceResolutionFinding).join('; ')}`,
+    );
+  }
+  const keys = new Set();
+  const byDispatch = new Map();
+  for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
+    if (alias.surface === 'application.commands') byDispatch.set(alias.name, alias.canonical);
+  }
+  for (const name of CLI_WEB_COMMANDS) {
+    const canonical = byDispatch.get(name) ?? name;
+    const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+      .find((op) => op.key === canonical);
+    if (!operation) continue;
+    // The table's Example column is the row's own dispatch shape: a semantic-action verb
+    // (run.feedback, run.interrupt, run.select, …) compiles to `{kind:'semantic-action'}` and is
+    // taught by its action kind, not by this command table. Only command-shaped rows belong here.
+    const witness = resolveOperationSurfaces(operation).witnesses.cli;
+    if (witness?.kind !== 'command') continue;
+    keys.add(canonical);
+  }
+  // docs/36 §9 M5 — run.send is a semantic-action CLI verb (its registry row carries
+  // `action: 'send'` and no legacy application-command spelling); the deleted run.steer alias was
+  // its only prior path into this inventory. The alias is gone at M5, the CLI verb stays served,
+  // so the contract pins it here beside the host-local port.
+  if (APPLICATION_SEMANTIC_REGISTRY.cli.commands.some((row) => row.id === 'run.send')) {
+    keys.add('run.send');
+  }
+  for (const key of HOST_LOCAL_CLI_KEYS) keys.add(key);
+  return APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .filter((operation) => operation.surfaces.includes('cli') && keys.has(operation.key))
+    .map((operation) => operation.key)
+    .sort();
+}
+
+/**
+ * The CLI verb path a taught example invokes: its leading lowercase words (`baton run adopt
+ * RUN_ID --reason R` → `baton run adopt`). The derived `deriveSurfaceNames(key).cli` spelling is
+ * a grammar projection that can name a verb the CLI never had; the example is the spelling the
+ * witness parses, so the column and the example cannot disagree.
+ */
+function cliVerbFromExample(example) {
+  const verb = ['baton'];
+  for (const token of String(example ?? '').split(/\s+/u).slice(1)) {
+    if (!/^[a-z][a-z0-9-]*$/u.test(token)) break;
+    verb.push(token);
+  }
+  return verb.join(' ');
+}
+
+export function renderCliVerbInventory() {
+  const rows = servedCliOrdinaryKeys().map((key) => {
+    const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+      .find((entry) => entry.key === key);
+    return `| \`${operation.key}\` | \`${operation.profile}\` | \`${cliVerbFromExample(operation.example)}\` | \`${operation.example}\` |`;
+  });
+  return [
+    '| Operation | Profile | CLI verb | Example |',
+    '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * MCP application-profile inventory: the real tool table from McpFleetServer surface
+ * construction (ORDINARY_APPLICATION_TOOL_DEFINITIONS), never deriveSurfaceNames alone.
+ */
+export function renderMcpToolInventory() {
+  // Issue #314 (docs/49 §2): the inventory IS the shipped core table — one row per core tool,
+  // its verbs in the Operation column, the bare advertised name in the MCP tool column (the
+  // surface-conformance reader takes that column), the annotation derived from the tool's own
+  // hints (never a hand-kept list).
+  const definitions = new Map(coreToolDefinitions().map((tool) => [tool.name, tool]));
+  const rows = Object.entries(CORE_TOOL_VERBS).map(([tool, verbs]) => {
+    const hints = definitions.get(tool)?.annotations ?? {};
+    const effect = hints.destructiveHint === true ? 'destructive'
+      : hints.readOnlyHint === true ? 'idempotent' : 'effectful';
+    return `| \`${tool} {verb: ${verbs.join('|')}}\` | \`ordinary\` | \`${tool}\` | ${effect} |`;
+  });
+  return [
+    '| Operation | Profile | MCP tool | Annotation |',
+    '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/** The rows of docs/49 §7's migration table, parsed from its ONE owner: `[today's tool, lands as]`
+ * per row. A source whose heading or table shape no longer matches REFUSES (never an empty or
+ * partial table), because an empty render is the one outcome that would let the block drift
+ * silently — the same posture renderSwarmFamily takes on its attention vocabulary. */
+export function mcpMigrationRows(text = readFileSync(MIGRATION_DOC, 'utf8')) {
+  const start = text.indexOf(MIGRATION_HEADING);
+  if (start < 0) throw new Error(`docs/49 §7 heading not found: "${MIGRATION_HEADING}"`);
+  const rows = [];
+  for (const line of text.slice(start).split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) {
+      if (rows.length > 0) break;
+      continue;
+    }
+    // The header row and the `|---|` separator are the table's first two lines.
+    if (rows.length === 0 && /^\|\s*today's tool\s*\|/u.test(trimmed)) continue;
+    if (/^\|[\s:-]+\|[\s:|-]*$/u.test(trimmed)) continue;
+    const cells = trimmed.replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim());
+    if (cells.length !== 2 || cells.some((cell) => cell.length === 0)) {
+      throw new Error(`docs/49 §7 row is not a two-cell migration row: ${trimmed}`);
+    }
+    rows.push(cells);
+  }
+  if (rows.length === 0) throw new Error('docs/49 §7 carries no migration rows');
+  return rows;
+}
+
+/** MCP.md's migration section: the docs/49 §7 table, rendered from the design that owns it. Every
+ * flat spelling the guide documents maps to exactly one core verb, one surface operation, or a
+ * named retirement; the executable pin of the same table is the red file's MIGRATION (314-f). */
+export function renderMcpMigrationTable() {
+  const rows = mcpMigrationRows().map(([tool, landsAs]) => `| ${tool} | ${landsAs} |`);
+  return [
+    "| today's tool | lands as |",
+    '|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * The fleet-routes table (issue #293) — rendered from the SERVED route registry (DEFAULT_ROUTES
+ * plus the one conditional route), never hand-edited. One row per registered
+ * harness/provider/model family with efforts in registry order; the Ready-when column is the
+ * deployment's own routeReadinessContract — the same contract the readiness gates enforce — so
+ * the first surface an operator reads cannot disagree with what the deployment serves.
+ */
+export function renderCliFleetRoutes() {
+  const families = new Map();
+  for (const route of DEFAULT_BATON_DEPLOYMENT_ROUTES) {
+    const key = `${route.harness}|${route.provider ?? ''}|${route.model}`;
+    const family = families.get(key) ?? { route, efforts: [] };
+    if (!family.efforts.includes(route.effort)) family.efforts.push(route.effort);
+    families.set(key, family);
+  }
+  const rows = [...families.values()].map(({ route, efforts }) => {
+    const providerLabel = route.provider && route.provider !== 'claude'
+      ? ` (provider ${route.provider})` : '';
+    return `| \`${route.harness}\`${providerLabel} | \`${route.model}\` | ${efforts.join('/')} | ${routeReadinessContract(route)} |`;
+  });
+  // The one conditional route: declared beside the registry because it registers only when its
+  // private credential is present. Rendered from that same declaration, and only when the
+  // default registry does not already carry it — the table never shows it twice.
+  const conditionalServed = DEFAULT_BATON_DEPLOYMENT_ROUTES.some((route) => (
+    route.harness === KIMI_THROUGH_CLAUDE_ROUTE.harness
+    && route.provider === KIMI_THROUGH_CLAUDE_ROUTE.provider
+    && route.model === KIMI_THROUGH_CLAUDE_ROUTE.model));
+  if (!conditionalServed) {
+    rows.push(`| \`${KIMI_THROUGH_CLAUDE_ROUTE.harness}\` (provider ${KIMI_THROUGH_CLAUDE_ROUTE.provider}, conditional) | \`${KIMI_THROUGH_CLAUDE_ROUTE.model}\` | ${KIMI_THROUGH_CLAUDE_ROUTE.effort} | ${routeReadinessContract(KIMI_THROUGH_CLAUDE_ROUTE)} |`);
+  }
+  return [
+    '| Harness | Model(s) | Efforts | Ready when |',
+    '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * The #170 wavefile directive table (D4/P8) — rendered mechanically from the compiler's
+ * WAVEFILE_DIRECTIVES registry (the ONE source), never hand-edited. The conformance main proves the
+ * documented ⇄ parsed ⇄ admitted invariant against this table.
+ */
+export function renderWavefileGrammar() {
+  const rows = Object.entries(WAVEFILE_DIRECTIVES).map(([directive, definition]) => (
+    `| \`${directive}\` | \`${definition.arity}\` | \`${definition.tokens.join(' ')}\` | \`${definition.field}\` |`
+  ));
+  return [
+    '| Directive | Arity | Tokens | IR field |',
+    '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// docs/36 §7.4 — the swarm family (2026-09-14 audit S-G1).
+//
+// The section is rendered, never hand-written: the verb/kind tables come from
+// impl/src/swarm-contract.mjs, the payload fields from impl/src/swarm-event-schemas.mjs, and the
+// permission set from the runtime constant the admission check reads. The gate compares the
+// committed block byte-for-byte, so a verb, update kind, permission or attention kind added to
+// the code and not here is refused when it is made.
+// ---------------------------------------------------------------------------
+
+const SWARM_RUNTIME_SOURCE = new URL('../src/swarm-runtime.mjs', import.meta.url);
+// The attention vocabulary has no exported constant: the runtime mints a row per condition at the
+// site that derives it. Both mint sites are read from the source with their exact shape, in source
+// order — `organization.push({ kind: '<kind>'` for the derived rows and `{ kind: '<kind>', command:`
+// for the in-flight operation row. A source whose shape no longer matches refuses to render an
+// empty vocabulary: a silent empty list is the one outcome that would let the section drift.
+const ATTENTION_ORGANIZATION_ROW = /organization\.push\(\{\s*kind: '(?<kind>[a-z0-9_.]+)'/gu;
+const ATTENTION_OPERATION_ROW = /\{\s*kind: '(?<kind>[a-z0-9_.]+)',\s*command:/gu;
+
+/** The attention kinds the swarm runtime mints, in the runtime's own source order. */
+export function swarmAttentionKinds(source = readFileSync(SWARM_RUNTIME_SOURCE, 'utf8')) {
+  const kinds = [];
+  for (const match of source.matchAll(ATTENTION_ORGANIZATION_ROW)) kinds.push(match.groups.kind);
+  for (const match of source.matchAll(ATTENTION_OPERATION_ROW)) kinds.push(match.groups.kind);
+  const unique = [...new Set(kinds)];
+  if (unique.length === 0) {
+    throw new Error('swarm attention vocabulary could not be read from impl/src/swarm-runtime.mjs — the mint sites changed shape; fix the extractor, never render an empty list');
+  }
+  const nonAttention = unique.filter((kind) => kind.startsWith('swarm.'));
+  if (nonAttention.length > 0) {
+    throw new Error(`swarm attention extractor read event kinds as attention rows: ${nonAttention.join(', ')}`);
+  }
+  return unique;
+}
+
+/** The §7.4 block: every verb, update kind, driver kind, permission and attention kind. */
+export function renderSwarmFamily() {
+  const commands = Object.entries(SWARM_COMMAND_DEFINITIONS).map(([name, definition]) => {
+    const args = definition.args.length > 0 ? definition.args.map((arg) => `\`${arg}\``).join(', ') : '—';
+    const capabilities = definition.capabilities.map((capability) => `\`${capability}\``).join(', ');
+    const transports = [definition.web ? 'web' : null, definition.mcp ? 'mcp' : null]
+      .filter((surface) => surface !== null).join(' + ');
+    const durability = definition.mcpStateful
+      ? `\`idempotencyKey\`${definition.reconcilable ? ', reconcilable' : ''}`
+      : 'identity-keyed';
+    return `| \`${name}\` | ${args} | ${capabilities} | ${transports} | ${durability} |`;
+  });
+  const updateKinds = SWARM_EVENT_KINDS.map((kind) => {
+    const expanded = SWARM_OPERATION_KINDS.includes(kind);
+    const required = swarmEventAgentRequiredFields(kind);
+    return `| \`${kind}\` | ${expanded ? 'expanded by the runtime into the events it names' : 'recorded by the coordination store and replayed by the fold'} | ${required.length > 0 ? required.map((field) => `\`${field}\``).join(', ') : '—'} |`;
+  });
+  const permissions = SWARM_PERMISSIONS.map((permission) => `\`${permission}\``).join(', ');
+  const attention = swarmAttentionKinds();
+  return [
+    `**Verbs.** The ten \`swarm.*\` commands, their declared arguments, the capability class each`,
+    'requires, the transports that serve it, and its durability class — rendered from',
+    '`SWARM_COMMAND_DEFINITIONS` (`impl/src/swarm-contract.mjs`), the same rows the CLI parser,',
+    'the MCP tool table, and the web bus gate on.',
+    '',
+    '| Verb | Arguments | Capabilities | Transports | Durability |',
+    '|---|---|---|---|---|',
+    ...commands,
+    '',
+    `**\`swarm.update\` kinds (closed set, ${SWARM_EVENT_KINDS.length}).** Every domain change a caller may name; the payload`,
+    'fields each kind requires of the caller are read from the payload schemas',
+    '(`impl/src/swarm-event-schemas.mjs`).',
+    '',
+    '| Kind | Where it lands | Caller-required payload fields |',
+    '|---|---|---|',
+    ...updateKinds,
+    '',
+    `**Runtime-owned driver kinds (never caller-submittable, ${SWARM_DRIVER_EVENT_KINDS.length}).** The operation lifecycle and refusal rows the runtime`,
+    'records for itself, disjoint from the caller-submittable set above:',
+    '',
+    ...SWARM_DRIVER_EVENT_KINDS.map((kind) => `- \`${kind}\``),
+    '',
+    `**Permissions (closed set, ${SWARM_PERMISSIONS.length}).** ${permissions} — the grant vocabulary \`swarm.recruit\` admits and the`,
+    'runtime admission check reads (`impl/src/swarm-runtime.mjs`).',
+    '',
+    `**Attention kinds (closed set, ${attention.length}).** Each view row is a condition that needs an act, derived by the`,
+    'runtime from durable state — never asserted by a caller:',
+    '',
+    ...attention.map((kind) => `- \`${kind}\``),
+    '',
+    'Semantics, responses and the coupling records behind these rows: [docs/39](39-swarm-runtime.md)',
+    'and the swarm section of `impl/MCP.md`. This block is generated — do not hand-edit it.',
+  ].join('\n');
+}
+
+/** U-G7 host half (issue #313): the host verbs the application inventory cannot carry — rendered
+ * from the parser's own HOST_CLI_VERBS table, never a hand list. */
+export function renderCliHostVerbInventory() {
+  const rows = HOST_CLI_VERBS.map((row) => `| \`${row.verb}\` | \`${row.argv.join(' ')}\` | ${row.summary} |`);
+  return [
+    '| Host verb | Parser argv | Serves |',
+    '|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/** Issue #340: the closed top-level verb set — rendered from the parser's OWN CLI_TOP_LEVEL_VERBS
+ * table, the one derivation `baton --help` and the unknown-verb refusal read too. A verb that exists
+ * in the parser and not here (or the reverse) is a refusal the moment the gate runs. */
+export function renderCliTopLevelVerbs() {
+  const rows = CLI_TOP_LEVEL_VERBS.map((row) => `| \`${row.verb}\` | \`${row.argv.join(' ')}\` | ${row.summary} |`);
+  return [
+    '| Top-level verb | Parser argv | Serves |',
+    '|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+export function injectGeneratedBlock(text, marker, block) {
+  const begin = beginMarker(marker);
+  const end = endMarker(marker);
+  const start = text.indexOf(begin);
+  const stop = text.indexOf(end);
+  if (start < 0 || stop < 0 || stop < start) {
+    throw new Error(`missing or malformed generated markers for "${marker}"`);
+  }
+  const before = text.slice(0, start + begin.length);
+  const after = text.slice(stop);
+  return `${before}\n\n${block}\n\n${after}`;
+}
+
+// #293: exported so the surface gate's --write path (renderDocs.TARGETS) regenerates every
+// block — an unexported list silently wrote nothing there.
+export const TARGETS = [
+  { doc: CLI_DOC, marker: CLI_INVENTORY_MARKER, render: renderCliVerbInventory },
+  { doc: CLI_DOC, marker: CLI_FLEET_ROUTES_MARKER, render: renderCliFleetRoutes },
+  { doc: CLI_DOC, marker: CLI_HOST_VERBS_MARKER, render: renderCliHostVerbInventory },
+  { doc: CLI_DOC, marker: CLI_TOP_LEVEL_VERBS_MARKER, render: renderCliTopLevelVerbs },
+  { doc: MCP_DOC, marker: MCP_INVENTORY_MARKER, render: renderMcpToolInventory },
+  { doc: MCP_DOC, marker: MCP_MIGRATION_MARKER, render: renderMcpMigrationTable },
+  { doc: GRAMMAR_DOC, marker: SWARM_FAMILY_MARKER, render: renderSwarmFamily },
+];
+
+export function renderSurfaceDoc({ doc, marker, render }) {
+  return injectGeneratedBlock(readFileSync(doc, 'utf8'), marker, render());
+}
+
+// The conformance check: for each target, the committed file must byte-equal the freshly rendered
+// file. A drifted committed block (or a stale renderer) is reported, never silently accepted.
+// `targets` is injectable so a test can prove a tampered block is refused without editing the
+// committed documents.
+export function checkSurfaceDocs({ targets = TARGETS } = {}) {
+  const findings = [];
+  for (const target of targets) {
+    const committed = readFileSync(target.doc, 'utf8');
+    if (renderSurfaceDoc(target) !== committed) {
+      findings.push(`generated block "${target.marker}" is stale in ${target.doc.pathname.split('/').pop()}`);
+    }
+  }
+  return findings;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const check = process.argv.includes('--check');
+  if (check) {
+    const findings = checkSurfaceDocs();
+    for (const finding of findings) process.stderr.write(`render-surface-docs: ${finding}\n`);
+    process.exit(findings.length > 0 ? 1 : 0);
+  }
+  for (const target of TARGETS) writeFileSync(target.doc, renderSurfaceDoc(target));
+  process.stdout.write('render-surface-docs: regenerated CLI.md inventory and fleet-routes blocks, MCP.md inventory block\n');
+}

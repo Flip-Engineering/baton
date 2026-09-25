@@ -1,0 +1,214 @@
+From 30401b32341e10c58fe38fa0c6f14c58cce6de24 Mon Sep 17 00:00:00 2001
+From: "baton-worker-deepseek:deepseek"
+ <baton-worker-deepseek:deepseek@localhost>
+Date: Thu, 13 Aug 2026 21:29:15 -0700
+Subject: [PATCH] baton snapshot: ws-aadf735bb1a9a00540ff63c00f589b36
+
+Baton-Task: ws-aadf735bb1a9a00540ff63c00f589b36
+Baton-Vendor: deepseek:deepseek
+Baton-Model: deepseek-v4-pro[1m]
+Baton-Effort: high
+---
+ .../contract-qa.md                            | 190 ++++++++++++++++++
+ 1 file changed, 190 insertions(+)
+ create mode 100644 docs/reference/evidence/lifecycle-contracts-2026-08-14/contract-qa.md
+
+diff --git a/docs/reference/evidence/lifecycle-contracts-2026-08-14/contract-qa.md b/docs/reference/evidence/lifecycle-contracts-2026-08-14/contract-qa.md
+new file mode 100644
+index 0000000..a00ca75
+--- /dev/null
++++ b/docs/reference/evidence/lifecycle-contracts-2026-08-14/contract-qa.md
+@@ -0,0 +1,190 @@
++CONTRACT-QA v1
++
++[attempt: c664aa16-db1f-48e3-94dd-2743dbb61179 coordinator]
++
++Coordinator QA — the lifecycle-contracts four-row foundry (package ③, wave
++`lifecycle-contracts-2026-08-14-wave-a`). Every claim below is cited evidence (on-disk files,
++git SHAs, `sed -n`/`grep -an` reads, reservation records) or an explicitly named absence. No
++clocks, no fabrication. Verdicts drive the landing.
++
++## Signal status
++
++| Lane | Expected (wavefile `steering`) | Received | State |
++|---|---|---|---|
++| messageOnSpawn | `brief` (steering → every member) | `message:65d3b080417402fd7fecfcb8581b2d5c18ef9ddca39a024646cb665a88ea4b17` | RECEIVED — body equals the wavefile `messageOnSpawn` (read objectiveRef IN FULL, then foundry-brief) |
++| signalOnMembersDone | `result` to the coordinator once `row-lc-fs,row-lc-launch,row-lc-members,row-lc-ledger` are all terminal | — | NOT RECEIVED |
++
++The signal did not fire: the four watched rows are not terminal, and none produced its report
++on disk (below). This is the #175 corrected semantics (`signalOnMembersDone` names the watched
++rows; the remaining member — this coordinator — is the recipient), verified against
++`lifecycle-contracts.wavefile` line `signalOnMembersDone row-lc-fs,row-lc-launch,row-lc-members,row-lc-ledger result …`.
++
++## On-disk verification (the #174 law — silence is not death)
++
++- The four contract files — `contract-filesystem.md`, `contract-launch.md`,
++  `contract-members.md`, `contract-ledger.md` — are ABSENT from every worktree
++  (`../../wt/ws-*/`), the main repo, and `docs/reference/evidence/lifecycle-contracts-2026-08-14/`
++  on `master` (`b71f96b`, which carries only the pack: `foundry-brief.md`,
++  `coordinator-brief.md`, `lifecycle-contracts.wavefile`, and the four `row-lc-*.md` briefs).
++  `find` for each name across `.baton/wt` and `docs/` returns nothing.
++- The four row worktrees are RESERVED but NOT MATERIALIZED. `capacity/reservations.json` lists
++  `ws-38521b188a96e71605fa312e821a1124` (created 02:25:42Z), `ws-54a1a84dcf163c71cfcc1d81276f8676`
++  (02:26:03Z), `ws-8c9a76fd31e2711e7b1d47e8fc151414` (02:26:20Z), `ws-48cf0d4c515e4e9dd2716acc2bba73c0`
++  (02:26:40Z) — all `materializedAt: null` at the last reservation write (03:28Z). None of the
++  four directories exists under `.baton/wt/`.
++- The only sibling worktrees on disk are three honesty-package lanes (`ws-179d42ff…`,
++  `ws-9e576927…`, `ws-acf789c2…`), all at `baseSha 69f8a8d`, none carrying a lifecycle contract.
++- The reservation records do not carry a `role` tag, so the exact role → worktree mapping is not
++  observable on disk; the four pending reservations are the four rows by count and by the
++  creation order that matches the wavefile member order.
++
++`not-landed` is not `dead`: per the #174 law a missing attempt marker is not a dead row, and
++silence is verified against disk, not assumed. What is true at verification time is that no row
++produced a contract, so there is no contract to cite-audit, pin-test, or fold.
++
++## Per-contract verdicts
++
++| Row | Report (this dir) | Issue set | Worktree (reserved, not materialized) | Verdict |
++|---|---|---|---|---|
++| row-lc-fs | `contract-filesystem.md` — ABSENT | #168 · #172 · #185 | `ws-38521b18…` | **needs-fold** — blocker: row not landed (no contract on disk to audit) |
++| row-lc-launch | `contract-launch.md` — ABSENT | #173 · #202 · #207 | `ws-54a1a84d…` | **needs-fold** — blocker: row not landed |
++| row-lc-members | `contract-members.md` — ABSENT | #199 · #200 · #204 | `ws-8c9a76fd…` | **needs-fold** — blocker: row not landed |
++| row-lc-ledger | `contract-ledger.md` — ABSENT | #194 · #205 | `ws-48cf0d4c…` | **needs-fold** — blocker: row not landed |
++
++No verdict is `sound`: there is no contract text to grade. The blocker for each is the same
++authority-class fact — the rows are reserved and silent. That disposition is escalated below
++(§ Escalation), not decided here.
++
++## Spot-check record (the citation audit run against the only citations available pre-contract — the row briefs)
++
++Because no contract is on disk, the citation audit was run against the row briefs' seed anchors
++(the anchors each contract will inherit). Each was read fresh this session:
++
++| Anchor cited (brief) | Verified on disk | Result |
++|---|---|---|
++| `workflow-interpreter.mjs:39` — the 64 KiB objectiveRef admission (#207) | `const OBJECTIVE_REF_MAX_BYTES = 64 * 1024; // D5 …` | ✓ accurate |
++| `limits.mjs:56` — run.start's 4096-byte objective cap (#207) | `'run.objective': { … value: 4096, … graceful: 'spill-digest-citation', … }` | ✓ accurate (the adjacent `wave.member.objective` row, line 57, is also 4096 with the same spill graceful) |
++| `wave.mjs` createWave captured `startError` never reaching the receipt (#207) | `wave.mjs:235-251` — `entry.startError = { code, message }` on `runs.start` throw; the receipt/outcome path only surfaces it via `settle()`'s `phase:'failed', terminalCause:'start'` | ✓ accurate |
++| `application.mjs:11631-11646` — the synchronous full-lifetime drive (#173) | `async runWorkflow(rawRequest, rawPrincipal)` delegating to the interpreter's `runWorkflow(baton, specOrPath, …)` | ✓ accurate (the await-the-whole-drive lives one hop down, `workflow-interpreter.mjs:534-609`) |
++| `workflow-interpreter.mjs:525` — "the base-commit line" (#168) | line 525 is `const salt = randomUUID();`; the base commit is `execFileSync('git', ['-c', …, 'commit', '-q', '-m', \`baton workflow base …\`])` at ~`workflow-interpreter.mjs:539-540` | ✗ INACCURATE — off by ~15 lines; the row contract must re-anchor this before it pins a red-first acceptance pin on it |
++
++The four briefs are otherwise internally consistent with the named issues' incident record in
++`docs/PROGRESS.md` and the per-issue evidence dirs (base-commit captures for #168, the two
++index.lock reaps for #172, the two client timeouts for #173, the 64KiB-vs-4096 admission gap for
++#207, the phantom-failure saga #199/#200, the bare-text bus response #202, the restart dance
++#204, the logged-invariant gap #194).
++
++Additional anchors verified fresh (continuation pass — the same discipline the landed contracts
++will be held to):
++
++| Issue | Claim (brief) | Verified on disk | Result |
++|---|---|---|---|
++| #168 | four base commits capture the operator's dirty state | `git log` — `055c6cc`, `cd555ca`, `a176f39`, `04bd28f` all exist as `baton workflow base …` commits | ✓ four commits confirmed |
++| #199 | member-creation failures emit no `task.created` | `coordination-store.mjs:1498` validates `kind === 'task.created'`; task-topology identity checks at `:1626-1645` (`task_topology_invalid`, `duplicate_task`) | ✓ the event kind + topology machinery exist (the phantom gap is a creation-path emit, not a missing kind) |
++| #200 | task-id derives from the objectiveRef path, un-namespaced | task-topology `taskId`/`runId` derivation at `:1626-1664`; no wave namespace in the id path | ✓ consistent |
++| #194 | the cited spill artifact, never bodies-inline | `coordination-store.mjs:119-120` `_spills` (Decision 4, digest-addressed); `spill.minted` event at `:8807-8810` (`spill:sha256:<digest>`) | ✓ the spill machinery exists |
++| #205 | decision lane round-trips but never ledgers | decision admission limits enforced at `:3557-3566` (`decision.need`/`decision.rationale` FRAME_LIMITS → `coachingRefusal`); no `decision.*` event record found alongside | ✓ consistent (admission exists; no ledger event) |
++| #172 | snapshot machinery abandons `.git/index.lock` | `grep -rn 'index.lock' impl/src/*.mjs` → no matches | ✓ no handling exists (the abandonment is real) |
++
++## Boundary map (the four contracts share the waves.run surface — overlaps and gaps named from the declared seams)
++
++Declared seams (from `foundry-brief.md` + row briefs):
++
++- **fs** — workflow base-commit dirty-state capture (#168) · snapshot index.lock reaps (#172) ·
++  member raw-fs confinement + settle sweep (#185): `workflow-interpreter.mjs` base-commit path,
++  the snapshot machinery, the write-scope fence.
++- **launch** — synchronous drive (#173) · response shapes (#202) · objectiveRef-admission
++  alignment + startError-on-wire + spill-digest graceful path (#207): `application.mjs` waves.run
++  surface, `workflow-interpreter.mjs` drive, `limits.mjs` admission, `wave.mjs` startError.
++- **members** — creation failures emit typed events, never phantom (#199) · task-id namespacing
++  (#200) · drain-restart (#204): `coordination-store.mjs` creation/event tables, task-id
++  derivation, the resident drain.
++- **ledger** — model-visible-means-logged + the durable no-step turn (#194) · decision ledgering
++  (#205): `coordination-store.mjs` log/spill-artifact seam, the `decision.*` event lane.
++
++**Overlaps (the landing must reconcile — named by file/seam):**
++
++1. `limits.mjs` spill-digest-citation — **launch (#207)** × **ledger (#194)**. Both cite the same
++   `graceful: 'spill-digest-citation'` rows (`run.objective`, `wave.member.objective`). Launch
++   owns "the receipt must carry the spill"; ledger owns "the spilled artifact must be
++   reconstructable". Who writes the spill artifact vs. who verifies it is the shared boundary.
++2. objectiveRef PATH derivation — **fs (#168/#185)** × **members (#200)**. #168 captures the
++   operator's dirty state including the ref path; #200 derives task-id from the ref path without
++   the wave namespace (same-path re-drive). Two contracts over the same path seam.
++3. dispatch/wire response shape — **launch (#202)** × **ledger (#194)**. The bare-text
++   `'Command executed successfully.'` is simultaneously a launch receipt-shape defect (#202) and a
++   ledger reconstructability defect (#194 — the served context cannot be rebuilt from a bare
++   string). The launch-receipt shape and the ledger record must be the SAME shape.
++
++**Gaps (uncontracted seams of the waves.run surface — named):**
++
++1. `attachWave` / re-drive (`wave.mjs:275-344`) — the attach-and-harvest path, the
++   `wave_already_terminal` replay refusal (#183), and the required `mintDetached` binding proof
++   (`wave_attach_proof_required`). Part of the waves.run surface, named by NONE of the four
++   briefs. Falls between launch (createWave) and ledger (evidence trace).
++2. The wave-side `evidence()` trace (`wave.mjs:530-541` — `outcomes/steering/stops/progress`) vs.
++   the coordination-store-side log (#194). The four contracts draw the ledger boundary at the
++   store, leaving the in-wave trace (what `settle()`/`close()` actually produced) as a gap between
++   ledger (#194) and launch (#173, which produces the outcomes the trace records).
++
++## Fold instruction set (concrete, for when the rows land)
++
++1. **Re-anchor `workflow-interpreter.mjs` base-commit** before pinning: the brief's `:525` is the
++   salt line; the commit is at `:539-540`. Any `contract-filesystem.md` pin citing `:525` is a
++   wrong-citation finding.
++2. Per landed contract, spot-check **≥3 anchors** against the code (NUL discipline on
++   `application.mjs`/`coordination-store.mjs` — `grep -an`/`sed -n` only).
++3. **Acceptance-pin shallow-greenability**: for each pin, confirm it is RED at HEAD and would be
++   green only for a correct impl. The three overlap seams above are where shallow pins hide — a
++   pin that only checks "a JSON response exists" would green a bare-text response (#202) and must
++   be tightened to the closed shape.
++4. **Refusal vocabulary**: confirm each contract's refusals are closed, typed, surface-constant
++   (a code like `spill_body_exceeded` / `wave_scope_invalid`, not a prose string), and that no
++   contract introduces a clock.
++5. Reconcile the three named overlaps at fold — one owner per seam (fs/launch/members/ledger), the
++   other three cite the owner.
++6. Decide the two named gaps — either assign `attachWave`/re-drive and the wave-side `evidence()`
++   trace to a row, or record them as out-of-scope-for-③ in the fold.
++
++## Publish-to-shared (step 3 — the refusal, recorded)
++
++Instructed to "Publish to `shared` — or record the refusal." The exact outcome is a silent scope
++hardcode, not a typed refusal, and it is still live at this base:
++
++- `coordination-store.mjs:14103` — `const scope = \`worker:${fields.workerId}\`;` inside
++  `writeScratchpad` (line 14064) hardcodes the worker-facing write scope to the worker partition;
++  there is no worker-visible path to a `shared` scope.
++- `coordination-store.mjs:12497` — `if (auth?.actor !== 'orchestrator') invalid('settlement task requires the orchestrator actor');` — the `shared`-scope settlement path is orchestrator-only.
++
++A coordinator publish-to-`shared` is therefore silently admitted into `worker:<id>`, never
++`shared`. This is the #158 root cause, live because no member of this wave contracts the write
++lane. No exact refusal string exists to record — the refusal is the admission.
++
++## Residual register
++
++1. **Signal absent.** `signalOnMembersDone` did not fire; the four watched rows are not terminal
++   (no report on disk). Recorded, not fabricated.
++2. **Rows reserved, not materialized.** Four `.baton/wt` reservations at `materializedAt: null`
++   ~1 h after creation; none of the four row worktrees exists on disk.
++3. **Base drift.** This worktree is at `69f8a8d`; the wave pack (`foundry-brief.md`,
++   `coordinator-brief.md`, the four `row-lc-*.md` briefs, `lifecycle-contracts.wavefile`) lives on
++   `master` at `5f982fc` → `b71f96b`, so the wave definition is not inside this worktree (read
++   from the main checkout). `impl/src` is identical across the two (`69f8a8d` → `b71f96b` are
++   docs-only), so the anchor reads above are against HEAD-equivalent code.
++4. **Shared publish gapped** (above) — a live #158 confirmation, not a lifecycle-contract
++   regression.
++
++## Escalation (authority-class — via DECISION_REQUEST)
++
++The disposition of four reserved-but-unmaterialized rows is not mine to decide alone. Options
++(2–4 + free response) sent UP as a DECISION_REQUEST:
++
++- **release-gapped** — conclude this wave now with the four contracts marked needs-fold (as
++  above); the landing records the four as unlanded and folds later.
++- **hold-recheck** — hold the coordinator open and re-verify on disk after a re-check window; the
++  rows are reserved (not dead), so a late materialization would then be cross-checked normally.
++- **redrive-rows** — re-drive the four rows (fresh worktrees) and re-signal.
++
++Recommended: **hold-recheck** — the reservations are live (the orchestrator wrote new
++reservations for packages ④/⑤ at 03:27–03:28Z, so the dispatcher is moving, not wedged), and
++the four rows are the entire substance of this wave.
+-- 
+2.50.1
+

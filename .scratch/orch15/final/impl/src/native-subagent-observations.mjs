@@ -1,0 +1,784 @@
+// native-subagent-observations.mjs — pure normalization/projection helper for native harness
+// subagent observations.
+//
+// Baton observes native-harness child sub-executions through the PARENT session's wire frames
+// only. This module normalizes those frames into honest observation records without inventing
+// independently controllable Baton workers, guessing completion, or retaining raw frames.
+//
+// Wire evidence (installed binaries + JSON schema, 2026-09-13):
+//
+//   OMP 17.4.0 binary strings (/opt/homebrew/Cellar/omp/17.4.0/bin/omp, Mach-O arm64):
+//     `toolName === 'task'` is the subagent discriminator.
+//     Binary: `if (Ye.toolName === "task") {...}` / `const a = e.toolName === "task" && t === "running"`
+//     All other toolNames (Bash, Read, Write, Grep, Edit, …) are ordinary tool calls — return null.
+//     tool_execution_start: {type, toolCallId, toolName:'task', args:{agent?,context?,tasks?}}
+//     tool_execution_end:   {type, toolCallId, toolName:'task', result, isError}
+//     Single-task result:   result.details.{sessionFile, jobId, work}
+//     Async/backgrounded:   result.details.async.{state:'running'|'completed'|'failed', jobId, type}
+//       When details.async.state === 'running': tool returned but job still in-flight — phase STARTED.
+//     Batch result:         result.details.{projectAgentsDir, results:[], totalDurationMs}
+//       tool_execution_end fires once for whole batch; details.results has per-sub-task outcomes.
+//     Binary: `details: { jobId: _, work: s, sessionFile: x }`
+//     Binary: `async: { state: "running", jobId: e, type: "eval" }` (still in-flight)
+
+//   OMP 17.4.0 rpc.md (`omp read omp://rpc.md`) + LIVE RPC probe (2026-09-13: bounded
+//   background task delegation through a real `omp --mode rpc` child, raw frames captured):
+//     The event stream also carries `tool_execution_update` frames:
+//       { type, toolCallId, toolName:'task', args, partialResult:{content, details} }
+//       details.{projectAgentsDir, results:[], totalDurationMs, progress:[…], async}
+//       details.async = { state:'running', jobId, type:'task' } — progress ticks ONLY.
+//       Live: 5/5 task updates carried state 'running'; a terminal async update was NEVER
+//       observed on the wire, even long after tool_execution_end.
+//     Subagent frames are SUBSCRIPTION-GATED: `set_subagent_subscription` level
+//     off|progress|events, default off. Level 'progress' forwards:
+//       subagent_lifecycle payload (live-captured exact keys):
+//         { id, index, agent, agentSource, status, detached, sessionFile, parentToolCallId }
+//         status observed 'started' and 'completed'; the native registry (binary
+//         rpc-subagents.ts) treats every non-'started' status as terminal. 'completed' →
+//         COMPLETED, 'failed' → FAILED; any unrecognized status stays UNKNOWN.
+//       subagent_progress payload: { index, agent, agentSource, task, parentToolCallId,
+//         detached, assignment, progress:{…}, sessionFile } — task/assignment/recentOutput
+//         are PROMPT/OUTPUT TEXT and are never retained.
+//     TERMINAL CHILD TRUTH is a SECOND subagent_lifecycle (same id/sessionFile/
+//     parentToolCallId; status 'completed' arrived ~5s after tool_execution_end, live),
+//     after which the parent runs an async-delivery turn (rpc.md: agent_end
+//     isTerminal:false means async delivery scheduled more work). An end frame with
+//     async.state='running' therefore has a truthful completion path on the wire — it is
+//     just gated behind the subscription, which the adapter now requests (native control,
+//     native-owned; an older runtime that refuses simply keeps the observation honest).
+//     `subagent_event` frames ('events' level) carry full child conversation events: Baton
+//     subscribes at 'progress', so they never arrive; this module returns null for them.
+//
+//   Claude Code 2.1.269 binary strings (~/.local/bin/claude → Mach-O arm64):
+//     `tool_progress` WITH `subagent_type` is the subagent discriminator.
+//     Binary: `subagent_type:e.data.agentType` — absent from Bash/REPL/heartbeat progress frames.
+//     Binary: `...e.data.resolved!==!0&&{subagent_retry:{agent_id,attempt,max_retries,...}}`
+//     tool_progress (subagent):  {type:'tool_progress', tool_use_id, tool_name, parent_tool_use_id,
+//                                  elapsed_time_seconds, session_id, uuid, subagent_type, subagent_retry?}
+//     tool_progress (Bash/REPL): lacks subagent_type — return null
+//     tool_progress (heartbeat): heartbeat:true, no subagent_type — return null
+//     claude-session.mjs currently drops tool_progress (falls to default in _handleWireObject).
+//
+//   Codex 0.154.0 — JSON schema: codex app-server generate-json-schema
+//     v2/ThreadReadResponse.json definitions.CollabAgentToolCallThreadItem (index 10 in ThreadItem.oneOf):
+//     Required: id (tool call ID), tool, status, senderThreadId, receiverThreadIds, agentsStates
+//     CollabAgentTool enum: spawnAgent|sendInput|resumeAgent|wait|closeAgent|sendMessage|
+//                           followupTask|interruptAgent|listAgents
+//     CollabAgentToolCallStatus enum: inProgress|completed|failed|interrupted
+//     agentsStates: { [childThreadId]: CollabAgentState }
+//     CollabAgentState: { status: CollabAgentStatus, message?: string|null }
+//     CollabAgentStatus enum: pendingInit|running|interrupted|completed|errored|shutdown|notFound
+//     Optional: model, prompt, reasoningEffort  (NOT in identity record — payload only)
+//     NOT present: agentThreadId, agentPath, kind  (those were binary-string false positives)
+//     Adapter item/started and item/completed notifications feed these observations.
+//
+// IDENTITY CONSTRAINTS (enforced, never invented):
+//   - OMP tool_execution_start with toolName:'task' is a known child delegation, not completion.
+//   - OMP tool_execution_end is NOT a whole child-session exit (parent OMP session continues).
+//   - OMP tool_execution_end with details.async.state='running' means the job is still in-flight.
+//   - OMP tool_execution_update is progress; a detached job's terminal state arrives via
+//     subagent_lifecycle (subscription-gated), never inferred from the update stream.
+//   - OMP subagent_lifecycle supplies actual child identity (sessionFile) only when omp
+//     sends it — and is the ONLY frame that carries real child terminal status.
+//   - Claude tool_progress with subagent_type is a known delegation — completion not observable.
+//   - Codex collabAgentToolCall: invocation status (item.status) ≠ per-child status (agentsStates).
+//   - No Baton controls exist for native-managed sub-executions; the subscription request is
+//     an OMP-owned control Baton merely invokes.
+//   - No polling, no provider calls, no journals, no new dependencies.
+
+// Stable phase vocabulary
+export const NATIVE_PHASE = Object.freeze({
+  STARTED: 'started',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  UNKNOWN: 'unknown',
+});
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+// Composite invocation key using JSON-tuple encoding. Colon-concat would silently collide if
+// any part contains a colon; JSON encoding is unambiguous for arbitrary string values.
+function makeInvocationKey(harness, parentWorker, parentSessionId, invocationId) {
+  return JSON.stringify([harness, parentWorker ?? null, parentSessionId ?? null, invocationId ?? null]);
+}
+
+// Record the presence of unknown protocol fields without retaining their values.
+// Undocumented values may contain credentials, prompts or full tool results.
+function captureUnknownFields(obj, knownFields) {
+  const unknown = {};
+  for (const key of Object.keys(obj)) {
+    if (!knownFields.has(key)) Object.defineProperty(unknown, key, { value: true, enumerable: true });
+  }
+  return Object.keys(unknown).length > 0 ? unknown : null;
+}
+
+// OMP task frame known fields (top-level only; `args` and `result` are payload, not enumerated)
+// `intent` is wire-verified (2026-09-13: every tool_execution_start carries it; binary pushes
+// `intent: re.intent`).
+const OMP_TASK_START_KNOWN = new Set(['type', 'toolCallId', 'toolName', 'args', 'intent']);
+const OMP_TASK_END_KNOWN = new Set(['type', 'toolCallId', 'toolName', 'result', 'isError']);
+// tool_execution_update frames (rpc.md event stream; live-captured 2026-09-13)
+const OMP_TASK_UPDATE_KNOWN = new Set(['type', 'toolCallId', 'toolName', 'args', 'partialResult']);
+// Subscription-gated subagent frames (rpc.md; live-captured payload shapes)
+const OMP_SUBAGENT_FRAME_KNOWN = new Set(['type', 'payload']);
+const OMP_SUBAGENT_LIFECYCLE_PAYLOAD_KNOWN = new Set([
+  'id', 'index', 'agent', 'agentSource', 'status', 'detached', 'sessionFile', 'parentToolCallId',
+  'description',
+]);
+const OMP_SUBAGENT_PROGRESS_PAYLOAD_KNOWN = new Set([
+  'index', 'agent', 'agentSource', 'task', 'parentToolCallId', 'detached', 'assignment',
+  'progress', 'sessionFile',
+]);
+// Nested progress block of subagent_progress (live-captured keys; its task/assignment/
+// recentOutput values are prompt/output text and are never retained)
+const OMP_SUBAGENT_PROGRESS_NESTED_KNOWN = new Set([
+  'index', 'id', 'agent', 'agentSource', 'status', 'task', 'assignment', 'recentTools',
+  'recentOutput', 'toolCount', 'requests', 'tokens', 'cost', 'durationMs', 'modelOverride',
+  'contextWindow', 'resolvedModel', 'contextTokens', 'extractedToolData',
+]);
+
+// Claude tool_progress known fields (binary-verified set)
+const CLAUDE_TOOL_PROGRESS_KNOWN = new Set([
+  'type', 'tool_use_id', 'tool_name', 'parent_tool_use_id', 'elapsed_time_seconds',
+  'session_id', 'uuid', 'subagent_type', 'subagent_retry', 'heartbeat', 'task_id',
+]);
+
+// Codex collabAgentToolCall item known fields (from v2/ThreadReadResponse.json schema)
+// prompt/model/reasoningEffort are optional payload and are not identity fields — excluded
+const CODEX_ITEM_PARAMS_KNOWN = new Set(['item', 'threadId', 'turnId']);
+const CODEX_COLLAB_ITEM_KNOWN = new Set([
+  'type', 'id', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'agentsStates',
+  'model', 'prompt', 'reasoningEffort',
+]);
+
+// ---------------------------------------------------------------------------
+// OMP 17.4.0
+// ---------------------------------------------------------------------------
+
+// Derive OMP end-frame phase from the result field.
+// Binary: when details.async.state === 'running' the job is still in-flight even though
+// tool_execution_end fired (the tool call returned early via the async backgrounding path).
+function ompEndPhase(isError, details) {
+  if (isError) return NATIVE_PHASE.FAILED;
+  const asyncState = details?.async?.state;
+  if (typeof asyncState === 'string') {
+    if (asyncState === 'running') return NATIVE_PHASE.STARTED;  // still in-flight
+    if (asyncState === 'failed') return NATIVE_PHASE.FAILED;
+    if (asyncState === 'completed') return NATIVE_PHASE.COMPLETED;
+    // unknown async state — treat as UNKNOWN
+    return NATIVE_PHASE.UNKNOWN;
+  }
+  // No async field: synchronous task returned — completed
+  return NATIVE_PHASE.COMPLETED;
+}
+
+// tool_execution_update is always an in-flight tick from the tool executor; a missing
+// async block is still progress, never completion. Only an explicit terminal async state
+// upgrades the phase (live 2026-09-13: every observed task update stayed 'running').
+function ompUpdatePhase(asyncState) {
+  if (asyncState === 'completed') return NATIVE_PHASE.COMPLETED;
+  if (asyncState === 'failed') return NATIVE_PHASE.FAILED;
+  if (typeof asyncState === 'string' && asyncState !== 'running') return NATIVE_PHASE.UNKNOWN;
+  return NATIVE_PHASE.STARTED;
+}
+
+// Map the native subagent_lifecycle status to NATIVE_PHASE. Observed live: 'started',
+// 'completed'. Binary rpc-subagents.ts treats every non-'started' status as terminal.
+// Unrecognized statuses stay UNKNOWN — completion is never invented from an unknown word.
+function ompSubagentStatusPhase(status) {
+  if (status === 'started') return NATIVE_PHASE.STARTED;
+  if (status === 'completed') return NATIVE_PHASE.COMPLETED;
+  if (status === 'failed') return NATIVE_PHASE.FAILED;
+  return NATIVE_PHASE.UNKNOWN;
+}
+
+/**
+ * Normalize a single OMP wire frame into a subagent observation record.
+ *
+ * Returns null for any frame that does not signal `task` tool delegation:
+ *   - wrong frame type (not tool_execution_start, tool_execution_update or tool_execution_end)
+ *   - toolName !== 'task' (Bash/Read/Write/Grep/Edit/… are ordinary tools, never children)
+ *
+ * Returns a normalized record for task tool frames only. Start frames carry
+ * a `completion_unknown` gap — no end frame has arrived yet. End frames reflect
+ * the async state: details.async.state='running' means still in-flight (STARTED),
+ * not COMPLETED.
+ *
+ * @param {object} frame - raw OMP wire frame (JSONL-parsed object from omp-rpc.mjs)
+ * @param {{ worker?: string|null, sessionId?: string|null }} parentContext
+ * @returns {object|null}
+ */
+export function normalizeOmpTaskFrame(frame, parentContext) {
+  if (frame === null || typeof frame !== 'object' || Array.isArray(frame)) return null;
+  if (frame.type !== 'tool_execution_start' && frame.type !== 'tool_execution_update'
+    && frame.type !== 'tool_execution_end') return null;
+  // Binary evidence: `if (Ye.toolName === "task")` — only task tool spawns a child session.
+  // Bash/Read/Write/Grep/Edit/… must return null.
+  if (frame.toolName !== 'task') return null;
+
+  const worker = typeof parentContext?.worker === 'string' ? parentContext.worker : null;
+  const parentSessionId = typeof parentContext?.sessionId === 'string' ? parentContext.sessionId : null;
+  const toolCallId = typeof frame.toolCallId === 'string' && frame.toolCallId.length > 0
+    ? frame.toolCallId : null;
+
+  // JSON-tuple key prevents colon-containing values from producing collisions.
+  const invocationKey = makeInvocationKey('omp', worker, parentSessionId, toolCallId);
+
+  const gaps = [];
+  if (!toolCallId) gaps.push('no_stable_child_id');
+  if (!parentSessionId) gaps.push('parent_session_id_unknown');
+
+  if (frame.type === 'tool_execution_start') {
+    // Extract minimal identification from args (agent type only — full args may contain
+    // large context/prompt payloads and are not retained).
+    const taskAgent = frame.args !== null && typeof frame.args === 'object' && !Array.isArray(frame.args)
+      ? (typeof frame.args.agent === 'string' ? frame.args.agent : null)
+      : null;
+    const unknownFields = captureUnknownFields(frame, OMP_TASK_START_KNOWN);
+    return {
+      harness: 'omp',
+      invocationKey,
+      parentWorker: worker,
+      parentSessionId,
+      toolCallId,
+      taskAgent,
+      // Start alone does not constitute a known completion, session file, or process ownership.
+      phase: NATIVE_PHASE.STARTED,
+      nativeFrameType: 'tool_execution_start',
+      provenance: 'wire_frame',
+      gaps: [...gaps, 'completion_unknown', 'process_ownership_unknown', 'child_session_id_unknown'],
+      controls: [],
+      ...(unknownFields ? { unknownFields } : {}),
+    };
+  }
+  // tool_execution_update: in-flight progress for an open/backgrounded task call (rpc.md
+  // event stream; live-captured 2026-09-13). partialResult.details carries the batch shape
+  // (projectAgentsDir, results, totalDurationMs, progress[]) plus
+  // async: {state:'running', jobId, type:'task'}. Terminal async states are mapped should a
+  // runtime ever send them, but live evidence says terminal truth rides subagent_lifecycle.
+  if (frame.type === 'tool_execution_update') {
+    const updateDetails = frame.partialResult !== null && typeof frame.partialResult === 'object'
+      ? (frame.partialResult.details !== null && typeof frame.partialResult.details === 'object'
+        ? frame.partialResult.details : null)
+      : null;
+    const updateAsync = updateDetails?.async ?? null;
+    const asyncState = typeof updateAsync?.state === 'string' ? updateAsync.state : null;
+    const jobId = updateAsync?.jobId ?? null;
+    const normalizedJobId = typeof jobId === 'string' || (typeof jobId === 'number' && Number.isFinite(jobId))
+      ? jobId : null;
+    const asyncType = typeof updateAsync?.type === 'string' ? updateAsync.type : null;
+    // Counts only: the progress[]/results[] members carry prompt/output text.
+    const batchResultCount = Array.isArray(updateDetails?.results) ? updateDetails.results.length : null;
+    const progressCount = Array.isArray(updateDetails?.progress) ? updateDetails.progress.length : null;
+    const phase = ompUpdatePhase(asyncState);
+    const updateGaps = [...gaps, 'start_frame_not_retained', 'process_ownership_unknown', 'child_session_id_unknown'];
+    if (asyncState === 'running') updateGaps.push('async_job_in_flight');
+    if (asyncState === null) updateGaps.push('async_state_absent');
+    const unknownFields = captureUnknownFields(frame, OMP_TASK_UPDATE_KNOWN);
+    return {
+      harness: 'omp',
+      invocationKey,
+      parentWorker: worker,
+      parentSessionId,
+      toolCallId,
+      childSessionFile: null,
+      jobId: normalizedJobId,
+      ...(asyncType ? { asyncType } : {}),
+      asyncState,
+      ...(batchResultCount !== null ? { batchResultCount } : {}),
+      ...(progressCount !== null ? { progressCount } : {}),
+      phase,
+      nativeFrameType: 'tool_execution_update',
+      provenance: 'wire_frame',
+      ok: phase === NATIVE_PHASE.COMPLETED ? true : phase === NATIVE_PHASE.FAILED ? false : null,
+      invocationOk: true,
+      gaps: updateGaps,
+      controls: [],
+      ...(unknownFields ? { unknownFields } : {}),
+    };
+  }
+
+  // tool_execution_end: the task tool call settled. This is NOT a parent-session exit.
+  // Binary evidence: `details: { jobId: _, work: s, sessionFile: x }`
+  // Async backgrounded: `details.async.{state, jobId, type}` — 'running' means still in-flight.
+  const details = frame.result !== null && typeof frame.result === 'object'
+    ? (frame.result.details !== null && typeof frame.result.details === 'object'
+      ? frame.result.details : null)
+    : null;
+  const childSessionFile = typeof details?.sessionFile === 'string' ? details.sessionFile : null;
+  const jobId = details?.jobId ?? details?.async?.jobId ?? null;
+  const normalizedJobId = typeof jobId === 'string' || (typeof jobId === 'number' && Number.isFinite(jobId))
+    ? jobId : null;
+  const asyncState = typeof details?.async?.state === 'string' ? details.async.state : null;
+  const asyncType = typeof details?.async?.type === 'string' ? details.async.type : null;
+  const isError = frame.isError === true;
+
+  // Batch mode: result.details.results[] contains per-sub-task outcomes.
+  // We do not retain the full array (may be large) but record the count.
+  const batchResultCount = Array.isArray(details?.results) ? details.results.length : null;
+
+  const phase = ompEndPhase(isError, details);
+
+  const endGaps = [...gaps, 'start_frame_not_retained', 'process_ownership_unknown'];
+  if (!childSessionFile) endGaps.push('child_session_id_unknown');
+  // When async.state='running', the job is still in-flight despite tool_execution_end firing.
+  if (asyncState === 'running') endGaps.push('async_job_in_flight');
+
+  const unknownFields = captureUnknownFields(frame, OMP_TASK_END_KNOWN);
+  return {
+    harness: 'omp',
+    invocationKey,
+    parentWorker: worker,
+    parentSessionId,
+    toolCallId,
+    childSessionFile,
+    jobId: normalizedJobId,
+    asyncState,
+    ...(asyncType ? { asyncType } : {}),
+    ...(batchResultCount !== null ? { batchResultCount } : {}),
+    phase,
+    nativeFrameType: 'tool_execution_end',
+    provenance: 'wire_frame',
+    ok: phase === NATIVE_PHASE.COMPLETED ? true : phase === NATIVE_PHASE.FAILED ? false : null,
+    invocationOk: !isError,
+    gaps: endGaps,
+    controls: [],
+    ...(unknownFields ? { unknownFields } : {}),
+  };
+}
+
+/**
+ * Normalize an OMP RPC subagent frame (`subagent_lifecycle` / `subagent_progress`) into a
+ * subagent observation record.
+ *
+ * rpc.md: these frames exist ONLY when the host requested `set_subagent_subscription`
+ * (default 'off'; the adapter requests 'progress'). The native registry re-emits
+ * `subagent_lifecycle` with the SAME id/sessionFile/parentToolCallId on terminal
+ * transitions — that second frame is the raw completion event for a detached task job,
+ * and it is the ONLY wire source of real child terminal status.
+ *
+ * `subagent_progress` payloads carry prompt/assignment/output text (task, assignment,
+ * progress.recentOutput, …): never retained — unknown top-level fields land presence-only
+ * in unknownFields. `subagent_event` ('events' level, full child conversation events)
+ * returns null: Baton never subscribes at that level and child transcript content is not
+ * an observation this module makes.
+ *
+ * @param {object} frame - raw RPC subagent frame from omp-rpc.mjs
+ * @param {{ worker?: string|null, sessionId?: string|null }} parentContext
+ * @returns {object|null}
+ */
+export function normalizeOmpSubagentFrame(frame, parentContext) {
+  if (frame === null || typeof frame !== 'object' || Array.isArray(frame)) return null;
+  if (frame.type !== 'subagent_lifecycle' && frame.type !== 'subagent_progress') return null;
+  const payload = frame.payload;
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
+
+  const worker = typeof parentContext?.worker === 'string' ? parentContext.worker : null;
+  const parentSessionId = typeof parentContext?.sessionId === 'string' ? parentContext.sessionId : null;
+  const parentToolCallId = typeof payload.parentToolCallId === 'string' && payload.parentToolCallId.length > 0
+    ? payload.parentToolCallId : null;
+  const childSessionFile = typeof payload.sessionFile === 'string' ? payload.sessionFile : null;
+
+  // Child records key by the CHILD identity in an explicit `subagent:` namespace — a batch
+  // task call spawns several children under ONE parentToolCallId, so the parent call id
+  // alone would conflate them. The parent invocation linkage rides parentInvocationKey.
+  const subagentIdOf = (id) => (typeof id === 'string' && id.length > 0 ? id : null);
+  const parentInvocationKey = parentToolCallId
+    ? makeInvocationKey('omp', worker, parentSessionId, parentToolCallId) : null;
+
+  if (frame.type === 'subagent_progress') {
+    const progress = payload.progress !== null && typeof payload.progress === 'object' && !Array.isArray(payload.progress)
+      ? payload.progress : {};
+    const subagentId = subagentIdOf(progress.id);
+    const invocationKey = makeInvocationKey('omp', worker, parentSessionId,
+      subagentId ? `subagent:${subagentId}` : null);
+    const gaps = [];
+    if (!subagentId) gaps.push('no_stable_child_id');
+    if (!parentToolCallId) gaps.push('parent_tool_call_unknown');
+    if (!parentSessionId) gaps.push('parent_session_id_unknown');
+    if (!childSessionFile) gaps.push('child_session_id_unknown');
+    const unknownFields = captureUnknownFields(payload, OMP_SUBAGENT_PROGRESS_PAYLOAD_KNOWN);
+    const progressUnknownFields = captureUnknownFields(progress, OMP_SUBAGENT_PROGRESS_NESTED_KNOWN);
+    return {
+      harness: 'omp',
+      invocationKey,
+      ...(parentInvocationKey ? { parentInvocationKey } : {}),
+      parentWorker: worker,
+      parentSessionId,
+      toolCallId: parentToolCallId,
+      subagentId,
+      agentType: typeof payload.agent === 'string' ? payload.agent : null,
+      childSessionFile,
+      progressStatus: typeof progress.status === 'string' ? progress.status : null,
+      // A progress tick is in-flight evidence only — never a completion signal.
+      phase: NATIVE_PHASE.STARTED,
+      nativeFrameType: 'subagent_progress',
+      provenance: 'wire_frame',
+      gaps: [...gaps, 'progress_text_not_retained', 'completion_unknown', 'process_ownership_unknown'],
+      controls: [],
+      ...(unknownFields ? { unknownFields } : {}),
+      ...(progressUnknownFields ? { progressUnknownFields } : {}),
+    };
+  }
+
+  // subagent_lifecycle
+  const subagentId = subagentIdOf(payload.id);
+  const status = typeof payload.status === 'string' ? payload.status : null;
+  const invocationKey = makeInvocationKey('omp', worker, parentSessionId,
+    subagentId ? `subagent:${subagentId}` : null);
+  const phase = status !== null ? ompSubagentStatusPhase(status) : NATIVE_PHASE.UNKNOWN;
+
+  const gaps = [];
+  if (!subagentId) gaps.push('no_stable_child_id');
+  if (!parentToolCallId) gaps.push('parent_tool_call_unknown');
+  if (!parentSessionId) gaps.push('parent_session_id_unknown');
+  if (phase === NATIVE_PHASE.STARTED) gaps.push('completion_unknown');
+  if (status === null) gaps.push('subagent_status_absent');
+  else if (phase === NATIVE_PHASE.UNKNOWN) gaps.push('subagent_status_unknown');
+  if (!childSessionFile) gaps.push('child_session_id_unknown');
+  gaps.push('process_ownership_unknown');
+
+  const unknownFields = captureUnknownFields(payload, OMP_SUBAGENT_LIFECYCLE_PAYLOAD_KNOWN);
+  return {
+    harness: 'omp',
+    invocationKey,
+    ...(parentInvocationKey ? { parentInvocationKey } : {}),
+    parentWorker: worker,
+    parentSessionId,
+    toolCallId: parentToolCallId,
+    subagentId,
+    subagentIndex: Number.isSafeInteger(payload.index) ? payload.index : null,
+    agentType: typeof payload.agent === 'string' ? payload.agent : null,
+    agentSource: typeof payload.agentSource === 'string' ? payload.agentSource : null,
+    detached: payload.detached === true ? true : payload.detached === false ? false : null,
+    // Raw native status, verbatim ('started'/'completed' observed; native enum authority).
+    status,
+    childSessionFile,
+    phase,
+    nativeFrameType: 'subagent_lifecycle',
+    provenance: 'wire_frame',
+    ok: phase === NATIVE_PHASE.COMPLETED ? true : phase === NATIVE_PHASE.FAILED ? false : null,
+    gaps,
+    controls: [],
+    ...(unknownFields ? { unknownFields } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OMP parallel-task projection
+// ---------------------------------------------------------------------------
+
+/**
+ * Project a sequence of normalized OMP task observations into a parallel-task snapshot.
+ *
+ * Merges frames by invocationKey: start/end/update tool frames plus the subscription-gated
+ * subagent_lifecycle / subagent_progress frames (same key via parentToolCallId). Handles:
+ *   - Out-of-order delivery: an end before its start is an orphan
+ *   - Duplicate starts: contradictory gap recorded, last start wins
+ *   - Contradictory ends: duplicate_end gap recorded
+ *   - Incremental completion: partial results before all ends arrive
+ *   - Progress updates: refresh job identity/counts; phase upgrades ONLY on terminal state
+ *   - Subagent lifecycle: supplies actual child identity; terminal status upgrades an
+ *     in-flight phase and lands in jobTerminalState — separate from invocation completion
+ *
+ * Pure function — no side effects, no external state.
+ *
+ * @param {object[]} observations - records from normalizeOmpTaskFrame (nulls skipped)
+ * @returns {{ active: object[], completed: object[], failed: object[], orphanEnds: object[], gaps: string[] }}
+ */
+export function projectOmpParallelTasks(observations) {
+  const byInvocationKey = new Map();
+  const orphanEnds = [];
+  const projectionGaps = [];
+
+  for (const obs of observations) {
+    if (obs === null || typeof obs !== 'object') continue;
+    if (obs.harness !== 'omp') continue;
+
+    const key = obs.invocationKey;
+
+    if (obs.nativeFrameType === 'tool_execution_start') {
+      if (byInvocationKey.has(key)) {
+        projectionGaps.push(`duplicate_start:${obs.toolCallId ?? 'no_id'}`);
+      }
+      byInvocationKey.set(key, obs);
+
+    } else if (obs.nativeFrameType === 'tool_execution_end') {
+      const prior = byInvocationKey.get(key);
+      if (prior && prior.nativeFrameType === 'tool_execution_start') {
+        // Merge: combine start + end, remove transient gaps from each side
+        const mergedGaps = [
+          ...prior.gaps.filter((g) => g !== 'completion_unknown'),
+          ...obs.gaps.filter((g) => g !== 'start_frame_not_retained'),
+        ];
+        byInvocationKey.set(key, {
+          ...prior,
+          // End-frame fields override start-frame fields for final state
+          phase: obs.phase,
+          nativeFrameType: 'tool_execution_end',
+          childSessionFile: obs.childSessionFile,
+          jobId: obs.jobId,
+          asyncState: obs.asyncState,
+          ...(obs.asyncType ? { asyncType: obs.asyncType } : {}),
+          ...(obs.batchResultCount !== null && obs.batchResultCount !== undefined
+            ? { batchResultCount: obs.batchResultCount } : {}),
+          ...(obs.progressCount !== undefined ? { progressCount: obs.progressCount } : {}),
+          ok: obs.ok,
+          gaps: [...new Set(mergedGaps)],
+          ...(obs.unknownFields ? { unknownFieldsEnd: obs.unknownFields } : {}),
+        });
+      } else if (prior && prior.nativeFrameType === 'tool_execution_end') {
+        projectionGaps.push(`duplicate_end:${obs.toolCallId ?? 'no_id'}`);
+      } else {
+        // End arrived with no matching start: orphan
+        orphanEnds.push({ ...obs, gaps: [...obs.gaps, 'start_frame_missing'] });
+        projectionGaps.push(`orphan_end:${obs.toolCallId ?? 'no_id'}`);
+      }
+    } else if (obs.nativeFrameType === 'tool_execution_update') {
+      const prior = byInvocationKey.get(key);
+      if (prior && prior.nativeFrameType !== 'tool_execution_update') {
+        // Progress refresh: job identity/counts update; the phase upgrades ONLY via an
+        // explicit terminal async state (live evidence: updates stay 'running').
+        const terminal = obs.phase === NATIVE_PHASE.COMPLETED || obs.phase === NATIVE_PHASE.FAILED;
+        byInvocationKey.set(key, {
+          ...prior,
+          jobId: obs.jobId ?? prior.jobId,
+          asyncState: obs.asyncState ?? prior.asyncState,
+          ...(obs.asyncType ? { asyncType: obs.asyncType } : {}),
+          ...(obs.progressCount !== undefined ? { progressCount: obs.progressCount } : {}),
+          ...(obs.batchResultCount !== undefined ? { batchResultCount: obs.batchResultCount } : {}),
+          ...(terminal ? { phase: obs.phase, ok: obs.ok } : {}),
+          gaps: [...new Set([
+            ...prior.gaps,
+            ...obs.gaps.filter((g) => g !== 'start_frame_not_retained'),
+          ].filter((g) => !(terminal && g === 'async_job_in_flight')))],
+          ...(obs.unknownFields ? { unknownFieldsUpdate: obs.unknownFields } : {}),
+        });
+      } else if (!prior) {
+        // An update with no retained start/end: in-flight evidence, never completion.
+        byInvocationKey.set(key, obs);
+      } // consecutive updates collapse into the latest tick
+    } else if (obs.nativeFrameType === 'subagent_lifecycle' || obs.nativeFrameType === 'subagent_progress') {
+      // Child records key by child identity (`subagent:<id>` namespace), batch-safe under
+      // one parentToolCallId. They are first-class records — terminal child truth stands
+      // SEPARATE from the management invocation record, never merged into it. Repeated
+      // frames for the same child collapse to the latest observation (last status wins).
+      byInvocationKey.set(key, obs);
+    }
+  }
+
+  const active = [];
+  const completed = [];
+  const failed = [];
+
+  for (const obs of byInvocationKey.values()) {
+    switch (obs.phase) {
+      case NATIVE_PHASE.STARTED:
+      case NATIVE_PHASE.UNKNOWN:
+        active.push(obs);
+        break;
+      case NATIVE_PHASE.COMPLETED:
+        completed.push(obs);
+        break;
+      case NATIVE_PHASE.FAILED:
+        failed.push(obs);
+        break;
+      default:
+        active.push(obs);
+    }
+  }
+
+  return { active, completed, failed, orphanEnds, gaps: projectionGaps };
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code 2.1.269
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize a Claude Code `tool_progress` wire frame into a subagent observation record.
+ *
+ * Binary evidence: only `tool_progress` frames that contain `subagent_type` represent
+ * native subagent delegation. Regular Bash/REPL/heartbeat progress frames lack this field
+ * and must return null.
+ *
+ * Returns null for:
+ *   - any frame type other than 'tool_progress'
+ *   - tool_progress frames without a string `subagent_type` (Bash, REPL, heartbeat)
+ *   - assistant / tool_use / result / system frames (never subagent evidence in this module)
+ *
+ * claude-session.mjs calls this at its wire boundary, before ordinary tool handling.
+ *
+ * @param {object} frame - raw Claude Code stream-json wire frame
+ * @param {{ worker?: string|null, sessionId?: string|null }} parentContext
+ * @returns {object|null}
+ */
+export function normalizeClaudeToolProgressFrame(frame, parentContext) {
+  if (frame === null || typeof frame !== 'object' || Array.isArray(frame)) return null;
+  if (frame.type !== 'tool_progress') return null;
+  // Binary evidence: `subagent_type:e.data.agentType` — absent from Bash/REPL/heartbeat frames.
+  // A tool_progress frame is a subagent delegation ONLY if it carries a string subagent_type.
+  if (typeof frame.subagent_type !== 'string') return null;
+
+  const worker = typeof parentContext?.worker === 'string' ? parentContext.worker : null;
+  const parentSessionId = typeof parentContext?.sessionId === 'string' ? parentContext.sessionId : null;
+  const toolUseId = typeof frame.tool_use_id === 'string' && frame.tool_use_id.length > 0
+    ? frame.tool_use_id : null;
+
+  // JSON-tuple key: stable per-invocation handle, namespace-safe across parent sessions.
+  const invocationKey = makeInvocationKey('claude-code', worker, parentSessionId, toolUseId);
+
+  const gaps = [];
+  if (!toolUseId) gaps.push('no_stable_child_id');
+  if (!parentSessionId) gaps.push('parent_session_id_unknown');
+
+  // Binary evidence: `...e.data.resolved!==!0&&{subagent_retry:{agent_id,attempt,max_retries,...}}`
+  // subagent_retry present → subagent is being retried or still in flight
+  // subagent_retry absent → subagent resolved (outcome not observable from progress frame alone)
+  const subagentRetry = frame.subagent_retry !== undefined
+    ? (typeof frame.subagent_retry === 'object' && frame.subagent_retry !== null
+      ? Object.fromEntries(['agent_id', 'attempt', 'max_retries'].flatMap((key) => {
+        const value = frame.subagent_retry[key];
+        return typeof value === 'string' || Number.isSafeInteger(value) ? [[key, value]] : [];
+      })) : null)
+    : null;
+
+  const unknownFields = captureUnknownFields(frame, CLAUDE_TOOL_PROGRESS_KNOWN);
+
+  return {
+    harness: 'claude-code',
+    invocationKey,
+    parentWorker: worker,
+    parentSessionId,
+    toolUseId,
+    parentToolUseId: typeof frame.parent_tool_use_id === 'string' ? frame.parent_tool_use_id : null,
+    subagentType: frame.subagent_type,
+    // session_id in the frame is the emitting (parent) session's context, not the child session.
+    // Stored for reference; child session identity is not observable from progress frames alone.
+    sessionId: typeof frame.session_id === 'string' ? frame.session_id : null,
+    uuid: typeof frame.uuid === 'string' ? frame.uuid : null,
+    subagentRetry,
+    // tool_progress is an in-flight observation; final outcome is not determinable here.
+    phase: NATIVE_PHASE.STARTED,
+    nativeFrameType: 'tool_progress',
+    provenance: 'wire_frame',
+    gaps: [...gaps, 'completion_unknown', 'process_ownership_unknown', 'child_session_id_unknown'],
+    controls: [],
+    ...(unknownFields ? { unknownFields } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Codex 0.154.0
+// ---------------------------------------------------------------------------
+
+// Map CollabAgentToolCallStatus to NATIVE_PHASE.
+// Schema: inProgress|completed|failed|interrupted
+function collabStatusToPhase(status) {
+  if (status === 'completed') return NATIVE_PHASE.COMPLETED;
+  if (status === 'failed') return NATIVE_PHASE.FAILED;
+  if (status === 'inProgress' || status === 'interrupted') return NATIVE_PHASE.STARTED;
+  return NATIVE_PHASE.UNKNOWN;
+}
+
+/**
+ * Normalize a Codex `item/completed` notification params into a subagent observation.
+ *
+ * Schema source: codex app-server generate-json-schema --experimental
+ *   v2/ThreadReadResponse.json → definitions.ThreadItem → oneOf[10] (CollabAgentToolCallThreadItem)
+ *
+ * Required schema fields: id, tool, status, senderThreadId, receiverThreadIds, agentsStates
+ * The `frame` parameter is the JSON-RPC `item/completed` notification params:
+ *   { item: { type:'collabAgentToolCall', id, tool, status, senderThreadId,
+ *             receiverThreadIds, agentsStates }, threadId, turnId }
+ *
+ * Field semantics (from schema descriptions):
+ *   id:               Unique identifier for this collab tool call → stable invocation ID
+ *   tool:             Name of the collab tool (spawnAgent/sendInput/resumeAgent/…)
+ *   status:           Invocation status (inProgress/completed/failed/interrupted)
+ *   senderThreadId:   Thread ID of the agent issuing the collab request
+ *   receiverThreadIds: Thread IDs of the receiving agents
+ *   agentsStates:     Last known status of the target agents {[childThreadId]: {status, message?}}
+ *
+ * NOTE: invocation status (item.status) and per-child status (agentsStates[id].status) are
+ * separate. A completed invocation may still show children with running/pendingInit status
+ * if the snapshot is stale. Both are preserved in the observation.
+ *
+ * Returns null for all other frame types.
+ *
+ * codex-appserver.mjs calls this for item/started and item/completed notifications.
+ *
+ * @param {object} frame - JSON-RPC item/completed params from Codex app-server
+ * @param {{ worker?: string|null, sessionId?: string|null }} parentContext
+ * @returns {object|null}
+ */
+export function normalizeCodexFrame(frame, parentContext) {
+  if (frame === null || typeof frame !== 'object' || Array.isArray(frame)) return null;
+  const item = frame.item;
+  // Schema: type discriminant for collabAgentToolCall variant.
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+  if (item.type !== 'collabAgentToolCall') return null;
+
+  const worker = typeof parentContext?.worker === 'string' ? parentContext.worker : null;
+  const parentSessionId = typeof parentContext?.sessionId === 'string' ? parentContext.sessionId : null;
+
+  // Schema: `id` is the unique identifier for this collab tool call. Required field.
+  const collabToolCallId = typeof item.id === 'string' && item.id.length > 0 ? item.id : null;
+  // JSON-tuple key using the tool call ID as the stable per-invocation handle.
+  const invocationKey = makeInvocationKey('codex', worker, parentSessionId, collabToolCallId);
+
+  // Schema: `tool` — CollabAgentTool enum value
+  const tool = typeof item.tool === 'string' ? item.tool : null;
+  // Schema: `status` — CollabAgentToolCallStatus (invocation level, not child level)
+  const invocationStatus = typeof item.status === 'string' ? item.status : null;
+  // Schema: `senderThreadId` — required string
+  const senderThreadId = typeof item.senderThreadId === 'string' ? item.senderThreadId : null;
+  // Schema: `receiverThreadIds` — required array of strings; child target identities
+  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds.filter((id) => typeof id === 'string' && id.length) : [];
+  // Schema: `agentsStates` — required object; { [childThreadId]: {status, message?} }
+  // Per-child status is SEPARATE from invocation status — both are preserved.
+  const agentsStates = item.agentsStates !== null && typeof item.agentsStates === 'object' && !Array.isArray(item.agentsStates)
+    ? Object.fromEntries(Object.entries(item.agentsStates).map(([id, state]) => [id, {
+      status: typeof state?.status === 'string' ? state.status : 'unknown',
+      ...(typeof state?.message === 'string' || state?.message === null ? { message: state.message } : {}),
+    }])) : {};
+
+  const gaps = [];
+  if (!collabToolCallId) gaps.push('no_stable_child_id');
+  if (!parentSessionId) gaps.push('parent_session_id_unknown');
+
+  const itemUnknownFields = captureUnknownFields(item, CODEX_COLLAB_ITEM_KNOWN);
+  const paramsUnknownFields = captureUnknownFields(frame, CODEX_ITEM_PARAMS_KNOWN);
+
+  return {
+    harness: 'codex',
+    invocationKey,
+    parentWorker: worker,
+    parentSessionId,
+    collabToolCallId,
+    tool,
+    // Invocation-level status (inProgress/completed/failed/interrupted).
+    // Not the same as per-child status in agentsStates.
+    invocationStatus,
+    senderThreadId,
+    // Target children (populated from receiverThreadIds per schema description:
+    // "Thread ID of the receiving agent, when applicable.")
+    receiverThreadIds,
+    // Per-child status snapshot (CollabAgentState: {status, message?}).
+    // CollabAgentStatus enum: pendingInit|running|interrupted|completed|errored|shutdown|notFound
+    agentsStates,
+    turnId: typeof frame.turnId === 'string' ? frame.turnId : null,
+    threadId: typeof frame.threadId === 'string' ? frame.threadId : null,
+    // Phase derived from invocation status. Child-level completion is tracked in agentsStates.
+    phase: collabStatusToPhase(invocationStatus),
+    nativeFrameType: 'collabAgentToolCall',
+    provenance: 'wire_frame',
+    gaps,
+    controls: [],
+    ...(itemUnknownFields ? { unknownFields: itemUnknownFields } : {}),
+    ...(paramsUnknownFields ? { unknownParamsFields: paramsUnknownFields } : {}),
+  };
+}

@@ -1,0 +1,68 @@
+{
+  "at": "2026-07-13T14:09:18.457Z",
+  "baseSha": "20d9adcf663582d5501fbc87166785e9e39b78d3",
+  "repoHead": "20d9adcf663582d5501fbc87166785e9e39b78d3",
+  "buildPass": false,
+  "fatal": null,
+  "credential": {
+    "present": true,
+    "ownerOnly": true
+  },
+  "route": {
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase55-toolchain-projection-implementation\"]",
+    "exact": true
+  },
+  "result": {
+    "ready": true,
+    "status": "failed"
+  },
+  "budgetUsed": {
+    "tokens": 130059,
+    "usd": 4.541078
+  },
+  "captureSha": "e766baba4719a521ff472c7a9a2bda8e53bccacd",
+  "verifyAccept": false,
+  "processStarted": {
+    "schemaVersion": 1,
+    "generation": 1,
+    "pid": 30388,
+    "processGroupId": 30388,
+    "phase": "initializing"
+  },
+  "processClosed": {
+    "schemaVersion": 1,
+    "generation": 1,
+    "pid": 30388,
+    "processGroupId": 30388,
+    "code": 143,
+    "signal": null,
+    "ready": true
+  },
+  "kill": {
+    "ack": {
+      "ok": true,
+      "result": "confirmed",
+      "emulated": false
+    },
+    "requestedSeq": 139,
+    "confirmedSeq": 142
+  },
+  "responses": [],
+  "cleanup": {
+    "leaderGone": true,
+    "groupGone": true,
+    "taskWorktreeGone": true,
+    "runtimeGone": true,
+    "taskBranchGone": true,
+    "ownershipRestored": true,
+    "writerReleased": true
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T01:25:55.925Z",
+  "salt": "bg20260813012555",
+  "role": "blue-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-636bc8331a528e1a2499aea56cf505c5"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blue-77",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blue-77": {
+      "pin": "2b994d5c24ef3fb2071b29d26ffea1526a0a75d7",
+      "paths": [
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 422,
+  "verdict": "BLUE-77-OK"
+}

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "suite-foundry-2026-08-13-wave-b",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/suite-foundry-2026-08-13-b/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-b/coordinator-brief.md",
+      "report": "docs/reference/evidence/suite-foundry-2026-08-13-b/suite-qa.md"
+    },
+    {
+      "role": "row-suite-155",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/cli-silent-start-red.test.mjs", "docs/reference/evidence/cli-silent-start-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-b/row-suite-155.md",
+      "report": "impl/test/cli-silent-start-red.test.mjs"
+    },
+    {
+      "role": "row-suite-156",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/mcp-profile-parity-red.test.mjs", "docs/reference/evidence/mcp-profile-parity-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-b/row-suite-156.md",
+      "report": "impl/test/mcp-profile-parity-red.test.mjs"
+    },
+    {
+      "role": "row-suite-161",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/orchestrator-plan-object-red.test.mjs", "docs/reference/evidence/orchestrator-plan-object-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-b/row-suite-161.md",
+      "report": "impl/test/orchestrator-plan-object-red.test.mjs"
+    },
+    {
+      "role": "row-suite-164",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/blind-waits-red.test.mjs", "docs/reference/evidence/blind-waits-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-b/row-suite-164.md",
+      "report": "impl/test/blind-waits-red.test.mjs"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the suite — every pin becomes a row at its named stage; write the suite AND the notes incrementally; run it twice and record both splits." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the suite law binds you, including the attempt-echo law in the FIRST FIVE lines of both deliverables). Publish notes to the `shared` scratchpad as you go; a failed publish is evidence — record the refusal. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "result", "body": "Rows settled — VERIFY ON DISK FIRST (sibling worktrees at ../../wt/ws-*/ or the main repo post-harvest; silence is not death). Then verify per your brief and write suite-qa.md." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/suite-foundry-2026-08-13-b/suite-qa.md", "mustContain": "SUITE-QA v1" },
+      { "path": "impl/test/cli-silent-start-red.test.mjs", "mustContain": "cli-silent-start" },
+      { "path": "docs/reference/evidence/cli-silent-start-2026-08-13/suite-draft-notes.md", "mustContain": "#155" },
+      { "path": "impl/test/mcp-profile-parity-red.test.mjs", "mustContain": "mcp-profile-parity" },
+      { "path": "docs/reference/evidence/mcp-profile-parity-2026-08-13/suite-draft-notes.md", "mustContain": "#156" },
+      { "path": "impl/test/orchestrator-plan-object-red.test.mjs", "mustContain": "orchestrator-plan-object" },
+      { "path": "docs/reference/evidence/orchestrator-plan-object-2026-08-13/suite-draft-notes.md", "mustContain": "#161" },
+      { "path": "impl/test/blind-waits-red.test.mjs", "mustContain": "blind-waits" },
+      { "path": "docs/reference/evidence/blind-waits-2026-08-13/suite-draft-notes.md", "mustContain": "#164" }
+    ]
+  }
+}

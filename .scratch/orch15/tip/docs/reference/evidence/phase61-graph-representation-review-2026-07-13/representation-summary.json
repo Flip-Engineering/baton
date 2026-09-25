@@ -1,0 +1,32 @@
+{
+  "at": "2026-07-13T22:02:42.813Z",
+  "implementationSha": "340146d56f46bea15b2373b540a919977990d52d",
+  "beforeSha": "dfcdf022cfdd108b113f27856d4660775a48e920",
+  "target": "impl/src/atlas-representation-review.mjs",
+  "producerKind": "structural_delta",
+  "result": {
+    "status": "ok",
+    "rung": "R1",
+    "representationType": "ast_cst_structural_delta",
+    "grounding": "derived",
+    "identityDigest": "e567279bc032fcc9dbc5b0fdc90d255296b50899bdaf34784f75a6271b4f3dfd",
+    "sourceArtifactDigest": "fd98af0c1cd02055094a4f1410e4c96a347603ca9cf1b4a68a974c5a77ba5e2a",
+    "receiptDigest": "c9590084db717097d88076153b312c869d321c2b2746f29f509d249682ad7f78"
+  },
+  "reverify": {
+    "status": "ok",
+    "ok": true,
+    "graphProjectionDigest": "4986672e02c23d3caeeb825e1485fa88fe2859df9cfd6ff74226d58018a91f14"
+  },
+  "graphEdges": [
+    "DerivedFrom",
+    "ObservedIn",
+    "ProducedBy"
+  ],
+  "authorityDenied": true,
+  "driverClosed": true,
+  "worktreesRemoved": true,
+  "ownerRootEmpty": true,
+  "fatal": null,
+  "pass": true
+}

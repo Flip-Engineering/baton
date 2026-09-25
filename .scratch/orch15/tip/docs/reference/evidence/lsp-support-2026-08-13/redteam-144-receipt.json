@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T01:53:46.138Z",
+  "salt": "r120260813015346",
+  "role": "redteam-144",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2360bb1e9dc08ea3c83de72c9cdf0d50"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-144",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-144": {
+      "pin": "a070fccdbc829cd60302da3e52ae73145e2dc901",
+      "paths": [
+        "docs/reference/evidence/lsp-support-2026-08-13/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 427,
+  "verdict": "REDTEAM-144-OK"
+}

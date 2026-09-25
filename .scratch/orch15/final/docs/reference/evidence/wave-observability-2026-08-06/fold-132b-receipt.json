@@ -1,0 +1,40 @@
+{
+  "attempt": "2026-08-07T00:59:41.345Z",
+  "salt": "f920260807005941",
+  "role": "fold-132b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-8c94abd07b7631756b96d61232d88fec"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-132b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-132b": {
+      "pin": "eacd86e9d4b8f626e4d17506e779ef2b9f4cd491",
+      "paths": [
+        "impl/test/wave-observability-red.test.mjs",
+        "docs/reference/evidence/wave-observability-2026-08-06/suite-fold-2.md",
+        "docs/reference/evidence/wave-observability-2026-08-06/suite-draft-notes.md",
+        "docs/reference/evidence/wave-observability-2026-08-06/wave-observability-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 346,
+  "verdict": "FOLD-132B-OK"
+}

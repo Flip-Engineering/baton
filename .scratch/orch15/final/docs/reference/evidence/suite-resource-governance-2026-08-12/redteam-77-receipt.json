@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-12T20:01:44.773Z",
+  "salt": "rg20260812200144",
+  "role": "redteam-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a7930f8d1fb44f5175f2d330f3db52b8"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-77",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-77": {
+      "pin": "d464db1af5630b368044cd82bacccafeffe2eeb7",
+      "paths": [
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 409,
+  "verdict": "RT-77-OK"
+}

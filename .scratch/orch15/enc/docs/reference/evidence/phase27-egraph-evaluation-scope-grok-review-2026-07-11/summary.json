@@ -1,0 +1,469 @@
+{
+  "at": "2026-07-12T06:11:48.020Z",
+  "repoHead": "c949c666cdd1c387c9c7d783334fc914333baca5",
+  "reviewProfile": "egraph-evaluation",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-egraph-evaluation-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-egraph-evaluation-45.md",
+      "stance": "constructive",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-evaluation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54f3-2b6b-7e32-8417-02f621535310",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/wt/grok-egraph-evaluation-45",
+          "repoRoot": "/private/tmp/baton-egraph-evaluation.FAIShp",
+          "baseSha": "c949c666cdd1c387c9c7d783334fc914333baca5",
+          "branch": "baton/grok-egraph-evaluation-45",
+          "ownerTaskId": "grok-egraph-evaluation-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-egraph-evaluation-45",
+        "worktree": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/wt/grok-egraph-evaluation-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 58225,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:10:48.162Z"
+      },
+      "pid": 13821,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-evaluation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 17
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "a3d9e27d291fe01bf8fee065733d054a6e58c5a8",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-evaluation-review\"]"
+          }
+        },
+        "seq": 366,
+        "ts": "2026-07-12T06:11:45.343Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 17
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-evaluation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54f3-2b6b-7e32-8417-02f621535310",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/wt/grok-egraph-evaluation-45",
+          "repoRoot": "/private/tmp/baton-egraph-evaluation.FAIShp",
+          "baseSha": "c949c666cdd1c387c9c7d783334fc914333baca5",
+          "branch": "baton/grok-egraph-evaluation-45",
+          "ownerTaskId": "grok-egraph-evaluation-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Grok e-graph / equality-saturation evaluation (R7) — Decision at catalog c949c66\n\n*Catalogued R7 (docs/26 §I): e-graph/equality-saturation experiments where the domain is tractable. Sources: SYSTEM.md §9/feature index; docs/15 §§2–6; docs/21; docs/26 §§H–I; reviews/frontier-features/representation.md Feature 8 + FILTER; Phase 24 R4 ceiling; Phase 25 R5 behavioral fingerprint; Phase 26 structured-merge contracts/evidence. No e-graph engine, rewrite rules, or semantic proof invented here. Bounded expression-DSL evidence is never source-program equivalence.*\n\n## Decision\n\n**Per-domain verdicts (explicit):**\n\n| Domain | Verdict | Rationale (evidence, not aspiration) |\n|---|---|---|\n| **Whole-repo** | **Retire** | Doc 15 §4e and frontier review Feature 8: equality saturation explodes at program/repo scale; HEC/DialEgg remain expression/kernel-level (2025–26). Repo-scale e-graphs were already a CUT candidate. Phase 24 pattern: negative results become executable refusals, not silent omission. |\n| **Whole-function** | **Redirect** | Prefer Phase 25 `AtlasBehaviorFingerprint` (bounded empirical R5): observed corpus I/O + effect bounds, labeled `observed_corpus_agreement_not_semantic_equivalence`. Covers “did behavior change?” for fleet trust without equality saturation. Doc 15 §4c + frontier Feature 4; docs/21 walls e-graphs off the build path. |\n| **Expression / kernel DSL** | **Keep** (catalogued research only; not product build) | Sole domain that preserves the R7 *shape* without claiming readiness: mechanical e-class membership under a *pinned* operator rewrite theory for a *bounded pure expression DSL*. Doc 15 §4e and docs/26 §I (“where the domain is tractable”). No engine ships in this Decision. |\n\n**Fleet-level summary:** R7 is **not** on the coordinator/trust-gate build path. Whole-repo claims are retired with an executable tombstone. Whole-function equivalence claims **redirect** to Phase 25 (and ordinary trust-gate re-verify), never to e-class membership over source AST/CFG. Expression/kernel R7 remains **catalogued**, gated, and reopenable only by the machine-testable evidence in the contract below. Phase 26 structured merge stays syntax-aware only; e-graph, CPG, and fingerprint have **no merge authority** (Phase 26 evidence ban holds).\n\n**Smallest executable evaluation (no engine):** ship a Phase-24-style **policy ceiling + tombstone** for R7 domains—typed `rung_ceiling` / `r7_domain_retired` / `r7_redirect` refusals—plus red tests that prove mislabeling and over-claim fail closed. Do **not** integrate egg/egglog/HEC, invent rewrite rules, or emit “semantic equivalence” over Baton’s JS/TS product surface.\n\n**What this is not:** not a compiler, not translation validation (Phase 24 R4 still refused for JS/TS), not behavioral proof, not true semantic merge, not autoformalization.\n\n## Proposed numbered contract\n\n**EG0 — Decision artifact.** This file is the recorded Decision for catalogued R7 at evaluation id `grok-egraph-evaluation-45`. Retirement/redirect/keep are domain-scoped; nothing is deleted from docs/26 §I without this Decision class of record.\n\n**EG1 — Domain taxonomy (mandatory labels).** Every R7-facing API, log fact, or brief claim MUST name exactly one domain:\n\n1. `whole_repo` — multi-file / multi-module program graph or worktree-wide saturation  \n2. `whole_function` — single source function/method body as the e-graph subject  \n3. `expression_kernel` — pure expression AST in an operator-pinned **bounded DSL** (not host-language source)\n\n**EG2 — Whole-repo: retire (executable tombstone).**  \nAny request with domain `whole_repo` and operation in `{egraph.build, egraph.saturate, egraph.equivalent, eqsat.validate}` MUST fail typed `r7_domain_retired` with:\n\n- `maximumHonestDomain: expression_kernel`  \n- `decisionId: grok-egraph-evaluation-45`  \n- `redirects: []` (no substitute rung pretends repo-scale eqsat)  \n- payload media type / schema **must not** contain `semantic_equivalence`, `compiler_ir`, or unlabeled `equivalent: true`\n\nNo silent fallback to CPG, structural delta, fingerprint, or structured merge under an e-graph label (mirrors Phase 24 RG2/RG6).\n\n**EG3 — Whole-function: redirect.**  \nDomain `whole_function` + any e-graph op MUST fail typed `r7_redirect` with:\n\n- `redirectCapability: atlas.behavior_fingerprint` (Phase 25)  \n- `redirectEvidence: phase25-atlas-behavior-fingerprint-2026-07-11`  \n- `labelRequired: observed_corpus_agreement_not_semantic_equivalence`  \n- explicit prose fact: fingerprint agreement is **not** e-class membership and **not** merge authority (Phase 25/26 honest boundaries)\n\nOptional secondary redirect: ordinary trust-gate re-verify of pinned tests. Never invent function-level equality saturation.\n\n**EG4 — Expression/kernel: keep as catalogued research, refuse product pretence.**  \nDomain `expression_kernel` MAY remain visible in the catalog and in `representation.ceiling`-class capability cards as `research_catalogued`. Until **EG10 reopening evidence** is satisfied:\n\n- product coordinator MUST refuse `egraph.*` / `eqsat.*` as typed `r7_not_shipped` (or equivalent)  \n- limitations MUST state: no rewrite engine, no rule set, no saturation result, no source-program claim  \n\nA future **research prototype** (out of product path) is allowed only if every EG5–EG9 gate is green *before* any artifact may say `eclass_member`.\n\n**EG5 — Falsifiable demand gate.**  \nR7 expression/kernel work may reopen only if a logged fleet task corpus shows ≥N tasks (N≥10, fixed in the reopening PR) where:\n\n1. the claim is pure algebraic/expression rewrite under a named theory, **and**  \n2. Phase 25 fingerprint + trust-gate tests are **insufficient** (documented counterexample: fingerprint agrees or is inapplicable, but a wrong rewrite would still pass the suite), **and**  \n3. the alternative is not “run more tests / fuzz” alone  \n\nMachine check: JSONL demand ledger with fields `{task_id, claim_class, why_r5_insufficient, theory_id}` and `jq` count ≥N.\n\n**EG6 — Domain/tool/translation gates (expression/kernel only).**  \nReopening package MUST pin:\n\n| Gate | Machine-testable bar |\n|---|---|\n| Domain | Single pure expression grammar ≤K nodes (K≤64 default); no statements, no I/O, no refs, no effects |\n| Tool | Named external eqsat tool + version digest **or** explicit “no tool—refuse”; Baton does not invent egglog rules in-tree as product |\n| Translation | Bidirectional round-trip tests: DSL text → tool term → DSL text byte-stable on a fixed fixture set; any lossy step fails typed |\n| Scale | Wall time ≤T and e-graph nodes ≤M on the fixture suite (T,M fixed in reopening PR); any overrun = fail closed |\n| Soundness | Only **syntactic e-class membership under pinned rules** may be claimed; ban words `source_equivalent`, `semantically_equal`, `repo_safe`, `merge_ok` on the artifact |\n\n**EG7 — Honest non-claims (always on).**  \nProvenance on any future R7 artifact MUST include fixed strings:\n\n- `not_source_program_equivalence`  \n- `not_whole_function_proof`  \n- `not_merge_authority`  \n- `not_translation_validation`  \n\nPhase 26: e-graph results MUST NOT hook integration authority (same ban as CPG/fingerprint).\n\n**EG8 — Tombstone capability (smallest ship).**  \n`representation.r7_policy` (name illustrative) returns ACI-envelope policy only:\n\n- status, summary, token-bounded payload, content-addressed digest, provenance  \n- per-domain enum: `retired` | `redirect` | `research_catalogued`  \n- reverify rebuilds identical digest from the same request (Phase 24 RG5 pattern)  \n\nNo kind/media type may claim an e-graph was built.\n\n**EG9 — Acceptance for this Decision (executable without engine).**  \nFocused reds (see next section) + canonical suite green. Baton-on-Baton optional: query a real `.mjs` path, request false R7 ops for all three domains, observe typed refusals, balance capability events, leave no residue.\n\n**EG10 — Exact reopening evidence (machine-testable).**  \nR7 expression/kernel may move from `research_catalogued` to `prototype_allowed` **iff** a single reopening PR adds a directory:\n\n`docs/reference/evidence/r7-expression-kernel-reopen-<date>/`\n\ncontaining ALL of:\n\n1. `demand.jsonl` — ≥10 EG5 records; `test $(wc -l < demand.jsonl) -ge 10`  \n2. `theory.lock.json` — `{theory_id, rule_digest_sha256, tool_name, tool_version, tool_digest}`  \n3. `fixtures/` — ≥20 pure expressions; each `before`/`after` pair; `manifest.json` lists digests  \n4. `gates.json` — concrete `K`, `T_ms`, `M_nodes`, `round_trip_pass: true`  \n5. `negative.json` — ≥5 pairs that must **not** share an e-class under the pinned theory; prototype must report non-membership or refuse  \n6. `soundness_banner.txt` — exact four EG7 strings present (`grep -Fq` each)  \n7. `ci.sh` — non-interactive script exit 0 only if (1)–(6) hold and scale bounds met; exit ≠0 otherwise  \n\n**Whole-repo reopening is closed** by this Decision (no EG10 path). **Whole-function reopening** requires a *new* Decision that first falsifies Phase 25 redirect on a published counterexample corpus—not a silent R7 revive.\n\n**EG11 — Relationship to shipped ceilings.**  \nPhase 24: JS/TS max honest product rung remains R3 for IR/TV; R7 does not reopen R4.  \nPhase 25: empirical R5 is the function-level substitute.  \nPhase 26: structured merge remains lower R6 syntax rung; true semantic merge stays catalogued separately from R7.\n\n## Red tests and proof\n\n**Reds that prove this Decision (no eqsat engine required):**\n\n1. **Repo refuse:** `domain=whole_repo, op=egraph.saturate` → `r7_domain_retired`, `decisionId=grok-egraph-evaluation-45`, no artifact bytes claiming equivalence.  \n2. **Function redirect:** `domain=whole_function, op=egraph.equivalent` → `r7_redirect` naming `atlas.behavior_fingerprint` and `observed_corpus_agreement_not_semantic_equivalence`.  \n3. **Kernel not shipped:** `domain=expression_kernel, op=egraph.build` pre-EG10 → `r7_not_shipped` / research card only; zero rewrite rules loaded.  \n4. **No CPG laundering:** request that would return CPG delta labeled as e-class → typed failure; media type rejects `compiler_ir`/`semantic_equivalence` disguises (Phase 24 analogy).  \n5. **No merge authority:** inject fake `eclass_member: true` into integration path → structured integrate ignores it; only SM fresh-verify + parents may pass (Phase 26).  \n6. **Fingerprint ≠ proof:** Phase 25 agree pair still cannot set merge or “semantic equivalence” flags (existing BF boundary; regression lock).  \n7. **Reverify stability:** `representation.r7_policy` digest stable across reverify; tamper fails typed.  \n8. **EG10 negative control:** incomplete reopen dir (missing `negative.json` or `ci.sh`) → reopen checklist fails closed.\n\n**Proof obligations already satisfied by prior phases (cite, don’t re-run here):**\n\n- Phase 24: typed `rung_ceiling` for false R4; suite + Baton-on-Baton policy proof.  \n- Phase 25: BF1–BF7 reds; agreement label non-proof; sandbox/protocol hardening.  \n- Phase 26: SM1–SM10; resolver isolation; ban on CPG/fingerprint integration authority.  \n- Frontier representation FILTER Feature 8: CUT repo-scale e-graph; research-track only.\n\n**Proof this evaluation does *not* claim:** that any two host-language programs are equivalent; that egg/HEC runs in-tree; that equality saturation is ready for fleet merge or trust-gate auto-pass.\n\n## Risks and rejection criteria\n\n| Risk | Rejection criterion (auto-fail if observed) |\n|---|---|\n| **Over-claim** | Any log/UI/docs string asserts whole-repo or whole-function *semantic equivalence* via e-graphs without EG10 package + new Decision | \n| **Laundering** | CPG, IR, fingerprint, or structured-merge success relabeled as e-class membership |\n| **Engine smuggling** | Product path vendors egg/egglog/HEC or in-tree rewrite DBs “for convenience” without EG5–EG10 |\n| **DSL scope creep** | “Expression” fixtures include statements, imports, effects, or >K nodes without failing scale gate |\n| **Weak demand** | Reopen with N&lt;10 or with tasks where more tests/fuzz suffice (EG5.2 false) |\n| **Soundness theater** | Artifact omits any EG7 banner string, or claims `merge_ok` / source equivalence |\n| **Merge hook** | Integration accepts e-graph fact as authority (violates Phase 26 + EG7) |\n| **R4 confusion** | R7 prototype used to imply JS/TS compiler IR or TV (violates Phase 24) |\n| **Silent retirement** | R7 removed from docs/26 catalog without recorded Decision (violates full-system goal) |\n| **Silent revive** | Whole-repo domain re-enabled without overturning this file’s retire verdict |\n\n**Operator rule:** if a worker brief claims “prove refactor equivalent via e-graph,” the coordinator must apply EG2/EG3 refusals or Phase 25 redirect—not attempt saturation.\n\n**Net:** Retire whole-repo R7; redirect whole-function to Phase 25 behavioral fingerprints; keep expression/kernel only as a catalogued, refused-by-default research slot with a machine-testable EG10 reopen package. That is the smallest evaluation that preserves the honest bet and refuses repo-scale pretence."
+    },
+    {
+      "taskId": "grok-egraph-evaluation-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-egraph-evaluation-composer.md",
+      "stance": "adversarial",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-evaluation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54f3-2b6e-7ef2-bf42-af2c63072e43",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/wt/grok-egraph-evaluation-composer",
+          "repoRoot": "/private/tmp/baton-egraph-evaluation.FAIShp",
+          "baseSha": "c949c666cdd1c387c9c7d783334fc914333baca5",
+          "branch": "baton/grok-egraph-evaluation-composer",
+          "ownerTaskId": "grok-egraph-evaluation-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-egraph-evaluation-composer",
+        "worktree": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/wt/grok-egraph-evaluation-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 31664,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:10:48.551Z"
+      },
+      "pid": 13826,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-evaluation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 21
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "7a4cfeb669e78956c4ecf8c1d4cc8b54e486c8dd",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-evaluation-review\"]"
+          }
+        },
+        "seq": 456,
+        "ts": "2026-07-12T06:11:47.514Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 21
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-evaluation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54f3-2b6e-7ef2-bf42-af2c63072e43",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-evaluation.FAIShp/.baton/wt/grok-egraph-evaluation-composer",
+          "repoRoot": "/private/tmp/baton-egraph-evaluation.FAIShp",
+          "baseSha": "c949c666cdd1c387c9c7d783334fc914333baca5",
+          "branch": "baton/grok-egraph-evaluation-composer",
+          "ownerTaskId": "grok-egraph-evaluation-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# R7 e-graph / equality-saturation evaluation (commit `c949c66`)\n\nEvaluated against `SYSTEM.md` representation status, `docs/15-representation-and-computation.md` §§2–6, `docs/21-frontier-features.md`, `docs/26-full-system-goal.md` §§H–I, `reviews/frontier-features/representation.md` e-graph findings, and shipped Phase 24 (R4 ceiling), Phase 25 (behavioral fingerprint), and Phase 26 (structured merge) contracts plus their evidence posture. This review tries to falsify any reason to build a native Baton e-graph rung now; it does not invent an engine, rewrite rules, or semantic proof.\n\n## Decision\n\n**Verdict: retire native R7 e-graph construction across all three domains for the current pursuit order; redirect whole-function equivalence work to Phase 25; redirect expression/kernel claims to external bounded tools only if reopening gates fire.** No domain earns **keep** (build a Baton equality-saturation rung now).\n\n### Falsification pass — reasons to build now, and why each fails\n\n| Claimed demand | Falsifier at `c949c66` |\n|---|---|\n| Fleet needs mechanical proof that refactors preserve behavior | Phase 25 `behavior.fingerprint` / `behavior.compare` ships measured R5 with explicit meaning `observed_corpus_agreement_not_semantic_equivalence` (BF4, BF6). Doc 15 §5 ranks behavioral fingerprint as a **moat** and e-graph equivalence (§4e) as a **research bet**. Representation review Feature 8: CUT from build plan; Feature 4 covers the empirical need. |\n| Fleet needs semantics-preserving merge | Phase 26 adopts Mergiraf-class **syntax-aware structured merge** (SM1–SM7) with **fresh post-merge verification** (SM6). SM10 states CPG and behavioral fingerprints are **advisory only** and cannot skip SM6; true semantic merge remains research. E-graph-assisted merge is unproven at scale (doc 15 §4b). |\n| Baton needs compiler-IR–anchored equivalence | Phase 24 `AtlasRepresentationCeiling` refuses `ir.build`, `ir.delta`, and `tv.validate` for JS/TS-family sources at `maximumRung: R3` (RG2). Provenance denies translation-validation certificates (RG6). Without honest R4, e-graph saturation has no sound lowering target in the primary Baton substrate. |\n| Expression/kernel HEC/DialEgg progress justifies a rung | Representation review confirms HEC/DialEgg are **expression/kernel-scale** in 2025–26, not whole-function or whole-repo. Progress validates the *shape* of doc 15 R5/R7, not a Baton build obligation. Wrap external tools; do not build saturation. |\n| Upper rungs are sequenced next | `docs/26` §I and pursuit order (lines 284–287) keep IR, behavioral fingerprints, semantic diff/merge, and e-graphs **in the catalog** with prototype/evaluation gates — but shipped verticals are R1–R3 Atlas, R5 fingerprint, and R6 structured merge. R7 has **no** shipped capability, focused gate, or Baton-on-Baton proof. `docs/21` walls e-graph equivalence off the build path. |\n\nNo falsified row survives as a **native-build** mandate. The ladder remains catalogued; the **build** bet does not clear demand, domain, translation, scale, or soundness gates today.\n\n### Per-domain verdicts\n\n#### Whole-repo\n\n**RETIRE** native R7.\n\nDoc 15 §4e and §5: equality saturation is mature for expression DSLs, **explodes on real code**, and whole-program e-graph maintenance is not tractable. Phase 24 proves Baton’s primary JS/TS path has no R4 IR or translation-validation substrate to lower into a sound e-graph. Phase 26 closes the fleet merge gap with structured merge plus mandatory re-verification — a path that does not require saturation. Representation review: “drop repo-scale e-graphs as over-reach.”\n\n**Reopening evidence (machine-testable):** A versioned `docs/reference/evidence/r7-reopen-whole-repo-<id>/` bundle where (1) `summary.json` records `domain: whole_repo`, `language_family`, `file_count`, `loc`, and `engine: external_only`; (2) an adopted external equality engine completes saturation on **≥3** pinned real-repo tasks within deployment bounds without OOM/timeout; (3) **≥2** tasks exhibit `false_clean_structured_merge` — SM6-class verification green, structured merge green, but an independent oracle (expanded behavioral corpus or human-adjudicated differential test) proves semantic disagreement; and (4) e-graph membership **correctly rejects** the inequivalent pair while structured merge + tests incorrectly accept. Absent that bundle, whole-repo R7 stays retired.\n\n#### Whole-function\n\n**REDIRECT** to Phase 25 behavioral fingerprint and the existing trust-gate test oracle.\n\nDoc 15 §3 assigns optimization validation to “IR + e-graph check,” but §6 defers all upper rungs until the fleet proves demand; §5 says most tasks need R0–R1. Phase 25 is the first **measured** R5 vertical: sandboxed, deterministic, corpus-bound observation with honest non-equivalence semantics (BF1–BF7). Phase 26 SM10 explicitly subordinates behavioral fingerprints to fresh verification — they advise, they do not authorize. For “did this function’s behavior change?”, running a pinned corpus twice and comparing observations is strictly weaker than saturation but **strictly more honest** for source programs: it does not pretend to prove equivalence, only reports divergence on observed inputs.\n\n**Reopening evidence:** `docs/reference/evidence/r7-reopen-whole-function-<id>/` where (1) `summary.json` includes `corpus_digest`, `export_name`, and `fingerprint_agree: true`; (2) the same pair shows `trust_gate_green: true` on pinned primary verification; (3) an **expanded** oracle corpus (≥10× case count, content-addressed, disjoint from the fingerprint corpus) demonstrates `behavior_divergence: true`; and (4) a bounded external expression-level checker **on extracted pure kernels only** (not whole source files) certifies the divergence class within budget. One such bundle redirects workflow to “fingerprint + escalate corpus,” not to native saturation. Zero bundles → stay redirected.\n\n#### Expression / kernel DSL\n\n**REDIRECT** to external HEC/egglog-class adoption behind translation-validation gates; **retire** native Baton saturation engine, rewrite-rule corpus, and e-class store.\n\nRepresentation review table: egglog/egg/HEC/DialEgg confirm R5 **equivalence at kernel scale** while doc 15’s bet call holds for source programs. This domain is the only tractable saturation surface — but tractability is **bounded DSL evidence**, not source-program equivalence. Phase 24 RG6 forbids treating structural or CPG deltas as refinement certificates; any reopening must use a distinct capability, schema, and tool provenance. Building saturation in-process duplicates commodity research tooling without a fleet-demonstrated gap.\n\n**Reopening evidence:** `docs/reference/evidence/r7-reopen-expression-kernel-<id>/` where (1) `summary.json` declares `domain: expression_kernel`, `dsl_schema_version`, `external_engine_id`, `translation_validation: pass`; (2) **≥5** pinned kernel pairs from real Baton tasks (extracted, not hand-written toys) complete saturation within `wall_ms` and `node_budget` deployment caps; (3) measured **false-positive rate = 0** and **false-negative rate = 0** against a labeled equivalence corpus of **≥20** pairs with independent oracle labels; (4) **≥3** pairs are labeled equivalent where Phase 25 fingerprint **diverges** or is **inapplicable** (non-pure, effectful, or corpus-incomplete), demonstrating incremental value **beyond** fingerprint+tests; and (5) Baton issues only **wrapper** artifacts (ACI envelope, provenance, refusal on bound exceedance) — no `egraph.saturate` native implementation. Failure of (3) or absence of (4) → remain retired/redirect-only.\n\n### Summary table\n\n| Domain | Verdict | Primary substitute now | Reopen? |\n|---|---|---|---|\n| Whole-repo | **Retire** | Phase 26 structured merge + SM6 verification; R1/R3 review deltas | Only on false-clean structured-merge counterexamples at repo scale |\n| Whole-function | **Redirect** | Phase 25 `behavior.fingerprint` / `behavior.compare` + trust-gate tests | Only on fingerprint+test false-agree with oracle-diverge |\n| Expression/kernel DSL | **Redirect** (external only) | Adopt HEC/egglog-class with TV gates; no native engine | Only on labeled-corpus superiority over fingerprint |\n\n**Recorded Decision id:** `decision-r7-egraph-retire-redirect-c949c66`\n\n## Proposed numbered contract\n\nTombstone contract **EG1–EG12** makes the Decision executable without homelab integration or new dependencies. Pattern follows Phase 24 `rung_ceiling`, Phase 25 honesty envelope, and Phase 26 fail-closed refusal.\n\n### EG1 — capability tombstone\n\n`egraph.saturate`, `egraph.equivalent`, and `egraph.rewrite` are **unimplemented**. Requests fail typed `rung_retired` with `decisionId: decision-r7-egraph-retire-redirect-c949c66`, `maximumBuiltRung: R6`, and redirects: whole-function → `behavior.fingerprint` / `behavior.compare`; expression/kernel → `representation.ceiling` plus documented external-engine path; whole-repo → `integration.structured` + trust-gate verification.\n\n### EG2 — domain gate\n\nEvery request must declare `domain: whole_repo | whole_function | expression_kernel`. Undeclared or `whole_repo` requests fail `rung_retired` without fallback. `whole_function` requests fail `rung_retired` with redirect to BF1–BF7. `expression_kernel` requests fail `rung_retired` unless `reopening_evidence_ref` points to a valid `r7-reopen-expression-kernel-*` summary with `translation_validation: pass`.\n\n### EG3 — demand gate\n\nNo coordinator, merge, or trust-gate path may **require** e-graph results. SM6, BF4, and R1/R3 review remain sufficient for authorization. Advisory mentions in LOG are allowed; hard gates are not.\n\n### EG4 — tool gate\n\nBaton must not ship an in-repo equality-saturation engine, rewrite-rule corpus, or e-class store. Permitted reopening path: subprocess wrapper around a pinned external binary with bounded time, memory, and output; missing or excess bounds fail typed.\n\n### EG5 — translation gate\n\nExpression/kernel checks apply only to content-addressed extracted kernels with schema version, source span digests, and `tv.validate: pass` from an **external** translation-validation artifact. JS/TS whole-function or whole-repo sources cannot enter saturation directly. Phase 24 `rung_ceiling` refusals remain authoritative for false R4 operations.\n\n### EG6 — scale gate\n\nDeployment caps: `max_kernel_nodes`, `max_saturation_iterations`, `wall_ms`, `output_bytes`. Exceeding any cap fails typed `budget_exceeded`; partial e-graphs are never cached as success.\n\n### EG7 — soundness gate\n\nArtifacts must declare `meaning: bounded_dsl_membership_not_source_equivalence` for expression/kernel and must not use `semantic_equivalence`, `proof`, or `compiler_ir_certificate` in kind or media type. Whole-function behavioral claims remain `observed_corpus_agreement_not_semantic_equivalence` per BF4.\n\n### EG8 — ACI envelope\n\nAny future advisory wrapper result uses the bounded ACI envelope: status, summary, token-bounded payload, content-addressed refs, cost, provenance, digest/offset resume, cancellation, and deterministic `reverify`. Tombstone refusals use the same envelope with `policy_decision` media type.\n\n### EG9 — integration authority\n\nE-graph artifacts cannot satisfy SM6, advance main, skip trust-gate primary verification, or substitute for CK/result acceptance. Phase 26 SM8 replay authority unchanged.\n\n### EG10 — reopening registry\n\n`reopening_evidence_ref` must resolve to `docs/reference/evidence/r7-reopen-<domain>-<id>/summary.json` whose schema version, `domain`, `decisionId`, and `evidence_sha256` match the registry table maintained beside the Decision. Unknown refs fail `reopening_evidence_missing`.\n\n### EG11 — retirement persistence\n\n`representation.ceiling` and capability discovery surfaces list R7 as `status: retired_redirect` with per-domain redirects. Negative results retire via recorded Decision, never omission (`docs/26` §I).\n\n### EG12 — acceptance\n\nFocused reds cover EG1–EG11: tombstone refusal per domain, redirect payload correctness, budget exceedance, missing reopening ref, forbidden media types, SM6 non-bypass, and `reverify` stability. Canonical suite remains green. Baton-on-Baton proof queries a real `.mjs` path and observes typed `rung_retired` for `egraph.equivalent` on all three domains without residue.\n\n## Red tests and proof\n\n### Tombstone reds (ship with EG12)\n\n1. **EG1-refusal:** `egraph.equivalent` on a confined Baton `.mjs` export → `rung_retired`, redirects include `behavior.fingerprint`.\n2. **EG2-whole-repo:** `domain: whole_repo` → `rung_retired`, no partial saturation artifact.\n3. **EG2-whole-function-redirect:** `domain: whole_function` → `rung_retired` with `redirect: behavior.compare`.\n4. **EG5-translation:** `expression_kernel` without `tv.validate: pass` ref → typed refusal, not silent CPG/IR reuse.\n5. **EG6-bounds:** injected external executor exceeding `wall_ms` → `budget_exceeded`, no cache.\n6. **EG7-honesty:** successful wrapper artifact body contains no `semantic_equivalence` claim string.\n7. **EG9-non-bypass:** integration fixture cannot finalize main using only an e-graph artifact; SM6 still required.\n8. **EG10-registry:** bogus `reopening_evidence_ref` → `reopening_evidence_missing`.\n9. **EG12-reverify:** tombstone refusal `reverify` digest-stable across repeated queries.\n\n### Reopening proof (machine-testable)\n\nAutomated checker `scripts/check-r7-reopening-evidence.mjs` (spec-only in this Decision; implementation deferred until evidence exists) exits **0** iff a bundle satisfies **all** domain predicates:\n\n```\ncheck(domain, path):\n  summary = parse(summary.json)\n  assert summary.decisionId == \"decision-r7-egraph-retire-redirect-c949c66\"\n  assert summary.domain == domain\n  if domain == \"whole_repo\":\n    assert summary.false_clean_structured_merge_count >= 2\n    assert all tasks have sm6_green && structured_merge_green && oracle_diverge\n  if domain == \"whole_function\":\n    assert summary.fingerprint_agree && summary.trust_gate_green\n    assert summary.expanded_corpus_diverge\n    assert summary.expanded_corpus_case_count >= 10 * summary.fingerprint_corpus_case_count\n  if domain == \"expression_kernel\":\n    assert summary.translation_validation == \"pass\"\n    assert summary.labeled_pairs >= 20 && summary.false_positive == 0 && summary.false_negative == 0\n    assert summary.fingerprint_strict_wins >= 3\n    assert summary.external_engine_id && !summary.native_implementation\n```\n\n**Reopen rule:** A domain transitions from `retired_redirect` to `external_adopt` only when `check(domain, path)` exits 0 on a bundle merged to `main` and referenced from an updated Decision superseding `decision-r7-egraph-retire-redirect-c949c66`. Whole-repo additionally requires `false_clean_structured_merge_count >= 2`. Until then, grep-based CI guard: `egraph.saturate` must not appear in `impl/src/` except in tombstone refusal handlers.\n\n### Baton-on-Baton tombstone proof\n\nQuery `egraph.equivalent` against a real coordinator export used in Phase 25 evidence; expect `rung_retired` with `maximumBuiltRung: R6`, zero worktree/integration residue, and `reverify` match — mirroring Phase 24’s “typed refusal without false R4” proof pattern.\n\n## Risks and rejection criteria\n\n### Risks if the bet is reopened prematurely\n\n- **False equivalence confidence:** Source-level saturation over-claims soundness; workers and reviewers treat e-class membership as proof, weakening the trust gate (violates EG7, BF6, RG6).\n- **Scale explosion:** Whole-repo or whole-function saturation exhausts worker budgets; fleet throughput collapses (doc 15 §4e, representation review Feature 8).\n- **Duplicate commodity:** Native egglog/HEC rebuild burns pursuit order while external tools already serve kernel DSLs (representation review rental test).\n- **Merge confusion:** Relabeling structured merge successes as “semantic” because an e-graph said so — SM10 explicitly forbids this; e-graph must not become a bypass.\n- **IR hallucination:** Saturation without Phase 24-honest R4 lowering reinvents “CPG labeled as IR” failure mode (RG2, RG6).\n\n### Rejection criteria — keep the tombstone when any hold\n\n| Criterion | Threshold | Action |\n|---|---|---|\n| No reopening bundle | `check-r7-reopening-evidence` never exits 0 for a domain | Stay retired/redirect |\n| Fingerprint sufficiency | Zero `expanded_corpus_diverge` cases while fingerprint+tests agree | Reject whole-function native build |\n| Structured merge sufficiency | Zero `false_clean_structured_merge` cases at repo scale | Reject whole-repo native build |\n| Labeled-corpus failure | Any false positive/negative on expression/kernel corpus | Reject external adoption; fix tool or labels |\n| No strict win over fingerprint | `fingerprint_strict_wins < 3` for expression/kernel | Reject — fingerprint+tests already enough |\n| Translation missing | `tv.validate != pass` for kernels | Reject — bounded DSL evidence only |\n| Budget blowout | >10% of pinned kernels exceed EG6 caps | Reject scale gate |\n| Native implementation detected | `native_implementation: true` in evidence | Reject — violates EG4 |\n| Trust-gate bypass attempted | Any path uses e-graph to skip SM6 or primary verification | Reject; poison integration authority |\n| Homelab or network coupling | Evidence requires undeclared integration deps | Reject per project constraints |\n\n### Bitter-lesson alignment\n\nDoc 15 §5 and `docs/21`: e-graph equivalence is a **research bet** obviatable by better text reasoning or by empirical fingerprints. Phase 25 and Phase 26 shipped the empirical and merge layers first; nothing in Phases 24–26 demonstrates fleet tasks blocked for lack of saturation. **Default action: tombstone EG1–EG12, pursue redirected rungs, reopen only on counterexample bundles that pass `check-r7-reopening-evidence`.**"
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-egraph-evaluation-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-egraph-evaluation-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "expectedReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "allKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

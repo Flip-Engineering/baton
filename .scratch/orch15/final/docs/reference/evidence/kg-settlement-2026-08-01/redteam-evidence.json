@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-01T22:50:52.523Z",
+  "members": [
+    "authority-attacker",
+    "lifecycle-attacker"
+  ],
+  "outcomes": [
+    {
+      "role": "authority-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "5c738f1e0040879734f204fadb28f0b338c9f7c3"
+    },
+    {
+      "role": "lifecycle-attacker",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "authority-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "lifecycle-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "authority-attacker",
+      "requestId": "pause:baton-2594e7cda739f3c471f98a7a-work:164",
+      "at": "2026-08-01T23:04:09.605Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "authority-attacker",
+      "requestId": "pause:baton-2594e7cda739f3c471f98a7a-work:180",
+      "at": "2026-08-01T23:04:47.005Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  }
+}

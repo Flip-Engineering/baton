@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "grammar-m3-implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: effort_unavailable.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "grammar-m3-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

@@ -1,0 +1,901 @@
+// claude-session.test.mjs — TDD-RED tests for ClaudeSessionCli (spec/phase8/claude-session-adapter.md).
+//
+// `../src/claude-session.mjs` does not exist yet. This import is expected to fail today with a
+// module-resolution error (ERR_MODULE_NOT_FOUND) — that is the correct RED reason for this phase:
+// missing export, not a syntax error in this file. Run `node --test test/claude-session.test.mjs`
+// from `impl/` (node 25) to confirm.
+//
+// Every test below drives the REAL ClaudeSessionCli against the REAL fake `claude` binary
+// (test/fixtures/fake-claude.mjs, spawned as `node <fixture>`) — zero model quota, no vendor CLI is
+// ever invoked. Assertions target EFFECTS (same pid across turns, actual process death, wire content
+// echoed back, argv shape) rather than bare Ack return values, per house rule.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli, buildClaudeSessionArgs } from '../src/claude-session.mjs';
+import { assertIsAdapter } from '../src/adapter.mjs';
+
+const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
+
+function makeCli(opts = {}) {
+  return new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], ...opts });
+}
+
+function brief(goal) {
+  return {
+    goal,
+    constraints: [],
+    pathScope: ['src/**'],
+    definitionOfDone: 'tests pass',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 100000, usd: 1, wallMin: 10 },
+  };
+}
+
+/** Event bus harness: buffers every event and lets tests await the first matching one. */
+function harness(cliOpts = {}) {
+  const cli = makeCli(cliOpts);
+  const events = [];
+  const waiters = [];
+  cli.onEvent((e) => {
+    events.push(e);
+    for (let i = waiters.length - 1; i >= 0; i -= 1) {
+      if (waiters[i].pred(e)) { const w = waiters[i]; waiters.splice(i, 1); w.resolve(e); }
+    }
+  });
+  function waitFor(pred, timeoutMs = 4000) {
+    const already = events.find(pred);
+    if (already) return Promise.resolve(already);
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`waitFor timeout after ${timeoutMs}ms; seen kinds: ${events.map((e) => e.kind).join(',')}`)), timeoutMs);
+      waiters.push({ pred, resolve: (e) => { clearTimeout(t); resolve(e); } });
+    });
+  }
+  function waitForKind(kind, timeoutMs) { return waitFor((e) => e.kind === kind, timeoutMs); }
+  return { cli, events, waitFor, waitForKind };
+}
+
+// ---------------------------------------------------------------------------
+// CS1 — pure argv builder (no process spawned)
+// ---------------------------------------------------------------------------
+
+test('CS1: buildClaudeSessionArgs always includes the stream-json trio; adds permission-prompt-tool stdio only when approvals; adds --resume only when sessionId given', () => {
+  const base = buildClaudeSessionArgs({});
+  assert.ok(base.includes('--input-format') && base.includes('--output-format') && base.includes('--verbose'));
+  assert.ok(base[base.indexOf('--input-format') + 1] === 'stream-json');
+  assert.ok(base[base.indexOf('--output-format') + 1] === 'stream-json');
+  assert.ok(!base.includes('--permission-prompt-tool'), 'no approvals => no permission-prompt-tool flag');
+  assert.ok(!base.includes('--resume'));
+
+  const withApprovals = buildClaudeSessionArgs({ approvals: true });
+  const idx = withApprovals.indexOf('--permission-prompt-tool');
+  assert.ok(idx !== -1);
+  assert.equal(withApprovals[idx + 1], 'stdio', 'the magic value confirmed from the Agent SDK source, not an arbitrary tool name');
+  assert.equal(withApprovals[withApprovals.indexOf('--permission-mode') + 1], 'acceptEdits',
+    'an approval callback requires an ask-capable mode');
+
+  const withResume = buildClaudeSessionArgs({ sessionId: 'sess-123' });
+  const ridx = withResume.indexOf('--resume');
+  assert.ok(ridx !== -1);
+  assert.equal(withResume[ridx + 1], 'sess-123');
+});
+
+test('CS1: unattended sessions default to bypassPermissions and honestly disclose unverified containment', () => {
+  const base = buildClaudeSessionArgs({});
+  const pidx = base.indexOf('--permission-mode');
+  assert.ok(pidx !== -1, 'default argv must carry an explicit permission mode');
+  assert.equal(base[pidx + 1], 'bypassPermissions');
+
+  const narrower = buildClaudeSessionArgs({ permissionMode: 'acceptEdits' });
+  assert.equal(narrower[narrower.indexOf('--permission-mode') + 1], 'acceptEdits');
+
+  const none = buildClaudeSessionArgs({ permissionMode: null });
+  assert.ok(!none.includes('--permission-mode'), 'explicit null opts out (caller supplies its own policy flags)');
+
+  assert.throws(
+    () => buildClaudeSessionArgs({ approvals: true, permissionMode: 'bypassPermissions' }),
+    /cannot be combined/,
+    'Claude never invokes the callback under bypassPermissions, so the adapter must refuse a lying combination',
+  );
+  assert.throws(
+    () => makeCli({ approvals: true, permissionMode: 'bypassPermissions' }),
+    /cannot use bypassPermissions/,
+  );
+});
+
+test('conforms to the D1 8-verb session-shaped Adapter contract', () => {
+  assert.doesNotThrow(() => assertIsAdapter(makeCli()));
+});
+
+test('constructor is testability-injectable: cmd/args/env override the real "claude" defaults', () => {
+  const real = new ClaudeSessionCli({});
+  assert.equal(real._cfg.cmd, 'claude', 'default cmd targets the real vendor binary');
+  const fake = makeCli();
+  assert.equal(fake._cfg.cmd, process.execPath);
+  assert.deepEqual(fake._cfg.args, [FAKE_CLAUDE]);
+});
+
+test('configured Claude executable version is probed safely and unavailable is preserved', () => {
+  const calls = [];
+  const observed = new ClaudeSessionCli({
+    cmd: '/fixture/claude',
+    versionProbe: (command, args, options) => {
+      calls.push({ command, args, options });
+      return 'Claude Code v9.8.7 (fixture)';
+    },
+  });
+  assert.equal(observed.card().version, '9.8.7');
+  assert.deepEqual(calls[0].command, '/fixture/claude');
+  assert.deepEqual(calls[0].args, ['--version']);
+  assert.equal(calls[0].options.timeout, 5_000);
+  assert.equal(calls[0].options.maxBuffer, 64 * 1024);
+
+  const unavailable = new ClaudeSessionCli({
+    cmd: '/fixture/missing-claude', versionProbe: () => { throw new Error('absent'); },
+  });
+  assert.equal(unavailable.card().version, 'unavailable');
+  assert.equal(new ClaudeSessionCli({
+    cmd: '/fixture/not-claude', versionProbe: () => 'not a version',
+  }).card().version, 'unavailable');
+});
+
+// ---------------------------------------------------------------------------
+// CS18/CS19 — card() capability negotiation, no silent emulation
+// ---------------------------------------------------------------------------
+
+test('CS18: card().verbs.approve/answer are unsupported by default and native only with approvals:true', () => {
+  const noApprovals = makeCli().card();
+  assert.equal(noApprovals.verbs.approve, 'unsupported');
+  assert.equal(noApprovals.verbs.answer, 'unsupported');
+  assert.deepEqual(noApprovals.permissions, {
+    mode: 'bypassPermissions', sandbox: 'unverified',
+    boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+  });
+  const withApprovals = makeCli({ approvals: true }).card();
+  assert.equal(withApprovals.verbs.approve, 'native');
+  assert.equal(withApprovals.verbs.answer, 'native');
+  assert.equal(withApprovals.permissions.mode, 'acceptEdits');
+});
+
+test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection is real) and everything else native too', () => {
+  const card = makeCli().card();
+  assert.equal(card.verbs.steer, 'native',
+    'live-disproven premise: CS8 assumed no way to splice content into an in-flight completion; the real CLI absorbs a mid-turn user frame at the next tool boundary');
+  assert.equal(card.verbs.spawn, 'native');
+  assert.equal(card.verbs.prompt, 'native');
+  assert.equal(card.verbs.interrupt, 'native');
+  assert.equal(card.verbs.kill, 'native');
+  assert.deepEqual(card.governance, {
+    usage: { tokens: 'native', usd: 'native', tokenMetric: 'anthropic_input_plus_output_tokens_excluding_cache', terminalSeal: 'native' },
+    providerCalls: { observation: 'native', enforcement: 'unavailable' },
+    toolCalls: { observation: 'native', enforcement: 'unavailable' },
+    maxWireFrameBytes: 1024 * 1024,
+  });
+});
+
+test('Claude authentication readiness parses only bounded projected-runtime status', () => {
+  const calls = [];
+  const ready = makeCli({
+    authenticationProbe: (command, args, options) => {
+      calls.push({ command, args, options });
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          loggedIn: true, email: 'must-not-project@example.invalid', orgId: 'must-not-project',
+        }),
+      };
+    },
+  }).authenticationReadiness({ env: { HOME: '/private/projected-home', PATH: '/usr/bin' } });
+  assert.deepEqual(ready, {
+    state: 'ready', credentialState: 'verified',
+    summary: 'Projected Claude authentication was verified in the private worker runtime.',
+  });
+  assert.deepEqual(calls[0].args, ['auth', 'status', '--json']);
+  assert.equal(calls[0].options.env.HOME, '/private/projected-home');
+  assert.equal(JSON.stringify(ready).includes('must-not-project'), false);
+
+  const blocked = makeCli({
+    authenticationProbe: () => ({ status: 1, stdout: JSON.stringify({ loggedIn: false, email: 'hidden' }) }),
+  }).authenticationReadiness({ env: { HOME: '/private/projected-home' } });
+  assert.equal(blocked.state, 'blocked');
+  assert.equal(blocked.code, 'authentication_refresh_required');
+  assert.equal(blocked.credentialState, 'refresh_required');
+  assert.equal(JSON.stringify(blocked).includes('hidden'), false);
+
+  const malformed = makeCli({
+    authenticationProbe: () => ({ status: 0, stdout: 'x'.repeat((64 * 1024) + 1) }),
+  }).authenticationReadiness({ env: { HOME: '/private/projected-home' } });
+  assert.equal(malformed.code, 'authentication_probe_invalid');
+});
+
+// ---------------------------------------------------------------------------
+// CS2/CS3/CS4/CS5 — spawn: Brief as first turn, real session_id, honest turn-boundary lifecycle
+// ---------------------------------------------------------------------------
+
+test('CS2/CS3: spawn delivers the Brief as the first turn; lifecycle.spawned carries the WIRE session_id, not a client-generated one', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  const ack = await cli.spawn(w, brief('add rate limiting to the login route'), { worktree: process.cwd() });
+  assert.equal(ack.ok, true);
+
+  const spawned = await waitForKind('lifecycle.spawned');
+  assert.equal(spawned.worker, w);
+  assert.ok(spawned.payload.sessionId, 'session_id came from the wire system/init frame');
+  assert.ok(spawned.payload.pid > 0);
+
+  const started = await waitForKind('lifecycle.turn_started');
+  assert.equal(started.worker, w);
+
+  const message = await waitForKind('content.message');
+  assert.match(message.payload.text, /add rate limiting to the login route/, 'the Brief text was actually delivered on the wire, not just claimed');
+
+  const completed = await waitForKind('lifecycle.turn_completed');
+  assert.equal(completed.worker, w);
+  assert.equal(completed.payload.pid, spawned.payload.pid, 'same process for spawn as for the session lifecycle event');
+  assert.deepEqual(completed.payload.usageSeal.tokens, 'reported');
+  assert.deepEqual(completed.payload.usageSeal.usd, 'reported');
+  const usage = events.find((event) => event.kind === 'resource.tokens');
+  assert.ok(usage && events.indexOf(usage) < events.indexOf(completed));
+  assert.equal(usage.payload.counterId, completed.payload.usageSeal.counterId);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('provider-auth result failures are typed and sanitized without classifying successful prose', async () => {
+  const refused = harness();
+  assert.equal((await refused.cli.spawn('auth-refused', brief('TRIGGER_AUTH_REFUSAL'), {
+    worktree: process.cwd(),
+  })).ok, true);
+  const failed = await refused.waitForKind('lifecycle.turn_completed');
+  assert.equal(failed.payload.result.status, 'failed');
+  assert.deepEqual(failed.payload.result.failure, { code: 'authentication_refresh_required' });
+  assert.equal(failed.payload.result.summary, 'Provider authentication requires refresh.');
+  await refused.cli.kill('auth-refused');
+  await refused.waitForKind('kill.confirmed');
+
+  const successful = harness();
+  const narrative = 'A successful report may quote Not logged in · Please run /login as evidence.';
+  assert.equal((await successful.cli.spawn('auth-prose', brief(narrative), {
+    worktree: process.cwd(),
+  })).ok, true);
+  const completed = await successful.waitForKind('lifecycle.turn_completed');
+  assert.equal(completed.payload.result.status, 'completed');
+  assert.equal(Object.hasOwn(completed.payload.result, 'failure'), false);
+  await successful.cli.kill('auth-prose');
+  await successful.waitForKind('kill.confirmed');
+});
+
+test('CS2/CS3: input-gated Claude Code boot receives one Brief before init without exposing results before readiness', async () => {
+  const { cli, events, waitForKind } = harness({
+    env: { FAKE_CLAUDE_INIT_AFTER_INPUT: '1' },
+  });
+  const worker = 'input-gated-init';
+  try {
+    assert.equal((await cli.spawn(worker, brief('BOOT_AFTER_INPUT exactly once'), {
+      worktree: process.cwd(),
+    })).ok, true);
+    const spawned = await waitForKind('lifecycle.spawned');
+    const started = await waitForKind('lifecycle.turn_started');
+    const message = await waitForKind('content.message');
+    const completed = await waitForKind('lifecycle.turn_completed');
+    assert.match(message.payload.text, /BOOT_AFTER_INPUT exactly once/u);
+    assert.equal(events.filter((event) => event.kind === 'lifecycle.turn_started').length, 1);
+    assert.ok(events.indexOf(spawned) < events.indexOf(started));
+    assert.ok(events.indexOf(started) < events.indexOf(message));
+    assert.ok(events.indexOf(message) < events.indexOf(completed));
+  } finally {
+    await cli.kill(worker);
+    await waitForKind('kill.confirmed');
+  }
+});
+
+test('provider cost outside exact nano-USD authority holds only USD while preserving exact token evidence', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'inexact-usd';
+  try {
+    await cli.spawn(w, brief('REPORT_INEXACT_USD'), { worktree: process.cwd() });
+    const completed = await waitForKind('lifecycle.turn_completed');
+    const usage = events.find((event) => event.kind === 'resource.tokens');
+    assert.ok(usage, 'the independently valid token dimension remains observable');
+    assert.equal(usage.payload.tokens, 21);
+    assert.equal(Object.hasOwn(usage.payload, 'usd'), false, 'provider cost is not rounded into authority');
+    assert.equal(completed.payload.usageSeal.tokens, 'reported');
+    assert.equal(completed.payload.usageSeal.usd, 'unavailable');
+    assert.equal(completed.payload.usageSeal.counterId, usage.payload.counterId);
+  } finally {
+    await cli.kill(w);
+    await waitForKind('kill.confirmed');
+  }
+});
+
+test('provider token operands whose sum is unsafe hold tokens without emitting an unsafe result claim', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'token-sum-overflow';
+  try {
+    await cli.spawn(w, brief('REPORT_TOKEN_SUM_OVERFLOW'), { worktree: process.cwd() });
+    const completed = await waitForKind('lifecycle.turn_completed');
+    const usage = events.find((event) => event.kind === 'resource.tokens');
+    assert.ok(usage, 'the independently valid USD dimension remains observable');
+    assert.equal(Object.hasOwn(usage.payload, 'tokens'), false);
+    assert.equal(usage.payload.usd, 0.0001);
+    assert.equal(completed.payload.usageSeal.tokens, 'unavailable');
+    assert.equal(completed.payload.usageSeal.usd, 'reported');
+    assert.deepEqual(completed.payload.result.budgetUsed, { tokens: 0, usd: 0.0001 });
+  } finally {
+    await cli.kill(w);
+    await waitForKind('kill.confirmed');
+  }
+});
+
+test('Phase 60: resume attachOnly performs the native handshake but emits no turn or provider work before prompt()', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'phase60-claude-attach';
+  try {
+    const ack = await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT must not be delivered during attach'), {
+      worktree: process.cwd(),
+      session: { mode: 'resume', id: 'phase60-claude-native' },
+      attachOnly: true,
+    });
+    assert.equal(ack.ok, true);
+    const spawned = await waitForKind('lifecycle.spawned');
+    assert.equal(spawned.payload.sessionId, 'phase60-claude-native');
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const forbidden = new Set([
+      'lifecycle.turn_started', 'resource.provider_call', 'content.tool_call',
+      'content.file_edit', 'content.message', 'lifecycle.turn_completed',
+    ]);
+    assert.deepEqual(events.filter((event) => forbidden.has(event.kind)).map((event) => event.kind), [],
+      'attach-only recovery must not deliver the Brief or begin provider work');
+
+    const prompt = await cli.prompt(w, 'phase60 continuation after durable attach', 'turn');
+    assert.equal(prompt.ok, true);
+    await waitForKind('lifecycle.turn_started');
+    const completed = await waitForKind('lifecycle.turn_completed');
+    assert.match(completed.payload.result.summary, /phase60 continuation after durable attach/u);
+  } finally {
+    try { await cli.kill(w); } catch { /* RED cleanup */ }
+  }
+});
+
+test('Phase 60: attachOnly refuses a non-resume session before creating a provider process', async () => {
+  const { cli, events } = harness();
+  for (const mode of ['new', 'fork']) {
+    const w = `phase60-claude-invalid-attach-${mode}`;
+    try {
+      const ack = await cli.spawn(w, brief('must not run'), {
+        worktree: process.cwd(), session: { mode, ...(mode === 'fork' ? { id: 'parent' } : {}) }, attachOnly: true,
+      });
+      assert.equal(ack.ok, false);
+      assert.equal(ack.code, 'attach_only_requires_resume');
+      assert.equal(events.some((event) => event.worker === w && event.kind === 'lifecycle.process_started'), false);
+    } finally {
+      try { await cli.kill(w); } catch { /* RED cleanup */ }
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CS6/CS7 — multi-turn on ONE process; prompt(turn/nudge) is native (no emulated flag)
+// ---------------------------------------------------------------------------
+
+test('CS6: two prompt() calls produce two turn_completed events on the SAME child pid (multi-turn, no respawn)', async () => {
+  const { cli, waitFor, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('turn one'), { worktree: process.cwd() });
+  const first = await waitForKind('lifecycle.turn_completed');
+
+  const ack = await cli.prompt(w, 'turn two content', 'turn');
+  assert.equal(ack.ok, true);
+  assert.ok(!ack.emulated, 'CS7/CS19: a plain turn-mode prompt is native, never silently emulated');
+
+  const second = await waitFor((e) => e.kind === 'lifecycle.turn_completed' && e !== first, 4000);
+  assert.notEqual(second, first);
+  assert.equal(second.payload.pid, first.payload.pid, 'the effect that proves ONE persistent process handled both turns');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS7: prompt mode "nudge" also writes natively; sent while idle it begins the next turn (sent mid-turn it would be absorbed — see the CS8/E2 steer tests)', async () => {
+  const { cli, waitFor, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
+  const firstCompleted = await waitForKind('lifecycle.turn_completed');
+
+  const ack = await cli.prompt(w, 'nudge content here', 'nudge');
+  assert.equal(ack.ok, true);
+  assert.ok(!ack.emulated);
+  // Match the NUDGED content specifically — turn 1 already produced an (unrelated) content.message.
+  const message = await waitFor((e) => e.kind === 'content.message' && /nudge content here/.test(e.payload.text ?? ''), 4000);
+  assert.ok(message);
+  const completed = await waitFor((e) => e.kind === 'lifecycle.turn_completed' && e !== firstCompleted, 4000);
+  assert.ok(completed);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+// ---------------------------------------------------------------------------
+// CS8 (erratum E2) — steer: NATIVE mid-turn injection. The running turn absorbs the frame at
+// its next boundary; no interrupt round-trip, no aborted tool call, one terminal per turn.
+// ---------------------------------------------------------------------------
+
+test('CS8/E2: prompt(mode:"steer") injects into the IN-FLIGHT turn natively — the running turn absorbs it and completes redirected, with NO interrupt round-trip', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  const spawned = await waitForKind('lifecycle.spawned');
+  await waitForKind('content.message'); // "holding..." — proves the first turn is genuinely in flight
+
+  const ack = await cli.prompt(w, 'steer: do the other thing instead', 'steer');
+  assert.equal(ack.ok, true);
+  assert.ok(!ack.emulated, 'steer is native on this wire now — no emulation flag');
+
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.equal(completed.payload.pid, spawned.payload.pid, 'steer redirected the SAME session, no respawn');
+  assert.match(completed.payload.result?.summary ?? '', /steered-to:.*do the other thing instead/,
+    'the RUNNING turn absorbed the steer content (live-observed semantics), not a fresh turn after an interrupt');
+
+  const kinds = events.map((e) => e.kind);
+  assert.ok(!kinds.includes('control.interrupt_requested'), 'no phantom interrupt in the log for a steer');
+  assert.ok(!kinds.includes('control.interrupt_confirmed'), 'a steer must not satisfy a racing stop-waiter');
+  assert.ok(kinds.includes('control.steer'), 'the steer itself is an explicit orchestrator-actor event');
+  assert.equal(kinds.filter((k) => k === 'lifecycle.turn_started').length, 1,
+    'the absorbed frame does NOT fake a second turn_started — one turn, one start, one terminal');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS8/E2: steer when NO turn is in flight simply begins the next turn (wire truth: same user frame either way)', async () => {
+  const { cli, waitFor, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
+  const first = await waitForKind('lifecycle.turn_completed');
+
+  const ack = await cli.prompt(w, 'steer while idle', 'steer');
+  assert.equal(ack.ok, true);
+  const completed = await waitFor((e) => e.kind === 'lifecycle.turn_completed' && e !== first, 4000);
+  assert.match(completed.payload.result?.summary ?? '', /steer while idle/);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+// ---------------------------------------------------------------------------
+// CS9/CS10/CS11 — interrupt: exact frame, session survives, interrupted turn's result is discarded
+// ---------------------------------------------------------------------------
+
+test('CS9/CS10: interrupt() Acks immediately (native, not a signal); confirmed stop is a LATER event; the session survives for a follow-up prompt', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  const spawned = await waitForKind('lifecycle.spawned');
+  await waitForKind('content.message');
+
+  const ack = await cli.interrupt(w);
+  assert.equal(ack.ok, true);
+  assert.ok(!ack.emulated, 'a real control_request, not a signal — native');
+
+  const confirmed = await waitForKind('control.interrupt_confirmed');
+  assert.equal(confirmed.worker, w);
+  assert.equal(confirmed.payload.sessionId, spawned.payload.sessionId,
+    'interrupt confirmation binds the exact still-attached native session');
+  assert.equal(confirmed.payload.transportOpen, true);
+  assert.equal(confirmed.payload.usageSeal.tokens, 'reported', 'the interrupted result is accounted before confirmation');
+  assert.equal(confirmed.payload.usageSeal.usd, 'reported');
+  const usage = events.find((event) => event.kind === 'resource.tokens');
+  assert.ok(usage && events.indexOf(usage) < events.indexOf(confirmed));
+  assert.equal(usage.payload.counterId, confirmed.payload.usageSeal.counterId);
+
+  // Session survives: a normal follow-up prompt completes successfully on the SAME pid.
+  await cli.prompt(w, 'still alive?', 'turn');
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.equal(completed.payload.pid, spawned.payload.pid);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS11: the interrupted turn never produces a lifecycle.turn_completed of its own (single-terminal-per-turn: interrupt_confirmed IS the terminal)', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+  await cli.interrupt(w);
+  await waitForKind('control.interrupt_confirmed');
+
+  // Give the (discarded) trailing result frame time to have arrived and been processed.
+  await new Promise((r) => setTimeout(r, 150));
+  const completedBeforeNextTurn = events.filter((e) => e.kind === 'lifecycle.turn_completed');
+  assert.equal(completedBeforeNextTurn.length, 0, 'the fake binary emits a result for the interrupted turn; the adapter MUST discard it, not surface it as completed');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+// ---------------------------------------------------------------------------
+// CS12 — approve(): approval.requested -> approve() -> control_response; denial does not crash the turn
+// ---------------------------------------------------------------------------
+
+test('CS12: approve("allow") round-trips a real can_use_tool control_request/control_response and the turn completes reflecting the allow', async () => {
+  const { cli, waitForKind } = harness({ approvals: true });
+  const w = 'w1';
+  await cli.spawn(w, brief('REQUEST_APPROVAL:Bash'), { worktree: process.cwd() });
+
+  const requested = await waitForKind('approval.requested');
+  assert.equal(requested.worker, w);
+  assert.ok(requested.payload.requestId);
+  assert.equal(requested.payload.toolName, 'Bash');
+
+  const ack = await cli.approve(w, requested.payload.requestId, 'allow', { updatedInput: { command: 'echo hi' } });
+  assert.equal(ack.ok, true);
+
+  const resolved = await waitForKind('approval.resolved');
+  assert.equal(resolved.payload.decision, 'allow');
+
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.match(completed.payload.result?.summary ?? JSON.stringify(completed.payload), /approved:Bash/,
+    'the fake validates updatedInput+toolUseID (erratum E3) — reaching approved: proves the full live-honored shape went out');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS12 erratum E3 regression: approve("allow") with NO payload falls back to the ORIGINAL request input and echoes toolUseID — a bare {behavior:"allow"} is silently re-asked by the real CLI (live-caught wedge, 2026-07-10)', async () => {
+  const { cli, events, waitForKind } = harness({ approvals: true });
+  const w = 'w1';
+  await cli.spawn(w, brief('REQUEST_APPROVAL:Bash'), { worktree: process.cwd() });
+  const requested = await waitForKind('approval.requested');
+  assert.ok(requested.payload.toolUseID, 'the wire tool_use_id is surfaced so callers can correlate');
+
+  const ack = await cli.approve(w, requested.payload.requestId, 'allow'); // no payload at all
+  assert.equal(ack.ok, true);
+
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.match(completed.payload.result?.summary ?? '', /approved:Bash/,
+    'an allow without updatedInput/toolUseID would have been re-asked and then failed approval-invalid');
+  const echo = events.find((e) => e.kind === 'content.message' && /ran Bash with/.test(e.payload.text ?? ''));
+  assert.match(echo.payload.text, /"command":"echo hi"/, 'the ORIGINAL request input was echoed back as updatedInput');
+  assert.equal(events.filter((e) => e.kind === 'approval.requested').length, 1, 'exactly one ask — no silent re-ask loop');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS12: approve("deny") does NOT crash the turn — it completes normally, reflecting the denial', async () => {
+  const { cli, events, waitForKind } = harness({ approvals: true });
+  const w = 'w1';
+  await cli.spawn(w, brief('REQUEST_APPROVAL:Write'), { worktree: process.cwd() });
+  const requested = await waitForKind('approval.requested');
+
+  await cli.approve(w, requested.payload.requestId, 'deny', { message: 'not allowed here' });
+
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.match(completed.payload.result?.summary ?? JSON.stringify(completed.payload), /denied:Write/);
+  assert.equal(events.filter((e) => e.kind === 'lifecycle.crashed').length, 0, 'a tool denial is not a process crash');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('approve() without approvals enabled rejects without touching the wire', async () => {
+  const cli = makeCli({ approvals: false });
+  const ack = await cli.approve('w1', 'req_1', 'allow');
+  assert.equal(ack.ok, false);
+});
+
+// ---------------------------------------------------------------------------
+// CS13 — answer(): question.asked -> answer() -> the turn reflects the answer
+// ---------------------------------------------------------------------------
+
+test('CS13: answer() round-trips an elicitation control_request and the turn reflects the free-form answer', async () => {
+  const { cli, waitForKind } = harness({ approvals: true });
+  const w = 'w1';
+  await cli.spawn(w, brief('REQUEST_QUESTION please pick a color'), { worktree: process.cwd() });
+
+  const asked = await waitForKind('question.asked');
+  assert.equal(asked.worker, w);
+  assert.ok(asked.payload.requestId);
+
+  const ack = await cli.answer(w, asked.payload.requestId, { text: 'blue' });
+  assert.equal(ack.ok, true);
+
+  const answered = await waitForKind('question.answered');
+  assert.equal(answered.payload.text, 'blue');
+
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.match(completed.payload.result?.summary ?? JSON.stringify(completed.payload), /blue/);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+// ---------------------------------------------------------------------------
+// CS14 — kill(): process-group SIGTERM->SIGKILL escalation, always resolves
+// ---------------------------------------------------------------------------
+
+test('CS14: kill() ends an unresponsive process by escalating SIGTERM to SIGKILL within killGraceMs (never hangs)', async () => {
+  const { cli, waitForKind } = harness({ killGraceMs: 60, env: { FAKE_CLAUDE_IGNORE_SIGTERM: '1' } });
+  const w = 'w1';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+
+  const started = Date.now();
+  const ack = await cli.kill(w);
+  assert.equal(ack.ok, true, 'D9: kill() always resolves');
+
+  const confirmed = await waitForKind('kill.confirmed', 3000);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed >= 60, 'the SIGKILL escalation genuinely waited out the grace window, not an instant kill');
+  assert.equal(confirmed.worker, w);
+  assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
+});
+
+test('CS14: kill() on a cooperative process confirms promptly via plain SIGTERM (no escalation needed)', async () => {
+  const { cli, waitForKind } = harness({ killGraceMs: 5000 });
+  const w = 'w1';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+  const started = Date.now();
+  await cli.kill(w);
+  await waitForKind('kill.confirmed', 2000);
+  assert.ok(Date.now() - started < 4000, 'a cooperative process should not need to wait out the full escalation window');
+});
+
+// ---------------------------------------------------------------------------
+// #281 Claude half (audit A-E3/A-N1, A-G3, A-G4/A-I7)
+// ---------------------------------------------------------------------------
+
+test('A-E3/A-N1: an auth-refresh respawn advances the process generation, starts the new child under it, and still closes the replaced generation', async () => {
+  let refreshed = 0;
+  const { cli, events, waitForKind } = harness({
+    credentialController: {
+      ensureFresh: async () => {},
+      refresh: async () => { refreshed += 1; },
+      projectionEnv: () => ({}),
+    },
+  });
+  const w = 'auth-refresh-gen';
+  try {
+    assert.equal((await cli.spawn(w, brief('TRIGGER_AUTH_REFUSAL'), { worktree: process.cwd() })).ok, true);
+    const terminal = await waitForKind('lifecycle.turn_completed', 8000);
+    assert.equal(terminal.payload.result.status, 'failed');
+    assert.equal(terminal.payload.result.failure?.code, 'authentication_refresh_required');
+    assert.equal(refreshed, 1, 'the failed turn retried through exactly one credential refresh');
+
+    // The replacement process is a NEW generation: two distinct OS processes must never share
+    // one generation number, or every generation-keyed guard (cost ledger, result dedup) is
+    // ambiguous across the swap.
+    const starts = events.filter((e) => e.kind === 'lifecycle.process_started');
+    assert.deepEqual(
+      starts.map((e) => e.payload.generation),
+      [1, 2],
+      'the respawned child emits lifecycle.process_started under an advanced generation',
+    );
+
+    // The replaced generation still owns its process group until reaped: its close is a fact
+    // about generation 1, not silence.
+    const closes = events.filter((e) => e.kind === 'lifecycle.process_closed');
+    assert.equal(closes.length, 1, 'the replaced generation still reports its close');
+    assert.equal(closes[0].payload.generation, 1);
+  } finally {
+    await cli.kill(w);
+  }
+});
+
+test('A-G4/A-I7: closing the session settles in-flight control requests instead of hanging the interrupt confirmation', async () => {
+  const { cli, waitForKind } = harness();
+  const w = 'drain-on-close';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+  const session = cli._sessions.get(w);
+  assert.ok(session, 'the worker owns a session');
+  // Hold the wire: create the interrupt round-trip through the real path while the fake can
+  // never answer it — exactly the in-flight shape a close must settle.
+  const write = cli._write.bind(cli);
+  cli._write = (s, obj) => {
+    if (obj?.type === 'control_request') return undefined;
+    return write(s, obj);
+  };
+  const confirmed = cli._sendInterrupt(session);
+  cli._write = write;
+  assert.equal(session.pendingControlRequests.size, 1, 'the interrupt round-trip is in flight');
+  let settled = false;
+  void confirmed.then(() => { settled = true; });
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed', 4000);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(settled, true, 'the in-flight control request settles on close instead of hanging');
+  assert.equal(session.pendingControlRequests.size, 0, 'no control waiter is retained past close');
+  assert.equal(session.pendingInterrupt, null, 'no interrupt confirmation outlives its session');
+});
+
+test('A-G3: kill() reports unconfirmed while the process has not confirmed its exit, and terminal once it has', async () => {
+  const { cli, waitForKind } = harness();
+  const w = 'kill-unconfirmed';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+
+  // The child is still alive: no close fact exists, so the Ack must say unconfirmed —
+  // a bare {ok:true} would read as done while nothing was observed.
+  assert.deepEqual(await cli.kill(w), { ok: true, confirmed: false, reason: 'close_pending' });
+  await waitForKind('kill.confirmed', 4000);
+
+  // The generation is reaped now: no confirmation event can ever follow, so the Ack IS it.
+  assert.deepEqual(await cli.kill(w), { ok: true, terminal: true });
+});
+
+// ---------------------------------------------------------------------------
+// CS15 — resume: constructor sessionId -> --resume, echoed back on the wire
+// ---------------------------------------------------------------------------
+
+test('CS15: constructor sessionId round-trips through --resume to the SAME session_id on the wire', async () => {
+  const { cli, waitForKind } = harness({ sessionId: 'resume-me-0001' });
+  const w = 'w1';
+  await cli.spawn(w, brief('anything'), { worktree: process.cwd() });
+  const spawned = await waitForKind('lifecycle.spawned');
+  assert.equal(spawned.payload.sessionId, 'resume-me-0001');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+// ---------------------------------------------------------------------------
+// CS16/CS17 — lifecycle: session death mapping, no events after death
+// ---------------------------------------------------------------------------
+
+test('CS17: a genuine vendor process failure maps to lifecycle.crashed (distinct from a graceful kill)', async () => {
+  const { cli, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('TRIGGER_CRASH'), { worktree: process.cwd() });
+  const crashed = await waitForKind('lifecycle.crashed', 3000);
+  assert.equal(crashed.worker, w);
+  assert.deepEqual(crashed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
+});
+
+test('CS16: no event is ever emitted for a worker after its session-terminal event fires', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
+  await waitForKind('lifecycle.turn_completed');
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+
+  const countAtDeath = events.length;
+  // Nothing left alive to emit anything, but assert the invariant explicitly: a late, deliberately
+  // sent stray frame the adapter might still be holding a reference to must not surface.
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(events.length, countAtDeath, 'no event arrived after the session-terminal event');
+});
+
+// ---------------------------------------------------------------------------
+// CS18 — every Claude-family session tier receives the ONE unified Brief
+// (audit A-F1/A-I1, A-F2/A-I2, A-F3, A-F4, A-N4)
+// ---------------------------------------------------------------------------
+
+/** The full Brief a Claude-family worker is dispatched with, and what its wire must carry. */
+function tierBrief() {
+  return {
+    goal: 'add rate limiting to the login route',
+    constraints: ['no new dependencies'],
+    pathScope: ['src/**'],
+    definitionOfDone: 'the focused suite passes',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 100000, usd: 1, wallMin: 10 },
+    tools: ['baton_swarm_view'],
+    effects: [],
+    requiredEffects: [],
+    outputFormat: 'one paragraph, no headings',
+    knowledge: {
+      items: [{
+        ref: 'finding:live', validFrom: '2026-09-01', validTo: '2026-09-30',
+        snippet: 'the drain deadline latches shut',
+      }],
+      truncated: false,
+    },
+  };
+}
+
+/** Event-driven collector for a named CLI class (the file's harness() builds ClaudeSessionCli only). */
+function tierHarness(Cli, opts = {}) {
+  const cli = new Cli({ cmd: process.execPath, args: [FAKE_CLAUDE], ...opts });
+  const events = [];
+  const waiters = [];
+  cli.onEvent((e) => {
+    events.push(e);
+    for (let i = waiters.length - 1; i >= 0; i -= 1) {
+      if (waiters[i].pred(e)) { const w = waiters.splice(i, 1)[0]; w.resolve(e); }
+    }
+  });
+  function waitFor(pred, timeoutMs = 4000) {
+    const hit = events.find(pred);
+    if (hit) return Promise.resolve(hit);
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`tier waitFor timeout after ${timeoutMs}ms; saw kinds: ${events.map((e) => e.kind).join(',')}`)), timeoutMs);
+      waiters.push({ pred, resolve: (e) => { clearTimeout(t); resolve(e); } });
+    });
+  }
+  return { cli, waitFor, waitForKind: (kind, timeoutMs) => waitFor((e) => e.kind === kind, timeoutMs) };
+}
+
+test('CS18: every Claude-family session tier delivers the unified Brief on the wire, authority sections included', async () => {
+  const tiers = [
+    ['ClaudeSessionCli', ClaudeSessionCli, {}, {}],
+    ['GlmSessionCli', GlmSessionCli, { authToken: 'fixture-only' }, {}],
+    // Kimi's route prep requires its exact model + effort (a credential/route prerequisite, not a
+    // rendering one); all values are fixtures.
+    ['KimiSessionCli', KimiSessionCli, { authToken: 'fixture-only' }, { model: 'kimi-k3[1m]', reasoningEffort: 'max' }],
+  ];
+  for (const [name, Cli, cliOpts, route] of tiers) {
+    const { cli, waitForKind } = tierHarness(Cli, cliOpts);
+    const worker = `tier-${name}`;
+    const ack = await cli.spawn(worker, tierBrief(), { worktree: process.cwd(), ...route });
+    assert.equal(ack.ok, true, `${name}: spawn refused (${JSON.stringify(ack)})`);
+
+    const message = await waitForKind('content.message');
+    const wire = message.payload.text;
+    assert.match(wire, /Echo: \[baton brief:cli\]/u, `${name}: the shipped text is the unified cli dialect`);
+    assert.match(wire, /## Write authority\nHarness permissions are execution capability, not write authority\./u, name);
+    assert.match(wire, /Never modify, move, chmod, delete, replace, or repair anything outside that authority/u, name);
+    assert.match(wire, /## Repository mutation authority\nRepository mutation is not authorized\./u, `${name}: the NOT-authorized stance reaches this tier`);
+    assert.ok(wire.includes('## Tools\nUse only the tools advertised here for Baton actions; any other Baton surface is not authorized for this task.\n- baton_swarm_view'),
+      `${name}: the advertised tool is listed with the order to use only it`);
+    assert.match(wire, /## Budget \(notify-only evidence/u, name);
+    assert.match(wire, /- tokens: 100000/u, name);
+    assert.match(wire, /## Output format\none paragraph, no headings/u, name);
+    assert.match(wire, /## Ambient knowledge \(provenance: knowledge — untrusted, verify before use\)\n- \[knowledge\/untrusted\] finding:live/u, name);
+    assert.match(wire, /Work only within: src\/\*\*/u, name);
+    assert.match(wire, /The hub re-runs this exact command independently after you finish; the exit code you report is untrusted/u, name);
+
+    await cli.kill(worker);
+    await waitForKind('kill.confirmed');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A-E2/A-I3 + A-F8: one idle-interrupt shape (the event) and one Ack vocabulary
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-I3: a LIVE idle session confirms its interrupt as the event (the wire round-trip, no turn in flight)', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('idle stop target'), { worktree: process.cwd() });
+  const completed = await waitForKind('lifecycle.turn_completed');
+
+  const ack = await cli.interrupt(w);
+  assert.equal(ack.ok, true);
+  assert.notEqual(ack.terminal, true, 'a live session is not a settled terminal — the event carries the stop');
+
+  const confirmed = await waitForKind('control.interrupt_confirmed');
+  assert.equal(confirmed.worker, w);
+  assert.equal(confirmed.payload.transportOpen, true);
+  assert.ok(events.indexOf(confirmed) > events.indexOf(completed), 'the confirmation follows the settled turn');
+
+  // The session survives: the next turn completes on the SAME pid.
+  await cli.prompt(w, 'still alive?', 'turn');
+  const next = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.equal(next.payload.pid, completed.payload.pid);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('A-E2/A-F8: interrupt() of a TERMINAL session returns the typed settled Ack — the event channel is closed', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
+  await waitForKind('lifecycle.turn_completed');
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+  const before = events.filter((e) => e.kind === 'control.interrupt_confirmed').length;
+
+  // After the terminal, _emit drops every non-terminal kind, so no event can confirm this stop:
+  // the Ack IS the confirmation, and a stop waiter must not burn its deadline waiting for one.
+  assert.deepEqual(await cli.interrupt(w), { ok: true, terminal: true });
+  assert.equal(events.filter((e) => e.kind === 'control.interrupt_confirmed').length, before);
+});

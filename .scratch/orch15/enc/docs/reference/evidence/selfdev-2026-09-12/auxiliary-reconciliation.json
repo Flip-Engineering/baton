@@ -1,0 +1,59 @@
+{
+  "baseline": {
+    "revision": "b394a892",
+    "before": true,
+    "after": false,
+    "report": {
+      "prunedAdminEntries": [],
+      "removedZombieDirs": [],
+      "removedIntegrationDirs": [],
+      "removedVerifyDirs": [
+        "/tmp/baton-auxiliary-reconcile-proof-ZkmnMZ/.baton/verify/still-verifying-f68b979a"
+      ],
+      "validatedExpectedOwners": [],
+      "retainedExpectedOwners": [],
+      "validatedExpectedBindings": [],
+      "retainedExpectedBindings": [],
+      "removedPhysicalOwners": [],
+      "receiptOnlyRefusals": [],
+      "diagnostics": [],
+      "errors": []
+    }
+  },
+  "followup": {
+    "revision": "working-followup",
+    "before": true,
+    "after": true,
+    "report": {
+      "prunedAdminEntries": [],
+      "removedZombieDirs": [],
+      "removedIntegrationDirs": [],
+      "removedVerifyDirs": [],
+      "validatedExpectedOwners": [],
+      "retainedExpectedOwners": [],
+      "validatedExpectedBindings": [],
+      "retainedExpectedBindings": [],
+      "removedPhysicalOwners": [],
+      "receiptOnlyRefusals": [],
+      "diagnostics": [
+        {
+          "code": "workspace_auxiliary_owner_unproven",
+          "path": "/tmp/baton-auxiliary-reconcile-proof-kSMqXI/.baton/verify/still-verifying-4755b1e8",
+          "kind": "verify",
+          "authority": "unproven",
+          "retained": true
+        }
+      ],
+      "errors": []
+    }
+  },
+  "validation": {
+    "tests": 71,
+    "pass": 71,
+    "fail": 0,
+    "cancelled": 0,
+    "log": "/tmp/baton-auxiliary-reconciliation-tests.log",
+    "sha256": "d30883aeb9b5fef83caa6bcf1c4359d12c70422c14484fae5cdb3a583933daa1"
+  },
+  "limitation": "Retain unattributed auxiliary workspaces. Explicit operation cleanup remains available; automatic orphan recovery requires ownership and process closure evidence. Original concurrent-startup refusal is not causally established by this separate reproduction."
+}

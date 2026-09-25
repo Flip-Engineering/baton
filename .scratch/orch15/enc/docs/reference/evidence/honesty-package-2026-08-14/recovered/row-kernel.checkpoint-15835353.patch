@@ -1,0 +1,776 @@
+From 158353532876b7032824373e8b7383dd8cf1c6c2 Mon Sep 17 00:00:00 2001
+From: "baton-worker-deepseek:deepseek"
+ <baton-worker-deepseek:deepseek@localhost>
+Date: Thu, 13 Aug 2026 20:20:53 -0700
+Subject: [PATCH] baton snapshot: ws-be931764fb4a8109c7f3332c76225bd8
+
+Baton-Task: ws-be931764fb4a8109c7f3332c76225bd8
+Baton-Vendor: deepseek:deepseek
+Baton-Model: deepseek-v4-flash
+Baton-Effort: high
+---
+ .../notes-row-kernel.md                       | 182 ++++++++++++++++++
+ impl/MCP.md                                   |   1 +
+ impl/scripts/surface-inventory-artifact.json  |   8 +-
+ impl/src/application-semantics.mjs            |  12 ++
+ impl/src/coordination-store.mjs               | 176 ++++++++++++++++-
+ impl/src/mcp-northbound.mjs                   |  38 +++-
+ impl/src/web-northbound.mjs                   |  22 ++-
+ impl/test/mcp-reflex-surface-red.test.mjs     |   6 +-
+ impl/test/phase16-mcp-northbound.test.mjs     |   4 +-
+ ...se67-progressive-agent-experience.test.mjs |   2 +-
+ .../phase72-kimi-orchestrator-mcp.test.mjs    |   4 +-
+ impl/test/scratchpad-33-red.test.mjs          |   8 +-
+ impl/test/wave-observability-red.test.mjs     |   6 +-
+ 13 files changed, 447 insertions(+), 22 deletions(-)
+ create mode 100644 docs/reference/evidence/honesty-package-2026-08-14/notes-row-kernel.md
+
+diff --git a/docs/reference/evidence/honesty-package-2026-08-14/notes-row-kernel.md b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-kernel.md
+new file mode 100644
+index 0000000..3e11b6e
+--- /dev/null
++++ b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-kernel.md
+@@ -0,0 +1,182 @@
++# ROW KERNEL — issue #158 scratchpad WRITE/append lane: the kernel write path + admission tables
++
++[attempt: c8a3f4fc-fe15-4311-953e-5fc21b03ec44 row-kernel]
++
++Row-kernel's acceptance: every `scratchpad-write-red.test.mjs` row that depends on my work
++green at its named stage. My rows are the kernel write path (`coordination-store.mjs`
++`appendScratchpad` + the `scratchpad.entry_appended` fold), the semantic-registry row
++(`application-semantics.mjs`), and the web/MCP admission tables (`web-northbound.mjs` +
++`mcp-northbound.mjs`). The CLI parser leg is row-cli's; the application `_commandDispatch`
++handler is row-app's; the deployment restrictor is row-deploy's. Nothing in this file was
++fabricated — every claim cites a code anchor or a suite run.
++
++## Scope (work-only boundary, honored)
++
++`docs/reference/evidence/honesty-package-2026-08-14/**` ·
++`impl/src/application-semantics.mjs` · `impl/src/coordination-store.mjs` ·
++`impl/src/mcp-northbound.mjs` · `impl/src/web-northbound.mjs`. The only files written outside
++that boundary were surface-truth **test restages** (see §7) — pinned lists/counts that a
++surface change legitimately moves, maintained under the f4a64da "surface-truth restage"
++precedent and the CLAUDE.md failing-tests rule. The acceptance suite
++`scratchpad-write-red.test.mjs` was never edited.
++
++## Kernel design — the D-depth-2 direct shared-tier write (G8)
++
++**New store method `appendScratchpad(fields, auth)`** — `coordination-store.mjs:14224`. The
++D1 write law is enforced at the surface `_authorize` seam (row-deploy), never in this fold;
++the kernel keeps the write-integrity invariants:
++
++- **Envelope closure (D2.1)**: `scratchpadExact(fields, ['runId', 'scope', 'entry'])` plus a
++  non-empty `auth.actor`/`auth.principalId`, `validRunId`, `SCRATCHPAD_SCOPE`. The author is
++  server-bound — there is no `workerId` field; it is read from `auth.principalId`
++  (`:14230-14231`).
++- **Body bound (OQ4 / A7-1)**: a note body over `MAX_SCRATCHPAD_ENTRY_BYTES` (8192) refuses
++  `scratchpad_entry_exceeded` before normalization (`:14236-14240`); the steering/non-steering
++  8192/2048 split stays a `FRAME_LIMITS['scratchpad.entry.body']` value — one refusal code,
++  never a second surface code.
++- **Closed normalizer**: `normalizeScratchpadEntry` with a steering-aware `noteMaxBytes`
++  (`:14243-14253`); `scratchpad_entry_invalid` / `scratchpad_entry_exceeded` pass through
++  verbatim.
++- **Idempotency (D3, P-A4)**: the kernel `_byKey` binding has **no scope term**. `key` is the
++  surface's namespaced key (`auth.key`); absent one, the kernel derives
++  `run.scratchpad.append:<runId>:<scope>:<contentDigest>`. An exact retry replays
++  `{ok:true, result:'idempotent', entryId, ...}`; a changed binding (different kind/actor/
++  runId/workerId/contentDigest) refuses `scratchpad_write_conflict` (`:14260-14274`).
++- **Partition caps (A7-2/A7-3)**: per-partition (`scratchpadScopeKey(runId, scope)`) —
++  `MAX_SCRATCHPAD_SHARED_ENTRIES` (512) for `shared`, `MAX_SCRATCHPAD_WORKER_ENTRIES` (128)
++  for `worker:<id>`; the (cap+1)th append refuses `scratchpad_partition_exhausted`
++  (`:14276-14282`).
++- **Canonical mints + linkage citation (A6-1 law 4)**: canonical `entryId`/`entryDigest`; a
++  `link`→`entry` append to a shared elevated target atomically records one `scratch.read`
++  citation (`:14291-14312`). The append is workflow-ephemeral — it **never** mints a
++  scratch-fact / KG candidacy; elevation stays the promotion law.
++- **Receipt**: `{ok:true, result:'written'|'idempotent', event, entry, entryId, entryDigest,
++  scope, scratchpadFence, eventSeq}` (`:14316-14322`).
++
++**New event kind `scratchpad.entry_appended`** — apply fold at `coordination-store.mjs:8381`.
++The existing `entry_written` apply hard-requires worker scope (impossible for
++shared/cross-partition writes), so the append lane carries its own fold. Replay-integrity
++checks: exact field closure, canonical mints, monotone ordinal within the addressed partition,
++normalizer re-verify (`:8410-8421`). The suite does not pin the event kind name, so this is a
++pure additive fold.
++
++**Snapshot slices**: `scratchpadSnapshot(runId, scope)` now returns the canonical `entries`
++projection **additively** plus `slices: capture.slices` (`coordination-store.mjs:14099-14110`)
++so surface append rows read `snap.slices[0].entries` back. `scratchpadSnapshotBatch` projects
++one `{scope, entries}` slice per requested scope (`:14092-14096`). The `entry_appended` event
++also joins the projection/gate redaction folds (`:1079`, `:7789`).
++
++## Semantic registry row — `application-semantics.mjs:1710`
++
++`['run.scratchpad.append', { profile:'ordinary', surfaces:['embedded','mcp','cli','web'],
++effect:'control', capabilities:['control','observe'], outputView:'outline',
++helpTopic:'run', example:'baton run scratchpad append RUN_ID --scope shared --kind note
++--body TEXT', inputSchema:{runId, scope, kind? note|plan|doubt|link, body? string|object|
++array, idempotencyKey?} }]`. The `scope` pattern is `^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$`
++— the D1 partition law's two-tier shape. `idempotencyKey` is optional (D3's absent-key
++derivation is kernel-side); when present the surface namespaces it by scope.
++
++## MCP admission — `mcp-northbound.mjs` (five sites)
++
++1. `baton_run_scratchpad_append: ['control','observe']` in the tool→capability map (`:118`).
++2. Tool definition `{name:'baton_run_scratchpad_append', ...}` in `ORDINARY_APPLICATION_TOOL_
++   DEFINITIONS` at the LEGACY tool positions (`:684`) — `idempotentHint` stays `false` (D3's
++   idempotency is a binding property, not an annotation).
++3. `'baton_run_scratchpad_append'` in the sorted pinned tool-name list (`:854`) — the
++   `mcpApplicationToolNames()` source, which `tools/list` sorts.
++4. Schema-level admission branch (`:1225`) — validates runId/scope/kind/body before dispatch.
++5. `_dispatch` branch (`:1965`) — routes `baton_run_scratchpad_append` → `this.application.
++   command('run.scratchpad.append', {...}, {actor, principalId, sessionId}, ctx)`. The
++   application handler (row-app) is the branch target; my table rows admit the tool and route
++   it.
++
++## Web admission — `web-northbound.mjs` (four tables, H2.1)
++
++1. `WAVE_WEB_ENTRIES` gains `['run_scratchpad_append', 'run.scratchpad.append',
++   Object.freeze(['control','observe'])]` (`:53`) — the direct-port source of
++   `WEB_DIRECT_PORT_COMMANDS`, so `validateEnvelope` skips `validateApplicationCommandArgs`
++   and the kernel fold is the argument authority.
++2. `COMMAND_CAPABILITY.run_scratchpad_append = ['control','observe']` (`:100`).
++3. `ARG_FIELDS.run_scratchpad_append = new Set(['runId','scope','kind','body',
++   'idempotencyKey'])` (`:144`).
++4. `APPLICATION_COMMAND.run_scratchpad_append = 'run.scratchpad.append'` (`:168`).
++
++## Cross-package pin restages (surface-truth maintenance)
++
++Adding an ordinary MCP tool grows `mcpApplicationToolNames()` 36→37 and the combined
++`tools/list` 87→88. Under the f4a64da precedent ("surface-truth restages"), the following
++pinned lists/counts were updated — each is a mechanical consequence of the surface change, not
++a behavior edit:
++
++- **`mcp-profile-parity-red.test.mjs`**: conformance regeneration only — the suite's 13 named
++  rows fail at their DESIGNED stages (its #156 impl is a later package). All 8 pins green
++  (8 pass / 13 fail, unchanged from acceptance).
++- **`phase16-mcp-northbound.test.mjs`** (29/29): `baton_run_scratchpad_append` inserted into
++  the sorted application-tool list (after `baton_run_scratchpad_elevate`, before
++  `baton_run_knowledge_seed`); combined count 87→88 (+ 1 scratchpad.append #158).
++- **`mcp-reflex-surface-red.test.mjs`** (21/21): same insertion; combined 87→88 (`:173`),
++  application 36→37 (`:201`).
++- **`phase67-progressive-agent-experience.test.mjs`** (12/12): tool-list insertion (`:655`).
++- **`phase72-kimi-orchestrator-mcp.test.mjs`** (20/20): tool-list insertion at both pinned
++  occurrences (replace_all).
++- **`wave-observability-red.test.mjs`** (30/30): A3-2 §4 MCP enumeration pins 36→37 (two
++  sites); waves-family positions unchanged — scratchpad tools sit at LEGACY positions 27-30.
++- **`scratchpad-33-red.test.mjs`** (50/50): two pins were inherently superseded by the #158
++  contract. **SP1** — `appendScratchpad` moved from the absent surface to the present surface
++  (the append verb is the whole point of #158). **SP4** — the folded scratchpad kind set
++  gains `'scratchpad.entry_appended'` (sorted first); "exactly three kinds" is now four. Both
++  are additive-only closures; the suite's other 48 rows untouched.
++- **`impl/MCP.md`** + **`impl/scripts/surface-inventory-artifact.json`**: REGENERATED via
++  `node impl/scripts/render-surface-docs.mjs` and `node impl/scripts/surface-conformance.mjs
++  --write-inventory` (canonicalOperations 74→75, mcpApplicationTools 36→37, mcpCombinedTools
++  87→88). No hand-edits.
++
++## Acceptance state (verified 2026-08-13, in-worktree)
++
++| Suite | Result | Notes |
++|---|---|---|
++| `scratchpad-write-red.test.mjs` | **8/23** | My 8 stages green: A2-1, A2-3, A3-2, P-A1, P-A4, P-A5, P-A6, P-A7 |
++| `mcp-profile-parity-red.test.mjs` | 8 pass / 13 fail | All 8 pins green; 13 rows fail at designed stages (#156 impl later) |
++| `workflow-dsl-package-red.test.mjs` | 12/12 | — |
++| `scratchpad-33-red.test.mjs` | 50/50 | Restored after SP1/SP4 |
++| `wave-observability-red.test.mjs` | 30/30 | — |
++| `phase16-mcp-northbound.test.mjs` | 29/29 | — |
++| `mcp-reflex-surface-red.test.mjs` | 21/21 | — |
++| `phase67-progressive-agent-experience.test.mjs` | 12/12 | — |
++| `phase72-kimi-orchestrator-mcp.test.mjs` | 20/20 | — |
++
++Full adjacent set re-verified fresh at finish time (2026-08-13, in-worktree) — every count
++matches the brief's named baseline, so the surface change disturbed nothing:
++
++| Adjacent (brief baseline) | Fresh run |
++|---|---|
++| `workflow-dsl-red` (35/35) | 35/35 |
++| `workflow-as-data-red` (30/30) | 30/30 |
++| `control-surface-truth-red` (7/7) | 7/7 |
++| `blind-waits-red` (23/11 by design) | 23 pass / 11 fail |
++| `orchestrator-plan-object-red` (5/42 by design) | 5 pass / 42 fail |
++
++By-design rows from the package's other issues, unchanged at HEAD (not re-run this row —
++untouched files): `launch-validation` 3/9, `doc-truth-conformance` 2/13, `tight-cell` 9/30,
++`cli-wave-fidelity` 8/16.
++
++## Rows still RED — upstream-owned, named stages only
++
++| Row | Owner | Why red at this stage |
++|---|---|---|
++| A1-1, A1-2, A9-1, A9-2, A10-1 | row-cli | `run scratchpad append`/subverb parser branch + closed-set teaching; the parser throws `unexpected argument` at HEAD |
++| A2-2, A3-1 | row-app | `_commandDispatch` (`application.mjs:12606`) has no `run.scratchpad.append` branch → `application_command_unavailable` |
++| A6-1, A7-1, A7-2, A7-3, A8-1 | row-app (handler) | These rows drive the kernel through `fx.application.command(...)`; the handler branch must land before the kernel contract is reachable. **Kernel side verified complete**: body limit, caps, replay/conflict, ephemeral no-candidacy, snapshot read-back all present in `appendScratchpad` (see §2) |
++| A4-1, A4-2, A5-1 | row-deploy | The restrictor at the `_authorize` seam (own-run predicate, review-authority shared-only); the deployment installs it |
++
++When row-app's handler and row-cli's parser land, A6-1/A7-1/A7-2/A7-3/A8-1 should flip green
++against the existing kernel — no further kernel work is expected from this row unless one of
++those rows surfaces a contract mismatch (a DECISION_REQUEST, never a suite edit).
++
++## Craft-law compliance
++
++No clocks; no `localeCompare`; byte literals only in `limits.mjs`; additive-only on the closed
++vocabularies (registry, tool list, kind set, web tables); NUL discipline held on
++`coordination-store.mjs`/`application.mjs` (`grep -a`/`sed -n` only); generated docs
++regenerated, never hand-edited; the acceptance suite never edited; all work confined to the
++row's worktree; this attempt line verbatim in the first five lines.
+diff --git a/impl/MCP.md b/impl/MCP.md
+index a5e6e50..b0b3347 100644
+--- a/impl/MCP.md
++++ b/impl/MCP.md
+@@ -162,6 +162,7 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
+ | `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
+ | `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
+ | `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
++| `run.scratchpad.append` | `ordinary` | `baton_run_scratchpad_append` | idempotent |
+ | `run.scratchpad.elevate` | `ordinary` | `baton_run_scratchpad_elevate` | idempotent |
+ | `run.scratchpad.read` | `ordinary` | `baton_run_scratchpad_read` | idempotent |
+ | `run.start` | `ordinary` | `baton_run_start` | idempotent |
+diff --git a/impl/scripts/surface-inventory-artifact.json b/impl/scripts/surface-inventory-artifact.json
+index 7b33d4d..df1daf7 100644
+--- a/impl/scripts/surface-inventory-artifact.json
++++ b/impl/scripts/surface-inventory-artifact.json
+@@ -2,12 +2,12 @@
+   "schemaVersion": 1,
+   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
+   "counts": {
+-    "canonicalOperations": 74,
++    "canonicalOperations": 75,
+     "cliWebCommands": 37,
+     "parserLifecycleActions": 28,
+-    "mcpApplicationTools": 36,
++    "mcpApplicationTools": 37,
+     "mcpAdvancedTools": 19,
+-    "mcpCombinedTools": 87,
++    "mcpCombinedTools": 88,
+     "mcpDispatchTools": 42,
+     "webBusCommands": 25,
+     "applicationCommandDefinitions": 26
+@@ -72,6 +72,7 @@
+       "baton_run_member_view",
+       "baton_run_message_receipt",
+       "baton_run_message_send",
++      "baton_run_scratchpad_append",
+       "baton_run_scratchpad_elevate",
+       "baton_run_scratchpad_read",
+       "baton_run_start",
+@@ -145,6 +146,7 @@
+       "baton_run_member_view",
+       "baton_run_message_receipt",
+       "baton_run_message_send",
++      "baton_run_scratchpad_append",
+       "baton_run_scratchpad_elevate",
+       "baton_run_scratchpad_read",
+       "baton_run_start",
+diff --git a/impl/src/application-semantics.mjs b/impl/src/application-semantics.mjs
+index b680911..f3b968a 100644
+--- a/impl/src/application-semantics.mjs
++++ b/impl/src/application-semantics.mjs
+@@ -1707,6 +1707,18 @@ const CANONICAL_OPERATION_SPECS = [
+       entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+     }, ['runId', 'taskId', 'entryIds']),
+   }],
++  ['run.scratchpad.append', {
++    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
++    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
++    example: 'baton run scratchpad append RUN_ID --scope shared --kind note --body TEXT',
++    inputSchema: objectSchema({
++      runId: id,
++      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
++      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
++      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
++      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
++    }, ['runId', 'scope']),
++  }],
+   ['run.board.post', {
+     profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'control',
+     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+diff --git a/impl/src/coordination-store.mjs b/impl/src/coordination-store.mjs
+index 105da7d..f71d887 100644
+--- a/impl/src/coordination-store.mjs
++++ b/impl/src/coordination-store.mjs
+@@ -1076,7 +1076,7 @@ export class CoordinationStore {
+     // projection surface through the parsed-event cache. The durable checkpoint writer opts
+     // into its authoritative parsed-prefix cache; the append-only ledger remains the source.
+     if (!durable) {
+-      payload._events = this._events.map((event) => event.kind === 'scratchpad.entry_written'
++      payload._events = this._events.map((event) => (event.kind === 'scratchpad.entry_written' || event.kind === 'scratchpad.entry_appended')
+         && !this._scratchpadEntries.has(event.payload.entryId)
+         ? freeze({ ...clone(event), payload: freeze({ ...clone(event.payload), content: '[reaped]' }) })
+         : event);
+@@ -7786,6 +7786,7 @@ export class CoordinationStore {
+       admittedRunId = this._replManifestAdmissions.get(p?.manifestDigest)?.runId ?? null;
+     }
+     else if (event.kind === 'scratchpad.entry_written') admittedRunId = p?.runId ?? null;
++    else if (event.kind === 'scratchpad.entry_appended') admittedRunId = p?.runId ?? null;
+     else if (event.kind === 'scratchpad.entry_elevated') {
+       const source = this._scratchpadEntries.get(p?.sourceEntryId);
+       admittedRunId = source?.runId ?? p?.runId ?? null;
+@@ -8377,6 +8378,58 @@ export class CoordinationStore {
+       this._scratchpadEntries.set(p.entryId, row);
+       this._scratchpadEntriesByScope.set(scopeKey, freeze([...ids, p.entryId]));
+       this._scratchpadFences.set(scopeKey, (this._scratchpadFences.get(scopeKey) ?? 0) + 1);
++    } else if (event.kind === 'scratchpad.entry_appended') {
++      // Issue #158 — the surface append verb's write (the unlanded tight-cell D-depth-2 direct
++      // shared-tier write, G8). Unlike the worker lane's entry_written, whose scope is hard-bound
++      // to the author's own partition, an appended entry carries an EXPLICIT scope — `shared` or a
++      // member partition — with the author identity server-bound to the payload workerId (H1.3).
++      // The D1 scope law is enforced at the surface authorize seam, never in this fold; here we
++      // keep only the replay-integrity invariant: a valid SCRATCHPAD_SCOPE, canonical mints, and a
++      // monotone ordinal within the addressed partition. The append is workflow-ephemeral (law 4):
++      // it never mints a scratch-fact / KG candidacy — elevation stays the promotion law.
++      const fields = [
++        'schemaVersion', 'runId', 'taskId', 'workerId', 'scope', 'ordinal',
++        'entryId', 'entryDigest', 'contentDigest', 'kind', 'content',
++      ];
++      if (!scratchpadExact(p, fields) || p.schemaVersion !== 1 || !validRunId(p.runId)
++        || !validRunId(p.taskId) || !validRunId(p.workerId)
++        || !SCRATCHPAD_SCOPE.test(p.scope ?? '') || !Number.isSafeInteger(p.ordinal) || p.ordinal <= 0
++        || !SCRATCHPAD_ENTRY_ID.test(p.entryId ?? '') || !SCRATCHPAD_DIGEST.test(p.entryDigest ?? '')
++        || !SCRATCHPAD_DIGEST.test(p.contentDigest ?? '') || !SCRATCHPAD_KINDS.has(p.kind)
++        || p.content?.kind !== p.kind
++        || p.contentDigest !== canonicalDigest(p.content)
++        || p.entryId !== `scratchpad-entry:${canonicalDigest({
++          runId: p.runId, taskId: p.taskId, workerId: p.workerId, scope: p.scope,
++          ordinal: p.ordinal, mintSeq: event.seq,
++        })}`
++        || p.entryDigest !== canonicalDigest({
++          schemaVersion: 1, entryId: p.entryId, runId: p.runId, taskId: p.taskId,
++          workerId: p.workerId, scope: p.scope, ordinal: p.ordinal, kind: p.kind,
++          contentDigest: p.contentDigest, content: p.content,
++        })) {
++        throw new CoordinationIntegrityError('scratchpad appended entry is invalid', 'scratchpad_entry_integrity');
++      }
++      let normalized;
++      try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
++      catch { throw new CoordinationIntegrityError('scratchpad appended content is invalid', 'scratchpad_entry_integrity'); }
++      if (canonicalDigest(normalized) !== canonicalDigest(p.content) || this._scratchpadEntries.has(p.entryId)) {
++        throw new CoordinationIntegrityError('scratchpad appended entry changed during replay', 'scratchpad_entry_integrity');
++      }
++      const scopeKey = scratchpadScopeKey(p.runId, p.scope);
++      const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
++      if (p.ordinal !== ids.length + 1) {
++        throw new CoordinationIntegrityError('scratchpad ordinal is invalid', 'scratchpad_entry_integrity');
++      }
++      const row = freeze({
++        schemaVersion: 1, entryId: p.entryId, entryDigest: p.entryDigest,
++        contentDigest: p.contentDigest, runId: p.runId, taskId: p.taskId,
++        workerId: p.workerId, scope: p.scope, ordinal: p.ordinal, kind: p.kind,
++        content: clone(p.content), createdEvent: event.seq, createdAt: event.ts,
++        source: null, scratchFactId: null,
++      });
++      this._scratchpadEntries.set(p.entryId, row);
++      this._scratchpadEntriesByScope.set(scopeKey, freeze([...ids, p.entryId]));
++      this._scratchpadFences.set(scopeKey, (this._scratchpadFences.get(scopeKey) ?? 0) + 1);
+     } else if (event.kind === 'scratchpad.entry_elevated') {
+       const fields = [
+         'schemaVersion', 'runId', 'scope', 'sourceEntryId', 'sourceEntryDigest',
+@@ -14049,6 +14102,10 @@ export class CoordinationStore {
+       runId, scope, observedSeq: capture.observedSeq,
+       scratchpadFence: capture.fenceTuple[0][1], fenceTuple: capture.fenceTuple,
+       entries: capture.slices[0].entries,
++      // The single-scope snapshot exposes the batch's slice structure too (Issue #158 — the
++      // surface append rows read the scoped slice back via slices[0].entries); `.entries` above
++      // stays the canonical projection for existing single-scope consumers.
++      slices: capture.slices,
+     });
+   }
+ 
+@@ -14154,6 +14211,123 @@ export class CoordinationStore {
+     });
+   }
+ 
++  // Issue #158 — the surface append verb's write (the unlanded tight-cell D-depth-2 direct
++  // shared-tier write, G8). The entry's scope is EXPLICIT — `shared` or a member partition —
++  // while the author identity is server-bound to auth.principalId (H1.3), never a caller field
++  // (D2.1 excludes workerId). The D1 scope law is enforced at the surface authorize seam; this
++  // fold only enforces the closed envelope, the declared partition caps (D3: 128 worker / 512
++  // shared), and the _byKey replay binding {kind, actor, runId, taskId, workerId, contentDigest}
++  // with NO scope term (P-A4 — the surface disambiguates the two-scope verb's keys by namespacing
++  // every key by scope, H3.1). Absent caller keys derive run.scratchpad.append:<runId>:<scope>:
++  // <contentDigest> (OQ2) so the surface need not compute the kernel's content digest. A written
++  // append is workflow-ephemeral (law 4): it never mints a scratch-fact / KG candidacy.
++  appendScratchpad(fields, auth) {
++    if (!scratchpadExact(fields, ['runId', 'scope', 'entry'])
++      || typeof auth?.actor !== 'string' || auth.actor.length === 0
++      || typeof auth?.principalId !== 'string' || auth.principalId.length === 0
++      || !validRunId(fields?.runId) || !SCRATCHPAD_SCOPE.test(fields?.scope ?? '')) {
++      throw new CoordinationRefusal('scratchpad append envelope is invalid', 'scratchpad_write_invalid');
++    }
++    const steeringRegistered = this._steeringRuns.has(fields.runId);
++    const workerId = auth.principalId;
++    // D3: the surface body bound is the #89 admission row verbatim (OQ4). A note body over
++    // scratchpad.entry.body (8192) refuses scratchpad_entry_exceeded — the kernel's steering
++    // 8192/2048 note split is a doc note, never a second surface code.
++    if (typeof fields.entry?.text === 'string'
++      && Buffer.byteLength(fields.entry.text) > MAX_SCRATCHPAD_ENTRY_BYTES) {
++      throw new CoordinationRefusal('scratchpad entry body exceeds the admission bound', 'scratchpad_entry_exceeded');
++    }
++    let content;
++    try {
++      content = normalizeScratchpadEntry(fields.entry,
++        (entryId, entryDigest, requirement) => this._scratchpadResolveForWorker(
++          fields.runId, workerId, entryId, entryDigest, requirement,
++        ),
++        steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
++    } catch (error) {
++      if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
++      throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
++    }
++    const contentDigest = canonicalDigest(content);
++    const key = typeof auth?.key === 'string' && auth.key.length > 0
++      ? auth.key
++      : `run.scratchpad.append:${fields.runId}:${fields.scope}:${contentDigest}`;
++    if (!SCRATCHPAD_IDEMPOTENCY_KEY.test(key)) {
++      throw new CoordinationRefusal('scratchpad write idempotency key is invalid', 'scratchpad_write_invalid');
++    }
++    const prior = this._byKey.get(key);
++    if (prior) {
++      if (prior.kind !== 'scratchpad.entry_appended' || prior.actor !== auth.actor
++        || prior.payload?.runId !== fields.runId || prior.payload?.taskId !== fields.runId
++        || prior.payload?.workerId !== workerId || prior.payload?.contentDigest !== contentDigest) {
++        throw new CoordinationRefusal('scratchpad idempotency binding changed', 'scratchpad_write_conflict');
++      }
++      const priorRow = this._scratchpadEntries.get(prior.payload.entryId) ?? {
++        ...clone(prior.payload), createdEvent: prior.seq, createdAt: prior.ts, source: null, scratchFactId: null,
++      };
++      return freeze({
++        ok: true, result: 'idempotent', event: clone(prior), entry: clone(priorRow),
++        entryId: prior.payload.entryId, entryDigest: prior.payload.entryDigest,
++        scope: prior.payload.scope, scratchpadFence: this.scratchpadFence(fields.runId, prior.payload.scope),
++        eventSeq: prior.seq,
++      });
++    }
++    const scope = fields.scope;
++    const scopeKey = scratchpadScopeKey(fields.runId, scope);
++    const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
++    const cap = scope === 'shared' ? MAX_SCRATCHPAD_SHARED_ENTRIES : MAX_SCRATCHPAD_WORKER_ENTRIES;
++    if (ids.length >= cap) {
++      throw new CoordinationRefusal('scratchpad partition is full', 'scratchpad_partition_exhausted');
++    }
++    const taskId = fields.runId;
++    const ordinal = ids.length + 1;
++    const mintSeq = this._events.length + 1;
++    const entryId = `scratchpad-entry:${canonicalDigest({
++      runId: fields.runId, taskId, workerId, scope, ordinal, mintSeq,
++    })}`;
++    const entryDigest = canonicalDigest({
++      schemaVersion: 1, entryId, runId: fields.runId, taskId,
++      workerId, scope, ordinal, kind: content.kind,
++      contentDigest, content,
++    });
++    const payload = {
++      schemaVersion: 1, runId: fields.runId, taskId,
++      workerId, scope, ordinal, entryId, entryDigest,
++      contentDigest, kind: content.kind, content: clone(content),
++    };
++    const authForEvent = { actor: auth.actor, key };
++    let event;
++    if (content.kind === 'link' && content.target.type === 'entry') {
++      const target = this._scratchpadEntries.get(content.target.entryId);
++      if (target?.scope === 'shared' && target.scratchFactId) {
++        const resource = `scratchpad:${target.entryId}`;
++        const envRef = { repoId: this._repoId, treeSha: this._deploymentBaseSha };
++        const result = this.checkScratch(resource, envRef);
++        const readPayload = {
++          readerActor: 'scratchpad.link', readerWorker: workerId,
++          taskId, runId: fields.runId,
++          citationLinkEntryId: entryId, citationLinkEntryDigest: entryDigest,
++          targetEntryId: target.entryId, targetEntryDigest: target.entryDigest,
++          citationRelation: content.relation, resource, envRef, result: clone(result),
++        };
++        [event] = this._appendBatch([
++          { kind: 'scratchpad.entry_appended', payload, auth: authForEvent },
++          {
++            kind: 'scratch.read', payload: readPayload,
++            auth: { actor: auth.actor, key: `${key}:citation` },
++          },
++        ], 'scratchpad_link_citation');
++      }
++    }
++    if (!event) event = this._append('scratchpad.entry_appended', payload, authForEvent);
++    const entry = this._scratchpadEntries.get(entryId);
++    return freeze({
++      ok: true, result: 'written', event: clone(event), entry: clone(entry),
++      entryId, entryDigest, scope, scratchpadFence: this.scratchpadFence(fields.runId, scope),
++      eventSeq: event.seq,
++    });
++  }
++
+   _scratchpadReapReceipt(prior, result = 'idempotent') {
+     const reap = this._scratchpadReaps.find((row) => row.eventSeq === prior.seq);
+     if (!reap) throw new CoordinationIntegrityError('scratchpad reap receipt is absent', 'scratchpad_reap_integrity');
+diff --git a/impl/src/mcp-northbound.mjs b/impl/src/mcp-northbound.mjs
+index a795ba9..2ce6cec 100644
+--- a/impl/src/mcp-northbound.mjs
++++ b/impl/src/mcp-northbound.mjs
+@@ -115,6 +115,7 @@ const CAPABILITY = Object.freeze({
+   baton_run_attention_watch: ['observe'],
+   baton_run_scratchpad_read: ['observe'],
+   baton_run_scratchpad_elevate: ['control', 'observe'],
++  baton_run_scratchpad_append: ['control', 'observe'],
+   baton_run_knowledge_seed: ['control', 'observe'],
+   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
+   // the run-orchestrator lease resolved inside S-2 is the control authority.
+@@ -679,6 +680,18 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+     }, ['repoId', 'runId', 'taskId', 'entryIds']),
+     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+   },
++  {
++    name: 'baton_run_scratchpad_append',
++    description: "Append one entry to a run scratchpad scope (shared or worker:<id>) as a direct EPHEMERAL write (issue #158). Returns the store receipt verbatim {ok, result:'written'|'idempotent', entryId, entryDigest, scope, scratchpadFence, eventSeq}. The entry's author is server-bound to the caller identity; an exact retry under the same idempotencyKey replays the prior receipt.",
++    inputSchema: schema({
++      ...repo, runId,
++      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
++      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
++      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
++      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
++    }, ['repoId', 'runId', 'scope']),
++    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
++  },
+   {
+     name: 'baton_run_knowledge_seed',
+     description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+@@ -838,7 +851,8 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
+   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
+   'baton_knowledge_settlement_lease',
+   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+-  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
++  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
++  'baton_run_knowledge_seed',
+ ]);
+ const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
+ const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
+@@ -1208,6 +1222,17 @@ function validateArguments(name, args, maxWaitMs = null) {
+       return 'invalid_scratchpad_elevate';
+     }
+   }
++  if (name === 'baton_run_scratchpad_append') {
++    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
++      || typeof args.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/.test(args.scope)
++      || (Object.hasOwn(args, 'kind') && !['note', 'plan', 'doubt', 'link'].includes(args.kind))
++      || !Object.hasOwn(args, 'body') || args.body === null || args.body === undefined
++      || (typeof args.body !== 'string' && typeof args.body !== 'object')
++      || (Object.hasOwn(args, 'idempotencyKey')
++        && (typeof args.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(args.idempotencyKey)))) {
++      return 'invalid_scratchpad_append';
++    }
++  }
+   if (name === 'baton_run_knowledge_seed') {
+     if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+       || !['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis',
+@@ -1937,6 +1962,17 @@ export class McpFleetServer {
+         principalId: principal.userId, sessionId: principal.sessionId,
+       }, this._applicationDispatchContext(args, callId, principal));
+     }
++    else if (name === 'baton_run_scratchpad_append') {
++      value = await this.application.command('run.scratchpad.append', {
++        runId: args.runId, scope: args.scope,
++        ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
++        body: clone(args.body),
++        ...(Object.hasOwn(args, 'idempotencyKey') ? { idempotencyKey: args.idempotencyKey } : {}),
++      }, {
++        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
++        principalId: principal.userId, sessionId: principal.sessionId,
++      }, this._applicationDispatchContext(args, callId, principal));
++    }
+     else if (name === 'baton_run_knowledge_seed') {
+       value = await this.application.command('run.knowledge.seed', {
+         runId: args.runId, type: args.type, grounding: args.grounding, body: args.body,
+diff --git a/impl/src/web-northbound.mjs b/impl/src/web-northbound.mjs
+index bd36c40..7b8fd79 100644
+--- a/impl/src/web-northbound.mjs
++++ b/impl/src/web-northbound.mjs
+@@ -45,6 +45,12 @@ const WAVE_WEB_ENTRIES = Object.freeze([
+   // workflow_* refusals) is the argument authority, exactly like the five sibling verbs.
+   ['waves_run', 'waves.run', Object.freeze(['control', 'observe'])],
+   ['waves_compile', 'waves.compile', Object.freeze(['observe'])],
++  // #158 (scratchpad-write-2026-08-13/contract-fold.md H2.1): the folded scratchpad WRITE direct
++  // port. WEB_DIRECT_PORT_COMMANDS is derived from THIS array, so validateEnvelope skips
++  // validateApplicationCommandArgs and the append's own closed normalizer (the kernel fold,
++  // coordination-store.mjs appendScratchpad) is the argument authority — the same direct-port
++  // admission the five wave verbs ride. Capability classes match the MCP capability map.
++  ['run_scratchpad_append', 'run.scratchpad.append', Object.freeze(['control', 'observe'])],
+ ]);
+ // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
+ // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
+@@ -90,6 +96,8 @@ const COMMAND_CAPABILITY = Object.freeze({
+   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
+   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
+   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
++  // #158 (H2.1): the scratchpad WRITE direct port's capability classes (matches the MCP capability map).
++  run_scratchpad_append: ['control', 'observe'],
+   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
+   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
+   ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+@@ -131,6 +139,9 @@ const ARG_FIELDS = Object.freeze({
+   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
+   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
+   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
++  // #158 (H2.1): the closed {runId, scope, kind, body, idempotencyKey} accepted set — the D2.1
++  // verb closure, exactly the fields the folded append verb admits on every surface.
++  run_scratchpad_append: new Set(['runId', 'scope', 'kind', 'body', 'idempotencyKey']),
+   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, name, definition]) => [
+     transport, advertisedArgs(definition, name),
+   ])),
+@@ -148,9 +159,14 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
+     transport, acceptedArgs(definition, name),
+   ])),
+ });
+-const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
+-  [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
+-));
++const APPLICATION_COMMAND = Object.freeze({
++  ...Object.fromEntries(
++    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
++  ),
++  // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
++  // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
++  run_scratchpad_append: 'run.scratchpad.append',
++});
+ const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
+ const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
+ const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
+diff --git a/impl/test/mcp-reflex-surface-red.test.mjs b/impl/test/mcp-reflex-surface-red.test.mjs
+index d7ef084..c5f3af6 100644
+--- a/impl/test/mcp-reflex-surface-red.test.mjs
++++ b/impl/test/mcp-reflex-surface-red.test.mjs
+@@ -170,7 +170,7 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen
+   // MCP-W1/W2 (v1.0.1 adjudication): the ordinary surface gains the wave ergonomics, doctor,
+   // decision.answer, and the four settlement tools (10 additions); decision.answer moves OUT of
+   // the reflex inventory, and the three settlement rows leave the S-3 matrix (ordinary tools).
+-  assert.equal(names.length, 87, '64 ordinary/advanced tools + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 1 waves.compile (#170) + 14 legacy-and-S-3 reflex tools');
++  assert.equal(names.length, 88, '64 ordinary/advanced tools + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 1 waves.compile (#170) + 1 scratchpad.append (#158) + 14 legacy-and-S-3 reflex tools');
+   const reflexNames = [
+     'baton_context_eval', 'baton_decision_list',
+     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
+@@ -198,7 +198,7 @@ test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2
+   // tool crosses. M4b: the canonical grammar tools render beside the retained legacy tools.
+   // Facade-projection epic (#87+#48): the six workflow-surface tools join between the settlement
+   // family and the view verbs.
+-  assert.equal(response.result.tools.length, 36);
++  assert.equal(response.result.tools.length, 37);
+   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
+     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
+@@ -207,7 +207,7 @@ test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2
+     'baton_deployment_doctor', 'baton_decision_answer',
+     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
++    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+     'baton_run_member_stop', 'baton_application_help',
+   ]);
+diff --git a/impl/test/phase16-mcp-northbound.test.mjs b/impl/test/phase16-mcp-northbound.test.mjs
+index a58a0e5..8950022 100644
+--- a/impl/test/phase16-mcp-northbound.test.mjs
++++ b/impl/test/phase16-mcp-northbound.test.mjs
+@@ -97,7 +97,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
+     'baton_deployment_doctor', 'baton_decision_answer',
+     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
++    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+     'baton_run_member_stop', 'baton_application_help',
+   ]);
+@@ -118,7 +118,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
+     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
+     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
+   ];
+-  assert.equal(combined.result.tools.length, 87); // 64 ordinary/advanced + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 1 waves.compile (#170) + 14 S-3 reflex (decision.answer + settlement rows are ordinary at MCP-W1/W2)
++  assert.equal(combined.result.tools.length, 88); // 64 ordinary/advanced + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 1 waves.compile (#170) + 1 scratchpad.append (#158) + 14 S-3 reflex (decision.answer + settlement rows are ordinary at MCP-W1/W2)
+   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
+   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
+   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
+diff --git a/impl/test/phase67-progressive-agent-experience.test.mjs b/impl/test/phase67-progressive-agent-experience.test.mjs
+index 99103d8..056a19c 100644
+--- a/impl/test/phase67-progressive-agent-experience.test.mjs
++++ b/impl/test/phase67-progressive-agent-experience.test.mjs
+@@ -652,7 +652,7 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
+     'baton_deployment_doctor', 'baton_decision_answer',
+     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
++    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+     'baton_run_member_stop', 'baton_application_help',
+   ]);
+diff --git a/impl/test/phase72-kimi-orchestrator-mcp.test.mjs b/impl/test/phase72-kimi-orchestrator-mcp.test.mjs
+index ad4716d..d673056 100644
+--- a/impl/test/phase72-kimi-orchestrator-mcp.test.mjs
++++ b/impl/test/phase72-kimi-orchestrator-mcp.test.mjs
+@@ -301,7 +301,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
+     'baton_deployment_doctor', 'baton_decision_answer',
+     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
++    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+     'baton_run_member_stop', 'baton_application_help',
+   ]);
+@@ -635,7 +635,7 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
+     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+     // Facade-projection epic (#87+#48): the six workflow-surface tools join the packaged bridge.
+     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
++    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+     'baton_run_member_stop', 'baton_application_help',
+   ]);
+diff --git a/impl/test/scratchpad-33-red.test.mjs b/impl/test/scratchpad-33-red.test.mjs
+index e24b714..4ba82c0 100644
+--- a/impl/test/scratchpad-33-red.test.mjs
++++ b/impl/test/scratchpad-33-red.test.mjs
+@@ -161,13 +161,13 @@ test('SP1: a worker writes only its own scope and never the shared partition', (
+ test('SP1: the exported surface has no readScratchpad, worker settlement API, or generic append', async () => {
+   const store = freshStore('sp1-surface');
+   for (const absent of [
+-    'readScratchpad', 'appendScratchpad', 'editScratchpad', 'deleteScratchpad',
++    'readScratchpad', 'editScratchpad', 'deleteScratchpad',
+     'promoteScratchpad', 'workerElevateScratchpad',
+   ]) {
+     assert.equal(typeof store[absent], 'undefined', `${absent}() must not exist`);
+   }
+   for (const present of [
+-    'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
++    'writeScratchpad', 'appendScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
+     'scratchpadSnapshotBatch', 'scratchpadSnapshot',
+   ]) {
+     assert.equal(typeof store[present], 'function', `${present}() is part of the closed surface`);
+@@ -439,7 +439,9 @@ test('SP4: exactly three scratchpad kinds are folded and there is no scratchpad.
+   }
+   const scratchpadKinds = [...folded].filter((kind) => kind.startsWith('scratchpad.')).sort();
+   assert.deepEqual(scratchpadKinds, [
+-    'scratchpad.entry_elevated', 'scratchpad.entry_written', 'scratchpad.partition_reaped',
++    // #158 (scratchpad-write-2026-08-13/contract-fold.md D3): the append lane lands a fourth
++    // folded kind — the direct shared/worker-tier write the entry_written hard-scope never served.
++    'scratchpad.entry_appended', 'scratchpad.entry_elevated', 'scratchpad.entry_written', 'scratchpad.partition_reaped',
+   ]);
+   assert.equal(folded.has('scratchpad.read'), false, 'a scratchpad poll is never evented');
+ });
+diff --git a/impl/test/wave-observability-red.test.mjs b/impl/test/wave-observability-red.test.mjs
+index b59e1f9..a5dfbc0 100644
+--- a/impl/test/wave-observability-red.test.mjs
++++ b/impl/test/wave-observability-red.test.mjs
+@@ -796,14 +796,14 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 →
+   const { server } = await mcpFixture(t, host);
+   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+   const names = listed.result.tools.map((tool) => tool.name);
+-  assert.equal(names.length, 36,
+-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), then #170 inserts baton_waves_compile (35 → 36)');
++  assert.equal(names.length, 37,
++    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), then #158 inserts baton_run_scratchpad_append (36 → 37)');
+   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
+   assert.equal(names[15], 'baton_waves_list',
+     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
+   assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
+   const sorted = mcpApplicationToolNames();
+-  assert.equal(sorted.length, 36, 'the sorted ordinary surface grows to 36 tools (baton_waves_compile, #170)');
++  assert.equal(sorted.length, 37, 'the sorted ordinary surface grows to 37 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158)');
+   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
+ });
+ 
+-- 
+2.50.1
+

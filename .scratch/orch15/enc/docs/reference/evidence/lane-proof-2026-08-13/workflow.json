@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "lane-proof-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/lane-proof-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/lane-proof-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/lane-proof-2026-08-13/lane-qa.md"
+    },
+    {
+      "role": "row-lane-decision",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/lane-proof-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/lane-proof-2026-08-13/row-lane-decision.md",
+      "report": "docs/reference/evidence/lane-proof-2026-08-13/lane-decision.md"
+    },
+    {
+      "role": "row-lane-messages",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/lane-proof-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/lane-proof-2026-08-13/row-lane-messages.md",
+      "report": "docs/reference/evidence/lane-proof-2026-08-13/lane-messages.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the lane laws bind you). This wave exists to USE the bidirectional lanes and produce evidence — record message ids and event seqs, or the verbatim refusal/absence. Your [attempt:] line goes verbatim in your report's first five lines." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "answerDecisions": { "policy": { ".*[Pp]artition.*": "opt-shared" } },
+    "signalOnMembersDone": { "roles": ["row-lane-decision", "row-lane-messages"], "message": { "kind": "result", "body": "Both rows settled (you are the remaining member — pinned #175 semantics). Verify on disk per the #174 law, then write lane-qa.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/lane-proof-2026-08-13/lane-qa.md", "mustContain": "LANE-QA v1" },
+      { "path": "docs/reference/evidence/lane-proof-2026-08-13/lane-decision.md", "mustContain": "lane-decision" },
+      { "path": "docs/reference/evidence/lane-proof-2026-08-13/lane-messages.md", "mustContain": "lane-messages" }
+    ]
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "at": "2026-07-12T05:08:38.686Z",
+  "repoHead": "99bea173364a59b4e1f122397cf263dff0d175a7",
+  "reviewProfile": "merge-implementation",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-merge-implementation-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-merge-implementation-45.md",
+      "stance": "authority",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"merge-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": null,
+        "sessionContext": null,
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": true
+        },
+        "review": null,
+        "taskId": "grok-merge-implementation-45",
+        "worktree": null,
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "working",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T05:08:04.268Z"
+      },
+      "pid": null,
+      "verify": null
+    },
+    {
+      "taskId": "grok-merge-implementation-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-merge-implementation-composer.md",
+      "stance": "security",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": null,
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": null,
+        "sessionContext": null,
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-merge-final.mu8UeM/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": true
+        },
+        "review": null,
+        "taskId": "grok-merge-implementation-composer",
+        "worktree": null,
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "working",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T05:08:04.308Z"
+      },
+      "pid": null,
+      "verify": null
+    }
+  ],
+  "approvals": [],
+  "stopResults": [
+    {
+      "taskId": "grok-merge-implementation-45",
+      "degradedEmergency": true,
+      "ack": {
+        "ok": true,
+        "result": "confirmed_unlogged",
+        "auditUnavailable": true
+      },
+      "poison": "operational_log_unavailable"
+    },
+    {
+      "taskId": "grok-merge-implementation-composer",
+      "degradedEmergency": true,
+      "ack": {
+        "ok": true,
+        "result": "confirmed_unlogged",
+        "auditUnavailable": true
+      },
+      "poison": "operational_log_unavailable"
+    }
+  ],
+  "checks": {
+    "noHarnessError": false,
+    "twoReviews": true,
+    "distinctLivePids": false,
+    "concurrentTurns": false,
+    "exactModelsObserved": false,
+    "bothFreshVerified": false,
+    "reportsCaptured": false,
+    "bothKillsConfirmed": false,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": "OperationalLogIntegrityError: authoritative operational log append failed: ENOENT: no such file or directory, open '/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-merge-implementation-review-Avj1RU/w-1.jsonl'\n    at Coordinator._log.append (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/coordinator.mjs:325:27)\n    at appendAttributed (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/coordinator.mjs:2660:53)\n    at Coordinator._handleEvent (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/coordinator.mjs:2783:34)\n    at GrokAcpCli._cb (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/coordinator.mjs:374:20)\n    at GrokAcpCli._emit (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/grok-acp.mjs:195:24)\n    at GrokAcpCli._onNotification (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/grok-acp.mjs:358:16)\n    at GrokAcpCli._onLine (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/grok-acp.mjs:302:10)\n    at Socket.<anonymous> (file:///private/tmp/baton-merge-final.mu8UeM/impl/src/grok-acp.mjs:239:14)\n    at Socket.emit (node:events:508:20)\n    at addChunk (node:internal/streams/readable:564:12)",
+  "pass": false
+}

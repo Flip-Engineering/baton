@@ -1,0 +1,46 @@
+{
+  "outcome": {
+    "phase": "result_ready",
+    "resultSha": "c3cd5c708ed0ffe8c58429406c7cc4fde843f0e6"
+  },
+  "decisionLog": [
+    {
+      "role": "verifier",
+      "requestId": "w-1:decision:1",
+      "question": "Finding #2 in the surveyor map: should the verifier ship a fix now, mark it not-a-bug, or gather more evidence first?",
+      "options": [
+        {
+          "id": "fix-now",
+          "label": "Fix now",
+          "summary": null
+        },
+        {
+          "id": "not-a-bug",
+          "label": "Not a bug",
+          "summary": null
+        },
+        {
+          "id": "more-evidence",
+          "label": "Gather more evidence first",
+          "summary": null
+        }
+      ],
+      "recommended": {
+        "worker": "w-1",
+        "text": "more-evidence",
+        "provenance": "model-authored",
+        "untrusted": true
+      },
+      "expiresInMs": 599984
+    }
+  ],
+  "nudges": 1,
+  "claims": [
+    {
+      "role": "verifier",
+      "requestId": "pause:baton-e9a9d6b4bbf86a4e74143185-work:66",
+      "at": "2026-08-01T01:57:58.141Z",
+      "code": "claimed"
+    }
+  ]
+}

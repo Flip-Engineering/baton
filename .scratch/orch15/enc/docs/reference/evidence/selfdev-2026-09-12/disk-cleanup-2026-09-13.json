@@ -1,0 +1,14 @@
+{
+  "date": "2026-09-13",
+  "removed": "Generated Xcode device-debugging symbols",
+  "logicalAllocatedBytes": 6109921280,
+  "physicalApfsFreeIncreaseBytes": 6099890176,
+  "apfsFreeBytesAfter": 7246118912,
+  "guards": [
+    "No Xcode/debugger processes",
+    "No open files in candidate directory",
+    "Candidate contained only extracted symbols and extraction metadata",
+    "No source, Git worktree, agent history, model, user output or uncommitted file removed"
+  ],
+  "result": "Fresh Baton native worker workspaces admitted after cleanup"
+}

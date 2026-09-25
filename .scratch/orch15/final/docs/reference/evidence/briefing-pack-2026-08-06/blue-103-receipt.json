@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-06T23:18:09.544Z",
+  "salt": "b520260806231809",
+  "role": "blue-103",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-6054662c1ed047aa137a38213cc24b7f"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blue-103",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blue-103": {
+      "pin": "9f0a6ec09d2a3432710c967f244deabca040c002",
+      "paths": [
+        "docs/reference/evidence/briefing-pack-2026-08-06/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 331,
+  "verdict": "BLUE-103-OK"
+}

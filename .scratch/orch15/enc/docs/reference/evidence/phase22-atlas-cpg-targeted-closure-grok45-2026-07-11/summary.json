@@ -1,0 +1,267 @@
+{
+  "at": "2026-07-12T03:56:08.453Z",
+  "repoHead": "0923fe9aa89c6691618ab0ddd92eba95613700a5",
+  "selectedModels": [
+    "grok-4.5"
+  ],
+  "reviewTimeoutMs": 420000,
+  "reviewFocus": "Focus on the AST-aware boolean/comment pruning fix, dead-arm join removal, and whether any actionable PS1-PS8 defect remains. Do not re-audit unrelated product gaps.",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-cpg-impl-review-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-cpg-impl-review-45.md",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5476-7b60-77b0-bbfe-a9bdfcbddac1",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/wt/grok-cpg-impl-review-45",
+          "repoRoot": "/private/tmp/baton-cpg-targeted-closure.n1HksN",
+          "baseSha": "0923fe9aa89c6691618ab0ddd92eba95613700a5",
+          "branch": "baton/grok-cpg-impl-review-45",
+          "ownerTaskId": "grok-cpg-impl-review-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-cpg-impl-review-45",
+        "worktree": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/wt/grok-cpg-impl-review-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 54178,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T03:54:37.805Z"
+      },
+      "pid": 28804,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "✔ CG1/CG2: card and deterministic graph identity are honest (16.142416ms)\n✔ CG3/CG4/CG5: graph has containment, control, lexical def-use, and local call edges (2.944084ms)\n✔ CG5: duplicate and dynamic callees remain unresolved with candidates (1.382583ms)\n✔ CG2/CG5: parameterized arrow functions use their binding name, not their first parameter (0.999666ms)\n✔ CG4: assignments and direct call arguments produce explicit value-flow edges (3.524708ms)\n✔ CG6: parse errors are partial and cancellation/unsupported language fail typed (1.0485ms)\n✔ CG7: bounded result resumes, detects tamper, and reverifies (2.3165ms)\n✔ CG6: source and graph deployment ceilings fail typed (3.829833ms)\n✔ CD1/CD2: identical semantics with moved formatting produces an empty delta (10.463334ms)\n✔ CD3/CD4: syntax and call changes classify and propagate impact to callers (3.8555ms)\n✔ CD2/CD5: rename is remove/add and unresolved calls do not fabricate caller impact (3.370542ms)\n✔ CD4/CD6: impact depth, cancellation, and parse health are enforced (1.841708ms)\n✔ CD7: bounded delta resumes, detects tamper, and reverifies (7.235167ms)\n✔ CD6: delta artifact ceiling is deployment-bound (1.328083ms)\n✔ CT1/CT2: assignment value flow reaches an explicit sink with typed edges (10.003625ms)\n✔ CT2: a nested source call flows directly into the sink argument (2.313542ms)\n✔ CT3/CT5: configured sanitizer cuts flow while unrelated unresolved calls fabricate nothing (6.615375ms)\n✔ CT4/CT6: deployment bounds, cancellation, and parse partials are enforced (4.681709ms)\n✔ CT7: bounded result resumes, detects tamper, and reverifies (4.385417ms)\n✔ CT1: invalid policy names fail before graph construction (0.380708ms)\n✔ PS1: a braced if/else enters both branches and both non-terminal tails join the follower (11.899084ms)\n✔ PS2/PS4: alternate branch definitions may reach a join but literal-dead sources and sinks do not (8.185ms)\n✔ PS3/PS4: direct identifier copies carry value while a nested sanitizer cannot be bypassed (8.665916ms)\n✔ PS2/PS6: reaching-definition expansion has a mandatory deployment ceiling (2.650542ms)\n✔ PS4/PS5: direct arguments remain, while heap and interprocedural return flow remain explicitly absent (4.353458ms)\n✔ PS1/PS4: unsupported control remains atomic instead of making its nested values unreachable (1.138917ms)\n✔ PS1/PS2/PS4: an else-if chain is entered from the outer false edge and preserves the middle-arm may-flow (5.278167ms)\n✔ PS1/PS4: a structured if inside atomic unsupported control collapses outward without reviving a literal-dead arm (2.089542ms)\n✔ PS2/PS4: multiple same-name definitions collapsed into one atomic region remain a may-union (1.10725ms)\n✔ PS1/PS4: AST boolean literals prune comment-bearing dead arms and emit no dead-tail join edge (3.712125ms)\nℹ tests 30\nℹ suites 0\nℹ pass 30\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 326.7915\n",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 385
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "85d5c221e83bbfd6d89c315378edd95e74a0d267",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]"
+          }
+        },
+        "seq": 436,
+        "ts": "2026-07-12T03:56:08.222Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "✔ CG1/CG2: card and deterministic graph identity are honest (16.142416ms)\n✔ CG3/CG4/CG5: graph has containment, control, lexical def-use, and local call edges (2.944084ms)\n✔ CG5: duplicate and dynamic callees remain unresolved with candidates (1.382583ms)\n✔ CG2/CG5: parameterized arrow functions use their binding name, not their first parameter (0.999666ms)\n✔ CG4: assignments and direct call arguments produce explicit value-flow edges (3.524708ms)\n✔ CG6: parse errors are partial and cancellation/unsupported language fail typed (1.0485ms)\n✔ CG7: bounded result resumes, detects tamper, and reverifies (2.3165ms)\n✔ CG6: source and graph deployment ceilings fail typed (3.829833ms)\n✔ CD1/CD2: identical semantics with moved formatting produces an empty delta (10.463334ms)\n✔ CD3/CD4: syntax and call changes classify and propagate impact to callers (3.8555ms)\n✔ CD2/CD5: rename is remove/add and unresolved calls do not fabricate caller impact (3.370542ms)\n✔ CD4/CD6: impact depth, cancellation, and parse health are enforced (1.841708ms)\n✔ CD7: bounded delta resumes, detects tamper, and reverifies (7.235167ms)\n✔ CD6: delta artifact ceiling is deployment-bound (1.328083ms)\n✔ CT1/CT2: assignment value flow reaches an explicit sink with typed edges (10.003625ms)\n✔ CT2: a nested source call flows directly into the sink argument (2.313542ms)\n✔ CT3/CT5: configured sanitizer cuts flow while unrelated unresolved calls fabricate nothing (6.615375ms)\n✔ CT4/CT6: deployment bounds, cancellation, and parse partials are enforced (4.681709ms)\n✔ CT7: bounded result resumes, detects tamper, and reverifies (4.385417ms)\n✔ CT1: invalid policy names fail before graph construction (0.380708ms)\n✔ PS1: a braced if/else enters both branches and both non-terminal tails join the follower (11.899084ms)\n✔ PS2/PS4: alternate branch definitions may reach a join but literal-dead sources and sinks do not (8.185ms)\n✔ PS3/PS4: direct identifier copies carry value while a nested sanitizer cannot be bypassed (8.665916ms)\n✔ PS2/PS6: reaching-definition expansion has a mandatory deployment ceiling (2.650542ms)\n✔ PS4/PS5: direct arguments remain, while heap and interprocedural return flow remain explicitly absent (4.353458ms)\n✔ PS1/PS4: unsupported control remains atomic instead of making its nested values unreachable (1.138917ms)\n✔ PS1/PS2/PS4: an else-if chain is entered from the outer false edge and preserves the middle-arm may-flow (5.278167ms)\n✔ PS1/PS4: a structured if inside atomic unsupported control collapses outward without reviving a literal-dead arm (2.089542ms)\n✔ PS2/PS4: multiple same-name definitions collapsed into one atomic region remain a may-union (1.10725ms)\n✔ PS1/PS4: AST boolean literals prune comment-bearing dead arms and emit no dead-tail join edge (3.712125ms)\nℹ tests 30\nℹ suites 0\nℹ pass 30\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 326.7915\n",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 385
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5476-7b60-77b0-bbfe-a9bdfcbddac1",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-cpg-targeted-closure.n1HksN/.baton/wt/grok-cpg-impl-review-45",
+          "repoRoot": "/private/tmp/baton-cpg-targeted-closure.n1HksN",
+          "baseSha": "0923fe9aa89c6691618ab0ddd92eba95613700a5",
+          "branch": "baton/grok-cpg-impl-review-45",
+          "ownerTaskId": "grok-cpg-impl-review-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Grok CPG impl review 45 — Phase 22 PS1–PS8 closure\n\nAdversarial, evidence-backed review of committed Phase 22 path-sensitive CPG (PS1–PS8) against [spec/phase22/atlas-cpg-path-sensitive.md](spec/phase22/atlas-cpg-path-sensitive.md), [impl/src/atlas-cpg.mjs](impl/src/atlas-cpg.mjs), [impl/src/atlas-cpg-delta.mjs](impl/src/atlas-cpg-delta.mjs), [impl/src/atlas-cpg-taint.mjs](impl/src/atlas-cpg-taint.mjs), and Phase 18–22 tests. Focus: AST-aware boolean/comment pruning, dead-arm join removal, residual PS1–PS8 defects only.\n\n## Verdict\n\n**No actionable PS1–PS8 defect remains** on the focused closure seams.\n\n`booleanLiteral` ([impl/src/atlas-cpg.mjs](impl/src/atlas-cpg.mjs) L26–32) walks parenthesized conditions, ignores non-boolean structure, and strips comments via named-child filtering so `/*lead*/true/*tail*/` and nested `((true))` prune like bare literals. Structured-if wiring (L142–148) gates both branch edges and `connectTail` on the same literal, so dead arms neither enter the CFG nor emit tail-to-join edges. Live probes: comment/paren true/false cases yield **0** taint paths and **0** `CFG_NEXT`/`CFG_EXIT` out of `cfgReachable===false` statements for those arms; non-literal `if((flag))` retains a path. Fixed-point may-reach, sanitizer cuts, ceilings, schema/resume/reverify, and claim language match the contract. Remaining gaps (unbraced `if`, solvers, heap, interproc returns) are **PS5 non-goals**, not defects.\n\n## Contract matrix\n\n| Seam | Verdict | Evidence |\n|------|---------|----------|\n| **PS1** structured `if` CFG | **Pass** | Braced if: `CFG_TRUE`/`CFG_FALSE` to consequence / alternative-or-join; no fall-through `CFG_NEXT` from the if (L135–148). Else-if: alternative `if_statement` is the false target (L121–131, 144–146); phase22 else-if test expects outer `CFG_FALSE` → nested if. Unbraced / try / switch / etc. skip structured expansion (L120, L127) → atomic. |\n| **PS1** literal prune + comment/paren | **Pass** | `booleanLiteral`: `true`/`false` leaves; recurse only `parenthesized_expression` with single named non-comment child (L26–32). Phase22 L128–134: `if(/*lead*/true/*tail*/)` and `if(false/*tail*/)` cut taint; dead stmt has no join out-edge. Probes: `((true))`, `(/*c*/false)` → paths=0, deadOut=0. |\n| **PS1** dead-arm join removal | **Pass** | L147–148: consequence `connectTail` only if `literal !== 'false'`; alternative only if `literal !== 'true'`. Probe `if(true){…}else{…}`: only `CFG_TRUE` + live join; no `CFG_FALSE`. |\n| **PS1** unsupported-control atomic | **Pass** | Nested structured if under try collapses via `effectiveStatement` to reachable outer anchor when the arm is not literal-dead (L156–168); phase22 L90–94, L116–120: live try-if taints, `try{if(false){…}}` does not. |\n| **PS2** CFG may-reaching-def FP | **Pass** | Gen at effective anchors; IN merge over CFG preds; kill-gen per name; refs use IN (L175–198). Probe `x=1; if(flag){x=2}else{x=3}; use(x)` → **2** `REACHING_DEF` (branch may-union, not lexical-last). Switch may-union → 2 reach-defs + taint path (phase22 L123–125). |\n| **PS2** bound | **Pass** | Constructor requires `maxReachDefPairs` (L47); emit throws `reachdef_too_large` (L197). Phase22 L72–75. |\n| **PS2** literal-dead defs excluded | **Pass** | Unreachable anchors skipped for gen/ref (L181, L196); `effectiveStatement` returns null for literal-dead descendants (L162–163). |\n| **PS3** direct copy / argument | **Pass** | `ASSIGNED_FROM` only direct id/call RHS (L93–97, L202); `ARGUMENT_TO` only direct id/call args (L89–90, L203). Phase22 copy edgeTypes and direct `ARGUMENT_TO` (L58–63, L78–81). |\n| **PS3/PS4** sanitizer non-bypass | **Pass** | Nested `sanitize(readInput())` composes call→call; taint cuts at sanitizer (atlas-cpg-taint.mjs live BFS). Phase22 L65–69: with sanitizer 0 paths, without 1. |\n| **PS4** taint consumes CFG | **Pass** | Sources/sinks require `cfgReachable !== false` (atlas-cpg-taint.mjs); dead definition / dead direct call paths 0 (phase22 L49–55). Join may-flow preserved (L43–47). |\n| **PS4/PS5** claim language | **Pass** | Taint provenance `cfg_may_reach_value_graph_not_safety_proof` (phase22 L82; taint card/limitations). Graph provenance `scope: single_file_intraprocedural_cfg_may_reach_seed`, card limitations list literal-only prune / atomic unsupported control (atlas-cpg.mjs L51, L210). No safety/must-def overclaim. |\n| **PS5** non-goals | **Pass (explicit)** | Heap `o.x` and interproc `wrap()` return → 0 paths (phase22 L84–87). Unbraced/solver/alias/heap remain out of scope. |\n| **PS6** schema / resume / reverify | **Pass** | Graph `schemaVersion: 2`, content-addressed write, integrity checks, cursor resume, `reverify` digests (L206–217). Statement `cfgReachable`; id/call `cfgAnchor` + `cfgReachable` (L155–172). |\n| **PS7** delta compatibility | **Pass** | Delta builds via `AtlasCpgSlice` with `maxReachDefPairs`; impact may follow richer `REACHING_DEF` without path-sensitive impact claims (atlas-cpg-delta.mjs + card). Spec L50–53. |\n| **PS8** acceptance coverage | **Pass** | phase22 tests cover joins, literal prune+dead join, else-if, may-reach, copy, sanitizer, ceiling, direct args, non-goals, atomic unsupported, collapse+literal-dead. |\n\n## Actionable findings\n\n**None.** Focused falsification of AST boolean/comment pruning, dead-arm join removal, and the PS1–PS8 matrix did not produce a contract-breaking defect with a concrete failing sequence under the shipped semantics.\n\n### Non-actionable / residual notes (not PS1–PS8 defects)\n\n1. **Transitively unreachable nested structured ifs still emit local CFG edges.** Example: `if (true) { a() } else if (false) { b() } else { c() } d()` — outer literal correctly omits false entry and outer alternative `connectTail` (L145–148), but the nested structured if still synthesizes its own edges (including a join from `c` toward `d`). Those predecessors are not in the reachable anchor set (L183), so may-reach/taint stay correct. Spec language targets *that if’s* literal dead branch, not global “no edges from any transitively dead node.” Treat as optional graph hygiene, not a PS1 bug.\n\n2. **Product gaps already listed as PS5** (path-condition solving, unbraced expansion, SSA/must-def, heap, interprocedural returns, shadowing-aware bindings) remain out of scope by design.\n\n## Missing regressions\n\nUseful additions if suites grow; none are required to close a live defect:\n\n| Gap | Suggested red |\n|-----|----------------|\n| Nested paren literal | `if (((true))) {…} else { value=readInput() }` → 0 taint, no `CFG_FALSE` |\n| Comment inside nested paren | `if ((/*c*/false)) { value=readInput() }` → 0 taint |\n| Empty then + literal false | `if (false) {}` follower only via `CFG_FALSE`→join |\n| Outer true + nested else-if | Assert no taint from dead nested arms; optionally that nested dead leaves do not *need* join edges for soundness (document current hygiene) |\n| Double-definition join count | Assert `REACHING_DEF` cardinality 2 for `if/else` both assigning before use |\n\nPhase 18–20 suites remain the home for schema/resume/tamper/delta lifecycle regressions; phase22 already owns the path-sensitive red set listed in PS8."
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-cpg-impl-review-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "expectedReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "freshVerified": true,
+    "reportsCaptured": true,
+    "killsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

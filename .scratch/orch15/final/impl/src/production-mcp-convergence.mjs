@@ -1,0 +1,844 @@
+import {
+  CORE_TOOL_NAMES,
+  coreMetaAlias,
+  coreMovedTo,
+  coreToolDefinitions,
+  resolveCoreCall,
+} from './mcp-core-tools.mjs';
+import { nearestToolName } from './mcp-northbound.mjs';
+
+import { randomUUID } from 'node:crypto';
+
+import { resolveUnifiedSurfaceCommand } from './control-surface-unification.mjs';
+import { BatonControlError, digestValue } from './holistic-runtime.mjs';
+import { ProductionConvergenceRuntime } from './production-convergence.mjs';
+import {
+  assertUnifiedCapabilityCoverage,
+  prepareApplicationSurfaceInvocation,
+} from './surface-capability-catalog.mjs';
+import {
+  COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
+  assertSurfaceCapabilityNameClosure,
+  completeUnifiedCapabilityCatalog,
+  resolveSurfaceCapability,
+} from './surface-capability-resolution.mjs';
+import {
+  projectLiveMcpCapability,
+  projectLiveMcpCatalog,
+} from './surface-live-mcp.mjs';
+import { WEB_WAIT_CEILING_ROW } from './limits.mjs';
+import {
+  auditMcpMetaCompletion,
+  auditMcpMetaFailure,
+  authorizeMcpMetaRead,
+  takeMcpMetaQuota,
+} from './surface-mcp-authority.mjs';
+
+const NATIVE_QUERY_TOOLS = new Set([
+  'fleet_wait', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status',
+  'fleet_goal_plan_status', 'baton_decision_list', 'baton_deployment_doctor',
+]);
+const NATIVE_EMERGENCY_TOOLS = new Set([
+  'fleet_kill', 'fleet_drain', 'baton_waves_stop', 'baton_workstream_stop',
+]);
+const QUERY_NAME = /(?:_read|_list|_view|_status|_progress|_compile|_receipt|_watch|_recall|_horizon|_cite|_result|_capabilities|_wait)$/u;
+const MUTATION_NAME = /(?:_post|_close|_drop|_reorder|_retitle|_promote|_admit|_attach|_elevate|_settle|_seed|_append)$/u;
+const META_NAMES = new Set(COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS.map((tool) => tool.name));
+
+const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const clone = (value) => value == null ? value : structuredClone(value);
+const safeId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
+
+function definitionFor(tool) {
+  if (typeof tool !== 'string' || tool.length === 0) return null;
+  try {
+    const row = resolveUnifiedSurfaceCommand('mcp', tool);
+    const forcedEffect = MUTATION_NAME.test(tool);
+    return Object.freeze({
+      key: row.key,
+      mode: forcedEffect ? 'effect' : row.mode,
+      lane: forcedEffect && row.lane === 'projection' ? 'interactive_control' : row.lane,
+    });
+  } catch (error) {
+    if (error?.code !== 'command_unknown') throw error;
+  }
+  if (!tool.startsWith('fleet_') && !tool.startsWith('baton_')) return null;
+  if (NATIVE_QUERY_TOOLS.has(tool) || QUERY_NAME.test(tool)) {
+    return Object.freeze({ key: tool, mode: 'query', lane: 'projection' });
+  }
+  return Object.freeze({
+    key: tool,
+    mode: 'effect',
+    lane: NATIVE_EMERGENCY_TOOLS.has(tool) ? 'emergency_control' : 'interactive_control',
+  });
+}
+
+function responseFailure(response) {
+  if (response?.error) return response.error;
+  if (response?.result?.isError === true) {
+    return response.result.structuredContent?.error
+      ?? response.result.structuredContent
+      ?? { code: 'mcp_tool_error', message: 'MCP tool returned an error result' };
+  }
+  return null;
+}
+
+function toolResult(id, value) {
+  return {
+    jsonrpc: '2.0', id,
+    result: {
+      structuredContent: value,
+      content: [{ type: 'text', text: JSON.stringify(value) }],
+    },
+  };
+}
+
+function toolErrorResponse(message, error) {
+  const envelope = BatonControlError.from(error).envelope().error;
+  // ONE envelope shape on the wire (2026-09-14 audit, U-F8): the core tools answer
+  // `{ok:false, error:{code, message?, detail?, field?}}`, and the meta family used to answer
+  // `{error:{…, retryable, action}}` with no `ok` at all. This projection keeps the richer
+  // retryable/action guidance while carrying the same top-level shape every other tool uses.
+  const body = { ok: false, error: envelope };
+  return {
+    jsonrpc: '2.0', id: message?.id ?? null,
+    result: {
+      isError: true,
+      structuredContent: body,
+      content: [{ type: 'text', text: JSON.stringify(body) }],
+    },
+  };
+}
+
+function closedArgs(message, allowed, required = []) {
+  const args = message?.params?.arguments ?? {};
+  if (!record(args)) throw new BatonControlError('surface_arguments_invalid', 'surface arguments must be an object');
+  const unknown = Object.keys(args).find((key) => !allowed.includes(key));
+  if (unknown) throw new BatonControlError('surface_argument_unknown', `unknown surface argument ${unknown}`, { field: unknown });
+  const missing = required.find((key) => !Object.hasOwn(args, key));
+  if (missing) throw new BatonControlError('surface_argument_required', `surface argument ${missing} is required`, { field: missing });
+  return args;
+}
+
+function attentionCursorGuard(tool, message, response) {
+  if (tool !== 'baton_run_attention_watch' && tool !== 'run.attention.watch') return response;
+  const requested = message?.params?.arguments?.cursor;
+  const page = response?.result?.structuredContent;
+  if (!Number.isSafeInteger(requested) || requested <= 0 || !page || response?.result?.isError === true) return response;
+  if (Number.isSafeInteger(page.throughCursor) && page.throughCursor < requested) {
+    return toolErrorResponse(message, new BatonControlError(
+      'attention_scope_forbidden',
+      'attention watch could not preserve the authorized cursor; refusing silent empty fallback',
+      { detail: { requestedCursor: requested, throughCursor: page.throughCursor } },
+    ));
+  }
+  return response;
+}
+
+async function authorizeRunScopedQuery(target, tool, message) {
+  if (!['baton_repl_cite', 'repl.cite'].includes(tool)) return null;
+  const runId = message?.params?.arguments?.runId;
+  if (!runId || typeof target.application?.authorizeReplay !== 'function') return null;
+  const principal = target.principal ?? {};
+  try {
+    await target.application.authorizeReplay('run.inspect', { runId, depth: 'outline' }, {
+      actor: `mcp:${principal.userId ?? 'unknown'}:${principal.sessionId ?? 'unknown'}`,
+      principalId: principal.userId,
+      sessionId: principal.sessionId,
+    }, { transport: 'mcp', requestId: String(message?.id ?? 'repl-cite-authority') });
+    return null;
+  } catch (error) {
+    return toolErrorResponse(message, error);
+  }
+}
+
+async function admitAndDispatch(runtime, definition, message, dispatch) {
+  const commandId = typeof message?.id === 'string' || Number.isSafeInteger(message?.id)
+    ? `mcp:${String(message.id)}` : `mcp:${randomUUID()}`;
+  const args = message?.params?.arguments ?? {};
+  const admitted = runtime.journal.append('command.admitted', {
+    commandId, command: definition.key, args, principalId: 'mcp-transport', transport: 'mcp',
+  });
+  return runtime.scheduler.enqueue(definition.lane, async () => {
+    runtime.journal.assertExternalAwaitAllowed();
+    runtime.journal.append('effect.requested', {
+      commandId, command: definition.key, admittedSeq: admitted.seq, transport: 'mcp',
+    });
+    try {
+      const response = await dispatch();
+      const failure = responseFailure(response);
+      runtime.journal.append(failure ? 'effect.failed' : 'effect.succeeded', failure
+        ? { commandId, command: definition.key, transport: 'mcp', error: failure }
+        : { commandId, command: definition.key, transport: 'mcp', resultDigest: digestValue(response ?? null) });
+      return response;
+    } catch (error) {
+      runtime.journal.append('effect.failed', {
+        commandId, command: definition.key, transport: 'mcp',
+        error: BatonControlError.from(error).envelope().error,
+      });
+      throw error;
+    }
+  }, { commandId, command: definition.key, transport: 'mcp' });
+}
+
+function applicationContext(target, message, args) {
+  const principal = target.principal ?? {};
+  const base = {
+    transport: 'mcp',
+    requestId: String(message?.id ?? randomUUID()),
+    idempotencyKey: args.idempotencyKey ?? `mcp.surface:${message?.id ?? randomUUID()}`,
+    capabilities: Array.isArray(principal.capabilities) ? [...principal.capabilities] : [],
+  };
+  if (typeof target._applicationDispatchContext === 'function') {
+    try { return { ...target._applicationDispatchContext(args, message?.id ?? randomUUID(), principal), ...base }; }
+    catch { /* keep the explicit bounded context above */ }
+  }
+  return base;
+}
+
+function actorContext(target) {
+  const principal = target.principal ?? {};
+  return {
+    actor: `mcp:${principal.userId ?? 'unknown'}:${principal.sessionId ?? 'unknown'}`,
+    principalId: principal.userId,
+    sessionId: principal.sessionId,
+  };
+}
+
+function toolCandidateNames(capability) {
+  return [...new Set([
+    capability.names?.mcp,
+    capability.key,
+    ...(capability.aliases?.mcp ?? []),
+    capability.invocation?.mcpTool,
+  ].filter(Boolean))];
+}
+
+function definitionByName(server, name) {
+  return (server.toolDefinitions ?? []).find((tool) => tool.name === name) ?? null;
+}
+
+function completeToolArguments(server, name, supplied, idempotencyKey) {
+  const args = { ...supplied };
+  const definition = definitionByName(server, name);
+  const properties = definition?.inputSchema?.properties ?? {};
+  const [repoId] = server.repoIds ?? [];
+  if (Object.hasOwn(properties, 'repoId') && !Object.hasOwn(args, 'repoId') && repoId) args.repoId = repoId;
+  if (Object.hasOwn(properties, 'idempotencyKey') && !Object.hasOwn(args, 'idempotencyKey')) {
+    args.idempotencyKey = idempotencyKey;
+  }
+  return args;
+}
+
+async function createAdvancedShadow(target) {
+  const Shadow = target.constructor;
+  if (typeof Shadow !== 'function') return null;
+  try {
+    const shadow = new Shadow({
+      coordinator: target.coordinator,
+      coordination: target.coordination,
+      principal: target.principal,
+      repoIds: [...(target.repoIds ?? [])],
+      surface: 'advanced',
+      application: null,
+      applicationOwned: false,
+      isPrincipalActive: target.isPrincipalActive,
+      takeToolQuota: target.takeToolQuota,
+      now: target.now,
+      maxWaitMs: target.maxWaitMs,
+      maxMessageBytes: target.maxMessageBytes,
+      maxObservationAudits: target.maxObservationAudits,
+    });
+    shadow.lifecycle = 'ready';
+    return shadow;
+  } catch {
+    return null;
+  }
+}
+
+async function surfaceSnapshot(target, runtime, args) {
+  const principal = actorContext(target);
+  const appContext = applicationContext(target, { id: 'surface-snapshot' }, args);
+  const safe = async (fn) => {
+    try { return { ok: true, value: clone(await fn()) }; }
+    catch (error) { return { ok: false, error: BatonControlError.from(error).envelope().error }; }
+  };
+  const snapshot = {
+    schemaVersion: 2,
+    generatedAt: new Date().toISOString(),
+    coverage: assertUnifiedCapabilityCoverage(),
+    nameClosure: assertSurfaceCapabilityNameClosure(),
+    convergence: runtime.audit(),
+    applicationCard: await safe(() => target.application?.card?.() ?? null),
+    readiness: await safe(() => target.application?.command?.('deployment.doctor', {}, principal, appContext)
+      ?? target.application?.doctorReadiness?.() ?? null),
+    workers: await safe(() => target.coordinator?.list?.() ?? []),
+    routeCapabilities: await safe(() => target.coordinator?.capabilityCards?.() ?? []),
+    providerTelemetry: await safe(() => target.coordinator?.readProviderStatus?.({}, {
+      repoId: [...(target.repoIds ?? [])][0] ?? null,
+    }) ?? null),
+  };
+  if (args.runId) {
+    snapshot.run = await safe(() => target.application.command(
+      'run.inspect', { runId: args.runId, depth: 'outline' }, principal, appContext,
+    ));
+  }
+  if (args.waveId) {
+    snapshot.wave = await safe(() => target.application.command(
+      'waves.progress', { waveId: args.waveId }, principal, appContext,
+    ));
+  }
+  return Object.freeze(snapshot);
+}
+
+function validateWatchArgs(args, target) {
+  if (!safeId(args.runId)) {
+    throw new BatonControlError('surface_watch_invalid', 'surface watch requires a valid runId', { field: 'runId' });
+  }
+  if (args.waveId !== undefined && !safeId(args.waveId)) {
+    throw new BatonControlError('surface_watch_invalid', 'surface watch waveId is invalid', { field: 'waveId' });
+  }
+  for (const field of ['afterCursor', 'attentionCursor']) {
+    if (args[field] !== undefined && (!Number.isSafeInteger(args[field]) || args[field] < 0)) {
+      throw new BatonControlError('surface_watch_invalid', `${field} must be a non-negative safe integer`, { field });
+    }
+  }
+  if (args.kind !== undefined && !safeId(args.kind)) {
+    throw new BatonControlError('surface_watch_invalid', 'surface watch kind is invalid', { field: 'kind' });
+  }
+  const maximum = Math.min(WEB_WAIT_CEILING_ROW.value, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : WEB_WAIT_CEILING_ROW.value);
+  const timeoutMs = args.timeoutMs ?? maximum;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maximum) {
+    throw new BatonControlError('surface_watch_invalid', `timeoutMs must be between 1 and ${maximum}`, {
+      field: 'timeoutMs', detail: { maximum },
+    });
+  }
+  return Object.freeze({
+    runId: args.runId,
+    waveId: args.waveId ?? null,
+    afterCursor: args.afterCursor ?? 0,
+    attentionCursor: args.attentionCursor ?? 0,
+    kind: args.kind ?? null,
+    timeoutMs,
+  });
+}
+
+async function surfaceWatch(target, runtime, input, message) {
+  if (typeof target.application?.command !== 'function') {
+    throw new BatonControlError('surface_profile_restricted', 'surface watch requires the existing application facade');
+  }
+  const args = validateWatchArgs(input, target);
+  const principal = actorContext(target);
+  const context = applicationContext(target, message, input);
+  const follow = await target.application.command('run.follow', {
+    runId: args.runId,
+    afterCursor: args.afterCursor,
+    timeoutMs: args.timeoutMs,
+  }, principal, context);
+  const attention = await target.application.command('run.attention.watch', {
+    runId: args.runId,
+    cursor: args.attentionCursor,
+    ...(args.kind === null ? {} : { kind: args.kind }),
+  }, principal, context);
+  if (Number.isSafeInteger(attention?.throughCursor)
+    && attention.throughCursor < args.attentionCursor) {
+    throw new BatonControlError(
+      'attention_scope_forbidden',
+      'attention watch could not preserve the authorized cursor; refusing silent empty fallback',
+      { detail: { requestedCursor: args.attentionCursor, throughCursor: attention.throughCursor } },
+    );
+  }
+  const decisions = typeof target.application.decisionList === 'function'
+    ? await target.application.decisionList({ runId: args.runId }, principal, context)
+    : Object.freeze({ available: false, reason: 'decision_list_not_available_in_profile' });
+  const wave = args.waveId === null ? null : await target.application.command(
+    'waves.progress', { waveId: args.waveId }, principal, context,
+  );
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: 'baton.surface_watch',
+    runId: args.runId,
+    waveId: args.waveId,
+    afterCursor: args.afterCursor,
+    attentionCursor: args.attentionCursor,
+    nextAfterCursor: Number.isSafeInteger(follow?.cursor)
+      ? follow.cursor : Number.isSafeInteger(follow?.throughCursor) ? follow.throughCursor : args.afterCursor,
+    nextAttentionCursor: Number.isSafeInteger(attention?.throughCursor)
+      ? attention.throughCursor : args.attentionCursor,
+    follow: clone(follow),
+    attention: clone(attention),
+    decisions: clone(decisions),
+    wave: clone(wave),
+    convergence: runtime.audit(),
+  });
+}
+
+const VISUAL_VIEWS = new Set(['overview', 'topology', 'timeline', 'telemetry']);
+
+function validateVisualizeArgs(args, target) {
+  const view = args.view ?? 'overview';
+  if (!VISUAL_VIEWS.has(view)) {
+    throw new BatonControlError('surface_visualization_invalid', `view must be one of ${[...VISUAL_VIEWS].join(', ')}`, { field: 'view' });
+  }
+  if (args.runId !== undefined && !safeId(args.runId)) {
+    throw new BatonControlError('surface_visualization_invalid', 'visualization runId is invalid', { field: 'runId' });
+  }
+  if (args.waveId !== undefined && !safeId(args.waveId)) {
+    throw new BatonControlError('surface_visualization_invalid', 'visualization waveId is invalid', { field: 'waveId' });
+  }
+  if (args.width !== undefined && (!Number.isSafeInteger(args.width) || args.width < 40 || args.width > 240)) {
+    throw new BatonControlError('surface_visualization_invalid', 'width must be an integer between 40 and 240', { field: 'width' });
+  }
+  if (args.follow !== undefined && typeof args.follow !== 'boolean') {
+    throw new BatonControlError('surface_visualization_invalid', 'follow must be a boolean', { field: 'follow' });
+  }
+  for (const field of ['afterCursor', 'attentionCursor']) {
+    if (args[field] !== undefined && (!Number.isSafeInteger(args[field]) || args[field] < 0)) {
+      throw new BatonControlError('surface_visualization_invalid', `${field} must be a non-negative safe integer`, { field });
+    }
+  }
+  if (args.kind !== undefined && !safeId(args.kind)) {
+    throw new BatonControlError('surface_visualization_invalid', 'visualization kind is invalid', { field: 'kind' });
+  }
+  const maximum = Math.min(WEB_WAIT_CEILING_ROW.value, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : WEB_WAIT_CEILING_ROW.value);
+  if (args.timeoutMs !== undefined && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 1 || args.timeoutMs > maximum)) {
+    throw new BatonControlError('surface_visualization_invalid', `timeoutMs must be between 1 and ${maximum}`, { field: 'timeoutMs' });
+  }
+  return Object.freeze({
+    view,
+    runId: args.runId ?? null,
+    waveId: args.waveId ?? null,
+    width: args.width ?? 96,
+    follow: args.follow === true,
+    afterCursor: args.afterCursor ?? 0,
+    attentionCursor: args.attentionCursor ?? 0,
+    kind: args.kind ?? null,
+    timeoutMs: args.timeoutMs ?? null,
+  });
+}
+
+// docs/38 — the bounded visualization meta tool. Composes the already-authorized snapshot and
+// (on follow) watch authorities into one canonical visual model plus an ANSI-free static text
+// rendering. The visual-model/visual-renderer siblings land in parallel waves; they load lazily
+// so the package import graph stays inert (docs/38 acceptance #8). No renderer becomes an
+// authority and no ANSI ever enters the MCP text channel.
+async function surfaceVisualize(target, runtime, args, message) {
+  const validated = validateVisualizeArgs(args, target);
+  if (validated.follow && !safeId(validated.runId)) {
+    throw new BatonControlError(
+      'surface_visualization_invalid',
+      'visualization follow requires a runId; a global watch authority is not invented',
+      { field: 'runId' },
+    );
+  }
+  const snapshot = await surfaceSnapshot(target, runtime, {
+    runId: validated.runId, waveId: validated.waveId,
+  });
+  let watch = null;
+  let nextAfterCursor = validated.afterCursor;
+  let nextAttentionCursor = validated.attentionCursor;
+  if (validated.follow) {
+    watch = await surfaceWatch(target, runtime, {
+      runId: validated.runId,
+      ...(validated.waveId === null ? {} : { waveId: validated.waveId }),
+      afterCursor: validated.afterCursor,
+      attentionCursor: validated.attentionCursor,
+      ...(validated.kind === null ? {} : { kind: validated.kind }),
+      timeoutMs: validated.timeoutMs,
+    }, message);
+    nextAfterCursor = Number.isSafeInteger(watch?.nextAfterCursor)
+      ? watch.nextAfterCursor : validated.afterCursor;
+    nextAttentionCursor = Number.isSafeInteger(watch?.nextAttentionCursor)
+      ? watch.nextAttentionCursor : validated.attentionCursor;
+  }
+  let modelModule;
+  let rendererModule;
+  try {
+    [modelModule, rendererModule] = await Promise.all([
+      import('./visual-model.mjs'),
+      import('./visual-renderer.mjs'),
+    ]);
+  } catch (error) {
+    throw new BatonControlError(
+      'surface_visualization_unavailable',
+      'visual model/renderer siblings are not yet available in this deployment',
+      { detail: { cause: BatonControlError.from(error).envelope().error } },
+    );
+  }
+  if (typeof modelModule.projectBatonVisualModel !== 'function'
+    || typeof rendererModule.renderBatonVisual !== 'function') {
+    throw new BatonControlError(
+      'surface_visualization_unavailable',
+      'visual siblings must export projectBatonVisualModel and renderBatonVisual',
+    );
+  }
+  const model = modelModule.projectBatonVisualModel({
+    snapshot, ...(watch === null ? {} : { watch }), width: validated.width,
+  });
+  const text = rendererModule.renderBatonVisual(model, {
+    width: validated.width, color: false, motion: false, view: validated.view,
+  });
+  const accessibleSummary = typeof model?.accessibleSummary === 'string'
+    ? model.accessibleSummary : text;
+  const actions = (Array.isArray(model?.attention) ? model.attention : [])
+    .filter((item) => typeof item?.runId === 'string' && typeof item?.requestId === 'string')
+    .flatMap((item) => ['allow', 'deny'].map((decision) => Object.freeze({
+      tool: 'baton_surface_invoke',
+      name: 'run.answer',
+      args: { runId: item.runId, requestId: item.requestId, answer: { decision } },
+      label: `${decision} ${item.prompt ?? item.id ?? item.requestId}`,
+    })));
+  const value = Object.freeze({
+    schemaVersion: 1,
+    kind: 'baton.surface_visualization',
+    view: validated.view,
+    model: clone(model),
+    presentation: Object.freeze({
+      text,
+      accessibleSummary,
+      refresh: Object.freeze({
+        tool: 'baton_surface_visualize',
+        view: validated.view,
+        runId: validated.runId,
+        waveId: validated.waveId,
+        width: validated.width,
+        follow: validated.follow,
+        afterCursor: nextAfterCursor,
+        attentionCursor: nextAttentionCursor,
+        kind: validated.kind,
+        timeoutMs: validated.timeoutMs,
+      }),
+      motion: Object.freeze({ frames: 4, kind: 'flip_sparkle', required: false }),
+      actions: Object.freeze(actions),
+    }),
+    convergence: runtime.audit(),
+  });
+  return {
+    jsonrpc: '2.0', id: message.id,
+    result: {
+      structuredContent: value,
+      content: [{ type: 'text', text: value.presentation.text }],
+    },
+  };
+}
+
+function augmentInstructions(response) {
+  if (!response?.result || typeof response.result.instructions !== 'string') return response;
+  const suffix = ' Unified surface tools project Baton\'s existing control, observation, telemetry, communication, task management, knowledge, diagnostics/environment awareness, and notification authorities; use baton_surface_catalog for profile-specific availability and baton_surface_watch for the composed existing notification loop.';
+  return { ...response, result: { ...response.result, instructions: `${response.result.instructions}${suffix}` } };
+}
+
+function augmentTools(response, tools) {
+  if (!Array.isArray(response?.result?.tools)) return response;
+  const byName = new Map(response.result.tools.map((tool) => [tool.name, tool]));
+  for (const tool of tools) if (!byName.has(tool.name)) byName.set(tool.name, tool);
+  return { ...response, result: { ...response.result, tools: [...byName.values()] } };
+}
+
+// ── the core agent surface (issue #314, docs/49) ────────────────────────────────────────────
+//
+// The ordinary (`application`) surface is the seven core verb-tools: this wrapper advertises
+// the core table in place of the raw server's flat 52 (plus the six unified meta tools, which
+// fold into ONE baton_surface) and routes a core call to the flat tool its verb names — the
+// SAME operation, through the SAME server dispatch, so a core call and its legacy counterpart
+// answer byte-identically. A flat spelling the core folds in refuses `unknown_tool` with a
+// `movedTo` pointer (docs/49 §8); every other name keeps the landed unknown-tool shape, now
+// naming the CORE advertised set. The `advanced`/`combined` profiles (the descriptor's kernel
+// and authoring surfaces) are untouched: they advertise exactly what they advertise today.
+
+/** The advertised tools of a core-surface session: the seven definitions, with the envelope
+ * fields stripped when the connection binds the repository coordinate (as the raw server does
+ * for its own table). */
+function coreSurfaceTools(target) {
+  return coreToolDefinitions({ bindApplicationContext: target.bindApplicationContext === true });
+}
+
+function serveCoreTools(response, tools) {
+  if (!Array.isArray(response?.result?.tools)) return response;
+  return { ...response, result: { ...response.result, tools: [...tools] } };
+}
+
+function coreToolRefusal(message, refusal) {
+  const body = {
+    ok: false,
+    error: {
+      code: refusal.code,
+      ...(refusal.message == null ? {} : { message: refusal.message }),
+      ...(refusal.detail == null ? {} : { detail: refusal.detail }),
+      ...(refusal.field == null ? {} : { field: refusal.field }),
+    },
+  };
+  return {
+    jsonrpc: '2.0', id: message?.id ?? null,
+    result: { isError: true, structuredContent: body, content: [{ type: 'text', text: JSON.stringify(body) }] },
+  };
+}
+
+/** The landed unknown-tool refusal (mcp-northbound.mjs:2036-2046), re-minted over the CORE
+ * advertised set — plus the one DATA addition docs/49 §8 mints: a flat spelling the core folds
+ * in carries `data.movedTo: {tool, verb}` naming its replacement. */
+function coreUnknownTool(message, name, tools) {
+  const names = [...tools].sort();
+  const nearest = nearestToolName(name, names);
+  const movedTo = coreMovedTo(name);
+  const messageText = movedTo === null
+    ? (nearest === null
+      ? `unknown tool ${name}; this surface advertises no tools`
+      : `unknown tool ${name}; the nearest core tool is ${nearest}`)
+    : `unknown tool ${name}; the core surface folds it into ${movedTo.tool} {verb: ${JSON.stringify(movedTo.verb)}}`;
+  return {
+    jsonrpc: '2.0', id: message?.id ?? null,
+    error: {
+      code: -32602,
+      message: messageText,
+      data: { code: 'unknown_tool', requested: name, nearest, tools: names, ...(movedTo === null ? {} : { movedTo }) },
+    },
+  };
+}
+
+/** Dispatch one core tool call: the verb's flat counterpart through the raw server (the ONE
+ * dispatch), or the meta authority for the six baton_surface verbs. */
+async function dispatchCoreTool(target, shadow, runtime, message, tool) {
+  const args = message?.params?.arguments;
+  const resolved = resolveCoreCall(tool, args ?? {}, {
+    bindApplicationContext: target.bindApplicationContext === true,
+  });
+  if (!resolved.ok) return coreToolRefusal(message, resolved);
+  const call = resolved.dispatch;
+  // A meta leg speaks the unified meta tools' own closed arg sets, which carry no repoId (their
+  // authority derives it — authorizeMcpMetaRead): the envelope field the core schema carries at
+  // the top level is dropped there, exactly as the bound bridge surface drops it for every tool.
+  const forwarded = call.kind === 'meta'
+    ? Object.fromEntries(Object.entries(call.arguments).filter(([field]) => field !== 'repoId'))
+    : call.arguments;
+  const rewritten = {
+    ...message,
+    params: { ...message.params, name: call.name, arguments: forwarded },
+  };
+  if (call.kind === 'meta') return handleMeta(target, await shadow(), runtime, rewritten);
+  return target.handle(rewritten);
+}
+
+async function invokeCapability(target, shadow, capability, args, idempotencyKey, message) {
+  if (capability.kind === 'cli_native' || capability.hostLocal === true) {
+    throw new BatonControlError('surface_host_command_required', `${capability.id} is a host-local CLI capability`);
+  }
+  if (capability.kind === 'surface_meta') {
+    throw new BatonControlError('surface_meta_direct_required', `${capability.id} must be called through its direct meta tool`);
+  }
+  if (capability.kind === 'application_operation' && capability.operatorFacing !== true) {
+    throw new BatonControlError(
+      'surface_embedded_only',
+      `${capability.id} retains ${capability.remotePosture} authority and is not an operator command`,
+    );
+  }
+
+  const candidates = toolCandidateNames(capability);
+  for (const server of [target, shadow].filter(Boolean)) {
+    const name = candidates.find((candidate) => server.toolNames?.has?.(candidate));
+    if (!name) continue;
+    const inner = await server.handle({
+      jsonrpc: '2.0', id: `surface:${message.id ?? randomUUID()}`, method: 'tools/call',
+      params: { name, arguments: completeToolArguments(server, name, args, idempotencyKey) },
+    });
+    return { ...inner, id: message.id };
+  }
+  if (capability.kind !== 'application_operation' || !target.application?.command) {
+    throw new BatonControlError('surface_profile_restricted', `${capability.id} is unavailable in this MCP deployment profile`);
+  }
+  const prepared = prepareApplicationSurfaceInvocation(capability, args, { surface: 'mcp' });
+  const value = await target.application.command(
+    prepared.command,
+    prepared.args,
+    actorContext(target),
+    applicationContext(target, message, { ...args, idempotencyKey }),
+  );
+  return toolResult(message.id, { capability: capability.id, path: prepared.path, result: clone(value) });
+}
+
+function liveServers(target, shadow) {
+  return [target, shadow].filter(Boolean);
+}
+
+async function handleMeta(target, shadow, runtime, message) {
+  const name = message?.params?.name;
+  let repoId = null;
+  try {
+    const authority = await authorizeMcpMetaRead(target, name, {
+      takeQuota: name !== 'baton_surface_invoke',
+    });
+    repoId = authority.repoId;
+    const applicationAvailable = typeof target.application?.command === 'function';
+    let response;
+
+    if (name === 'baton_surface_catalog') {
+      const args = closedArgs(message, ['category', 'surface', 'mode', 'owner']);
+      const capabilities = projectLiveMcpCatalog(
+        completeUnifiedCapabilityCatalog(args),
+        liveServers(target, shadow),
+        { applicationAvailable },
+      );
+      response = toolResult(message.id, {
+        schemaVersion: 3,
+        source: 'configured_existing_mcp_authority',
+        coverage: assertUnifiedCapabilityCoverage(),
+        nameClosure: assertSurfaceCapabilityNameClosure(),
+        capabilities,
+      });
+    } else if (name === 'baton_surface_describe') {
+      const args = closedArgs(message, ['name'], ['name']);
+      response = toolResult(message.id, {
+        schemaVersion: 3,
+        source: 'configured_existing_mcp_authority',
+        capability: projectLiveMcpCapability(
+          resolveSurfaceCapability(args.name),
+          liveServers(target, shadow),
+          { applicationAvailable },
+        ),
+      });
+    } else if (name === 'baton_surface_snapshot') {
+      const args = closedArgs(message, ['runId', 'waveId']);
+      response = toolResult(message.id, await surfaceSnapshot(target, runtime, args));
+    } else if (name === 'baton_surface_watch') {
+      const args = closedArgs(message, [
+        'runId', 'waveId', 'afterCursor', 'attentionCursor', 'kind', 'timeoutMs',
+      ], ['runId']);
+      response = toolResult(message.id, await surfaceWatch(target, runtime, args, message));
+    } else if (name === 'baton_surface_visualize') {
+      const args = closedArgs(message, [
+        'view', 'runId', 'waveId', 'width', 'follow', 'afterCursor', 'attentionCursor',
+        'kind', 'timeoutMs',
+      ]);
+      response = await surfaceVisualize(target, runtime, args, message);
+    } else if (name === 'baton_surface_invoke') {
+      const args = closedArgs(message, ['name', 'args', 'idempotencyKey'], ['name', 'args']);
+      if (!record(args.args)) throw new BatonControlError('surface_arguments_invalid', 'surface invoke args must be an object', { field: 'args' });
+      const capability = resolveSurfaceCapability(args.name);
+      const live = projectLiveMcpCapability(
+        capability,
+        liveServers(target, shadow),
+        { applicationAvailable },
+      );
+      if (live.liveMcp.direct !== true) await takeMcpMetaQuota(target, name, repoId);
+      const dispatch = () => invokeCapability(
+        target, shadow, capability, args.args,
+        args.idempotencyKey ?? `mcp.surface:${message.id ?? randomUUID()}`,
+        message,
+      );
+      response = capability.mode === 'query'
+        ? await dispatch()
+        : await admitAndDispatch(runtime, {
+          key: capability.key,
+          mode: capability.mode,
+          lane: capability.lane ?? 'interactive_control',
+        }, message, dispatch);
+    } else {
+      throw new BatonControlError('surface_capability_unknown', `unknown meta tool ${name}`);
+    }
+
+    auditMcpMetaCompletion(target, name, repoId);
+    return response;
+  } catch (error) {
+    if (repoId !== null) {
+      try { auditMcpMetaFailure(target, name, repoId, error); }
+      catch (auditError) { return toolErrorResponse(message, auditError); }
+    }
+    return toolErrorResponse(message, error);
+  }
+}
+
+export function wrapProductionMcpServer(server, {
+  runtime = new ProductionConvergenceRuntime(),
+  expandNative = true,
+} = {}) {
+  if (!server || typeof server.handle !== 'function') throw new TypeError('MCP server with handle() is required');
+  let shadowPromise = null;
+  const shadow = async () => {
+    if (!expandNative || server.surface === 'advanced' || server.surface === 'combined') return null;
+    shadowPromise ??= createAdvancedShadow(server);
+    return shadowPromise;
+  };
+  // U-E2 (#287 and #289, 2026-09-14 audit): a surface’s tools/list is EXACTLY what tools/call
+  // dispatches — the server’s own table plus the unified meta tools. The advanced shadow is an
+  // internal authority for `baton_surface_invoke`/`baton_surface_catalog` (it is what lets an
+  // ordinary deployment resolve a kernel capability on request), not a second advertised surface.
+  // Merging its definitions here advertised 17 kernel tools (the whole fleet_* family) on an
+  // ordinary surface whose dispatch guard then refused them by name, so those tools answered every
+  // call with `-32602 Invalid params` — the list lied. The alternative fix, widening the ordinary
+  // guard, would make an `application` deployment advertise AND dispatch kernel control directly,
+  // which MCP.md reserves for `advanced`/`combined` (MCP.md §Connect); so the merge is what goes,
+  // and kernel reachability stays where the profile already projects it — the baton_surface_* meta
+  // tools route to this same shadow (invokeCapability), while an advanced/combined surface carries
+  // the definitions itself.
+  // The core surface (docs/49 §2): on the ordinary profile this wrapper advertises the seven
+  // core verb-tools instead of the flat table; `advanced`/`combined` keep the landed merge.
+  const coreSurface = server.surface === 'application';
+  const coreTools = coreSurface ? coreSurfaceTools(server) : null;
+  const coreNames = new Set(coreTools === null ? [] : CORE_TOOL_NAMES);
+  const listedTools = async () => (coreSurface ? coreTools : [
+    ...(server.toolDefinitions ?? []),
+    ...COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
+  ]);
+  return new Proxy(server, {
+    get(target, key, receiver) {
+      if (key === 'convergence') return runtime;
+      if (key === 'unifiedCapabilityCoverage') return Object.freeze({
+        coverage: assertUnifiedCapabilityCoverage(),
+        nameClosure: assertSurfaceCapabilityNameClosure(),
+      });
+      if (key === 'toolDefinitions') {
+        if (coreSurface) return [...coreTools];
+        const byName = new Map((target.toolDefinitions ?? []).map((tool) => [tool.name, tool]));
+        for (const tool of COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS) byName.set(tool.name, tool);
+        return [...byName.values()];
+      }
+      if (key === 'toolNames') {
+        if (coreSurface) return new Set(coreNames);
+        return new Set([...(target.toolNames ?? []), ...META_NAMES]);
+      }
+      if (key !== 'handle') {
+        const value = Reflect.get(target, key, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return async (message) => {
+        if (message?.method === 'initialize') {
+          return augmentInstructions(await target.handle(message));
+        }
+        if (message?.method === 'tools/list'
+          || (message?.method === 'notifications/initialized' && message?.id !== undefined)) {
+          return coreSurface
+            ? serveCoreTools(await target.handle(message), coreTools)
+            : augmentTools(await target.handle(message), await listedTools());
+        }
+        const tool = message?.method === 'tools/call' ? message?.params?.name : null;
+        // The core surface: a core tool dispatches its verb's own operation. The six unified meta
+        // spellings the CLI's own MCP client speaks (configured-mcp-client.mjs) ride their core
+        // verb as aliases — docs/49 §0 keeps the CLI unchanged — while every other unadvertised
+        // name refuses over the CORE set, `movedTo` naming the verb that replaced it.
+        if (coreSurface && typeof tool === 'string') {
+          if (coreNames.has(tool)) return dispatchCoreTool(target, shadow, runtime, message, tool);
+          const alias = coreMetaAlias(tool);
+          if (alias !== null) {
+            return dispatchCoreTool(target, shadow, runtime, {
+              ...message,
+              params: { ...message.params, arguments: { ...(message.params?.arguments ?? {}), verb: alias.verb } },
+            }, alias.tool);
+          }
+          return coreUnknownTool(message, tool, coreNames);
+        }
+        if (META_NAMES.has(tool)) return handleMeta(target, await shadow(), runtime, message);
+        const definition = definitionFor(tool);
+        if (!definition) return target.handle(message);
+        if (definition.mode === 'query') {
+          const authorityFailure = await authorizeRunScopedQuery(target, tool, message);
+          if (authorityFailure) return authorityFailure;
+          return attentionCursorGuard(tool, message, await target.handle(message));
+        }
+        return admitAndDispatch(runtime, definition, message, () => target.handle(message));
+      };
+    },
+    has(target, key) {
+      return ['convergence', 'unifiedCapabilityCoverage'].includes(key) || Reflect.has(target, key);
+    },
+  });
+}

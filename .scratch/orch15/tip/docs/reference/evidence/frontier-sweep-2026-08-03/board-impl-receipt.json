@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T18:14:27.167Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "55076da22f610e56cbe5f6809aa6dac609ea98df"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-6cf996e9dd50bac1af1f5a32-work:576",
+      "at": "2026-08-03T18:52:14.689Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-6cf996e9dd50bac1af1f5a32-work:630",
+      "at": "2026-08-03T18:56:09.055Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:44a6fe739ea3e08b5ade305787ac8521",
+    "idempotencyKey": "l2-board-impl-2026-08-03",
+    "recipeDigest": "00bb8a8e08cf331d238d6f5e1307605c0a118e36114b6c2c8e862d496d5bf7c1",
+    "salt": "55f78eb6-192b-4bea-b0c1-fc820756b87e",
+    "renderedMembers": [
+      {
+        "role": "implementer",
+        "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the assigned contract rung. The task that follows is your sole work authority. Implement the #78 epic per docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-contract.md (READ IT FULLY first), the folded blue-team blockers in docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-suite-fold.md (READ IT second — it carries the sharpened oracles), and make impl/test/board-workerhalf-red.test.mjs (READ IT FULLY third) green with ZERO weakening edits. The suite is red-first post-fold: every row fails at a named stage for a missing capability — your work is to make each named capability real, never to move a stage or relax an assertion. Some files contain NUL bytes (application.mjs, coordinator.mjs, coordination-store.mjs) — grep -an + sed -n only, never open them whole. Campaign law: controls are eval-able, constructive, or conversational — NEVER clocks or turn-limits; scanners stay shape-only (no content caps at the wire, #86/#89); localeCompare is BANNED (use (a < b ? -1 : a > b ? 1 : 0)); sorted-key closed-shape literals must be written in ACTUAL sorted order (the BD3-A0 lesson). board worker-half (#78): worker-facing claim/report lanes on the coordination board — grant mint/revoke with generation records, claimVersion reset semantics, read-only grant REFUSING a claim (permission enforcement, the blue-team headline hole), in-kernel digest adjudication, in-item pagination, close/drop in-batch expiry, board_oversize_item/oversize-row truncation, replay-wins-over-live-state + revoked-grant replay refusal at the seam (Decision 6 rule 4), the BOARD_CLAIM/BOARD_REPORT wire scanner grammars in claude-session.mjs (sibling to scanForMessageSend — closed shape, identity stream-bound, shape-only per the #86 campaign law: no content caps at the wire), hub dispatch through the existing coordinator admission shape, S-2 board→run binding reuse, TG2 scratchpad wiring untouched (pin). Anchors: impl/src/coordination-store.mjs (board items/generation records), impl/src/application-semantics.mjs:1582 region (waves.send landed shape), impl/src/coordinator.mjs (claimGrant prerequisite :11483 region), impl/src/claude-session.mjs (scanner siblings :31-150). Verify: node --test impl/test/board-workerhalf-red.test.mjs from the repo root, then the suite's adjacents it names.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: 55f78eb6-192b-4bea-b0c1-fc820756b87e implementer]",
+        "exact": {
+          "harness": "deepseek",
+          "model": "deepseek-v4-flash",
+          "effort": "high"
+        },
+        "scope": [
+          "impl/**",
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ]
+      }
+    ]
+  }
+}

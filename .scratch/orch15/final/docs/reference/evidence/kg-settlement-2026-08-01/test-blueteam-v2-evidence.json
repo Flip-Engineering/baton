@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T01:47:37.971Z",
+  "members": [
+    "remediation-verifier"
+  ],
+  "outcomes": [
+    {
+      "role": "remediation-verifier",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "3cbdc3942848144e87686f94d27a67dbd22dba5a"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "remediation-verifier",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "remediation-verifier",
+      "requestId": "pause:baton-be2156720442c712f036585e-work:58",
+      "at": "2026-08-02T01:54:25.825Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "remediation-verifier",
+      "requestId": "pause:baton-be2156720442c712f036585e-work:72",
+      "at": "2026-08-02T01:54:48.930Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  }
+}

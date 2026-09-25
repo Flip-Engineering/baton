@@ -1,0 +1,40 @@
+{
+  "attempt": "2026-08-13T05:44:27.030Z",
+  "salt": "v520260813054427",
+  "role": "fold-144b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-26706c83bc04fa30ad4cdb67c2807009"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-144b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-144b": {
+      "pin": "c0992c146d45a18155644f8381f580cca588576e",
+      "paths": [
+        "impl/test/issue144-lsp-pool-red.test.mjs",
+        "docs/reference/evidence/lsp-support-2026-08-13/suite-fold-2.md",
+        "docs/reference/evidence/lsp-support-2026-08-13/suite-draft-notes.md",
+        "docs/reference/evidence/lsp-support-2026-08-13/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 458,
+  "verdict": "FOLD-144B-OK"
+}

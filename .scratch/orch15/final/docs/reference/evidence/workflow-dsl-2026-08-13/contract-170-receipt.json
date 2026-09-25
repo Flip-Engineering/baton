@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:58:01.742Z",
+  "salt": "z820260813075801",
+  "role": "contract-170",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-d99bc1aeb34df9c9f37e874e3f9bf25a"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-170",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-170": {
+      "pin": "fb5562d51027486e6f037d8c2407990ec09311a8",
+      "paths": [
+        "docs/reference/evidence/workflow-dsl-2026-08-13/workflow-dsl-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 481,
+  "verdict": "CONTRACT-170-OK"
+}

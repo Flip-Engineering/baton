@@ -1,0 +1,137 @@
+{
+  "runId": "grok-multi-reap-1783751152711",
+  "at": "2026-07-11T06:25:56.600Z",
+  "repoHead": "81868b6d6638ac06e4f247ec0fea8fe1dd863bda",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "pids": [
+    5871,
+    5875,
+    5879,
+    5883
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-reap-1",
+      "phase": "interrupt",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-reap-2",
+      "phase": "interrupt",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-reap-3",
+      "phase": "direct-kill",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-reap-4",
+      "phase": "direct-kill",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-reap-1",
+      "phase": "post-interrupt-kill",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-reap-2",
+      "phase": "post-interrupt-kill",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "statuses": [
+    {
+      "taskId": "grok-reap-1",
+      "workerId": "w-1",
+      "result": {
+        "ready": true,
+        "status": "cancelled",
+        "verdict": null
+      }
+    },
+    {
+      "taskId": "grok-reap-2",
+      "workerId": "w-2",
+      "result": {
+        "ready": true,
+        "status": "cancelled",
+        "verdict": null
+      }
+    },
+    {
+      "taskId": "grok-reap-3",
+      "workerId": "w-3",
+      "result": {
+        "ready": true,
+        "status": "cancelled",
+        "verdict": null
+      }
+    },
+    {
+      "taskId": "grok-reap-4",
+      "workerId": "w-4",
+      "result": {
+        "ready": true,
+        "status": "cancelled",
+        "verdict": null
+      }
+    }
+  ],
+  "cleanup": {
+    "dirsGone": true,
+    "pidsGone": true,
+    "stressBranches": [
+      "baton/grok-reap-1",
+      "baton/grok-reap-2",
+      "baton/grok-reap-3",
+      "baton/grok-reap-4"
+    ],
+    "presentBeforeDelete": [
+      "baton/grok-reap-1",
+      "baton/grok-reap-2",
+      "baton/grok-reap-3",
+      "baton/grok-reap-4"
+    ],
+    "branchDeleteErrors": [],
+    "branchesGone": true
+  },
+  "checks": {
+    "noHarnessError": true,
+    "fourDistinctLivePids": true,
+    "fourTurnsStartedBeforeStop": true,
+    "twoInterruptsConfirmed": true,
+    "fourKillsConfirmed": true,
+    "allProcessesGone": true,
+    "allWorktreesReaped": true,
+    "allTasksTerminal": true,
+    "stressBranchesCleaned": true
+  },
+  "fatal": null,
+  "pass": true
+}

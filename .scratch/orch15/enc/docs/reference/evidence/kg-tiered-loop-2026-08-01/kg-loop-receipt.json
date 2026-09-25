@@ -1,0 +1,21 @@
+{
+  "attempt": "2026-08-01T06:24:19.200Z",
+  "salt": "kgl20260801062419",
+  "phases": [
+    {
+      "phase": 1,
+      "ritualOnly": true,
+      "note": "live wave already landed; ritual re-run over the persisted store"
+    },
+    {
+      "phase": 2,
+      "failed": true,
+      "error": {
+        "code": "coordination_projection_poisoned",
+        "name": "CoordinationIntegrityError",
+        "message": "coordination projection failed after durable seq 77; restart and replay are required"
+      }
+    }
+  ],
+  "repoId": "repo-76d484205f22eed0163d8f21b8287740"
+}

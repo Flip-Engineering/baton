@@ -1,0 +1,27 @@
+# Phase 12 IL1–IL8 authenticated web-session lifecycle review
+
+Date: 2026-07-11
+
+## Scope and method
+
+Independently reviewed the current `spec/phase12/authenticated-web-session-lifecycle.md` and its parent authenticated-web-northbound specification, plus `impl/src/web-auth.mjs`, `impl/src/web-northbound.mjs`, `impl/src/web-stream.mjs`, and all four Phase 12 test files named by the acceptance command. Prior evidence logs were not inspected. No network, homelab, deployment, or fleet integration was used.
+
+## Result
+
+No actionable IL1–IL8 implementation defect was found.
+
+## Trust-seam disposition
+
+- **IL1 — injected identity / confused deputy / claim expansion:** Login passes the bounded parsed provider body to the configured provider but accepts identity, authentication method, capabilities, repository scopes, and TTL only from the provider result. The result is allowlisted and revalidated by the session store. Refresh accepts an empty body only and copies the predecessor's claims; request JSON cannot expand them. Repository and capability checks remain downstream of authentication. Provider absence, throw, refusal, malformed claims, and out-of-policy TTL converge on a bounded unauthenticated refusal without issuance.
+- **IL2 — issuance, rotation, predecessor replay, restart integrity:** Credentials and cookie CSRF values are independently random and only SHA-256 digests are persisted. A rotation is one fsynced `session.rotated` record whose replay atomically revokes the predecessor and installs a fresh successor. The raw successor is returned only after append and sync. A failed append/sync returns no credential; restart validates newline termination, JSON, schema, sequence, event references, uniqueness, claim equality, digest shape, CSRF posture, and TTL invariants. Old-token replay and concurrent/retried refresh therefore cannot reactivate or reuse the predecessor.
+- **IL3 — TLS, Origin, media type, body, CSRF, and CORS:** Lifecycle POSTs are selected by exact path, require the encrypted socket and an exactly configured Origin before provider/session mutation, require JSON, use the shared bounded parser, and require an empty refresh/logout object. Cookie refresh/logout compare a session-bound CSRF digest in constant time. Login correctly has no pre-session CSRF requirement. Successful allowed-origin responses and preflight use the exact origin plus credentials and `Vary: Origin`; no wildcard is emitted. All lifecycle responses are `no-store`. (The preflight header list is sufficient for the browser-cookie lifecycle defined here; browser use of `Authorization` is not part of IL1–IL8.)
+- **IL4 — cookie/Bearer posture and leakage:** Cookie responses expose no session token in JSON and use a host-only `__Host-` cookie with `Secure`, `HttpOnly`, `SameSite=Strict`, and `Path=/`; logout emits the matching clearing cookie. Bearer credentials appear only in the one successful JSON response. Raw session and CSRF credentials are absent from session records, coordination audits, provider metadata, URLs, SSE frames, and errors. Mixed cookie/Bearer and malformed or oversized credential presentations fail closed.
+- **IL5 — audit ordering and crash windows:** Refusals are coordination-audited before their response. Successful decisions are coordination-audited before session mutation, so a coordination-audit failure cannot issue, rotate, or revoke. The subsequent session mutation is itself an append-only, actor-attributed, fsynced `session.issued`, `session.rotated`, or `session.revoked` record and precedes any credential/success response. A crash after the decision audit but before mutation leaves a harmless authorized-decision record and no session change; a crash after durable mutation but before response reconciles from session truth (login requires retry, refresh/logout leave the presented predecessor inactive) and cannot duplicate or undo a credential. Truncated or otherwise invalid durable tails fail startup closed.
+- **IL6 — stream liveness and zero fleet effects:** Rotation/logout invalidate the old session in the live registry synchronously. Ticket issuance/consumption and every replayed event recheck expiry/scope/liveness; established SSE polling closes on the next check and withholds later events. Disconnect and authorization loss only close/audit the stream. Lifecycle code never invokes coordinator fleet methods, and focused tests assert zero fleet calls.
+- **IL7 — regression coverage:** The Phase 12 suites cover provider-only claims and malformed provider output; TLS/Origin/content type/body bounds; cookie CSRF and cookie attributes; bearer and cookie issuance/refresh; one-event atomic rotation; failed append; predecessor refusal; restart acceptance of only the successor; logout and durable revocation; audit fail-closed ordering; credential non-persistence/non-propagation; expiry/malformed/mixed credentials; stream revocation during polling and mid-replay; and no lifecycle fleet calls. No missing regression was identified that would expose an actionable IL1–IL8 defect.
+- **IL8 — explicitly deferred, not findings:** Login throttling and per-IP/principal quotas (WN5), trusted-proxy/address handling (WN8), OIDC redirect/callback details, optional WebSocket parity, and real-browser automation (WN9) remain declared deferred scope. This review does not treat their absence as an IL1–IL8 defect and makes no claim that the broader WN1–WN10 gate is complete.
+
+## Severity/source/failure-sequence findings
+
+None.
+

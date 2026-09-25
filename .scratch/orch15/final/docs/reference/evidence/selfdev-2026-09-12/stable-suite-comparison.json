@@ -1,0 +1,498 @@
+{
+  "schemaVersion": 1,
+  "baselineRevision": "67904d59cb5c183f8f683aa73e375402b0255991",
+  "workingRevision": "89661c1ffc7f1040717165b5d490910434ddd523",
+  "comparisonScope": "Both full runs used Node22 and test-concurrency2. Changed observations require diagnosis; this is not a claim that remaining failures are expected or unrelated.",
+  "sharedFailureRows": 649,
+  "onlyInWorkingSweep": [
+    {
+      "record": "failure",
+      "test": "BU-2-2-2: _steeringEvidenceQualifies admits the capability_op evidence kind with extract-digest dedup",
+      "location": "impl/test/browser-use-red.test.mjs:675:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "BU-2-2-3: a worker-bound fetch settles the armed steering cycle (turn.settled, basis steering_answered)",
+      "location": "impl/test/browser-use-red.test.mjs:689:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "BU-2-2-4: an identical re-invoke replays pre-network (capability.op.replayed) and NEVER counts as TG2 progress",
+      "location": "impl/test/browser-use-red.test.mjs:718:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "OR-T1 (pin) [farm-guard]: a context.read-class wire emission never answers the TG3 steering cycle; a genuine resumed turn still does",
+      "location": "impl/test/orientation-red.test.mjs:1340:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "SC10: codex app-server vendor through createDriver \u2014 thread pinned to the task worktree, trust gate, completed",
+      "location": "impl/test/phase10-driver-e2e.test.mjs:130:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "SC10: grok ACP vendor through createDriver \u2014 child AND session pinned to the task worktree, trust gate, completed",
+      "location": "impl/test/phase10-driver-e2e.test.mjs:148:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "PS1-PS5: Claude, Codex, and Grok each run two public turns on one native session then kill",
+      "location": "impl/test/phase11-persistent-sessions.test.mjs:325:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV2: outage, pagination, and response ceilings fail closed with typed reasons",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:89:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV6: cache and snapshot reverify avoid network; expiry blocks until explicit refresh",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:112:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV3/QV6: malicious package signal blocks and dossier substitution/tamper refuses",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:126:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV3: a tiny context budget returns an honest ref-only partial without an infinite cursor",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:137:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "QV1/QV7: the public driver exposes external vet through the sole audited ACI plane",
+      "location": "impl/test/phase36-quartermaster-external.test.mjs:144:1",
+      "failureType": "cancelledByParent",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "E1 (PIN): the TG2 evidence law is shipped \u2014 only THIS attempt's distinct scratchpad digests answer its steering cycle (D4/GT8)",
+      "location": "impl/test/redrive-continuity-red.test.mjs:843:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented count bound of 64",
+      "location": "impl/test/tight-cell-red.test.mjs:1412:1",
+      "failureType": "testCodeFailure",
+      "baselineTestRowObserved": false
+    }
+  ],
+  "onlyInBaseline": [
+    {
+      "record": "failure",
+      "test": "R-R2: re-projecting the same primary events dedups by idempotencyKey \u2014 each node exactly once (RED \u2014 no projection)",
+      "location": "impl/test/cross-deployment-knowledge-red.test.mjs:472:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "R-R3: the strict-prefix gap law refuses knowledge_primary_unreachable, never a silent skip (RED \u2014 no replay law)",
+      "location": "impl/test/cross-deployment-knowledge-red.test.mjs:484:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "K-R1: the 4-code federation refusal family is surface-constant in ACTUAL sorted order (RED \u2014 family absent)",
+      "location": "impl/test/cross-deployment-knowledge-red.test.mjs:508:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "K-R2: knowledge_cross_root_denied fires typed for a \\#63 admission with a foreign candidate (RED \u2014 no cross-root denial)",
+      "location": "impl/test/cross-deployment-knowledge-red.test.mjs:515:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "K-R3: a strict read past the deployment-owned ceiling refuses knowledge_projection_stale (RED \u2014 no staleness posture)",
+      "location": "impl/test/cross-deployment-knowledge-red.test.mjs:529:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "K-R4: a strict read with an unreadable primary ledger refuses knowledge_primary_unreachable (RED \u2014 no unreachable posture)",
+      "location": "impl/test/cross-deployment-knowledge-red.test.mjs:539:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
+      "location": "impl/test/feedback-forge-hardening-red.test.mjs:607:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs",
+      "location": "impl/test/frame-economics-red.test.mjs:1786:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi confirms yolo through ACP before readiness and the first provider prompt",
+      "location": "impl/test/kimi-acp.test.mjs:85:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi performs exact initialize, login auth, new session, and prompt order",
+      "location": "impl/test/kimi-acp.test.mjs:114:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi fails closed during wrong-agent",
+      "location": "impl/test/kimi-acp.test.mjs:149:3",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi fails closed during no-auth",
+      "location": "impl/test/kimi-acp.test.mjs:149:3",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi fails closed during auth-fail",
+      "location": "impl/test/kimi-acp.test.mjs:149:3",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi fails closed during model-absent",
+      "location": "impl/test/kimi-acp.test.mjs:149:3",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi accepts only end_turn as provider completion",
+      "location": "impl/test/kimi-acp.test.mjs:160:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi interrupt and process-group kill have distinct confirmed terminals",
+      "location": "impl/test/kimi-acp.test.mjs:170:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi holds a timeoutMs-bearing prompt-hang member alive; explicit kill releases exact ownership",
+      "location": "impl/test/kimi-acp.test.mjs:196:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi permission request stays correlated through approve",
+      "location": "impl/test/kimi-acp.test.mjs:229:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi recovery loads the exact session and can attach without provider work",
+      "location": "impl/test/kimi-acp.test.mjs:240:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi provider frames are sanitized before events",
+      "location": "impl/test/kimi-acp.test.mjs:250:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "native Kimi coalesces stream deltas and repeated tool progress without losing milestones",
+      "location": "impl/test/kimi-acp.test.mjs:261:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "PL7/PL10: pre-close Kimi timeout retains runtime, worktree, and local authority through an unconfirmed reap",
+      "location": "impl/test/phase51-process-lifecycle.test.mjs:327:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "DC1/DC5: max+1 refuses before fencing and an exact retry can still close",
+      "location": "impl/test/phase56-drain-and-close.test.mjs:228:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "UA2/UA6: a durable Goal-only planning failure remains a readable retryable RunView",
+      "location": "impl/test/phase64-integrated-run-application.test.mjs:452:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "KC1/KC4/KC5: public native route uses private subscription state, redacts output, and preserves before exact reap",
+      "location": "impl/test/phase72-native-kimi-integration.test.mjs:55:1",
+      "failureType": "cancelledByParent",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
+      "location": "impl/test/phase79-workflow-composition-red.test.mjs:109:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "WF79-6: role-addressed member stop is durable, exact, and leaves a sibling Attempt running",
+      "location": "impl/test/phase79-workflow-composition-red.test.mjs:456:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "WF79-D1: Workflow definition prebinding survives a lost Plan proposal and precedes retry proposal",
+      "location": "impl/test/phase79-workflow-definition-authority-red.test.mjs:112:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-1: selected Candidate feedback proposes one successor Plan pre-effect and replays both rounds",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:75:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-2: a second feedback round appends Plan v3 and replays from its durable definition",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:184:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-3: repeated feedback and explicit contradiction pause recursion without a Plan effect",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:287:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-4: the bound deployment round ceiling pauses without exposing a caller loop knob",
+      "location": "impl/test/phase80-application-revision-red.test.mjs:357:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-RS1: lost successor-approval response restarts one exact revision dispatch",
+      "location": "impl/test/phase80-revision-restart-stop-red.test.mjs:194:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery",
+      "location": "impl/test/phase80-revision-restart-stop-red.test.mjs:246:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "a member terminalizing unrecoverably hard-breaks the loop and the survivor result-sha is harvested",
+      "location": "impl/test/quiescence-completion-red.test.mjs:299:3",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "R5 (stage[hard-break-evidence-missing])",
+      "location": "impl/test/quiescence-completion-red.test.mjs:298:1",
+      "failureType": "subtestsFailed",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "canonical names outrank compatibility aliases and live alias corrections have one owner",
+      "location": "impl/test/surface-capability-catalog.test.mjs:88:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "TW-01 (RED, stage[provider-call-answer-missing]): a valid requested-phase and a valid completed-phase provider call for the seat each settle the steering cycle",
+      "location": "impl/test/tg3-window-red.test.mjs:390:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-02 (RED, stage[dispatch-receipt-emission-missing]): the turn-start dispatch receipt is emitted at the dispatch point \u2014 before turn_started",
+      "location": "impl/test/tg3-window-red.test.mjs:420:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-03 (RED, stage[queued-start-expires]): a queued start never expires the window \u2014 a requested provider call in-window settles constructively at expiry",
+      "location": "impl/test/tg3-window-red.test.mjs:492:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-04b (RED, stage[steered-fold-missing]): the genuine expiry is receipted for \\#55-class debuggability \u2014 the fold rides the steered receipt and the steering_expired payload",
+      "location": "impl/test/tg3-window-red.test.mjs:544:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-05 (RED, stage[evidence-gate-defect-missing]): a D2-gate defect never kills a healthy worker \u2014 the expiry re-check finds start evidence and settles constructively with a named defect receipt",
+      "location": "impl/test/tg3-window-red.test.mjs:575:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-08b (RED, stage[provider-call-answers-once]): a worker emitting multiple provider calls answers exactly once \u2014 the FIRST; no re-answer, no re-arm",
+      "location": "impl/test/tg3-window-red.test.mjs:710:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-10 (RED, stage[answer-not-evidence]): the queued-start answer is evidence, never a window extension \u2014 no clock is added anywhere",
+      "location": "impl/test/tg3-window-red.test.mjs:808:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TW-disc-fold (RED, stage[observed-evidence-append-missing]): qualifying in-window evidence is APPENDED to record.steering.observedEvidence with its kind and the provider_call phase identity",
+      "location": "impl/test/tg3-window-red.test.mjs:923:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": false
+    },
+    {
+      "record": "failure",
+      "test": "TC-21 reply[per-member-reply-slot-missing]: a runId broadcast admits EACH delivered member's FIRST reply",
+      "location": "impl/test/tight-cell-red.test.mjs:931:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "CLI generic invocation resolves exact canonical names before compatibility aliases",
+      "location": "impl/test/unified-cli-surface.test.mjs:58:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "CLI surfaceSnapshot combines monitoring and optional run/wave projections",
+      "location": "impl/test/unified-cli-surface.test.mjs:79:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "configured describe resolves canonical names and corrected live aliases deterministically",
+      "location": "impl/test/unified-mcp-surface.test.mjs:145:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
+      "location": "impl/test/workflow-surface-red.test.mjs:1424:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    },
+    {
+      "record": "failure",
+      "test": "FP-15 (stage: tools + wire mapping absent): every newly projected refusal reaches the wire AS ITSELF",
+      "location": "impl/test/workflow-surface-red.test.mjs:1533:1",
+      "failureType": "testCodeFailure",
+      "workingTestRowObserved": true
+    }
+  ],
+  "followupDisposition": [
+    {
+      "tests": "browser-use BU-2-2-2/3/4, orientation OR-T1, redrive E1",
+      "cause": "Historical tests injected or asserted retired automatic steering-cycle internals.",
+      "resolution": "Replace policy assertions with public contribution attribution, replay and explicit-checkpoint behavior. Remove the redundant private-helper test.",
+      "checks": "Browser/orientation included in 92/92 integration battery; redrive E1 passes independently."
+    },
+    {
+      "tests": "phase10 SC10 Codex and Grok",
+      "cause": "Driver fixtures awaited automatic expiry instead of explicitly claiming native checkpoints.",
+      "resolution": "Wait for native turn.paused, claim_turn through coordinator, then assert verification and workspace identity.",
+      "checks": "Included in 92/92 integration battery."
+    },
+    {
+      "tests": "phase11 PS1-PS5",
+      "cause": "The fake Claude echoed the complete instructional brief, including executable peer-message examples, and exceeded its fixture token budget.",
+      "resolution": "Use its controlled REPORT_CWD response for both turns, keeping the original budget and asserting exactly two native completions.",
+      "checks": "All nine persistent-session/follow-up cases pass together."
+    },
+    {
+      "tests": "phase36 QV2 and four cancellations",
+      "cause": "Unreferenced deadline timers allowed the event loop to exit before an accepted request settled.",
+      "resolution": "Native Claude repair keeps owned request/scan timers alive until settlement and tests process exit and cleanup.",
+      "checks": "Baton fresh-worktree acceptance plus 92/92 integration battery."
+    },
+    {
+      "tests": "tight-cell TC-17",
+      "cause": "The old constant is absent in both revisions; the complete baseline did not print this row.",
+      "resolution": "Isolated baseline invocation reproduces the same assertion failure. A mandatory fixed cell size belongs to the superseded design and requires contract triage, not an invented runtime limit.",
+      "checks": "Original source: node --test --test-name-pattern=\"TC-17 size\" test/tight-cell-red.test.mjs exits 1 with undefined MAX_CELL_SIZE."
+    }
+  ]
+}

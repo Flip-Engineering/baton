@@ -1,0 +1,61 @@
+{
+  "attempt": "2026-08-03T04:56:01.831Z",
+  "salt": "bd320260803045601",
+  "canary": "ZEBRA-QUARTZ-41832",
+  "repoId": "repo-bd320260803045601",
+  "phases": [
+    {
+      "phase": 1,
+      "runId": "run-86faefb2a8717641c20d68f7f0e02b45"
+    },
+    {
+      "phase": 1.05,
+      "canarySeeded": true,
+      "runId": "run-86faefb2a8717641c20d68f7f0e02b45"
+    },
+    {
+      "phase": 1.1,
+      "messageSent": {
+        "ok": true,
+        "result": "sent",
+        "messageId": "message:092975bdf62c6ed647bbc2f14c560ec0f3f557cdef060c105eacf74ff7e8ad98",
+        "delivered": 1,
+        "targetCount": 1
+      },
+      "messageId": "message:092975bdf62c6ed647bbc2f14c560ec0f3f557cdef060c105eacf74ff7e8ad98"
+    },
+    {
+      "phase": 2,
+      "resting": true,
+      "dead": null,
+      "runId": "run-86faefb2a8717641c20d68f7f0e02b45"
+    },
+    {
+      "phase": 3,
+      "checks": {
+        "workerId": "w-1",
+        "worktreeId": "ws-72b34554cbfd9a77573a92417f90f03f",
+        "resultSha": "a501af86a8368eb54ef14e84bd0c51b4a030f434",
+        "readResults": 1,
+        "okResults": 1,
+        "canaryServed": true,
+        "untrustedFramed": true,
+        "messageId": "message:092975bdf62c6ed647bbc2f14c560ec0f3f557cdef060c105eacf74ff7e8ad98",
+        "receiptDelivered": true,
+        "receiptRead": null,
+        "postDeliveryTurns": 0,
+        "receiptReadHonest": true,
+        "deliveredEvents": 1,
+        "reportFound": true,
+        "reportCanary": true,
+        "reportBlue": true
+      },
+      "verdict": "BD3-LIVE-OK"
+    },
+    {
+      "phase": 4,
+      "waveClosed": true,
+      "remainingCount": 0
+    }
+  ]
+}

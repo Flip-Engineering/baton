@@ -1,0 +1,1223 @@
+{
+  "at": "2026-07-14T01:08:49.139Z",
+  "implementationSha": "230db8e2d4c0991c1aef26fd9b6a9042a4471481",
+  "runId": "phase62-goal-plan-authority-review",
+  "selectedTaskIds": [
+    "phase62-glm-review"
+  ],
+  "interpretation": {
+    "lifecyclePass": "all 1 selected exact routes admitted through one mandatory approved five-node Goal/Plan with exact authoritative Brief and atomic dispatch/task batch proof, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared",
+    "matrixPass": "lifecyclePass plus exact provider model observation, 1 fresh-verified report(s), and identical worker/verifier toolchain projection binding"
+  },
+  "manualWorkerKills": false,
+  "legacyDriverClose": false,
+  "capacityPolicy": {
+    "maxReservedBytes": 8589934592,
+    "maxReservedInodes": 1000000,
+    "minFreeBytes": 2147483648,
+    "minFreeInodes": 100000,
+    "runtimeReserveBytes": 67108864,
+    "runtimeReserveInodes": 10000
+  },
+  "closureReceipt": {
+    "schemaVersion": 1,
+    "state": "closed",
+    "fleet": {
+      "schemaVersion": 1,
+      "state": "drained",
+      "scope": "local-controller",
+      "repoId": "baton-phase62-live",
+      "targetCount": 1,
+      "remainingCount": 0,
+      "targetDigest": "68c387967d09dc0c3ccf6505c189d0ee06723dea3e8a9ab5321339eea721be26",
+      "counts": {
+        "pendingCancelled": 0,
+        "killConfirmed": 1,
+        "alreadyTerminal": 0,
+        "processesObserved": 1,
+        "processesClosed": 1
+      },
+      "checks": {
+        "admissionClosed": true,
+        "authorityOpsDrained": true,
+        "stopWaitersDrained": true,
+        "cleanupDrained": true,
+        "localWorkerAuthorityReleased": true
+      },
+      "effects": {
+        "coordinatorClosed": false,
+        "writerReleased": false,
+        "transportsClosed": false
+      },
+      "receiptDigest": "72c93c15ecd2e4c49cd1beceaaf9014fc7655f8b93cee7cf5982a77ed4ae7f98"
+    },
+    "supervisors": {
+      "sessionRecovery": "absent",
+      "providerProcessing": "absent",
+      "providerPolling": "absent"
+    },
+    "authority": {
+      "coordinatorClosed": true,
+      "writerReleased": true
+    },
+    "capacity": {
+      "policyDigest": "6c47e8d4150dc664ba24f9714b8de52b0aadf0dc30ea3c653c7b7c9ecbff6b84",
+      "stateDigest": "e043e0288c7d32cbe5e82e3c06d1f5cf60369bcc3fc1a340d0db2692138a0897",
+      "ownedReservations": 0,
+      "fleetTotals": {
+        "bytes": 0,
+        "inodes": 0
+      }
+    },
+    "receiptDigest": "b19417ab1e1754c3f17eedccd402bb634d7cc74353783ac312d25a5b309045a6"
+  },
+  "credentialMeasurements": {
+    "glm": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "codex": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "grok": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    }
+  },
+  "simultaneousGrokSamples": [],
+  "attempts": [
+    {
+      "taskId": "phase62-glm-review",
+      "admitted": true,
+      "error": null
+    }
+  ],
+  "rows": [
+    {
+      "taskId": "phase62-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-1",
+      "pid": 95744,
+      "processGroupId": 95744,
+      "result": {
+        "status": "completed",
+        "ready": true,
+        "observationOnly": true,
+        "providerGovernance": {
+          "policyDigest": "a8de4f4c106b7779c766574a247ae13d2000cde5cf4cb6463479c012e80881a4",
+          "routeDigest": "9840cce4739d351fc8ff32d3b32472cc137da7c25b09265858c2875b7d2f6296",
+          "mode": "observe",
+          "observationOnly": true,
+          "hardExceeded": false,
+          "telemetryFailed": false
+        }
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "providerPolicyDigest": "a8de4f4c106b7779c766574a247ae13d2000cde5cf4cb6463479c012e80881a4",
+      "providerTurn": {
+        "admissionSeq": 1,
+        "phase": "spawn",
+        "usage": {
+          "tokens": 62541,
+          "usd": 0.633768
+        },
+        "providerCalls": 13,
+        "toolCalls": 23,
+        "violation": null,
+        "sealed": true
+      },
+      "budgetUsed": {
+        "tokens": 62541,
+        "usd": 0.633768
+      },
+      "verifyAccept": true,
+      "budgetAdmission": {
+        "hardExceeded": false,
+        "refereeAccept": true,
+        "used": {
+          "tokens": 62541,
+          "usd": 0.633768
+        },
+        "limits": {
+          "tokens": 300000,
+          "usd": 3
+        }
+      },
+      "providerGovernanceAdmission": {
+        "policyDigest": "a8de4f4c106b7779c766574a247ae13d2000cde5cf4cb6463479c012e80881a4",
+        "routeDigest": "9840cce4739d351fc8ff32d3b32472cc137da7c25b09265858c2875b7d2f6296",
+        "mode": "observe",
+        "observationOnly": true,
+        "hardExceeded": false,
+        "telemetryFailed": false,
+        "terminalSeal": {
+          "tokens": "reported",
+          "usd": "reported",
+          "counterId": "claude:w-1:1",
+          "tokenMetric": "anthropic_input_plus_output_tokens_excluding_cache"
+        },
+        "turn": {
+          "admissionSeq": 1,
+          "usage": {
+            "tokens": 62541,
+            "usd": 0.633768
+          },
+          "providerCalls": 13,
+          "toolCalls": 23,
+          "violation": null,
+          "sealed": true
+        }
+      },
+      "reportCaptured": true,
+      "processStartedSeq": 6,
+      "processClosedSeq": 66,
+      "terminalReason": "Review complete. I've written a comprehensive Phase 62 review at `reviews/dogfood/phase62-glm-review.md` that:\n\n- **Verdict: PASS** - The implementation at commit 230db8e correctly satisfies GP1-GP8 requirements\n- **P0-P1 findings:** Documents 5 key issues focusing on the required areas:\n  - Provider usage aggregation (FIXED in 230db8e)  \n  - Caller Brief substitution window (FIXED in 9ce83e9)\n  - Locale-sensitive plan digest collision (MITIGATED)\n  - Torn dispatch batch replay detection (VERIFI"
+    }
+  ],
+  "responses": [],
+  "routeAdmission": {
+    "allAttempted": true,
+    "allAdmitted": true,
+    "exactRequestedResolved": true,
+    "noObservedMismatch": true,
+    "providerObservationComplete": true,
+    "providerGovernanceMode": "observe",
+    "allGovernedBeforeEffect": true
+  },
+  "providerProof": {
+    "startedProcessCount": 1,
+    "allSelectedProcessesStarted": true,
+    "simultaneousActiveGrokPidSampleObserved": false,
+    "everyStartedProcessClosedExactly": true,
+    "everyRequestedKillConfirmed": true,
+    "zeroReapUnconfirmed": true,
+    "everyStartedLeaderGone": true,
+    "everyStartedGroupGone": true
+  },
+  "cleanup": {
+    "closureReceiptPresent": true,
+    "coordinatorClosed": true,
+    "writerReleased": true,
+    "taskWorktreesGone": true,
+    "runtimesGone": true,
+    "taskBranchesGone": true,
+    "targetDependencyAbsent": true,
+    "ownershipSnapshotRestored": true,
+    "capacityReceiptPresent": true,
+    "capacityFleetZero": true
+  },
+  "projectionProof": {
+    "identity": {
+      "schemaVersion": 1,
+      "directoryAccountingVersion": 2,
+      "sourceId": "baton-local-node-toolchain",
+      "manifestDigest": "b35c83cea12285a9236ad7912dd37ab6c0e3b4dd55a14c77cf77dff45dcc86ed",
+      "mappingCount": 1,
+      "fileCount": 22,
+      "directoryCount": 7,
+      "targetParentDirectoryCount": 1,
+      "targetParentDirectoryDigest": "4203a11c11cd3887869aa935c504adf55b4f057144113ec07b10c8ff0cd30fdf",
+      "byteCount": 7357718,
+      "limits": {
+        "maxMappings": 1,
+        "maxFiles": 50000,
+        "maxDirectories": 10000,
+        "maxBytes": 536870912,
+        "maxFileBytes": 67108864,
+        "maxPathBytes": 2048,
+        "maxDepth": 64
+      },
+      "projectionDigest": "4174484b7e08a5e00299e26a4224b7bb5f775ab275e7355e42c05dbd123a6cb0"
+    },
+    "allWorkersBound": true,
+    "allVerifiersBound": true,
+    "sourcePathAbsentFromBoundedEvents": true
+  },
+  "reviewProof": {
+    "terminalTaskCount": 1,
+    "verifiedReports": [
+      "phase62-glm-review"
+    ],
+    "allSelectedVerified": true
+  },
+  "goalPlanProof": {
+    "configuredMandatory": true,
+    "goal": {
+      "goalId": "goal:8d266c3e7ab1c87121ef204c0f1755fc1c0ef14bc66549bb63d4b8bdb2831eab",
+      "version": 1,
+      "digest": "6d5bc11fdd3e837c7f2c5d0e5c3de8125e4749cbc33293621ced6aedf0f7d6a5",
+      "policyDigest": "7cfd808f401e802354fa132acb0da72ba0fc394144691313163321a5848c2d17"
+    },
+    "plan": {
+      "planId": "plan:d7676ff38c72d37faa82fdb91943fb5545568b6fd3d11dd83a9dd3479a7e9173",
+      "version": 1,
+      "digest": "1667103eaa0eb7b28dbbb57452194b35f51b91588bdfdd91ed25d314eb5592dd",
+      "nodeCount": 5,
+      "exactRoutes": [
+        {
+          "key": "phase62-claude-review",
+          "routes": {
+            "harnesses": [
+              "claude"
+            ],
+            "models": [
+              "claude-opus-4-6"
+            ],
+            "efforts": [
+              "low"
+            ]
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "-e",
+              "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+              "reviews/dogfood/phase62-claude-review.md",
+              "impl/test/phase62-goal-plan-authority.test.mjs",
+              "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+              "impl/test/phase62-web-goal-plan.test.mjs",
+              "impl/test/phase62-goal-plan-stream.test.mjs",
+              "impl/test/phase62-mcp-goal-plan.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 180000,
+            "maxOutputBytes": 2097152,
+            "requiredPredecessorEvidence": []
+          }
+        },
+        {
+          "key": "phase62-codex-review",
+          "routes": {
+            "harnesses": [
+              "codex"
+            ],
+            "models": [
+              "gpt-5.6-sol"
+            ],
+            "efforts": [
+              "low"
+            ]
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "-e",
+              "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+              "reviews/dogfood/phase62-codex-review.md",
+              "impl/test/phase62-goal-plan-authority.test.mjs",
+              "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+              "impl/test/phase62-web-goal-plan.test.mjs",
+              "impl/test/phase62-goal-plan-stream.test.mjs",
+              "impl/test/phase62-mcp-goal-plan.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 180000,
+            "maxOutputBytes": 2097152,
+            "requiredPredecessorEvidence": []
+          }
+        },
+        {
+          "key": "phase62-glm-review",
+          "routes": {
+            "harnesses": [
+              "glm"
+            ],
+            "models": [
+              "glm-4.7"
+            ],
+            "efforts": [
+              "low"
+            ]
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "-e",
+              "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+              "reviews/dogfood/phase62-glm-review.md",
+              "impl/test/phase62-goal-plan-authority.test.mjs",
+              "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+              "impl/test/phase62-web-goal-plan.test.mjs",
+              "impl/test/phase62-goal-plan-stream.test.mjs",
+              "impl/test/phase62-mcp-goal-plan.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 180000,
+            "maxOutputBytes": 2097152,
+            "requiredPredecessorEvidence": []
+          }
+        },
+        {
+          "key": "phase62-grok45-review",
+          "routes": {
+            "harnesses": [
+              "grok"
+            ],
+            "models": [
+              "grok-4.5"
+            ],
+            "efforts": [
+              "low"
+            ]
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "-e",
+              "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+              "reviews/dogfood/phase62-grok45-review.md",
+              "impl/test/phase62-goal-plan-authority.test.mjs",
+              "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+              "impl/test/phase62-web-goal-plan.test.mjs",
+              "impl/test/phase62-goal-plan-stream.test.mjs",
+              "impl/test/phase62-mcp-goal-plan.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 180000,
+            "maxOutputBytes": 2097152,
+            "requiredPredecessorEvidence": []
+          }
+        },
+        {
+          "key": "phase62-grokbuild-review",
+          "routes": {
+            "harnesses": [
+              "grok"
+            ],
+            "models": [
+              "grok-build"
+            ],
+            "efforts": [
+              "low"
+            ]
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "-e",
+              "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+              "reviews/dogfood/phase62-grokbuild-review.md",
+              "impl/test/phase62-goal-plan-authority.test.mjs",
+              "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+              "impl/test/phase62-web-goal-plan.test.mjs",
+              "impl/test/phase62-goal-plan-stream.test.mjs",
+              "impl/test/phase62-mcp-goal-plan.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 180000,
+            "maxOutputBytes": 2097152,
+            "requiredPredecessorEvidence": []
+          }
+        }
+      ]
+    },
+    "approval": {
+      "digest": "097b7e12895496206ea3644f9c26ed926696dc0c99ed94ee8f7c3b7eba0e5a57",
+      "disposition": "approved",
+      "proposerPrincipalId": "phase62-planner",
+      "approverPrincipalId": "phase62-approver",
+      "distinctPrincipal": true
+    },
+    "status": {
+      "coordinationUpperBound": 16,
+      "goal": {
+        "schemaVersion": 1,
+        "goalId": "goal:8d266c3e7ab1c87121ef204c0f1755fc1c0ef14bc66549bb63d4b8bdb2831eab",
+        "version": 1,
+        "digest": "6d5bc11fdd3e837c7f2c5d0e5c3de8125e4749cbc33293621ced6aedf0f7d6a5",
+        "repoId": "baton-phase62-live",
+        "runId": "phase62-goal-plan-authority-review",
+        "objective": "Independently review committed Phase 62 at 230db8e across all five exact provider routes under mandatory Goal/Plan authority.",
+        "definitionOfDone": [
+          "All three headings exist and the verdict explicitly says PASS or REVISE."
+        ],
+        "constraints": [
+          "Do not inspect credentials or environment, use network tools, commit, push, deploy, or access homelab/project-manager.",
+          "Edit only the single repository path in this approved plan node scope and leave every other path unchanged.",
+          "Ground confirmed defects in exact committed source and distinguish them from retained later scope.",
+          "Keep the report under 700 words and use at most 8 repository/tool calls.",
+          "Write a Markdown document at exactly the path named in the node objective; do not rename it, change its extension, or make it executable source code."
+        ],
+        "risk": "high",
+        "budget": {
+          "tokens": 1650000,
+          "usd": 15,
+          "wallMin": 70,
+          "providerTurns": 500
+        },
+        "predecessor": null,
+        "policyDigest": "7cfd808f401e802354fa132acb0da72ba0fc394144691313163321a5848c2d17",
+        "definedEvent": 1,
+        "definedAt": "2026-07-14T01:07:24.974Z"
+      },
+      "plan": {
+        "schemaVersion": 1,
+        "planId": "plan:d7676ff38c72d37faa82fdb91943fb5545568b6fd3d11dd83a9dd3479a7e9173",
+        "version": 1,
+        "digest": "1667103eaa0eb7b28dbbb57452194b35f51b91588bdfdd91ed25d314eb5592dd",
+        "repoId": "baton-phase62-live",
+        "runId": "phase62-goal-plan-authority-review",
+        "goal": {
+          "goalId": "goal:8d266c3e7ab1c87121ef204c0f1755fc1c0ef14bc66549bb63d4b8bdb2831eab",
+          "version": 1,
+          "digest": "6d5bc11fdd3e837c7f2c5d0e5c3de8125e4749cbc33293621ced6aedf0f7d6a5"
+        },
+        "predecessor": null,
+        "nodes": [
+          {
+            "key": "phase62-claude-review",
+            "objective": "Independently review committed Phase 62 at 230db8e, focusing on distinct proposer and approver authority, stale or rejected decisions, policy drift, and exact approval replay. Inspect spec/phase62/goal-plan-web-authority.md and its implementation/tests. Write reviews/dogfood/phase62-claude-review.md with exactly the headings \"## Verdict\", \"## P0-P1 findings\", and \"## Required corrections\".",
+            "definitionOfDone": [
+              "All three headings exist and the verdict explicitly says PASS or REVISE."
+            ],
+            "deps": [],
+            "pathScope": [
+              "reviews/dogfood/phase62-claude-review.md"
+            ],
+            "risk": "high",
+            "budget": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "verification": {
+              "command": "node",
+              "arguments": [
+                "-e",
+                "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+                "reviews/dogfood/phase62-claude-review.md",
+                "impl/test/phase62-goal-plan-authority.test.mjs",
+                "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+                "impl/test/phase62-web-goal-plan.test.mjs",
+                "impl/test/phase62-goal-plan-stream.test.mjs",
+                "impl/test/phase62-mcp-goal-plan.test.mjs"
+              ],
+              "cwd": ".",
+              "envAllowlist": [
+                "PATH"
+              ],
+              "expectExit": 0,
+              "expectResult": "exit_code",
+              "timeoutMs": 180000,
+              "maxOutputBytes": 2097152,
+              "requiredPredecessorEvidence": []
+            },
+            "routes": {
+              "harnesses": [
+                "claude"
+              ],
+              "models": [
+                "claude-opus-4-6"
+              ],
+              "efforts": [
+                "low"
+              ]
+            },
+            "capabilities": [
+              "code",
+              "test"
+            ],
+            "effects": [
+              "provider_call",
+              "repository_edit"
+            ]
+          },
+          {
+            "key": "phase62-codex-review",
+            "objective": "Independently review committed Phase 62 at 230db8e, focusing on append-only goal and plan canonicalization, bounded DAG and budget authority, and immutable plan-owned verification. Inspect spec/phase62/goal-plan-web-authority.md and its implementation/tests. Write reviews/dogfood/phase62-codex-review.md with exactly the headings \"## Verdict\", \"## P0-P1 findings\", and \"## Required corrections\".",
+            "definitionOfDone": [
+              "All three headings exist and the verdict explicitly says PASS or REVISE."
+            ],
+            "deps": [],
+            "pathScope": [
+              "reviews/dogfood/phase62-codex-review.md"
+            ],
+            "risk": "high",
+            "budget": {
+              "tokens": 450000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "verification": {
+              "command": "node",
+              "arguments": [
+                "-e",
+                "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+                "reviews/dogfood/phase62-codex-review.md",
+                "impl/test/phase62-goal-plan-authority.test.mjs",
+                "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+                "impl/test/phase62-web-goal-plan.test.mjs",
+                "impl/test/phase62-goal-plan-stream.test.mjs",
+                "impl/test/phase62-mcp-goal-plan.test.mjs"
+              ],
+              "cwd": ".",
+              "envAllowlist": [
+                "PATH"
+              ],
+              "expectExit": 0,
+              "expectResult": "exit_code",
+              "timeoutMs": 180000,
+              "maxOutputBytes": 2097152,
+              "requiredPredecessorEvidence": []
+            },
+            "routes": {
+              "harnesses": [
+                "codex"
+              ],
+              "models": [
+                "gpt-5.6-sol"
+              ],
+              "efforts": [
+                "low"
+              ]
+            },
+            "capabilities": [
+              "code",
+              "test"
+            ],
+            "effects": [
+              "provider_call",
+              "repository_edit"
+            ]
+          },
+          {
+            "key": "phase62-glm-review",
+            "objective": "Independently review committed Phase 62 at 230db8e, focusing on project-key GLM isolation, authoritative Brief derivation, pre-effect node dispatch CAS, and restart reconciliation. Inspect spec/phase62/goal-plan-web-authority.md and its implementation/tests. Write reviews/dogfood/phase62-glm-review.md with exactly the headings \"## Verdict\", \"## P0-P1 findings\", and \"## Required corrections\".",
+            "definitionOfDone": [
+              "All three headings exist and the verdict explicitly says PASS or REVISE."
+            ],
+            "deps": [],
+            "pathScope": [
+              "reviews/dogfood/phase62-glm-review.md"
+            ],
+            "risk": "high",
+            "budget": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "verification": {
+              "command": "node",
+              "arguments": [
+                "-e",
+                "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+                "reviews/dogfood/phase62-glm-review.md",
+                "impl/test/phase62-goal-plan-authority.test.mjs",
+                "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+                "impl/test/phase62-web-goal-plan.test.mjs",
+                "impl/test/phase62-goal-plan-stream.test.mjs",
+                "impl/test/phase62-mcp-goal-plan.test.mjs"
+              ],
+              "cwd": ".",
+              "envAllowlist": [
+                "PATH"
+              ],
+              "expectExit": 0,
+              "expectResult": "exit_code",
+              "timeoutMs": 180000,
+              "maxOutputBytes": 2097152,
+              "requiredPredecessorEvidence": []
+            },
+            "routes": {
+              "harnesses": [
+                "glm"
+              ],
+              "models": [
+                "glm-4.7"
+              ],
+              "efforts": [
+                "low"
+              ]
+            },
+            "capabilities": [
+              "code",
+              "test"
+            ],
+            "effects": [
+              "provider_call",
+              "repository_edit"
+            ]
+          },
+          {
+            "key": "phase62-grok45-review",
+            "objective": "Independently review committed Phase 62 at 230db8e, focusing on concurrent Grok route/model/effort constraints, atomic dispatch/task batches, process correlation, kill, and exact reap. Inspect spec/phase62/goal-plan-web-authority.md and its implementation/tests. Write reviews/dogfood/phase62-grok45-review.md with exactly the headings \"## Verdict\", \"## P0-P1 findings\", and \"## Required corrections\".",
+            "definitionOfDone": [
+              "All three headings exist and the verdict explicitly says PASS or REVISE."
+            ],
+            "deps": [],
+            "pathScope": [
+              "reviews/dogfood/phase62-grok45-review.md"
+            ],
+            "risk": "high",
+            "budget": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "verification": {
+              "command": "node",
+              "arguments": [
+                "-e",
+                "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+                "reviews/dogfood/phase62-grok45-review.md",
+                "impl/test/phase62-goal-plan-authority.test.mjs",
+                "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+                "impl/test/phase62-web-goal-plan.test.mjs",
+                "impl/test/phase62-goal-plan-stream.test.mjs",
+                "impl/test/phase62-mcp-goal-plan.test.mjs"
+              ],
+              "cwd": ".",
+              "envAllowlist": [
+                "PATH"
+              ],
+              "expectExit": 0,
+              "expectResult": "exit_code",
+              "timeoutMs": 180000,
+              "maxOutputBytes": 2097152,
+              "requiredPredecessorEvidence": []
+            },
+            "routes": {
+              "harnesses": [
+                "grok"
+              ],
+              "models": [
+                "grok-4.5"
+              ],
+              "efforts": [
+                "low"
+              ]
+            },
+            "capabilities": [
+              "code",
+              "test"
+            ],
+            "effects": [
+              "provider_call",
+              "repository_edit"
+            ]
+          },
+          {
+            "key": "phase62-grokbuild-review",
+            "objective": "Independently review committed Phase 62 at 230db8e, focusing on authenticated web and MCP parity, status/event truth, reflexive Baton-on-Baton friction, and retained later authority. Inspect spec/phase62/goal-plan-web-authority.md and its implementation/tests. Write reviews/dogfood/phase62-grokbuild-review.md with exactly the headings \"## Verdict\", \"## P0-P1 findings\", and \"## Required corrections\".",
+            "definitionOfDone": [
+              "All three headings exist and the verdict explicitly says PASS or REVISE."
+            ],
+            "deps": [],
+            "pathScope": [
+              "reviews/dogfood/phase62-grokbuild-review.md"
+            ],
+            "risk": "high",
+            "budget": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "verification": {
+              "command": "node",
+              "arguments": [
+                "-e",
+                "const { execFileSync } = require('node:child_process'); const { readFileSync } = require('node:fs'); const [target, ...testFiles] = process.argv.slice(1); const report = readFileSync(target, 'utf8'); for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1); execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+                "reviews/dogfood/phase62-grokbuild-review.md",
+                "impl/test/phase62-goal-plan-authority.test.mjs",
+                "impl/test/phase62-goal-plan-replay-reds.test.mjs",
+                "impl/test/phase62-web-goal-plan.test.mjs",
+                "impl/test/phase62-goal-plan-stream.test.mjs",
+                "impl/test/phase62-mcp-goal-plan.test.mjs"
+              ],
+              "cwd": ".",
+              "envAllowlist": [
+                "PATH"
+              ],
+              "expectExit": 0,
+              "expectResult": "exit_code",
+              "timeoutMs": 180000,
+              "maxOutputBytes": 2097152,
+              "requiredPredecessorEvidence": []
+            },
+            "routes": {
+              "harnesses": [
+                "grok"
+              ],
+              "models": [
+                "grok-build"
+              ],
+              "efforts": [
+                "low"
+              ]
+            },
+            "capabilities": [
+              "code",
+              "test"
+            ],
+            "effects": [
+              "provider_call",
+              "repository_edit"
+            ]
+          }
+        ],
+        "totals": {
+          "tokens": 1650000,
+          "usd": 15,
+          "wallMin": 70,
+          "providerTurns": 500
+        },
+        "policyDigest": "7cfd808f401e802354fa132acb0da72ba0fc394144691313163321a5848c2d17",
+        "proposedEvent": 2,
+        "proposedAt": "2026-07-14T01:07:24.977Z"
+      },
+      "approval": {
+        "schemaVersion": 1,
+        "goal": {
+          "goalId": "goal:8d266c3e7ab1c87121ef204c0f1755fc1c0ef14bc66549bb63d4b8bdb2831eab",
+          "version": 1,
+          "digest": "6d5bc11fdd3e837c7f2c5d0e5c3de8125e4749cbc33293621ced6aedf0f7d6a5"
+        },
+        "plan": {
+          "planId": "plan:d7676ff38c72d37faa82fdb91943fb5545568b6fd3d11dd83a9dd3479a7e9173",
+          "version": 1,
+          "digest": "1667103eaa0eb7b28dbbb57452194b35f51b91588bdfdd91ed25d314eb5592dd"
+        },
+        "disposition": "approved",
+        "policyDigest": "7cfd808f401e802354fa132acb0da72ba0fc394144691313163321a5848c2d17",
+        "digest": "097b7e12895496206ea3644f9c26ed926696dc0c99ed94ee8f7c3b7eba0e5a57",
+        "decidedEvent": 3,
+        "decidedAt": "2026-07-14T01:07:24.978Z"
+      },
+      "nodes": [
+        {
+          "key": "phase62-claude-review",
+          "deps": [],
+          "state": "ready",
+          "dispatchVersion": 0,
+          "taskId": null,
+          "terminalEvent": null,
+          "terminalOutcome": null,
+          "budget": {
+            "status": "unreserved",
+            "initial": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "reserved": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "consumed": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "released": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "held": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "overrun": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "availability": {
+              "tokens": "unavailable",
+              "usd": "unavailable",
+              "wallMin": "unavailable",
+              "providerTurns": "unavailable"
+            },
+            "settledEvent": null
+          }
+        },
+        {
+          "key": "phase62-codex-review",
+          "deps": [],
+          "state": "ready",
+          "dispatchVersion": 0,
+          "taskId": null,
+          "terminalEvent": null,
+          "terminalOutcome": null,
+          "budget": {
+            "status": "unreserved",
+            "initial": {
+              "tokens": 450000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "reserved": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "consumed": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "released": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "held": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "overrun": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "availability": {
+              "tokens": "unavailable",
+              "usd": "unavailable",
+              "wallMin": "unavailable",
+              "providerTurns": "unavailable"
+            },
+            "settledEvent": null
+          }
+        },
+        {
+          "key": "phase62-glm-review",
+          "deps": [],
+          "state": "accepted",
+          "dispatchVersion": 1,
+          "taskId": "phase62-glm-review",
+          "terminalEvent": 12,
+          "terminalOutcome": {
+            "status": "completed",
+            "accepted": true,
+            "code": "accepted"
+          },
+          "budget": {
+            "status": "settled",
+            "initial": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "reserved": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "consumed": {
+              "tokens": 62541,
+              "usd": 0.633768,
+              "wallMin": 1.393134,
+              "providerTurns": 1
+            },
+            "released": {
+              "tokens": 237459,
+              "usd": 2.366232,
+              "wallMin": 12.606866,
+              "providerTurns": 99
+            },
+            "held": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "overrun": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "availability": {
+              "tokens": "exact",
+              "usd": "exact",
+              "wallMin": "exact",
+              "providerTurns": "exact"
+            },
+            "settledEvent": 15
+          }
+        },
+        {
+          "key": "phase62-grok45-review",
+          "deps": [],
+          "state": "ready",
+          "dispatchVersion": 0,
+          "taskId": null,
+          "terminalEvent": null,
+          "terminalOutcome": null,
+          "budget": {
+            "status": "unreserved",
+            "initial": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "reserved": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "consumed": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "released": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "held": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "overrun": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "availability": {
+              "tokens": "unavailable",
+              "usd": "unavailable",
+              "wallMin": "unavailable",
+              "providerTurns": "unavailable"
+            },
+            "settledEvent": null
+          }
+        },
+        {
+          "key": "phase62-grokbuild-review",
+          "deps": [],
+          "state": "ready",
+          "dispatchVersion": 0,
+          "taskId": null,
+          "terminalEvent": null,
+          "terminalOutcome": null,
+          "budget": {
+            "status": "unreserved",
+            "initial": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "reserved": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "consumed": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "released": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "held": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "overrun": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "availability": {
+              "tokens": "unavailable",
+              "usd": "unavailable",
+              "wallMin": "unavailable",
+              "providerTurns": "unavailable"
+            },
+            "settledEvent": null
+          }
+        }
+      ]
+    },
+    "bindings": [
+      {
+        "taskId": "phase62-glm-review",
+        "binding": {
+          "schemaVersion": 1,
+          "goalId": "goal:8d266c3e7ab1c87121ef204c0f1755fc1c0ef14bc66549bb63d4b8bdb2831eab",
+          "goalVersion": 1,
+          "goalDigest": "6d5bc11fdd3e837c7f2c5d0e5c3de8125e4749cbc33293621ced6aedf0f7d6a5",
+          "planId": "plan:d7676ff38c72d37faa82fdb91943fb5545568b6fd3d11dd83a9dd3479a7e9173",
+          "planVersion": 1,
+          "planDigest": "1667103eaa0eb7b28dbbb57452194b35f51b91588bdfdd91ed25d314eb5592dd",
+          "nodeKey": "phase62-glm-review",
+          "approvalDigest": "097b7e12895496206ea3644f9c26ed926696dc0c99ed94ee8f7c3b7eba0e5a57",
+          "policyDigest": "7cfd808f401e802354fa132acb0da72ba0fc394144691313163321a5848c2d17",
+          "dispatchVersion": 1
+        },
+        "bindingExact": true,
+        "authoritativeBriefExact": true,
+        "status": {
+          "key": "phase62-glm-review",
+          "deps": [],
+          "state": "accepted",
+          "dispatchVersion": 1,
+          "taskId": "phase62-glm-review",
+          "terminalEvent": 12,
+          "terminalOutcome": {
+            "status": "completed",
+            "accepted": true,
+            "code": "accepted"
+          },
+          "budget": {
+            "status": "settled",
+            "initial": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "reserved": {
+              "tokens": 300000,
+              "usd": 3,
+              "wallMin": 14,
+              "providerTurns": 100
+            },
+            "consumed": {
+              "tokens": 62541,
+              "usd": 0.633768,
+              "wallMin": 1.393134,
+              "providerTurns": 1
+            },
+            "released": {
+              "tokens": 237459,
+              "usd": 2.366232,
+              "wallMin": 12.606866,
+              "providerTurns": 99
+            },
+            "held": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "overrun": {
+              "tokens": 0,
+              "usd": 0,
+              "wallMin": 0,
+              "providerTurns": 0
+            },
+            "availability": {
+              "tokens": "exact",
+              "usd": "exact",
+              "wallMin": "exact",
+              "providerTurns": "exact"
+            },
+            "settledEvent": 15
+          }
+        },
+        "statusExact": true,
+        "batch": {
+          "id": "1bc9900d3012fa38f31752e1165aca9e7293fb0ec3710900484fb73cd1268694",
+          "dispatchSeq": 4,
+          "taskSeq": 5,
+          "kind": "goal_plan_node_dispatch",
+          "count": 2
+        },
+        "batchExact": true
+      }
+    ],
+    "pass": true
+  },
+  "ownershipBefore": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "ownershipAfter": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "fatal": null,
+  "lifecyclePass": true,
+  "matrixPass": true,
+  "targetWorktreeRemoved": true,
+  "removalError": null,
+  "ownerRootReadyForSupervisorReap": true
+}

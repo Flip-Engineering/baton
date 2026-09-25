@@ -1,0 +1,181 @@
+{
+  "attempt": "2026-08-06T00:35:49.006Z",
+  "salt": "dw20260806003549",
+  "canary": "COPPER-FOXNIFE-89007",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": {
+          "lead": "run-88490d86a8762ec7d7784931f04b9541",
+          "cli-surveyor": "run-70a7a389459953c5bf9684c4853b9fb9",
+          "mcp-surveyor": "run-a756a7ed223a4cc65c3b413178093496",
+          "grammar-surveyor": "run-90523bc6bac94cd212ebcd0f9f0aa23a"
+        }
+      }
+    },
+    {
+      "step": "board.post:cli",
+      "receipt": {
+        "result": "posted"
+      }
+    },
+    {
+      "step": "board.post:mcp",
+      "receipt": {
+        "result": "posted"
+      }
+    },
+    {
+      "step": "board.post:grammar",
+      "receipt": {
+        "result": "posted"
+      }
+    },
+    {
+      "step": "board.post:lead",
+      "receipt": {
+        "result": "posted"
+      }
+    },
+    {
+      "step": "knowledge.seed:lead",
+      "receipt": {
+        "result": "added"
+      }
+    },
+    {
+      "step": "knowledge.seed:cli-surveyor",
+      "receipt": {
+        "result": "added"
+      }
+    },
+    {
+      "step": "knowledge.seed:mcp-surveyor",
+      "receipt": {
+        "result": "added"
+      }
+    },
+    {
+      "step": "knowledge.seed:grammar-surveyor",
+      "receipt": {
+        "result": "added"
+      }
+    },
+    {
+      "step": "message.send:lead",
+      "receipt": {
+        "messageId": "message:5ffc8cb8ff9bb34013c1232bdac4e914816581d0dd40d7fd500da8df65e28f28"
+      }
+    },
+    {
+      "step": "message.send:cli-surveyor",
+      "receipt": {
+        "messageId": "message:bdf9de2444a664925b5cd9de930eab8c4b9e961e42eb5fdc02b3d33430ed30a4"
+      }
+    },
+    {
+      "step": "message.send:mcp-surveyor",
+      "receipt": {
+        "messageId": "message:1138ddd89334914df8d00f1ca2918abd6f7871f869b22f6ece14fac5a46b43f6"
+      }
+    },
+    {
+      "step": "message.send:grammar-surveyor",
+      "receipt": {
+        "messageId": "message:4cb6b56ae7dad35218bae432c7e11ef0edc06139ee06fa62a889c4bbfa604461"
+      }
+    },
+    {
+      "step": "terminal:cli-surveyor",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:mcp-surveyor",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "answer:lead-synthesis-gate",
+      "receipt": {
+        "requestId": "w-1:decision:1",
+        "answer": "synthesize",
+        "result": "ok"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": [
+          "lead",
+          "grammar-surveyor"
+        ],
+        "answered": true,
+        "messaged": [
+          "lead",
+          "cli-surveyor",
+          "mcp-surveyor",
+          "grammar-surveyor"
+        ]
+      }
+    },
+    {
+      "step": "message.receipts",
+      "receipt": {
+        "lead": {
+          "delivered": true,
+          "read": true,
+          "reply": "Progress: liveness artifact minted (scratchpad note, key dw20260806003549-lead-n"
+        },
+        "cli-surveyor": {
+          "delivered": true,
+          "read": null,
+          "reply": "cli-surveyor status: liveness note posted (idempotencyKey dw20260806003549-cli-n"
+        },
+        "mcp-surveyor": {
+          "delivered": true,
+          "read": true,
+          "reply": "mcp-surveyor progress: located impl/MCP.md, impl/src/mcp-descriptor.mjs, and imp"
+        },
+        "grammar-surveyor": {
+          "delivered": true,
+          "read": true,
+          "reply": "Acknowledged. Progress: scratchpad liveness note written, board read returned bo"
+        }
+      }
+    }
+  ],
+  "verdict": {
+    "verdict": "DYNAMIC-WORKFLOW-INCOMPLETE",
+    "reports": {
+      "mcp-surface-audit.md": {
+        "pin": "5c0e0eb02a2508a916d58fbef3e1a2d3d22235dc",
+        "bytes": 13487,
+        "canary": true,
+        "blue": false
+      },
+      "cli-surface-audit.md": {
+        "pin": "2e4d44eaad7e3ecf09c9409e0d4a76d4a11213a4",
+        "bytes": 20400,
+        "canary": true,
+        "blue": false
+      }
+    },
+    "leadDecisionAnswered": true,
+    "elevated": [],
+    "checks": {
+      "allMembersDrained": false,
+      "synthesisReport": false,
+      "canaryQuoted": true,
+      "blueAcknowledged": false,
+      "decisionGateAnswered": true
+    }
+  },
+  "staticAssertion": {
+    "clean": true,
+    "violations": []
+  }
+}

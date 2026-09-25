@@ -1,0 +1,485 @@
+{
+  "at": "2026-07-12T04:50:12.360Z",
+  "repoHead": "79337d850234faee35d874e4950a9a2c05980baf",
+  "reviewProfile": "merge-scope",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-merge-scope-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-merge-scope-45.md",
+      "stance": "authority",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"merge-design-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54a8-2b0a-7130-a374-d93820cddbd7",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-merge-scope.dISLRC/.baton/wt/grok-merge-scope-45",
+          "repoRoot": "/private/tmp/baton-merge-scope.dISLRC",
+          "baseSha": "79337d850234faee35d874e4950a9a2c05980baf",
+          "branch": "baton/grok-merge-scope-45",
+          "ownerTaskId": "grok-merge-scope-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-merge-scope-45",
+        "worktree": "/private/tmp/baton-merge-scope.dISLRC/.baton/wt/grok-merge-scope-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 78381,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T04:48:54.011Z"
+      },
+      "pid": 72722,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"merge-design-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 11
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "8d270176e5dd9a174784e21c3c09827eb55bd06d",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"merge-design-review\"]"
+          }
+        },
+        "seq": 356,
+        "ts": "2026-07-12T04:50:12.072Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 11
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"merge-design-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54a8-2b0a-7130-a374-d93820cddbd7",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-merge-scope.dISLRC/.baton/wt/grok-merge-scope-45",
+          "repoRoot": "/private/tmp/baton-merge-scope.dISLRC",
+          "baseSha": "79337d850234faee35d874e4950a9a2c05980baf",
+          "branch": "baton/grok-merge-scope-45",
+          "ownerTaskId": "grok-merge-scope-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Design review — structured merge vertical (commit `79337d8`)\n\nGrounding: `SYSTEM.md` §4.1/§5.1/§9; `docs/15` §4b/§6; `docs/21` structured-merge keeper; `docs/26` E integration + representation catalog; `reviews/frontier-features/representation.md` Feature 3 KEEP; `spec/phase11/acceptance-integration.md` AC5–AC6; `impl/src/{coordinator,index,worktree,atlas-cpg-delta,atlas-behavior-fingerprint}.mjs`; `impl/test/phase11-acceptance-integration.test.mjs`. Host has no Mergiraf binary. No network, no product edits beyond this report.\n\n## Decision\n\n**Ship one numbered vertical: syntax-aware structured merge as a second local integration strategy that wraps Mergiraf (or a test-injected executable with Mergiraf CLI semantics), never a Baton-owned parser or merge algorithm.**\n\nKeep `ff-only` as the default and only strategy that may rewrite `main` without a prior staged conflict resolution. Add `structured` (name frozen in the contract below) as an explicit opt-in strategy for non-fast-forward integration of two **already accepted** captured SHAs when path-lease residue still conflicts on lines.\n\nAuthority boundaries (non-negotiable):\n\n| Claim | Authority? | Source of truth |\n|---|---|---|\n| Git object graph, refs, index, worktree cleanliness | **Yes — sole merge authority** | real `git` against the repo |\n| Whether main advances | **Yes — coordinator policy after gates** | LOG + coordination Decision + fresh trust-gate pass |\n| Structured conflict resolution text | **Tool output only, never trusted alone** | injected Mergiraf-class driver; still must pass re-verify |\n| CPG delta / impact | **Review signal only** | `atlas-cpg-delta` (`impactMeaning: seed_graph_reachability_not_behavioral_proof`) |\n| Behavioral fingerprint / corpus agreement | **Never merge authority** | `atlas-behavior-fingerprint` is ensemble evidence-ladder material only |\n| True data-flow / “semantic edge” merge | **Not this vertical** | research catalog; keep/redirect/retire below |\n\n**Do not** invent CST matching, Dijkstra subtree alignment, or language grammars inside Baton. **Do not** configure global `merge.driver` as the primary path in this vertical (host may lack Mergiraf; tests must inject). Prefer an explicit, sandboxed invocation whose argv/env are coordinator-owned, logged, and substitutable.\n\n**One implementation sequence (unambiguous):**\n\n1. Spec SM1–SM12 (below) under `spec/phase26/` (or next free phase id) + red tests first.\n2. Introduce `MergirafDriver` port: `resolve({ base, left, right, path, languageHint }) → { status, mergedText?, markers?, tool, argv, exitCode, stderrDigest }` with pure injection of `exec` for unit tests.\n3. Extend worktree manager with **isolated merge-stage worktree** under `.baton/merge/<integrationId>/` (not worker wt, not main, not verify path reuse-without-reap). Materialize base/left/right blobs; never checkout main for staging.\n4. Wire `coordinator.integrate(..., { strategy: 'structured', theirsSha })` (or two accepted task result SHAs) so that: retain pins → kill/reap workers → stage merge off-main → run structured driver only on conflicted paths after `git merge-tree`/`git read-tree` style three-way prep **without** updating main HEAD → refuse on markers/tool-miss/parse-fallback/overlap flags → **fresh trust-gate** at staged result SHA → only then update main (ff of staged commit, or explicit `git update-ref` of the verified merge commit) while main was dirty-checked and never mutated on failure paths.\n5. Record LOG kinds `integration.structured.*`, coordination Decision only after gate+authority batch success (CK9 atomicity).\n6. Cleanup stage worktrees/artifacts on success, refuse, timeout, crash reconcile; keep `refs/baton/results/*` pins on refuse.\n7. Live-prove only when Mergiraf is present; CI always uses the injected fake that encodes Mergiraf exit/marker semantics already summarized in repo research (success clean tree, conflict leaves markers / non-zero, unsupported language = fail closed — never silent text merge).\n\nTrue semantic merge stays out of the build path until its keep criteria fire.\n\n## Proposed numbered contract\n\n**Phase label:** Phase 26 — Structured merge integration (Mergiraf wrap).  \n**Strategies after this phase:** `ff-only` (existing AC5), `structured` (new). Unsupported strategy → typed refuse (today: `unsupported_strategy`).\n\n### SM1 — Tool invocation and configuration\n- Binary path from deployment config `tools.mergiraf.path` (or inject `execFile` / `driver` in tests). Default discover optional; **missing tool ⇒ refuse**, never fall back to textual auto-merge that claims structured success.\n- Args are fixed by Baton (no worker-supplied argv). Log tool identity, version string if obtainable, argv digest, exit code, wall time.\n- No global permanent gitconfig mutation required for the vertical; if a temp `.git/config` / attributes fragment is written, it lives only inside the stage worktree and is reaped with it.\n\n### SM2 — Isolated staging (main is not a workspace)\n- All structured merge I/O occurs in `.baton/merge/<id>/` worktree or detached sandbox created from the merge-base commit.\n- Stage produces a **captured merge commit SHA** (or explicit refuse) without moving main’s HEAD, index, or worktree.\n- Gate: after any refuse/crash, `git rev-parse HEAD` and `git status --porcelain` on main equal pre-integrate snapshots (extends current dirty-main AC5 proof).\n\n### SM3 — Preconditions (Git authority)\n- Both tips are accepted captured result SHAs (or one tip is current main when integrating a single completed task that is not ff — only if main is still a clean descendant of the recorded merge-base policy). Prefer two-result merge for concurrent workers.\n- Main clean unless operator opts into documented stash policy (default: dirty ⇒ refuse, matching `index.mjs` integrate).\n- Worker(s) quiescent; path leases released or re-checked; retained result refs pinned before stage (existing retain/release pattern).\n\n### SM4 — Conflict classification (honest, not “semantic”)\nAfter three-way attempt on stage:\n- **clean textual** → no Mergiraf call required; still re-verify.\n- **line conflict, structured candidate** → invoke Mergiraf-class driver per conflicted path.\n- **binary / unsupported language / tool parse fallback / unresolved markers** → **fail closed** (`structured_unresolved`).\n- **semantic-overlap advisory** (optional CPG-delta or lease intersection on same symbol): may **only escalate refuse or force human review**; may not auto-resolve. Overlap evidence is advisory LOG payload, not authority.\n\n### SM5 — Fail-closed tool outcomes\nRefuse integration (no main move) when any of:\n1. tool unavailable / non-executable / timeout;\n2. non-zero exit with unresolved conflict markers remaining;\n3. driver reports parse fallback to line merge while still claiming success (if detectable via documented Mergiraf status — else treat unknown as refuse);\n4. merged blob still contains conflict marker lines `<<<<<<<` / `=======` / `>>>>>>>`;\n5. post-stage `git diff --check` / merge-commit creation fails.\n\n### SM6 — Fresh verification before any main update\n- Staged merge commit is re-verified in a **new** `freshVerifySandbox` at that SHA using the pinned acceptance command(s) for the integration (union of task DoD or explicit integrate verification).\n- Required trust-gate outcomes match Phase 11 AC1+ (and optional coverage/mutation if pinned). Failure ⇒ refuse; retain stage artifacts + result pins; main untouched.\n- **Behavioral fingerprint agreement is not a substitute** for this gate and cannot mark `integration.completed`.\n\n### SM7 — Main update, LOG, coordination (CK9)\n- Only after SM6 pass: advance main to the verified merge commit; write `integration.completed` with `{ strategy:'structured', beforeSha, leftSha, rightSha, mergeBaseSha, stageSha, afterSha, tool, conflictedPaths, resolutions[] }`.\n- Coordination Decision + artifact batch is atomic with operational success; post-effect authority failure poisons and replay must not report integrated (mirror existing CK9 post-merge test) — for structured, prefer **stage-then-verify-then-main** so a coordination failure after verify but before main leaves main clean; if main already moved, same poison+manual reconcile rules as ff-only CK9 apply and must be tested.\n\n### SM8 — Rollback\n- Pre-main failure: delete stage worktree; keep `refs/baton/results/*`; emit `integration.refused`.\n- Post-main detected inconsistency (authority poison): do not silently `reset --hard`; surface `integration.authority_divergent` and retain pins (operator/reconcile path). Automated hard reset of main is out of scope.\n\n### SM9 — Crash / replay ambiguity\n- Restart must reconstruct whether stage completed, verify completed, main moved, and Decision exists from LOG + git refs only.\n- Ambiguous window (stage commit exists, no verify event) ⇒ treat as not integrated; reap stale stage; never invent success.\n- Replay rejects asymmetric Decision without matching driver artifact + verify evidence (extend CK9 split-authority test).\n\n### SM10 — Artifact retention and cleanup\n- Stage logs, merged blobs digests, tool stderr digests, and resolution manifest are content-addressed under `.baton/artifacts/merge/` (or existing artifact registry) with retention on refuse until operator GC.\n- Success: release stage worktree; optional keep resolution manifest as accepted artifact; release result pins when main retains objects.\n- `reconcile()` reaps orphaned `.baton/merge/*` older than bound / without live integration id.\n\n### SM11 — CPG / behavior surfaces (explicit non-authority)\n- May attach `cpg.delta` summary between merge-base and stage as **review triage** after SM6 (same limitations as Phase 19).\n- May not call `behavior.fingerprint` as merge decider. If invoked for ensemble compare, results are separate evidence nodes with grounding ≠ merge authority.\n\n### SM12 — True semantic merge catalog entry (not implemented)\nRecord in goal catalog: **structured ≠ semantic**. Semantic merge means conflict defined on data-flow/semantic edges with round-trip to valid source — still research. Keep/redirect/retire:\n\n| Verdict | Criteria |\n|---|---|\n| **KEEP research** | Measured demand: structured+leases still thrash concurrent N; offline study shows ≥X% of remaining conflicts are “same edge incompatible intent” **and** a language-scoped tool exists with published false-clean bound. |\n| **REDIRECT** | If Mergiraf+leases+re-verify absorb residual cost, or if demand is only review (then invest in structural/CPG **diff**, not merge). Redirect effort to trust-gate cluster / semantic-diff review. |\n| **RETIRE** | After two measured fleet evals where false-clean rate of any semantic-merge prototype exceeds structured+re-verify baseline, or no maintainer-quality external engine exists — retire with evidence Decision; keep catalog tombstone. |\n\n## Red tests and proof\n\nEvery proposed claim has a falsifiable gate (temp-repo, injected driver; no Mergiraf install required in CI).\n\n| ID | Red test (must fail before impl / pass after) | Proves |\n|---|---|---|\n| R1 | `strategy:'structured'` with `driver=null` / missing binary → `IntegrationError` code `structured_tool_unavailable`; main HEAD+porcelain unchanged | fail-closed tool config |\n| R2 | Injected driver returns markers; integrate refuses; main clean; `integration.refused` logged; result pin retained | unresolved markers |\n| R3 | Injected driver exit 0 but file still contains `<<<<<<<` → refuse | marker scan gate |\n| R4 | Injected “parse fallback success” flag → refuse (no claim of structured clean) | no silent line-merge promotion |\n| R5 | Two accepted tips conflict on same function lines; driver returns clean merge text; **main still at beforeSha until** verify sandbox passes; spy shows verify ran at stage SHA | stage-without-main + fresh verify order |\n| R6 | Stage merge succeeds, pinned verify command fails → no main move; stage reaped or retained per SM10 refuse path | post-merge trust gate |\n| R7 | Dirty main + structured request → refuse; porcelain identical (extend AC5 dirty-main) | dirty-main preservation |\n| R8 | Concurrent main advance making three-way impossible / non-ancestor policy fail → refuse without rewrite | Git authority |\n| R9 | Kill mid-stage (simulate crash after stage commit, before verify event); restart → `integration` null; orphan stage reaped by reconcile | crash/replay ambiguity |\n| R10 | Verify pass + coordination authority batch throws → poison; replay `result.integration === null`; document main/stage invariant for stage-first ordering | CK9 structured analogue |\n| R11 | Asymmetric LOG Decision without stage/verify artifacts → replay null integration | split authority |\n| R12 | Success path: stage gone, merge artifacts GC policy holds, workers/branches reaped, afterSha == main | cleanup |\n| R13 | CPG-delta “overlap” advisory present → cannot alone set integrated; if policy `overlap:refuse`, refuses even when driver clean | semantic overlap non-authority |\n| R14 | Fingerprint corpus agreement fixture → integrate still requires SM6; agreement event cannot complete integration | behavior never merge authority |\n| R15 | Unsupported strategy still throws; `ff-only` path unchanged golden SHAs | non-regression AC5 |\n\nProof bar: focused `node --test` suite green; no network; injected exec only. Optional live evidence file when host provides Mergiraf — never a CI hard dependency.\n\n## Risks and rejection criteria\n\n**Risks**\n\n1. **False-clean structured merge** — syntax-disjoint resolutions can still break behavior. Mitigation: SM6 mandatory re-verify; never skip because tool exited 0.\n2. **Main mutation ordering** — copying ff-only “merge then log” into structured reopens CK9 split brain. Mitigation: stage→verify→main; test R5/R9/R10.\n3. **Host without Mergiraf** — shipping a hard runtime dependency blocks dogfood. Mitigation: injectability + fail-closed; live proof separate.\n4. **Config surface creep** — global merge drivers and attributes are sticky. Mitigation: stage-local config only; SM1.\n5. **Authority laundering via Atlas** — treating CPG/behavior as auto-merge. Mitigation: SM11–SM12; R13–R14; card limitations remain “not behavioral proof.”\n6. **Artifact disk leak** — stage trees under `.baton/merge`. Mitigation: SM10 + reconcile reap (fleet lifecycle rules in docs/26 A).\n7. **Scope inflation into “semantic merge”** — inventing graph merge. **Reject the PR** if it adds Baton-owned parsers, e-graph merge, or promotes fingerprint match to `integration.completed`.\n\n**Reject this vertical (or the PR) if**\n\n- main worktree is used as the merge workspace;\n- success is recorded without a fresh verify sandbox at the merge commit;\n- missing Mergiraf falls back to unmarked textual merge success;\n- conflict markers can remain in an “integrated” tree;\n- behavioral or CPG agreement alone advances main;\n- rollback uses silent destructive main reset as the happy path;\n- crash replay can report integrated without Git+LOG+coordination agreement;\n- implementation invents a merge algorithm instead of wrapping an injected tool.\n\n**Accept only when** R1–R15 exist and pass, SM1–SM12 are test-locked, and catalog text still separates structured (shipped) from true semantic merge (research with keep/redirect/retire above)."
+    },
+    {
+      "taskId": "grok-merge-scope-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-merge-scope-composer.md",
+      "stance": "semantics",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-design-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54a8-2a98-7c63-9508-1b8ec3850e1e",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-merge-scope.dISLRC/.baton/wt/grok-merge-scope-composer",
+          "repoRoot": "/private/tmp/baton-merge-scope.dISLRC",
+          "baseSha": "79337d850234faee35d874e4950a9a2c05980baf",
+          "branch": "baton/grok-merge-scope-composer",
+          "ownerTaskId": "grok-merge-scope-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-merge-scope.dISLRC/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-merge-scope-composer",
+        "worktree": "/private/tmp/baton-merge-scope.dISLRC/.baton/wt/grok-merge-scope-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 54603,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T04:48:54.087Z"
+      },
+      "pid": 72726,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-design-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 12
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "065103828ba711852cedefd63b64c6042933c9a9",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-design-review\"]"
+          }
+        },
+        "seq": 367,
+        "ts": "2026-07-12T04:49:45.656Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 12
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-design-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54a8-2a98-7c63-9508-1b8ec3850e1e",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-merge-scope.dISLRC/.baton/wt/grok-merge-scope-composer",
+          "repoRoot": "/private/tmp/baton-merge-scope.dISLRC",
+          "baseSha": "79337d850234faee35d874e4950a9a2c05980baf",
+          "branch": "baton/grok-merge-scope-composer",
+          "ownerTaskId": "grok-merge-scope-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Structured merge scope — design review at 79337d8\n\n*Dogfood design review for Baton’s next representation increment. Read: `SYSTEM.md`, `docs/15-representation-and-computation.md`, `docs/21-frontier-features.md`, `docs/26-full-system-goal.md`, `reviews/frontier-features/representation.md`, `spec/phase11/acceptance-integration.md`, `impl/src/{coordinator,index,worktree,atlas-cpg-delta,atlas-behavior-fingerprint}.mjs`, and Phase 11/13/22/25 integration tests. Host constraint: no Mergiraf binary installed.*\n\n## Decision\n\n**Ship Phase 26 SM1–SM8 as a syntax-aware structured-merge vertical that wraps Mergiraf (or an injected test double) and refuses every claim beyond that boundary.** Do not start CPG/data-flow merge, a bespoke parser, or behavioral-fingerprint merge authority.\n\n### Authority boundary (load-bearing)\n\n| Layer | Role | Merge authority? |\n|---|---|---|\n| **Textual `git merge --ff-only`** (today) | Only shipped integration strategy in `impl/src/index.mjs` | Yes, when fast-forward is possible and AC1–AC5 gates already passed |\n| **Mergiraf-class structured merge (R6 lower rung)** | External syntax-aware three-way merge over base/left/right; resolves many line conflicts when AST subtrees are disjoint | **Conditional:** may produce a candidate integration commit only after the same acceptance ladder; never bypasses fresh verification |\n| **Atlas CPG delta / taint (R3, Phase 22)** | Local data-flow tripwire and review escalation | **Never.** Evidence for routing and false-clean warnings only |\n| **Behavioral fingerprint (R5, Phase 25)** | Pinned-corpus differential observation with `observed_corpus_agreement_not_semantic_equivalence` | **Never.** Corpus agreement is not equivalence and must not unlock integration |\n| **True semantic / CPG merge (doc 15 §4b)** | Conflict defined as incompatible mutation of the same semantic edge | **Redirect** — research catalog only until a measured gate proves sound round-trip |\n\n### Why this is the smallest honest vertical\n\nCurrent code integrates only via `ff-only` (`impl/src/index.mjs` lines 72–80; `coordinator.integrate` at AC5). That is correct for non-overlapping path leases but refuses the moment `main` advances past a worker’s pinned base — exactly when structured merge earns its keep (`docs/21-frontier-features.md`, `reviews/frontier-features/representation.md` Feature 3). Mergiraf is production syntax-aware merge infrastructure (native parsers, three-way subtree matching, Git merge-driver interface); Baton’s job is **policy, staging, classification, logging, and trust-gate re-verification**, not a merge algorithm (`docs/15` §4b vs §6; `docs/26` §I R6).\n\nPhase 25 and Phase 22 already bound the adjacent evidence planes: behavioral output explicitly denies semantic equivalence; CPG is a scoped local tripwire, not whole-program soundness (`reviews/frontier-features/representation.md` Feature 2 soundness critique). Neither may be promoted to merge authority without relabeling closed phases — that would recreate false-clean risk the trust gate exists to prevent (`SYSTEM.md` §5.1, `impl/src/referee.mjs`).\n\n### Keep / redirect / retire — true semantic merge\n\n| Verdict | Criterion |\n|---|---|\n| **KEEP (catalogued)** | Data-flow-aware merge where conflict means two branches mutated the same PDG/CPG edge with incompatible intent and the resolver preserves global soundness after round-trip to source (`docs/15` §4b, `docs/26` §I R6 upper rung). |\n| **REDIRECT** | Do not implement inside Phase 26. Require prior evidence: (1) commit-granular CPG overlay maintenance is insufficient; (2) localized taint tripwire demonstrably routes integration review on Baton-on-Baton dogfood; (3) an external semantic-merge tool with falsifiable exit codes exists and is adoptable like Mergiraf. Until then, route “semantic overlap suspected” to **human/orchestrator escalation**, not auto-resolution. |\n| **RETIRE** | Record a Decision only if a measured negative gate shows structured merge plus pinned verification catches the same integration failures at lower total cost than path-lease partitioning alone, **or** Mergiraf-class tools regress to parse-fallback rates that make the wrapper lie more than it helps. Retirement removes the *automatic* structured path, not textual `ff-only` or the catalog entry. |\n\n### False-clean risk (explicit)\n\nStructured merge can emit **syntactically valid, parseable, silently wrong** code: complementary syntax edits that break data flow, effect ordering, or cross-file invariants while resolving conflict markers. Mergiraf does not guarantee behavior preservation; it guarantees syntax-aware conflict reduction. Therefore every structured-merge success claim must be gated by **fresh referee verification in a sandbox the worker never touched** (AC1–AC3, `worktree.freshVerifySandbox`), plus optional CPG/BF artifacts attached as **untrusted-advisory** coordinator facts (`SYSTEM.md` §4.3). A green structured merge with red pinned verification is a refused integration, not a partial success.\n\n## Proposed numbered contract\n\n**Phase 26 — Structured merge (SM1–SM8).** One implementation sequence; each item is falsifiable; no `main` mutation until SM6 passes.\n\n### SM1 — Merge-driver executor boundary\n\nIntroduce `mergeDriverExecutor` as the sole injection point for external structured merge (parallel to existing git shell-outs in `worktree.mjs`). Production executor invokes Mergiraf through Git’s merge-driver contract (`%O` base, `%A` current/left, `%B` other/right, `%P` path, `%L` marker length) or the upstream CLI surface already documented in repository research — **Baton does not parse languages for merge.**\n\n**Gate:** unit tests call a fake executor without any Mergiraf binary; production assembly wires the real executor only when configured.\n\n### SM2 — Staging worktree (no `main` mutation during merge)\n\nAdd `createIntegrationSandbox(taskId, mainSha)` under `.baton/integrate/<taskId>` checked out at current `main` HEAD. All three-way work happens here. `main` at `repoRoot` stays untouched until SM6.\n\n**Gate:** red test proves `integrate(..., { strategy: 'structured-three-way' })` leaves `repoRoot` `HEAD` and index identical when merge or verification fails.\n\n### SM3 — Structured three-way attempt (fail-closed taxonomy)\n\nGiven pinned `baseSha` (task base), `leftSha` (`main` HEAD), `rightSha` (accepted `capturedSha`), run the injected driver per conflicted path. Classify every path into exactly one coordinator-computed class logged to the operational ledger:\n\n| Class | Meaning | Integration |\n|---|---|---|\n| `clean_ff` | `rightSha` is ancestor of `leftSha` or vice versa — delegate to existing `ff-only` | Continue |\n| `structured_resolved` | Driver exit 0, no conflict markers, parse check passes | Continue staging |\n| `structured_unresolved` | Conflict markers remain | **Refuse** (`integration_refused`, `merge_conflict_unresolved`) |\n| `driver_unavailable` | Binary missing, not configured, or executor not injected in production | **Refuse** (`merge_driver_unavailable`) — no silent textual fallback |\n| `parse_fallback` | Driver reports fallback-to-text or equivalent upstream flag | **Refuse** (`merge_parse_fallback`) |\n| `semantic_overlap_suspected` | Driver reports overlapping semantic edits, or CPG delta flags intersecting changed symbols on both sides for the same file | **Refuse** (`merge_semantic_overlap_suspected`) — escalate, do not auto-merge |\n| `textual_conflict` | Driver not attempted (unsupported language/path) | **Refuse** unless explicit orchestrator policy downgrades to manual — default closed |\n\n**Gate:** table-driven reds with injected executor fixtures covering every row; no fixture may assert behavior equivalence.\n\n### SM4 — Integration commit in staging only\n\nOn full-path `structured_resolved`, commit merged tree in the staging worktree (single merge commit with parents `leftSha` and `rightSha`). Record `{ baseSha, leftSha, rightSha, mergedSha, perPathClasses, driverVersion, executorId }` as a trusted coordinator fact. Pin `refs/baton/integrate/<taskId>` until acceptance or refusal (extends AC5 result-pin semantics).\n\n**Gate:** replay reconstructs the same classification from the log without re-invoking Mergiraf.\n\n### SM5 — Advisory evidence attachment (non-authoritative)\n\nAfter staging commit, optionally attach:\n\n- **CPG delta** (`atlas-cpg-delta.mjs`): localized new/changed edges in changed functions — label `cpg_tripwire_advisory`, not `safe_to_merge`.\n- **Behavioral fingerprint** (`atlas-behavior-fingerprint.mjs`): only when a pinned corpus exists — propagate Phase 25 meaning string verbatim; fingerprint **match or mismatch does not change** SM3/SM6 outcomes.\n\nThese feed review depth and story compiler warnings only (`docs/21` cross-vendor review, effect tripwire). They are forbidden from `integrate()` preconditions.\n\n**Gate:** red proves corpus agreement on intentionally behavior-divergent merged code still refuses integration when pinned verification fails; red proves CPG “low risk” does not skip verification.\n\n### SM6 — Fresh verification before `main` update\n\nRun the immutable brief verification command (and required AC1–AC3 rungs) in `freshVerifySandbox` at `mergedSha`, same as `result()` trust gate. **SM6 pass is necessary and sufficient for merge authority** regardless of SM5 signals.\n\n**Gate:** extend Phase 11 acceptance patterns — merged sandbox must be distinct from worker worktree; verification command runs at `mergedSha`; failure refuses with `integration_verification_failed` and preserves staging evidence.\n\n### SM7 — `main` fast-forward/update (reuses AC5)\n\nOnly after SM6 pass: update `main` via `git merge --ff-only mergedSha` or equivalent single-parent fast-forward from `leftSha` to `mergedSha`. Then `completeIntegration`, release pins per AC5, reap worker/worktree/branch/staging sandbox.\n\n**Gate:** existing AC5 tests remain green; new tests prove SM7 never runs if SM6 never recorded pass.\n\n### SM8 — Coordinator API and honest claim language\n\nExtend `coordinator.integrate(workerId, { strategy: 'ff-only' | 'structured-three-way', actor })`. Default remains `ff-only`. Public strings:\n\n- Allowed: “syntax-aware structured merge candidate,” “conflict markers absent in staged tree,” “pinned verification passed on merged commit.”\n- Forbidden: “semantically merged,” “behaviorally equivalent,” “CPG-clean merge,” “corpus-agreed merge,” “auto-safe.”\n\nLog `strategy`, `outcome`, and `refusalCode` on the integration Decision node (CK9).\n\n**Gate:** grep-based contract test on exported error codes and claim strings; documentation lint in review artifact.\n\n### Conflict-classification vs merge-authority diagram\n\n```mermaid\nflowchart TD\n  A[Accepted capturedSha] --> B{ff-only possible?}\n  B -->|yes| G[SM6 fresh verify]\n  B -->|no| C[SM2 staging sandbox]\n  C --> D[SM3 injected Mergiraf]\n  D -->|structured_resolved| E[SM4 staging commit]\n  D -->|any refuse class| R[integration_refused]\n  E --> F[SM5 advisory CPG/BF]\n  F --> G\n  G -->|pass| H[SM7 update main]\n  G -->|fail| R\n```\n\n## Red tests and proof\n\nAll tests use **injected `mergeDriverExecutor`** fixtures; CI does not require Mergiraf installed (host constraint).\n\n1. **SM1/SM3:** Executor returning exit 0 with `<<<<<<<` in output → `structured_unresolved`. Executor missing → `driver_unavailable` without calling `git merge` on `main`.\n2. **SM2:** Intentional staging failure → `git rev-parse HEAD` at `repoRoot` unchanged.\n3. **SM3 parse fallback:** Executor sets `parseFallback: true` → refusal even if text looks clean.\n4. **SM3 semantic overlap:** Executor sets `semanticOverlap: true` OR injected CPG fixture reports intersecting changed symbols on both sides → `merge_semantic_overlap_suspected`.\n5. **SM4 replay:** Rebuild integration artifact from log; assert byte-identical `perPathClasses` without second driver call.\n6. **SM5 non-authority:** Fixture where behavioral compare returns `agreement: true` but verification command fails → integration refused; fixture where CPG reports no new edges but verification fails → same.\n7. **SM6 freshness:** Assert verify sandbox path ≠ worker `.baton/wt/<taskId>` and uses `mergedSha`.\n8. **SM7 ordering:** Spy on `main` update; assert zero calls when SM6 spy returns fail.\n9. **AC5 compatibility:** Existing `phase11-acceptance-integration.test.mjs` `ff-only` cases remain green unchanged.\n10. **Honest language:** Snapshot refusal messages — must not contain “semantic merge” or “equivalent” as success labels.\n\n**Proof bar for closing Phase 26:** focused SM gate green, full suite green, one Baton-on-Baton dogfood scenario where concurrent workers with non-overlapping leases still produce a non-ff integration that structured merge resolves, staged verification passes, and `main` updates once. **Not required for closure:** live Mergiraf binary on CI host (injected proofs suffice); CPG/BF auto-merge; true semantic merge.\n\n**Explicit non-goals for this phase:** inventing parsers, implementing GumTree/Dijkstra matching, whole-program CPG merge, e-graph equivalence, using `observed_corpus_agreement_not_semantic_equivalence` as an integrate precondition, homelab coupling, or mutating `main` before fresh verification.\n\n## Risks and rejection criteria\n\n### Primary risks\n\n1. **False-clean structured merge** — highest severity. Syntax-resolved trees that fail pinned tests or hide effect regressions. *Mitigation:* SM6 mandatory; SM5 may only escalate review, never waive SM6.\n2. **Parse fallback masquerading as success** — Mergiraf or successor tools may degrade to textual merge on unsupported constructs. *Mitigation:* SM3 `parse_fallback` refuse class; per-path logging.\n3. **Semantic overlap false negatives** — syntax disjoint but data-flow entangled (the case true semantic merge would solve). *Mitigation:* conservative `semantic_overlap_suspected` plus CPG advisory; accept manual escalation rate over silent wrong merge.\n4. **Executor injection drift** — test double diverges from production Mergiraf semantics. *Mitigation:* record `driverVersion`/`executorId` in SM4; optional live-environment proof lane separate from default CI.\n5. **Authority creep from Phase 22/25** — reusing atlas modules tempts “CPG said safe.” *Mitigation:* SM5 gates above; reject any PR coupling `integrate()` to `behavior.compare` or `cpg.delta` outcomes.\n6. **Staging disk / reap leaks** — new `.baton/integrate/*` sandboxes follow Phase 23/TF lessons. *Mitigation:* register in lifecycle tables; reap on refuse, pass, kill, and crash paths.\n\n### Phase refusal (do not merge SM implementation to main catalog) if\n\n- Any test allows `main` mutation before SM6 verification pass.\n- Missing Mergiraf/config falls back to textual three-way merge without refusal.\n- Unresolved conflict markers or driver-reported fallback still yield `integrated` status.\n- Behavioral corpus agreement or CPG risk class short-circuits the acceptance ladder.\n- Claim language markets “semantic merge” for what is only Mergiraf-class syntax-aware merge.\n- Replay cannot reconstruct integration decisions without re-running the driver.\n\n### True semantic merge remains redirected until\n\n- Structured merge (Phase 26) is closed with dogfood evidence including measured false-clean catch rate via SM6.\n- A follow-on design records adoptable **external** data-flow merge tooling (or a negative Decision retiring the rung).\n- Overlay/maintenance economics for commit-granular CPG are measured — not assumed from Salsa/editor literature (`reviews/frontier-features/representation.md` Feature 5 critique).\n\n### Unambiguous implementation sequence\n\n1. Land SM1 injected executor interface + SM3 classification types and refusal codes (tests only).\n2. Land SM2 staging worktree helpers in `worktree.mjs` / index adapter.\n3. Land SM3–SM4 merge orchestration producing staged `mergedSha` + log artifact.\n4. Land SM5 advisory hooks (CPG/BF) behind feature flags that cannot affect outcomes.\n5. Wire SM6 into existing referee path; add reds for false-clean cases.\n6. Land SM7–SM8 coordinator `structured-three-way` strategy + Decision logging.\n7. Run focused SM suite, full suite, single Baton-on-Baton concurrent-integration proof.\n8. **Only after step 7 is green:** update pursuit catalog / evidence ledger; **do not** advance `main` integration defaults until dogfood proof completes.\n\n---\n\n*Review stance: adopt structured merge as fleet policy around commodity Mergiraf; keep true semantic merge behind explicit redirect/retire gates; let verification authority remain the trust gate, not representation artifacts.*"
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-merge-scope-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-merge-scope-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "twoReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "bothKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

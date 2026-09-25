@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T01:04:37.430Z",
+  "members": [
+    "board-workerhalf-reviewer",
+    "orientation-reviewer",
+    "readiness-reviewer",
+    "browser-use-reviewer"
+  ],
+  "outcomes": [
+    {
+      "role": "board-workerhalf-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "7681ced0325295916dcb8e8d92e3630f5a02eb24"
+    },
+    {
+      "role": "orientation-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "a338100bce59e87f4ccac6621dca5dcfa1767d9a"
+    },
+    {
+      "role": "readiness-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "27180f756a76c2e7c13b24b01ff437508777d732"
+    },
+    {
+      "role": "browser-use-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "01fc610f2cdccc7f5c87293307e08d56c1e55c01"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "board-workerhalf-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "orientation-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "readiness-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "browser-use-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "orientation-reviewer",
+      "requestId": "pause:baton-0180a1487b0fb4e9e73de18c-work:102",
+      "at": "2026-08-03T01:13:16.102Z"
+    },
+    {
+      "role": "readiness-reviewer",
+      "requestId": "pause:baton-0a866b9e092e1cc9f8e14de4-work:128",
+      "at": "2026-08-03T01:13:48.974Z"
+    },
+    {
+      "role": "browser-use-reviewer",
+      "requestId": "pause:baton-c2a0d6e884b16d07f9ee5e01-work:230",
+      "at": "2026-08-03T01:14:42.789Z"
+    },
+    {
+      "role": "board-workerhalf-reviewer",
+      "requestId": "pause:baton-e058e35e5b44482187ce40e5-work:96",
+      "at": "2026-08-03T01:16:48.035Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "orientation-reviewer",
+      "requestId": "pause:baton-0180a1487b0fb4e9e73de18c-work:111",
+      "at": "2026-08-03T01:13:23.575Z",
+      "code": "claimed"
+    },
+    {
+      "role": "readiness-reviewer",
+      "requestId": "pause:baton-0a866b9e092e1cc9f8e14de4-work:152",
+      "at": "2026-08-03T01:14:46.469Z",
+      "code": "claimed"
+    },
+    {
+      "role": "browser-use-reviewer",
+      "requestId": "pause:baton-c2a0d6e884b16d07f9ee5e01-work:240",
+      "at": "2026-08-03T01:15:12.358Z",
+      "code": "claimed"
+    },
+    {
+      "role": "board-workerhalf-reviewer",
+      "requestId": "pause:baton-e058e35e5b44482187ce40e5-work:138",
+      "at": "2026-08-03T01:19:20.200Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 3,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:f54feecde02acfa576fcc80d0711c2bf",
+    "idempotencyKey": "l2-crossreview-storm-2026-08-03",
+    "recipeDigest": "41f383f8ea1293152ab79c035ebb4668bd2846319e345e12dd2e83f4a257c0d4",
+    "salt": "abfa7cd4-4266-47f1-a09e-5acc4073766c",
+    "renderedMembers": [
+      {
+        "role": "board-workerhalf-reviewer",
+        "objective": "Adversarially red-team the assigned epic contract against the shipped codebase. Every claim grounded in file:line (grep -an + sed -n for NUL-containing files; never whole-file reads >1500 lines). For each decision in the contract: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + the amendment text. Attack authority (identity derivation, injection lanes, replay/ idempotency, scope leaks), lifecycle (ordering, crash recovery, retention, freshness), and completeness (what the contract forgot — name at least one missed hole). The campaign control law is binding: controls must be eval-able, constructive, or conversational — never clocks or turn-limits. Verify the contract HONORS it everywhere. TARGET: docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-contract.md (#78, codex-drafted). Anchors: application-semantics.mjs:1407-1419 (the ghost rows), coordination-store.mjs:13495+ (the S-2 admitBoardCommand envelope), :13671-13800 (postBoardItem/closeBoardItem/CAS), the board claim machinery (requestBoardClaim). Report: docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-redteam.md\nCross-review red-team the four storm-drafted L2 contracts in parallel\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: abfa7cd4-4266-47f1-a09e-5acc4073766c board-workerhalf-reviewer]",
+        "exact": {
+          "harness": "glm",
+          "model": "glm-5.2",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-redteam.md"
+      },
+      {
+        "role": "orientation-reviewer",
+        "objective": "Adversarially red-team the assigned epic contract against the shipped codebase. Every claim grounded in file:line (grep -an + sed -n for NUL-containing files; never whole-file reads >1500 lines). For each decision in the contract: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + the amendment text. Attack authority (identity derivation, injection lanes, replay/ idempotency, scope leaks), lifecycle (ordering, crash recovery, retention, freshness), and completeness (what the contract forgot — name at least one missed hole). The campaign control law is binding: controls must be eval-able, constructive, or conversational — never clocks or turn-limits. Verify the contract HONORS it everywhere. TARGET: docs/reference/evidence/frontier-sweep-2026-08-03/orientation-contract.md (#81, glm-drafted). Anchors: impl/src/atlas-index.mjs, cartographer-quartermaster.mjs, application-semantics.mjs (UNTRUSTED framing), the KG candidacy machinery (coordination-store.mjs:13717+), context-runtime.mjs (the citation seams). Report: docs/reference/evidence/frontier-sweep-2026-08-03/orientation-redteam.md\nCross-review red-team the four storm-drafted L2 contracts in parallel\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: abfa7cd4-4266-47f1-a09e-5acc4073766c orientation-reviewer]",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/orientation-redteam.md"
+      },
+      {
+        "role": "readiness-reviewer",
+        "objective": "Adversarially red-team the assigned epic contract against the shipped codebase. Every claim grounded in file:line (grep -an + sed -n for NUL-containing files; never whole-file reads >1500 lines). For each decision in the contract: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + the amendment text. Attack authority (identity derivation, injection lanes, replay/ idempotency, scope leaks), lifecycle (ordering, crash recovery, retention, freshness), and completeness (what the contract forgot — name at least one missed hole). The campaign control law is binding: controls must be eval-able, constructive, or conversational — never clocks or turn-limits. Verify the contract HONORS it everywhere. TARGET: docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-contract.md (#47+#83+#84, deepseek-drafted). Anchors: claude-credential-cache.mjs (the #11 pattern), application-deployment.mjs readiness assembly + grokAuthenticationState :400-410, the route-learning store (routePolicy/routeObservations), issue #47/#83/#84 texts (gh issue view). Report: docs/reference/evidence/frontier-sweep-2026-08-03/readiness-redteam.md\nCross-review red-team the four storm-drafted L2 contracts in parallel\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: abfa7cd4-4266-47f1-a09e-5acc4073766c readiness-reviewer]",
+        "exact": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/readiness-redteam.md"
+      },
+      {
+        "role": "browser-use-reviewer",
+        "objective": "Adversarially red-team the assigned epic contract against the shipped codebase. Every claim grounded in file:line (grep -an + sed -n for NUL-containing files; never whole-file reads >1500 lines). For each decision in the contract: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + the amendment text. Attack authority (identity derivation, injection lanes, replay/ idempotency, scope leaks), lifecycle (ordering, crash recovery, retention, freshness), and completeness (what the contract forgot — name at least one missed hole). The campaign control law is binding: controls must be eval-able, constructive, or conversational — never clocks or turn-limits. Verify the contract HONORS it everywhere. TARGET: docs/reference/evidence/frontier-sweep-2026-08-03/browser-use-contract.md (#85, sonnet-drafted). Anchors: messages.mjs (wrapProse/sanitization), the TG5 analysis machinery (goal-plan.mjs:347-353 + coordinator.mjs:11359), the TG2 evidence classes (coordinator.mjs:11046), application-deployment.mjs normalizeAtlasDeployment (the capability posture), SECRET_SHAPED_TEXT patterns. Report: docs/reference/evidence/frontier-sweep-2026-08-03/browser-use-redteam.md\nCross-review red-team the four storm-drafted L2 contracts in parallel\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: abfa7cd4-4266-47f1-a09e-5acc4073766c browser-use-reviewer]",
+        "exact": {
+          "harness": "deepseek",
+          "model": "deepseek-v4-flash",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/browser-use-redteam.md"
+      }
+    ]
+  }
+}

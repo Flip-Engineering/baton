@@ -1,0 +1,58 @@
+{
+  "at": "2026-07-12T00:57:57.604Z",
+  "path": "impl/src/atlas-rewrite.mjs",
+  "search": {
+    "status": "ok",
+    "summary": "11 structural matches",
+    "provenance": {
+      "tool": "@ast-grep/napi@0.44.1",
+      "language": "javascript",
+      "inputDigest": "22b3748597a0f327c1146612de540fd77dc771c7be31ec0c0737738aa9db9a06",
+      "patternDigest": "d3af4e4b70feda4886fa994a2b8b033432694c54befdda0b587ec7b4a85e5aaa",
+      "replacementDigest": null,
+      "outputDigest": null,
+      "manifestDigest": "d4a482f4a9c69c46a96a936243c0c0621e54bde20f780d7e9049b5cb30ad3982",
+      "parseErrors": {
+        "input": 0,
+        "output": 0
+      },
+      "deterministic": true,
+      "applyAuthority": false
+    }
+  },
+  "rewrite": {
+    "status": "ok",
+    "summary": "11 structural matches; 11 proposed edits",
+    "provenance": {
+      "tool": "@ast-grep/napi@0.44.1",
+      "language": "javascript",
+      "inputDigest": "22b3748597a0f327c1146612de540fd77dc771c7be31ec0c0737738aa9db9a06",
+      "patternDigest": "d3af4e4b70feda4886fa994a2b8b033432694c54befdda0b587ec7b4a85e5aaa",
+      "replacementDigest": "85a78adc64dd20d132e4b6273aa03cb808ca12cbc00b0899c00a3ff87f4615f0",
+      "outputDigest": "af7222f423e366c3ac16239203e42c3eeae3c348549f2f356eb7ff089c1075cc",
+      "manifestDigest": "d16c5854374279fef2f468d52116d74aeecce2458014fe83e1d0334db1557a38",
+      "parseErrors": {
+        "input": 0,
+        "output": 0
+      },
+      "deterministic": true,
+      "applyAuthority": false
+    }
+  },
+  "reverified": {
+    "ok": true,
+    "observedManifestDigest": "d16c5854374279fef2f468d52116d74aeecce2458014fe83e1d0334db1557a38",
+    "observedOutputDigest": "af7222f423e366c3ac16239203e42c3eeae3c348549f2f356eb7ff089c1075cc"
+  },
+  "checks": {
+    "noError": true,
+    "realMatches": true,
+    "proposalEditsEveryMatch": true,
+    "proposedSourceChanged": true,
+    "sourceUnchanged": true,
+    "reverified": true,
+    "auditPairs": true
+  },
+  "fatal": null,
+  "pass": true
+}
