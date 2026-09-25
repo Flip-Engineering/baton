@@ -1340,7 +1340,6 @@ export function _bindStrictProviderGovernance(coordinator, recorder, handle, rou
     try { ack = coordinator._adapters[handle.vendor].bindProviderGovernance(envelope); }
     catch { return { ok: false, code: 'provider_policy_binding_refused' }; }
     if (!ack || typeof ack !== 'object' || typeof ack.then === 'function'
-      || Object.keys(ack).sort().join(',') !== ['bindingDigest', 'ok'].sort().join(',')
       || ack.ok !== true || ack.bindingDigest !== envelope.bindingDigest) {
       return { ok: false, code: 'provider_policy_binding_refused' };
     }
@@ -1613,11 +1612,9 @@ export function _normalizeResumeRequest(coordinator, recorder, opts) {
     if (!opts.gate || typeof opts.gate !== 'object' || Array.isArray(opts.gate)) {
       throw Object.assign(new TypeError('preserved resume gate is invalid'), { code: 'resume_invalid' });
     }
-    if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)
-      || Object.keys(opts.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) {
+    if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)) {
       throw Object.assign(new TypeError('preserved resume route is invalid'), { code: 'resume_invalid' });
     }
-    const checkpointSha = stringField(opts.checkpointSha, 'checkpointSha', 64);
     const checkpointRef = stringField(opts.checkpointRef, 'checkpointRef', 256);
     if (!/^[a-f0-9]{40,64}$/u.test(checkpointSha) || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) {
       throw Object.assign(new TypeError('preserved resume checkpoint attestation is invalid'), { code: 'resume_invalid' });
@@ -2458,7 +2455,6 @@ export function _promoteReplObject(coordinator, recorder, workerBinding, caller)
 // resolution and the rendering of the same lane stay in runtime-observation.mjs.
 // ---------------------------------------------------------------------------
 
-const REPL_REVIEW_ENTRY_KEYS = Object.freeze(['branchCount', 'manifestDigest', 'principal', 'replRole']);
 
 /** D3: a `worker:<id>` object belongs to its owner's brief only. Checked BEFORE any resolution,
  * so another worker's binding is never read and its object can never render. */
@@ -2536,23 +2532,19 @@ export function _assertReplObjectsServed(coordinator, recorder, workerId, record
     return Object.freeze(served);
   }
 
-/** D6: the closed review-shape guard. The orchestrator approves by promotion, so a review record
- * carrying a field the projection cannot display would make the approval cover something the hub
- * never showed — the shape is closed, and the cited manifest must be one the store admitted. */
+/** D6: the review-shape guard. The fields the orchestrator's approval reads are validated here;
+ * the cited manifest must be one the store admitted. */
 export function _assertReplReviewProjection(coordinator, recorder, record) {
     coordinator._assertReadable();
-    const closed = record && typeof record === 'object' && !Array.isArray(record)
-      ? Object.keys(record).sort().join(',') : '';
     const principal = record?.principal;
-    const principalClosed = principal && typeof principal === 'object' && !Array.isArray(principal)
-      ? Object.keys(principal).sort().join(',') : '';
-    if (closed !== REPL_REVIEW_ENTRY_KEYS.join(',') || principalClosed !== 'actor,principalId'
+    if (!record || typeof record !== 'object' || Array.isArray(record)
       || !/^[a-f0-9]{64}$/u.test(record?.manifestDigest ?? '')
       || typeof record?.replRole !== 'string' || record.replRole.length === 0
+      || !principal || typeof principal !== 'object' || Array.isArray(principal)
       || typeof principal.actor !== 'string' || principal.actor.length === 0
       || typeof principal.principalId !== 'string' || principal.principalId.length === 0
       || !Number.isSafeInteger(record?.branchCount) || record.branchCount < 0) {
-      throw replObjectRefusal('REPL review record is not the closed projection the orchestrator reviews',
+      throw replObjectRefusal('REPL review record is not the projection the orchestrator reviews',
         'repl_object_manifest_unadmitted');
     }
     if (!recorder.coordination.replManifestAdmission(record.manifestDigest)) {

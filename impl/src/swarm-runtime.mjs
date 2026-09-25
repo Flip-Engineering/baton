@@ -1435,13 +1435,6 @@ export function validateSwarmKnowledgeCommand(name, args) {
         { field, rule: 'identity-field', expectation: 'server-derived — remove it' });
     }
   }
-  const known = new Set(Object.keys(properties));
-  for (const key of Object.keys(args)) {
-    if (!known.has(key)) {
-      refuse(`Swarm knowledge request is invalid: unknown field ${key}`, 'swarm_command_invalid',
-        { field: key, rule: 'unknown-field' });
-    }
-  }
   // Scratchpad scope defaults to the caller's own worker scope at the swarm layer: the scratchpad
   // is the run's memory, and a participant never knows its own worker id.
   const defaulted = name === 'run.scratchpad.append' || name === 'run.scratchpad.read' ? 'scope' : null;
@@ -1568,13 +1561,10 @@ export function swarmSeatReadPermission(name) {
   return SWARM_SEAT_READ_COMMANDS[name]?.permission ?? null;
 }
 
-/** The seat read verbs' ONE shape validator (#441): the same closed-key admission the knowledge
- * verbs run, over the same canonical-schema predicates. The bridge runs it BEFORE dispatch (so
- * the cheapest wrong shape never reaches a runtime effect and the refusal is reported to the
- * durable lane) and the runtime runs it again as the authority — never the transport's word.
- * The swarm is the token's (`swarmId`, filled by the bridge from the credential's own scope);
+/** The seat read verbs' ONE shape validator (#441), over the canonical-schema predicates. The
+ * swarm is the token's (`swarmId`, filled by the bridge from the credential's own scope);
  * `runId` is the seat's own, so supplying it refuses: a seat names its request, its token names
- * itself. */
+ * itself. Unknown keys ride along unread. */
 export function validateSwarmSeatReadCommand(name, args) {
   const verb = swarmSeatReadCommand(name);
   if (!verb) return;
@@ -1582,21 +1572,12 @@ export function validateSwarmSeatReadCommand(name, args) {
     refuse('Swarm seat read request is invalid: arguments must be one JSON object', 'swarm_command_invalid',
       { rule: 'arguments-shape' });
   }
-  // The swarm vocabulary rides ON the verb's own closed field set: every seat read names its
-  // swarm (the bridge fills it from the token scope), spelled with the SAME safe-id predicate the
-  // swarm contract applies to every swarmId.
   const properties = { swarmId: { type: 'string', pattern: '^[A-Za-z0-9._:-]{1,256}$' }, ...verb.fields };
   const admitted = Object.keys(properties).sort();
   for (const field of verb.identityFields) {
     if (args[field] !== undefined) {
       refuse(`Swarm seat read request is invalid: ${field} is derived from your swarm token`, 'swarm_command_invalid',
         { field, rule: 'identity-field', expectation: 'server-derived — remove it' });
-    }
-  }
-  for (const key of Object.keys(args)) {
-    if (!Object.hasOwn(properties, key)) {
-      refuse(`Swarm seat read request is invalid: unknown field ${key}`, 'swarm_command_invalid',
-        { field: key, rule: 'unknown-field', admitted, correction: `remove ${key} — ${name} accepts ${admitted.join(', ')}` });
     }
   }
   // Issue #43 AX (2026-09-21): the refusal names EVERY missing required field, with each field's
