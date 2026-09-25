@@ -60,7 +60,7 @@ import { landContribution } from './worktree.mjs';
 // a tail nobody else's bound describes.
 import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
 import { deriveWakeFrame, parseWakeFilter, wakeAttribution, wakeClassFor } from './wake-stream.mjs';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -157,13 +157,29 @@ async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
   }
 }
 
+/** The directory ONE gate run's verdict document lives in.
+ *
+ * Issue #593: it sits under ONE stable intermediate directory in the temp root, never directly
+ * under it. An UNJUDGED run keeps its directory, because the verdict it may still write is the one
+ * a successor reads (#551) — and #571's per-file hygiene check lists fixture-shaped directories
+ * directly below a test file's private temp directory, so a retained scratch left as a direct
+ * child is counted as that file's own leak. A test that drives a landing would then redden as a
+ * leak by construction, which is what the two landings of this revision's own content hit. The
+ * intermediate name matches no fixture shape, and the installed runner's own root reaping still
+ * removes the whole tree. */
+function gateVerdictScratch() {
+  const parent = join(tmpdir(), 'baton-gate-runs');
+  mkdirSync(parent, { recursive: true });
+  return mkdtempSync(join(parent, 'baton-integrate-'));
+}
+
 /** One supervised run of the suite runner over `files` in `dir`, with its verdict document read
  * back (null when the runner wrote none) and its last words and exit status. */
 async function runGateFiles(dir, files, { pool = null, holder = null, leaseAuthority = null } = {}) {
   // Issue #551: whether this incarnation read a verdict document at all. An unjudged run keeps
   // its scratch directory, because the verdict it may still write is the one a successor reads.
   let judged = false;
-  const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
+  const scratch = gateVerdictScratch();
   const verdictPath = join(scratch, 'verdict.json');
   try {
     const result = await runSupervisedGateRun({
