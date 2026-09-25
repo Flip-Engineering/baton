@@ -65,11 +65,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-// The artifacts a landing regenerates before it commits (#296): the seam inventory, the surface
-// gate's outputs and the rendered docs. They run INSIDE the squash so the target never carries a
-// commit whose generated artifacts disagree with its source.
+// The artifacts a landing regenerates before it commits (#296): the surface gate's outputs and
+// the rendered docs. They run INSIDE the squash so the target never carries a commit whose
+// generated artifacts disagree with its source. The seam inventory is not among them (E02 of
+// the #598 audit): the committed artifact is deleted, and the landing table derives the map
+// live from the collector at gate time.
 const INTEGRATION_REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
