@@ -1,4 +1,4 @@
-// Issue #542 — a start refused on a scratch runtime scope it could not remove yet.
+// Issue #542 — a runtime scope the resident cannot remove yet, at the start and at the stop.
 //
 // Observed on this host 2026-09-24, restarting the resident after a power loss:
 //
@@ -10,12 +10,15 @@
 // removal succeeded. `RuntimeIsolation.reconcile` treated a scope it could not remove as a
 // permanent condition and `_trackStartupCleanup` turned that into the fatal
 // `coordinator_cleanup_incomplete`, so the resident — the thing every swarm on the host depends
-// on — stayed down until an operator removed the directory by hand.
+// on — stayed down until an operator removed the directory by hand. The SAME reconcile runs at
+// the stop, where its refusal fails the fleet drain (`coordinator_drain_incomplete`, cause
+// `runtime_cleanup_failed`) for the same transient scope.
 //
-// The repair pinned here: a scope the start cannot remove yet is a PENDING REMOVAL. The
+// The repair pinned here: a scope the resident cannot remove yet is a PENDING REMOVAL. The
 // coordinator records each such scope as `host.cleanup_pending` on its ledger, carries it on
-// `coordinator.startupCleanupDeferred()`, starts anyway, and reconciles exactly those scopes
-// again in the background until they are absent — with no retry count that then refuses.
+// `coordinator.cleanupDeferred()`, proceeds — a start that publishes, a stop that converges —
+// and reconciles exactly those scopes again in the background until they are absent, landing
+// `host.cleanup_completed`. The retry count is unbounded.
 //
 // Hermetic: a real git checkout in os.tmpdir(), the deployment's own RuntimeIsolation, a fixture
 // adapter, and a scope directory made unremovable with the one permission bit that produces the
@@ -155,7 +158,7 @@ test('542-a: a scratch scope unremovable for one pass starts the resident and en
   const hosted = await deployment.host();
   assert.equal(hosted.state, 'published', 'the resident publishes with the scope still pending');
 
-  assert.deepEqual(driver.coordinator.startupCleanupDeferred().map((row) => row.record), ['w-dead'],
+  assert.deepEqual(driver.coordinator.cleanupDeferred().map((row) => row.record), ['w-dead'],
     'the pending scope is surfaced on the coordinator read');
 
   const pending = ledgerRows(f.deploymentRoot, 'host.cleanup_pending');
@@ -170,7 +173,7 @@ test('542-a: a scratch scope unremovable for one pass starts the resident and en
   chmodSync(scope, 0o700);
 
   await until(() => !existsSync(scope), 'the pending scope to reach absence');
-  await until(() => driver.coordinator.startupCleanupDeferred().length === 0,
+  await until(() => driver.coordinator.cleanupDeferred().length === 0,
     'the deferred read to settle');
   assert.deepEqual(ledgerRows(f.deploymentRoot, 'host.cleanup_completed').map((row) => row.record), ['w-dead'],
     'the scope reaching absence is recorded once, on the same ledger');
@@ -197,7 +200,7 @@ test('542-b: a scope that keeps refusing keeps being retried, stays named, and i
     'the ledger names the scope the start could not remove');
 
   // The scope keeps refusing while its child tears down: the retry runs again and gives up nothing.
-  await until(() => (driver.coordinator.startupCleanupDeferred()[0]?.attempts ?? 0) >= 1,
+  await until(() => (driver.coordinator.cleanupDeferred()[0]?.attempts ?? 0) >= 1,
     'the background retry to run', KILL_ESCALATION_GRACE_MS * 2);
   assert.deepEqual(ledgerRows(f.deploymentRoot, 'host.cleanup_pending').map((row) => row.record), ['w-stuck'],
     'ONE pending row per scope, however many retries run');
@@ -207,7 +210,46 @@ test('542-b: a scope that keeps refusing keeps being retried, stays named, and i
 
   // The child finishes tearing down; the same retry now reaches absence.
   chmodSync(scope, 0o700);
-  await until(() => driver.coordinator.startupCleanupDeferred().length === 0,
+  await until(() => driver.coordinator.cleanupDeferred().length === 0,
     'the retry to reach absence');
   assert.equal(existsSync(scope), false, 'the scope is gone');
+});
+
+test('542-c: a scope that refuses when the resident stops does not fail the drain', async (t) => {
+  const f = fixture('c');
+  const opened = await open(f).then((value) => ({ value, error: null }), (error) => ({ error }));
+  assert.equal(opened.error, null, `the start must not refuse: ${opened.error?.message ?? ''}`);
+  const { deployment, driver } = opened.value;
+  let closed = false;
+  t.after(async () => { if (!closed) { try { await deployment.close(); } catch { /* best effort */ } } });
+  const hosted = await deployment.host();
+  assert.equal(hosted.state, 'published', 'the resident publishes');
+
+  // A scope that appeared after the start, still held open by its child when the resident stops:
+  // the drain's historical resource reconcile is where it is met (a start-time fixture would be
+  // deferred by the startup pass first and would not isolate this seam).
+  const scope = join(f.runtimeRoot, 'w-late');
+  mkdirSync(join(scope, 'tmp'), { recursive: true });
+  writeFileSync(join(scope, 'tmp', 'scratch.txt'), 'a child is still writing here\n');
+  chmodSync(scope, 0o500);
+  t.after(() => { try { chmodSync(scope, 0o700); } catch { /* absent, or already restored */ } });
+
+  const refusal = await deployment.close().then(() => null, (error) => error);
+  closed = true;
+  assert.equal(refusal, null,
+    `the drain must not fail on a scope it cannot remove yet: ${refusal?.message ?? ''}`);
+
+  assert.deepEqual(ledgerRows(f.deploymentRoot, 'host.cleanup_pending').map((row) => row.record), ['w-late'],
+    'the stop names the scope it could not remove');
+  assert.equal(ledgerRows(f.deploymentRoot, 'host.cleanup_completed').length, 0,
+    'no row claims a removal that did not happen');
+  assert.deepEqual(driver.coordinator.cleanupDeferred().map((row) => row.record), ['w-late'],
+    'and the scope stays surfaced after the resident stopped');
+  assert.equal(existsSync(scope), true, 'it is still on disk for the next start');
+
+  // A leftover scope is not a brick: the next start reconciles it once the child is gone.
+  chmodSync(scope, 0o700);
+  const second = await open(f);
+  t.after(async () => { try { await second.deployment.close(); } catch { /* best effort */ } });
+  assert.equal(existsSync(scope), false, 'the next start removes the leftover');
 });
