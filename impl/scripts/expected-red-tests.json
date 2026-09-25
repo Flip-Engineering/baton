@@ -1647,6 +1647,10 @@
       "reason": "#85"
     },
     {
+      "file": "test/canonical-naming-233-red.test.mjs",
+      "reason": "#566"
+    },
+    {
       "file": "test/capacity-refusal-visibility-red.test.mjs",
       "reason": "#35"
     },
@@ -1729,6 +1733,10 @@
     {
       "file": "test/frame-bounded-250-red.test.mjs",
       "reason": "#250"
+    },
+    {
+      "file": "test/frame-economics-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/git-batch-216-red.test.mjs",
@@ -1829,6 +1837,10 @@
     {
       "file": "test/log-archival-285-red.test.mjs",
       "reason": "#285"
+    },
+    {
+      "file": "test/mcp-packaging-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/mcp-profile-parity-red.test.mjs",
@@ -2213,6 +2225,10 @@
     {
       "file": "test/wave-index-memo-229-red.test.mjs",
       "reason": "#229"
+    },
+    {
+      "file": "test/wave-observability-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/waves-list-scaling-red.test.mjs",
