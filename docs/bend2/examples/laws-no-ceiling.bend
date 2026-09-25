@@ -1,10 +1,14 @@
-# CLAIM: the runtime's decision on requested work is a function of authority and of the resource
-# state observed now, and it is the same for every size, count, spend and elapsed time. A work
-# item is admitted, or waits while an observed resource is short, or is refused for lack of
-# authority. No magnitude and no clock can turn waiting or admitted work into a refusal, whether
-# the bound is a bare constant or one derived from a physical resource.
+# CLAIM: for every size and every elapsed time the model decision is the specification's: it is
+# authority and the observed resource state, and no magnitude and no clock turn waiting or admitted
+# work into a refusal. The extension below states the admission inputs and the transitions the
+# operator adopted on 2026-09-25: the decision's inputs derive from the authenticated authority and
+# the measured resource, a completion, a cancellation and an external failure name their own
+# disposition, a tick and an attempt timeout preserve the work disposition and the pending request.
+# Scope at this level: the queue, the scheduler, the clock, the measurement and every host effect
+# are supplied or absent; the runtime's own limits are not imported.
 # Status: proposed revision of M-10 (revision 12a, 2026-09-25), from the operator rulings of
-# 2026-09-13, 2026-09-20 and 2026-09-21 (#258, #541, #583). Not part of the approved set.
+# 2026-09-13, 2026-09-20 and 2026-09-21 (#258, #541, #583) and the adopted statement. Not part of
+# the approved set.
 # Reference: ../reference/README.md, bend 2.0.25, a4952426.
 # Evidence: laws-no-ceiling.evidence.md.
 import Base
@@ -89,3 +93,110 @@ def decision_ignores_magnitude_and_clock(size, elapsed, authorized, available):
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print("no-ceiling: the decision ignores magnitude and clock; law checked.")
+
+def authorized_from(grant: Bool) -> Bool:
+  grant
+
+def available_from(measured: Bool) -> Bool:
+  measured
+
+def admitted(grant: Bool, measured: Bool, size: Nat, elapsed: Nat) -> Decision:
+  decide(size, elapsed, authorized_from(grant), available_from(measured))
+
+law admission_inputs_derive_from_authority_and_measurement:
+  for grant: Bool
+  for measured: Bool
+  for size: Nat
+  for elapsed: Nat
+  {admitted(grant, measured, size, elapsed) == decide(0n, 0n, grant, measured) : Decision}
+
+def admission_inputs_derive_from_authority_and_measurement(grant, measured, size, elapsed):
+  {==}
+
+type Disposition is Data:
+  Pending{}
+  Running{}
+  Completed{}
+  Cancelled{}
+  Failed{id: Nat}
+
+type Request is Data:
+  Request{owner: Nat, owed: Nat, continuation: +List<Nat>}
+
+type Work is Data:
+  Work{disposition: Disposition, telemetry: Nat, retry: Nat, request: Request}
+
+type WorkEvent is Data:
+  Tick{}
+  Completion{}
+  Cancellation{}
+  ExternalFailure{id: Nat}
+  AttemptTimeout{}
+
+def named_disposition(e: WorkEvent, current: Disposition) -> Disposition:
+  match e:
+    case Tick{}: current
+    case Completion{}: Completed{}
+    case Cancellation{}: Cancelled{}
+    case ExternalFailure{+id}: Failed{id}
+    case AttemptTimeout{}: current
+
+def step(w: Work, e: WorkEvent) -> Work:
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}:
+      Work{named_disposition(e, disposition), telemetry, retry, request}
+
+def disposition_of(w: Work) -> Disposition:
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}: disposition
+
+def request_of(w: Work) -> Request:
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}: request
+
+law a_work_event_sets_the_disposition_it_names:
+  for w: Work
+  for e: WorkEvent
+  {disposition_of(step(w, e)) == named_disposition(e, disposition_of(w)) : Disposition}
+
+def a_work_event_sets_the_disposition_it_names(w, e):
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}:
+      match e:
+        case Tick{}: {==}
+        case Completion{}: {==}
+        case Cancellation{}: {==}
+        case ExternalFailure{+id}: {==}
+        case AttemptTimeout{}: {==}
+
+law a_tick_preserves_the_work_disposition:
+  for w: Work
+  {disposition_of(step(w, Tick{})) == disposition_of(w) : Disposition}
+
+def a_tick_preserves_the_work_disposition(w):
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}: {==}
+
+law an_attempt_timeout_preserves_the_work_disposition:
+  for w: Work
+  {disposition_of(step(w, AttemptTimeout{})) == disposition_of(w) : Disposition}
+
+def an_attempt_timeout_preserves_the_work_disposition(w):
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}: {==}
+
+law pending_work_keeps_its_request_across_a_tick:
+  for w: Work
+  {request_of(step(w, Tick{})) == request_of(w) : Request}
+
+def pending_work_keeps_its_request_across_a_tick(w):
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}: {==}
+
+law pending_work_keeps_its_request_across_an_attempt_timeout:
+  for w: Work
+  {request_of(step(w, AttemptTimeout{})) == request_of(w) : Request}
+
+def pending_work_keeps_its_request_across_an_attempt_timeout(w):
+  match w:
+    case Work{+disposition, +telemetry, +retry, +request}: {==}
