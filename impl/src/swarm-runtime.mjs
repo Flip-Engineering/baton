@@ -2092,14 +2092,41 @@ export class SwarmRuntime {
     return participant;
   }
 
-  _permit(swarm, principal, context, permission) {
+  _permit(swarm, principal, context, permission, targetParticipantId = null) {
     const member = this._caller(swarm, principal, context);
     if (member && !(member.permissions ?? DEFAULT_PERMISSIONS).includes(permission)) {
-      refuse(`This swarm has not granted ${permission} authority to this participant`, 'swarm_permission_required', {
-        permission, participantId: member.participantId,
-      });
+      // Issue #584: a lead holds every management act over the seats it leads (the parentId
+      // subtree — docs/46 §4.1) and stop over itself. The flat permission list is the root's
+      // grant TO this seat; the join-time delegation cap (a recruiter cannot grant authority it
+      // does not hold) would otherwise make `stop` structurally unreachable for every non-root
+      // seat, and the management relation — not the flat list — is what the law grants.
+      const actsOverLedSeats = permission === 'stop' || permission === 'review'
+        || permission === 'integrate' || permission === 'recruit';
+      const namesLedSeat = typeof targetParticipantId === 'string' && targetParticipantId.length > 0
+        && this._leads(swarm, member.participantId, targetParticipantId);
+      const stopsItself = permission === 'stop' && targetParticipantId === member.participantId;
+      if (!(actsOverLedSeats && namesLedSeat) && !stopsItself) {
+        refuse(`This swarm has not granted ${permission} authority to this participant`, 'swarm_permission_required', {
+          permission, participantId: member.participantId,
+        });
+      }
     }
     return member;
+  }
+
+  /** Whether `callerId` leads `targetId`: the target sits in the caller's parentId subtree
+   * (docs/46 §4.1), the one direction the delegation relation runs — a seat does not lead the
+   * seat that recruited it. Bounded by the delegation depth; a cycle would still terminate on
+   * the seen guard. */
+  _leads(swarm, callerId, targetId) {
+    let current = swarm.participants?.[targetId]?.parentId ?? null;
+    const seen = new Set();
+    while (typeof current === 'string' && !seen.has(current)) {
+      if (current === callerId) return true;
+      seen.add(current);
+      current = swarm.participants?.[current]?.parentId ?? null;
+    }
+    return false;
   }
 
   /** The permission one swarm.update request requires of THIS caller — the ONE derivation the
@@ -8188,7 +8215,11 @@ export class SwarmRuntime {
       }
       permission = 'contribute';
     }
-    const caller = this._permit(swarm, principal, context, permission);
+    // Issue #584: the commands that name a target seat pass it, so a management act over a
+    // seat the caller leads (and a self-stop) is judged against the relation, not just the
+    // caller's flat grant.
+    const caller = this._permit(swarm, principal, context, permission,
+      typeof args?.participantId === 'string' ? args.participantId : null);
     // Issue #296: the landing verb. Idempotent under its operation key: the first attempt lands and
     // records its result, a retry under the same key returns that result, and a retry over an
     // attempt whose outcome was never confirmed refuses (the family's own rule — only swarm.recruit
