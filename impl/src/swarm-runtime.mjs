@@ -50,7 +50,8 @@ import { renderRouteUsageLines } from './adapter.mjs';
 // runs that test, which is the rule the landing's region table alone could not carry.
 import { gateSetForPaths, issueNumberOf } from './landing-table.mjs';
 import {
-  NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, unaccountedFiles, verdictFailures,
+  NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, confirmSuiteFailures, confirmationLine,
+  unaccountedFiles, verdictFailures,
 } from './suite-comparison.mjs';
 import { selectFromRepository } from './verification-selection.mjs';
 import { landContribution } from './worktree.mjs';
@@ -311,14 +312,35 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   const unaccountedRows = unaccounted.map((file) => ({
     row: 'selected-file-unaccounted', file, script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
   }));
+  // Issue #593: a blocking row must be one the change's own run reproduces. A row that asserts
+  // something about the caller's event loop or a millisecond deadline can redden against nine
+  // lanes on a ten-core host and pass in the base run, which schedules fewer files; the blocking
+  // files are re-run once at the squash, and only a row that run reproduces blocks. The checkout
+  // is at the squash here (the base run switched back), so this run judges the change. A selected
+  // file the run did not account for is a fact about the run, never a flake: it is never confirmed
+  // away, and it keeps its own row below.
+  let blocking = comparison.blocking;
+  let unconfirmed = [];
+  if (blocking.length > 0) {
+    const blockingFiles = [...new Set(blocking.map((failure) => failure.file))]
+      .filter((file) => typeof file === 'string' && file.length > 0
+        && existsSync(join(dir, GATE_RUNNER_LAYOUT.suiteRoot, file)));
+    if (blockingFiles.length > 0) {
+      const again = await runGateFiles(dir, blockingFiles, supervision);
+      const confirmed = confirmSuiteFailures({ blocking, confirmation: again.document });
+      blocking = confirmed.confirmed;
+      unconfirmed = confirmed.unconfirmed;
+    }
+  }
   return {
     files,
-    verdictLine: `${comparison.blocking.length + unaccounted.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
-      + comparisonCountsLine({ blocking: comparison.blocking, shared: comparison.shared, baseNoun: 'the target' })
+    verdictLine: `${blocking.length + unaccounted.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
+      + comparisonCountsLine({ blocking, shared: comparison.shared, baseNoun: 'the target' })
       + `${unaccounted.length > 0 ? `, ${unaccounted.length} selected file(s) the run did not account for` : ''}`
-      + `${squashNote}${comparison.note}${unjudgedNote}`,
-    unexpected: [...comparison.blocking.map((failure) => failure.original), ...unaccountedRows],
+      + `${confirmationLine({ unconfirmed })}${squashNote}${comparison.note}${unjudgedNote}`,
+    unexpected: [...blocking.map((failure) => failure.original), ...unaccountedRows],
     failingOnTarget: comparison.shared.map((failure) => failure.original),
+    ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map((failure) => failure.original) }),
     stderrTail, exit,
   };
 }
@@ -8208,6 +8230,10 @@ export class SwarmRuntime {
             files,
             verdictLine: verdict?.verdictLine ?? null,
             unexpected: Array.isArray(verdict?.unexpected) ? verdict.unexpected : [],
+            // Issue #593: the blocking rows the change's own run did not reproduce ride the gate
+            // verdict to the receipt, so a reader sees them instead of only the verdict line.
+            ...(Array.isArray(verdict?.unconfirmed) && verdict.unconfirmed.length > 0
+              ? { unconfirmed: verdict.unconfirmed } : {}),
           };
         },
       });
