@@ -1,10 +1,9 @@
 # Bend2 law application plan, 2026-09-25
 
 The obligations of law revisions 11 and 12 are encoded as checked models on `bend2-rewrite` at
-`c238cece`, and every `Application scope` row of [laws-trace.md](laws-trace.md) records the
-runtime application as open. This record names the lanes that apply those obligations to `impl/`
-on `master`, the runtime site each lane owns, and the test that closes it. An obligation stays
-open in the trace until its lane's test proves it against the runtime.
+`c238cece`. This record names the lanes that apply those obligations to `impl/` on `master` and the
+runtime site each lane owns. A slice lands when its own real run works: the lane's changed-path run,
+and `swarm integrate`'s comparison of the change's failures against the target's.
 
 ## Route
 
@@ -78,17 +77,9 @@ management act over its scope, taking recruit, guide, stop, review, integrate an
 set; a seat stops itself. The lane reports which of the management-action universe and the
 prospective-recruit scope it could derive from the runtime and which it left open.
 
-## Reviewer
-
-Seat `bend2-appreview19` on route `codex/gpt-6-astra`, read-only result intent. For each landed
-lane it re-runs that lane's test at the landed tip, reads the diff against the obligation's
-wording, and publishes a review contribution naming what it reproduced and what it could not.
-
 ## Queued
 
-Lane D applies revisions 12a and 12b after lanes A, B and C land. Lane E follows each landing with
-the trace edit that names the proving test in that obligation's `Application scope` row. This plan
-does not edit the trace.
+Lane D applies revisions 12a and 12b after lanes A, B and C land.
 
 ## Boundaries
 
