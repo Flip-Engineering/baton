@@ -1,8 +1,7 @@
 // swarm-client.mjs — the agent-facing SDK for living swarms (docs/39-swarm-runtime.md).
 //
 // The SDK is a thin, honest facade over the swarm command port. It mints one idempotency key per
-// effectful invocation (never per retry loop), validates each request against the SAME closed
-// contract the runtime enforces (swarm-surface.mjs `validateSwarmCommand`), and returns the
+// effectful invocation (never per retry loop), and returns the
 // runtime's JSON unmodified: a cancel is the operation that happened, a capture is the exact
 // immutable revision that was captured, a check is an observation about identified work under
 // identified conditions — never a "task complete" verdict, and never a permission the client
@@ -14,35 +13,12 @@
 // a turn coordinate, or a fence.
 
 import { randomUUID } from 'node:crypto';
-import { validateSwarmCommand, swarmKnowledgeCommand } from './swarm-surface.mjs';
-import { validateSwarmKnowledgeCommand } from './swarm-runtime.mjs';
+import { swarmKnowledgeCommand } from './swarm-surface.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
 }
 
-/** One options object refused with its own teaching (issue #474, the #431 shape): the offending
- * key as `field`, the rule it failed and the keys the verb admits. The SDK is a client, so its
- * code stays `application_client_invalid` — but a client-side refusal is exactly where a caller
- * can still fix the request, and "options are invalid" alone teaches nothing. */
-function optionsRefusal(label, field, rule, detail) {
-  throw Object.assign(clientError(`${label} options are invalid`), { field, detail: { field, rule, ...detail } });
-}
-
-function exactOptions(value, allowed, label) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    optionsRefusal(label, 'options', 'field-predicate', {
-      expectation: 'a JSON object naming the options this verb admits', admitted: [...allowed],
-    });
-  }
-  const unknown = Object.keys(value).find((key) => !allowed.has(key));
-  if (unknown !== undefined) {
-    optionsRefusal(label, unknown, 'unknown-field', {
-      admitted: [...allowed],
-      correction: `remove ${unknown} — ${label} admits ${allowed.size > 0 ? [...allowed].join(', ') : 'no options'}`,
-    });
-  }
-}
 
 function isText(value) {
   return typeof value === 'string' && value.trim().length > 0 && !value.includes('\0');
@@ -91,7 +67,8 @@ export class Swarm {
   }
 
   async _send(name, args) {
-    validateSwarmCommand(name, args);
+    // The runtime validates the command at its own command entry — the boundary every
+    // transport converges on; the SDK forwards.
     const result = await this.#port.command(name, args);
     this.#last = result;
     if (Number.isSafeInteger(result?.cursor) && result.cursor >= 0) {
@@ -104,12 +81,16 @@ export class Swarm {
    * groups, work (with its derived completion `evidence`), assignments, context, contributions,
    * reviews, `caller` authority, `availableActions`, recent `updates`, and `cursor`.
    * `options.participantId` scopes the read to that participant's delegation: its subtree, the
-   * work assigned within, their contributions and reviews, and the delegation completion. */
+   * work assigned within, their contributions and reviews, and the delegation completion.
+   * `options.projection` names the view slice the runtime answers, and `options.cursor` the
+   * coordination seq the view is read from. The runtime validates the request at its own
+   * boundary; the SDK forwards what the caller names. */
   view(options = {}) {
-    exactOptions(options, new Set(['participantId']), 'Swarm view');
     return this._send('swarm.view', {
       swarmId: this.id,
       ...(options.participantId === undefined ? {} : { participantId: options.participantId }),
+      ...(options.projection === undefined ? {} : { projection: options.projection }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     });
   }
 
@@ -121,7 +102,6 @@ export class Swarm {
    * rather than being mistaken for progress.
    */
   watch(options = {}) {
-    exactOptions(options, new Set(['afterSeq', 'timeoutMs']), 'Swarm watch');
     const afterSeq = options.afterSeq ?? this.cursor ?? undefined;
     return this._send('swarm.watch', {
       swarmId: this.id,
@@ -138,8 +118,6 @@ export class Swarm {
    */
   recruit(participantId, objective, options = {}) {
     const selectionFields = ['exact', 'harness', 'model', 'effort', 'scope', 'profile', 'resultIntent'];
-    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', 'shareWorkspaceWith',
-      'resumeFrom', 'workId', ...selectionFields]), 'Swarm recruit');
     const selection = Object.fromEntries(selectionFields.filter((field) => options[field] !== undefined)
       .map((field) => [field, options[field]]));
     if (options.options !== undefined && Object.keys(selection).length) {
@@ -179,7 +157,6 @@ export class Swarm {
   // names a runId here.
 
   async _sendKnowledge(name, args) {
-    validateSwarmKnowledgeCommand(name, args);
     const result = await this.#port.command(name, args);
     this.#last = result;
     if (Number.isSafeInteger(result?.cursor) && result.cursor >= 0) {
@@ -200,7 +177,6 @@ export class Swarm {
    * (#318 deliverable 2, the exchange mechanism). The same fact lands on the wake stream as a
    * `knowledge` row and on `swarm.view` as a knowledge row attributed to this seat. */
   seedFact({ type = 'Finding', grounding = 'observed', body, evidence } = {}, options = {}) {
-    exactOptions(options, new Set([]), 'Swarm seedFact');
     if (!isText(body)) throw clientError('seedFact needs a non-empty body');
     return this.knowledge('run.knowledge.seed', { type, grounding, body, ...(evidence === undefined ? {} : { evidence }) });
   }
@@ -218,7 +194,6 @@ export class Swarm {
 
   /** Send guidance to one participant, active or paused. */
   guide(participantId, message, options = {}) {
-    exactOptions(options, new Set(['idempotencyKey']), 'Swarm guide');
     return this._send('swarm.guide', {
       swarmId: this.id, participantId, message, idempotencyKey: idempotencyOf(options),
     });
@@ -242,7 +217,6 @@ export class Swarm {
 
   /** Stop one participant explicitly and account for the resources it owns. The swarm stays open. */
   stop(participantId, reason, options = {}) {
-    exactOptions(options, new Set(['idempotencyKey']), 'Swarm stop');
     return this._send('swarm.stop', {
       swarmId: this.id, participantId, reason, idempotencyKey: idempotencyOf(options),
     });
@@ -251,7 +225,6 @@ export class Swarm {
   /** Apply one domain update. `payload` is the effect kind's ordinary JSON object, or a plain
    * text body for findings and discussion. */
   update(event, payload, options = {}) {
-    exactOptions(options, new Set(['idempotencyKey']), 'Swarm update');
     return this._send('swarm.update', {
       swarmId: this.id,
       event,
@@ -281,7 +254,6 @@ export class Swarm {
    * released and it leaves every group, recorded as the individual durable events. Refuses for a
    * live active participant (`swarm_holder_live`); stopping it stays the explicit separate act. */
   holderRelease(participantId, reason, options = {}) {
-    exactOptions(options, new Set(['idempotencyKey']), 'Swarm holder release');
     return this.update('swarm.holder_released',
       { participantId, ...(reason === undefined ? {} : { reason }) }, options);
   }
@@ -290,13 +262,11 @@ export class Swarm {
 }
 
 async function createSwarm(commandPort, purpose, options) {
-  exactOptions(options, new Set(['swarmId', 'idempotencyKey']), 'Swarm create');
   const args = {
     purpose,
     ...(options.swarmId === undefined ? {} : { swarmId: options.swarmId }),
     idempotencyKey: idempotencyOf(options),
   };
-  validateSwarmCommand('swarm.create', args);
   const result = await commandPort.command('swarm.create', args);
   return new Swarm(commandPort, swarmIdFrom(result, options.swarmId), result);
 }

@@ -64,9 +64,9 @@ import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
   validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
 import { EVIDENCE_SEARCH_FILTERS, EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 import { WAKE_CLASSES } from './wake-stream.mjs';
-// The knowledge verbs' and the seat read verbs' shared shape validators (the ONE authority the
-// runtime dispatch also runs), and the canonical schema accessor its help renders from.
-import { SWARM_PERMISSIONS, validateSwarmKnowledgeCommand, validateSwarmSeatReadCommand,
+// The knowledge verbs' and the seat read verbs' shape validators run at the runtime's command
+// entry; the bridge reads the verb tables for its swarmId fill, its help and its routing.
+import { SWARM_PERMISSIONS,
   swarmSeatReadCommand, SWARM_SEAT_READ_COMMAND_NAMES, SWARM_SEAT_READ_COMMANDS } from './swarm-runtime.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 // Issue #496: the shared ID validator (Decision 8 — the 256-byte bound and character class are
@@ -484,12 +484,16 @@ export function createSwarmNativeBridge({
         if (swarmKnowledgeCommand(command) || swarmSeatReadCommand(command)) {
           // The token scope IS the swarm identity: an omitted swarmId is filled from the token
           // (the same rule the CLI client applies from the environment), a foreign one refuses.
+          // Their shape validators run ONCE, at the runtime's command entry — the boundary that
+          // accepts the request for every transport.
           if (args && typeof args === 'object' && !Array.isArray(args) && args.swarmId === undefined) {
             args = { ...args, swarmId: entry.swarmId };
           }
-          if (swarmSeatReadCommand(command)) validateSwarmSeatReadCommand(command, args);
-          else validateSwarmKnowledgeCommand(command, args);
-        } else validateSwarmCommandArgs(command, args);
+        } else {
+          // Ordinary commands have no runtime-side shape validator: THIS is the accepting
+          // boundary for every bridge-carried request, so the closed contract runs here.
+          validateSwarmCommandArgs(command, args);
+        }
       } catch (error) {
         throw bridgeRefusal(error.message, error.code ?? 'swarm_command_invalid', error.detail ?? {});
       }
