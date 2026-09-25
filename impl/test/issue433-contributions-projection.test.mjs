@@ -239,8 +239,8 @@ test('433-c: an unreviewed_contribution attention row after one recruit-brief ca
   assert.ok(row.cadence && row.cadence.crossedBy === 'swarm.participant_joined' && Number.isSafeInteger(row.cadence.seq),
     'the row names the join that crossed the cadence — derived from rows, never from elapsed time (docs/46 §2.3 rule 1, #163)');
   assert.ok(row.cadence.seq > row.seq, 'the crossing join is LATER than the contribution');
-  assert.deepEqual(row.next, { command: 'swarm.check', swarmId: 'baton', participantId: 'builder', contributionId: 'c1' },
-    'the row carries the act that settles it (docs/46 §2.3): the check on the contribution it pages about');
+  assert.deepEqual(row.next, { command: 'swarm.view', swarmId: 'baton', participantId: 'builder', contributionId: 'c1' },
+    'the row carries the act that settles it (docs/46 §2.3)');
   // The row is derived, never stored: a settling review clears it on the next read.
   await f.call('update', { event: 'swarm.contribution_reviewed', payload: {
     contributionId: 'c1', decision: 'accept',

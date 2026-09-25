@@ -48,7 +48,7 @@ const refuse = (message, code, detail = {}) => Object.assign(new Error(message),
 const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
-  'swarm.check': 'review', 'swarm.stop': 'stop',
+  'swarm.stop': 'stop',
 });
 const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.group_updated': 'organize', 'swarm.work_updated': 'organize',
@@ -865,11 +865,11 @@ test('the help text tells the truth about idempotency keys: what replays, what n
   // minted key, and that any other new attempt needs a new one.
   assert.match(family.stdout, /swarm\.recruit and swarm\.holder_released/u);
   assert.match(family.stdout, /NEW attempt needs a NEW key/u);
-  assert.match(family.stdout, /swarm\.capture and swarm\.check take no key/u);
+  assert.match(family.stdout, /swarm\.capture takes no key/u);
   assert.match(family.stdout, /on STDOUT with a non-zero exit/u, 'the refusal stream is pinned in the help');
-  for (const command of ['swarm.capture', 'swarm.check']) {
-    const help = await execFileAsync(process.execPath, [BRIDGE_MODULE, command, '--help'], { env: cleanEnv });
-    assert.match(help.stdout, /idempotencyKey is refused here/u, `${command} help names what it takes`);
+  {
+    const help = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.capture', '--help'], { env: cleanEnv });
+    assert.match(help.stdout, /idempotencyKey is refused here/u, 'swarm.capture help names what it takes');
   }
   const update = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.update', '--help'], { env: cleanEnv });
   assert.match(update.stdout, /use a NEW key for a new attempt/u);

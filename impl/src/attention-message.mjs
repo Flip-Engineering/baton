@@ -23,10 +23,6 @@ const OWED_WORDS = Object.freeze({
 function nextCommand(item) {
   const next = item.next !== null && typeof item.next === 'object' ? item.next : {};
   const pick = (name) => text(next[name]) ?? text(item[name]);
-  if (next.command === 'swarm.check') {
-    const ids = [pick('swarmId'), pick('participantId'), pick('contributionId')];
-    return ids.every(Boolean) ? `baton swarm check ${ids.join(' ')} CHECK_ID` : null;
-  }
   if (next.command === 'swarm.view') {
     const swarmId = pick('swarmId');
     return swarmId === null ? null : `baton swarm view ${swarmId}`;

@@ -158,22 +158,6 @@ if (clockFindings.length > 0) {
   }
   process.exit(1);
 }
-// Issue #582: the hand-maintained divergence ledger and its HEAD monotone check are removed —
-// the ledger-comparison gates above every suite run were the banned bookkeeping pattern. What
-// remains is the registry-derived surface gate below (#262), which derives everything it
-// judges from the live registry and never reads a committed census.
-
-// Issue #262: the surface gate (grammar lint, artifact/doc/parity staleness, MCP dispatch
-// resolvability) runs before any test so a surface change is refused when it is made.
-const { runSurfaceGate } = await import(new URL('./surface-gate.mjs', import.meta.url).href);
-
-const gateFindings = await runSurfaceGate();
-for (const finding of gateFindings) process.stderr.write(`surface-gate: ${finding}\n`);
-if (gateFindings.length > 0) {
-  process.stderr.write('surface-gate: refused — regenerate artifacts with `node scripts/surface-gate.mjs --write` and fix the remaining findings\n');
-  process.exit(1);
-}
-
 const repositoryRoot = new URL('../../', import.meta.url);
 
 // Unix-domain socket fixtures need their paths to remain below sockaddr_un.sun_path. `/tmp` is

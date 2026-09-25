@@ -79,8 +79,7 @@ test('585-1: a review_owed wake names the swarm, the seat, the contribution and 
     return owed(store, {
     swarmId: 'swarm-40e6', participantId: 'ada', contributionId: 'contribution-ada-1',
     owed: 'review_owed', ask: null,
-    next: { command: 'swarm.check', swarmId: 'swarm-40e6', participantId: 'ada',
-      contributionId: 'contribution-ada-1' },
+    next: { command: 'swarm.view', swarmId: 'swarm-40e6' },
   }, '585-review-owed');
   }, { wakeClass: 'root_owed', swarmId: 'swarm-40e6' });
 
@@ -88,7 +87,7 @@ test('585-1: a review_owed wake names the swarm, the seat, the contribution and 
     `${SMILE} ▲ needs you — review owed in swarm-40e6`,
     '  from: ada · contribution-ada-1',
     '  subject: The ledger fold reads its checkpoint once',
-    '  next: baton swarm check swarm-40e6 ada contribution-ada-1 CHECK_ID',
+    '  next: baton swarm view swarm-40e6',
   ].join('\n'));
   assert.equal(body.includes('{'), false, 'the root reads no JSON blob');
   assert.equal(body.includes('"'), false, 'no JSON string carries a field into the message');
@@ -135,11 +134,11 @@ test('585-4: every value is shown whole; nothing is shortened', async () => {
   const ask = `${'the ask '.repeat(600)}END`;
   const body = await rootWakeBody((store) => owed(store, {
     swarmId: long, participantId: long, contributionId: long, owed: 'needs_root', ask,
-    next: { command: 'swarm.check', swarmId: long, participantId: long, contributionId: long },
+    next: { command: 'swarm.view', swarmId: long },
   }, '585-whole'), { wakeClass: 'root_owed', swarmId: long });
 
   assert.ok(body.includes(`  ask: ${ask}`), 'the whole ask reaches the reader');
-  assert.ok(body.includes(`baton swarm check ${long} ${long} ${long} CHECK_ID`), 'the command is runnable as written');
+  assert.ok(body.includes(`baton swarm view ${long}`), 'the command is runnable as written');
   assert.equal(body.includes('…'), false, 'no value is cut');
 });
 
