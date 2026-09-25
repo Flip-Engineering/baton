@@ -74,19 +74,12 @@ const ADMISSION = Object.freeze({
   'wave.run.spec_path': { lane: 'wave.run.spec_path', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'waves.run admission (the semantic-registry input schema; the interpreter containment re-checks)', refusalCode: 'workflow_spec_invalid' },
   'waves.harvest.onto': { lane: 'waves.harvest.onto', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'the harvest accessor (registry schema, facade shape normalizer, MCP tool schema)', refusalCode: 'application_waves_harvest_invalid' },
   'view.resultpin.page': { lane: 'view.resultpin.page', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
-  'decision.question': { lane: 'decision.question', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest / coordinator decision seam', refusalCode: 'decision_question_exceeded' },
-  'decision.need': { lane: 'decision.need', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_need_exceeded' },
-  'decision.rationale': { lane: 'decision.rationale', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_rationale_exceeded' },
   'orientation.note': { lane: 'orientation.note', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordinator.orientWorker', refusalCode: 'orientation_note_exceeded' },
   'steering.focus': { lane: 'steering.focus', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordinator steering policy injection', refusalCode: 'steering_focus_exceeded' },
-  'board.title': { lane: 'board.title', class: 'admission', value: 160, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.postBoardItem', refusalCode: 'board_title_exceeded' },
-  'board.detail': { lane: 'board.detail', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.postBoardItem', refusalCode: 'board_detail_exceeded' },
   // Issue #66 (D7): the resolve act's own admission bound, enforced at coordinator.resolveDoubt.
   'doubt.resolution.bytes': { lane: 'doubt.resolution.bytes', class: 'admission', value: 4096, unit: 'bytes', graceful: 'refused', enforcedAt: 'coordinator.resolveDoubt', refusalCode: 'doubt_resolution_exceeded' },
   'board.report.body': { lane: 'board.report.body', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.submitBoardReport', refusalCode: 'board_report_exceeded' },
   'run.legacy_send.body': { lane: 'run.legacy_send.body', class: 'admission', value: 16384, unit: 'bytes', graceful: null, enforcedAt: 'application run.workstream.notify / run.act send / coordination-store run control', refusalCode: 'run_legacy_send_exceeded' },
-  'decision.option.label': { lane: 'decision.option.label', class: 'admission', value: 160, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest option label', refusalCode: 'decision_option_label_exceeded' },
-  'decision.option.summary': { lane: 'decision.option.summary', class: 'admission', value: 512, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest option summary', refusalCode: 'decision_option_summary_exceeded' },
   'decision.text': { lane: 'decision.text', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionAnswer text', refusalCode: 'decision_text_exceeded' },
   'scratchpad.entry.body': { lane: 'scratchpad.entry.body', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.writeScratchpad', refusalCode: 'scratchpad_entry_exceeded' },
   // Issue #294: one wake-filter token (a class/swarm/participant name) admitted into a subscribe
@@ -237,11 +230,9 @@ const LIST_PAGE_ITEMS = Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['me
 // because a seat's brief renders every peer's role line (`## Swarm situation`), in an answer the
 // bridge counts TWICE (the MCP envelope mirrors it):
 //   2 × 36 seats × 35 peer lines × bound ≤ wire.frame ⇒ bound ≤ 416 B
-// 160 B is the registry's own one-line bound (`board.title`, `decision.option.label`: one line a
-// reader scans — the same shape a role line has) and it composes with the roster's own share to
-// spare (36 × 35 × 160 × 2 = 403 200 B, 38 % of the frame), so the value is READ from that row
-// rather than re-typed here.
-const ROLE_HEAD_BYTES = ADMISSION['board.title'].value;
+// 160 B is the registry's own one-line bound for a role line (the `view.role.head` row below) and it
+// composes with the roster's own share to spare (36 × 35 × 160 × 2 = 403 200 B, 38 % of the frame).
+const ROLE_HEAD_BYTES = 160;
 
 // Issue #464 (the participant row's commit tail — the second half of the issue, after the role
 // head): the wrapper-attributed commits a participant row CARRIES. The live swarm measured one
@@ -480,9 +471,8 @@ export const MAX_MESSAGE_DEPTH_BUDGET = 8;
  * "Cannot convert object to primitive value" inside the template literal. */
 export const code = 'limits-module';
 
-/** sha256 of the canonical serialization of the DECLARED rows ONLY (Decision 7). A deployment
- * override of decision.need/decision.rationale rides the doctor projection's per-lane `effective`
- * channel and never changes this digest — the CLI handshake stays green between identical code. */
+/** sha256 of the canonical serialization of the DECLARED rows ONLY (Decision 7): the digest covers
+ * the rows the registry declares, so the CLI handshake stays green between identical code. */
 export const FRAME_LIMITS_DIGEST = createHash('sha256')
   .update(JSON.stringify(canonical(FRAME_LIMITS))).digest('hex');
 

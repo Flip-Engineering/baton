@@ -8504,16 +8504,10 @@ export class BatonApplication {
     const routes = [...this.profiles.values()].flatMap((profile) => profile.routes.map((route) => (
       Object.freeze({ ...clone(route), state: 'ready' })
     )));
-    // Decision 7: the frozen limits projection tabulates EVERY registry lane; `effective` is
-    // present ONLY where a deployment override exists (decision.need / decision.rationale) — the
-    // digest covers DECLARED rows only, so an override never changes the handshake.
-    const reuse = this.driver?.coordinator?._reuseDecisionPolicy ?? null;
+    // Decision 7: the frozen limits projection tabulates EVERY registry lane.
     const lanes = Object.keys(FRAME_LIMITS).map((lane) => {
       const row = FRAME_LIMITS[lane];
-      const projected = { lane, class: row.class, value: row.value, unit: row.unit, graceful: row.graceful ?? null };
-      if (reuse && lane === 'decision.need' && reuse.maxNeedBytes !== row.value) projected.effective = reuse.maxNeedBytes;
-      if (reuse && lane === 'decision.rationale' && reuse.maxRationaleBytes !== row.value) projected.effective = reuse.maxRationaleBytes;
-      return projected;
+      return { lane, class: row.class, value: row.value, unit: row.unit, graceful: row.graceful ?? null };
     });
     return deepFreeze({
       schemaVersion: 1, repoId: this.repoId,
@@ -9130,22 +9124,6 @@ export class BatonApplication {
         && (typeof value.owner !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.owner)))
       || (value.evidence !== undefined && !Array.isArray(value.evidence))) {
       throw applicationError('run board post request is invalid', 'application_board_post_invalid');
-    }
-    const titleBytes = Buffer.byteLength(value.title);
-    if (titleBytes > FRAME_LIMITS['board.title'].value) {
-      throw applicationError(
-        `Board title exceeds the ${FRAME_LIMITS['board.title'].value}-byte cap (actual ${titleBytes} bytes)`,
-        'application_board_post_invalid',
-      );
-    }
-    if (value.detail != null) {
-      const detailBytes = Buffer.byteLength(value.detail);
-      if (detailBytes > FRAME_LIMITS['board.detail'].value) {
-        throw applicationError(
-          `Board detail exceeds the ${FRAME_LIMITS['board.detail'].value}-byte cap (actual ${detailBytes} bytes)`,
-          'application_board_post_invalid',
-        );
-      }
     }
     const evidence = value.evidence ?? [];
     if (evidence.length > 8) {

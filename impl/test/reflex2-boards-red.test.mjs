@@ -103,15 +103,14 @@ function brief(overrides = {}) {
 // Part C shapes — messages.mjs closed-shape refusals
 // ============================================================
 
-test('createBoardItem refuses an unknown field, a bad board id, and an empty/oversized title', () => {
+test('createBoardItem refuses an unknown field, a bad board id, and an empty title', () => {
   assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', bogus: 1 }), ValidationError);
   assert.throws(() => createBoardItem({ board: 'has spaces', title: 'ok' }), ValidationError);
   assert.throws(() => createBoardItem({ board: 'shared', title: '' }), ValidationError);
-  assert.throws(() => createBoardItem({ board: 'shared', title: 'x'.repeat(161) }), ValidationError);
 });
 
-test('createBoardItem refuses oversized detail, too many/invalid evidence, and a bad owner', () => {
-  assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', detail: 'x'.repeat(4097) }), ValidationError);
+test('createBoardItem refuses an empty detail, too many/invalid evidence, and a bad owner', () => {
+  assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', detail: '' }), ValidationError);
   const nine = Array.from({ length: 9 }, (_, i) => ({ coordinationSeq: i + 1 }));
   assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', evidence: nine }), ValidationError);
   assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', evidence: [{ nope: 1 }] }), ValidationError);

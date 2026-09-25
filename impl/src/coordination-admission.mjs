@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_STORE_BOARD_DETAIL_BYTES, MAX_STORE_BOARD_EVIDENCE, MAX_STORE_BOARD_TITLE_BYTES, REPL_DIGEST, SAFE_BOARD_ID, SAFE_BOARD_OWNER, SAFE_REPL_NAME, SAFE_REPL_SCOPE, assertWaveStartedRoster, boardBounded, boardReportRequestDigest, coachingRefusal, contextChildAccepted, contextReadAttemptKey, providerAttemptDelay, replBindingContentDigest, replBindingKey, resourceOverlap, validBoardEvidenceRef, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
+import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_STORE_BOARD_EVIDENCE, REPL_DIGEST, SAFE_BOARD_ID, SAFE_BOARD_OWNER, SAFE_REPL_NAME, SAFE_REPL_SCOPE, assertWaveStartedRoster, boardBounded, boardNonEmpty, boardReportRequestDigest, coachingRefusal, contextChildAccepted, contextReadAttemptKey, providerAttemptDelay, replBindingContentDigest, replBindingKey, resourceOverlap, validBoardEvidenceRef, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef, normalizeContextAuthority } from './context-authority.mjs';
@@ -840,22 +840,9 @@ export function _validateReuseDecisionPayload(store, p, event, integrity = false
   const topFields = new Set(['schemaVersion', 'id', 'requestDigest', 'decisionDigest', 'decisionArtifactDigest', 'subjectDigest', 'envRef', 'indexEpoch', 'need', 'choice', 'rationale', 'coordinate', 'actor', 'dossierDigest', 'sbomDigest', 'evidenceProjectionDigest', 'supersedes', 'dossierRef', 'sbomRef', 'dossierSnapshot', 'sbomSnapshot', 'reverifyEvidence', 'artifacts', 'affectedReadEvents']);
   if (!p || Object.keys(p).some((key) => !topFields.has(key)) || p.schemaVersion !== 1 || !validEnvRef(p.envRef)
     || Object.keys(p.envRef).sort().join(',') !== ['indexEpoch', 'lockfileDigest', 'overlayDigest', 'repoId', 'treeSha'].sort().join(',')) fail('reuse decision environment is invalid', 'invalid_reuse_decision');
-  // Decision 2 (blocker 6): the registry's decision.need / decision.rationale rows are the
-  // declared defaults AND the ceiling-of-ceilings. Oversize draws the coaching refusal on the
-  // LIVE admission path; replay (integrity=true) never re-validates sizes (Decision 5).
   if (!['borrow', 'build'].includes(p.choice)) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
-  const needCap = FRAME_LIMITS['decision.need'].value;
-  const rationaleCap = FRAME_LIMITS['decision.rationale'].value;
   if (typeof p.need !== 'string' || p.need.trim().length === 0 || p.need.includes('\0')) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
-  if (Buffer.byteLength(p.need) > needCap) {
-    if (!integrity) throw coachingRefusal(FRAME_LIMITS['decision.need'], Buffer.byteLength(p.need), needCap);
-    fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
-  }
   if (typeof p.rationale !== 'string' || p.rationale.trim().length === 0 || p.rationale.includes('\0')) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
-  if (Buffer.byteLength(p.rationale) > rationaleCap) {
-    if (!integrity) throw coachingRefusal(FRAME_LIMITS['decision.rationale'], Buffer.byteLength(p.rationale), rationaleCap);
-    fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
-  }
   if (!Array.isArray(p.affectedReadEvents) || new Set(p.affectedReadEvents).size !== p.affectedReadEvents.length
     || p.affectedReadEvents.some((seq) => !Number.isSafeInteger(seq) || seq < 1 || seq >= event.seq)) fail('reuse affected-reader projection is invalid', 'reuse_decision_integrity');
   const coordinate = p.coordinate;
@@ -6409,15 +6396,15 @@ export function admitBoardCommand(store, envelope) {
     if (!exactMutation(['detail', 'evidence', 'kind', 'owner', 'title'])
       || envelope.item !== null || !Number.isSafeInteger(envelope.expectedBoardFence)
       || envelope.expectedBoardFence < 0
-      || !boardBounded(mutation.title, MAX_STORE_BOARD_TITLE_BYTES)
-      || (mutation.detail !== null && !boardBounded(mutation.detail, MAX_STORE_BOARD_DETAIL_BYTES))
+      || !boardNonEmpty(mutation.title)
+      || (mutation.detail !== null && !boardNonEmpty(mutation.detail))
       || (mutation.owner !== null && (typeof mutation.owner !== 'string' || !SAFE_BOARD_OWNER.test(mutation.owner)))
       || !Array.isArray(mutation.evidence) || mutation.evidence.length > MAX_STORE_BOARD_EVIDENCE
       || !mutation.evidence.every(validBoardEvidenceRef)) fail('board post admission is invalid');
   } else if (kind === 'retitle') {
     if (!exactMutation(['detail', 'kind', 'title'])
-      || !boardBounded(mutation.title, MAX_STORE_BOARD_TITLE_BYTES)
-      || (mutation.detail !== null && !boardBounded(mutation.detail, MAX_STORE_BOARD_DETAIL_BYTES))) {
+      || !boardNonEmpty(mutation.title)
+      || (mutation.detail !== null && !boardNonEmpty(mutation.detail))) {
       fail('board retitle admission is invalid');
     }
   } else if (kind === 'reorder') {
