@@ -223,14 +223,15 @@ function renderOverview(model, ctx) {
   lines.push(fitToWidth(`  objective   ${run.objective ?? '—'}`, width));
   lines.push(fitToWidth(`  progress    ${run.progress?.current ?? '—'}`, width));
 
-  // Resident — the seat's own resident row: identity, transport, state.
+  // Resident — the seat's own resident row: identity, transport, state. Only the cells the doctor
+  // projection actually carries are rendered (issue #585 audit S3): an absent identity field is
+  // absence, and a row of placeholder dashes names nothing. The state word is the one derivation.
   const resident = model?.resident ?? null;
   if (resident && (resident.deploymentId || resident.state)) {
+    const cells = [resident.deploymentId, resident.incarnation, resident.transport]
+      .filter((cell) => typeof cell === 'string' && cell.length > 0);
     lines.push(styled('Resident', color, ['bold']));
-    lines.push(fitToWidth(
-      `  ${resident.deploymentId ?? '—'}  ${resident.incarnation ?? '—'}  ${resident.transport ?? '—'}  ${statusWord(resident.state)}`,
-      width,
-    ));
+    lines.push(fitToWidth(`  ${[...cells, statusWord(resident.state)].join('  ')}`, width));
   }
 
   // Swarm family — residents' swarms and their participants with state and last wake
@@ -379,6 +380,18 @@ function renderTopology(model, ctx) {
   return lines;
 }
 
+/** The unattached wake stream's one row, at the width it has: the longest complete statement that
+ * fits. The shortest always fits the renderer's narrowest pinned width, so the line is never
+ * truncated into an unfinished sentence (issue #585 audit S3). */
+function wakeStreamAbsenceLine(width) {
+  const statements = [
+    '  (wake stream not attached — the seat attaches one stream per resident when the wake module is present)',
+    '  (wake stream not attached — no wake module is present)',
+    '  (no wake stream attached)',
+  ];
+  return statements.find((statement) => batonVisualWidth(statement) <= width) ?? statements[statements.length - 1];
+}
+
 function renderTimeline(model, ctx) {
   const { width, color, motion } = ctx;
   const lines = [];
@@ -388,7 +401,10 @@ function renderTimeline(model, ctx) {
   lines.push(styled('Wake stream', color, ['bold']));
   const wakes = model?.wakes ?? { attached: false, items: [] };
   if (!wakes.attached) {
-    lines.push(fitToWidth('  (wake stream not attached — the seat attaches one stream per resident when the wake module is present)', width));
+    // The absence line is chosen, not truncated (issue #585 audit S3): the longest statement that
+    // fits the width is rendered, and every statement is complete on its own, so a narrow terminal
+    // never reads half a sentence.
+    lines.push(fitToWidth(wakeStreamAbsenceLine(width), width));
   } else if ((wakes.items ?? []).length === 0) {
     lines.push(fitToWidth(`  attached${wakes.lastSeq != null ? ` · last wake #${wakes.lastSeq}` : ''} · (no frames yet)`, width));
   }
