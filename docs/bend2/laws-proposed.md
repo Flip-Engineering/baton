@@ -293,6 +293,69 @@ law, and `examples/laws-no-park.evidence.md` records both controls at the pin.
 
 ---
 
+## Revision 11: no bookkeeping ledgers in place of function
+
+Status: proposed 2026-09-25; the encoding is checked at the pin and its three controls fail as
+required. Law review pending (an external review by a gpt-6-astra seat is requested). Not part of
+the operative set.
+
+**Statement.** A gate decides from observed runs only. No gate, test or check reads a
+hand-maintained record of expected results in place of running the software: no expected-failure
+list, no converged declaration, no count or census pin. A landing blocks exactly when a test fails
+with the change and does not fail on the target. A test that is new with the change is absent on
+the target, so its failure blocks.
+
+**Evidence from current Baton.**
+
+- `impl/scripts/expected-red-tests.json` listed 417 `file :: test name` rows expected to
+  fail, each with a reason, and 161 `converged` files. The gate passed a failure when the manifest
+  listed it. Keeping it current required `--write-expected-red` rewrites after landings, and guard
+  tests checked the list itself.
+- The #565 landing re-listed 27 rows at closed issues, and the list then hid a regression (#566).
+- #571's fixture-leak rows had run-specific names, so the list could not list them, and every broad
+  gate went red until the key was fixed (78123579).
+- Census pins (SI6, `CORPUS_COUNTS`) and count literals in tests (the runtime-api count removed in
+  c66098c1) failed on every change that added a member, and each such change carried a re-pin
+  commit (for example 83c40b4e).
+- 5df1acf5 removed SI6 and added the AGENTS.md ban. #579 removes the remaining count pins. #580
+  deletes the manifest and changes `swarm integrate` to re-run the change's failing files on the
+  target and block only on failures the target does not share.
+
+**Operator decision (2026-09-24).** The pattern is banned in AGENTS.md ("No bookkeeping ledgers
+in place of function"), and "If the solution is removal please remove." On 2026-09-25 the operator
+asked for the ban as a Bend2 law.
+
+**Shape in the rewrite.** The law quantifies over a stored record: the gate is handed a value that
+stands for any manifest entry, pin or flag, and the law requires the gate's decision to equal the
+specification `breaks(change, target)` for every value of that record. A gate whose decision
+depends on the record makes the law false at a named case. `examples/laws-no-ledger.bend` states
+the model and two laws: `gate_reads_only_observations` (per test, proved by splitting every case)
+and `landing_blocks_iff_breaks` (per landing, proved by induction over the selected tests).
+`examples/laws-no-ledger.evidence.md` records three controls at the pin:
+
+- A: an expected-failure list. A listed test that fails with the change and passes on the target
+  does not block.
+- B: a count pin. At pin 0 it blocks a failure the target shares. At pin 1 it blocks a run with no
+  failure until the pin is updated.
+- C: no comparison with the target. It blocks a failure the target shares.
+
+**Questions for law review.**
+
+1. Is the entry a law under the definition (a quantified theorem over the implementation, or an
+   unrepresentable state), or is it tested behaviour that belongs in the trace as a test obligation?
+2. The model takes outcomes as values any caller can write. Can the rewrite make an `Outcome`
+   constructible only by the test runner at the pin, given that an exported constructor is
+   forgeable from an importing module? If it cannot, what does the law guarantee without that?
+3. Does the specification handle the cases the JavaScript gate handles: a failing file new with the
+   change (`Absent{}` on the target), a file-level failure (hung, crashed, leaked fixtures)
+   compared by file and failure type, and a target run that produced no verdict (every failure
+   blocks)?
+4. A test that fails on the target and with the change never blocks. Does that let a change make
+   an already-failing test fail differently without notice, and should the law distinguish failure
+   types or messages?
+
+---
+
 ## Deferred and excluded
 
 - **M-15 (whole-mandate admission) — deferred to the design notes.** The forbidden behavior is
