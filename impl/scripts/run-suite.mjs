@@ -13,8 +13,7 @@ import {
   writeSuiteOwnerReceipt,
 } from './suite-hygiene.mjs';
 import {
-  computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
-  loadExpectedRed, planExpectedRedRewrite, reasonClassOf, verdictDocument, writeExpectedRed,
+  computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, verdictDocument,
 } from './suite-verdict.mjs';
 import {
   deriveSuiteCoverage, renderSuiteCoverageNote, renderSuiteVerdictHeadline,
@@ -267,22 +266,7 @@ const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)
 // suite-lanes.json run one
 // at a time afterwards. Explicit file arguments run through the same scheduler; any other
 // node --test option (--watch, --test-name-pattern, …) keeps the legacy passthrough.
-// 2026-09-14 audit S-G2/S-I6: a rewritten manifest row must carry a reason, so a rewrite that
-// meets a row it has never listed needs one declared for it — the flag fills the manifest's own
-// `reason` field, and its absence refuses the write instead of recording a silent placeholder.
-const reasonFlagIndex = process.argv.indexOf('--expected-red-reason');
-const expectedRedReason = reasonFlagIndex === -1 ? null : (process.argv[reasonFlagIndex + 1] ?? null);
-// Issue #327: a new row minted with the `credential` class must name the prerequisite it depends
-// on — the registry route key the suite environment line prints — so the verdict can judge it
-// against that prerequisite's observed state instead of the global absent list.
-const prerequisiteFlagIndex = process.argv.indexOf('--expected-red-prerequisite');
-const expectedRedPrerequisite = prerequisiteFlagIndex === -1 ? null : (process.argv[prerequisiteFlagIndex + 1] ?? null);
-if (reasonClassOf(expectedRedReason) === 'credential'
-  && (expectedRedPrerequisite === null || expectedRedPrerequisite.trim().length === 0)) {
-  process.stderr.write('baton test runner: --expected-red-reason credential names an environment-class row, so it needs the prerequisite the row depends on — pass --expected-red-prerequisite <registry-route-key> (the route key the suite environment line prints, e.g. omp/deepseek/deepseek-flash or claude-code:claude/claude-opus-4-6); a row with a bare class keeps the global behaviour only until it is attributed\n');
-  process.exit(1);
-}
-const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason', '--expected-red-prerequisite', '--test-concurrency']);
+const runnerFlags = new Set(['--test-concurrency']);
 // #300: `--changed <paths…>` selects the affected test files through the import graph
 // (verification-selection.mjs) instead of naming files by hand. The paths are the capture's
 // changedPaths — the flag's INPUT, never passthrough file names — and the selection itself is
@@ -298,22 +282,12 @@ if (changedFlagIndex !== -1) {
   }
 }
 const passthroughArgs = process.argv.slice(2).filter((arg, index, argv) => (
-  !runnerFlags.has(arg) && !(index > 0 && argv[index - 1] === '--expected-red-reason')
-  && !(index > 0 && argv[index - 1] === '--expected-red-prerequisite')
+  !runnerFlags.has(arg)
   && !(index > 0 && argv[index - 1] === '--test-concurrency')
   && !changedFlagArgs.has(index + 2)
 ));
-const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
 const explicitFiles = passthroughArgs.filter((arg) => !arg.startsWith('-'));
 const legacyPassthrough = passthroughArgs.some((arg) => arg.startsWith('-'));
-// Issue #290: --write-expected-red rewrites the whole expected-red manifest from THIS run's
-// failures. An explicit-file run executes a subset, so a rewrite would record rows for tests the
-// run never executed (and drop rows it inherited) — the manifest may only be rewritten from a
-// full-suite run. Refuse by naming that contract.
-if (writeExpectedRedRequested && explicitFiles.length > 0) {
-  process.stderr.write('baton test runner: --write-expected-red rewrites the expected-red manifest from a full-suite run only — it never rewrites the manifest from an explicit-file (partial) run, because rows the run never executed cannot be judged; re-run the whole suite with the flag, or run explicit files without it\n');
-  process.exit(1);
-}
 // #300 refusals: a selection is a partial run, so it obeys the same contracts an explicit file
 // list does — and it cannot be combined with one, because two subset selectors in one run would
 // make "what was and was not run" ambiguous.
@@ -326,10 +300,6 @@ if (changedPaths.length > 0 && (explicitFiles.length > 0 || legacyPassthrough)) 
   process.stderr.write('baton test runner: --changed selects the affected files itself — it does not combine with explicit file arguments or node --test passthrough options, because two subset selectors in one run cannot say what was and was not run; use one or the other\n');
   process.exit(1);
 }
-if (changedPaths.length > 0 && writeExpectedRedRequested) {
-  process.stderr.write('baton test runner: --write-expected-red rewrites the expected-red manifest from a full-suite run only — a --changed run is a partial run whose rows cannot all be judged; re-run the whole suite with the flag\n');
-  process.exit(1);
-}
 const implRoot = new URL('../', import.meta.url);
 const implRootPath = fileURLToPath(implRoot);
 const testRoot = new URL('../test/', import.meta.url);
@@ -338,7 +308,6 @@ const testRoot = new URL('../test/', import.meta.url);
 const checkoutRootPath = fileURLToPath(new URL('../../', import.meta.url));
 const reporterUrl = new URL('./suite-verdict-reporter.mjs', import.meta.url).href;
 const watchdogUrl = new URL('./suite-orphan-watchdog.mjs', import.meta.url).href;
-const manifestPath = new URL('./expected-red-tests.json', import.meta.url);
 const lanesPath = new URL('./suite-lanes.json', import.meta.url);
 // The runner's own liveness bound: a file that emits no test event for this long is hung and
 // is reaped instead of holding the verdict hostage. A wall-clock bound on the runner is a real
@@ -560,7 +529,7 @@ function childEnv(summaryFile, fileTempRoot = suiteRoot) {
     ...(suiteLeaseDigest !== null ? { [SUITE_VERIFY_LEASE_ENV]: suiteLeaseDigest } : {}),
   };
   // Each file runs as its OWN process with its own reporter. A NODE_TEST_CONTEXT inherited from
-  // an outer `node --test` (the runner itself driven from a test, as the manifest-guard test does)
+  // an outer `node --test` (the runner itself driven from a test)
   // would instead make the file report into that outer runner and leave this run's summary file
   // unwritten — the file then reads as "exited without reporting". The child's context is this
   // run's, never the caller's.
@@ -629,8 +598,8 @@ async function runFile(file) {
   }
   if (leakedFixtures.length > 0) {
     failed.push({
-      // The row key names the file only, so a file still being repaired can be pinned in the
-      // expected-red manifest; the leaked directory names ride the message.
+      // The name is the same for every run of the file, so a gate compares it by file; the
+      // leaked directory names ride the message.
       file, name: '(file leaked fixture directories)',
       failureType: 'fixtureLeak', message: `leaked fixture directories: ${leakedFixtures.join(', ')}`,
     });
@@ -707,14 +676,10 @@ if (legacyPassthrough) {
     changedSelection = selectFromRepository({
       root: fileURLToPath(repositoryRoot),
       changedPaths,
-      manifest: loadExpectedRed(manifestPath),
     });
     process.stderr.write(`baton test runner: --changed selected ${changedSelection.files.length} test file(s) from ${changedPaths.length} changed path(s) — ${changedSelection.reason}\n`);
     for (const provenance of changedSelection.provenance) {
       process.stderr.write(`  ${provenance.path} (${provenance.reason}${provenance.via ? `: ${provenance.via}` : ''})\n`);
-    }
-    for (const row of changedSelection.rows) {
-      process.stderr.write(`  expected red (reasoned ${row.reason}): ${row.key}\n`);
     }
   }
   const files = laneFiles(changedSelection);
@@ -763,33 +728,8 @@ if (legacyPassthrough) {
         // named by its own progress deadline (runFile above) as a hung row, which the verdict
         // reads as the hang dimension (#521).
         const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), skipped: files.skipped }];
-        let rewriteRefused = false;
-        if (writeExpectedRedRequested) {
-          const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');
-          const plan = planExpectedRedRewrite({
-            failures,
-            prior: loadExpectedRed(manifestPath),
-            defaultReason: expectedRedReason,
-            defaultPrerequisite: expectedRedPrerequisite,
-          });
-          if (plan.refused) {
-            process.stderr.write(`baton test runner: --write-expected-red refuses to record ${plan.newKeys.length} row(s) with no reason — ${plan.newKeys.join('; ')}\n`);
-            process.stderr.write('baton test runner: declare the reason for newly red rows with --expected-red-reason <reason> (the manifest field is "reason": a GitHub issue like #263, the audit item that tracks it like S-G5, or a class: credential | environment | design | unattributed)\n');
-            rewriteRefused = true;
-          } else {
-            const written = writeExpectedRed(manifestPath, { rows: plan.kept, converged: plan.converged });
-            process.stderr.write(`baton test runner: wrote ${written.rows.length} expected-red rows to scripts/expected-red-tests.json (kept ${plan.kept.length - plan.newKeys.length} reasons, dropped ${plan.dropped.length} now-green rows${plan.newKeys.length > 0 ? `, ${plan.newKeys.length} new rows reasoned ${expectedRedReason}${expectedRedPrerequisite ? ` with prerequisite ${expectedRedPrerequisite}` : ''}` : ''})\n`);
-          }
-        }
-        if (rewriteRefused) {
-          finish(1, null, null, true);
-        } else {
-          const manifest = loadExpectedRed(manifestPath);
-          const verdict = computeVerdict(summaries, manifest, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
-          // A partial run (explicit files, or a --changed selection) cannot judge rows it never ran.
-          const judged = explicitFiles.length > 0 || changedPaths.length > 0
-            ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 }
-            : verdict;
+        {
+          const judged = computeVerdict(summaries, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
           // Issue #399: ONE coverage value from what the runner already knows — `full`
           // when the file set is the canonical selection, `subset` when files were named
           // or --changed narrowed them. The subset headline and the consumer's subset

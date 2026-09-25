@@ -7,14 +7,11 @@
 //      a changed module selects itself;
 //   3. a changed file NO test imports still selects the test files that name it in a fixture
 //      path (its basename or path suffix in the test's source) — and the selection says so,
-//      because a fixture-path match is a weaker, over-selectable signal a reviewer should see;
-//   4. the reasoned expected-red manifest (#284) contributes the expected-red rows of the
-//      selected files, so the pre-verdict run's verdict can be read against what was already
-//      known to be red.
+//      because a fixture-path match is a weaker, over-selectable signal a reviewer should see.
 //
 // Static ESM imports only: `import … from '…'`, `export … from '…'` and bare `import '…'`.
 // Dynamic `import()` is a runtime decision, not a static edge, and is deliberately not a
-// selector. Selection is a pure function of (changed paths, file contents, manifest) — the
+// selector. Selection is a pure function of (changed paths, file contents) — the
 // same inputs always yield the same sorted set — and the check caches it per capture commit
 // (#300): the graph of a commit cannot change, so a repeated check of the same sha re-reads
 // nothing.
@@ -31,9 +28,6 @@ import { join, relative, posix } from 'node:path';
  * import edge MAY point outside them (a test importing `impl/scripts/x.mjs` counts); the
  * scan roots decide whose outgoing edges are read, and scripts are not scanned. */
 export const VERIFICATION_GRAPH_DIRS = Object.freeze(['impl/src', 'impl/test']);
-
-/** The reasoned expected-red manifest (#284), read from the same revision as the graph. */
-export const EXPECTED_RED_MANIFEST_PATH = 'impl/scripts/expected-red-tests.json';
 
 const IMPORT_SOURCE = /(?:^|[\s;}])import\s[^'"]*?from\s*['"]([^'"\n]+)['"]|(?:^|[\s;}])import\s*['"]([^'"\n]+)['"]|(?:^|[\s;}])export\s[^'"]*?from\s*['"]([^'"\n]+)['"]/gu;
 
@@ -110,18 +104,15 @@ const REASON_ORDER = Object.freeze({ changed: 0, imports: 1, 'fixture-path': 2 }
  * @param {string[]} inputs.changedPaths repo-relative paths the capture changes.
  * @param {Map<string, {imports: Set<string>, text: string}>} inputs.graph the scanned files'
  *   import graph (collectImportGraph).
- * @param {{rows?: {key: string, reason: string}[], converged?: {file: string, reason: string}[]}|null}
- *   [inputs.manifest] the reasoned expected-red manifest (#284) at the same revision.
  * @param {(path: string) => boolean} [inputs.exists] does the path exist at the checked
  *   revision; defaults to graph membership (a changed file the graph never read — deleted, or
  *   outside the scan roots and unreadable — selects nothing by itself).
  * @returns {{files: string[], provenance: {path: string, reason: string, via: string|null}[],
- *   reason: string, rows: {key: string, reason: string}[]}} the sorted, de-duplicated
- *   selection; `files` is what runs first, `provenance` says why each file was selected,
- *   `reason` is the one-line account a receipt shows a reviewer, `rows` are the expected-red
- *   rows of the selected files.
+ *   reason: string}} the sorted, de-duplicated selection; `files` is what runs first,
+ *   `provenance` says why each file was selected, `reason` is the one-line account a receipt
+ *   shows a reviewer.
  */
-export function selectAffectedTests({ changedPaths, graph, manifest = null, exists = null } = {}) {
+export function selectAffectedTests({ changedPaths, graph, exists = null } = {}) {
   const changed = [...new Set((changedPaths ?? []).filter((path) => typeof path === 'string' && path.length > 0))].sort();
   const present = exists ?? ((path) => graph.has(path));
   const selected = new Map();
@@ -162,27 +153,11 @@ export function selectAffectedTests({ changedPaths, graph, manifest = null, exis
   const provenance = [...selected.values()].sort((a, b) => (
     a.path < b.path ? -1 : a.path > b.path ? 1 : REASON_ORDER[a.reason] - REASON_ORDER[b.reason]));
   const files = provenance.map((entry) => entry.path);
-  const rows = expectedRedRows(manifest, files);
   return {
     files,
     provenance,
     reason: selectionReason(changed, provenance),
-    rows,
   };
-}
-
-/** The manifest's expected-red rows that belong to the selected files: a row is keyed
- * `<file> :: <test name>`; a converged row names its whole file. */
-export function expectedRedRows(manifest, files) {
-  if (!manifest || files.length === 0) return [];
-  const selected = new Set(files);
-  const rows = (manifest.rows ?? [])
-    .filter((row) => selected.has(row.key.slice(0, row.key.indexOf(' ::'))))
-    .map((row) => ({ key: row.key, reason: row.reason }));
-  const converged = (manifest.converged ?? [])
-    .filter((row) => selected.has(row.file))
-    .map((row) => ({ key: `${row.file} :: (converged)`, reason: row.reason }));
-  return [...rows, ...converged].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 function selectionReason(changed, provenance) {
@@ -205,20 +180,19 @@ function selectionReason(changed, provenance) {
  * @param {object} inputs
  * @param {string} inputs.root repository root path (contains `impl/`).
  * @param {string[]} inputs.changedPaths repo-relative changed paths.
- * @param {object|null} [inputs.manifest] parsed expected-red manifest.
  * @param {string[]|null} [inputs.graphDirs] defaults to VERIFICATION_GRAPH_DIRS.
  * @param {(path: string) => string|null} [inputs.read] file reader (default: fs, null on error).
  * @param {(path: string) => boolean} [inputs.exists] existence at the revision (default: read !== null).
  */
 export function selectFromRepository({
-  root, changedPaths, manifest = null, graphDirs = VERIFICATION_GRAPH_DIRS, read = null, exists = null,
+  root, changedPaths, graphDirs = VERIFICATION_GRAPH_DIRS, read = null, exists = null,
 } = {}) {
   const readFile = read ?? ((path) => {
     try { return readFileSync(join(root, path), 'utf8'); } catch { return null; }
   });
   const files = listGraphFiles(root, graphDirs);
   const graph = collectImportGraph({ files, read: readFile });
-  return selectAffectedTests({ changedPaths, graph, manifest, exists: exists ?? ((path) => readFile(path) !== null) });
+  return selectAffectedTests({ changedPaths, graph, exists: exists ?? ((path) => readFile(path) !== null) });
 }
 
 function listGraphFiles(root, graphDirs) {
