@@ -8011,14 +8011,17 @@ export class SwarmRuntime {
         },
         runGates: async (dir, changed, gateContext) => {
           // The gate set is DERIVED from what the squash actually changed, by the TWO derivations
-          // the rest of the system already reads — never a second table (#466). The runner's own
-          // selector (`selectFromRepository`, the function `node impl/scripts/run-suite.mjs
-          // --changed` calls) runs over the CHECKOUT the squash produced, which is what carries a
-          // lane's OWN new test: the file exists there the moment the squash is staged, while the
-          // landing table's directory listing (read beside the resident's own module) can never
-          // see it. The table's region, seam and issue gates are ADDED to that selection, so the
-          // regions an import graph cannot see keep running exactly as they did.
-          const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue] });
+          // the rest of the system already reads — never a second table (#466). Both read the
+          // CHECKOUT the squash produced: the runner's own selector (`selectFromRepository`, the
+          // function `node impl/scripts/run-suite.mjs --changed` calls) builds its import graph
+          // there, and the landing table lists that checkout's test directory and reads its seam
+          // inventory (the `root` it is handed). A lane's OWN new test is therefore visible the
+          // moment the squash is staged, and a test file the change REMOVED or renamed away is not
+          // selected: a listing read from any other checkout names a file that is not there, and
+          // the gate then fails on a file the change legitimately deleted (#466, the removal half).
+          // The table's region, seam and issue gates are ADDED to that selection, so the regions an
+          // import graph cannot see keep running exactly as they did.
+          const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue], root: dir });
           const runner = selectFromRepository({ root: dir, changedPaths: changed });
           // Issue #463: the derived selection reaches the runner in the RUNNER'S shape and at the
           // runner's root — `<tests>/<file>` relative to the suite root the runner runs from — and

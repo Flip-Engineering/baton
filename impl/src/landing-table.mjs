@@ -25,11 +25,29 @@
 // the order the runner should take it (regions in table order, then issue rows, then a stable sort
 // inside each group). Nothing here runs anything.
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const INVENTORY_PATH = fileURLToPath(new URL('../scripts/seam-inventory.json', import.meta.url));
 const TEST_DIR = fileURLToPath(new URL('../test/', import.meta.url));
+
+/** Does the checkout under judgement carry this test file? The table's universe is the repository's
+ * own (`TEST_DIR`, beside this module) — the tokens below name regions of THIS repository. A LANDING
+ * judges the scratch checkout the squash produced, and names it as `root`: a name that checkout
+ * cannot open is not a gate, because handing it to the runner is a gate failure on a file the change
+ * legitimately deleted, and that made a pure rename unlandable (#466, the removal half).
+ *
+ * A root carrying no test directory at all is not a checkout of this repository — a fixture's bare
+ * repo, or a landing whose checkout is broken — so the declared set is answered UNCHANGED and the
+ * runner reports what it cannot find: fail-closed, never a silently empty gate set that verified
+ * nothing. A caller that names no root asks for the declared set alone. */
+function carriedBy(root, name) {
+  if (root === undefined || root === null) return true;
+  const dir = join(root, 'impl/test');
+  if (!existsSync(dir)) return true;
+  return existsSync(join(dir, name));
+}
 
 /** A changed path as the table reads it: repo-relative, `/`-separated, no leading `./`. */
 function normalizePath(path) {
@@ -152,8 +170,12 @@ function inventoryReading(paths) {
  * The gate set for one landed change.
  *
  * @param {string[]} paths the changed paths the squash carries (repo-relative)
- * @param {{issues?: (number|string)[]}} [opts] `issues` names the issues the contribution is FOR
- *   (`purpose` or subject `#<n>`); an issue a changed path names is selected without being listed.
+ * @param {{issues?: (number|string)[], root?: string|null}} [opts] `issues` names the issues the
+ *   contribution is FOR (`purpose` or subject `#<n>`); an issue a changed path names is selected
+ *   without being listed. `root` names the checkout under judgement: a selected test file that
+ *   checkout does not carry is dropped, so a renamed or deleted test never reaches the runner as a
+ *   name it cannot open — unless that checkout carries no test directory at all, when the declared
+ *   set is answered unchanged. Omitted, the declared set is answered alone.
  * @returns {{files: string[], regions: string[], inventoried: string[], seams: string[]}}
  * @throws {TypeError} when `paths` is not an array of strings
  */
@@ -202,7 +224,7 @@ export function gateSetForPaths(paths, opts = {}) {
 
   const reading = inventoryReading(changed);
   return {
-    files: [...selected].sort(),
+    files: [...selected].sort().filter((name) => carriedBy(opts.root, name)),
     regions: [...regions].sort(),
     inventoried: [...reading.inventoried],
     seams: [...reading.seams],

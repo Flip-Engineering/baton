@@ -34,7 +34,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -225,18 +225,22 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
   const integrate = (args = {}) => runtime.command('swarm.integrate', {
     swarmId: 's1', contributionId: 'contribution:1', target: 'master', idempotencyKey: 'i466:integrate', ...args,
   }, principal);
-  /** The runner's OWN selection for the landed change, read from a detached worktree at the lane
-   * tip through the function `node impl/scripts/run-suite.mjs --changed` calls. */
-  const runnerSelection = () => {
+  /** The checkout under judgement: a detached worktree at the lane tip, whose `impl/test` is what
+   * the squash produces. BOTH derivations read it — the runner's selection through the function
+   * `node impl/scripts/run-suite.mjs --changed` calls, and the landing table's gate set. */
+  const judgedTree = () => {
     const tree = join(directory, 'tip');
-    git(repo, 'worktree', 'add', '-q', '--detach', tree, tip);
-    return selectFromRepository({ root: tree, changedPaths: [...LANE_CHANGED] });
+    if (!existsSync(tree)) git(repo, 'worktree', 'add', '-q', '--detach', tree, tip);
+    return tree;
   };
+  const runnerSelection = () => selectFromRepository({ root: judgedTree(), changedPaths: [...LANE_CHANGED] });
   return {
     directory, repo, store, runtime, tip, targetHead, gateCalls, integrate, runnerSelection,
     receiptRow: () => store.swarm('s1').contributions['contribution:1'].integration,
-    /** The region gates the landing table derives for the lane's change, in the runner's shape. */
-    regionGates: () => gateSetForPaths([...LANE_CHANGED], { issues: [] }).files.map(runnerName),
+    /** The gates the landing table derives for the lane's change, in the runner's shape, read from
+     * the same checkout the landing judges — the expectation is the landing's own derivation. */
+    regionGates: () => gateSetForPaths([...LANE_CHANGED], { issues: [], root: judgedTree() })
+      .files.map(runnerName),
   };
 }
 
@@ -348,4 +352,40 @@ test('466: an omitted target on a detached checkout derives the branch at the ch
     'the lane landed on the derived branch');
   assert.deepEqual(answer.integration.gates.files, expected,
     'the detached checkout moves the TARGET derivation only — the gate set is still the runner\'s selection unioned with the region gates');
+});
+
+// ── the removal half: a name the checkout under judgement cannot open is not a gate ──────────────
+//
+// Found when a lane's pure rename could not land: the table derives its set from the repository's own
+// test directory, so a changed path naming a test file the change REMOVED still selected that file,
+// and the gate then ran a file the squash had deleted (`<file> exited 1 without reporting`) and
+// refused the landing. A caller that names the checkout under judgement (`root`, the scratch
+// checkout the squash produced) now has the selected names pruned to the ones that checkout carries.
+
+/** A checkout with this repository's layout, carrying exactly the named test files. */
+function judgedTree(t, tests) {
+  const root = mkdtempSync(join(tmpdir(), 'baton-466-judged-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'impl/test'), { recursive: true });
+  for (const name of tests) writeFileSync(join(root, 'impl/test', name), '// judged checkout\n');
+  return root;
+}
+
+test('466d: a removed test file is not a gate, and a declared name survives only where it exists', (t) => {
+  const present = judgedTree(t, ['issue466-landing-selection.test.mjs', 'issue466-beta.test.mjs']);
+  const carried = gateSetForPaths([
+    'impl/test/issue466-landing-selection.test.mjs',
+    'impl/test/issue466-gone.test.mjs',
+  ], { issues: [466], root: present });
+  assert.deepEqual(carried.files, ['issue466-landing-selection.test.mjs'],
+    'the declared name this checkout carries is a gate; the file the change removed never is');
+  const absent = judgedTree(t, ['issue466-beta.test.mjs']);
+  assert.deepEqual(gateSetForPaths(['impl/test/issue466-landing-selection.test.mjs'], { issues: [466], root: absent }).files, [],
+    'the same declared name is dropped when the checkout under judgement does not carry it');
+});
+
+test('466d: a caller that names no root keeps reading this module own checkout', () => {
+  const gate = gateSetForPaths(['impl/test/issue466-landing-selection.test.mjs'], { issues: [466] });
+  assert.ok(gate.files.includes('issue466-landing-selection.test.mjs'),
+    'without a root the listing is this module own test directory, which carries this file');
 });
