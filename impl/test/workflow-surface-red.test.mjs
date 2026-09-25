@@ -1781,18 +1781,6 @@ test('FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming ca
       command: 'run.scratchpad.elevate', code: 'application_scratchpad_elevate_invalid', cap: /128/u, actual: /129/u,
     },
     {
-      label: 'board title ≤160 bytes',
-      atCap: { runId: 'run:j1', board: 'ws-j1', title: 't'.repeat(160) },
-      overCap: { runId: 'run:j1', board: 'ws-j1', title: 't'.repeat(161) },
-      command: 'run.board.post', code: 'application_board_post_invalid', cap: /160/u, actual: /161/u,
-    },
-    {
-      label: 'board detail ≤4,096 bytes',
-      atCap: { runId: 'run:j1', board: 'ws-j1', title: 't', detail: 'd'.repeat(4096) },
-      overCap: { runId: 'run:j1', board: 'ws-j1', title: 't', detail: 'd'.repeat(4097) },
-      command: 'run.board.post', code: 'application_board_post_invalid', cap: /4096/u, actual: /4097/u,
-    },
-    {
       label: 'board evidence ≤8 refs',
       atCap: { runId: 'run:j1', board: 'ws-j1', title: 't', evidence: Array.from({ length: 8 }, (_, i) => ({ coordinationSeq: i + 1 })) },
       overCap: { runId: 'run:j1', board: 'ws-j1', title: 't', evidence: Array.from({ length: 9 }, (_, i) => ({ coordinationSeq: i + 1 })) },

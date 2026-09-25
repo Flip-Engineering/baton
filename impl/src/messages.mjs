@@ -223,15 +223,16 @@ export function createResult(fields, opts) {
 // ---------------------------------------------------------------------------
 
 const SAFE_OPTION_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
-// The registry is the single source (Decision 8): these lane bounds are imported, never
-// re-declared. The decision-question lane is declared hard in v1 (Open question 3).
-const MAX_DECISION_QUESTION_BYTES = FRAME_LIMITS['decision.question'].value;
-const MAX_OPTION_LABEL_BYTES = FRAME_LIMITS['decision.option.label'].value;
-const MAX_OPTION_SUMMARY_BYTES = FRAME_LIMITS['decision.option.summary'].value;
+// The registry is the single source (Decision 8): the answer text lane's bound is imported, never
+// re-declared. The request's own prose (question, labels, summaries) carries no ceiling.
 const MAX_DECISION_TEXT_BYTES = FRAME_LIMITS['decision.text'].value;
 
+function nonEmpty(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
 function boundedNonEmpty(value, maxBytes) {
-  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
+  return nonEmpty(value) && Buffer.byteLength(value) <= maxBytes;
 }
 
 /** Build a coaching ValidationError (Decision 3): the payload {cap, actual, unit, gracefulPath}
@@ -247,36 +248,17 @@ function coachingValidationError(errors, row, actual, cap = row.value) {
   return error;
 }
 
-/** @param {{question,options,allowFreeResponse?,recommended?,deadlineMs}} fields @param {{shapeOnly?:boolean}} [opts]
+/** @param {{question,options,allowFreeResponse?,recommended?,deadlineMs}} fields
  * @returns {object} a deeply-frozen DecisionRequest @throws {ValidationError}
- * The scanner path (Decision 5 split) validates SHAPE only (`shapeOnly: true`) — the size bounds
- * apply at the admission seam, so an oversize question PARSES and travels instead of being
- * scanner-null (the ground-truth-5 silent wire cap). */
-export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
+ * Shape only: a question, an option label and an option summary are non-empty strings and carry no
+ * byte ceiling, so what the caller needs to say travels whole. */
+export function createDecisionRequest(fields) {
   const errors = [];
-  const questionCap = shapeOnly ? Infinity : MAX_DECISION_QUESTION_BYTES;
-  const labelCap = shapeOnly ? Infinity : MAX_OPTION_LABEL_BYTES;
-  const summaryCap = shapeOnly ? Infinity : MAX_OPTION_SUMMARY_BYTES;
-  // The split (Decision 5): shape failures keep plain shape errors; SIZE failures compose the
-  // coaching refusal and stamp the payload. The first size failure's row/actual rides the thrown
-  // ValidationError as {cap, actual, unit, gracefulPath}.
-  let sizeRow = null;
-  let sizeActual = 0;
   const allowedKeys = new Set(['question', 'options', 'allowFreeResponse', 'recommended', 'deadlineMs']);
   for (const key of Object.keys(fields ?? {})) {
     if (!allowedKeys.has(key)) errors.push(`decision request has an unknown field "${key}"`);
   }
-  if (!boundedNonEmpty(fields?.question, questionCap)) {
-    const actual = typeof fields?.question === 'string' ? Buffer.byteLength(fields.question) : 0;
-    if (actual > questionCap) {
-      sizeRow ??= { row: FRAME_LIMITS['decision.question'], actual };
-      // Issue #398: the hard-class refusal names the caller's OBSERVED byte count and the
-      // registry row it was judged against — never the cap+1 boundary golden.
-      errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.question'], actual, MAX_DECISION_QUESTION_BYTES));
-    } else {
-      errors.push('question is required (non-empty string)');
-    }
-  }
+  if (!nonEmpty(fields?.question)) errors.push('question is required (non-empty string)');
   let optionIds = [];
   // A free-response decision (allowFreeResponse) may carry ZERO preset options — the answer is the
   // caller's own text (issue #114 D3, the answerDecisions free-text path). Every other decision
@@ -300,23 +282,9 @@ export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
         seen.add(opt.id);
         optionIds.push(opt.id);
       }
-      if (!boundedNonEmpty(opt.label, labelCap)) {
-        const labelActual = typeof opt.label === 'string' ? Buffer.byteLength(opt.label) : 0;
-        if (labelActual > labelCap) {
-          sizeRow ??= { row: FRAME_LIMITS['decision.option.label'], actual: labelActual };
-          errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.option.label'], labelActual, MAX_OPTION_LABEL_BYTES));
-        } else {
-          errors.push(`options[${i}].label must be non-empty, <=${MAX_OPTION_LABEL_BYTES} bytes`);
-        }
-      }
-      if (hasSummary && opt.summary !== null && !boundedNonEmpty(opt.summary, summaryCap)) {
-        const summaryActual = typeof opt.summary === 'string' ? Buffer.byteLength(opt.summary) : 0;
-        if (summaryActual > summaryCap) {
-          sizeRow ??= { row: FRAME_LIMITS['decision.option.summary'], actual: summaryActual };
-          errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.option.summary'], summaryActual, MAX_OPTION_SUMMARY_BYTES));
-        } else {
-          errors.push(`options[${i}].summary must be null or <=${MAX_OPTION_SUMMARY_BYTES} bytes`);
-        }
+      if (!nonEmpty(opt.label)) errors.push(`options[${i}].label must be a non-empty string`);
+      if (hasSummary && opt.summary !== null && !nonEmpty(opt.summary)) {
+        errors.push(`options[${i}].summary must be null or a non-empty string`);
       }
     });
   }
@@ -333,10 +301,7 @@ export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
   if (!Number.isSafeInteger(fields?.deadlineMs) || fields.deadlineMs <= 0) {
     errors.push('deadlineMs is required and must be a positive safe integer');
   }
-  if (errors.length) {
-    if (sizeRow) throw coachingValidationError(errors, sizeRow.row, sizeRow.actual, sizeRow.row.value);
-    throw new ValidationError(errors);
-  }
+  if (errors.length) throw new ValidationError(errors);
   return deepFreeze({
     question: fields.question,
     options: fields.options.map((opt) => ({
@@ -391,11 +356,8 @@ export function createDecisionAnswer(fields) {
 const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const SAFE_ITEM_ID = /^[A-Za-z0-9_.:-]{1,256}$/;
 const ITEM_DIGEST = /^[a-f0-9]{64}$/;
-// Board bounds imported from the registry (Decision 8). These factories are DEAD (no impl/src
-// importer — blocker 8); the LIVE board.title/board.detail/board.report.body bounds are the
-// store's, which import the same registry rows.
-const MAX_BOARD_TITLE_BYTES = FRAME_LIMITS['board.title'].value;
-const MAX_BOARD_DETAIL_BYTES = FRAME_LIMITS['board.detail'].value;
+// The live board.report.body bound is imported from the registry (Decision 8); a title and a
+// detail carry none.
 const MAX_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
 const MAX_BOARD_EVIDENCE = 8;
 
@@ -415,9 +377,9 @@ export function createBoardItem(fields) {
     if (!allowedKeys.has(key)) errors.push(`board item has an unknown field "${key}"`);
   }
   if (typeof fields?.board !== 'string' || !SAFE_BOARD_ID.test(fields.board)) errors.push('board must be a safe id (letters, digits, "_.:-", 1..128 bytes)');
-  if (!boundedNonEmpty(fields?.title, MAX_BOARD_TITLE_BYTES)) errors.push(`title is required (non-empty, <=${MAX_BOARD_TITLE_BYTES} bytes)`);
-  if (fields?.detail !== undefined && fields.detail !== null && !boundedNonEmpty(fields.detail, MAX_BOARD_DETAIL_BYTES)) {
-    errors.push(`detail must be null or non-empty, <=${MAX_BOARD_DETAIL_BYTES} bytes`);
+  if (!nonEmpty(fields?.title)) errors.push('title is required (non-empty string)');
+  if (fields?.detail !== undefined && fields.detail !== null && !nonEmpty(fields.detail)) {
+    errors.push('detail must be null or a non-empty string');
   }
   if (fields?.owner !== undefined && fields.owner !== null && (typeof fields.owner !== 'string' || !SAFE_OPTION_ID.test(fields.owner))) {
     errors.push('owner must be null or a safe worker id');

@@ -1489,8 +1489,8 @@ const CANONICAL_OPERATION_SPECS = [
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
     helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
       sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId,
-      title: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.title'].value },
-      detail: { type: ['string', 'null'], minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value },
+      title: { type: 'string', minLength: 1 },
+      detail: { type: ['string', 'null'], minLength: 1 },
       owner: { type: ['string', 'null'], minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' },
       evidence: { type: 'array', maxItems: 8, items: evidenceRef },
       expectedBoardFence: { type: 'integer', minimum: 0 },
@@ -1502,8 +1502,8 @@ const CANONICAL_OPERATION_SPECS = [
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
     helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
       sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
-      title: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.title'].value },
-      detail: { type: ['string', 'null'], minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value },
+      title: { type: 'string', minLength: 1 },
+      detail: { type: ['string', 'null'], minLength: 1 },
       expectedBoardFence: { type: 'integer', minimum: 0 },
     }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
     authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
@@ -1934,8 +1934,8 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton run board post RUN_ID --board BOARD --title TEXT',
     inputSchema: objectSchema({
-      runId: id, board: safeBoardId, title: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.title'].value },
-      detail: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value }, owner: safeBoardId, evidence: { type: 'array', maxItems: 8, items: evidenceRef },
+      runId: id, board: safeBoardId, title: { type: 'string', minLength: 1 },
+      detail: { type: 'string', minLength: 1 }, owner: safeBoardId, evidence: { type: 'array', maxItems: 8, items: evidenceRef },
     }, ['runId', 'board', 'title']),
   }],
   ['run.board.read', {
