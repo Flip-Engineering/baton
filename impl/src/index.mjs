@@ -1064,8 +1064,36 @@ function worktreeManager(repoRoot, opts = {}) {
           const branch = localGit(['branch', '--show-current'], worktree, { encoding: 'utf8' }).trim();
           if (branch !== context.branch) return { ok: false, reason: 'session worktree branch mismatch' };
         }
+        // Issue #563: the recorded base is checked so the verdict NAMES which fact failed. A base
+        // that is no longer an ancestor of HEAD is three different facts — the commit is not in
+        // this repository, the branch was rewound behind it, or the histories diverged — and each
+        // has its own remedy. Answered as one generic session_context_mismatch, a rewind reads as
+        // a foreign context and leaves the caller with no direction.
         if (context.baseSha) {
-          localGit(['merge-base', '--is-ancestor', context.baseSha, 'HEAD'], worktree, { stdio: 'ignore' });
+          const head = localGit(['rev-parse', 'HEAD'], worktree, { encoding: 'utf8' }).trim();
+          const reaches = (ancestor, descendant) => {
+            try {
+              localGit(['merge-base', '--is-ancestor', ancestor, descendant], worktree, { stdio: 'ignore' });
+              return true;
+            } catch { return false; }
+          };
+          const recordedKnown = (() => {
+            try {
+              localGit(['rev-parse', '--verify', '--quiet', `${context.baseSha}^{commit}`], worktree, { stdio: 'ignore' });
+              return true;
+            } catch { return false; }
+          })();
+          if (!recordedKnown) {
+            return { ok: false, code: 'session_worktree_base_unknown',
+              reason: `session worktree records base ${context.baseSha}, which is not a commit in this repository; HEAD is ${head}` };
+          }
+          if (!reaches(context.baseSha, 'HEAD')) {
+            return reaches(head, context.baseSha)
+              ? { ok: false, code: 'session_worktree_base_rewound',
+                reason: `session worktree branch was rewound behind its recorded base: HEAD ${head} is an ancestor of base ${context.baseSha}; restore the recorded base as an ancestor of HEAD, or admit a fresh seat at ${head}` }
+              : { ok: false, code: 'session_worktree_base_diverged',
+                reason: `session worktree history diverged from its recorded base ${context.baseSha}: neither HEAD ${head} nor the recorded base contains the other` };
+          }
         }
         if (!Array.isArray(context.sparsePaths) && opts.workerSparseCheckoutIdentity.mode !== 'full') return { ok: false, reason: 'session sparse checkout identity is missing' };
         const contextSparsePaths = Array.isArray(context.sparsePaths) ? context.sparsePaths : [];

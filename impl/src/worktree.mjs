@@ -135,6 +135,22 @@ function gitFile(args, cwd, opts = {}, extraEnv = {}) {
   return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: localGitEnv(extraEnv) });
 }
 
+/** Issue #573: the environment for a REMOTE-directed git call — the landing's pre-flight probe,
+ * fetch, push and read-back. `localGitEnv` blanks the global config so a local-only git call
+ * stays deterministic, but the credential helper the deployment owner configured for the
+ * declared remote lives in exactly that config, so a call that talks to the remote drops the
+ * GIT_CONFIG_GLOBAL override while keeping the GIT_* strip and the system-config exemption.
+ * Local-only git calls keep `gitFile`'s blanked config. */
+function publishGitEnv(extra = {}) {
+  const env = localGitEnv(extra);
+  delete env.GIT_CONFIG_GLOBAL;
+  return env;
+}
+
+function gitRemote(args, cwd, opts = {}, extraEnv = {}) {
+  return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: publishGitEnv(extraEnv) });
+}
+
 function isClean(dir) {
   return sh('git', ['status', '--porcelain'], dir) === '';
 }
@@ -142,6 +158,16 @@ function isClean(dir) {
 function mergeError(message, code, cause) {
   return Object.assign(new StructuredMergeError(message, code), cause ? { cause } : {});
 }
+/** Issue #573: the stderr classes the publish pre-flight reads as AUTHENTICATION failures — every
+ * other `git ls-remote` failure reads as the destination being absent or unreachable. Matched
+ * against the bounded tail (`gitStepTail`), case-insensitively, because the wording differs per
+ * transport: SSH publickey refusals, HTTP credential prompts the hermetic environment cannot
+ * answer, and host-key verification that never reached the credential at all. */
+const GIT_REMOTE_AUTH_FAILURE = /permission denied|publickey|could not read username|could not read password|authentication failed|terminal prompts disabled|no such device or address|host key verification|identity file/i;
+/** Issue #573: the throwaway ref the publish pre-flight names. `--dry-run` writes nothing on
+ * either side, so the ref never exists on the remote; it only gives the simulated push a
+ * refspec to carry. */
+const PUBLISH_AUTH_PROBE_REF = 'baton-reviewer-auth-probe';
 
 function postEffectMergeError(message, cause) {
   return Object.assign(mergeError(message, 'structured_post_effect_inconsistent', cause), { postEffect: true });
@@ -2160,6 +2186,13 @@ function commitEnv(author, committer) {
  * private scaffolding into every other lane's checkout. */
 export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
 
+/** Issue #562: the identity the deployment's own effective-tree snapshot commits under. That
+ * snapshot is a lane worktree's BASE (application-deployment.mjs `repositorySnapshot`), so its tree
+ * is the resident's own checkout — including whatever that checkout had untracked-and-unignored at
+ * the moment the snapshot was taken. ONE derivation: the snapshot writer commits under it and the
+ * landing filter below reads it back. */
+export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
+
 /**
  * Land one contribution's whole range as ONE squashed commit.
  *
@@ -2186,9 +2219,12 @@ export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.b
  *   configures them; omitted, the scratch checkout derives them from the repository (#451)
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
  * @param {string|null} [request.publishRemote] the deployment's DECLARED shared remote (a URL or
- *   path from `advanced.integration.publishRemote`): the landed ref is pushed to it after the
- *   fast-forward, naming the declared value itself, never a remote name. Null on a dry run or a
- *   deployment that declares none — a real landing without one refuses
+ *   path from `advanced.integration.publishRemote`): a real landing with one pre-flights the
+ *   remote BEFORE the gate run and refuses typed when the destination does not exist, cannot be
+ *   reached, or cannot authenticate this environment (#573), then fetches the remote's target
+ *   branch and gates on that tip (#570), builds the squash on it, and pushes the landed ref to it
+ *   after the fast-forward, naming the declared value itself, never a remote name. Null on a dry
+ *   run or a deployment that declares none — a real landing without one refuses
  *   `integrate_publish_undeclared` before anything moves.
  * @param {boolean} [request.dryRun]
  * @param {object} [request.log]
@@ -2197,7 +2233,7 @@ export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.b
  *   or any gate, so the durable record of a landing names its directory while it is still running
  * @returns {Promise<{base: string, target: string, targetHeadBefore: string, targetHeadAfter: string|null,
  *   squashSha: string, changedPaths: string[], regenerated: string[],
- *   gates: {files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
+ *   gates: {baseSha: string, files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
  */
 export async function landContribution(repoRoot, request) {
   const { contributionId, target, commitSha, message, author, committer } = request;
@@ -2218,12 +2254,110 @@ export async function landContribution(repoRoot, request) {
   } catch {
     throw mergeError(`the target ${target} is not a local branch of this repository`, 'integrate_change_invalid');
   }
+  // Issue #558: `publishRemote` is the deployment's DECLARED shared remote — a configuration
+  // value, never `origin` (a resident origin has pointed at a local checkout instead of the
+  // shared remote) and never derived from repoId (a hash of the local git dir path, distinct per
+  // clone). Both flags are read BEFORE the gate run: a real landing with a declared remote
+  // pre-flights that remote (#573 below) and gates on its fetched tip (#570 below); a real
+  // landing without one refuses before anything moves.
+  const dryRun = request.dryRun === true;
+  const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
+    && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+  // Issue #573: the push is the LAST step of a landing, so a declared remote this environment
+  // cannot publish to cost the whole derived gate run before the landing learned it — and the
+  // report was a bare git tail. Reads prove nothing here: a public-read remote lists refs to an
+  // anonymous fetch and still refuses the push, so the pre-flight is a `git push --dry-run` —
+  // the same command as the landing's own push, in the SAME publish environment (publishGitEnv:
+  // the deployment owner's configured credentials, prompts disabled), naming a THROWAWAY ref
+  // (`--dry-run` writes nothing anywhere; the ref never exists on the remote). It runs before
+  // the scratch checkout exists and before any gate file runs, and the refusal names which of
+  // the two failed: the destination does not exist or cannot be reached, or it answered but
+  // this environment holds no credential it accepts. The push itself, its rollback and the #558
+  // refusal keep their places: a remote that breaks between pre-flight and push still refuses
+  // `integrate_publish_failed` and rolls the local move back.
+  if (!dryRun && publishRemote !== null) {
+    try {
+      gitRemote(['push', '--dry-run', publishRemote, `${targetHeadBefore}:refs/heads/${PUBLISH_AUTH_PROBE_REF}`], repoRoot,
+        { stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
+    } catch (error) {
+      const unauthenticated = GIT_REMOTE_AUTH_FAILURE.test(gitStepTail(error));
+      throw Object.assign(
+        mergeError(unauthenticated
+          ? `this environment cannot authenticate to the declared shared remote for ${target}; give the landing's git environment the push credential it needs`
+          : `the declared shared remote for ${target} does not exist or cannot be reached; correct the destination named by advanced.integration.publishRemote`,
+        unauthenticated ? 'integrate_publish_unauthenticated' : 'integrate_publish_unreachable'),
+        {
+          script: 'git push --dry-run',
+          ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+          stderrTail: redactPushTail(gitStepTail(error)),
+        },
+      );
+    }
+  }
+  // Issue #570: the local target ref can drift behind the declared remote (the resident's own
+  // master sat commits behind the published tip), and a squash built on the stale head pushes as
+  // a non-fast-forward and rolls the landing back. A real landing with a declared remote
+  // therefore fetches the remote's target branch FIRST — one git call, in the same publish
+  // environment as the push (#573) — and gates on that tip: the landing requires the local ref
+  // to be an
+  // ancestor of the fetched tip and refuses typed, naming both heads, when the pair has
+  // diverged, builds the squash on the fetched tip, and the compare-and-swap below brings the
+  // local ref from its stale head to the landed squash in the same step. A remote that does not
+  // hold the branch yet is no tip to gate on: the landing proceeds on the local ref, and the push
+  // creates the branch there. A dry run — and any deployment that declares no remote — lands on
+  // the local ref exactly as before.
+  let ontoHead = targetHeadBefore;
+  if (!dryRun && publishRemote !== null) {
+    let fetchedTip = null;
+    let fetched = false;
+    try {
+      gitRemote(['fetch', '--no-tags', publishRemote, ref], repoRoot,
+        { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
+      fetched = true;
+    } catch (error) {
+      // A remote that does not hold the target branch yet (a fresh declaration publishes the
+      // first landing to it) has no remote tip to gate on: one `ls-remote` classifies the failed
+      // fetch — an absent branch lets the landing proceed on the local ref exactly as a
+      // no-remote deployment does, while an unreachable remote, or a branch the probe still sees
+      // after the fetch failed, refuses typed.
+      let absent = false;
+      try {
+        absent = String(gitRemote(['ls-remote', '--heads', publishRemote, ref], repoRoot,
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' })).trim() === '';
+      } catch { absent = false; }
+      if (!absent) {
+        throw Object.assign(
+          mergeError(`the declared shared remote could not be fetched for ${target}; declare a reachable remote with advanced.integration.publishRemote`, 'integrate_publish_failed'),
+          {
+            script: 'git fetch',
+            ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+            stderrTail: redactPushTail(gitStepTail(error)),
+          },
+        );
+      }
+    }
+    if (fetched) fetchedTip = sh('git', ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'], repoRoot);
+    if (fetchedTip !== null && fetchedTip !== targetHeadBefore) {
+      let behind = false;
+      try {
+        sh('git', ['merge-base', '--is-ancestor', targetHeadBefore, fetchedTip], repoRoot);
+        behind = true;
+      } catch { behind = false; }
+      if (!behind) {
+        throw Object.assign(
+          mergeError(`the target ${target} has diverged from the declared shared remote: the local head ${targetHeadBefore} is not an ancestor of the fetched tip ${fetchedTip}`, 'integrate_target_diverged'),
+          { localSha: targetHeadBefore, fetchedSha: fetchedTip },
+        );
+      }
+      ontoHead = fetchedTip;
+    }
+  }
   // The base rule (#296 item 1). Never the contribution's recorded observedHead: once a lane
   // rebases, that commit is an ancestor of nothing on the target and a squash from it would replay
   // the lane's ancestors as its own work.
   let base;
   try {
-    base = sh('git', ['merge-base', ref, tip], repoRoot);
+    base = sh('git', ['merge-base', ontoHead, tip], repoRoot);
   } catch {
     throw mergeError(`the contribution commit ${commitSha} and ${target} share no common ancestor`, 'integrate_commit_unreachable');
   }
@@ -2298,6 +2432,21 @@ export async function landContribution(repoRoot, request) {
         });
       }
       gitFile(['add', '-A'], checkout.dir, { stdio: 'pipe' });
+      // Issue #562: the paths this squash would carry only because the lane's BASE carried them. A
+      // lane worktree's base is the deployment's effective-tree snapshot, whose tree is the
+      // resident's checkout, so a file the resident had untracked-and-unignored then sits in every
+      // lane's base and the squash would land it as that lane's own addition. A path whose FIRST
+      // addition in this lane's history is the snapshot commit is the resident's content, never the
+      // lane's work: it leaves the index here, and the receipt names every path it took.
+      const inherited = [];
+      for (const path of sh('git', ['diff', '--cached', '--name-only', '--diff-filter=A'], checkout.dir)
+        .split('\n').filter((line) => line.length > 0)) {
+        const addedBy = sh('git', ['log', '--reverse', '--diff-filter=A', '--format=%ae', tip, '--', path], checkout.dir)
+          .split('\n').find((line) => line.length > 0) ?? null;
+        if (addedBy !== SNAPSHOT_COMMIT_EMAIL) continue;
+        gitFile(['rm', '--cached', '--quiet', '--', path], checkout.dir, { stdio: 'pipe' });
+        inherited.push(path);
+      }
       const changed = sh('git', ['diff', '--cached', '--name-only'], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const regenerated = changed.filter((path) => !changedBeforeRegeneration.includes(path));
@@ -2313,14 +2462,14 @@ export async function landContribution(repoRoot, request) {
       const targetChanged = sh('git', ['diff', '--name-only', base, ontoHead], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const overlaps = changed.filter((path) => targetChanged.includes(path));
-      return { checkout, squashSha, changed, regenerated, overlaps };
+      return { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead };
     } catch (error) {
       await checkout.cleanup();
       throw error;
     }
   };
 
-  let attempt = await prepare(targetHeadBefore);
+  let attempt = await prepare(ontoHead);
   // The target moving between the squash and the fast-forward is a race, not a refusal: re-base
   // ONCE onto the new head and only refuse if it moves again. `update-ref` is the CAS that decides.
   if (sh('git', ['rev-parse', '--verify', ref], repoRoot) !== targetHeadBefore) {
@@ -2334,8 +2483,12 @@ export async function landContribution(repoRoot, request) {
     targetHeadBefore = moved;
   }
 
-  const { checkout, squashSha, changed, regenerated, overlaps } = attempt;
+  const { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead: gateBase } = attempt;
   try {
+    // Issue #570: the gate verdict names the base commit it judged — the head the squash
+    // descends from, which is the fetched remote tip when the local ref sat behind the declared
+    // remote. A red verdict rides the refusal detail, so a refused landing shows which base
+    // produced it; a green one lands on the receipt's gates row.
     const gates = request.runGates
       ? await request.runGates(checkout.dir, changed, { base, targetHeadBefore, squashSha })
       : { files: [], verdictLine: null, unexpected: [] };
@@ -2343,17 +2496,11 @@ export async function landContribution(repoRoot, request) {
     if (unexpected.length > 0) {
       throw Object.assign(
         mergeError(`the derived gate set ran red: ${unexpected.length} unexpected row(s)`, 'integrate_gates_red'),
-        { verdictLine: gates?.verdictLine ?? null, unexpected },
+        { verdictLine: gates?.verdictLine ?? null, unexpected, baseSha: gateBase },
       );
     }
-    const dryRun = request.dryRun === true;
-    // Issue #558: the declared shared remote — a deployment configuration value, never `origin`
-    // (a resident origin has pointed at a local checkout instead of the shared remote) and never
-    // derived from repoId (a hash of the local git dir path, distinct per clone). A real landing
-    // without one refuses BEFORE anything moves: a landing that cannot publish never reports a
-    // local success. A dry run lands nothing, so it publishes nothing either.
-    const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
-      && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+    // A landing that cannot publish never reports a local success. A dry run lands nothing, so
+    // it publishes nothing either.
     if (!dryRun && publishRemote === null) {
       throw mergeError(
         `the deployment declares no shared remote for landings (advanced.integration.publishRemote), so ${target} cannot be published`,
@@ -2370,24 +2517,42 @@ export async function landContribution(repoRoot, request) {
       // Issue #558: publish the landed ref to the declared remote. The push names the declared
       // value itself, never a remote name, so no local remote configuration the resident holds
       // can redirect it — a landing published to the wrong destination is the same failure as
-      // never publishing. GIT_TERMINAL_PROMPT=0 so a remote that wants a credential fails typed
-      // instead of hanging the landing on a prompt. A failed push rolls the local move back, so
-      // the target holds no unpublished squash. Neither step checks out a branch: a detached
-      // main checkout stays detached.
+      // never publishing. The push runs under publishGitEnv (#573): the deployment owner's
+      // configured credential helper answers the remote, and GIT_TERMINAL_PROMPT=0 so a remote
+      // that wants an interactive credential fails typed instead of hanging the landing on a
+      // prompt. A failed push rolls the local move back, so the target holds no unpublished
+      // squash. Neither step checks out a branch: a detached main checkout stays detached.
       try {
-        gitFile(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
+        gitRemote(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
           { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
+        // Issue #556: read the DECLARED destination back. A push reports success against whatever
+        // its URL resolved to, so a landing could publish somewhere else — an intermediate
+        // checkout, a push-only rewrite — while every in-process signal read as a real publish.
+        // The landed ref has to be the tip the declared destination itself reports.
+        const observedTip = publishedTip(repoRoot, publishRemote, ref);
+        if (observedTip !== squashSha) {
+          throw Object.assign(new Error(`${publishRemote} reports ${observedTip ?? 'no tip'} at ${ref}`), {
+            code: 'integrate_publish_unverified', observedTip,
+          });
+        }
       } catch (error) {
         let rolledBack = false;
         try {
           gitFile(['update-ref', ref, targetHeadBefore, squashSha], repoRoot, { stdio: 'pipe' });
           rolledBack = true;
         } catch { /* the refusal below still answers; rolledBack: false names the state */ }
+        // #556: a destination that does not report the landed squash is refused under its own code
+        // and names the tip it did report; a push that failed keeps #558's vocabulary.
+        const unverified = error?.code === 'integrate_publish_unverified';
         throw Object.assign(
-          mergeError(`the declared shared remote could not publish ${target}; declare a reachable remote with advanced.integration.publishRemote`, 'integrate_publish_failed'),
+          mergeError(unverified
+            ? `the declared shared remote does not report the landed ${target}; the push to it is unverified`
+            : `the declared shared remote could not publish ${target}; declare a reachable remote with advanced.integration.publishRemote`,
+            unverified ? 'integrate_publish_unverified' : 'integrate_publish_failed'),
           {
             script: 'git push',
             ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+            ...(unverified ? { observedTip: error.observedTip ?? null } : {}),
             stderrTail: redactPushTail(gitStepTail(error)),
             rolledBack,
           },
@@ -2396,12 +2561,14 @@ export async function landContribution(repoRoot, request) {
     }
     logEvent(request, 'worktree', 'worktree.contribution_landed', {
       contributionId, target, base, targetHeadBefore, squashSha, changedPaths: changed, dryRun,
+      ...(inherited.length === 0 ? {} : { inherited }),
     });
     return {
       base, target, targetHeadBefore,
       targetHeadAfter: dryRun ? null : squashSha,
-      squashSha, changedPaths: changed, regenerated, overlaps,
+      squashSha, changedPaths: changed, regenerated, overlaps, inherited,
       gates: {
+        baseSha: gateBase,
         files: [...(gates?.files ?? [])],
         verdictLine: gates?.verdictLine ?? null,
         unexpected: [],
@@ -2444,6 +2611,17 @@ function gitStepTail(error) {
   const stderr = Buffer.isBuffer(error?.stderr) ? error.stderr.toString('utf8') : String(error?.stderr ?? '');
   const text = stderr.trim().length > 0 ? stderr.trim() : String(error?.message ?? error);
   return text.slice(-GIT_STEP_TAIL_BYTES);
+}
+
+/** Issue #556: the tip one ref holds AT a destination, read from that destination. An absent ref
+ * answers null; a destination that cannot be read throws, and the caller composes the refusal. The
+ * read names the same value the push named, so a rewrite that redirects only the push — a
+ * pushInsteadOf rule, a mirror that drops the ref — lands here as a mismatch. */
+function publishedTip(repoRoot, remote, ref) {
+  const out = gitRemote(['ls-remote', remote, ref], repoRoot,
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
+  const line = String(out).split('\n').map((row) => row.trim()).find((row) => row.length > 0) ?? null;
+  return line === null ? null : line.split(/\s+/u)[0] ?? null;
 }
 
 /** #453: the bounded cause of a failed snapshot carry — kept on the error so the refusal that
