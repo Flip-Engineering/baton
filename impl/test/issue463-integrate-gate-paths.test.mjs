@@ -137,7 +137,18 @@ function runnerSource({ mode, recordPath }) {
     '  process.exit(1);',
     '}',
   ];
-  if (mode === 'red') {
+  if (mode === 'red-shared' || mode === 'red-change-only') {
+    // Issue #580: the runner fails the first named test file. 'red-shared' fails it on every tree,
+    // so the target fails it too; 'red-change-only' fails it only where the lane's change is
+    // present (src/coordinator.mjs carries 'lane = 2' on the lane and 'lane = 1' on the target).
+    lines.push("const { readFileSync } = await import('node:fs');");
+    lines.push("const laneChange = (() => { try { return readFileSync(join(process.cwd(), 'src/coordinator.mjs'), 'utf8').includes('lane = 2'); } catch { return false; } })();");
+    lines.push(`const failing = ${JSON.stringify(mode)} === 'red-shared' || laneChange;`);
+    lines.push("const key = `${names[0]} :: 580 fixture test`;");
+    lines.push("const failures = failing ? [{ key, file: names[0], name: '580 fixture test', failureType: 'testCodeFailure' }] : [];");
+    lines.push("writeFileSync(verdict, JSON.stringify({ schemaVersion: 2, green: !failing, passed: names.length - failures.length, failures, unexpected: failures.map((row) => row.key) }));");
+    lines.push('process.exit(failing ? 1 : 0);');
+  } else if (mode === 'red') {
     lines.push(`process.stderr.write(${JSON.stringify(`${RED_TAIL}\n`)});`);
     lines.push('writeFileSync(verdict, JSON.stringify({ green: false, passed: 0, expectedRed: 0,'
       + ` unexpected: [${JSON.stringify(RED_ROW)}] }));`);
@@ -363,7 +374,7 @@ test('463c: a red gate refuses naming the selection, the runner tail and the reg
   assert.ok(error, 'the landing refuses');
   assert.equal(error.code, 'integrate_gates_red');
   const detail = error.detail;
-  assert.match(detail.verdictLine ?? '', /^red — passed 0, unexpected 1/u,
+  assert.match(detail.verdictLine ?? '', /^red — passed 0, 1 failing only with the change/u,
     'the verdict line is still the verdict line');
   assert.deepEqual(detail.unexpected, [RED_ROW], 'and the rows the runner judged are still the rows');
   assert.ok(detail.selection, 'the refusal carries the selection those rows came from');
@@ -436,4 +447,32 @@ test('463e: the refusal the operator reads names the selection and the runner\'s
   assert.match(printed.message, new RegExp(RED_TAIL, 'u'), "with the runner's own last words");
   assert.deepEqual(printed.detail?.selection?.files, w.expected.map((name) => `test/${name}`),
     'and the refusal the CLI read carries the selection, not only its rows');
+});
+
+// ── #580: the gate compares the change with its target ──────────────────────────────────────────
+
+test('580a: a test that fails on the target too does not block, and the landing lands naming it', needsGit, async (t) => {
+  const w = await world(t, { change: 'impl/src/coordinator.mjs', gate: { mode: 'red-shared' } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  await w.integration();
+
+  assert.equal(w.failureRows().length, 0, 'no landing failure is recorded');
+  assert.notEqual(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target moved: the change landed');
+  const landed = w.store.eventsView().filter((event) => event.kind === 'swarm.contribution_integrated' || event.payload?.kind === 'swarm.contribution_integrated').at(-1);
+  assert.ok(landed, 'the landing recorded its integration');
+});
+
+test('580b: a test that passes on the target and fails with the change blocks, naming it', needsGit, async (t) => {
+  const w = await world(t, { change: 'impl/src/coordinator.mjs', gate: { mode: 'red-change-only' } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integration().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses');
+  assert.equal(error.code, 'integrate_gates_red');
+  assert.equal(error.detail.unexpected.length, 1, 'exactly the one test the change broke');
+  assert.match(String(error.detail.unexpected[0]), / :: 580 fixture test$/u);
+  assert.match(error.detail.verdictLine ?? '', /1 failing only with the change, 0 failing on the target too/u);
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'a red gate never moves the target');
 });

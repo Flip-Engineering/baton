@@ -2352,7 +2352,7 @@ export async function landContribution(repoRoot, request) {
     const unexpected = Array.isArray(gates?.unexpected) ? gates.unexpected : [];
     if (unexpected.length > 0) {
       throw Object.assign(
-        mergeError(`the derived gate set ran red: ${unexpected.length} unexpected row(s)`, 'integrate_gates_red'),
+        mergeError(`the derived gate set ran red: ${unexpected.length} test(s) fail with the change and pass on the target`, 'integrate_gates_red'),
         { verdictLine: gates?.verdictLine ?? null, unexpected },
       );
     }

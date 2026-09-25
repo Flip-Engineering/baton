@@ -239,7 +239,8 @@ test('HC-6: run-suite.mjs defaults its parallelism from the derivation; BATON_SU
   // loaded host the child's verify lease is refused (exit 1 before any lane) and this row would
   // read that refusal as a fixture failure.
   env.BATON_HOST_CAPACITY_DISABLED = '1';
-  const child = spawn(process.execPath, [runner, 'test/adapter-card-contract.test.mjs'], {
+  // The file only has to run and pass: its verdict is not this row's subject.
+  const child = spawn(process.execPath, [runner, 'test/suite-verdict.test.mjs'], {
     cwd: implRoot, env, stdio: ['ignore', 'ignore', 'pipe'],
   });
   let stderr = '';
