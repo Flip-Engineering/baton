@@ -41,15 +41,11 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // Closed-schema primitives (recipes-lane pattern, recipes.mjs:74-121).
 // ---------------------------------------------------------------------------
 
-// D5 — the byte bound pinned at its exact value (F8b). #207 (row-admission-align) judgment call
-// (recorded in docs/reference/evidence/phantom-root-2026-08-15/wave-g/notes-row-admission-align.md):
-// this 64 KiB stays the READ/containment envelope (a brief up to 64 KiB is read and rendered —
-// W1-03 pins the 64 KiB + 1 refusal at this exact value), while the run.start objective cap
-// (run.objective, FRAME_LIMITS below) is the ADMISSION bound enforced at compile/admit: the
-// interpreter does NOT split, so a rendered objective over the run cap refuses
-// workflow_spec_invalid naming both byte counts — fail-loud at the seam, never a per-member
-// phantom start failure.
-const OBJECTIVE_REF_MAX_BYTES = 64 * 1024;
+// D5 — an objectiveRef is contained (it must resolve inside the repository) and its text is read
+// and rendered whole. The run.start objective cap (run.objective, FRAME_LIMITS below) is the
+// ADMISSION bound enforced at compile/admit: the interpreter does NOT split, so a rendered
+// objective over the run cap refuses workflow_spec_invalid naming both byte counts — fail-loud at
+// the seam, never a per-member phantom start failure.
 // Issue #499: the member/scope ceilings are the registry's COUNTS rows — a structural admission
 // bound on ONE wave payload (admission audit §4 F7), never a fleet size.
 const MAX_MEMBERS = FRAME_LIMITS['wave.members'].value;
@@ -342,7 +338,7 @@ function assertHarvestContained(path, repoRoot) {
 }
 
 // ---------------------------------------------------------------------------
-// D5 — render each member's objective from its objectiveRef (containment + byte bound).
+// D5 — render each member's objective from its objectiveRef (containment).
 // ---------------------------------------------------------------------------
 
 function renderObjective(repoRoot, member, salt) {
@@ -352,9 +348,6 @@ function renderObjective(repoRoot, member, salt) {
   const target = resolve(repoRoot, ref);
   if (!existsSync(target)) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" does not exist`);
   const text = readFileSync(target, 'utf8');
-  if (Buffer.byteLength(text) > OBJECTIVE_REF_MAX_BYTES) {
-    throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" is oversize (limit ${OBJECTIVE_REF_MAX_BYTES} bytes — D5)`);
-  }
   // The salt line (`[attempt: <salt> <role>] `) mirrors createWaveDriver's own prefix
   // (wave-driver.mjs:334) so the wave's attempt marker rides the member's committed report and the
   // D4 harvest can attribute it (B2). The interpreter is the sole salt owner here (createWave does
@@ -376,7 +369,7 @@ function assertObjectiveAdmissible(member, objective) {
   if (bytes > cap) {
     throw specInvalid(
       `the member "${member.role}" objectiveRef "${member.objectiveRef}" renders to ${bytes} bytes (cap ${cap} — run.objective); `
-      + `a brief within the ${OBJECTIVE_REF_MAX_BYTES}-byte D5 envelope that the run machinery cannot start is refused at admission (#207)`,
+      + 'the run machinery cannot start it, so the interpreter refuses it at admission (#207)',
     );
   }
 }
