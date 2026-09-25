@@ -467,7 +467,66 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       spilled: false, bytes: 0, digest: '', spill: '',
     }),
   }),
-});
+  // Issue #594: the preservation lane's three outcome rows — what the runtime published to the
+  // deployment's declared shared remote, what it could not, and what it held back. Driver rows,
+  // never caller-submittable and never folded into the swarm state.
+  'worktree.preserve_pushed': Object.freeze({
+    summary: Object.freeze('one successful preserve push: a seat commit, a contribution commit, or a turn-end snapshot of uncommitted changes published to the declared shared remote'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the preserved work belongs to'),
+      participantId: STRING('the seat whose work was published'),
+      workspaceId: STRING('the workspace the work came from — null when the observation named none', { type: 'string|null' }),
+      sha: STRING('the commit the push carried'),
+      ref: STRING('the preserve ref it published: refs/baton/preserve/branches/<seat>/<branch> for commits and contributions, refs/baton/preserve/uncommitted/<seat> for snapshots'),
+      remote: STRING('the declared shared remote the push went to'),
+      work: STRING('the producing event class: commit, contribution, or uncommitted'),
+      at: STRING('the instant the push succeeded, ISO 8601'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'lane', workspaceId: 'ws-9f2c',
+      sha: 'a'.repeat(40), ref: 'refs/baton/preserve/branches/lane/baton/lane-1',
+      remote: 'https://example.invalid/org/repo.git', work: 'commit', at: '2026-09-25T18:00:00.000Z',
+    }),
+  }),
+  'worktree.preserve_failed': Object.freeze({
+    summary: Object.freeze('one preserve push that failed, recorded with its cause — retried on the next commit, contribution record or turn boundary, never on a timer'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the preserved work belongs to'),
+      participantId: STRING('the seat whose work could not be published'),
+      workspaceId: STRING('the workspace the work came from — null when the observation named none', { type: 'string|null' }),
+      sha: STRING('the commit the push carried — null when the commit could not be read', { type: 'string|null' }),
+      ref: STRING('the preserve ref the push named'),
+      remote: STRING('the declared shared remote the push went to'),
+      work: STRING('the producing event class: commit, contribution, or uncommitted'),
+      cause: STRING('the failure the push reported — the git tail\'s last line, or the spawn fault'),
+      at: STRING('the instant the push failed, ISO 8601'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'lane', workspaceId: 'ws-9f2c',
+      sha: 'a'.repeat(40), ref: 'refs/baton/preserve/branches/lane/baton/lane-1',
+      remote: 'https://example.invalid/org/repo.git', work: 'commit',
+      cause: 'Repository not found', at: '2026-09-25T18:00:00.000Z',
+    }),
+  }),
+  'worktree.preserve_held': Object.freeze({
+    summary: Object.freeze('one commit or snapshot the preserve lane held back — its changed paths carry a credential shape, so it is recorded and left unpreserved on this host, never published'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the held work belongs to'),
+      participantId: STRING('the seat whose work was held'),
+      workspaceId: STRING('the workspace the work came from — null when the observation named none', { type: 'string|null' }),
+      sha: STRING('the commit that was held — null when the ref name itself could not be built', { type: 'string|null' }),
+      ref: STRING('the preserve ref the push would have named — null when the seat or branch name cannot label a ref', { type: 'string|null' }),
+      work: STRING('the producing event class: commit, contribution, or uncommitted'),
+      paths: JSON_VALUE('the changed paths that matched the credential shapes'),
+      at: STRING('the instant the work was held, ISO 8601'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'lane', workspaceId: 'ws-9f2c',
+      sha: 'a'.repeat(40), ref: 'refs/baton/preserve/branches/lane/baton/lane-1', work: 'commit',
+      paths: Object.freeze(['impl/auth.json']), at: '2026-09-25T18:00:00.000Z',
+    }),
+  }),
+ });
 
 /** One-paragraph description of a refusal row for agent-facing surfaces: what the runtime records
  * when it refuses a mutation, what a watcher sees when it wakes on one, and how the row clears —
