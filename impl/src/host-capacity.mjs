@@ -718,13 +718,6 @@ export class HostCapacityAuthority {
         const mine = entries.find((record) => record.nonce === nonce) ?? null;
         const ahead = mine ? entries.indexOf(mine) : entries.length;
         const head = mine === null || ahead === 0;
-        // #541: a host whose memory cannot fund one full suite is a standing property of the
-        // host, not a queue. It answers at once — no lease, the shortfall named — and the caller
-        // proceeds without the exclusion a lease would buy. Nothing waits on a limit no wait
-        // could cure.
-        if (kind === 'verify' && mine === null && memoryTightFor(kind, capacity)) {
-          return Object.freeze({ degraded: hostCapacityShortfall(kind, capacity, used) });
-        }
         // A verify is judged against the suite's measured cost and the budget the admitted
         // verifies leave; a worker holds no slot and is always admitted (see roomFor).
         if (head && roomFor(kind, capacity, used)) {
@@ -753,7 +746,6 @@ export class HostCapacityAuthority {
           },
         });
       });
-      if (outcome.degraded) return Object.freeze({ token: null, degraded: outcome.degraded });
       if (outcome.admitted) {
         return Object.freeze({
           token: outcome.admitted,
