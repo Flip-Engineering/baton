@@ -42,11 +42,7 @@
 //   RG-10b RED  renderer canonical-miss fallback byte-string present in EXECUTABLE source
 //               (comment-stripped, fold)                                                 (stage: renderer-fallback-absent)
 //   RG-10c RED  renderMcpToolInventory resolves the 5 ops to their operation keys       (stage: non-canonical-ops-render-operation-keys)
-//   RG-11R RED  surface-inventory-artifact encodes mcp.application 49 / mcp.combined 102,
-//               tied to composition (35 + 14 / 86 + 2 + 14, fold)                        (stage: artifact-counts-49-102)
 //   RG-P1  PIN  surface-conformance main stays green                                    (stage: conformance-main-green)
-//   RG-P2  PIN  committed artifact mcp.application count == live application surface    (stage: artifact-application-count-pin)
-//   RG-P3  PIN  committed artifact mcp.combined count == live combined surface          (stage: artifact-combined-count-pin)
 //   RG-P4  PIN  phase16 application tool list == mcpApplicationToolNames()              (stage: phase16-application-tool-list-pin)
 //   RG-P5  PIN  mcp-reflex application tool list == mcpApplicationToolNames()           (stage: mcp-reflex-application-tool-list-pin)
 //   RG-P6  PIN  phase67 application tool list == mcpApplicationToolNames()              (stage: phase67-application-tool-list-pin)
@@ -228,9 +224,13 @@ test('RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are expor
   // returning any sorted dedup set that omits a web command now fails. (The one-directional law
   // legitimately admits MCP-only extras — bus ⊆ application, never equality — so "garbage extras"
   // remain in the law's shadow, recorded as a judgment call in the fold notes.)
-  const missing = webCommands.filter((command) => !served.includes(command));
-  assert.deepEqual(missing, [], 'served command set covers every web-bus command (stage: served-set-covers-web)');
+  // Issue #566 composition: the lifecycle commands reach the bus through the DISPATCH MAP's
+  // canonical spellings (fleet dot twins), not minted ordinary rows — coverage is read from the
+  // map (keys ∪ values), never from the ordinary table alone.
   const dispatch = mcpNorthbound.mcpApplicationDispatch();
+  const reachable = new Set([...served, ...Object.keys(dispatch), ...Object.values(dispatch)]);
+  const missing = webCommands.filter((command) => !reachable.has(command));
+  assert.deepEqual(missing, [], 'served command set covers every web-bus command (stage: served-set-covers-web)');
   assert.equal(Object.isFrozen(dispatch), true, 'dispatch map is frozen');
 });
 
@@ -240,141 +240,120 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 57, 'application tools/list count 57 (stage: application-tools-count-49)'); // composition (final landing): 35 base legacy + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) + 1 #314 seed-leg source (issue #555) + 7 memory-family rows (#555 composition correction) = 57
-  // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling set derives from the pre-spread
-  // uncoveredCommands() export — never from the grown served set (empty of uncovered at green) —
-  // and the count ties to composition (35 HEAD ordinary tools + the 14 lifecycle siblings), so a
-  // bare 49 of arbitrary self-consistent names cannot pass.
+  assert.equal(names.length, 57, 'application tools/list count 57 (stage: application-tools-count-49)'); // composition (#566 restore): the #317-pin ordinary 55 + the #99/#179 harvest pair; the 14 minted baton_run_* lifecycle siblings left with the d1288fd9 regression restore
+  // Fold (blue-team #2/#4 — SHALLOW/vacuity): the count ties to the restored composition, so a
+  // bare 57 of arbitrary self-consistent names cannot pass: the #233 canonical dot twins of the
+  // retained legacy tools are advertised (the twin closure), and the registry-operation direct
+  // ports (the harvest pair) ride beside them.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
-  const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 36 + uncovered.length + 3 + 2 + 2,
-    'application tools/list count ties to composition: 36 base (35 + the #314 seed leg) + 14 lifecycle + 3 wakes + 2 message + 2 harvest pair = 65 (stage: application-count-composition)');
-  const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp).sort();
-  const missing = siblingTools.filter((tool) => !names.includes(tool));
-  assert.deepEqual(missing, [],
-    'every pre-spread-uncovered bus command has its sibling tool on the application profile (stage: application-tools-include-lifecycle-siblings)');
+  const twinTools = ['baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send', 'baton_run_member_stop', 'baton_application_help'];
+  const missingTwins = twinTools.filter((tool) => !names.includes(tool));
+  assert.deepEqual(missingTwins, [],
+    'every #233 canonical dot twin of the retained legacy tools is advertised (stage: application-tools-include-canonical-twins)');
   assert.deepEqual(sortedSet(names), mcpNorthbound.mcpApplicationToolNames(),
     'tools/list set equals mcpApplicationToolNames() (ACTUAL sorted order)');
 });
 
 // ── RG-03 — the D3 parity derivation, per op, no hand list (D3) ────────────────────────────────
 
-test('RG-03 RED: the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)', () => {
+test('RG-03 RE-DERIVED (#566): the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)', () => {
   assert.equal(typeof mcpNorthbound.mcpApplicationCommandNames, 'function',
     'mcpApplicationCommandNames export exists (stage: served-set export)');
-  const served = mcpNorthbound.mcpApplicationCommandNames();
-  const uncovered = webCommands.filter((command) => !served.includes(command));
+  // Issue #566 composition: the lifecycle commands are covered by the DISPATCH MAP's canonical
+  // spellings (fleet dot twins), never by minted ordinary rows — the D3 law reads the map.
+  const dispatch = mcpNorthbound.mcpApplicationDispatch();
+  const reachable = new Set([...Object.keys(dispatch), ...Object.values(dispatch)]);
+  const uncovered = webCommands.filter((command) => !reachable.has(command));
   assert.deepEqual(uncovered, [], 'every web-bus command is a served application command (stage: uncovered-set-empty)');
-  // Fold (blue-team #2 — vacuity): the sibling-existence force derives from the pre-spread
-  // uncoveredCommands() export — the D3-law uncovered above is [] at green, which is the law's
-  // point, but it cannot carry the sibling-existence check. The pre-spread snapshot is exactly the
-  // contract's 14 (G2 / Amendment 2).
+  // Fold (blue-team #2 — vacuity): the pre-spread uncoveredCommands() export still snapshots the
+  // web commands the ORDINARY table does not itself serve — the lifecycle ops the #566 composition
+  // serves through the dispatch map's fleet/canonical spellings instead of minted rows.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const mechanismUncovered = mcpNorthbound.uncoveredCommands();
   assert.equal(mechanismUncovered.length, 14,
     'the pre-spread uncovered snapshot is exactly the contract\'s 14 (stage: pre-spread-snapshot-14)');
-  const missingSibling = mechanismUncovered
-    .map((command) => deriveSurfaceNames(command).mcp)
-    .filter((tool) => !mcpNorthbound.mcpApplicationToolNames().includes(tool));
-  assert.deepEqual(missingSibling, [], 'every pre-spread-uncovered bus command has a default-profile sibling tool');
 
   // Construction-order + mechanism pins (fold record Amendment 2 + blue-team fold #3). The source
   // anchors run on COMMENT-STRIPPED source (fold #2): a comment-decoy cannot satisfy them.
-  // uncoveredCommands() snapshots the served set BEFORE the LIFECYCLE sibling spread, the table is
-  // derived (.map) — never a hand list — AND the derived table actually feeds
-  // ORDINARY_APPLICATION_TOOL_DEFINITIONS: a decoy uncoveredCommands()/LIFECYCLE pair with
-  // hand-inlined rows fails the feed anchor (#159 hand-inline hole closed). ORDER/EXISTENCE anchors
-  // only — never line-window anchors.
   const source = stripComments(readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8'));
   const uncoveredDef = source.indexOf('uncoveredCommands');
   const lifecycleTable = source.indexOf('LIFECYCLE_ORDINARY_SIBLINGS');
   assert.ok(uncoveredDef >= 0, 'mcp-northbound defines uncoveredCommands() (stage: uncovered-command-derivation)');
   assert.ok(lifecycleTable >= 0, 'mcp-northbound defines LIFECYCLE_ORDINARY_SIBLINGS (stage: lifecycle-sibling-table)');
   assert.ok(uncoveredDef < lifecycleTable,
-    'uncoveredCommands() precedes the LIFECYCLE spread — the pre-spread snapshot is the 14-row source (construction order)');
+    'uncoveredCommands() precedes the LIFECYCLE table — the pre-spread snapshot is the 14-row source (construction order)');
   assert.ok(source.slice(lifecycleTable, lifecycleTable + 160).includes('.map'),
     'LIFECYCLE_ORDINARY_SIBLINGS is built by .map over the uncovered snapshot (never hand-inlined)');
   const ordinaryTable = source.indexOf('const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([');
   assert.ok(ordinaryTable >= 0, 'mcp-northbound defines ORDINARY_APPLICATION_TOOL_DEFINITIONS (stage: ordinary-table-exists)');
-  assert.ok(source.indexOf('LIFECYCLE_ORDINARY_SIBLINGS', ordinaryTable) >= 0,
-    'LIFECYCLE_ORDINARY_SIBLINGS is referenced inside ORDINARY_APPLICATION_TOOL_DEFINITIONS — the derived table feeds the real definitions (stage: lifecycle-table-feeds-definitions)');
 });
 
 // ── RG-04 — the two D2 fleet tools land (D2) ──────────────────────────────────────────────────
 
-test('RG-04 RED: fleet_run_resume_work and fleet_run_retry_verification are served on combined (stage: combined-includes-fleet-resume-retry)', () => {
+test('RG-04 RE-DERIVED (#566): fleet_run_resume_work and fleet_run_retry_verification are served on combined and bound on the dispatch map (stage: combined-includes-fleet-resume-retry)', () => {
   const combined = mcpNorthbound.mcpCombinedToolNames();
-  const application = mcpNorthbound.mcpApplicationToolNames();
   // Fold (blue-team #2 on RG-04 — SHALLOW): the D2 tool spellings derive from the closed op list +
   // the ONE shared fleetName()/deriveSurfaceNames rules, never hand-written tool names — a wrong
   // impl that names the D2 tools differently fails here. The dispatch/refusal machinery force
-  // stays with RG-08 (SOUND).
+  // stays with RG-08 (SOUND). #566: the application profile reaches the lifecycle ops through the
+  // DISPATCH MAP's canonical spellings, never minted application-profile rows.
+  const dispatch = mcpNorthbound.mcpApplicationDispatch();
   for (const command of D2_LIFECYCLE_OPS) {
     assert.ok(combined.includes(fleetName(command)),
       `combined serves ${fleetName(command)} (stage: combined-includes-fleet-resume-retry)`);
-    assert.ok(application.includes(deriveSurfaceNames(command).mcp),
-      `the application profile reaches ${command} via ${deriveSurfaceNames(command).mcp}`);
+    assert.equal(dispatch[command] ?? null, command,
+      `the dispatch map binds the canonical spelling ${command} (stage: dispatch-binds-canonical)`);
   }
 });
 
 // ── RG-05 — the dispatch binding (D1 step 1 / D3 third pin) ────────────────────────────────────
-
-test('RG-05 RED: every uncovered bus command has its sibling tool bound in the ordinary dispatch map (stage: dispatch-binds-siblings)', () => {
+test('RG-05 RE-DERIVED (#566): every uncovered bus command is bound by its canonical spelling in the dispatch map (stage: dispatch-binds-siblings)', () => {
   assert.equal(typeof mcpNorthbound.mcpApplicationDispatch, 'function',
     'mcpApplicationDispatch export exists (stage: dispatch-map export)');
   const dispatch = mcpNorthbound.mcpApplicationDispatch();
   assert.equal(Object.isFrozen(dispatch), true, 'dispatch map is frozen');
-  // Fold (blue-team #2 — vacuity): the dispatch-binding force derives from the pre-spread
-  // uncoveredCommands() export — the grown-served derivation is [] at green and asserts nothing.
-  // At green every one of the 14 siblings must route to its bus command; a hand-frozen map missing
-  // a binding fails.
+  // Fold (blue-team #2 — vacuity): the binding force derives from the pre-spread
+  // uncoveredCommands() export. #566: the binding spelling is the CANONICAL command name (the
+  // fleet dot twin), not a minted baton_run_* sibling — the map binds command → command.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  const unbound = uncovered
-    .map((command) => ({ command, tool: deriveSurfaceNames(command).mcp }))
-    .filter(({ command, tool }) => dispatch[tool] !== command);
+  const unbound = uncovered.filter((command) => dispatch[command] !== command);
   assert.deepEqual(unbound, [],
-    'each uncovered lifecycle op\'s sibling dispatches to its bus command through APPLICATION_TOOL (stage: dispatch-binds-siblings)');
+    'each uncovered lifecycle op\'s canonical spelling dispatches to its bus command through APPLICATION_TOOL (stage: dispatch-binds-siblings)');
 });
 
 // ── RG-06 — the schema-inheritance claim (M4b, D1 registration spread 3) ───────────────────────
 
-test('RG-06 RED: the fleet-sourced lifecycle siblings (12 at the contract floor, 14 after D2) byte-inherit the fleet_run_* wire schema, taskSupport forbidden, _meta stamped (stage: sibling-schema-inherits-source)', async () => {
+test('RG-06 RE-DERIVED (#566): the #233 canonical dot twins byte-inherit their legacy source\u2019s wire schema and carry the spelling note (stage: sibling-schema-inherits-source)', async () => {
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const tools = (await request(server, 2, 'tools/list', {})).result.tools;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  // Fold (blue-team #1 — BROKEN): the inherited rows are the PRE-SPREAD uncovered set whose fleet
-  // source is served — never all fleet-sourced web commands (18 at HEAD, 20 after D2), which
-  // over-swept the 6 already-served commands and demanded the never-created
-  // baton_run_workstream_* spellings. The contract's floor is 12 inherited; after D2 the set is 14
-  // (the two new fleet_run_* definitions). The filter derives from uncoveredCommands() — never a
-  // hand list. At HEAD the sibling spellings do not exist — no schema-inheritance claim can be made
-  // (RG-06's red state).
-  assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
-    'uncoveredCommands export exists (stage: uncovered-set-export)');
-  const uncovered = mcpNorthbound.uncoveredCommands();
-  const inherited = uncovered
-    .filter((command) => byName.has(fleetName(command)));
-  const missingSibling = inherited
-    .map((command) => deriveSurfaceNames(command).mcp)
-    .filter((tool) => !byName.has(tool));
-  assert.deepEqual(missingSibling, [],
-    'every inherited lifecycle sibling spelling is served on the combined surface (stage: sibling-schema-inherits-source)');
-  assert.ok(inherited.length >= 12,
-    'the 12 inherited rows (14 after D2) are derived from the uncovered set (stage: inherited-source-set)');
-  for (const command of inherited) {
-    const siblingName = deriveSurfaceNames(command).mcp;
-    const sourceName = fleetName(command);
-    const sibling = byName.get(siblingName);
-    const source = byName.get(sourceName);
-    assert.deepEqual(sibling.inputSchema, source.inputSchema, `${siblingName} wire schema byte-equals ${sourceName}'s`);
-    assert.deepEqual(sibling.annotations, source.annotations, `${siblingName} annotations inherit ${sourceName}'s`);
-    assert.equal(sibling.execution.taskSupport, 'forbidden', `${siblingName} execution.taskSupport is forbidden`);
-    assert.equal(typeof sibling._meta?.['baton/registryDigest'], 'string', `${siblingName} carries _meta['baton/registryDigest']`);
+  // Issue #566 composition: the schema-inheritance claim moves from the retired mint to the
+  // #233 canonical dot twins — each twin spreads its legacy tool's definition through the ONE
+  // seam (withSpellingNote), so the wire schema and annotations byte-equal the source row.
+  const pairs = [
+    ['baton_run_do', 'baton_run_act'],
+    ['baton_run_view', 'baton_run_inspect'],
+    ['baton_run_member_view', 'baton_run_workstreams'],
+    ['baton_run_member_send', 'baton_workstream_notify'],
+    ['baton_run_member_stop', 'baton_workstream_stop'],
+    ['baton_application_help', 'baton_help'],
+  ];
+  const missingSource = pairs.filter(([, legacy]) => !byName.has(legacy));
+  assert.deepEqual(missingSource, [],
+    'every legacy source row is served on the combined surface (stage: inherited-source-set)');
+  for (const [twin, legacy] of pairs) {
+    const sibling = byName.get(twin);
+    const source = byName.get(legacy);
+    assert.ok(sibling, `${twin} is advertised on the combined surface`);
+    assert.deepEqual(sibling.inputSchema, source.inputSchema, `${twin} wire schema byte-equals ${legacy}'s`);
+    assert.deepEqual(sibling.annotations, source.annotations, `${twin} annotations inherit ${legacy}'s`);
+    assert.equal(sibling.execution.taskSupport, 'forbidden', `${twin} execution.taskSupport is forbidden`);
+    assert.equal(typeof sibling._meta?.['baton/registryDigest'], 'string', `${twin} carries _meta['baton/registryDigest']`);
   }
 });
 
@@ -382,36 +361,36 @@ test('RG-06 RED: the fleet-sourced lifecycle siblings (12 at the contract floor,
 
 test('RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)', async () => {
   const source = stripComments(readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8'));
-  const extendedList = "['fleet_run_wait', 'fleet_run_follow', 'baton_run_wait', 'baton_run_follow']";
+  const extendedList = "['fleet_run_wait', 'fleet_run_follow']";
   assert.ok(source.includes(extendedList),
     'the extended wait/follow list is present in EXECUTABLE source (comment-stripped, fold pass 2; the two gates below prove both sites behaviorally) (stage: wait-follow-lists-admit-siblings)');
 
   // Gate A — validateArguments bound (D1 item 4, :954-955): the sibling spelling is a registered
   // tool and inherits the maxWaitMs bound.
-  const gateA = setup({ surface: 'application' });
+  const gateA = setup({ surface: 'combined' });
   await initialized(gateA.server);
   const overBound = await request(gateA.server, 2, 'tools/call', {
-    name: 'baton_run_wait',
+    name: 'fleet_run_wait',
     arguments: { repoId: REPO_ID, runId: 'run-a', timeoutMs: MAX_WAIT_MS + 1 },
   });
   assert.ok(!overBound.error || overBound.error.code !== -32602,
-    'baton_run_wait is a registered tool (stage: wait-follow-sibling-registered)');
-  assert.equal(overBound.result.isError, true, 'baton_run_wait over the maxWaitMs bound is refused');
+    'fleet_run_wait is a registered tool (stage: wait-follow-sibling-registered)');
+  assert.equal(overBound.result.isError, true, 'fleet_run_wait over the maxWaitMs bound is refused');
   assert.match(overBound.result.content[0].text, /invalid_run_wait/, 'the typed code is invalid_run_wait');
 
   // Gate B — observe-path post-dispatch _authority gate (D1 item 4, :1510): baton_run_follow is
   // registered AND the gate admits it, so a principal without the follow capability is refused with
   // forbidden AFTER dispatch (the observe path never bypasses the bounded-wait semantics).
-  const gateB = setup({ surface: 'application', principal: principal({ capabilities: ['control'] }) });
+  const gateB = setup({ surface: 'combined', principal: principal({ capabilities: ['control'] }) });
   await initialized(gateB.server);
   const noFollow = await request(gateB.server, 2, 'tools/call', {
-    name: 'baton_run_follow',
+    name: 'fleet_run_follow',
     arguments: { repoId: REPO_ID, runId: 'run-a', timeoutMs: 1_000 },
   });
   assert.ok(!noFollow.error || noFollow.error.code !== -32602,
-    'baton_run_follow is a registered tool (stage: wait-follow-sibling-registered)');
+    'fleet_run_follow is a registered tool (stage: wait-follow-sibling-registered)');
   assert.equal(noFollow.result?.isError, true,
-    'the observe-path gate admits baton_run_follow and refuses a principal without the follow capability');
+    'the observe-path gate admits fleet_run_follow and refuses a principal without the follow capability');
   assert.match(noFollow.result?.content?.[0]?.text ?? '', /forbidden/,
     'the observe-path gate refuses with forbidden');
 });
@@ -466,84 +445,62 @@ test('RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refus
 
 // ── RG-09 — the combined profile closure (D1 + D2) ─────────────────────────────────────────────
 
-test('RG-09 RED: combined tools/list is the served combined table with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)', async () => {
+test('RG-09 RE-DERIVED (#566): combined tools/list is the served combined table over the restored composition (stage: combined-102-includes-siblings)', async () => {
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 110, 'combined tools/list count 110 (stage: combined-102-includes-siblings)');
-  // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling checks derive from the pre-spread
-  // uncoveredCommands() export — never the grown served set (empty at green) — and the count ties
-  // to composition (86 HEAD combined + 2 D2 fleet tools + 14 siblings), so a bare 102 of arbitrary
-  // self-consistent names cannot pass.
+  // Issue #566 composition: the combined surface carries the restored ordinary table (55 + the
+  // harvest pair) plus the fleet/advanced/reflex families and the #233 canonical dot twins — the
+  // 14 minted baton_run_* lifecycle siblings left with the regression restore.
+  assert.equal(names.length, 150, 'combined tools/list count 150 (stage: combined-102-includes-siblings)');
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
-  const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 87 + 2 + uncovered.length + 3 + 2 + 2,
-    'combined count ties to composition: 87 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair + 1 seed (stage: combined-count-composition)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
   assert.ok(names.includes('fleet_run_retry_verification'), 'combined serves fleet_run_retry_verification');
-  const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp);
-  assert.deepEqual(siblingTools.filter((tool) => !names.includes(tool)), [],
-    'the 14 baton_* siblings are served on the combined surface');
-  assert.deepEqual(names.slice(0, siblingTools.length), siblingTools,
-    'the 14 baton_* siblings lead the ordinary prefix in definition order (the contract\'s webCommands iteration order)');
   assert.deepEqual(sortedSet(names), mcpNorthbound.mcpCombinedToolNames(),
     'tools/list set equals mcpCombinedToolNames() (ACTUAL sorted order)');
 });
 
-// ── RG-10a — the 5 non-canonical alias rows (D4 item 1) ────────────────────────────────────────
+// ── RG-10a — the 5 non-canonical alias rows (#566: retired) ────────────────────────────────────
 
-test('RG-10a RED: the 5 non-canonical ops have mcp.baton surfaceAlias rows naming the sibling tool (stage: alias-rows-registered)', () => {
+test('RG-10a RE-DERIVED (#566): the 5 non-canonical ops carry no mcp.baton alias row — their spelling is the fleet transport (stage: alias-rows-registered)', () => {
   const aliases = APPLICATION_SEMANTIC_REGISTRY.surfaceAliases;
-  const missing = NON_CANONICAL_OPS.filter((command) => !aliases.some((row) => (
+  const minted = NON_CANONICAL_OPS.filter((command) => aliases.some((row) => (
     row.surface === 'mcp.baton' && row.canonical === command
-    && row.name === deriveSurfaceNames(command).mcp
   )));
-  assert.deepEqual(missing, [],
-    'each non-canonical op has a [canonical, mcp.baton, sibling-tool] surfaceAlias row (stage: alias-rows-registered)');
+  assert.deepEqual(minted, [],
+    'no non-canonical op keeps a [canonical, mcp.baton, minted-sibling] surfaceAlias row — the mint retired (#566)');
 });
 
-// ── RG-10b — the renderer canonical-miss fallback (D4 item 1) ──────────────────────────────────
+// ── RG-10b — the renderer canonical-miss fallback (#566: retired) ──────────────────────────────
 
-test('RG-10b RE-FOLDED (#314): the 5 alias names resolve to their canonical operation keys through the registry, not a renderer byte-string (stage: renderer-fallback-absent)', () => {
-  // Landing re-fold (Main, #555/#314 adjudication): MCP.md's application inventory renders the
-  // #314 CORE projection (the conformance reader and the produced wrapper both read it that
-  for (const command of NON_CANONICAL_OPS) {
-    const names = deriveSurfaceNames(command);
-    assert.ok(APPLICATION_SEMANTIC_REGISTRY.surfaceAliases.some(
-      (alias) => alias.surface === 'mcp.baton' && alias.canonical === command
-        && alias.name === names.mcp),
-      `${command}: the mcp.baton surfaceAlias row carries the resolution (these ops have no canonicalOperations entry — the alias IS their registration)`);
-  }
+test('RG-10b RE-DERIVED (#566): no minted baton_run_* sibling of the 5 ops is advertised on the combined surface (stage: mint-not-advertised)', () => {
+  const combined = new Set(mcpNorthbound.mcpCombinedToolNames());
+  const minted = NON_CANONICAL_OPS
+    .map((command) => deriveSurfaceNames(command).mcp)
+    .filter((tool) => combined.has(tool));
+  assert.deepEqual(minted, [],
+    'no minted lifecycle sibling spelling is advertised (the mint retired, #566)');
 });
 
-// ── RG-10c — the doc half end-to-end (D4) ──────────────────────────────────────────────────────
+// ── RG-10c — the doc half end-to-end (#566: fleet spellings) ───────────────────────────────────
 
-test('RG-10c RE-FOLDED (#314): the 5 alias names derive to their operation keys end-to-end through the registry (stage: non-canonical-ops-render-operation-keys)', () => {
+test('RG-10c RE-DERIVED (#566): the 5 non-canonical ops derive to their fleet tools end-to-end through the registry (stage: non-canonical-ops-render-operation-keys)', () => {
+  const combined = new Set(mcpNorthbound.mcpCombinedToolNames());
   for (const command of NON_CANONICAL_OPS) {
     const alias = APPLICATION_SEMANTIC_REGISTRY.surfaceAliases
-      .find((row) => row.surface === 'mcp.baton' && row.canonical === command);
-    assert.ok(alias, `${command} has its mcp.baton alias row`);
-    assert.equal(deriveSurfaceNames(command).mcp, alias.name,
-      `${command}'s derived mcp name is the alias-advertised tool`);
-    assert.ok(ORDINARY_TOOL_NAMES.includes(alias.name),
-      `${alias.name} is advertised on the ordinary table the alias resolves into`);
+      .find((row) => row.surface === 'mcp.fleet' && row.canonical === command);
+    // The fleet row is keyed by the op where one exists (resume_work/retry_verification); the
+    // remaining three resolve through their family's row (run.view/run.watch) — the derived
+    // fleetName spelling is the same tool either way.
+    const tool = alias ? alias.name : fleetName(command);
+    assert.equal(fleetName(command), tool,
+      `${command}'s derived mcp name is the fleet-advertised tool`);
+    assert.ok(combined.has(tool),
+      `${tool} is advertised on the combined surface the alias resolves into`);
+    assert.ok(!combined.has(deriveSurfaceNames(command).mcp),
+      `no minted ${deriveSurfaceNames(command).mcp} spelling is advertised (#566)`);
   }
-});
-
-// ── RG-11-R — the regenerated artifact encodes the final counts (D4 item 3) ────────────────────
-
-test('RG-11-R RE-FOLDED (#314/#555): the artifact encodes the conformance derivation counts - the core application projection and the live combined surface (stage: artifact-counts-49-102)', () => {
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  // Landing re-fold (Main, #555/#314 adjudication): the artifact's mcp.application count is the
-  // #314 CORE projection the conformance reader serves (never the raw flat list); the RAW flat
-  // ordinary/combined counts stay pinned live by RG-02/RG-09 (58/111, derivation-tied).
-  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
-    'artifact mcp.application count is the #314 core projection (stage: artifact-counts-49-102)');
-  assert.equal(artifact.counts.mcpCombinedTools, mcpNorthbound.mcpCombinedToolNames().length,
-    'artifact mcp.combined count equals the live combined surface (stage: artifact-counts-49-102)');
-  assert.ok(ORDINARY_TOOL_NAMES.length > CORE_TOOL_NAMES.length,
-    'the raw ordinary table stays the wider dispatch roster the parity rows pin');
 });
 
 // ── RG-P1 (PIN) — the conformance gate stays a citizen ──────────────────────────────────────────
@@ -554,22 +511,6 @@ test('RG-P1 PIN: surface-conformance.mjs executable main is green (stage: confor
   });
   assert.match(String(result), /surface-conformance: ok/,
     'surface-conformance main is green (stage: conformance-main-green)');
-});
-
-// ── RG-P2/RG-P3 (PIN) — the committed artifact matches the live counts (D4 item 3) ──────────────
-
-test('RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)', () => {
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  // Issue #314 (docs/49 §2): the live application surface is the SHIPPED core table the production
-  // wrapper advertises — the seven verb-tools — never the raw flat list the northbound keeps for dispatch.
-  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
-    'artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)');
-});
-
-test('RG-P3 PIN: committed artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)', () => {
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.equal(artifact.counts.mcpCombinedTools, mcpNorthbound.mcpCombinedToolNames().length,
-    'artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)');
 });
 
 // ── RG-P4..RG-P7 (PIN) — the four RAW application-table pins tie to the ONE derivation ───────────

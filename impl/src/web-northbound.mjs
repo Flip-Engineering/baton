@@ -94,6 +94,8 @@ const WORKFLOW_WEB_ENTRIES = Object.freeze([
   ['run_board_read', 'run.board.read', Object.freeze(['observe'])],
   ['run_knowledge_seed', 'run.knowledge.seed', Object.freeze(['control', 'observe'])],
   // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's web-bus admission.
+  // Issue #566: the registry rows claim 'web' beside this admission — the CLI dispatch
+  // projection derives from it, so the pair is served-cli AND web-admitted by one claim.
   ['run_resultpin', 'run.resultpin', Object.freeze(['observe'])],
   ['waves_harvest', 'waves.harvest', Object.freeze(['control', 'observe'])],
 ]);

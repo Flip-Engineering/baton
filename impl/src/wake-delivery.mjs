@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -172,7 +173,7 @@ export function claudeCrossSessionFrame({ sessionId, from, body, messageId }) {
 
 async function defaultClaudeDiscovery() {
   return execFileAsync('claude', ['agents', '--json'], {
-    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+    encoding: 'utf8', timeout: 10_000, maxBuffer: FRAME_LIMITS['exec.max_buffer'].value,
   });
 }
 

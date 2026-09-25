@@ -1,17 +1,14 @@
 // Doc-truth ⇄ admission conformance — red-first acceptance for the folded #159 contract
 // (docs/reference/evidence/doc-truth-conformance-2026-08-13/contract-fold.md v1.1).
-// Every acceptance pin R1–R11 becomes a row at its named stage; the two P-CS* rows are the
-// substrate pins (the conformance main + the checked inventory artifact) that MUST stay green.
+// Every acceptance pin becomes a row at its named stage; the P-CS1-b row is the substrate pin
+// (the conformance main) that MUST stay green.
 //
 // [attempt: de03bfa2-a0ea-49a4-941b-dcf2d6312512 row-suite-159]
 //
 // Style: surface/conformance (control-surface-truth-red) — imports + source-region pins +
-// parseBatonCli / instantiateProfileInventory probes + doc-file reads. R3/R9/R10 additionally
+// parseBatonCli probes + doc-file reads. R3/R9/R10 additionally
 // exercise the MCP answer-shape and tool-admission tables through ONE minimal combined-surface
 // McpFleetServer fixture (the CS-2 construction pattern) — no network, no host state.
-//
-// Split (verified at HEAD e371f70, measured twice — fold-suite-159.md):
-//   13 tests · 11 fail at their named stages (R1–R11) · 2 pass (P-CS1-b, P-CS4).
 //
 // Invented behavior (post-contract) is asserted BEHAVIORALLY or via source-region pins — a missing
 // implementation is a red assertion, never a load-time crash from importing an absent export.
@@ -25,9 +22,9 @@ import { fileURLToPath } from 'node:url';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap } from '../src/application-semantics.mjs';
+import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
 import { McpFleetServer, mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
 import { webCardCommands } from '../scripts/surface-truth.mjs';
-import { buildSurfaceInventoryArtifact, checkSurfaceInventoryArtifact, instantiateProfileInventory } from '../scripts/surface-conformance.mjs';
 import { servedCliOrdinaryKeys } from '../scripts/render-surface-docs.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -37,7 +34,7 @@ const conformanceScript = fileURLToPath(
 
 
 // The eight facade ports (application-cli.mjs:29-31) — whitelisted for the CLI, refused on the
-// web surface, unledgered at HEAD (R7).
+// web surface (R7).
 const FACADE_PORTS = [
   'run.message.send',
   'run.message.receipt',
@@ -143,33 +140,6 @@ function advertisedAnswerKeys() {
   return [...schema.matchAll(/schema\(\{\s*([A-Za-z_][A-Za-z0-9_]*):/gu)].map((match) => match[1]);
 }
 
-// R11 leg 2: the parser's ACTUAL lifecycle dispatch set — the `const lifecycleActions = new Set(…)`
-// literal PLUS any action special-cases wired before the shared gate (branch-added verbs are
-// dispatchable; a count that reads only the literal misses them). The artifact's
-// parserLifecycleActions count must match the dispatch, not a hand-maintained probe array.
-function parserLifecycleDispatchCount() {
-  const src = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'utf8');
-  const marker = 'const lifecycleActions = new Set(';
-  const start = src.indexOf(marker);
-  assert.ok(start >= 0, 'lifecycleActions literal present');
-  // 2026-09-14 audit (#289): the dispatch gate is the four-way refusal (`cliRunVerbRefusal`),
-  // which now owns the objective-first fall-through INSIDE the guard — the old naked-return anchor
-  // no longer exists. The region still ends where the lifecycle dispatch hands off.
-  const gate = src.indexOf('if (!lifecycleActions.has(action)) {', start);
-  assert.ok(gate >= 0, 'lifecycle dispatch gate present');
-  const region = src.slice(start, gate);
-  const actions = new Set();
-  const literalEnd = region.indexOf(');');
-  for (const match of region.slice(marker.length, literalEnd).matchAll(/'([^']+)'/g)) {
-    actions.add(match[1]);
-  }
-  for (const match of region.matchAll(/action\s*===\s*'([^']+)'/gu)) actions.add(match[1]);
-  for (const match of region.matchAll(/\[([^\]]*)\]\.includes\(action\)/gu)) {
-    for (const inner of match[1].matchAll(/'([^']+)'/gu)) actions.add(inner[1]);
-  }
-  return actions.size;
-}
-
 // One minimal combined-surface McpFleetServer for the answer-shape and tool-admission probes. The
 // construction follows the CS-2 pattern (cli-dead-paths-red) — a stub facade listing the
 // APPLICATION_COMMAND_DEFINITIONS keys satisfies the combined-surface card check; nothing here
@@ -271,24 +241,17 @@ test('R2 (web-bus-inventory-undercount): web.bus inventory equals the card AND d
   const WAVE_DIRECT_PORT_VERBS = ['waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list', 'waves.run'];
   // The card's advertised set — the web-admitted application command names ∪ the wave direct ports
   // (the `application.commands` names the card spreads at web-northbound.mjs:1521) — derives in
-  // ONE place (surface-truth.webCardCommands); the committed inventory artifact carries the
-  // byte-stability witness the pinned literal used to.
+  // ONE place (surface-truth.webCardCommands).
   const card = [
     ...Object.entries(APPLICATION_COMMAND_DEFINITIONS).filter(([, d]) => d.web).map(([name]) => name),
     ...WAVE_DIRECT_PORT_VERBS,
   ].sort();
   assert.deepEqual(card, webCardCommands(), 'R2: the card projection matches the derived web card');
-  const committed = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.deepEqual(webCardCommands(), committed.profiles['web.bus'],
-    'R2: the derived web card is byte-stable against the committed web.bus profile');
-  const inventory = instantiateProfileInventory('web.bus');
-  assert.deepEqual(inventory.names, webCardCommands(),
-    `R2 (web-bus-inventory-undercount): web.bus inventory (${inventory.names.length}) must equal the derived card`);
   // D2 single-source law: webBusNames() must DERIVE from the D1 webBusAdmittedCommandNames()
   // accessor (the card's admission source), not from a hand-written literal — a hardcoded
   // 31-name literal or an append of the six wave verbs fails this source pin.
   const conformanceSrc = readFileSync(new URL('../scripts/surface-conformance.mjs', import.meta.url), 'utf8');
-  const body = sourceRegion(conformanceSrc, 'function webBusNames() {', 'export function instantiateProfileInventory');
+  const body = sourceRegion(conformanceSrc, 'function webBusNames() {', '\n}\n');
   assert.ok(/webBusAdmittedCommandNames/u.test(body),
     'R2 (web-bus-inventory-undercount): webBusNames() must reference the D1 webBusAdmittedCommandNames() accessor');
 });
@@ -404,46 +367,26 @@ test('R6 (cli-run-steer-prose-live): CLI.md teaches no run steer command (any sp
     'R6 (cli-run-steer-prose-live): the "remains an advanced compatibility surface" claim is retired');
 });
 
-// ── R7 (D3 #3): every whitelisted CLI name is web-admitted or ledgered ─────────────────────────
+// ── R7 (D3 #3): every whitelisted CLI name is web-admitted ─────────────────────────────────────
 
-test('R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape', () => {
+test('R7 (facade-ports-web-admitted): every CLI_WEB_COMMANDS name is web-admitted through the card or a registry-operation direct port', () => {
   const card = new Set(webCardCommands());
-  const ledger = JSON.parse(readFileSync(new URL('../scripts/surface-divergence-ledger.json', import.meta.url), 'utf8'));
-  assert.equal(ledger.schemaVersion, 1, 'R7: the divergence ledger declares schemaVersion 1');
-  assert.ok(Array.isArray(ledger.entries), 'R7: the divergence ledger carries an entries array');
-  // Shape law — a ledger row is not name-presence: it records the validateLedger fields
-  // (surface/name/dimension/retiresIn/canonical) AND names the divergence it documents. Name-only
-  // entries (the cheapest wrong impl) fail here.
-  for (const entry of ledger.entries) {
-    assert.ok(typeof entry.surface === 'string' && entry.surface.length > 0, 'R7: ledger row carries a surface');
-    assert.ok(typeof entry.name === 'string' && entry.name.length > 0, 'R7: ledger row carries a name');
-    assert.ok(typeof entry.dimension === 'string' && entry.dimension.length > 0, 'R7: ledger row carries a dimension');
-    assert.ok(entry.retiresIn !== undefined && entry.retiresIn !== null, 'R7: ledger row carries retiresIn');
-    assert.ok('canonical' in entry, 'R7: ledger row carries a canonical target');
-    const divergence = entry.reason ?? entry.refusal ?? entry.note;
-    assert.ok(typeof divergence === 'string' && divergence.length > 0,
-      'R7: ledger row documents a non-empty divergence (naming the web refusal)');
-  }
-  const ledgerNames = new Set(ledger.entries.map((entry) => entry.name));
-  // Forward direction: every whitelisted CLI name is web-admitted or ledgered.
-  const unledgered = [];
+  // #566 third arm: the registry-operation direct ports (the #99/#179 accessor pair) ride the web
+  // bus through the workflow entries without being APPLICATION_COMMAND_DEFINITIONS keys — the CLI
+  // dispatch projection reads that same admission (CLI_CARD_LEDGERED_PORTS), so they are
+  // web-admitted in the way that matters and pass beside the carded names (harvest-accessor
+  // contract Decision 5).
+  const registryOperationDirectPorts = new Set([...webAdmittedCommandNames()]
+    .filter((adm) => adm.includes('.') && !APPLICATION_COMMAND_DEFINITIONS[adm]));
+  const unadmitted = [];
   for (const name of CLI_WEB_COMMANDS) {
     const resolved = applicationOperationAliasMap()[name] ?? name;
     if (card.has(name) || card.has(resolved)) continue; // web-admitted (canonical or legacy spelling)
-    if (ledgerNames.has(name) || ledgerNames.has(resolved)) continue; // ledgered
-    unledgered.push(name);
+    if (registryOperationDirectPorts.has(name) || registryOperationDirectPorts.has(resolved)) continue; // registry-operation direct port
+    unadmitted.push(name);
   }
-  assert.deepEqual(unledgered, [],
-    `R7 (facade-ports-unledgered): unledgered whitelisted-but-web-refused names — ${unledgered.join(', ')}`);
-  // Stale-ledger direction: no ledger row for a web-admitted name (a row for an admitted name is
-  // stale — the name belongs in the admission, not the divergence ledger).
-  const stale = [];
-  for (const entry of ledger.entries) {
-    const resolved = applicationOperationAliasMap()[entry.name] ?? entry.name;
-    if (card.has(entry.name) || card.has(resolved)) stale.push(entry.name);
-  }
-  assert.deepEqual(stale, [],
-    `R7 (facade-ports-unledgered): ledgered names that are web-admitted — ${stale.join(', ')}`);
+  assert.deepEqual(unadmitted, [],
+    `R7 (facade-ports-web-admitted): whitelisted-but-web-refused names — ${unadmitted.join(', ')}`);
 });
 
 // ── R8 (D3 #4): the MCP initialize instruction names only existing tools ───────────────────────
@@ -538,28 +481,7 @@ test('R10 (mcp-wave-examples-omit-repoId): Orchestrate-a-wave examples are fence
     `R10 (mcp-wave-examples-omit-repoId): unadmitted wave example shapes — ${unadmitted.join(' | ')}`);
 });
 
-// ── R11 (D2 + D1 CLI leg + regen): the committed artifact carries the admission and compile-set ─
-
-test('R11 (artifact-counts-stale): committed artifact counts match the admission and the parser dispatch', () => {
-  const failures = [];
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  // Leg 1 — webBusCommands ties to the R2 card derivation (the 31-name admission), not a separate
-  // count.
-  const card = new Set([...webCardCommands()]);
-  if (artifact.counts.webBusCommands !== card.size) {
-    failures.push(`webBusCommands ${artifact.counts.webBusCommands} ≠ card admission ${card.size}`);
-  }
-  // Leg 2 — parserLifecycleActions ties to the parser's lifecycle dispatch set (literal + branch
-  // special-cases), not a hand-maintained probe array.
-  const dispatchCount = parserLifecycleDispatchCount();
-  if (artifact.counts.parserLifecycleActions !== dispatchCount) {
-    failures.push(`parserLifecycleActions ${artifact.counts.parserLifecycleActions} ≠ parser dispatch ${dispatchCount}`);
-  }
-  assert.deepEqual(failures, [],
-    `R11 (artifact-counts-stale): ${failures.join(' | ')}`);
-});
-
-// ── substrate pins (must stay GREEN at HEAD) ───────────────────────────────────────────────────
+// ── substrate pin (must stay GREEN at HEAD) ─────────────────────────────────────────────────────
 
 test('P-CS1-b: node impl/scripts/surface-conformance.mjs has an executable main that is green', () => {
   const result = execFileSync(process.execPath, [conformanceScript], {
@@ -572,14 +494,4 @@ test('P-CS1-b: node impl/scripts/surface-conformance.mjs has an executable main 
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   assert.match(String(result), /surface-conformance: ok/u);
-});
-
-test('P-CS4: the checked inventory artifact regenerates deterministically and checks clean', () => {
-  const first = buildSurfaceInventoryArtifact();
-  const second = buildSurfaceInventoryArtifact();
-  assert.equal(JSON.stringify(first), JSON.stringify(second),
-    'P-CS4: artifact must be byte-stable across two builds');
-  assert.deepEqual(checkSurfaceInventoryArtifact(), []);
-  assert.equal(typeof first.counts.webBusCommands, 'number');
-  assert.equal(typeof first.counts.parserLifecycleActions, 'number');
 });

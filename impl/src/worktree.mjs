@@ -25,7 +25,7 @@ import { compareCanonicalStrings, foldCanonicalCase } from './canonical-order.mj
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 // Issue #428: the one custody predicate — a second inline opinion about whether cleanup may
 // destroy a shared checkout is exactly the drift the surface gate refuses.
-import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
+import { isPhysicalWorkspaceId, PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE } from './shared-workspace-custody.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors (W7 — typed, never a bare Error wrapping raw stderr)
@@ -367,6 +367,16 @@ function workspaceOwnerReceiptPath(repoRoot, physicalOwnerId) {
   return join(workspaceOwnerRoot(repoRoot, false), `${physicalOwnerId}.json`);
 }
 
+// The receipt names in the publication root carry the physical workspace id. Both patterns derive
+// from the one spelling of that shape (shared-workspace-custody.mjs), so a change to the id shape
+// cannot leave a reader here matching the old one.
+const WORKSPACE_OWNER_RECEIPT_NAME = new RegExp(
+  `^(${PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE})\\.json(?:\\.tmp-[A-Za-z0-9-]+)?$`, 'u',
+);
+const WORKSPACE_OWNER_TEMP_NAME = new RegExp(
+  `^(${PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE})\\.json\\.tmp-[A-Za-z0-9-]+$`, 'u',
+);
+
 // #500: the identity text a workspace owner receipt carries — logical task id, run id, attempt
 // id — is bounded at 4 096 bytes each, and the controller's pidStart at 256 bytes. The default is
 // the reader's own: validateWorkspaceOwnerReceipt passes no explicit bound for logicalTaskId.
@@ -391,7 +401,7 @@ function validateWorkspaceOwnerReceipt(value, repoRoot, expectedOwnerId = null) 
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join(',') !== fields.sort().join(',')
     || value.schemaVersion !== 1
-    || !/^ws-[a-f0-9]{32}$/u.test(value.physicalOwnerId ?? '')
+    || !isPhysicalWorkspaceId(value.physicalOwnerId)
     || (expectedOwnerId !== null && value.physicalOwnerId !== expectedOwnerId)
     || value.branch !== `baton/${value.physicalOwnerId}`
     || value.worktree !== pathResolve(repoRoot, '.baton', 'wt', value.physicalOwnerId)
@@ -456,7 +466,7 @@ function foreignConsistentReceipt(repoRoot, physicalOwnerId) {
     if (Object.keys(value).sort().join(',') !== fields.sort().join(',')
       || value.schemaVersion !== 1
       || value.physicalOwnerId !== physicalOwnerId
-      || !/^ws-[a-f0-9]{32}$/u.test(value.physicalOwnerId ?? '')
+      || !isPhysicalWorkspaceId(value.physicalOwnerId)
       || value.branch !== `baton/${value.physicalOwnerId}`
       || value.receiptDigest !== canonicalDigest(receiptCore(value))) return null;
     return value;
@@ -599,7 +609,7 @@ function removeExactWorktreeRegistration(repoRoot, worktreePath) {
 function recoverWorkspaceOwnerPublication(repoRoot, root, binding, authority) {
   const candidates = new Map();
   for (const name of readdirSync(root).sort()) {
-    const match = /^(ws-[a-f0-9]{32})\.json(?:\.tmp-[A-Za-z0-9-]+)?$/u.exec(name);
+    const match = WORKSPACE_OWNER_RECEIPT_NAME.exec(name);
     if (!match) continue;
     const physicalOwnerId = match[1];
     let receipt = null;
@@ -2678,7 +2688,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     const publicationRoot = workspaceOwnerRoot(repoRoot, false);
     if (publicationRoot && existsSync(publicationRoot)) {
       for (const name of readdirSync(publicationRoot)) {
-        const match = /^(ws-[a-f0-9]{32})\.json\.tmp-[A-Za-z0-9-]+$/u.exec(name);
+        const match = WORKSPACE_OWNER_TEMP_NAME.exec(name);
         if (match) localWorkerCandidates.add(match[1]);
       }
     }
@@ -2740,7 +2750,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       }
       let expectedBindingValid = false;
       let expectedBindingId = null;
-      if (expected.has(taskId) && /^ws-[a-f0-9]{32}$/u.test(normalizedTaskId)) {
+      if (expected.has(taskId) && isPhysicalWorkspaceId(normalizedTaskId)) {
         const expectedRows = expectedBindings.get(normalizedTaskId) ?? [];
         if (expectedRows.length !== 1 || typeof expectedRows[0].expectationId !== 'string') {
           report.diagnostics.push(Object.freeze({
@@ -2786,7 +2796,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           }
           continue;
         } catch {
-          if (/^ws-[a-f0-9]{32}$/u.test(normalizedTaskId)) {
+          if (isPhysicalWorkspaceId(normalizedTaskId)) {
             report.diagnostics.push(Object.freeze({
               code: 'workspace_owner_checkout_invalid', physicalOwnerId: normalizedTaskId,
               expectationId: expectedBindingId,
@@ -2800,7 +2810,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           // Legacy logical worktree ownership retains the pre-Phase-92 quarantine behavior.
         }
       }
-      if (expected.has(taskId) && /^ws-[a-f0-9]{32}$/u.test(normalizedTaskId)
+      if (expected.has(taskId) && isPhysicalWorkspaceId(normalizedTaskId)
         && !existsSync(fullDir)) {
         report.diagnostics.push(Object.freeze({
           code: 'workspace_owner_checkout_missing', physicalOwnerId: normalizedTaskId,
@@ -2869,7 +2879,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           sha: lane.branchSha, branch: lane.branch, reason: 'crash_reconciliation',
         });
       }
-      if (/^ws-[a-f0-9]{32}$/u.test(normalizedTaskId)) {
+      if (isPhysicalWorkspaceId(normalizedTaskId)) {
         if (!ownerReceipt) {
           report.diagnostics.push(Object.freeze({
             code: 'workspace_owner_receipt_missing', physicalOwnerId: normalizedTaskId,
@@ -3071,7 +3081,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     }
   }
   for (const physicalOwnerId of expected) {
-    if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)
+    if (!isPhysicalWorkspaceId(physicalOwnerId)
       || report.validatedExpectedOwners.includes(physicalOwnerId)
       || report.retainedExpectedOwners.includes(physicalOwnerId)) continue;
     report.diagnostics.push(Object.freeze({

@@ -1,6 +1,6 @@
-import { pathMatchesScope } from './path-scope.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
+import { pathMatchesScope } from './path-scope.mjs';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
   openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync, writeSync,
@@ -253,7 +253,8 @@ function deploymentError(message) {
  * refuse here, at open, never first at landing time. */
 export function normalizeIntegrationPublishRemote(value) {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || value.length === 0 || value.length > 2048
+  if (typeof value !== 'string' || value.length === 0
+    || value.length > FRAME_LIMITS['deployment.publish_remote'].value
     || value.includes('\0') || /[\r\n]/u.test(value)) {
     throw deploymentError('advanced integration publishRemote must be one non-empty remote URL or path');
   }
