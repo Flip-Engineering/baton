@@ -6,6 +6,9 @@ import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
 import { FRAME_LIMITS } from './limits.mjs';
 
+// Issue #585: the root wake message is composed by the one attention-message composer.
+import { composeOwedMessage, composeTurnReportMessage } from './attention-message.mjs';
+
 const execFileAsync = promisify(execFile);
 
 const capability = (mechanism, canStartTurn, note) => Object.freeze({
@@ -460,11 +463,28 @@ function rootTurnReportedPayload(store, frame) {
   return Object.freeze({ ...payload });
 }
 
-function rootWakeBody(payload, wakeClass) {
-  if (wakeClass === 'root_turn_reported') {
-    return `Baton root turn report.\n${JSON.stringify(payload, null, 2)}`;
+// The root wake message is composed by attention-message.mjs, the one composer the #592
+// dispatcher also uses. This delivery adds the one fact its payload does not carry: the subject
+// of the contribution the row is about, read from the recorded contribution row.
+
+function contributionSubject(store, contributionId) {
+  if (typeof contributionId !== 'string' || contributionId.length === 0) return null;
+  for (const event of storedEvents(store)) {
+    const payload = event?.kind === 'driver.recorded' ? event.payload : event?.payload;
+    if (payload?.kind !== 'swarm.contribution_recorded' && event?.kind !== 'swarm.contribution_recorded') continue;
+    if (payload?.contributionId !== contributionId) continue;
+    const subject = payload?.body?.subject;
+    if (typeof subject === 'string' && subject.length > 0) return subject;
   }
-  return `Baton root attention is owed.\n${JSON.stringify(payload, null, 2)}`;
+  return null;
+}
+
+/** The message the frame's class asks the root to read: the owed attention, or the turn report. */
+function rootWakeBody(store, payload, wakeClass) {
+  return wakeClass === 'root_turn_reported'
+    ? composeTurnReportMessage(payload, { statusClass: wakeClass })
+    : composeOwedMessage({ ...payload, subject: contributionSubject(store, payload.contributionId) },
+      { statusClass: wakeClass });
 }
 
 /** Consume one root-addressed frame. The frame resolves only through its public source row kind
@@ -490,7 +510,7 @@ export async function deliverRootWakeFrame({
       const payload = frame.wakeClass === 'root_turn_reported'
         ? rootTurnReportedPayload(store, frame)
         : rootAttentionPayload(store, frame);
-      const body = rootWakeBody(payload, frame.wakeClass);
+      const body = rootWakeBody(store, payload, frame.wakeClass);
       if (deliver !== null) {
         if (typeof deliver !== 'function') {
           throw refusal('root wake delivery override must be a function', 'wake_delivery_invalid');

@@ -65,7 +65,8 @@ test('MCP visualization is advertised and composes the existing snapshot/watch m
   assert.equal(response.result.structuredContent.kind, 'baton.surface_visualization');
   assert.equal(response.result.structuredContent.model.run.runId, 'run:a');
   assert.equal(response.result.structuredContent.presentation.refresh.tool, 'baton_surface_visualize');
-  assert.match(response.result.content[0].text, /baton top/u);
+  assert.match(response.result.content[0].text, /baton ·/u);
+  assert.equal(response.result.content[0].text.includes('baton top'), false);
   assert.equal(response.result.content[0].text.includes('\u001b'), false);
 });
 

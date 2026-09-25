@@ -71,28 +71,36 @@ const STATUS_ROWS = Object.freeze({
 // the serve lifecycle states). Nothing here invents a state the machine surfaces do not
 // expose; a new projection class joins by editing this one table.
 const STATUS_DERIVATION = Object.freeze({
-  // ready — published, bound, ready routes
+  // ready — published, bound, ready routes; an OPEN swarm (its closed sibling is already `done`)
+  // and the resident lifecycle classes (a resident that started or was replaced is serving)
   ready: 'ready', hosted: 'ready', published: 'ready', listening: 'ready',
+  open: 'ready', resident_lifecycle: 'ready', incarnation_changed: 'ready',
   // working — an active run, seat, or wave
   working: 'working', running: 'working', progressing: 'working', executing: 'working',
   // needs you — a human must act (docs/38: the attention class, a parked decision, a paused
-  // turn waiting for a claim/nudge, a provider selection waiting on the caller)
+  // turn waiting for a claim/nudge, a provider selection waiting on the caller). The wake classes
+  // that name a lifecycle state of their subject join here (docs/56 D1): a parked resume decision,
+  // a proposed reroute, capacity the operator must free, and an owed contribution the root alone
+  // can check all wait on a person.
   attention: 'needs you', blocked: 'needs you', blocked_interaction: 'needs you',
   parked: 'needs you', awaiting: 'needs you', question: 'needs you',
   selection_required: 'needs you', paused: 'needs you',
+  resume_decision_required: 'needs you', reroute_proposed: 'needs you',
+  capacity_pressure: 'needs you', root_owed: 'needs you',
   // refused — the typed-refusal family and terminal-crash worker states
   refused: 'refused', failed: 'refused', denied: 'refused', error: 'refused',
   invalid: 'refused', dead: 'refused', exited: 'refused',
   // stalled — a member stalled or the watchdog escalated
   stalled: 'stalled', watchdog: 'stalled',
-  // idle — nothing running, nothing asked
-  idle: 'idle', unbound: 'idle', sleeping: 'idle',
+  // idle — nothing running, nothing asked; a queued member waits its turn
+  idle: 'idle', unbound: 'idle', sleeping: 'idle', queued: 'idle',
   // draining — a signal arrived and the fleet is draining
   draining: 'draining', stopping: 'draining', closing: 'draining', signal: 'draining',
   // done — terminal, nothing left running (including a lifecycle that ended by
   // cancellation/stop/leave: finished, not softened into success prose)
   done: 'done', completed: 'done', work_completed: 'done', result_ready: 'done',
   closed: 'done', integrated: 'done', cancelled: 'done', stopped: 'done', left: 'done',
+  contribution_integrated: 'done',
 });
 
 /**
@@ -112,11 +120,33 @@ export function flipStatus(statusClass, { color = false } = {}) {
   return { ...row, text };
 }
 
+/** The statused prefix a human-facing wake row carries for one projection class: `<glyph> <word> —
+ * `, or the empty string when the class derives no status. The ONE spelling every wake-row
+ * rendering shares — the seat brief's wake lines, the root wake message and the `baton top`
+ * timeline all read it, so one class reads the same wherever Baton names it, and an event-shaped
+ * class (a contribution landing, a work update) is never given a status it does not have. */
+export function flipStatusPrefix(statusClass, { color = false } = {}) {
+  const status = flipStatus(statusClass, { color });
+  return status === null ? '' : `${status.text} — `;
+}
+
+// ── the mark rule ──────────────────────────────────────────────────────────────────────────────
+//
+// ONE rule for the mark wherever Baton speaks to a person: the mark rides a line Baton writes FOR A
+// PERSON TO READ — the stderr channel on a TTY, the `baton top` frame, the MCP instructions field,
+// a message delivered into a person's session — and never a machine channel (stdout JSON, an MCP
+// tool result, a wake frame, a bridge envelope). `flipHumanLine` is the one function that composes
+// such a line; the human-facing renderers read it, and nothing else spells the mark.
+
+/** Compose one human-facing line: the mark, the derived status when the class carries one, the text. */
+export function flipHumanLine(text, { statusClass = null, color = false } = {}) {
+  return `${flipFace('smile', { color })} ${flipStatusPrefix(statusClass, { color })}${text}`;
+}
+
 /** The status channel is a TTY channel: silent when stderr is piped (docs/38 §2.3/§8).
- * Compose one statused stderr line: mark + status + text on a TTY, the bare text otherwise. */
+ * Compose one statused stderr line through the ONE mark rule: mark + status + text on a TTY, the
+ * bare text otherwise. */
 export function flipAnnounce(statusClass, text, { tty = false, color = false } = {}) {
   if (!tty) return text;
-  const status = flipStatus(statusClass, { color });
-  const mark = flipFace('smile', { color });
-  return status === null ? `${mark} ${text}` : `${mark} ${status.text} — ${text}`;
+  return flipHumanLine(text, { statusClass, color });
 }

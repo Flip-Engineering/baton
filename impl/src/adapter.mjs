@@ -492,6 +492,31 @@ export function renderRouteUsageLines(rows) {
   return lines;
 }
 
+/** The states the summary line names first, in this order; a state seen for the first time by this
+ * table follows them alphabetically, so the fixed part of the line never moves. */
+const ROUTE_STATE_ORDER = Object.freeze(['ready', 'degraded', 'blocked']);
+
+/** Issue #585 (docs/56 D6.1): the ONE summary line of a route-usage table — how many served
+ * routes sit in each state, how many rows report an exhausted quota window, and how many the
+ * caller may recruit on. Every count is read off the rows themselves; a count of zero is not
+ * rendered, and a table that yields no count renders null (no empty line). */
+function renderRouteStatusLine(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    if (typeof row?.state !== 'string' || row.state.length === 0) continue;
+    counts.set(row.state, (counts.get(row.state) ?? 0) + 1);
+  }
+  const parts = [
+    ...ROUTE_STATE_ORDER.filter((state) => counts.has(state)),
+    ...[...counts.keys()].filter((state) => !ROUTE_STATE_ORDER.includes(state)).sort(),
+  ].map((state) => `${counts.get(state)} ${state}`);
+  const exhausted = rows.filter((row) => row?.quota?.state === 'exhausted').length;
+  if (exhausted > 0) parts.push(`${exhausted} exhausted`);
+  const recruitable = rows.filter((row) => row.recruitable === true).length;
+  if (recruitable > 0) parts.push(`${recruitable} recruitable`);
+  return parts.length === 0 ? null : `Routes: ${parts.join(' · ')}`;
+}
+
 /**
  * @param {object} brief
  * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'|'omp-rpc'|'cli'} dialect
@@ -503,6 +528,14 @@ export function renderBrief(brief, dialect) {
   const pathScopeRendered = Array.isArray(brief.pathScope) && brief.pathScope.length > 0;
   const lines = [`[baton brief:${dialect}]`];
   lines.push(...presentation.goal(brief));
+  // Issue #585 (docs/56 D6.1): the route table is the brief's only live state, so its derived
+  // summary line sits directly under the goal. It is composed HERE, outside the dialect
+  // presentation objects, so every dialect renders the same counts from the same rows; a brief
+  // carrying no rows renders no section.
+  if (Array.isArray(brief.routeUsage) && brief.routeUsage.length > 0) {
+    const routeStatus = renderRouteStatusLine(brief.routeUsage);
+    if (routeStatus !== null) lines.push('## Status', routeStatus);
+  }
   lines.push('## Dispatch');
   if (brief.contextInput) {
     lines.push(advertisesBatonTool
