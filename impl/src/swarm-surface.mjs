@@ -35,7 +35,6 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection. The answer is a mutation receipt plus scopeOverlap — advisory rows naming every ACTIVE participant across the repository\'s swarms whose scope shares paths with the requested scope (never a refusal); pass --view true to also carry the refreshed view. A recruit whose run admission refuses rolls its join back (swarm.participant_left reason recruit_refused), and a repeated recruit of the same id resumes it. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318); a predecessor is resumable while it is active, while its provider killed it (left with reason provider_fault), or while the root stopped or completed it (left with reason stopped or completed) and its workspace still carries — a retained checkout or a snapshot commit on its lane branch (#452); anything else refuses typed (swarm_recruit_predecessor_unavailable) naming the state it settled in. With --follow, the CLI admits the recruit and then observes the swarm\'s own feed until this seat\'s admitted / queued / refused row appears, printing that row.',
   'swarm.guide': 'Send guidance to one participant, active or paused; the receipt carries the guide\'s own durable row — the seat, who it is from, the priority, and how it landed (delivered, parked for the seat\'s next exec / resume-from successor brief, or refused) — and names the observation to watch (the seat\'s next turn boundary, or the delivery that clears a park).',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary. The capture row records the merge-base of the captured revision with the deployment target; a revision whose base cannot reach the target is refused typed (swarm_capture_base_unreachable).',
-  'swarm.check': 'Record one independent check of a captured contribution.',
   'swarm.integrate': 'Land one accepted contribution on a target branch as ONE squashed commit: the base is the merge-base of the target with the contribution commit, the squash is prepared in a scratch checkout the deployment owns, the gate set derived from the changed paths runs there, and the target fast-forwards only after every gate is green. The receipt carries the landing itself — base, targetHeadBefore, targetHeadAfter, squashSha, changedPaths, gates, regenerated, conflicts, issue and landingComment (the text `gh issue close --body-file` takes verbatim) — and --dry-run performs everything but the fast-forward, leaving the target exactly where it was.',
   'swarm.stop': 'Stop one participant explicitly; the swarm itself stays open. The receipt names the operation row that recorded the stop.',
   'swarm.notify': 'Send one message to another participant, in this swarm or, with --to-swarm-id, in any other swarm of the deployment. The answer carries the message\'s own durable row as its receipt — who sent it, to which seat of which swarm, when, and how it landed (delivered on the lane it rode, parked in the recipient\'s own swarm for a harness that takes no mid-turn delivery, or refused) — and the way back to it is --receipt.',
@@ -95,7 +94,6 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     'swarm.recruit': ['swarmId', 'participantId', 'objective'],
     'swarm.guide': ['swarmId', 'participantId', 'message'],
     'swarm.capture': ['swarmId', 'participantId', 'contributionId'],
-    'swarm.check': ['swarmId', 'participantId', 'contributionId', 'checkId'],
     // Issue #296: the landing coordinates the usage line names positionally.
     'swarm.integrate': ['swarmId', 'contributionId'],
     'swarm.stop': ['swarmId', 'participantId', 'reason'],
@@ -135,7 +133,7 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     // `[--follow]` off both rows, and the #331 pin reads it off the recruit row (the recruit
     // follow leg observes the seat's own admitted / queued / refused row).
     ...(name === 'swarm.watch' ? ['[--follow]', '[--wake-class CLASS,...]', '[--since SEQ (with --follow)]']
-      : name === 'swarm.check' || name === 'swarm.recruit' || name === 'swarm.integrate' ? ['[--follow]'] : []),
+      : name === 'swarm.recruit' || name === 'swarm.integrate' ? ['[--follow]'] : []),
   ].join(' ');
   return Object.freeze({
     verb,

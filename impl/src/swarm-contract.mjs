@@ -351,14 +351,6 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
-  // One independent check per (swarm, participant, contribution, check). A check is an
-  // observation about identified work under identified conditions — never a task-completion
-  // verdict, and never a substitute for the author's own status.
-  'swarm.check': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId', 'view']),
-    capabilities: Object.freeze(['control', 'observe']),
-    web: true, mcp: true, mcpStateful: false, reconcilable: true,
-  }),
   // Issue #296: landing. The one verb that changes the REPOSITORY rather than the swarm's own
   // record: it resolves the contribution's commit against the target, squashes the whole range
   // into one commit in a scratch checkout the deployment owns, derives and runs the gate set,
@@ -511,11 +503,8 @@ export function swarmReceiptNext(command, args = {}, outcome = null) {
           participantId: args.participantId ?? null } };
     }
     case 'swarm.capture':
-      return { command: 'swarm.check', args: { swarmId, participantId: args.participantId ?? null,
-        contributionId: args.contributionId ?? null } };
-    case 'swarm.stop':
       return { command: 'swarm.view', args: { swarmId } };
-    case 'swarm.check':
+    case 'swarm.stop':
       return { command: 'swarm.view', args: { swarmId } };
     // Issue #296: a landing ends the contribution's own lane; what follows is reading the receipt
     // (the squash sha, the gate verdict, the conflicts) — never a second mutation.
@@ -745,10 +734,6 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.capture': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId']),
-    optional: Object.freeze(['view']),
-  }),
-  'swarm.check': Object.freeze({
-    required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
     optional: Object.freeze(['view']),
   }),
   // Issue #296: the landing verb. `--dry-run` is optional; so is `target` (#43 AX, 2026-09-21):
@@ -1109,15 +1094,6 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'contributionId']),
-  }),
-  Object.freeze({
-    command: 'swarm.check',
-    description: 'Record one independent check of a captured contribution, apart from the author status. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
-    readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({
-      swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA, checkId: ID_SCHEMA, view: VIEW_SCHEMA,
-    }),
-    required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
   }),
   Object.freeze({
     command: 'swarm.integrate',

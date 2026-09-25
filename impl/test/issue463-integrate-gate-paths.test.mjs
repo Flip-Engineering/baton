@@ -25,10 +25,8 @@
 //
 //   (a) the derived gate set reaches the runner as `<tests>/<file>` names with the SUITE ROOT as
 //       the child's working directory, every name resolving to a real file, and the dry run lands
-//       naming the selection it ran (the target unmoved). The set asserted is the landing's own
-//       authority — `gateSetForPaths`, the region/inventory table `impl/src/landing-table.mjs`
-//       declares for landings; the #300 import-graph selector in `verification-selection.mjs` is
-//       the CHECK's selector, and #463's reading of it as the landing's was a misdiagnosis;
+//       naming the selection it ran (the target unmoved). The set is derived from
+//       `selectFromRepository` in `impl/src/verification-selection.mjs`;
 //   (b) a change that touches no gate file RUNS NO GATE and the receipt says
 //       `skipped: 'no_affected_tests'` (the #300 / docs-42 §6 vocabulary) instead of silently
 //       widening an empty derivation into the whole suite;
@@ -64,7 +62,7 @@ import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { SupervisedProcesses } from '../src/coordinator.mjs';
 import { HostCapacityAuthority } from '../src/host-capacity.mjs';
 import { parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
-import { gateSetForPaths } from '../src/landing-table.mjs';
+import { selectFromRepository } from '../src/verification-selection.mjs';
 
 const IMPL = join(import.meta.dirname, '..');
 const RUNNER = join(IMPL, 'scripts', 'run-suite.mjs');
@@ -225,17 +223,22 @@ async function world(t, { change = 'impl/src/coordinator.mjs', gate = {} } = {})
   write(repo, 'impl/node_modules/fixture-dep/package.json',
     '{"name":"fixture-dep","version":"1.0.0","type":"module","exports":"./index.js"}\n');
   write(repo, 'impl/node_modules/fixture-dep/index.js', 'export const fixtureMarker = "installed";\n');
-  // The gate files the table derives for the change, materialized at the layout the runner takes
-  // them from — `impl/test/<file>` relative to this checkout. The landing table answers for THIS
-  // repository (its own test directory), so the names are the real ones.
-  const expected = gateSetForPaths([change], { issues: [] }).files;
-  for (const name of expected) {
-    write(repo, `impl/test/${name}`, '// the fixture materializes the suite the derived gate set names\n');
+  // A test file that imports the changed module, so selectFromRepository selects it through the
+  // import graph. For a prose/markdown change, no test file is created and selectFromRepository
+  // returns nothing — the correct derivation for test 463b.
+  if (change.startsWith('impl/src/') && change.endsWith('.mjs')) {
+    const moduleName = change.split('/').pop();
+    write(repo, `impl/test/fixture-${moduleName.replace('.mjs', '.test.mjs')}`,
+      `import '../src/${moduleName}';\n`);
   }
   write(repo, change, change.endsWith('.md') ? 'the lane writes prose\n' : 'export const lane = 1;\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');
+  // The gate set is derived from selectFromRepository: the import-graph selector that reads the
+  // tree under test and selects every test file that imports or names the changed path.
+  const expected = selectFromRepository({ root: repo, changedPaths: [change] })
+    .files.map((f) => f.replace(/^impl\/test\//, ''));
 
   git(repo, 'checkout', '-q', '-b', 'baton/lane-1');
   write(repo, change, change.endsWith('.md') ? 'the lane writes prose, once more\n' : 'export const lane = 2;\n');
@@ -336,7 +339,7 @@ test('463a: the derived gate set reaches the runner as test/<file> under the sui
     'and carries the same selection with it');
   assert.match(answer.integration.gates.selection.reason,
     new RegExp(`^${answer.integration.changedPaths.length} changed path\\(s\\) select`
-      + ` ${expectedNames.length} gate file\\(s\\)`, 'u'),
+      + ` ${expectedNames.length} test file\\(s\\)`, 'u'),
     'the selection account names the change it derived from, not the rows the runner judged');
   assert.equal(answer.integration.gates.selection.provenance.length, expectedNames.length,
     'every gate file carries why it is in the set');

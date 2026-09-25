@@ -60,10 +60,6 @@ const EXAMPLES = Object.freeze({
   'swarm.capture': Object.freeze({
     swarmId: 'swarm:one', participantId: 'impl-a', contributionId: 'contribution:1',
   }),
-  'swarm.check': Object.freeze({
-    swarmId: 'swarm:one', participantId: 'reviewer-a',
-    contributionId: 'contribution:1', checkId: 'check:1',
-  }),
   // Issue #296: the landing verb. The target rides the CLI as `--onto`, a value flag like every
   // other; `--dry-run` is a switch, so its absence is the admitted default and the example omits it.
   'swarm.integrate': Object.freeze({
@@ -240,11 +236,6 @@ test('the CLI parses each swarm verb into its exact command args', () => {
   });
   // Identity-keyed verbs carry no key in their args (the coordinates are the key) even though the
   // envelope still carries one for the transport.
-  const check = parsed(['swarm', 'check', 'swarm:one', 'reviewer-a', 'contribution:1', 'check:1']);
-  assert.deepEqual(check.args, {
-    swarmId: 'swarm:one', participantId: 'reviewer-a', contributionId: 'contribution:1', checkId: 'check:1',
-  });
-  assert.equal(check.idempotencyKey, key);
   // watch is observe-only: its args carry no caller key (the envelope still carries one).
   assert.deepEqual(parsed(['swarm', 'watch', 'swarm:one', '--after-seq', '7', '--timeout-ms', '5000']).args, {
     swarmId: 'swarm:one', afterSeq: 7, timeoutMs: 5_000,
@@ -420,29 +411,6 @@ test('delegated coordinator: availableActions are the runtime\'s, and the client
   await swarm.context({ key: 'notes', body: 'the API contract is frozen at rev 7' });
   assert.equal(port.calls[2].args.event, 'swarm.context_updated');
   assert.equal(port.calls[2].args.payload.body, 'the API contract is frozen at rev 7');
-});
-
-test('reviewer: a check observes a partial contribution and leaves the author session alone', async () => {
-  const check = {
-    swarmId: 'swarm:one', participantId: 'reviewer-a', contributionId: 'contribution:1', checkId: 'check:1',
-    verdict: 'observed_passed', capturedSha: 'a'.repeat(40), authorStatus: 'working',
-  };
-  const port = fakePort((name) => (name === 'swarm.check' ? check : { swarmId: 'swarm:one' }));
-  const swarm = createSwarms(port).open('swarm:one');
-
-  const captured = await swarm.capture('impl-a', 'contribution:1');
-  assert.deepEqual(port.calls[0].args, {
-    swarmId: 'swarm:one', participantId: 'impl-a', contributionId: 'contribution:1',
-  });
-  const observed = await swarm.check('reviewer-a', 'contribution:1', 'check:1');
-  // The check is returned as plain JSON — an observation about the captured revision, never a
-  // "task complete" wrapper, and the author's own status is untouched by it.
-  assert.deepEqual(observed, check);
-  assert.equal(observed.authorStatus, 'working');
-  assert.deepEqual(port.calls.map((call) => call.name), ['swarm.capture', 'swarm.check']);
-  assert.ok(!port.calls.some((call) => call.name === 'swarm.stop' || call.name === 'swarm.closed'),
-    'checking a contribution never stops or closes anything');
-  assert.deepEqual(captured, { swarmId: 'swarm:one' });
 });
 
 test('implementer: shared context is readable and a finding is an ordinary contribution', async () => {

@@ -232,14 +232,6 @@ export class Swarm {
     });
   }
 
-  /** Record one independent check of a captured contribution. Returns the check's JSON — an
-   * observation about the captured revision, not a statement about the author's task. */
-  check(participantId, contributionId, checkId) {
-    return this._send('swarm.check', {
-      swarmId: this.id, participantId, contributionId, checkId,
-    });
-  }
-
   /** Stop one participant explicitly and account for the resources it owns. The swarm stays open. */
   stop(participantId, reason, options = {}) {
     exactOptions(options, new Set(['idempotencyKey']), 'Swarm stop');

@@ -147,8 +147,6 @@ const CORE_TABLE = Object.freeze([
         ) }),
       Object.freeze({ verb: 'guide', command: 'swarm.guide', requires: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']) }),
       Object.freeze({ verb: 'capture', command: 'swarm.capture', requires: Object.freeze(['swarmId', 'participantId']) }),
-      Object.freeze({ verb: 'check', command: 'swarm.check', requires: Object.freeze(['swarmId', 'participantId', 'contributionId']),
-        wake: wakeHandoff(['reviewed'], ['reviewed'], ['swarmId']) }),
     ]),
   }),
   Object.freeze({

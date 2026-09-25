@@ -10,12 +10,11 @@
 //       excluded, receipt recorded with base = the merge-base;
 //   (b) the base is `git merge-base <target> <sha>` — a lane that was REBASED records an
 //       observedHead that is no longer the merge-base, and the merge-base is what lands;
-//   (c) the gate set is derived from the changed paths through the seam inventory and the declared
-//       region table, never typed;
+//   (c) the gate set is derived from the changed paths through selectFromRepository;
 //   (d) a path that conflicts with an already-landed contribution refuses typed, naming the files
 //       AND that contribution;
 //   (e) `--dry-run` records dryRun: true and leaves the target exactly where it was;
-//   (f) a contribution with no unrevoked accept refuses pre-effect: no checkout, no commit, no row;
+//   (f) a contribution without an accept review lands: the organize authority is the authorization;
 //   (g) `swarm.view` projects `integration` on the contribution row and the watch wakes on the
 //       receipt's own wake class;
 //   (h) the new row survives replay byte-identically, like every other fold row.
@@ -31,7 +30,6 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { foldSwarmEvent, swarmSnapshot, SWARM_EVENT_KINDS } from '../src/swarm-state.mjs';
 import { wakeClassFor } from '../src/wake-stream.mjs';
-import { gateSetForPaths } from '../src/landing-table.mjs';
 import { SWARM_REFUSAL_CODES } from '../src/swarm-refusals.mjs';
 
 const principal = { actor: 'direct:issue296-root', principalId: 'issue296-root', sessionId: 'issue296-root' };
@@ -85,6 +83,7 @@ async function world(t, {
   git(repo, 'config', 'user.name', 'Issue 296');
   git(repo, 'config', 'user.email', 'issue296@example.invalid');
   write(repo, 'README.md', 'base\n');
+  write(repo, 'impl/test/fixture-coordinator.test.mjs', "import '../src/coordinator.mjs';\n");
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');
@@ -240,28 +239,6 @@ test('296b: a REBASED lane lands from the merge-base, never its stale observedHe
   assert.equal(answer.integration.squashSha, git(w.repo, 'rev-parse', 'master'));
 });
 
-// ── (c) the gate set is derived ──────────────────────────────────────────────────────────────────
-
-test('296c: changed paths under the coordinator select the custody set and a named issue row', () => {
-  const gate = gateSetForPaths(['impl/src/coordinator.mjs'], { issues: [428] });
-  assert.deepEqual(gate.regions, ['custody'], 'the coordinator is the custody region');
-  assert.ok(gate.files.includes('issue428-worktree-custody-on-stop.test.mjs'),
-    'the named issue\'s own row is selected');
-  assert.ok(gate.files.includes('phase70-preserved-stop.test.mjs'), 'the region\'s phase rows are selected');
-  assert.ok(gate.files.includes('phase56-drain-and-close.test.mjs'), 'the drain rows are selected');
-  assert.ok(gate.inventoried.includes('impl/src/coordinator.mjs'),
-    'the seam inventory names the changed module');
-
-  // An unrelated module selects nothing but its own issue rows: the table never over-selects.
-  const unrelated = gateSetForPaths(['docs/readme.md']);
-  assert.deepEqual(unrelated.files, [], 'an unclassified path selects no gate');
-  assert.deepEqual(unrelated.regions, []);
-
-  // A changed path that carries its own issue number selects that issue's rows without being named.
-  const byPath = gateSetForPaths(['impl/test/issue296-swarm-integrate.test.mjs']);
-  assert.ok(byPath.files.includes('issue296-swarm-integrate.test.mjs'));
-});
-
 // ── (d) the typed conflict refusal ───────────────────────────────────────────────────────────────
 
 test('296d: a conflicting path refuses typed, naming the files and the landed contribution', needsGit, async (t) => {
@@ -342,30 +319,22 @@ test('296e: --dry-run prepares and verifies, records dryRun: true, and leaves th
   assert.ok(answer.integration.gates.files.length > 0, 'the gate set still ran');
 });
 
-// ── (f) not accepted refuses pre-effect ──────────────────────────────────────────────────────────
+// ── (f) no accept review required ───────────────────────────────────────────────────────────────
 
-test('296f: a contribution with no unrevoked accept refuses pre-effect', needsGit, async (t) => {
+test('296f: a contribution without an accept review lands — the organize authority is the authorization', needsGit, async (t) => {
   const w = await world(t, { accept: false });
-  const headBefore = git(w.repo, 'rev-parse', 'master');
-
-  const error = await w.integrate().then(() => null, (thrown) => thrown);
-
-  assert.equal(error.code, 'integrate_contribution_not_accepted');
-  assert.equal(error.detail.reviewState, 'unreviewed');
-  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
-  assert.equal(w.foldRow().integration, undefined, 'nothing was recorded');
-  assert.equal(w.store.swarms()[0].contributions['contribution:1'].integration, undefined);
+  const answer = await w.integrate();
+  assert.ok(answer.integration.squashSha.length >= 40, 'the squash landed');
+  assert.equal(w.foldRow().integration.squashSha, answer.integration.squashSha, 'the receipt is recorded');
 });
 
-test('296f: a LATER reject revokes an earlier accept, and the landing refuses', needsGit, async (t) => {
+test('296f: a LATER reject does not prevent landing', needsGit, async (t) => {
   const w = await world(t);
   w.store.recordSwarm('swarm.contribution_reviewed',
     { swarmId: 's1', contributionId: 'contribution:1', decision: 'reject', reviewerId: 'lane-a', reason: 'revoked' },
     { actor: principal.actor, key: 'i296:revoke' });
-
-  const error = await w.integrate().then(() => null, (thrown) => thrown);
-  assert.equal(error.code, 'integrate_contribution_not_accepted');
-  assert.equal(error.detail.reviewState, 'rejected');
+  const answer = await w.integrate();
+  assert.ok(answer.integration.squashSha.length >= 40, 'the squash landed');
 });
 
 // ── (g) the view projects it and the watch wakes on it ───────────────────────────────────────────
@@ -390,7 +359,7 @@ test('296g: the view carries integration on the contribution row and the watch w
   assert.ok(woken.cursor >= cursor, 'the watch advanced past the receipt');
 
   // The refusal codes the verb raises are in the family's ONE closed set.
-  for (const code of ['integrate_contribution_not_accepted', 'integrate_commit_unreachable',
+  for (const code of ['integrate_commit_unreachable',
     'integrate_conflict', 'integrate_gates_red', 'integrate_target_moved', 'integrate_target_undetermined']) {
     assert.ok(Object.hasOwn(SWARM_REFUSAL_CODES, code), `${code} is declared in the closed refusal set`);
   }

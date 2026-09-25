@@ -163,8 +163,7 @@ test('564-b: deriveWakeFrame renders a terminal frame whose next carries the coo
   const frame = deriveWakeFrame({ seq: 41, ts: 'T', kind: 'driver.recorded', actor: 'baton-runtime',
     payload: { kind: 'swarm.root_attention_owed', swarmId: 'swarm-1', participantId: 'ada',
       contributionId: 'contribution-ada-1', owed: 'review_owed', ask: null,
-      next: { command: 'swarm.check', swarmId: 'swarm-1', participantId: 'ada',
-        contributionId: 'contribution-ada-1' } } });
+      next: { command: 'swarm.view', swarmId: 'swarm-1' } } });
   assert.equal(frame.wakeClass, 'root_owed');
   assert.equal(frame.swarmId, 'swarm-1');
   assert.equal(frame.participantId, 'ada');
@@ -209,8 +208,7 @@ test('564-c1: review_owed fires with no other active reviewer seat, needs_root o
     kind: 'swarm.root_attention_owed',
     swarmId: SWARM_ID, participantId: 'author', contributionId: reviewOwed[0].payload.contributionId,
     owed: 'review_owed', ask: null,
-    next: { command: 'swarm.check', swarmId: SWARM_ID, participantId: 'author',
-      contributionId: reviewOwed[0].payload.contributionId },
+    next: { command: 'swarm.view', swarmId: SWARM_ID },
   });
   assert.ok(f.store.swarm(SWARM_ID).contributions[reviewOwed[0].payload.contributionId],
     'the row names a contribution the fold holds');
@@ -354,8 +352,7 @@ test('564-c4: an existing unreviewed contribution is re-addressed when its sole 
   assert.equal(owed.length, 1, 'the existing unreviewed contribution wakes the root after the loss');
   assert.equal(owed[0].payload.participantId, 'author');
   assert.deepEqual(owed[0].payload.next,
-    { command: 'swarm.check', swarmId: SWARM_ID, participantId: 'author',
-      contributionId: owed[0].payload.contributionId });
+    { command: 'swarm.view', swarmId: SWARM_ID });
   assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'needs_root').length, 1,
     'the departure does not re-fire the contribution write triggers');
 
