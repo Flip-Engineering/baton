@@ -4035,7 +4035,6 @@ export function _planDispatchState(store, gate, route, preservedResumeClaim = nu
     || planHead?.planId !== plan.planId || planHead.version !== plan.version || planHead.digest !== plan.digest) throw new CoordinationRefusal('plan dispatch coordinates are superseded', 'plan_stale');
   const approval = store._planApprovals.get(store._planVersionKey(plan.planId, plan.version));
   if (!approval || approval.disposition !== 'approved' || approval.policyDigest !== store._goalPlanPolicy.policyDigest) throw new CoordinationRefusal('plan is not currently approved', 'plan_not_approved');
-  if (Date.parse(store._clock()) - Date.parse(approval.decidedAt) > store._goalPlanPolicy.approvalTtlMs) throw new CoordinationRefusal('plan approval expired', 'plan_approval_expired');
   const node = plan.nodes.find((row) => row.key === gate.nodeKey); if (!node) throw new CoordinationRefusal('plan node is unavailable', 'plan_node_not_found');
   if (Object.hasOwn(node, 'revision') && options.allowRevision !== true) {
     throw new CoordinationRefusal('workflow revision requires its dedicated Plan admission',
