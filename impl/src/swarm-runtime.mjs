@@ -6617,19 +6617,11 @@ export class SwarmRuntime {
     // (it starts fresh and inherits guidance, the #318 contract); a dead predecessor's checkout
     // is carriable unless some OTHER live worker holds it. `liveHolders` therefore names the
     // FOREIGN live holders only, and `predecessorLive` says whether the predecessor itself is.
-    //
-    // Issue #595: the controller's holder list also names terminal handles that still hold the
-    // checkout. The controller classifies each (shared-workspace-custody classifyWorkspaceHolder): a
-    // holder that is live, still cleaning up, or whose process is not proven gone blocks the carry
-    // like before; one whose process is proven closed and whose cleanup is not running has no
-    // process that can write or remove the checkout, so it is released to the successor
-    // (`deadHolders`) instead of pinning the checkout forever. A controller that reports no standing
-    // keeps every foreign holder blocking.
     const predecessorLive = predecessorWorkerId !== null && !predecessorWorkerDead;
-    const standing = ctxResult?.standing ?? {};
-    const foreignHolders = (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId);
-    const deadHolders = foreignHolders.filter((id) => standing[id] === 'processless');
-    const liveHolders = foreignHolders.filter((id) => standing[id] !== 'processless');
+    // Issue #595: a foreign holder whose process is proven closed does not block the carry.
+    const deadHolders = (ctxResult?.deadHolders ?? []).filter((id) => id !== predecessorWorkerId);
+    const liveHolders = (ctxResult?.holders ?? [])
+      .filter((id) => id !== predecessorWorkerId && !deadHolders.includes(id));
     // The custody row the removal was backed by (#428); since #453 it names the snapshot's own
     // paths too, and the LAST row for this workspace is the snapshot being carried.
     let snapshotRow = null;
@@ -7078,11 +7070,9 @@ export class SwarmRuntime {
           paths: [...carry.paths], snapshotSha: predecessorWs.snapshotSha, how: carry.how,
           ...(carry.reason === null ? {} : { reason: carry.reason }),
         }, principal, `workspace-carried:${hash([swarm.swarmId, participant.participantId, carriedWorkspaceId])}`));
-        // Issue #595: the successor now works in the checkout, so a dead handle's unreleased hold on it
-        // is handed over (detached, nothing removed) instead of pinning the checkout forever.
-        if (predecessorWs.deadHolders?.length > 0 && carriedWorkspaceId === predecessorWs.workspaceId
-          && typeof this.coordinator.releaseDeadWorkspaceHolds === 'function') {
-          await this.coordinator.releaseDeadWorkspaceHolds(carriedWorkspaceId, predecessorWs.deadHolders, worker.id);
+        // Issue #595: a dead worker's hold must not keep the successor's checkout pinned.
+        if (predecessorWs.deadHolders.length > 0 && carriedWorkspaceId === predecessorWs.workspaceId) {
+          await this.coordinator.releaseDeadWorkspaceHolds(predecessorWs.deadHolders, worker.id);
         }
       }
       // Issue #337: the parked guidance this brief composed is delivered now, after the run
@@ -9316,11 +9306,8 @@ export class SwarmRuntime {
             paths: [...carry.paths], snapshotSha: predecessorWs.snapshotSha, how: carry.how,
             ...(carry.reason === null ? {} : { reason: carry.reason }),
           }, principal, `workspace-carried:${hash([args.swarmId, args.participantId, carriedWorkspaceId])}`));
-          // Issue #595: the successor now works in the checkout, so a dead handle's unreleased hold on it
-          // is handed over (detached, nothing removed) instead of pinning the checkout forever.
-          if (predecessorWs.deadHolders?.length > 0 && carriedWorkspaceId === predecessorWs.workspaceId
-            && typeof this.coordinator.releaseDeadWorkspaceHolds === 'function') {
-            await this.coordinator.releaseDeadWorkspaceHolds(carriedWorkspaceId, predecessorWs.deadHolders, worker.id);
+          if (predecessorWs.deadHolders.length > 0 && carriedWorkspaceId === predecessorWs.workspaceId) {
+            await this.coordinator.releaseDeadWorkspaceHolds(predecessorWs.deadHolders, worker.id);
           }
         }
         // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —

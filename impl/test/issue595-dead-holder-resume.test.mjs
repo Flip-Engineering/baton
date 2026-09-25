@@ -8,18 +8,15 @@
 // wake-astra592c` refused `predecessor_workspace_held` with holders [w-64], even after
 // wake-astra592b was stopped.
 //
-// The rule this file pins: a foreign holder blocks a resume unless it is processless (its process is
-// proven closed and no cleanup of the checkout is running). A processless holder has no process
-// that could write the checkout, so the successor binds to it and the holder's hold is released
-// durably to the successor (worktree.holder_released, reason custody_transferred).
+// The rule this file pins: a foreign holder blocks a resume unless its process is proven closed.
+// A holder whose process is closed cannot write the checkout, so the successor binds to it and the
+// dead holder is detached from it.
 //
 // Rows:
-//   (a) a foreign holder whose worker is dead does not block: the successor binds to the checkout;
+//   (a) a foreign holder whose process is closed does not block: the successor binds to the checkout;
 //   (b) a foreign holder whose worker is working still refuses predecessor_workspace_held;
-//   (c) binding the successor hands the processless holder's hold over to it;
-//   (d) the release touches only processless holders of the named checkout;
-//   (e) a terminal holder whose cleanup is still running, or whose process is not proven closed,
-//       still refuses: the checkout may be under removal, or a survivor may be writing it.
+//   (c) binding the successor detaches the dead holder from the checkout;
+//   (d) a terminal holder whose process is not proven closed still refuses.
 //
 // Fixture: the #452 fixture (real SwarmRuntime, real CoordinationStore, real owned checkouts), with
 // the controller reporting one extra holder for the predecessor's workspace.
@@ -33,7 +30,6 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { releaseDeadWorkspaceHolds } from '../src/runtime-api.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { allocatePhysicalWorkspaceOwner, createFromBase } from '../src/worktree.mjs';
 
@@ -70,7 +66,7 @@ function fixture(t) {
   // Holders the controller reports for a workspace beside the seats' own workers: the dead or live
   // worker of another seat that still names the checkout (#595).
   const foreignHolders = new Map(); // workspaceId → workerId[]
-  const standings = new Map(); // workerId → the controller's classification of that holder
+  const dead = new Set(); // holders whose process the controller reports closed
   const releases = []; // the releaseDeadWorkspaceHolds calls the runtime made
   const coordinator = {
     list: () => workers,
@@ -81,15 +77,15 @@ function fixture(t) {
       ({ contributionId, workerId, sha: baseSha, ref: `refs/baton/checkpoints/${baseSha}` }),
     checkContribution: async () => ({ passed: true, sha: baseSha, attempt: { cleanup: { state: 'closed' } } }),
     workspaceAttachment: (workerId) => checkouts.get(workerId) ?? null,
-    releaseDeadWorkspaceHolds: async (workspaceId, holderIds, successorWorkerId) => {
-      releases.push({ workspaceId, holderIds: [...holderIds], successorWorkerId });
+    releaseDeadWorkspaceHolds: async (holderIds, successorWorkerId) => {
+      releases.push({ holderIds: [...holderIds], successorWorkerId });
       return holderIds;
     },
     predecessorWorkspaceContext: (workspaceId) => {
       const row = [...checkouts.values()].find((entry) => entry.workspaceId === workspaceId);
       return row === undefined ? null
         : { sessionContext: row.sessionContext, holders: [...(foreignHolders.get(workspaceId) ?? [])],
-          standing: Object.fromEntries((foreignHolders.get(workspaceId) ?? []).map((id) => [id, standings.get(id)])) };
+          deadHolders: (foreignHolders.get(workspaceId) ?? []).filter((id) => dead.has(id)) };
     },
   };
   const runtime = new SwarmRuntime({
@@ -134,8 +130,8 @@ function fixture(t) {
     { swarmId: SWARM_ID, idempotencyKey: `stopped-${++key}`, ...args }, caller);
   return {
     store, runtime, repo, baseSha, workers, call, releases,
-    addForeignHolder: (workspaceId, workerId, status, standing) => {
-      standings.set(workerId, standing);
+    addForeignHolder: (workspaceId, workerId, status, processClosed) => {
+      if (processClosed) dead.add(workerId);
       workers.push({ id: workerId, taskId: `t-${workerId}`, runId: `run-${workerId}`, status,
         paused: false, terminalCause: null, sessionContext: { ownerTaskId: workspaceId }, worktree: null });
       foreignHolders.set(workspaceId, [...(foreignHolders.get(workspaceId) ?? []), workerId]);
@@ -186,7 +182,7 @@ async function stoppedSeat(t) {
 
 test('595-a: a foreign holder whose worker is dead does not block the resume, and the successor binds to the checkout', async (t) => {
   const { f, checkout } = await stoppedSeat(t);
-  f.addForeignHolder(checkout.workspaceId, 'w-dead-holder', 'dead', 'processless');
+  f.addForeignHolder(checkout.workspaceId, 'w-dead-holder', 'dead', true);
 
   await f.recruit('bravo', 'alpha');
   await f.answer('bravo');
@@ -200,7 +196,7 @@ test('595-a: a foreign holder whose worker is dead does not block the resume, an
 
 test('595-b: a foreign holder whose worker is working still refuses predecessor_workspace_held', async (t) => {
   const { f, checkout } = await stoppedSeat(t);
-  f.addForeignHolder(checkout.workspaceId, 'w-live-holder', 'working', 'live');
+  f.addForeignHolder(checkout.workspaceId, 'w-live-holder', 'working', false);
 
   const refused = await f.recruit('bravo', 'alpha')
     .then(() => f.answer('bravo'))
@@ -211,57 +207,26 @@ test('595-b: a foreign holder whose worker is working still refuses predecessor_
   assert.deepEqual(refused.detail?.holders, ['w-live-holder']);
 });
 
-test('595-c: binding the successor hands the dead holder\'s hold over to it', async (t) => {
+test('595-c: binding the successor detaches the dead holder from the checkout', async (t) => {
   const { f, checkout } = await stoppedSeat(t);
-  f.addForeignHolder(checkout.workspaceId, 'w-dead-holder', 'dead', 'processless');
+  f.addForeignHolder(checkout.workspaceId, 'w-dead-holder', 'dead', true);
 
   await f.recruit('bravo', 'alpha');
   await f.answer('bravo');
 
   const successor = f.workerOf('bravo');
   assert.ok(successor !== null, 'the successor has a worker');
-  assert.deepEqual(f.releases, [{
-    workspaceId: checkout.workspaceId, holderIds: ['w-dead-holder'], successorWorkerId: successor.id,
-  }], 'the dead holder is released to the successor, once');
+  assert.deepEqual(f.releases, [{ holderIds: ['w-dead-holder'], successorWorkerId: successor.id }],
+    'the dead holder is detached once, with the successor as the remaining holder');
 });
 
-test('595-d: releaseDeadWorkspaceHolds releases only processless holders of the named checkout', async () => {
-  const workspaceId = `ws-${'a'.repeat(32)}`;
-  const otherWorkspace = `ws-${'b'.repeat(32)}`;
-  const handle = (id, status, ownerTaskId, extra = {}) => ({
-    id, status, sessionContext: { ownerTaskId }, worktree: `/tmp/${ownerTaskId}`,
-    ownedWorktreeAuthority: true, workspaceCleanupDeferred: null, physicalWorkspaceCleanupCompleted: false,
-    processRef: { state: 'closed' }, ...extra,
-  });
-  const workers = new Map([
-    ['w-dead', handle('w-dead', 'dead', workspaceId)],
-    ['w-live', handle('w-live', 'working', workspaceId, { processRef: { state: 'ready' } })],
-    ['w-cleaning', handle('w-cleaning', 'dead', workspaceId, { cleanupPromise: Promise.resolve() })],
-    ['w-unproven', handle('w-unproven', 'dead', workspaceId, { processRef: { state: 'unconfirmed_after_restart' } })],
-    ['w-elsewhere', handle('w-elsewhere', 'dead', otherWorkspace)],
-  ]);
-  const releasedWith = [];
-  const coordinator = {
-    _workers: workers,
-    _releaseProcesslessHold: (h, successorWorkerId) => { releasedWith.push({ id: h.id, successorWorkerId }); },
-  };
-  const released = await releaseDeadWorkspaceHolds(coordinator, workspaceId,
-    ['w-dead', 'w-live', 'w-cleaning', 'w-unproven', 'w-elsewhere', 'w-unknown'], 'w-successor');
-  assert.deepEqual([...released], ['w-dead'], 'only the processless holder of this checkout is released');
-  assert.deepEqual(releasedWith, [{ id: 'w-dead', successorWorkerId: 'w-successor' }],
-    'it is released as a custody transfer naming the successor');
+test('595-d: a terminal holder whose process is not proven closed still refuses', async (t) => {
+  const { f, checkout } = await stoppedSeat(t);
+  f.addForeignHolder(checkout.workspaceId, 'w-terminal-holder', 'dead', false);
+  const refused = await f.recruit('bravo', 'alpha')
+    .then(() => f.answer('bravo'))
+    .then(() => null, (error) => error);
+  assert.ok(refused !== null, 'the resume refuses');
+  assert.equal(refused.detail?.reason, 'predecessor_workspace_held');
+  assert.deepEqual(refused.detail?.holders, ['w-terminal-holder']);
 });
-
-for (const [standing, why] of [['cleanup_in_flight', 'its cleanup may be removing the checkout'],
-  ['unresolved', 'its process is not proven closed']]) {
-  test(`595-e: a terminal holder whose standing is ${standing} still refuses (${why})`, async (t) => {
-    const { f, checkout } = await stoppedSeat(t);
-    f.addForeignHolder(checkout.workspaceId, 'w-terminal-holder', 'dead', standing);
-    const refused = await f.recruit('bravo', 'alpha')
-      .then(() => f.answer('bravo'))
-      .then(() => null, (error) => error);
-    assert.ok(refused !== null, 'the resume refuses');
-    assert.equal(refused.detail?.reason, 'predecessor_workspace_held');
-    assert.deepEqual(refused.detail?.holders, ['w-terminal-holder']);
-  });
-}

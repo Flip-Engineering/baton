@@ -1491,10 +1491,6 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
         name: 'CoordinationRefusal', code: 'run_sealed',
       });
     }
-    // Issue #595: a worker that released its checkout to a successor has no checkout to recover into.
-    if (handle.workspaceCleanupDeferred === 'custody_transferred') {
-      return { ok: false, result: 'workspace_hold_released' };
-    }
     if (handle.sessionPreservation?.state === 'preserved') {
       if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
       if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
@@ -2919,8 +2915,6 @@ export function* _replay(coordinator, recorder) {
       let processAuthority = null;
       let sessionContext = null;
       let workspaceOwnerBinding = null;
-      // Issue #595: a durable worktree.holder_released row for this worker's own checkout.
-      let holderReleased = null;
       let lineage = null;
       let capturedSha = null;
       let integration = null;
@@ -2997,13 +2991,6 @@ export function* _replay(coordinator, recorder) {
                   kind: 'provider_failure', code: 'transport_closed_after_preservation',
                 });
               }
-            }
-            break;
-          case 'worktree.holder_released':
-            if (e.actor === 'policy' && e.payload?.reason === 'custody_transferred'
-              && typeof e.payload?.physicalOwnerId === 'string'
-              && e.payload.physicalOwnerId === sessionContext?.ownerTaskId) {
-              holderReleased = e.payload.reason;
             }
             break;
           case 'control.recovery_process_absent':
@@ -3689,8 +3676,7 @@ export function* _replay(coordinator, recorder) {
         workspaceOwnerProcessAuthorityValid: null,
         lineage,
         taskId,
-        worktree: holderReleased === null ? (sessionContext?.worktree ?? null) : null,
-        workspaceCleanupDeferred: holderReleased,
+        worktree: sessionContext?.worktree ?? null,
         // A durable native reference is not a live transport. Even a terminal task that was
         // reusable before restart must remain uncontrollable until PS7 proves reattachment.
         status: (recoveryTerminalized || refinementAborted || sessionRef)

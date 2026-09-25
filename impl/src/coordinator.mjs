@@ -4309,9 +4309,12 @@ export class Coordinator {
     return runtimeApi.predecessorWorkspaceContext(this, workspaceId);
   }
 
-  /** Issue #595: release the holds dead handles keep on a checkout a successor is now bound to. */
-  releaseDeadWorkspaceHolds(physicalOwnerId, holderIds, successorWorkerId) {
-    return runtimeApi.releaseDeadWorkspaceHolds(this, physicalOwnerId, holderIds, successorWorkerId);
+  /** Issue #595: detach dead holders from a checkout a successor is now bound to. */
+  async releaseDeadWorkspaceHolds(holderIds, successorWorkerId) {
+    for (const id of holderIds) {
+      const handle = this._workers.get(id);
+      if (handle) await this._detachSharedWorkspace(handle, [successorWorkerId]);
+    }
   }
 
   /** Whether this handle's checkout is exactly usable under its own session context — the
@@ -4361,11 +4364,6 @@ export class Coordinator {
     return recorderPort.detachSharedWorkspace(this, this._recorder, handle, remainingHolders);
   }
 
-  /** Issue #595: durably release a processless handle's hold on its checkout, removing nothing. */
-  _releaseProcesslessHold(handle, successorWorkerId) {
-    return recorderPort.releaseProcesslessHold(this, this._recorder, handle, successorWorkerId);
-  }
-
   /** Release any holder — the checkout's own allocator or a borrowed holder — whose checkout is
    * retained because it holds content no capture recorded. Preservation keeps the resource
    * exactly as it is (checkout, receipt, reservation); this handle simply releases its hold, so
@@ -4406,9 +4404,7 @@ export class Coordinator {
       && handle.runtimeScope?.active !== true
       && handle.worktreeCreationPending !== true
       && (!opaquePhysicalOwner || handle.physicalWorkspaceCleanupCompleted === true
-        || handle.workspaceCleanupDeferred === 'content_retained'
-        // Issue #595: a released hold's checkout belongs to its successor.
-        || handle.workspaceCleanupDeferred === 'custody_transferred')) {
+        || handle.workspaceCleanupDeferred === 'content_retained')) {
       handle.cleanupPending = false;
       // A retained checkout keeps its refusal code observable on the handle; a fully reaped
       // one carries no error.

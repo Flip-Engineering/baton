@@ -47,24 +47,6 @@ export function holdsWorkspace(handle) {
     && (handle.worktree !== null && handle.worktree !== undefined || handle.ownedWorktreeAuthority === true);
 }
 
-/** Issue #595: how one holder of a checkout stands, for a decision about handing the checkout on.
- *  - `live`: its status is one a working process has; it is still in the checkout.
- *  - `cleanup_in_flight`: it is terminal and its own cleanup, capture or runtime release is still
- *    running; the checkout is protected until that settles.
- *  - `processless`: it is terminal, nothing of its cleanup is running, and its process is proven
- *    closed (its process reference is closed, which startup also records for a process proven
- *    absent after a restart). Its hold can be released without removing anything.
- *  - `unresolved`: it is terminal but its process is not proven closed; a survivor may exist.
- * Returns null for a handle that does not hold the checkout. */
-export function classifyWorkspaceHolder(handle) {
-  if (!holdsWorkspace(handle)) return null;
-  if (WORKSPACE_HOLDER_STATUSES.includes(handle.status)) return 'live';
-  if (handle.cleanupPromise || handle.contributionCapturePending || handle.runtimeScope?.active === true
-    || handle.worktreeCreationPending === true) return 'cleanup_in_flight';
-  if (handle.processRef?.state === 'closed') return 'processless';
-  return 'unresolved';
-}
-
 /**
  * Every other live holder of one physical checkout, as worker identities.
  * @param {Iterable<object>} handles live worker handles

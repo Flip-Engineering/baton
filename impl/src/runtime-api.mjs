@@ -23,7 +23,7 @@ import { canonicalDigest } from './coordination-internals.mjs';
 import { boundedAttentionText } from './messages.mjs';
 import { normalizeProviderRoute, readProviderFaultDetail } from './provider-faults.mjs';
 import {
-  attachedToExistingCheckout, classifyWorkspaceHolder, isPhysicalWorkspaceId, workspaceAttachmentOf,
+  attachedToExistingCheckout, isPhysicalWorkspaceId, WORKSPACE_HOLDER_STATUSES, workspaceAttachmentOf,
   workspaceCustodyRecord, workspaceHolders,
 } from './shared-workspace-custody.mjs';
 import { pathInScope } from './runtime-observation.mjs';
@@ -600,33 +600,14 @@ export function predecessorWorkspaceContext(coordinator, workspaceId) {
     }
     if (!context) return null;
     const holders = workspaceHolders(allHandles, workspaceId);
-    // Issue #595: each holder's standing, so a successor decision can tell a holder that is still in
-    // the checkout (or still cleaning it up) from one whose process is proven gone.
+    // Issue #595: a terminal holder whose process is proven closed cannot write the checkout.
     const byId = new Map(allHandles.map((handle) => [handle.id, handle]));
-    const standing = Object.fromEntries(holders.map((id) => [id, classifyWorkspaceHolder(byId.get(id))]));
-    return { sessionContext: context, holders, standing };
+    const deadHolders = holders.filter((id) => {
+      const handle = byId.get(id);
+      return !WORKSPACE_HOLDER_STATUSES.includes(handle?.status) && handle?.processRef?.state === 'closed';
+    });
+    return { sessionContext: context, holders, deadHolders };
   }
-
-/** Issue #595: hand the holds that dead handles still keep on one checkout to the successor now
- * working in it. A handle whose process is gone but whose cleanup never finalized (a host crash
- * restores it that way) keeps holdsWorkspace true forever; once a successor is bound to the checkout
- * that hold only keeps the checkout from ever being released. Each such hold is released durably
- * (worktree.holder_released, reason custody_transferred, naming the successor): nothing on disk is
- * removed, and only a holder whose process is proven closed and whose cleanup is not running is touched.
- * Returns the ids whose hold was released. */
-export async function releaseDeadWorkspaceHolds(coordinator, physicalOwnerId, holderIds, successorWorkerId) {
-  if (!isPhysicalWorkspaceId(physicalOwnerId) || typeof successorWorkerId !== 'string') return Object.freeze([]);
-  const released = [];
-  for (const id of holderIds ?? []) {
-    const handle = coordinator._workers.get(id);
-    if (!handle || handle.sessionContext?.ownerTaskId !== physicalOwnerId) continue;
-    // Only a holder whose process is proven closed and whose cleanup is not running is released.
-    if (classifyWorkspaceHolder(handle) !== 'processless') continue;
-    coordinator._releaseProcesslessHold(handle, successorWorkerId);
-    released.push(id);
-  }
-  return Object.freeze(released);
-}
 
 export function unregisterParticipantRuntime(coordinator, runId) {
     coordinator._participantRuntimes?.delete(runId);
