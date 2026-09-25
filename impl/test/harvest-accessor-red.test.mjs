@@ -774,17 +774,15 @@ test('H1-tools (stage: tools absent): the two ordinary tools register with close
   for (const [tool] of NEW_TOOLS) {
     assert.ok(names.includes(tool), `${tool} joins the ordinary application surface (33 → 35)`);
   }
-  // Main adjudication (final landing): the count pin is a DERIVATION, not a hand literal — the
-  // expected composition is the served ordinary table itself (legacy rows + the 14 lifecycle
-  // siblings + swarm + evidence + services + the 3 wakes + the message pair + the harvest pair),
-  // asserted dupes-free; the MEASURED totals ride as the redundant secondary asserts below.
+  // Issue #566 restores the ordinary definitions and canonical dot spellings. These count
+  // assertions supplement the closed-set derivation in canonical-naming-233-red.test.mjs.
   assert.equal(new Set(names).size, names.length, 'the ordinary table carries no duplicate spellings');
-  assert.equal(names.length, 57, 'measured ordinary total (56 + the #314 seed leg; the memory-family rows stay retired pending the design decision, #555)');
+  assert.equal(names.length, 57, 'the restored ordinary table includes both harvest tools');
   const combined = mcpCombinedToolNames();
   assert.ok(combined.includes('baton_run_resultpin'), 'combined surface gains baton_run_resultpin');
   assert.ok(combined.includes('baton_waves_harvest'), 'combined surface gains baton_waves_harvest');
   assert.equal(new Set(combined).size, combined.length, 'the combined table carries no duplicate spellings');
-  assert.equal(combined.length, 110, 'measured combined total (109 + the #314 seed leg, #555)');
+  assert.equal(combined.length, 150, 'the restored combined table includes the canonical dot spellings');
   const { server } = mockAppServer();
   await initialized(server);
   const list = await wireRequest(server, 2, 'tools/list', {});
