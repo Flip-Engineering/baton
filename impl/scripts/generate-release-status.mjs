@@ -23,17 +23,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const implRoot = resolve(here, '..');
 const repoRoot = resolve(implRoot, '..');
 const pkg = JSON.parse(readFileSync(resolve(implRoot, 'package.json'), 'utf8'));
-const expected = JSON.parse(readFileSync(resolve(here, 'expected-red.json'), 'utf8'));
-const shipped = JSON.parse(readFileSync(resolve(here, 'shipped-holistic-contracts.json'), 'utf8'));
+
 const outputArg = process.argv.indexOf('--output');
 const output = outputArg >= 0 ? resolve(process.cwd(), process.argv[outputArg + 1]) : resolve(repoRoot, 'baton-status.json');
 const commit = process.env.GITHUB_SHA || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 
-const families = Object.fromEntries([...new Set([...shipped.contracts, ...expected.contracts].map((row) => row.id.split('-')[0]))]
-  .sort().map((family) => {
-    const outstanding = expected.contracts.filter((row) => row.id.startsWith(`${family}-`));
-    return [family, outstanding.length === 0 ? 'shipped' : 'contract_only'];
-  }));
+
 const baseCoverage = assertUnifiedCapabilityCoverage();
 const nameClosure = assertSurfaceCapabilityNameClosure();
 const completeRows = completeUnifiedCapabilityCatalog();
@@ -73,13 +68,6 @@ const status = {
   packageVersion: pkg.version,
   node: process.version,
   releaseGate: process.env.BATON_RELEASE_GATE || 'unknown',
-  contractGate: process.env.BATON_CONTRACT_GATE || 'unknown',
-  holistic: {
-    state: expected.contracts.length === 0 ? 'shipped' : 'converging',
-    shippedContracts: shipped.contracts.length,
-    outstandingContracts: expected.contracts.length,
-    families,
-  },
   surfaces: {
     state: completeSurface ? 'unified' : 'incomplete',
     categories: completeCategories,
@@ -103,8 +91,6 @@ const status = {
     shadowedCompatibilityNames: nameClosure.shadowed,
     digest: baseCoverage.digest,
   },
-  shipped: shipped.contracts.map(({ id, owner, status: contractStatus }) => ({ id, owner, status: contractStatus })),
-  expectedRed: expected.contracts,
 };
 
 writeFileSync(output, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
