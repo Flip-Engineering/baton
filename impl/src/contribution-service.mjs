@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { verifyContribution } from './contribution-verification.mjs';
+import { SUITE_COMPARISON, suiteRoots } from './suite-comparison.mjs';
 import { selectFromRepository } from './verification-selection.mjs';
 
 const copy = (value) => structuredClone(value);
@@ -20,24 +21,43 @@ const cleanupLeak = (cleanupError) => (cleanupError ? Object.freeze({
   message: String(cleanupError.message ?? cleanupError),
 }) : null);
 
-/** #300: the pre-verdict selection reads the CAPTURED revision, never the hub's own checkout —
- * a capture may be older or newer than the deployment's tree. The ceiling is the widest
- * per-file read the captured-file seam admits (16 MiB): the graph must see every source file
- * whole, and a truncating bound here would silently under-select its importers. */
-const PREVERDICT_READ_CEILING = 16 * 1024 * 1024;
+/** #300/#593: the selection reads the CAPTURED revision, never the hub's own checkout — a capture
+ * may be older or newer than the deployment's tree. The ceiling is the widest per-file read the
+ * captured-file seam admits (16 MiB): the graph must see every source file whole, and a
+ * truncating bound here would silently under-select its importers. */
+const CHECK_SELECTION_READ_CEILING = 16 * 1024 * 1024;
+
+/** #593: the verdict of a capture the selection finds nothing to judge for. It is the landing
+ * gate's own decision (#463: an empty derivation runs no gate and says `no_affected_tests`),
+ * closed here as a receipt — never a widening to the whole suite, which is the run whose exit
+ * code this procedure replaced. */
+const NOTHING_TO_JUDGE_VERDICT = Object.freeze({
+  reverified: true, observedExit: null, passed: true, matchesClaim: true, locus: null,
+  diagnosticCode: 'verification_not_required',
+  execution: Object.freeze({ state: 'completed', code: 'verification_completed' }),
+  baseExecution: null,
+  outcome: 'passed', failureOwnership: null,
+});
+
+/** The attempt row for a check that never opened a sandbox: there is nothing it could have left
+ * behind, so its cleanup is closed by construction rather than by a writer that never ran. */
+const nothingToJudgeAttempt = () => Object.freeze({
+  phase: 'selection', verifierStarted: false,
+  cleanup: Object.freeze({ state: 'closed', code: null }),
+});
 
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */
 export class ContributionService {
   constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null, hostCapacity = null, repoRoot = null }) {
     Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict, verificationFor, repoRoot });
-    // #297: the host-wide capacity authority every resident shares — a check's full-suite verdict
-    // is admitted through it before the deployment's own verification lane orders it.
+    // #297: the host-wide capacity authority every resident shares — a check's verdict is
+    // admitted through it before the deployment's own verification lane orders it.
     this.hostCapacity = hostCapacity;
     this.pending = new Map();
     // #300: the selection is a function of the capture (sha + changed paths) and the captured
     // tree cannot change, so it is computed once per capture and reused by every later check.
-    this.preverdictSelections = new Map();
+    this.checkPlans = new Map();
   }
 
   captured(workerId, contributionId) {
@@ -120,24 +140,28 @@ export class ContributionService {
       brief: copy(captured.basis.brief), sessionContext: copy(captured.basis.sessionContext),
       worktree: captured.basis.worktree,
     };
-    // #269: the deployment may check a capture that touches none of its code paths with the
-    // docs verification instead of the whole suite; the selection is recorded with the check.
+    // #269: the deployment may check a capture that touches none of its code paths with the docs
+    // verification instead of the whole suite. #593: the same declaration says whether a code
+    // capture is judged by the comparison over the tests its changes select; both are recorded
+    // with the check.
     const selected = typeof this.verificationFor === 'function'
       ? this.verificationFor(captured.changedPaths ?? [], source.brief.verification) : null;
     const selection = selected?.selection ?? 'code';
     if (selected?.verification) source.brief.verification = selected.verification;
-    // #300: the affected subset is derived before anything runs, so the started record already
-    // names what will run first; the full suite remains the acceptance verdict either way.
-    const preverdict = this._preverdictPlan(captured, selection, source);
+    // #300: the selection is derived BEFORE anything runs — from the captured revision — so the
+    // started record already names what will run. #593: it is also the file set the comparison's
+    // change run takes, not a first verdict ahead of a full-suite acceptance.
+    const plan = this._checkPlan(captured, selection, source, selected?.comparison ?? null);
+    const comparison = plan.files === null ? null : { files: plan.files, roots: suiteRoots() };
     const workspaceId = `contribution-${createHash('sha256')
       .update(JSON.stringify([handle.id, contributionId, checkId])).digest('hex')}`;
     let checked;
     this.record('contribution.check_started', {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
       verification: { selection, command: source.brief.verification.command },
-      preverdict: preverdict.contract
-        ? { files: preverdict.selection.files.length, command: preverdict.contract.command }
-        : { skipped: preverdict.skipped },
+      comparison: comparison === null
+        ? { skipped: plan.skipped }
+        : { procedure: SUITE_COMPARISON, files: comparison.files.length },
     }, handle, task);
     // The deployment's verification lane is full: say so durably, so a waiting check reads as a
     // queue position and not as a slow verifier (#269).
@@ -150,7 +174,8 @@ export class ContributionService {
     // #297: the host admits this verdict BEFORE the deployment's lane orders it — a check whose
     // suite would be starved waits as a visible host queue entry (its typed queued row is
     // recorded the moment it is enqueued) instead of starting work the machine cannot run. The
-    // lease is held for the verdict (preverdict subset included) and released whichever way it ends.
+    // lease is held for the whole verdict — the comparison's change and base runs alike (#593) —
+    // and released whichever way it ends.
     let admission = null;
     let hostLease = null;
     if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
@@ -173,17 +198,21 @@ export class ContributionService {
           queuedAt: admitted.queuedAt ?? null } : {}),
       };
     }
-    let preverdictRow;
     try {
-      preverdictRow = await this._runPreverdict({ captured, source, preverdict, workspaceId, signal });
-      checked = await verifyContribution({
-        worktrees: this.worktrees, referee: this.referee, task: source,
-        capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
-        workspaceId, signal,
-        beforeVerify: this.acceptOptions.requireCoverage && typeof this.worktrees.changedLines === 'function'
-          ? async () => { source.changedLines = await this.worktrees.changedLines(source.sessionContext.baseSha, captured.sha); }
-          : null,
-      });
+      // #593: a capture whose selection is a decision — nothing to judge — needs no sandbox at
+      // all; every other check runs its comparison (or the deployment's own exit-code contract
+      // when the selection could not be derived at all) in the verify sandboxes.
+      checked = plan.files !== null && plan.files.length === 0
+        ? { observedVerdict: NOTHING_TO_JUDGE_VERDICT, attempt: nothingToJudgeAttempt(), cleanupError: null }
+        : await verifyContribution({
+          worktrees: this.worktrees, referee: this.referee, task: source,
+          capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
+          workspaceId, signal,
+          ...(comparison === null ? {} : { comparison }),
+          beforeVerify: this.acceptOptions.requireCoverage && typeof this.worktrees.changedLines === 'function'
+            ? async () => { source.changedLines = await this.worktrees.changedLines(source.sessionContext.baseSha, captured.sha); }
+            : null,
+        });
     } catch (error) {
       if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});
       const leak = cleanupLeak(error.cleanupError);
@@ -196,90 +225,78 @@ export class ContributionService {
     }
     if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});
     const leak = cleanupLeak(checked.cleanupError);
+    // A capture the selection finds nothing to judge for is a decision, green by its own rule the
+    // way the read-only no-change receipt is (#334) and the landing gate's empty derivation is
+    // (#463) — never accepted through a run that never happened.
+    const nothingToJudge = plan.files !== null && plan.files.length === 0;
     const receipt = {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
       verification: { selection, command: source.brief.verification.command },
-      passed: this.accept(checked.observedVerdict, {
+      passed: nothingToJudge ? true : this.accept(checked.observedVerdict, {
         ...this.acceptOptions, expectExit: source.brief.verification.expectExit,
       }) === true,
       verdict: this.closeVerdict(checked.observedVerdict, source.brief.verification),
       attempt: checked.attempt,
       // #297: the typed admission row the check reports beside its verdict.
       ...(admission ? { admission } : {}),
-      // #300: what ran before the full suite, with its own typed verdict — or the closed
-      // reason nothing did. Durable so a reviewer sees the subset without re-deriving it.
-      preverdict: preverdictRow,
+      // #300/#593: the selection and what the comparison made of it — which failures the change
+      // owns and which it shares with its base — or the closed reason no comparison ran. Durable
+      // so a reviewer reads the blocking rows without re-deriving them.
+      comparison: plan.files === null ? { skipped: plan.skipped }
+        : plan.files.length === 0 ? { skipped: plan.skipped, selection: plan.selection }
+          : { selection: plan.selection, ...(checked.observedVerdict?.comparison ?? {}) },
       ...(leak ? { cleanup: leak } : {}),
     };
     this.record('contribution.checked', receipt, handle, task);
     return copy(receipt);
   }
 
-  /** #300: the pre-verdict plan for one capture — which affected test files run first and under
-   * which contract, or the closed reason none will. Never throws: an unusable selection must
-   * not stop the check, it must be named on the receipt instead. Cached per capture (the
-   * captured tree cannot change), so repeated checks of the same sha re-read nothing. */
-  _preverdictPlan(captured, selection, source) {
-    if (selection === 'docs') return { skipped: 'docs' };
+  /** #300/#593: the plan for one capture — the test files the comparison judges (`files`), or the
+   * closed reason there is no file set (`files: null`, `skipped` named). Never throws: an unusable
+   * selection must not stop the check, it must be named on the receipt instead. Cached per capture
+   * (the captured tree cannot change), so repeated checks of the same sha re-read nothing. */
+  _checkPlan(captured, selection, source, procedure) {
+    // #269: a docs-only capture is judged by the docs contract itself, which is a command.
+    if (selection === 'docs') return { files: null, skipped: 'docs' };
+    // A deployment that does not name the comparison procedure keeps its own contract's exit-code
+    // judgement: the comparison is a declared procedure, never an assumption.
+    if (procedure !== SUITE_COMPARISON) return { files: null, skipped: 'procedure_not_declared' };
     const contract = source.brief.verification;
-    if (!Array.isArray(contract?.arguments)) return { skipped: 'contract_shape' };
+    if (!Array.isArray(contract?.arguments)) return { files: null, skipped: 'contract_shape' };
     const changedPaths = [...(captured.changedPaths ?? [])].sort();
     const cacheKey = JSON.stringify([captured.sha, changedPaths]);
-    if (this.preverdictSelections.has(cacheKey)) return this.preverdictSelections.get(cacheKey);
-    const plan = this._derivePreverdictPlan(captured, changedPaths, contract);
-    this.preverdictSelections.set(cacheKey, plan);
+    if (this.checkPlans.has(cacheKey)) return this.checkPlans.get(cacheKey);
+    const plan = this._deriveCheckPlan(captured, changedPaths);
+    this.checkPlans.set(cacheKey, plan);
     return plan;
   }
 
-  _derivePreverdictPlan(captured, changedPaths, contract) {
+  _deriveCheckPlan(captured, changedPaths) {
     if (!this.repoRoot || typeof this.worktrees.readCommitFile !== 'function') {
-      return { skipped: 'selection_unavailable' };
+      return { files: null, skipped: 'selection_unavailable' };
     }
     let selected;
     try {
       // The graph is read from the CAPTURED revision: a capture may carry imports or tests the
       // hub's own checkout has never seen, and only the captured tree can say what affects it.
       const readAtCapture = (path) => {
-        try { return this.worktrees.readCommitFile(captured.sha, path, PREVERDICT_READ_CEILING).text; }
+        try { return this.worktrees.readCommitFile(captured.sha, path, CHECK_SELECTION_READ_CEILING).text; }
         catch { return null; }
       };
       selected = selectFromRepository({ root: this.repoRoot, changedPaths, read: readAtCapture });
     } catch {
-      return { skipped: 'selection_unavailable' };
+      return { files: null, skipped: 'selection_unavailable' };
     }
-    if (selected.files.length === 0) return { skipped: 'no_affected_tests' };
+    const selection = {
+      changedPaths,
+      files: selected.files,
+      reason: selected.reason,
+      provenance: selected.provenance,
+    };
     // The selected files ride the contract's own argv: `npm test --prefix impl <files…>` and a
     // direct runner argv both forward plain positional file arguments unchanged.
-    return {
-      selection: {
-        changedPaths,
-        files: selected.files,
-        reason: selected.reason,
-        provenance: selected.provenance,
-      },
-      contract: { ...contract, arguments: [...contract.arguments, ...selected.files] },
-    };
-  }
-
-  /** Run the affected subset first and close its verdict as its own typed receipt row. A subset
-   * run that cannot produce a verdict is recorded as exactly that — the full suite after it
-   * stays the acceptance authority, so a red or unavailable subset never fails the check alone. */
-  async _runPreverdict({ captured, source, preverdict, workspaceId, signal }) {
-    if (!preverdict.contract) return { skipped: preverdict.skipped };
-    const task = { ...source, brief: { ...source.brief, verification: preverdict.contract } };
-    try {
-      const observed = await verifyContribution({
-        worktrees: this.worktrees, referee: this.referee, task,
-        capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
-        workspaceId: `${workspaceId}-preverdict`, signal,
-      });
-      return { selection: preverdict.selection, verdict: this.closeVerdict(observed.observedVerdict, preverdict.contract) };
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      return {
-        selection: preverdict.selection,
-        verdict: { state: 'unavailable', code: error.code ?? 'verification_unavailable' },
-      };
-    }
+    return selected.files.length === 0
+      ? { files: [], skipped: 'no_affected_tests', selection }
+      : { files: selected.files, skipped: null, selection };
   }
 }

@@ -10,11 +10,15 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { availableParallelism } from 'node:os';
-import { dirname, isAbsolute, resolve, sep } from 'node:path';
-import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { availableParallelism, tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import {
+  NO_BASE_FILES, SUITE_COMPARISON, SUITE_VERDICT_ENV, compareSuiteVerdicts, readVerdictDocument,
+  verdictFailures,
+} from './suite-comparison.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
+import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -279,7 +283,7 @@ function runCommand(command, cwd, timeoutMs, environment, maxOutputBytes, signal
   });
 }
 
-function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, maxOutputBytes, signal = null) {
+function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, maxOutputBytes, signal = null, extraEnv = null) {
   return new Promise((settle) => {
     const root = resolve(sandboxDir);
     const cwd = resolve(root, verification.cwd);
@@ -298,7 +302,9 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, maxOutpu
     const env = Object.fromEntries(verification.envAllowlist
       .filter((name) => Object.hasOwn(runtime.environment, name))
       .map((name) => [name, runtime.environment[name]]));
-    const child = spawn(verification.command, verification.arguments, { cwd, detached: true, env, shell: false });
+    const child = spawn(verification.command, verification.arguments, {
+      cwd, detached: true, env: extraEnv === null ? env : { ...env, ...extraEnv }, shell: false,
+    });
     // Output is bounded EVIDENCE; the exit code is the verdict (issue #266). A verifier that prints
     // more than the one declared bound is never killed for it: `boundedCapture` keeps the head and
     // the rolling tail and counts the bytes between, so the failure capsule still shows how the run
@@ -350,12 +356,177 @@ const executionOf = (run) => run.timedOut ? { state: 'timed_out', code: 'verific
   : run.exitCode == null ? { state: 'unavailable', code: 'verification_spawn_unavailable' }
     : { state: 'completed', code: 'verification_completed' };
 
+// ── the comparison procedure (#593) ───────────────────────────────────────────────────────────
+//
+// A deployment may declare, beside the command that runs its tests, that the command's EXIT CODE
+// is not the verdict: `SUITE_COMPARISON` says judge a capture by the tests its changes select and
+// by whether the failures are the change's own (impl/src/suite-comparison.mjs). This repository
+// declares it, because since #580 its suite runs red wherever a test was written before the
+// feature it names.
+//
+// The two halves run through `runClosedCommand` — the same closed argv, the same allowlisted
+// environment, the same bounded capture and the same shared timeout budget the pinned path uses —
+// with ONE addition: the child is told where to write its verdict document, the way the landing
+// gate tells its own runner child. Only the files the change run already failed on are re-run at
+// the base, and a failing file the base does not have is new with the change: it runs nowhere
+// there and its failures block.
+
+/** One half of a comparison: the pinned command over `files`, in `dir`, writing its verdict
+ * document to `verdictPath` (the ONE variable the suite runner reads for it). */
+function runComparisonHalf(verification, dir, files, timeoutMs, runtime, maxOutputBytes, signal, verdictPath) {
+  return runClosedCommand(
+    { ...verification, arguments: [...verification.arguments, ...files] },
+    dir, timeoutMs, runtime, maxOutputBytes, signal, { [SUITE_VERDICT_ENV]: verdictPath },
+  );
+}
+
+/**
+ * The comparison verdict: run the selected files in the candidate sandbox, re-run the failing
+ * files the base sandbox has in the base sandbox, and pass when the base's run has every failure
+ * the change's run does. A change run that writes no verdict is never a pass: the verdict is
+ * inconclusive, verifier-owned, and carries the runner's own last words in its failure capsule.
+ *
+ * @param {object} input.comparison `{files, roots}` — the selected test files, and the
+ *   sandbox-relative roots a verdict failure's file may be resolved against (`suiteRoots`,
+ *   suite-comparison.mjs), used only to ask the base sandbox whether it has the file.
+ */
+async function comparisonVerdict(task, sandbox, opts, ctx) {
+  const verification = task.verification;
+  const { files, roots = ['.'] } = opts.comparison;
+  const signal = opts.signal ?? null;
+  const baseDir = opts.baseSandbox?.dir ?? null;
+  const scratch = mkdtempSync(join(tmpdir(), 'baton-comparison-'));
+  const started = Date.now();
+  try {
+    const changePath = join(scratch, 'change.json');
+    const changeRun = await runComparisonHalf(
+      verification, sandbox.dir, files, ctx.budgetFor('candidate'), ctx.runtime, ctx.maxOutputBytes, signal, changePath,
+    );
+    ctx.spent('candidate');
+    if (signal?.aborted || changeRun.aborted) throw ctx.abortError();
+    const changeDocument = readVerdictDocument(changePath);
+    const changeExit = changeRun.timedOut ? null : changeRun.exitCode;
+    const failures = changeDocument === null ? [] : verdictFailures(changeDocument);
+    let baseFiles = [];
+    let baseRun = null;
+    let baseDocument = null;
+    if (baseDir !== null && failures.length > 0) {
+      // A failure's file is named the way the runner names its lanes (relative to the suite root),
+      // so the same roots a runner resolves a file argument against decide whether the base has it.
+      baseFiles = [...new Set(failures.map((failure) => failure.file))]
+        .filter((file) => typeof file === 'string' && file.length > 0
+          && roots.some((root) => existsSync(join(resolve(baseDir, root), file))));
+      if (baseFiles.length > 0) {
+        const basePath = join(scratch, 'base.json');
+        baseRun = await runComparisonHalf(
+          verification, baseDir, baseFiles, ctx.budgetFor('base'), ctx.runtime, ctx.maxOutputBytes, signal, basePath,
+        );
+        ctx.spent('base');
+        if (signal?.aborted || baseRun.aborted) throw ctx.abortError();
+        baseDocument = readVerdictDocument(basePath);
+      }
+    }
+    const base = baseDir === null ? null
+      : failures.length === 0 ? null
+        : baseFiles.length === 0 ? NO_BASE_FILES : { document: baseDocument };
+    const note = baseDir === null
+      ? '; no base to compare against, so every failure blocks'
+      : baseRun === null ? '' : '; the base run did not judge, so every failure blocks';
+    const comparison = compareSuiteVerdicts({ change: changeDocument, base, note });
+    const judged = changeDocument !== null;
+    const passed = judged && comparison.blocking.length === 0;
+    const execution = executionOf(changeRun);
+    const baseExecution = baseRun === null ? null : executionOf(baseRun);
+    // The exit a comparison reports is its OWN: the contract's expected exit when nothing blocks,
+    // else the change run's own exit status (1 when the failure was real, the runner's own when it
+    // died). The two HALF exits ride the comparison detail, so a reader never has to guess which
+    // run an exit belongs to.
+    const observedExit = passed
+      ? (Number.isSafeInteger(verification.expectExit) ? verification.expectExit : 0)
+      : Number.isSafeInteger(changeExit) ? changeExit : 1;
+    const diagnosticCode = execution.state !== 'completed' ? execution.code
+      : !judged ? 'verification_unjudged'
+        : passed ? 'verification_passed' : 'verification_exit_mismatch';
+    const verdict = {
+      reverified: judged,
+      observedExit,
+      outputExceeded: changeRun.outputExceeded,
+      hadClaim: false,
+      matchesClaim: true,
+      passed,
+      locus: 'fresh_sandbox',
+      // The comparison IS the verdict here: a red/green hardening signal asks whether the change
+      // run passed while the base run failed, which is a different question this verdict answers
+      // by construction. It stays null, and says why, rather than being minted from a run that
+      // never happened.
+      redGreen: null,
+      redGreenReason: 'comparison_is_the_verdict',
+      baseExit: baseRun === null || baseRun.timedOut ? null : baseRun.exitCode,
+      coverageOfChange: null,
+      uncoveredChangedLines: [],
+      mutationStrength: null,
+      mutationPassed: null,
+      survivedMutants: [],
+      capturedOutputBytes: changeRun.capturedOutputBytes,
+      capturedOutputDigest: changeRun.capturedOutputDigest,
+      diagnosticCode,
+      durationMs: Date.now() - started,
+      verificationBudget: {
+        limitMs: ctx.timeoutMs,
+        remainingMs: Math.max(0, ctx.deadline - Date.now()),
+        consumedBy: ctx.consumedBy(),
+      },
+      execution,
+      baseExecution,
+      runtimeDigest: ctx.runtime.digest,
+      // The comparison's own detail — what ran on each side, which failures the change owns and
+      // which it shares. The closed verdict (runtime-recovery.mjs) drops it; a check's receipt
+      // carries it, so a reviewer reads the blocking rows without re-deriving them.
+      comparison: Object.freeze({
+        procedure: SUITE_COMPARISON,
+        files: Object.freeze([...files]),
+        change: Object.freeze({
+          judged, exit: changeExit,
+          passed: changeDocument?.passed ?? null, green: changeDocument?.green ?? null,
+          failures: Object.freeze(failures.map((failure) => failure.original)),
+        }),
+        base: baseRun === null ? null : Object.freeze({
+          files: Object.freeze([...baseFiles]),
+          exit: baseRun.timedOut ? null : baseRun.exitCode,
+          judged: baseDocument !== null,
+          failures: Object.freeze(verdictFailures(baseDocument).map((failure) => failure.original)),
+        }),
+        blocking: Object.freeze(comparison.blocking.map((failure) => failure.original)),
+        shared: Object.freeze(comparison.shared.map((failure) => failure.original)),
+        note: comparison.note,
+      }),
+    };
+    if (!judged || execution.state !== 'completed') {
+      Object.assign(verdict, { passed: false, outcome: 'inconclusive', failureOwnership: 'verifier' });
+    } else {
+      Object.assign(verdict, {
+        outcome: passed ? 'passed' : 'candidate_failed', failureOwnership: passed ? null : 'candidate',
+      });
+    }
+    if (!passed) {
+      verdict.failureCapsule = verifierFailureCapsule(changeRun.output, {
+        capturedOutputBytes: changeRun.capturedOutputBytes,
+        capturedOutputDigest: changeRun.capturedOutputDigest,
+        sandboxRoots: [sandbox.dir, baseDir].filter(Boolean),
+      });
+    }
+    return verdict;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 /**
  * Re-derive the truth of a worker's result.
  * @param {object} task
  * @param {object} result
  * @param {{dir:string, sha:string, cleanup:() => Promise<void>}} sandbox
- * @param {{baseSandbox?: object, requireRedGreen?: boolean, requireCoverage?: boolean, requireMutation?: boolean, log?: object, worker?: string}} [opts]
+ * @param {{baseSandbox?: object, comparison?: {files: string[], roots?: string[]}, requireRedGreen?: boolean, requireCoverage?: boolean, requireMutation?: boolean, log?: object, worker?: string}} [opts]
  * @returns {Promise<object>} Verdict
  * @throws {SameWorktreeError}
  */
@@ -395,6 +566,24 @@ export async function verify(task, result, sandbox, opts = {}) {
     return remaining;
   };
   const spent = (phase) => { if (Date.now() >= deadline) consumedBy ??= phase; };
+  // Issue #593: a comparison run is a different procedure over the SAME guards, budget and
+  // capture bounds, so it branches here — after the freshness guard and the one time budget are
+  // in place, and before anything spawns. It refuses an empty file set: a comparison over no
+  // files would silently mean the whole contract.
+  if (opts.comparison !== undefined && opts.comparison !== null) {
+    if (!Array.isArray(opts.comparison.files) || opts.comparison.files.length === 0) {
+      throw new TypeError('verify: a comparison requires the non-empty file set its change run selects');
+    }
+    // A file set can only be appended to a closed argv contract: a legacy shell string has nowhere
+    // to carry it, and its caller refuses a comparison before it ever gets here.
+    if (!Array.isArray(task.verification?.arguments)) {
+      throw new TypeError('verify: a comparison requires a closed argv contract to append its files to');
+    }
+    return comparisonVerdict(task, sandbox, opts, {
+      abortError, budgetFor, spent, runtime, maxOutputBytes, timeoutMs, deadline,
+      consumedBy: () => consumedBy,
+    });
+  }
   // One auxiliary phase (coverage, mutation): draws what is LEFT of the shared budget, runs under
   // the same abort signal (G-11) and the same declared output bound (G-10) as the candidate, and
   // returns null when the budget is already spent — the phase is then not started at all.

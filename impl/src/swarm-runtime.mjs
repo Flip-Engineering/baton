@@ -49,6 +49,7 @@ import { renderRouteUsageLines } from './adapter.mjs';
 // landing composes the two — never a second table — so a lane that ships a test with its change
 // runs that test, which is the rule the landing's region table alone could not carry.
 import { gateSetForPaths, issueNumberOf } from './landing-table.mjs';
+import { NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, verdictFailures } from './suite-comparison.mjs';
 import { selectFromRepository } from './verification-selection.mjs';
 import { landContribution } from './worktree.mjs';
 // Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
@@ -177,32 +178,10 @@ async function runGateFiles(dir, files, { pool = null, holder = null, leaseAutho
   }
 }
 
-/** The failures one verdict document names, each with its file and failure type, and the entry
- * as the document wrote it (`original`), which a refusal carries unchanged. A runner older than
- * #580 (a branch that has not taken it) writes only `unexpected`: a `file :: name` string is read
- * as a test-level failure, and any other entry keeps no file, so it cannot be re-run on the target
- * and always blocks. */
-function verdictFailures(document) {
-  if (Array.isArray(document?.failures)) {
-    return document.failures.map((entry) => ({ ...entry, original: entry.key }));
-  }
-  return (Array.isArray(document?.unexpected) ? document.unexpected : []).map((entry) => {
-    if (typeof entry !== 'string') {
-      return { key: JSON.stringify(entry), file: null, name: null, failureType: null, original: entry };
-    }
-    const at = entry.indexOf(' :: ');
-    return {
-      key: entry, file: at < 0 ? null : entry.slice(0, at), name: at < 0 ? null : entry.slice(at + 4),
-      failureType: null, original: entry,
-    };
-  });
-}
+/** Issue #580/#593: the failure vocabulary and the comparison a landing gate judges by live in ONE
+ * module, shared with the contribution check (impl/src/suite-comparison.mjs) — the same reading of
+ * a verdict document, the same failure identity, the same "the base does not have it" rule. */
 
-/** File-level failures (a hung, crashed or fixture-leaking file) carry run-specific detail in
- * their names, so two runs compare them by file and failure type. */
-const FILE_LEVEL_FAILURE_TYPES = new Set(['fileHung', 'fileCrashed', 'fixtureLeak']);
-const failureIdentity = (failure) => (FILE_LEVEL_FAILURE_TYPES.has(failure.failureType)
-  ? `${failure.file} :: [${failure.failureType}]` : failure.key);
 
 /** Issue #580: switch the landing checkout between the squash and its target, so the change's
  * failing test files can be re-run on the target in the same directory with the same
@@ -266,7 +245,10 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   }
   const target = typeof context?.targetHeadBefore === 'string' ? context.targetHeadBefore : null;
   const squash = typeof context?.squashSha === 'string' ? context.squashSha : null;
-  let onTarget = null;
+  // #580's three base states, in the comparison's own vocabulary (#593): no target to compare
+  // against, a target run that did not judge, and a target that simply does not have the failing
+  // files — the last of which has nothing to share, so every failure blocks with no note.
+  let base = null;
   let targetNote = '';
   if (target !== null && squash !== null) {
     checkoutLandingTree(dir, target);
@@ -278,13 +260,12 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
           && existsSync(join(dir, GATE_RUNNER_LAYOUT.suiteRoot, file)));
       if (failingFiles.length > 0) {
         const baseline = await runGateFiles(dir, failingFiles, supervision);
+        base = { document: baseline.document };
         if (baseline.document === null) {
           targetNote = '; the target run did not judge, so every failure blocks';
-        } else {
-          onTarget = new Set(verdictFailures(baseline.document).map(failureIdentity));
         }
       } else {
-        onTarget = new Set();
+        base = NO_BASE_FILES;
       }
     } finally {
       checkoutLandingTree(dir, squash);
@@ -292,18 +273,14 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   } else {
     targetNote = '; no target to compare against, so every failure blocks';
   }
-  // A failure with no file could not be re-run on the target, so it blocks.
-  const sharedWithTarget = (failure) => onTarget !== null && typeof failure.file === 'string'
-    && onTarget.has(failureIdentity(failure));
-  const blocking = failures.filter((failure) => !sharedWithTarget(failure));
-  const shared = failures.filter(sharedWithTarget);
+  const comparison = compareSuiteVerdicts({ change: document, base, note: targetNote });
   return {
     files,
-    verdictLine: `${blocking.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
-      + `${blocking.length} failing only with the change, ${shared.length} failing on the target too`
-      + `${squashNote}${targetNote}`,
-    unexpected: blocking.map((failure) => failure.original),
-    failingOnTarget: shared.map((failure) => failure.original),
+    verdictLine: `${comparison.blocking.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
+      + comparisonCountsLine({ blocking: comparison.blocking, shared: comparison.shared, baseNoun: 'the target' })
+      + `${squashNote}${comparison.note}`,
+    unexpected: comparison.blocking.map((failure) => failure.original),
+    failingOnTarget: comparison.shared.map((failure) => failure.original),
     stderrTail, exit,
   };
 }

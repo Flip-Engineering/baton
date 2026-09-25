@@ -211,11 +211,14 @@ export const CLOSED_VERIFIER_EXECUTIONS = new Map([
   ['unavailable', 'verification_spawn_unavailable'],
 ]);
 
+// #593: the comparison procedure's own failure — the run finished and wrote no verdict, so the
+// comparison had nothing to read and the check fails on the runner's last words.
 export const CLOSED_VERIFIER_DIAGNOSTICS = new Set([
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
   'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
   'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
+  'verification_unjudged',
 ]);
 
 export const hex64OrNull = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : null;

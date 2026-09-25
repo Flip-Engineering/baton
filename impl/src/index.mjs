@@ -1174,6 +1174,8 @@ function refereeFn(runtime, task, result, opts) {
   return verify(mapped, result, { dir: opts.sandbox }, {
     ...(opts.baseSandbox ? { baseSandbox: { dir: opts.baseSandbox } } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
+    // #593: a contribution check's comparison rides to the referee exactly as its sandboxes do.
+    ...(opts.comparison ? { comparison: opts.comparison } : {}),
     runtime,
     classifyFailureOwnership: Boolean(opts.baseSandbox),
   });
@@ -1654,7 +1656,9 @@ export function createDriver(opts) {
       return { repoId: opts.repoId, treeSha: localGit(['rev-parse', 'HEAD'], opts.repoRoot, { encoding: 'utf8' }).trim(), indexEpoch, overlayDigest: overlayDigest ?? null, lockfileDigest };
     },
     // One verification lane per deployment (#269): every run verification and contribution check
-    // queues behind it instead of each spawning its own full suite.
+    // queues behind it instead of each starting its own suite of work. A check's comparison
+    // holds the lane for its two runs — the selected files, then the failing ones at the base
+    // (#593) — and a run verification holds it for its pinned contract.
     referee: withVerificationLane(refereeFn.bind(null, verificationRuntime), { concurrency: opts.verificationConcurrency }),
     verificationRuntimeDigest: verificationRuntime.digest,
     ...(opts.verificationForCapture ? { verificationForCapture: opts.verificationForCapture } : {}),

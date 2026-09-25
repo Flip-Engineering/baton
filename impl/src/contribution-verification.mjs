@@ -22,7 +22,7 @@ function matchToolchain(worker, verifier, label) {
  */
 export async function verifyContribution({
   worktrees, referee, task, capture, workerResult = null, signal,
-  workspaceId = task.id, onPhase = () => {}, beforeVerify = null,
+  workspaceId = task.id, onPhase = () => {}, beforeVerify = null, comparison = null,
 }) {
   let phase = 'candidate_sandbox';
   let verifierStarted = false;
@@ -69,6 +69,9 @@ export async function verifyContribution({
       pinnedVerification: task.brief.verification,
       sandbox: candidate?.path ?? null,
       baseSandbox: base?.path ?? null,
+      // #593: a check whose deployment declares the comparison procedure hands the referee the
+      // file set its change run takes; the referee re-runs the failing files at the base sandbox.
+      ...(comparison === null ? {} : { comparison }),
       ...(signal ? { signal } : {}),
     });
   } catch (error) {

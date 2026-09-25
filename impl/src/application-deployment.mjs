@@ -32,6 +32,7 @@ import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import { aaCredentialPath, designArenaCredentialPath } from './adapter.mjs';
 import { createRecipes } from './recipes.mjs';
+import { SUITE_COMPARISON } from './suite-comparison.mjs';
 import { ResultExportLifecycle } from './result-export.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
@@ -564,22 +565,32 @@ const validCommand = (value) => value && typeof value === 'object' && !Array.isA
   && Array.isArray(value.arguments) && value.arguments.length <= 64
   && value.arguments.every((argument) => typeof argument === 'string' && !argument.includes('\0'));
 
-/** #269: choose the verification a capture is checked by. A capture that changes at least one
- * path the code verification covers runs it; a capture that changes none (docs, audits) runs
- * the declared docs verification with the same contract shape. The selection is named. */
+/** #269/#593: choose how a capture is checked. A capture that changes at least one path the code
+ * verification covers runs it; a capture that changes none (docs, audits) runs the declared docs
+ * verification with the same contract shape. `comparison` carries the procedure the deployment
+ * declares beside its command (null when it declares none): a deployment that names
+ * `SUITE_COMPARISON` says the command runs the tests, and the change's own selection compared
+ * with its base is the verdict. The selection and the procedure are both named. */
 export function verificationSelector(verification) {
   return (changedPaths, contract) => {
+    const judged = {
+      ...(verification.comparison === undefined ? {} : { comparison: verification.comparison }),
+    };
+    // A deployment that declares no covered paths has no docs gate to fall to: every capture is
+    // a code capture, judged by the code contract.
+    if (verification.paths === undefined) return { selection: 'code', verification: contract, ...judged };
     const touchesCode = (changedPaths ?? []).some((path) => verification.paths.some((pattern) => pathMatchesScope(path, pattern)));
     return touchesCode
-      ? { selection: 'code', verification: contract }
+      ? { selection: 'code', verification: contract, ...judged }
       : { selection: 'docs', verification: { ...contract, command: verification.docs.command, arguments: [...verification.docs.arguments] } };
   };
 }
 
 function normalizeVerification(value, repoRoot) {
   if (value !== undefined) {
-    closed(value, ['arguments', 'command', 'concurrency', 'docs', 'paths'], 'advanced verification');
+    closed(value, ['arguments', 'command', 'comparison', 'concurrency', 'docs', 'paths'], 'advanced verification');
     if (!validCommand(value)
+      || (value.comparison !== undefined && value.comparison !== SUITE_COMPARISON)
       || (value.concurrency !== undefined && (!Number.isSafeInteger(value.concurrency) || value.concurrency <= 0))
       || (value.paths === undefined) !== (value.docs === undefined)
       || (value.paths !== undefined && (!Array.isArray(value.paths) || value.paths.length === 0
@@ -593,8 +604,12 @@ function normalizeVerification(value, repoRoot) {
     // `paths` + `docs` (#269): the globs the code verification covers, and the verification to
     // run instead when a capture changes none of them — a docs-only capture is checked by the
     // doc gate, not by the whole suite. Both or neither.
+    // `comparison` (#593): the name of the procedure that judges a code capture — the ONE name
+    // suite-comparison.mjs mints (`SUITE_COMPARISON`). A deployment that omits it keeps the
+    // command's own exit code as the verdict.
     return Object.freeze({
       command: value.command, arguments: [...value.arguments],
+      ...(value.comparison === undefined ? {} : { comparison: value.comparison }),
       ...(value.concurrency === undefined ? {} : { concurrency: value.concurrency }),
       ...(value.paths === undefined ? {} : {
         paths: Object.freeze([...value.paths]),
@@ -603,7 +618,14 @@ function normalizeVerification(value, repoRoot) {
     });
   }
   if (existsSync(join(repoRoot, 'impl', 'package.json'))) {
-    return Object.freeze({ command: 'npm', arguments: ['test', '--prefix', 'impl'] });
+    // #593: this repository's suite is red by design since #580 (a test written before its feature
+    // fails until the feature lands), so the command's exit code cannot be the verdict. The
+    // declaration names the comparison procedure: run the tests the capture's changes select,
+    // re-run the failing files at the capture's base, and block only on failures the base does
+    // not share. `npm test --prefix impl` is how the tests run, never the judgement.
+    return Object.freeze({
+      command: 'npm', arguments: ['test', '--prefix', 'impl'], comparison: SUITE_COMPARISON,
+    });
   }
   if (existsSync(join(repoRoot, 'package.json'))) {
     return Object.freeze({ command: 'npm', arguments: ['test'] });
@@ -6765,7 +6787,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // a 10 ms poll cadence. Operator-declared; the #500 pin test records the values.
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     ...(verification.concurrency === undefined ? {} : { verificationConcurrency: verification.concurrency }),
-    ...(verification.paths === undefined ? {} : { verificationForCapture: verificationSelector(verification) }),
+    // #269/#593: the selector answers for EVERY deployment — the docs gate when the operator
+    // declared covered paths, the comparison procedure when the declaration names one, and a
+    // plain code selection otherwise.
+    verificationForCapture: verificationSelector(verification),
     // #500: the grace between a budget threshold and the owner's hard stop (issue #258's
     // budget law); the 2 s default is operator-declarable through
     // advanced.budgetPolicy.terminalGraceMs, and the #500 pin test records it.

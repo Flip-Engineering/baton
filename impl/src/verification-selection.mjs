@@ -1,6 +1,6 @@
-// verification-selection.mjs — issue #300: the pre-verdict test selection for a contribution
-// check. The 2026-09-14 incident: every check and landing ran the full suite (~25 min at
-// parallelism 6) because the affected file set was chosen by hand. This module derives it:
+// verification-selection.mjs — issues #300 and #593: the test selection a contribution check's
+// comparison runs, and the same selection a landing's gate set is derived from. The 2026-09-14
+// incident: every check and landing ran the full suite (~25 min at parallelism 6) because the
 //
 //   1. every changed test file selects itself (it is the thing being verified);
 //   2. every test file that statically imports (transitively, across impl/src and impl/test)
@@ -11,15 +11,13 @@
 //
 // Static ESM imports only: `import … from '…'`, `export … from '…'` and bare `import '…'`.
 // Dynamic `import()` is a runtime decision, not a static edge, and is deliberately not a
-// selector. Selection is a pure function of (changed paths, file contents) — the
-// same inputs always yield the same sorted set — and the check caches it per capture commit
-// (#300): the graph of a commit cannot change, so a repeated check of the same sha re-reads
-// nothing.
+// selector. Selection is a pure function of (changed paths, file contents) — the same inputs
+// always yield the same sorted set — and the check caches it per capture commit (#300): the graph
+// of a commit cannot change, so a repeated check of the same sha re-reads nothing.
 //
-// Over-selection is the safe direction: the subset is a fast first verdict, never the
-// acceptance gate (the full suite runs after it either way). Under-selection would hide a
-// failure the full suite then finds 25 minutes later; a fixture-path basename shared by an
-// unrelated file only costs a few extra seconds and is visible in the receipt's provenance.
+// Over-selection is the safe direction: a selected file the change does not really affect costs a
+// few seconds and is visible in the receipt's provenance. Under-selection would let a failure the
+// change caused go unjudged, because no full suite runs after the selection (#593).
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, posix } from 'node:path';
@@ -162,7 +160,7 @@ export function selectAffectedTests({ changedPaths, graph, exists = null } = {})
 
 function selectionReason(changed, provenance) {
   if (provenance.length === 0) {
-    return `${changed.length} changed path(s) affect no test file: nothing runs before the full suite`;
+    return `${changed.length} changed path(s) affect no test file: nothing runs for this change`;
   }
   const count = (reason) => provenance.filter((entry) => entry.reason === reason).length;
   const parts = [`${count('changed')} changed test file(s)`, `${count('imports')} importing changed module(s)`];
@@ -174,8 +172,9 @@ function selectionReason(changed, provenance) {
 /**
  * Select from a repository checkout: list the graph directories on disk, read every file,
  * then selectAffectedTests. This is the CLI/`--changed` entry (the runner's own checkout is
- * exactly the tree under test); the contribution check instead reads the CAPTURED revision
- * through its retained checkpoint and calls selectAffectedTests directly.
+ * exactly the tree under test); the contribution check calls it against the CAPTURED revision,
+ * handing it a reader bound to the retained checkpoint, so a capture that carries imports or
+ * tests the hub's own checkout has never seen is still selected correctly.
  *
  * @param {object} inputs
  * @param {string} inputs.root repository root path (contains `impl/`).

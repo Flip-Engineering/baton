@@ -40,42 +40,57 @@ baton suite verdict: RED — 4849 passed, 22 failed, 0 hung
 ```
 
 The environment line is reported for the reader and does not change the verdict. A test that
-needs a credential this host lacks fails here; on a landing it fails on the target as well, so the
-landing comparison (§3) does not block on it.
+needs a credential this host lacks fails here; the comparison (§3) does not block on it, because
+the base run has the same failure.
 
-## 3. The landing comparison (#580)
+## 3. The comparison (#580, #593)
 
-A landing gate answers one question: does the change break a test that works on its target?
+A gate answers one question: does the change break a test that works at its base?
 
-1. `swarm integrate` runs the selected test files (§4) in the landing checkout at the squash
-   commit.
+1. Run the test files the change selects (§5).
 2. When every file passes, the gate is green.
-3. When some fail, the gate checks out the target commit (`targetHeadBefore`) in the same
-   checkout, re-runs only the failing files that exist on the target, and checks out the squash
-   again.
-4. A failure blocks when the target run does not have it. A test failure compares by key; a
+3. When some fail, re-run ONLY the failing files the base has, at the base revision.
+4. A failure blocks when the base run does not have it. A test failure compares by key; a
    file-level failure (`fileHung`, `fileCrashed`, `fixtureLeak`) compares by file and failure
    type, because its name carries run-specific detail.
-5. A failing file the target does not have is new with the change, and its failures block. When
-   the target run writes no verdict, or the landing has no target commit, every failure blocks.
+5. A failing file the base does not have is new with the change, and its failures block. When the
+   base run writes no verdict, or there is no base commit, every failure blocks.
+6. A change run that writes no verdict is never a pass: the verdict is inconclusive and
+   verifier-owned (`verification_unjudged`), and it carries the runner's own last words.
 
-The gate's verdict line reads `red — passed N, X failing only with the change, Y failing on the
-target too, squash <sha>`, and the receipt lists the blocking keys in `unexpected` and the shared
-ones in `failingOnTarget`.
+`impl/src/suite-comparison.mjs` is the ONE comparison: the failure vocabulary, the failure
+identity, and the rule that a failure the base does not have blocks. Two gates run it, over the
+same two halves in different places:
+
+- `swarm integrate` runs them in the landing checkout — the selected files at the squash commit,
+  then the failing files at `targetHeadBefore` in that same checkout, switched back to the squash
+  afterwards. Its verdict line reads `red — passed N, X failing only with the change, Y failing on
+  the target too, squash <sha>`, and the receipt lists the blocking keys in `unexpected` and the
+  shared ones in `failingOnTarget`.
+- `swarm check` runs them in a contribution check's two verify sandboxes — the selected files in
+  the candidate sandbox, then the failing files the base sandbox has in the base sandbox. Its
+  receipt carries `comparison: {selection, procedure, files, change, base, blocking, shared,
+  note}`, so a reviewer reads the blocking rows without re-deriving them.
+
+A deployment names the procedure beside the command that runs its tests
+(`advanced.verification.comparison`, the value `selected-vs-base`). This repository's default
+declares it, because its suite is red by design (see §4) and an exit-code judgement fails every
+capture whatever it does. A deployment that names no procedure keeps the command's own exit code
+as the verdict, and the check's receipt says `comparison: {skipped: 'procedure_not_declared'}`.
 
 ## 4. The `-red` suffix
 
 `-red.test.mjs` marks a test written before its implementation. The suffix records the file's
-origin and has no effect on the verdict. Such a test fails on the target and on the change until
-the implementation lands, so it never blocks a landing; the change that implements it turns it
+origin and has no effect on the verdict. Such a test fails at the base and with the change until
+the implementation lands, so it never blocks a gate; the change that implements it turns it
 green. The issue the test cites tracks the work. [docs/44](44-red-suffix-convention.md) states the
 naming rule.
 
-## 5. The pre-verdict selection: affected files first (#300)
+## 5. The selection: the files a change is judged by (#300, #593)
 
 The 2026-09-14 incident: every check and every landing ran the full suite (~25 minutes at
 parallelism 6) because the affected file set was chosen by hand from `changedPaths`. The
-selection is now derived and shared by the check and the runner:
+selection is now derived, and both the check's comparison and the landing's gate set read it:
 
 - `impl/src/verification-selection.mjs` is the ONE selector. From the changed paths it derives
   the test files that statically import (transitively, across `impl/src` and `impl/test`) a
@@ -83,21 +98,19 @@ selection is now derived and shared by the check and the runner:
   the test files that name it in a fixture path (its basename or path suffix in the test's
   source), with the reason recorded per file so the weaker fixture-path signal is visible, never
   silent.
-- A contribution check runs the affected subset FIRST, through the same verification lane, under
-  the contract's own argv with the selected file arguments appended, and records its verdict as a
-  typed row on the check receipt: `preverdict: {selection: {changedPaths, files, reason,
-  provenance}, verdict}`. The full suite runs after it, unchanged, and stays the acceptance
-  verdict — a red or unavailable subset is information on the receipt, never a failed check by
-  itself. When nothing runs before the full suite, the receipt says why: `skipped: 'docs'` (the
-  #269 docs gate is the whole check), `no_affected_tests`, `selection_unavailable` (no
-  captured-revision reader), or `contract_shape` (a legacy string contract cannot carry file
-  arguments). The selection is derived from the CAPTURED revision through its retained
+- A contribution check derives the selection from the CAPTURED revision through its retained
   checkpoint — a capture may carry imports or tests the hub's own checkout has never seen — and
-  is cached per capture commit.
+  caches it per capture commit. The file set rides the contract's own argv (the comparison appends
+  it, so `npm test --prefix impl <files…>` and a direct runner argv both forward positional file
+  arguments unchanged), and the selection is durable on the receipt as
+  `comparison: {selection: {changedPaths, files, reason, provenance}}`. When there is no file set
+  the receipt names why, as `comparison: {skipped: …}`: `'docs'` (the #269 docs gate is the whole
+  check), `'no_affected_tests'` (a decision — the check passes the way the landing gate's empty
+  derivation does), `'selection_unavailable'` (no captured-revision reader, so the contract's own
+  exit code judges), `'contract_shape'` (a legacy string contract cannot carry file arguments), or
+  `'procedure_not_declared'` (§3).
 - `node impl/scripts/run-suite.mjs --changed <paths…>` runs the same selection from the CLI,
-  against the checkout the runner is testing, and is the PRE-VERDICT STEP of the landing
-  procedure: before a landing runs the full gate, run the affected subset (fast first verdict,
-  its selection printed with per-file reasons), then run the full suite.
+  against the checkout the runner is testing, and prints the selection with its per-file reasons.
   `--changed` is a partial run under the same contracts an explicit file list obeys (#290): it
   refuses to combine with explicit file arguments or `node --test`
   passthrough options, and refuses to run with no paths — an unnamed selection would silently
@@ -108,9 +121,9 @@ selection is now derived and shared by the check and the runner:
   or helper module under `test/` (#508), and the verdict reports such a file as
   `skipped: no test-framework import` while judging only the files that ran.
 
-Over-selection is the safe direction for both entries: the subset is a fast first verdict, never
-the gate. Under-selection is what would hide a failure the full suite then finds 25 minutes
-later.
+Over-selection is the safe direction for both entries: a selected file the change does not really
+affect costs seconds and is visible in the receipt's provenance. Under-selection is what would let
+a failure the change caused go unjudged, because no full suite runs after the selection (#593).
 
 The native landing (`swarm integrate`, #296/#463/#466) runs the SAME selection: its gate set is
 the runner's own selector (`impl/src/verification-selection.mjs`, the function `--changed` calls)

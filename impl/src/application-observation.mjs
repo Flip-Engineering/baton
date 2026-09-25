@@ -146,11 +146,13 @@ export const VERIFIER_EXECUTION_STATES = Object.freeze(new Set(['completed', 'ti
 export const VERIFIER_EXECUTION_CODES = Object.freeze(new Set([
   'verification_completed', 'verification_timed_out', 'verification_output_exceeded', 'verification_spawn_unavailable',
 ]));
+// #593: the comparison procedure's own failure — the run wrote no verdict to compare.
 export const VERIFIER_DIAGNOSTIC_CODES = Object.freeze(new Set([
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
   'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
   'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
+  'verification_unjudged',
 ]));
 export function sanitizeHex64(value) {
   return typeof value === 'string' && HEX64.test(value) ? value : null;
@@ -805,6 +807,7 @@ export const VERDICT_CORRECTIVE_TABLE = Object.freeze({
   verification_coverage_unavailable: null,
   verification_mutation_unavailable: null,
   verification_exit_mismatch: null,
+  verification_unjudged: null,
 });
 // Issue #61 refusal vocabulary — a caller-authored corrective riding a durable event is
 // a forged corrective. The surface degrades PER-RECORD (the #73 B5 precedent): the

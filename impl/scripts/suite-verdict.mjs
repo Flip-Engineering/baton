@@ -8,28 +8,18 @@
 //
 // A file that stops reporting is bounded by the runner's own per-file progress deadline (#260):
 // the deadline reaps the file and mints a `fileHung` row, which this verdict reads as a hang.
+// Issue #593: the failure vocabulary two runs are compared by (and the verdict document a caller
+// hands the runner a path for) lives in ONE module, shared with the contribution check's
+// comparison (impl/src/suite-comparison.mjs). This module keeps its own surface: every name it
+// used to declare is re-exported from there, so a reader of the runner's verdict resolves the
+// same bindings.
 import { readFileSync } from 'node:fs';
 
-export function rowKey(file, name) {
-  return `${file} :: ${name}`;
-}
+import {
+  FILE_LEVEL_FAILURE_TYPES, failureIdentity, readVerdictDocument, rowKey,
+} from '../src/suite-comparison.mjs';
 
-/** The failure types that name a whole file rather than one test. Their names carry run-specific
- * detail (an idle time, an exit status), so two runs of the same file compare them by file and
- * failure type, never by name. */
-export const FILE_LEVEL_FAILURE_TYPES = Object.freeze(['fileHung', 'fileCrashed', 'fixtureLeak']);
-
-/** The identity one failure is compared by across two runs (the change and its target). */
-export function failureIdentity(failure) {
-  return FILE_LEVEL_FAILURE_TYPES.includes(failure.failureType)
-    ? `${failure.file} :: [${failure.failureType}]`
-    : rowKey(failure.file, failure.name);
-}
-
-/** Read a verdict document the runner wrote (BATON_SUITE_VERDICT_FILE), or null. */
-export function readVerdictDocument(path) {
-  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
-}
+export { FILE_LEVEL_FAILURE_TYPES, failureIdentity, readVerdictDocument, rowKey };
 
 // A hang is a test the RUNNER had to stop: its file emitted nothing until the progress deadline
 // (fileHung, minted by run-suite) or node's own per-test timeout fired (testTimeoutFailure /

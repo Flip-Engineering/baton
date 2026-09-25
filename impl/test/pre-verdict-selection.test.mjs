@@ -1,6 +1,7 @@
-// #300: the pre-verdict selection — from changed paths to the test files a check runs before
-// the full suite. The selection is derived, deterministic, and honest about WHY each file was
-// selected, including the weaker fixture-path signal.
+// #300/#593: the selection — from changed paths to the test files a check judges — is derived,
+// deterministic, and honest about WHY each file was selected, including the weaker fixture-path
+// signal. Since #593 it is the file set the check's comparison runs, not a pre-verdict ahead of a
+// full-suite acceptance.
 import { spawn } from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +12,8 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
+import { verificationSelector } from '../src/application-deployment.mjs';
+import { SUITE_COMPARISON, suiteRoots } from '../src/suite-comparison.mjs';
 import {
   parseStaticImports, resolveImportSpecifier,
   selectAffectedTests, selectFromRepository,
@@ -150,32 +153,43 @@ async function checkFixture(t, { referee, changedPaths, withCapturedFileRead = t
   return { coordinator, handle, log, worktrees, reads: () => capturedReads };
 }
 
-test('a check runs the affected subset first and records it as a typed receipt row', async (t) => {
-  const contracts = [];
-  const referee = async (task) => {
-    contracts.push(task.brief.verification);
-    return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+/** The deployment declaration #593 reads: a code capture is judged by the comparison over the
+ * files its changes select. Built through the ONE selector the deployment wires, so the test
+ * exercises the declaration path rather than a hand-written answer. */
+const declare = verificationSelector({ command: 'npm', arguments: ['test'], comparison: SUITE_COMPARISON });
+
+test('a check hands the comparison the files the capture\'s changes select, through the contract\'s own argv', async (t) => {
+  const seen = [];
+  const referee = async (task, result, opts) => {
+    seen.push({ arguments: task.brief.verification.arguments, comparison: opts?.comparison ?? null });
+    return {
+      reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox',
+      comparison: { procedure: SUITE_COMPARISON, files: [...opts.comparison.files], blocking: [], shared: [] },
+    };
   };
-  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'] });
+  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'], verificationFor: declare });
   await f.coordinator.captureContribution(f.handle.id, { contributionId: 'c1' });
   const receipt = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'c1', checkId: 'k1' });
-  assert.equal(receipt.passed, true, 'the full suite verdict still decides the check');
-  assert.deepEqual(contracts.map((contract) => contract.arguments), [
-    ['impl/scripts/run-suite.mjs', 'impl/test/a.test.mjs'],
-    ['impl/scripts/run-suite.mjs'],
-  ], 'the subset contract runs only the affected file, then the full contract runs unchanged');
-  assert.deepEqual(receipt.preverdict.selection.files, ['impl/test/a.test.mjs']);
-  assert.deepEqual(receipt.preverdict.selection.changedPaths, ['impl/src/b.mjs']);
-  assert.equal(receipt.preverdict.verdict.outcome, 'passed', 'the subset verdict is closed and typed');
-  assert.equal(receipt.preverdict.verdict.schemaVersion, 1);
+  assert.equal(receipt.passed, true);
+  assert.deepEqual(seen.map((row) => row.arguments), [['impl/scripts/run-suite.mjs']],
+    'the contract runs unchanged: the comparison appends the selected files itself');
+  assert.deepEqual(seen[0].comparison.files, ['impl/test/a.test.mjs']);
+  assert.deepEqual(seen[0].comparison.roots, suiteRoots(),
+    'the base side resolves a failure\'s file at the roots a runner resolves its arguments at');
+  assert.deepEqual(receipt.comparison.selection.files, ['impl/test/a.test.mjs']);
+  assert.deepEqual(receipt.comparison.selection.changedPaths, ['impl/src/b.mjs']);
+  assert.deepEqual(receipt.comparison.blocking, [], 'the verdict\'s own comparison detail rides the receipt');
   const started = f.log.read(f.handle.id).find((event) => event.kind === 'contribution.check_started');
-  assert.deepEqual(started.payload.preverdict, { files: 1, command: 'node' },
-    'the started record names the subset before anything runs');
+  assert.deepEqual(started.payload.comparison, { procedure: SUITE_COMPARISON, files: 1 },
+    'the started record names the comparison before anything runs');
 });
 
 test('a docs-only capture keeps the #269 skip and records it on the receipt', async (t) => {
-  let calls = 0;
-  const referee = async (task, ...rest) => { calls += 1; return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }; };
+  const comparisons = [];
+  const referee = async (task, result, opts) => {
+    comparisons.push(opts?.comparison ?? null);
+    return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+  };
   const f = await checkFixture(t, {
     referee,
     changedPaths: ['impl/src/orphan.mjs'],
@@ -186,54 +200,77 @@ test('a docs-only capture keeps the #269 skip and records it on the receipt', as
   });
   await f.coordinator.captureContribution(f.handle.id, { contributionId: 'docs' });
   const receipt = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'docs', checkId: 'k-docs' });
-  assert.deepEqual(receipt.preverdict, { skipped: 'docs' }, 'the docs gate is the whole check; nothing runs before it');
-  assert.equal(calls, 1, 'exactly one verification ran');
+  assert.deepEqual(receipt.comparison, { skipped: 'docs' }, 'the docs gate is the whole check');
+  assert.deepEqual(comparisons, [null], 'the docs contract is a command, judged by its own exit code');
 });
 
-test('a change no test reaches skips the subset by name and a fixture-path change does not', async (t) => {
-  const f = await checkFixture(t, { changedPaths: ['impl/src/orphan.mjs'] });
+test('a change no test reaches skips the comparison by name, and no sandbox is opened for it', async (t) => {
+  const calls = [];
+  const referee = async (...args) => {
+    calls.push(args);
+    return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+  };
+  const f = await checkFixture(t, {
+    referee, changedPaths: ['impl/src/nothing-reads-this.mjs'], verificationFor: declare,
+  });
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'empty' });
+  const receipt = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'empty', checkId: 'k-e' });
+  assert.equal(receipt.comparison.skipped, 'no_affected_tests');
+  assert.deepEqual(receipt.comparison.selection.files, []);
+  assert.equal(receipt.passed, true, 'nothing to judge passes, as the landing gate\'s empty derivation does');
+  assert.equal(receipt.verdict.diagnosticCode, 'verification_not_required');
+  assert.equal(receipt.attempt.phase, 'selection');
+  assert.equal(receipt.attempt.cleanup.state, 'closed');
+  assert.equal(calls.length, 0, 'a capture with nothing to judge opens no verify sandbox');
+});
+
+test('a fixture-path change is selected by the comparison, and the receipt says how', async (t) => {
+  const f = await checkFixture(t, { changedPaths: ['impl/src/orphan.mjs'], verificationFor: declare });
   await f.coordinator.captureContribution(f.handle.id, { contributionId: 'orphan' });
   const receipt = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'orphan', checkId: 'k-o' });
-  // the fixture tree's orphan-fixture test NAMES the orphan in a fixture path: it is selected
-  assert.equal(receipt.preverdict.selection.files.includes('impl/test/orphan-fixture.test.mjs'), true);
-  assert.equal(receipt.preverdict.selection.provenance.find((row) => row.reason === 'fixture-path') !== undefined, true,
+  assert.equal(receipt.comparison.selection.files.includes('impl/test/orphan-fixture.test.mjs'), true);
+  assert.equal(receipt.comparison.selection.provenance.some((row) => row.reason === 'fixture-path'), true,
     'the receipt says the file was selected by fixture-path naming');
 });
 
-test('an empty selection and an unusable selection are named, not silently skipped', async (t) => {
-  const f = await checkFixture(t, { changedPaths: ['impl/src/nothing-reads-this.mjs'] });
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'empty' });
-  const receipt = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'empty', checkId: 'k-e' });
-  assert.deepEqual(receipt.preverdict, { skipped: 'no_affected_tests' });
-
-  const g = await checkFixture(t, { changedPaths: ['impl/src/b.mjs'], withCapturedFileRead: false });
-  await g.coordinator.captureContribution(g.handle.id, { contributionId: 'nounread' });
-  const unavailable = await g.coordinator.checkContribution(g.handle.id, { contributionId: 'nounread', checkId: 'k-u' });
-  assert.deepEqual(unavailable.preverdict, { skipped: 'selection_unavailable' },
+test('an unusable selection is named, and the deployment\'s own contract still judges by exit code', async (t) => {
+  const comparisons = [];
+  const referee = async (task, result, opts) => {
+    comparisons.push(opts?.comparison ?? null);
+    return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+  };
+  const f = await checkFixture(t, {
+    referee, changedPaths: ['impl/src/b.mjs'], withCapturedFileRead: false, verificationFor: declare,
+  });
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'nounread' });
+  const unavailable = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'nounread', checkId: 'k-u' });
+  assert.deepEqual(unavailable.comparison, { skipped: 'selection_unavailable' },
     'no captured-revision reader, no selection — named on the receipt');
-  assert.equal(unavailable.passed, true, 'the full suite still checked the contribution');
+  assert.deepEqual(comparisons, [null], 'without a file set the contract is judged by its own exit code');
+  assert.equal(unavailable.passed, true);
 });
 
-test('a red subset verdict does not fail the check, and the selection is cached per capture', async (t) => {
+test('the comparison decides the check, and the selection is cached per capture', async (t) => {
   let call = 0;
   const referee = async () => {
     call += 1;
-    return call === 1
-      ? { reverified: true, observedExit: 1, passed: false, matchesClaim: true, locus: 'fresh_sandbox' }
-      : { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+    return {
+      reverified: true, observedExit: call === 1 ? 1 : 0, passed: call !== 1, matchesClaim: true,
+      locus: 'fresh_sandbox',
+    };
   };
-  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'] });
+  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'], verificationFor: declare });
   await f.coordinator.captureContribution(f.handle.id, { contributionId: 'c2' });
   const readsBefore = f.reads();
   const first = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'c2', checkId: 'k-1' });
-  assert.equal(first.passed, true, 'a red SUBSET is information; the full suite decided the check');
-  assert.equal(first.preverdict.verdict.outcome, 'candidate_failed');
+  assert.equal(first.passed, false, 'the comparison is the verdict: a failure its base does not share fails the check');
+  assert.equal(first.verdict.outcome, 'candidate_failed');
   const readsAfterFirst = f.reads();
   assert.ok(readsAfterFirst > readsBefore, 'the first check built the graph from the captured revision');
   // a second check of the SAME capture reuses the cached selection: no re-reading the tree
   const second = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'c2', checkId: 'k-2' });
   assert.equal(f.reads(), readsAfterFirst, 'the selection is cached per capture commit');
-  assert.equal(second.preverdict.selection.reason, first.preverdict.selection.reason);
+  assert.deepEqual(second.comparison.selection, first.comparison.selection);
 });
 
 // ── the CLI: run-suite --changed runs the same selection from the runner's own checkout ──

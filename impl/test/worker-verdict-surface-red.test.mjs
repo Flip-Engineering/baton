@@ -1206,8 +1206,9 @@ test('E2 (PIN): DEBUG_GATE_CODES is the closed gate enum in ACTUAL order — an 
       'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
       'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
       'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
+      'verification_unjudged',
     ],
-    'the closed verifier enum in ACTUAL source order (it moved from coordinator.mjs:513-518 to runtime-observation.mjs with the observation bucket, issue #259 slice 10, then to the runtime-recovery.mjs base layer with slice 12 — the effect seam reads it without an effects-observation cycle) — #334 appends verification_not_required for the read-only no-change skip receipt',
+    'the closed verifier enum in ACTUAL source order (it moved from coordinator.mjs:513-518 to runtime-observation.mjs with the observation bucket, issue #259 slice 10, then to the runtime-recovery.mjs base layer with slice 12 — the effect seam reads it without an effects-observation cycle) — #334 appends verification_not_required for the read-only no-change skip receipt, and #593 appends verification_unjudged for a comparison run that wrote no verdict',
   );
 });
 

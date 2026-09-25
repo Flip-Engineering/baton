@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockAdapter, openBaton } from '../src/index.mjs';
 import { verificationSelector } from '../src/application-deployment.mjs';
+import { SUITE_COMPARISON } from '../src/suite-comparison.mjs';
 
 const ROUTE = Object.freeze({ harness: 'mock', model: 'model-a', effort: 'low' });
 function repository(root) {
@@ -45,6 +46,22 @@ test('the selector runs the docs verification only when no changed path is cover
   assert.deepEqual(select(['docs/x.md', 'impl/src/a.mjs'], contract), { selection: 'code', verification: contract });
   assert.equal(select([], contract).selection, 'docs', 'a capture that changed nothing verified by the code contract is checked by the doc gate');
   assert.equal(select(['package.json'], contract).selection, 'code');
+});
+
+// #593: the declaration may also name the procedure that judges a code capture. The name rides the
+// selection (the check reads it there); the docs gate is a command, judged by its own exit code,
+// and never carries one.
+test('a declared comparison procedure rides the code selection, and the docs gate carries none', () => {
+  const select = verificationSelector({
+    command: 'npm', arguments: ['test'], comparison: SUITE_COMPARISON,
+    paths: ['impl/**', 'package.json'], docs: { command: 'node', arguments: ['impl/scripts/surface-gate.mjs'] },
+  });
+  const contract = { command: 'npm', arguments: ['test', '--prefix', 'impl'], cwd: '.', expectExit: 0 };
+  assert.deepEqual(select(['impl/src/a.mjs'], contract), {
+    selection: 'code', verification: contract, comparison: SUITE_COMPARISON,
+  });
+  assert.equal(select(['docs/x.md'], contract).comparison, undefined,
+    'the docs contract is judged by its own exit code');
 });
 
 test('paths and docs are declared together or not at all, and both are validated', async (t) => {
