@@ -779,7 +779,7 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
       if (coordinator._runtimeScopes && typeof coordinator._runtimeScopes.reconcile === 'function') {
         reconciliations.push(coordinator._trackStartupCleanup(
           () => coordinator._runtimeScopes.reconcile(expectedWorkers),
-          'worker_processes',
+          RUNTIME_SCOPE_RECONCILER,
           // Issue #542: a scratch scope this pass cannot remove yet is retried BY NAME, never by
           // repeating the sweep — a scope a worker admitted since startup created for itself is
           // not in this set and is never removed by a retry.
@@ -929,12 +929,16 @@ export function _startupReconcilerObservation(coordinator, recorder, caught, rec
     });
   }
 
-/** Issue #542: the scope-removal failures a start DEFERS. The runtime-scope reconciler reports the
- * exact scopes it could not remove on `pending`; a scope whose child is still tearing down is a
- * pending removal, never a startup refusal. An injected reconciler that supplies no retry, or one
+/** The reconciler name the runtime-scope authority reports under at both of its deferral sites —
+ * the startup pass and the drain's historical reconcile (the #384 vocabulary). */
+const RUNTIME_SCOPE_RECONCILER = 'worker_processes';
+
+/** Issue #542: the scope-removal failures a start or a drain DEFERS. The runtime-scope reconciler
+ * reports the exact scopes it could not remove on `pending`; a scope whose child is still tearing
+ * down is a pending removal, never a refusal. An injected reconciler that supplies no retry, or one
  * that names a live owner in `observed`, keeps the #384 fail-closed refusal. */
 function deferrableScopeRemovals(error, reconciler, retryScopes) {
-    if (retryScopes === null || reconciler !== 'worker_processes') return [];
+    if (retryScopes === null || reconciler !== RUNTIME_SCOPE_RECONCILER) return [];
     if (error?.code !== 'runtime_cleanup_failed' || error?.observed?.alive === true) return [];
     const rows = Array.isArray(error.pending) ? error.pending : [];
     return rows.filter((row) => typeof row?.workerId === 'string' && row.workerId.length > 0);
@@ -956,7 +960,7 @@ function deferScopeRemovals(coordinator, recorder, reconciler, error, rows, retr
     }]));
     const publish = () => {
       for (const fact of facts.values()) {
-        coordinator._startupCleanupDeferred.set(fact.record, Object.freeze({ ...fact }));
+        coordinator._cleanupDeferred.set(fact.record, Object.freeze({ ...fact }));
       }
     };
     for (const fact of facts.values()) {
@@ -979,7 +983,7 @@ function deferScopeRemovals(coordinator, recorder, reconciler, error, rows, retr
         catch (error) { refused = [error]; }
         if (!Array.isArray(refused) || refused.length === 0) {
           for (const fact of facts.values()) {
-            coordinator._startupCleanupDeferred.delete(fact.record);
+            coordinator._cleanupDeferred.delete(fact.record);
             try {
               recorder.recordDriver('host.cleanup_completed', {
                 reconciler, record: fact.record, attempts: fact.attempts,
@@ -1031,17 +1035,38 @@ export function _trackStartupCleanup(coordinator, recorder, operation, reconcile
     return tracked;
   }
 
+/** Issue #542 (the drain half): the drain's historical resource reconcile removes every runtime
+ * scope the resident still holds, and a scope it cannot remove YET is the same pending removal the
+ * startup pass defers — recorded on the ledger, surfaced on `cleanupDeferred()`, retried in the
+ * background. A drain that refused on it left the stop unable to converge for a transient scratch
+ * scope, so this seam proceeds and names the scope instead. Any other failure the reconciler
+ * reports still fails the drain. */
+export function _reconcileDrainRuntimeScopes(coordinator, recorder) {
+    const scopes = coordinator._runtimeScopes;
+    if (!scopes || typeof scopes.reconcile !== 'function') return undefined;
+    const retryScopes = typeof scopes.retryPendingScopes === 'function'
+      ? (workerIds) => scopes.retryPendingScopes(workerIds)
+      : null;
+    try { return scopes.reconcile([]); }
+    catch (error) {
+      const rows = deferrableScopeRemovals(error, RUNTIME_SCOPE_RECONCILER, retryScopes);
+      if (rows.length === 0) throw error;
+      deferScopeRemovals(coordinator, recorder, RUNTIME_SCOPE_RECONCILER, error, rows, retryScopes);
+      return undefined;
+    }
+  }
+
 export async function startupReady(coordinator, recorder) {
     await Promise.all(coordinator._startupCleanupPromises);
     if (coordinator._startupCleanupError) throw coordinator._startupCleanupError;
     return true;
   }
 
-/** Issue #542: the scratch runtime scopes this incarnation could not remove yet, one bounded row
- * per scope — the state behind the durable `host.cleanup_pending` rows. Empty means the deferred
- * removals reached absence (or none was ever pending). */
-export function startupCleanupDeferred(coordinator, recorder) {
-    const facts = coordinator._startupCleanupDeferred;
+/** Issue #542: the runtime scopes this incarnation could not remove yet, one bounded row per scope
+ * — the state behind the durable `host.cleanup_pending` rows. Empty means the deferred removals
+ * reached absence (or none was ever pending). */
+export function cleanupDeferred(coordinator, recorder) {
+    const facts = coordinator._cleanupDeferred;
     if (!(facts instanceof Map) || facts.size === 0) return Object.freeze([]);
     return Object.freeze([...facts.values()]);
   }
