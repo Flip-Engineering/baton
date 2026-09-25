@@ -676,127 +676,6 @@ export function lintProseInventories(options = {}) {
   return findings;
 }
 
-// Re-export doc check under the conformance module (CS-1 harness reuse).
-export { checkSurfaceDocs };
-
-// ── CS-4: checked inventory artifact ────────────────────────────────────────
-
-const INVENTORY_ARTIFACT_URL = new URL('./surface-inventory-artifact.json', import.meta.url);
-
-// B7 — the artifact's parserLifecycleActions count derives from the parser's lifecycle DISPATCH
-// set (the `lifecycleActions` literal plus branch special-cases), never a hand-maintained probe
-// list. When the D1 CLI leg exports cliParsedCommandNames() at landing, that compile-set is the
-// source; the interim fallback replicates the same extraction the acceptance suite's R11 leg 2
-// performs (the parser's own literal + `action === '…'`/`[…].includes(action)` special-cases).
-function parserLifecycleDispatchCount() {
-  if (typeof applicationCli.cliParsedCommandNames === 'function') {
-    return applicationCli.cliParsedCommandNames().length;
-  }
-  const src = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'latin1');
-  const marker = 'const lifecycleActions = new Set(';
-  const start = src.indexOf(marker);
-  if (start < 0) return 0;
-  // 2026-09-14 audit (#289): the dispatch gate is the four-way refusal, which owns the
-  // objective-first fall-through inside the guard; the naked return no longer exists.
-  const gate = src.indexOf('if (!lifecycleActions.has(action)) {', start);
-  if (gate < 0) return 0;
-  const region = src.slice(start, gate);
-  const actions = new Set();
-  const literalEnd = region.indexOf(');');
-  if (literalEnd >= 0) {
-    for (const match of region.slice(marker.length, literalEnd).matchAll(/'([^']+)'/g)) {
-      actions.add(match[1]);
-    }
-  }
-  for (const match of region.matchAll(/action\s*===\s*'([^']+)'/gu)) actions.add(match[1]);
-  for (const match of region.matchAll(/\[([^\]]*)\]\.includes\(action\)/gu)) {
-    for (const inner of match[1].matchAll(/'([^']+)'/gu)) actions.add(inner[1]);
-  }
-  return actions.size;
-}
-
-export function buildSurfaceInventoryArtifact() {
-  // Deterministic: parser lifecycle, web whitelist, MCP profiles, registry counts.
-  // Never regex extraction alone — parser probe + instantiated MCP tool tables + registry.
-  let parsedResume = null;
-  try {
-    parsedResume = parseBatonCli([
-      'run', 'resume', 'run-artifact', '--reason', 'probe', '--idempotency-key', 'artifact-resume',
-    ]);
-  } catch {
-    parsedResume = { error: true };
-  }
-  let contextEval = null;
-  try {
-    parseBatonCli(['context', 'eval', '--run', 'run-a', '--json', '{}']);
-    contextEval = { refused: false };
-  } catch (error) {
-    contextEval = { refused: true, code: error?.code ?? null };
-  }
-  const artifact = {
-    schemaVersion: 1,
-    generatedBy: 'impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact',
-    counts: {
-      canonicalOperations: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.length,
-      cliWebCommands: CLI_WEB_COMMANDS.size,
-      parserLifecycleActions: parserLifecycleDispatchCount(),
-      mcpApplicationTools: CORE_TOOL_NAMES.length,
-      mcpAdvancedTools: mcpAdvancedToolNames().length,
-      mcpCombinedTools: mcpCombinedToolNames().length,
-      mcpDispatchTools: mcpDispatchToolNames().length,
-      webBusCommands: webBusNames().length,
-      applicationCommandDefinitions: Object.keys(APPLICATION_COMMAND_DEFINITIONS).length,
-    },
-    // The byte-stable insertion-order key list of APPLICATION_COMMAND_DEFINITIONS (docs/36 §9 M3
-    // / issue #261): the committed witness surface-truth.mjs serves, regenerated here like every
-    // other artifact leg, never retyped in a test.
-    commandKeys: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
-    profiles: Object.fromEntries(
-      REFERENCE_PROFILES.map((profile) => [
-        profile.id,
-        instantiateProfileInventory(profile).names,
-      ]),
-    ),
-    pins: {
-      runResumeDispatch: parsedResume?.name ?? null,
-      contextEvalParseRefusal: contextEval,
-      runDebugRegistered: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-        .some((entry) => entry.key === 'run.debug'),
-      batonRunsAdvertised: CORE_TOOL_NAMES.includes('baton_runs'),
-    },
-  };
-  return artifact;
-}
-
-export function checkSurfaceInventoryArtifact() {
-  const built = buildSurfaceInventoryArtifact();
-  let committed;
-  try {
-    committed = JSON.parse(readFileSync(INVENTORY_ARTIFACT_URL, 'utf8'));
-  } catch (error) {
-    return [`inventory artifact missing or unreadable: ${error.message}`];
-  }
-  const left = `${JSON.stringify(built, null, 2)}\n`;
-  const right = `${JSON.stringify(committed, null, 2)}\n`;
-  if (left !== right && JSON.stringify(built) !== JSON.stringify(committed)) {
-    // Accept either pretty-printed form as long as values match.
-    if (JSON.stringify(built) !== JSON.stringify(committed)) {
-      return ['inventory artifact is stale; regenerate via node impl/scripts/surface-conformance.mjs --write-inventory'];
-    }
-  }
-  // Byte-stable across two builds
-  if (JSON.stringify(buildSurfaceInventoryArtifact()) !== JSON.stringify(built)) {
-    return ['inventory artifact builder is non-deterministic'];
-  }
-  return [];
-}
-
-export function writeSurfaceInventoryArtifact() {
-  const artifact = buildSurfaceInventoryArtifact();
-  writeFileSync(INVENTORY_ARTIFACT_URL, `${JSON.stringify(artifact, null, 2)}\n`);
-  return artifact;
-}
-
 // ── Executable main (CS-1 / R-CS-6) ─────────────────────────────────────────
 
 // #170 (D4/P8) — the wavefile leg: the documented 16-directive table ⇄ the compiler's accepted set
@@ -819,28 +698,9 @@ export function checkWavefileGrammar() {
   return findings;
 }
 
-export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
+export function runSurfaceConformanceMain() {
   const findings = [];
-  const ledgerUrl = new URL('./surface-divergence-ledger.json', import.meta.url);
-  let ledger;
-  try {
-    ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
-  } catch (error) {
-    findings.push(`invalid ledger: could not read: ${error.message}`);
-    return findings;
-  }
-  const ledgerFindings = validateLedger(ledger);
-  for (const finding of ledgerFindings) findings.push(`invalid ledger: ${finding}`);
-
   const inventory = collectSurfaceInventory();
-  const classified = classifySurfaces(inventory, ledger);
-  for (const item of classified.novel) {
-    findings.push(`novel name divergence: ${item.surface}:${item.name}:${item.dimension}`);
-  }
-  const enums = checkEnumStrings(inventory.phaseLiterals, ledger);
-  for (const item of enums.novel) {
-    findings.push(`enum divergence: ${item.name}`);
-  }
   // docs/36 §10 C4 (R-CX-13) — the banned-token lint promoted to red at M5. The canonical tree's
   // own names are scanned: a canonical operation that derives a surface name carrying a banned
   // synonym verb is a red finding. The ban retires SYNONYMS (one name per concept), so a name that
@@ -867,37 +727,14 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
       findings.push(`web-name collision: ${name} is a kernel/authoring literal`);
     }
   }
-  for (const finding of checkSurfaceDocs()) {
-    findings.push(`stale generated docs: ${finding}`);
-  }
   for (const finding of checkWavefileGrammar()) {
     findings.push(`wavefile grammar: ${finding}`);
-  }
-  for (const finding of lintProseInventories()) {
-    findings.push(`prose-inventory: ${finding}`);
-  }
-  if (writeInventory) writeSurfaceInventoryArtifact();
-  for (const finding of checkSurfaceInventoryArtifact()) {
-    findings.push(`inventory artifact: ${finding}`);
-  }
-  // Profile parity (CS-1a)
-  for (const profile of REFERENCE_PROFILES) {
-    const profileInventory = instantiateProfileInventory(profile);
-    const section = profileDocSection(profile);
-    const parity = checkProfileDocParity(profile, profileInventory, section);
-    for (const name of parity.missingFromDoc) {
-      findings.push(`profile ${profile.id}: served but undocumented: ${name}`);
-    }
-    for (const name of parity.missingFromServe) {
-      findings.push(`profile ${profile.id}: documented but unserved: ${name}`);
-    }
   }
   return findings;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const writeInventory = process.argv.includes('--write-inventory');
-  const findings = runSurfaceConformanceMain({ writeInventory });
+  const findings = runSurfaceConformanceMain();
   for (const finding of findings) process.stderr.write(`surface-conformance: ${finding}\n`);
   if (findings.length > 0) process.exit(1);
   process.stdout.write('surface-conformance: ok\n');

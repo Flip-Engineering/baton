@@ -26,7 +26,7 @@
 //   P6  elevation at wave close (D2) — completed → done + evidence links, incomplete → todo,
 //       wave map updated, reviewed-rejected done → re-opened todo (H4.2), no silent auto-promotion.
 //   P7  three-surface admission (D3) — registry rows, CLI plan read|write, CLI_WEB_COMMANDS,
-//       MCP baton_plan_read/write repoId-first, ledgered web refusal, generated CLI.md/MCP.md rows.
+//       MCP baton_plan_read/write repoId-first, refused web surface, generated CLI.md/MCP.md rows.
 //   P8  #74 integration — coordinator decomposition lands row tasks with ownedBy binding; the
 //       interpreter gates a member on its plan task's state (dispatch_pending / settleable).
 //   P9  orchestrator practice migration — plan.read at the orchestrator seat returns the campaign
@@ -136,16 +136,15 @@
 //   W2  reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomplete task never reads
 //       done (no silent auto-promotion) — the re-open driven by the review seat under planAuthorize. (RED)
 //
-// §P7 Three-surface admission (stage: cli-plan-verbs-missing / web-plan-ledger-missing /
+// §P7 Three-surface admission (stage: cli-plan-verbs-missing /
 //     mcp-plan-tool-missing / registry-plan-rows-missing / docs-plan-rows-missing)
 //   X1  baton plan read PLAN_ID parses to {kind:'command', name:'plan.read', args:{planId}}. (RED)
 //   X2  baton plan write PLAN_ID --mutation JSON parses to plan.write; a malformed body refuses
 //       cli_invalid naming the expected mutation shape (H3.2). (RED)
 //   X3  CLI_WEB_COMMANDS admits plan.read AND plan.write (the admitted web-envelope names). (RED)
-//   X4  the web surface is NOT claimed for plan.* (D3.4 recommended posture) — the web envelope is
-//       refused AND the refusal is ledgered in surface-divergence-ledger.json (#159 D3 #3); the
-//       ledger rows are exactly the two plan verbs, cross-checked against the ACTUAL refusal and the
-//       registry (no advertise-but-dead / ghost rows). (RED — at HEAD the ledger entries are empty)
+//   X4  the web surface is NOT claimed for plan.* (D3.4 recommended posture) — every plan.* web
+//       envelope is refused (GREEN — the refusal holds at HEAD); the registry rows the surface
+//       inventory derives from are X6.
 //   X5  MCP tools baton_plan_read/baton_plan_write exist with repoId LEADING required (H3.1) and
 //       dispatch (H3.2) — a tools/call for each tool reaches the application port (no
 //       advertise-but-dead tool). (RED — at HEAD the MCP ordinary tool list lacks both, and
@@ -200,8 +199,6 @@
 //       (HEAD: refused at web-northbound.mjs:405 'unsupported command')
 //   McpFleetServer tools 'baton_plan_read'/'baton_plan_write'  — invented MCP ordinary tools
 //       (HEAD: absent from the 35-tool list)
-//   surface-divergence-ledger.json entries for plan.read/plan.write  — invented ledgered rows
-//       (HEAD: entries is [])
 //   refusal codes 'plan_replay_conflict'/'plan_stale_version'/'plan_task_invalid'/
 //       'plan_topology_invalid'/'plan_parallel_progress'/'plan_reopen_forbidden'/
 //       'plan_focus_invalid'/'plan_authority_forbidden'/'coordinator_authority_forbidden'/
@@ -1344,44 +1341,16 @@ test('X3: CLI_WEB_COMMANDS admits plan.read AND plan.write', () => {
     'stage: cli-plan-verbs-missing — at HEAD CLI_WEB_COMMANDS (application-cli.mjs:16-32) admits no plan verbs; the fold admits plan.read/plan.write for the web-envelope dispatch (D3.2)');
 });
 
-test('X4: the plan.* web surface is refused AND ledgered in surface-divergence-ledger.json (#159 D3 #3)', () => {
+test('X4: the plan.* web surface is refused — plan.* is not a web transport (#159 D3 #3, D3.4)', () => {
   const planId = `plan:${'c'.repeat(32)}`;
-  const readToken = validateWebCommandEnvelope(webEnvelope('plan_read', { planId }));
-  assert.ok(readToken !== null && readToken.length > 0,
-    'the plan_read web envelope is refused — plan.* is not a web transport (D3.4 recommended posture, matching the facade verbs\' today)');
-  const writeToken = validateWebCommandEnvelope(webEnvelope('plan_write', { planId }));
-  assert.ok(writeToken !== null && writeToken.length > 0,
-    'the plan_write web envelope is refused');
-
-  const ledgerPath = fileURLToPath(new URL('../scripts/surface-divergence-ledger.json', import.meta.url));
-  const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-  assert.ok(ledger.schemaVersion === 1 && Array.isArray(ledger.entries),
-    'the ledger is well-formed (schemaVersion 1, entries array) — a comment shortcut adds no rows and fails here');
-  const verbOf = (entry) => {
-    const raw = entry?.command ?? entry?.verb ?? entry?.name;
-    if (raw === 'plan.read' || raw === 'plan.write') return raw;
-    if (raw === 'plan_read' || raw === 'plan_write') return raw.replaceAll('_', '.');
-    return null;
-  };
-  const rows = (ledger.entries ?? []).filter((entry) => verbOf(entry) !== null);
-  assert.equal(rows.length, 2,
-    'stage: web-plan-ledger-missing — at HEAD the ledger entries are [] (no plan.* rows); the fold ledger the two plan verbs\' web refusal under #159 D3 #3 (documented and parsed, web refusal documented, no ghost)');
-  const verbs = rows.map(verbOf).sort();
-  assert.deepEqual(verbs, ['plan.read', 'plan.write'],
-    'the ledgered plan rows are exactly the two plan verbs — a hand-edited third row or a non-plan row fails here');
-
-  // Blue-team X4 regeneration/conformance gate — each ledgered plan verb must be REAL: the web
-  // surface genuinely refuses it today (kills advertise-but-dead — a row documenting a verb the
-  // surface actually admits) and the verb has a registry row (the mechanical source every surface
-  // renderer consumes) — a hand-edited ledger row with no registry row is a ghost row.
-  const registered = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((op) => op.key));
-  for (const verb of verbs) {
+  // Both plan verbs are refused on the web transport: the plan.* surface is not claimed on the web
+  // (the D3.4 recommended posture, matching the facade verbs' today), so nothing is advertised that
+  // the surface does not serve.
+  for (const verb of ['plan.read', 'plan.write']) {
     const wire = verb.replaceAll('.', '_'); // plan.read → plan_read (the web-transport name)
     const token = validateWebCommandEnvelope(webEnvelope(wire, { planId }));
     assert.ok(token !== null && token.length > 0,
-      `the ledgered ${verb} is actually refused on the web surface (no advertise-but-dead row)`);
-    assert.ok(registered.has(verb),
-      `stage: registry-plan-rows-missing — the ledgered ${verb} has a registry row (the mechanical source the surface inventory derives from); a hand-edited ledger alone is a ghost row`);
+      `the ${verb} is refused on the web surface — plan.* is not a web transport (D3.4 recommended posture, matching the facade verbs' today)`);
   }
 });
 

@@ -16,31 +16,31 @@
 // its injectable `sources` seam, on a synthetic tree that mirrors the pinned census, so a green
 // tree and a refused tree are both provable.
 
-import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-
+import assert from 'node:assert/strict';
 import {
-  CUSTODY_PREDICATE_DEFINITION, CUSTODY_PREDICATE_PENDING, CUSTODY_PREDICATE_TOKEN,
+  CUSTODY_PREDICATE_DEFINITION, CUSTODY_PREDICATE_TOKEN,
   checkCustodyPredicateLiteral,
 } from '../scripts/surface-gate.mjs';
 import { PHYSICAL_WORKSPACE_ID, isPhysicalWorkspaceId } from '../src/shared-workspace-custody.mjs';
 
-const LITERAL = CUSTODY_PREDICATE_TOKEN;
 const COORDINATOR = new URL('../src/coordinator.mjs', import.meta.url);
 const STORE = new URL('../src/coordination-store.mjs', import.meta.url);
 const CUSTODY_MODULE = new URL('../src/shared-workspace-custody.mjs', import.meta.url);
+const LITERAL = CUSTODY_PREDICATE_TOKEN;
 const copies = (count) => `${LITERAL}\n`.repeat(count);
 
-/** A tree that mirrors the pinned census exactly: the definition plus every pending file at its
- * pinned count. A scenario perturbs exactly ONE entry, so the finding it produces is that entry's. */
+/** A synthetic tree: the one definition plus governed files that import the helper (zero inline
+ * copies — issue #582 removed the PENDING count-pin exemptions). A scenario perturbs exactly one
+ * entry, so the finding it produces is that entry's. */
 function censusTree(overrides = {}) {
   const sources = [{
     path: CUSTODY_PREDICATE_DEFINITION,
     text: `export const PHYSICAL_WORKSPACE_ID = /^${LITERAL}$/u;\n`,
   }];
-  for (const [path, entry] of Object.entries(CUSTODY_PREDICATE_PENDING)) {
-    sources.push({ path, text: copies(entry.occurrences) });
+  for (const path of ['impl/src/application.mjs', 'impl/src/index.mjs', 'impl/src/swarm-state.mjs', 'impl/src/worktree.mjs']) {
+    sources.push({ path, text: `import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';\n` });
   }
   return sources
     .filter((source) => !Object.hasOwn(overrides, source.path))
@@ -70,32 +70,6 @@ test('G36-R2: the gate refuses a second copy inside the definition file', () => 
   assert.equal(findings.length, 1);
   assert.match(findings[0], /shared-workspace-custody\.mjs/u);
   assert.match(findings[0], /2 copies/u, 'the finding counts the copies it found');
-});
-
-test('G36-R3: a grown pinned count is refused as an added copy', () => {
-  const findings = checkCustodyPredicateLiteral({
-    sources: censusTree({ 'impl/src/worktree.mjs': copies(CUSTODY_PREDICATE_PENDING['impl/src/worktree.mjs'].occurrences + 1) }),
-  });
-  assert.equal(findings.length, 1);
-  assert.match(findings[0], /worktree\.mjs/u);
-  assert.match(findings[0], /PENDING pins 9/u, 'the finding names the pinned count');
-  assert.match(findings[0], /added/u, 'a count that grew is an added copy, not a stale exemption');
-});
-
-test('G36-R4: a swept file and a vanished file are refused as stale exemptions', () => {
-  const swept = checkCustodyPredicateLiteral({
-    sources: censusTree({ 'impl/src/application.mjs': 'import { isPhysicalWorkspaceId } from \'./shared-workspace-custody.mjs\';\n' }),
-  });
-  assert.equal(swept.length, 1, 'the swept entry is the one finding');
-  assert.match(swept[0], /application\.mjs/u);
-  assert.match(swept[0], /stale/u, 'a swept file must be removed from the exemption list');
-
-  const vanished = censusTree();
-  const withoutIndex = vanished.filter((source) => source.path !== 'impl/src/index.mjs');
-  const missing = checkCustodyPredicateLiteral({ sources: withoutIndex });
-  assert.equal(missing.length, 1);
-  assert.match(missing[0], /index\.mjs/u);
-  assert.match(missing[0], /no longer carries/u, 'a pending file absent from the scan is a stale exemption, not a silent pass');
 });
 
 test('G36-R5: the real tree is green — the coordinator and the store carry no inline copy', () => {

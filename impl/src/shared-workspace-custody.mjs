@@ -12,7 +12,11 @@
 // settlement). This module answers one question — "is another live holder still in this
 // checkout?" — so the coordinator's detach gate and the manager's reap backstop cannot disagree.
 
-export const PHYSICAL_WORKSPACE_ID = /^ws-[a-f0-9]{32}$/u;
+// The one spelling of the physical-workspace-id token. The predicate below and every regex that
+// needs the shape — worktree.mjs's receipt-filename patterns — derive from this string, so the
+// literal is written once in the repository.
+export const PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE = 'ws-[a-f0-9]{32}';
+export const PHYSICAL_WORKSPACE_ID = new RegExp(`^${PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE}$`, 'u');
 
 // A handle that is still working in the checkout — or closing in it — holds it: its process may
 // still be running, and a peer must detach rather than destroy the resource underneath it.

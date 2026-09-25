@@ -2,7 +2,7 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -158,31 +158,10 @@ if (clockFindings.length > 0) {
   }
   process.exit(1);
 }
-
-const ledgerPath = new URL('./surface-divergence-ledger.json', import.meta.url);
-let currentLedger;
-try {
-  currentLedger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-} catch (error) {
-  process.stderr.write(`surface-conformance: could not read divergence ledger: ${error.message}\n`);
-  process.exit(1);
-}
-
-// The surface machinery loads here, in the runner proper: the thin re-executing parent (#77)
-// exits before this line and never pays these modules' load cost.
-const { collectSurfaceInventory } = await import(new URL('./surface-audit.mjs', import.meta.url).href);
-const { checkEnumStrings, checkLedgerMonotone, classifySurfaces } = await import(
-  new URL('./surface-conformance.mjs', import.meta.url).href
-);
-const inventory = collectSurfaceInventory();
-const surfaceFindings = classifySurfaces(inventory, currentLedger).novel;
-const enumFindings = checkEnumStrings(inventory.phaseLiterals, currentLedger).novel;
-for (const finding of [...surfaceFindings, ...enumFindings]) {
-  process.stderr.write(
-    `surface-conformance: novel divergence: ${finding.surface}:${finding.name}:${finding.dimension}\n`,
-  );
-}
-if (surfaceFindings.length > 0 || enumFindings.length > 0) process.exit(1);
+// Issue #582: the hand-maintained divergence ledger and its HEAD monotone check are removed —
+// the ledger-comparison gates above every suite run were the banned bookkeeping pattern. What
+// remains is the registry-derived surface gate below (#262), which derives everything it
+// judges from the live registry and never reads a committed census.
 
 // Issue #262: the surface gate (grammar lint, artifact/doc/parity staleness, MCP dispatch
 // resolvability) runs before any test so a surface change is refused when it is made.
@@ -196,35 +175,6 @@ if (gateFindings.length > 0) {
 }
 
 const repositoryRoot = new URL('../../', import.meta.url);
-let previousLedger = null;
-try {
-  previousLedger = JSON.parse(execFileSync(
-    'git',
-    ['show', 'HEAD:impl/scripts/surface-divergence-ledger.json'],
-    {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-      timeout: 2_000,
-      maxBuffer: 8 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  ));
-} catch (error) {
-  const missingBaseline = error?.status === 128
-    && String(error?.stderr).includes('exists on disk, but not in');
-  if (!missingBaseline) {
-    process.stderr.write(`surface-conformance: could not read the HEAD ledger: ${error.message}\n`);
-    process.exit(1);
-  }
-}
-if (previousLedger) {
-  try {
-    checkLedgerMonotone(previousLedger, currentLedger);
-  } catch (error) {
-    process.stderr.write(`surface-conformance: ${error.message}\n`);
-    process.exit(1);
-  }
-}
 
 // Unix-domain socket fixtures need their paths to remain below sockaddr_un.sun_path. `/tmp` is
 // the short system-temp spelling on Unix (including the `/private/tmp` target on macOS). An
@@ -378,11 +328,21 @@ function laneFiles(changedSelection = null) {
   const runnable = [];
   const skipped = [];
   for (const file of requested) {
+    const path = resolve(implRootPath, file);
+    // A checkout-relative requested file that does not exist is a file this change deleted. The
+    // landing gate's table half derives names from the resident's own tree, so a deleted test's
+    // own issue-numbered name still reaches the runner after the squash removed the file (#582:
+    // a removal lands on its merits). There is nothing to run and the absence is the change
+    // itself, so it skips as a named deletion — the verdict judges only the files that ran.
+    if (!isAbsolute(file) && !existsSync(path)) {
+      skipped.push({ file, reason: 'file absent from the checkout (deleted by this change)' });
+      continue;
+    }
     // The #508 classification guards the suite's own territory: a file under impl/ that never
     // imports `node:test` is not a runnable test. A file outside the suite root kept its
     // absolute path (relativeTestPath) because it is a fixture the caller owns, and it runs
     // as named.
-    if (isAbsolute(file) || fileImportsTestFramework(resolve(implRootPath, file))) runnable.push(file);
+    if (isAbsolute(file) || fileImportsTestFramework(path)) runnable.push(file);
     else skipped.push({ file, reason: 'no test-framework import' });
   }
   return {
