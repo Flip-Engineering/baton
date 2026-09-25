@@ -1,91 +1,94 @@
-# CLAIM: the runtime's decision on requested work is a function of authority and of the resource
-# state observed now, and it is the same for every size, count, spend and elapsed time. A work
-# item is admitted, or waits while an observed resource is short, or is refused for lack of
-# authority. No magnitude and no clock can turn waiting or admitted work into a refusal, whether
-# the bound is a bare constant or one derived from a physical resource.
-# Status: proposed revision of M-10 (revision 12a, 2026-09-25), from the operator rulings of
-# 2026-09-13, 2026-09-20 and 2026-09-21 (#258, #541, #583). Not part of the approved set.
+# CLAIM: the runtime's decision on requested work is derived from the authority the caller holds
+# and from the resource state observed now. It is the same for every magnitude and every elapsed
+# time. Work is admitted when its measured resources are available, retained pending while they
+# are short, and refused only without valid authority. Administrative magnitude or elapsed-time
+# bounds cannot reject, truncate, discard or terminalize that work. Every terminal transition is
+# bound to an actual event: a tick preserves the work disposition, completion terminates,
+# cancellation terminates, and a provider failure carries its observed cause. This file is the
+# model; ../laws.bend states the laws and laws-proof.bend discharges them.
+# Status: proposed revision of M-10 (revision 12a, 2026-09-25), re-encoded from the operator's
+# adopted statements in ../reviews/astra-law-review-r11-r12.md. The operator rulings behind it are
+# #258 (no budget hard stops), 2026-09-20 (no derivation check on a max limit), #541 (no caller
+# deadline, queue timeout or wait ceiling on an intent) and #583 (the 90 s run-stop deadline).
+# The removal of M-10's physical-bound exception is a new policy decision, not part of the
+# approved set.
 # Reference: ../reference/README.md, bend 2.0.25, a4952426.
 # Evidence: laws-no-ceiling.evidence.md.
 import Base
 
-type Decision is Data:
+# The authority the caller holds, derived from its authenticated grant at the time of effect.
+type Authority is Data:
+  Valid{}
+  Invalid{}
+
+# The resource state observed now: whether the resources the work measures are available.
+type Resources is Data:
+  Available{}
+  Short{}
+
+# One request for work. `magnitude` stands for any magnitude of the work (bytes, nodes, items,
+# tokens, spend) and `elapsed` for the time it has waited or run; neither is an input to the
+# decision.
+type Request is Data:
+  Request{authority: Authority, resources: Resources, magnitude: Nat, elapsed: Nat}
+
+# The decision on requested work.
+type Admission is Data:
   Admitted{}
-  Waiting{}
+  Pending{}
   Refused{}
 
-# The specification. `authorized` is whether the caller holds the authority the work needs;
-# `available` is whether the resource the work uses is available now, as observed.
-def expected(authorized: Bool, available: Bool) -> Decision:
-  match authorized:
-    case False{}: Refused{}
-    case True{}:
-      match available:
-        case True{}: Admitted{}
-        case False{}: Waiting{}
+# The specification: valid authority with available resources admits, valid authority with short
+# resources retains the work pending, and invalid authority refuses.
+def expected(authority: Authority, resources: Resources) -> Admission:
+  match authority:
+    case Valid{}:
+      match resources:
+        case Available{}: Admitted{}
+        case Short{}: Pending{}
+    case Invalid{}: Refused{}
 
-# The runtime's decision. `size` stands for any magnitude of the work (bytes, nodes, items,
-# tokens, spend) and `elapsed` for the time the work has waited or run.
-def decide(size: Nat, elapsed: Nat, authorized: Bool, available: Bool) -> Decision:
-  expected(authorized, available)
+def authority_of(r: Request) -> Authority:
+  match r:
+    case Request{+authority, _, _, _}: authority
 
-# The law: for every size and every elapsed time, the decision is the specification's.
-law decision_ignores_magnitude_and_clock:
-  for size: Nat
-  for elapsed: Nat
-  for authorized: Bool
-  for available: Bool
-  {decide(size, elapsed, authorized, available) == expected(authorized, available) : Decision}
+def resources_of(r: Request) -> Resources:
+  match r:
+    case Request{_, +resources, _, _}: resources
 
-# The proof splits size and elapsed at zero and one-or-more, and every authority and resource
-# case, so a decision that reads either magnitude fails on a named case.
-def decision_ignores_magnitude_and_clock(size, elapsed, authorized, available):
-  match size:
-    case 0n:
-      match elapsed:
-        case 0n:
-          match authorized:
-            case True{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-            case False{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-        case 1n+e:
-          match authorized:
-            case True{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-            case False{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-    case 1n+s:
-      match elapsed:
-        case 0n:
-          match authorized:
-            case True{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-            case False{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-        case 1n+e:
-          match authorized:
-            case True{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
-            case False{}:
-              match available:
-                case True{}: {==}
-                case False{}: {==}
+# The same request with the magnitude and the elapsed time cleared, every other input kept.
+def cleared(r: Request) -> Request:
+  match r:
+    case Request{+authority, +resources, _, _}: Request{authority, resources, 0n, 0n}
+
+# The runtime's decision. It derives its inputs from the request's authority and from the
+# resource state observed now.
+def admit(+r: Request) -> Admission:
+  expected(authority_of(r), resources_of(r))
+
+# The work states. A pending state carries its owner, the data it owes and its continuation, so a
+# pending decision never loses the work it retains.
+type Work is Data:
+  Working{owner: Nat, owed: Nat, continuation: Nat}
+  Completed{}
+  Cancelled{}
+  Failed{cause: Nat}
+
+# The events a work state can receive. A tick is a scheduler or telemetry event with no work
+# content. A provider failure carries the cause the provider or host observably reported.
+type WorkEvent is Data:
+  Tick{}
+  Completion{}
+  Cancellation{}
+  ProviderFailure{cause: Nat}
+
+def step(state: Work, event: WorkEvent) -> Work:
+  match event:
+    case Tick{}: state
+    case Completion{}: Completed{}
+    case Cancellation{}: Cancelled{}
+    case ProviderFailure{+cause}: Failed{cause}
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    IO.print("no-ceiling: the decision ignores magnitude and clock; law checked.")
+    IO.print("no-ceiling: the decision is derived from authority and measured resources; the laws are checked in laws-proof.bend.")

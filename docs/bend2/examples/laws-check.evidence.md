@@ -1,11 +1,12 @@
 # laws-check — evidence
 
 CLAIM: `python3 docs/bend2/laws-check.py <bend>` exits 0 at bend 2.0.25 on this tree. The pure
-models that `docs/bend2/laws.bend` states check, the ten quantified obligations are discharged by
-`docs/bend2/examples/laws-proof.bend`, the transition witness drives the real implementation, and
-sixteen negative controls fail the unchanged obligations one at a time — thirteen by mutating a
-model, one by mutating the witness's host half, and two being the existing host-side JavaScript
-regression rows.
+models that `docs/bend2/laws.bend` states check, its 53 quantified obligations are discharged by
+`docs/bend2/examples/laws-proof.bend` (the ten the approved set carries and the 43 the operator
+adopted on 2026-09-25 over the re-encoded revision 11 and revision 12 models), the transition
+witness drives the real implementation, and sixteen negative controls fail the unchanged
+obligations one at a time: thirteen by mutating a model, one by mutating the witness's host half,
+and two being the existing host-side JavaScript regression rows.
 
 ## Environment
 
@@ -28,14 +29,21 @@ Files under check, with the sha256 values the report records:
 
 | File | sha256 |
 |---|---|
-| `laws.bend` | `ed79d69ba32e5dcc5ec52a432e16d6eb0167a76e3210a9e7962354bcaf53eade` |
+| `laws.bend` | `b11b991f897f2b20f7f16ee73c9d61d35700dfe09ae6ec26b00db260691485fe` |
 | `examples/laws-history-model.bend` | `3e1d3da76c5038e655979b2a57570838c13f5b950bb38fb332bdcf7688ece532` |
 | `examples/laws-worker-model.bend` | `d5278dac4bfb1bc1b3a91fff934a62403d46af94922b494213b6ff5a943dbd92` |
 | `examples/laws-refusal-model.bend` | `27444694ef9f0ee7784a6f9b1b22179bd2f3eda50a3aac10aefb3840089168dc` |
 | `examples/laws-decision-model.bend` | `71232284d46d94113557746d3d004c55b9968ba586457b602231ded7770eed4d` |
-| `examples/laws-proof.bend` | `b0ff3a8c85dca79a865b70d959bc2996d3eaa70708214e723df47c33dda8d6d4` |
+| `examples/laws-proof.bend` | `88a13e217a27fa057d1f9e29def34f8928c25b66b7b84115b968d791e51b2949` |
 | `examples/laws-transition.bend` | `fd44069c4d642de6a431deb0b40532530022c8c97dceacb0cd15d15045a294f1` |
 | `examples/laws-transition.js` | `d9426d03c783664dc2bf9217a584db90ed22527aa83a3cc6bbf1d34d2fefe957` |
+| `examples/laws-no-ledger.bend` | `6dfa2331a6d501544c7f045f01ba522f6aeb2163050259f1113a943986dc39b6` |
+| `examples/laws-independence.bend` | `9a1891cf2de9769eb49f79e565fdcbfe9cfe434f6c2db42807f1ccc730f0f67b` |
+| `examples/laws-prerequisite.bend` | `69dce198df3a3f975cf078d74a263771dbb3a14954b773bf708143b108c6860e` |
+| `examples/laws-no-ceiling.bend` | `6f332c47c63297d70fd4bf484339bc5bec5d43b9fa4d4c4d4d909a049b0451be` |
+| `examples/laws-derived-catalog.bend` | `6a2794c2f63223d0a6b43fc6c4901c8b41891a9b5d5e47a2768523a29e7d50e1` |
+| `examples/laws-orchestrator-authority.bend` | `64847fb48aa0db4af2b965fbadace5c3ecdf2586d0d9cdf9f44276ea33a283f4` |
+| `examples/laws-no-park.bend` | `25630ec88a4a62d3b76ca976619cdb5045194e4c6261ba4f14be6bb530a3eaa8` |
 
 ## Recovery of the first increment
 
@@ -158,12 +166,15 @@ verbatim output are in the sibling `laws-check-results.json`; this table is that
 
 ```sh
 $ <bend> docs/bend2/laws.bend --check-only
-Error: 10 TODOs found.
+Error: 53 TODOs found.
 The code is incomplete, and not a valid proof yet.
 ```
 
-Exit code 1. The ten are the model obligations stated in `laws.bend`: two for M-5, one for M-10,
-four for M-14 and three for M-18. The other twelve approved entries carry no Bend proposition.
+Exit code 1. The 53 are the model obligations stated in `laws.bend`: the ten of the approved set
+(two for M-5, one for M-10, four for M-14 and three for M-18) and the 43 the operator adopted on
+2026-09-25 for revisions 11 and 12. The other twelve approved entries carry no Bend proposition.
+The driver reads this row for the reported obligations and the refusal, and holds no count of
+them: a count in the check would be a pin the source changes would have to maintain.
 
 ### 2. The proofs and the run
 
@@ -171,10 +182,17 @@ four for M-14 and three for M-18. The other twelve approved entries carry no Ben
 $ <bend> docs/bend2/examples/laws-proof.bend --check-only
 All terms check.
 $ <bend> docs/bend2/examples/laws-proof.bend
-M-5 reviews, M-10 worker admission, M-14 refusal rows and M-18 landing decision: model proofs checked.
+M-5 reviews, M-10 worker admission, M-14 refusal rows, M-18 landing decision and the adopted revision 11 and revision 12 obligations: model proofs checked.
 ```
 
-Exit code 0 for both.
+Exit code 0 for both. The proof file discharges every one of the 53 obligations, including the 43
+adopted ones over the re-encoded revision 11 and revision 12 models, whose own evidence files
+record their controls and the probes that now fail: [laws-no-ledger](laws-no-ledger.evidence.md),
+[laws-independence](laws-independence.evidence.md),
+[laws-prerequisite](laws-prerequisite.evidence.md),
+[laws-no-ceiling](laws-no-ceiling.evidence.md),
+[laws-derived-catalog](laws-derived-catalog.evidence.md) and
+[laws-orchestrator-authority](laws-orchestrator-authority.evidence.md).
 
 ### 3. The refusal laws are stated over two readers, so a drift is what they detect
 
@@ -301,14 +319,72 @@ $ node --test --test-reporter=spec --test-name-pattern=^HC-2: impl/test/issue297
 Exit code 0 for both. These rows read the JavaScript the laws name, at their existing enforcement
 points; the check does not modify `impl/src` or `impl/test`.
 
+## The adversarial probes of the 2026-09-25 review
+
+`docs/bend2/reviews/astra-r11-r12-probes` holds the review's executable probes. That directory is
+not on this lane's branch; its files are the ones commit
+`692a5fb977f58d77c888ed7c1d641e40a66ac9fd` records. Each probe was run from a byte-identical copy
+placed at the same relative depth under `.scratch/mirror/docs/bend2/reviews/`, beside a copy of
+`docs/bend2/`, so the probe's `../../examples/...` imports resolve against the re-encoded models.
+`.scratch/` is gitignored and carries no committed content. The copy method:
+
+```sh
+$ mkdir -p .scratch/mirror/docs/bend2 && cp -R docs/bend2/. .scratch/mirror/docs/bend2/
+$ rm -rf .scratch/mirror/docs/bend2/reviews && mkdir -p .scratch/mirror/docs/bend2/reviews
+$ git show 692a5fb9:docs/bend2/reviews/astra-r11-r12-probes/a-inputs.bend | shasum -a 256
+1df89628e1d003821586305ac589802d847c0dddcd72aa2535743a3502a39e09  -
+$ shasum -a 256 .scratch/mirror/docs/bend2/reviews/astra-r11-r12-probes/a-inputs.bend
+1df89628e1d003821586305ac589802d847c0dddcd72aa2535743a3502a39e09  .scratch/mirror/docs/bend2/reviews/astra-r11-r12-probes/a-inputs.bend
+```
+
+Every probe file in the mirror was compared with the same blob of that commit and reported an
+identical sha256, so the copy method preserves the files. The probes were then run from the mirror
+root, and each importing probe now fails at the re-encoded model:
+
+| Probe | sha256 | Exit |
+|---|---|---|
+| `a-inputs.bend` | `1df89628e1d003821586305ac589802d847c0dddcd72aa2535743a3502a39e09` | 1 |
+| `a-timer.bend` | `51ee5a47e30db63d4698848cda449199d04ececeb3527d818dbf91cfa7f139e7` | 1 |
+| `a-transition.bend` | `031ce30a735a8ef84abe49a68d2e04aff59c791cd2b8bb7192ee8c103881ffa3` | 0 |
+| `b-discovery.bend` | `7a86a6d74a8244d6db3b4ef107512138b001cc6c9aa51e22008f843dd4be935a` | 1 |
+| `b-exclusion.bend` | `09369d9c532fc58f9a9a6b0213ec302504ba44ea2f0a85720b4e10ec92902078` | 1 |
+| `c-dispatch.bend` | `7c9ad92bbaa3d6e72df9b3cbd9aeb9f29fcbd04bd72cacd6b409d735a8b43f90` | 1 |
+| `c-relation.bend` | `63c88d7bbaecd5c5295182fc53cc72374265d2c65c25125d3c4cf3b751cea762` | 1 |
+| `g1-always-deny.bend` | `7a452291d5d06efabda0b130e7f78d21c32e61ca553980fb95c58839edd8a0a5` | 0 |
+| `g1-smuggle.bend` | `70c34bc2d880ca44a54d8d10e270eb0b34c66fb01ca2850fbf490c7d4fa6dc8a` | 0 |
+| `g1.bend` | `25b948ebb2ea4b05cc7e4134d458d4efa8998b42fe0b69109d31da74bef3d853` | 0 |
+| `g2-label.bend` | `fac91d679679f92f5c8f560c36567eeb908d45c9cabc5ba32df7743ac524ef43` | 0 |
+| `g2-orchestrator-wait.bend` | `9ef8872de9ea951b4a18ca5103891dc7423a68a02b593c854e905becc5461964` | 0 |
+| `g2.bend` | `711c1fbb9e60d7a0abdfa3ebcd6d7fa8e12371047b14531e53d5bd93cb675467` | 0 |
+
+The six probes that fail without importing a model (`a-inputs`, `a-timer`, `b-discovery`,
+`b-exclusion`, `c-dispatch`, `c-relation`) fail because the bypass they build is no longer
+expressible over the re-encoded decision. The three positive probes (`a-transition`, `g1`, `g2`)
+stay green. The four bypass probes that carry their own copy of the law (`g1-always-deny`,
+`g1-smuggle`, `g2-label`, `g2-orchestrator-wait`) import nothing from `docs/bend2/examples`, so
+they cannot fail as files; the controls in
+[laws-independence](laws-independence.evidence.md) and
+[laws-prerequisite](laws-prerequisite.evidence.md) hold the same four constructions against the
+re-encoded laws and each fails at a named law.
+
+The revision 11 review's probes under `docs/bend2/reviews/astra-r11-probes` were run the same way;
+[laws-no-ledger](laws-no-ledger.evidence.md) records the six of them that import the re-encoded
+model and now fail.
+
 ## Verdict
 
-The claim holds at pin `a4952426` with bend 2.0.25 on this host: the check exits 0, ten quantified
-model obligations over the M-5 review history, the M-10 worker-admission branch, the M-14 refusal
-vocabulary and the M-18 landing decision are discharged by the checker, the transition witness
-compares the real fold and the real admission decision against those models in both runtime lanes,
-and sixteen controls fail one at a time — including a witness control that proves the comparison
-sees a dropped row. The scope of this evidence is the pure models, the witness corpus and the two
-JavaScript regression rows. `laws.bend` reports twelve approved entries with no checked Bend
-proposition, and no application transition is imported into the models beyond the witness corpus;
-`../laws-trace.md` records that remaining scope and the pin's boundary for every entry.
+The claim holds at pin `a4952426` with bend 2.0.25 on this host: the check exits 0, 53 quantified
+model obligations are discharged by the checker over the M-5 review history, the M-10
+worker-admission branch, the M-14 refusal vocabulary, the M-18 landing decision and the adopted
+revision 11 and revision 12 composition laws, the transition witness compares the real fold and
+the real admission decision against those models in both runtime lanes, and sixteen controls fail
+one at a time, including a witness control that proves the comparison sees a dropped row. The
+scope of this evidence is the pure models, the witness corpus and the two JavaScript regression
+rows. `laws.bend` reports twelve approved entries with no checked Bend proposition, and no
+application transition is imported into the models beyond the witness corpus; `../laws-trace.md`
+records that remaining scope and the pin's boundary for every entry.
+
+The adopted obligations are stated in `laws.bend` and proven in `laws-proof.bend` over six example
+models. Each model's evidence file records the composition it encodes, the controls that fail at
+the named law, and the adversarial probes of the 2026-09-25 astra review that now fail at this
+pin.

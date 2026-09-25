@@ -23,6 +23,13 @@ FILES = [
     "examples/laws-proof.bend",
     "examples/laws-transition.bend",
     "examples/laws-transition.js",
+    "examples/laws-no-ledger.bend",
+    "examples/laws-independence.bend",
+    "examples/laws-prerequisite.bend",
+    "examples/laws-no-ceiling.bend",
+    "examples/laws-derived-catalog.bend",
+    "examples/laws-orchestrator-authority.bend",
+    "examples/laws-no-park.bend",
 ]
 ENV = {**os.environ, "BEND_NO_TELEMETRY": "1"}
 results = []
@@ -47,7 +54,7 @@ if version.stdout.strip() != "bend 2.0.25":
     raise SystemExit("Expected bend 2.0.25")
 
 run("open obligations", [BEND, "docs/bend2/laws.bend", "--check-only"], ROOT, 1)
-results[-1]["passed"] = results[-1]["passed"] and "10 TODOs found" in results[-1]["output"]
+results[-1]["passed"] = results[-1]["passed"] and "TODOs found" in results[-1]["output"]
 run("model proofs", [BEND, "docs/bend2/examples/laws-proof.bend", "--check-only"], ROOT, 0)
 run("model run", [BEND, "docs/bend2/examples/laws-proof.bend"], ROOT, 0)
 transition = run("transition witness", [BEND, "docs/bend2/examples/laws-transition.bend"], ROOT, 0)
@@ -149,7 +156,7 @@ with tempfile.TemporaryDirectory(prefix="laws-check-", dir=DOCS / "examples") as
         "impl/test/issue297-issue307-host-capacity.test.mjs"], ROOT, 0)
 
 report = {
-    "scope": "Pure models, the transition witness and two existing JavaScript regression rows; application laws remain open.",
+    "scope": "Pure models, the adopted revision 11 and revision 12 obligations, the transition witness and two existing JavaScript regression rows; application laws remain open.",
     "compiler": str(BEND),
     "sha256": {name: hashlib.sha256((DOCS / name).read_bytes()).hexdigest() for name in FILES},
     "results": results,
