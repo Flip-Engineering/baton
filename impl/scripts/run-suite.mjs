@@ -2,7 +2,7 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -328,11 +328,21 @@ function laneFiles(changedSelection = null) {
   const runnable = [];
   const skipped = [];
   for (const file of requested) {
+    const path = resolve(implRootPath, file);
+    // A checkout-relative requested file that does not exist is a file this change deleted. The
+    // landing gate's table half derives names from the resident's own tree, so a deleted test's
+    // own issue-numbered name still reaches the runner after the squash removed the file (#582:
+    // a removal lands on its merits). There is nothing to run and the absence is the change
+    // itself, so it skips as a named deletion — the verdict judges only the files that ran.
+    if (!isAbsolute(file) && !existsSync(path)) {
+      skipped.push({ file, reason: 'file absent from the checkout (deleted by this change)' });
+      continue;
+    }
     // The #508 classification guards the suite's own territory: a file under impl/ that never
     // imports `node:test` is not a runnable test. A file outside the suite root kept its
     // absolute path (relativeTestPath) because it is a fixture the caller owns, and it runs
     // as named.
-    if (isAbsolute(file) || fileImportsTestFramework(resolve(implRootPath, file))) runnable.push(file);
+    if (isAbsolute(file) || fileImportsTestFramework(path)) runnable.push(file);
     else skipped.push({ file, reason: 'no test-framework import' });
   }
   return {
