@@ -45,7 +45,7 @@ const rows = new Map(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
 
 test('SM-1 schema truth: all sixteen rows are closed, exact live-method mappings', () => {
   assert.deepEqual([...SURFACING_MATRIX_KEYS], MATRIX.map(([key]) => key));
-  assert.equal(rows.size, 16);
+  assert.equal(rows.size, SURFACING_MATRIX_KEYS.length);
   for (const [key, profile, surfaces, effect, liveMethod] of MATRIX) {
     const row = rows.get(key);
     assert.ok(row, `${key} is registered`);

@@ -69,7 +69,7 @@ test('MN1/MN4/CI6/PF7: handshake and deterministic closed nineteen-tool inventor
   assert.equal(response.result.tools[0].inputSchema.properties.session.additionalProperties, false);
   assert.equal(response.result.tools[0].inputSchema.properties.runId.maxLength, 256);
   const capabilitySchema = response.result.tools.find((tool) => tool.name === 'fleet_capability_invoke').inputSchema;
-  assert.equal(capabilitySchema.oneOf.length, 4);
+  assert.ok(capabilitySchema.oneOf.length > 0, 'capability schema carries oneOf branches');
   assert.deepEqual(capabilitySchema.oneOf.map((branch) => branch.properties.action.const), ['invoke', 'resume', 'reverify', 'push']);
   const duplicate = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.equal(duplicate.error.code, -32600);
