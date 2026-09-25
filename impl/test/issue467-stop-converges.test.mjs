@@ -25,7 +25,7 @@
 //
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -190,7 +190,7 @@ async function endChild(child) {
 async function fixture(t, label, { drainTimeoutMs = 2_500, stopDeadlineMs = 400, webDrainMs = 300 } = {}) {
   // The resident's own socket path is bounded by sun_path (103 bytes) and the suite root on this
   // host is deep, so the fixture root is short (the issue351/issue383 idiom).
-  const directory = mkdtempSync(`/tmp/bt467-${label}-`);
+  const directory = mkdtempSync(join(tmpdir(), `bt467-${label}-`));
   const repo = join(directory, 'repo');
   initRepo(repo);
   const home = join(directory, 'home');
@@ -231,7 +231,14 @@ async function fixture(t, label, { drainTimeoutMs = 2_500, stopDeadlineMs = 400,
   }
   t.after(async () => {
     try { await deployment.close(); } catch { /* closed by the test or the fixture */ }
-    rmSync(directory, { force: true, recursive: true });
+    // Under suite load a late in-process writer (a checkpoint or ledger flush racing the close)
+    // can recreate a path after the removal; the fixture's contract is that the directory is gone
+    // when the file ends, so the removal re-checks and repeats inside this hook.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      rmSync(directory, { force: true, recursive: true, maxRetries: 3, retryDelay: 25 });
+      if (!existsSync(directory)) return;
+      await sleep(50);
+    }
   });
   return { deployment, driver, repo, directory, env, home };
 }

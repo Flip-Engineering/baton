@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -75,7 +76,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function fixture(t, label, { drainTimeoutMs = 350, stopDeadlineMs = 200, webDrainMs = 300 } = {}) {
   // The resident's own socket path is bounded by sun_path (103 bytes) and the suite root on this
   // host is deep, so the fixture root is short (the issue351/issue383 idiom).
-  const directory = mkdtempSync(`/tmp/bt472-${label}-`);
+  const directory = mkdtempSync(join(tmpdir(), `bt472-${label}-`));
   const repo = join(directory, 'repo');
   initRepo(repo);
   const home = join(directory, 'home');

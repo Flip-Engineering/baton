@@ -6,12 +6,16 @@
 // child terminate itself once its parent disappears.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from '../scripts/suite-hygiene.mjs';
+import {
+  addedFixtureDirectories, snapshotFixtureDirectories, sweepStaleSuiteRoots,
+  writeSuiteOwnerReceipt,
+} from '../scripts/suite-hygiene.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 function deadPid() {
   // A real, provably dead pid: spawn a trivial process and wait for it to exit.
@@ -52,6 +56,94 @@ test('SH2 (#40): the sweeper tolerates a missing parent directory and an empty o
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   assert.deepEqual(sweepStaleSuiteRoots(join(parent, 'never-created')), []);
   assert.deepEqual(sweepStaleSuiteRoots(parent), []);
+});
+
+test('SH5 (#571): fixture snapshots are limited to a suite-owned per-file temp directory', (t) => {
+  const suiteRoot = mkdtempSync(join(tmpdir(), 'baton-hygiene-fixtures-'));
+  t.after(() => rmSync(suiteRoot, { recursive: true, force: true }));
+  const fileRoot = join(suiteRoot, 'file-1');
+  mkdirSync(fileRoot);
+  const before = snapshotFixtureDirectories(fileRoot, suiteRoot);
+  mkdirSync(join(fileRoot, 'baton-repo-ABC123'));
+  mkdirSync(join(fileRoot, 'bt351-ABC123'));
+  mkdirSync(join(fileRoot, 'baton-501'));
+  mkdirSync(join(fileRoot, 'unrelated-ABC123'));
+  assert.deepEqual(addedFixtureDirectories(before, snapshotFixtureDirectories(fileRoot, suiteRoot)), [
+    'baton-repo-ABC123', 'bt351-ABC123',
+  ]);
+  assert.equal(snapshotFixtureDirectories(tmpdir(), suiteRoot), null,
+    'a shared temp directory outside the suite root is not inspected');
+});
+
+test('SH7 (#571): the socket-fixture root stays contained when it fits and falls back to the short system root when the ambient root is too deep', (t) => {
+  const previous = process.env.TMPDIR;
+  t.after(() => { process.env.TMPDIR = previous; });
+
+  // A short ambient root by construction (not the ambient one, which a seat runtime or a gate
+  // can make arbitrarily deep).
+  const short = mkdtempSync('/tmp/bat571-sh-');
+  t.after(() => rmSync(short, { recursive: true, force: true }));
+  process.env.TMPDIR = short;
+  const contained = fixtureSocketRoot('bt571-pin-');
+  t.after(() => rmSync(contained, { recursive: true, force: true }));
+  assert.ok(contained.startsWith(`${short}/`),
+    'a root whose socket path fits is minted under the ambient TMPDIR');
+
+  // A root deep enough that '<root>/bt571-pin-XXXXXX/resident.sock' passes the 103-byte bound.
+  const deep = join(short, 'd'.repeat(103));
+  mkdirSync(deep, { recursive: true });
+  process.env.TMPDIR = deep;
+  const fellBack = fixtureSocketRoot('bt571-pin-');
+  t.after(() => rmSync(fellBack, { recursive: true, force: true }));
+  assert.ok(fellBack.startsWith('/tmp/'),
+    'a root whose socket path would overflow falls back to the short system root');
+  assert.ok(Buffer.byteLength(join(fellBack, 'resident.sock')) <= 103,
+    'the fallback path fits the sun_path bound');
+});
+
+test('SH6 (#571): the runner fails and reaps a timed-out file that leaves a fixture directory', (t) => {
+  const world = mkdtempSync(join(tmpdir(), 'baton-hygiene-runner-'));
+  t.after(() => rmSync(world, { recursive: true, force: true }));
+  const fixture = join(world, 'leaking-fixture.test.mjs');
+  writeFileSync(fixture, [
+    "import { mkdtempSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import { join } from 'node:path';",
+    "import test from 'node:test';",
+    "mkdtempSync(join(tmpdir(), 'baton-deliberate-leak-'));",
+    "test('leaks then hangs', async () => {",
+    "  await new Promise(() => {});",
+    "});",
+    '',
+  ].join('\n'));
+  const calibration = {
+    baselineBasis: 'recorded', baselineProbeMs: 1, cores: 1, factor: 1,
+    load: { fifteen: 0, five: 0, one: 0 }, measuredAt: '2026-09-23T00:00:00.000Z',
+    probeMs: 1, schemaVersion: 1,
+  };
+  const env = {
+    ...process.env,
+    BATON_HOST_CAPACITY_DISABLED: '1',
+    BATON_RG_CALIBRATION: JSON.stringify(calibration),
+    BATON_TEST_TMP_PARENT: world,
+    TMPDIR: world, TMP: world, TEMP: world,
+  };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('BATON_SUITE_') || key === 'BATON_TEST_SUITE_ROOT' || key === 'NODE_TEST_CONTEXT') delete env[key];
+  }
+  // The nested process must finish Node startup and evaluate the fixture before its deliberate
+  // block reaches the runner's idle deadline. The directory is created during module evaluation,
+  // so every timeout after that point exercises the leak detector.
+  env.BATON_SUITE_IDLE_MS = '5000';
+  const outcome = spawnSync(process.execPath, [
+    join(import.meta.dirname, '..', 'scripts', 'run-suite.mjs'), fixture,
+  ], { encoding: 'utf8', env });
+  assert.equal(outcome.status, 1);
+  assert.match(`${outcome.stdout}\n${outcome.stderr}`, /\(file leaked fixture directories\)/u);
+  assert.match(`${outcome.stdout}\n${outcome.stderr}`, /baton-deliberate-leak-/u);
+  assert.match(`${outcome.stdout}\n${outcome.stderr}`, /file hung/u);
+  assert.deepEqual(readdirSync(world).sort(), ['leaking-fixture.test.mjs'],
+    'the runner removes the leaked directory and its suite root before it reports failure');
 });
 
 test('SH3 (#40): a watchdog-armed child terminates itself after its parent dies unhandled', async (t) => {

@@ -143,13 +143,26 @@ test('273-a: a guide to a paused seat answers with its own row, and says the lan
 });
 
 test('273-a: a lane that refuses on a deliverable harness answers a refused row, never null', async (t) => {
-  const f = await seated(t, { deliver: 'worker_not_active' });
+  const f = await seated(t, { deliver: 'worker_stopping' });
   const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
   assert.equal(guided.guide.kind, 'swarm.guidance_sent');
   assert.equal(guided.guide.delivery.state, 'refused');
-  assert.equal(guided.guide.delivery.reason, 'worker_not_active');
+  assert.equal(guided.guide.delivery.reason, 'worker_stopping');
   assert.equal(f.store.eventsView().some((event) => event.kind === 'driver.recorded'
-    && event.payload?.kind === 'swarm.guidance_parked'), false, 'a deliverable harness never parks');
+    && event.payload?.kind === 'swarm.guidance_parked'), false, 'a deliverable harness never parks on an ordinary lane refusal');
+});
+
+test('273-a2: a worker_not_active lane refusal parks the guidance under the lane\'s own reason (#534)', async (t) => {
+  const f = await seated(t, { deliver: 'worker_not_active' });
+  const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
+  assert.deepEqual(guided.result, { ok: true, result: 'parked', reason: 'worker_not_active',
+    messageId: guided.guide.messageId });
+  assert.equal(guided.guide.kind, 'swarm.guidance_parked');
+  assert.deepEqual(guided.guide.delivery,
+    { state: 'parked', lane: null, reason: 'worker_not_active' });
+  const parked = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_parked');
+  assert.equal(parked.length, 1, 'exactly one durable park — the seat\'s next exec or successor brief composes it');
 });
 
 // ── (b) priority: closed set, default, refusal shape ───────────────────────────────────────────
@@ -206,7 +219,7 @@ test('273-c: a one-shot seat parks at either priority, and the park stays durabl
   const parked = await f.call('guide', { participantId: 'builder', message: 'Hold the shape.', priority: 'now' });
   assert.equal(parked.receipt.event.kind, 'swarm.guidance_parked');
   assert.equal(parked.guide.priority, 'now');
-  assert.deepEqual(parked.guide.delivery, { state: 'parked', lane: null, reason: 'harness_one_shot' });
+  assert.deepEqual(parked.guide.delivery, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true });
   assert.deepEqual(parked.next.observation, { wakeClass: 'guidance_delivered', participantId: 'builder' });
   const rows = await f.guidanceFor('builder');
   assert.deepEqual(rows.map((row) => row.delivery.state), ['parked']);
@@ -310,7 +323,7 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
 
   const parked = swarmGuideRendering({
     guide: { seq: 7, participantId: 'builder', priority: 'next_boundary',
-      delivery: { state: 'parked', lane: null, reason: 'harness_one_shot' } },
+      delivery: { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true } },
     next: { command: 'swarm.watch', args: { swarmId: 'baton' },
       observation: { wakeClass: 'guidance_delivered', participantId: 'builder' } },
   });
@@ -319,7 +332,7 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
 
   const refused = swarmGuideRendering({
     guide: { seq: 8, participantId: 'builder', priority: 'next_boundary',
-      delivery: { state: 'refused', lane: null, reason: 'worker_not_active' } },
+      delivery: { state: 'refused', lane: null, reason: 'worker_stopping' }, },
     next: { command: 'swarm.watch', args: { swarmId: 'baton' }, observation: { wakeClass: 'paused', participantId: 'builder' } },
   });
   assert.match(refused.guide.rendering, /refused — the seat received nothing/u);
@@ -331,9 +344,11 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
 test('273-f: the CLI usage teaches --priority and --in-reply-to, and the parse hands them on typed', async () => {
   const row = swarmCliCommand('guide');
   assert.deepEqual(row.flags.map((entry) => entry.flag), ['--priority', '--in-reply-to', '--view']);
-  assert.match(row.usage, /\[--priority VALUE\] \[--in-reply-to VALUE\]/u);
+  // Issue #567: a closed-set flag renders its admitted values from the same table the validator
+  // judges against (swarmClosedSetAdmitted), never a bare VALUE that only a refusal decodes.
+  assert.match(row.usage, /\[--priority next_boundary\|now\] \[--in-reply-to VALUE\]/u);
   const help = batonCliHelp('swarm.guide');
-  assert.match(help, /baton swarm guide <SWARM-ID> <PARTICIPANT-ID> <MESSAGE> \[--priority VALUE\] \[--in-reply-to VALUE\]/u);
+  assert.match(help, /baton swarm guide <SWARM-ID> <PARTICIPANT-ID> <MESSAGE> \[--priority next_boundary\|now\] \[--in-reply-to VALUE\]/u);
 
   const parsed = parseBatonCli(['swarm', 'guide', 'baton', 'builder', 'Hold the shape.',
     '--priority', 'now', '--in-reply-to', '12']);

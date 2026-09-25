@@ -1,7 +1,7 @@
 // Swarm CLI and MCP projections of the shared command contract.
 import { canonicalAndTransportNames, deriveSurfaceNames } from './application-semantics.mjs';
 import { swarmUpdatePayloadDetails, swarmOperationRefusedDetails } from './swarm-event-schemas.mjs';
-import { SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_COMMAND_ROWS, SWARM_VIEW_PROJECTION_NAMES } from './swarm-contract.mjs';
+import { SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_COMMAND_ROWS, SWARM_VIEW_PROJECTION_NAMES, swarmClosedSetAdmitted } from './swarm-contract.mjs';
 export * from './swarm-contract.mjs';
 
 // The swarm verbs are ordinary application capabilities, so their MCP tools carry the registry's
@@ -113,7 +113,14 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
   const usage = [
     `baton swarm ${verb}`,
     ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
-    ...flags.map((entry) => entry.switch ? `[${entry.flag}]` : `[${entry.flag} VALUE]`),
+    ...flags.map((entry) => {
+      if (entry.switch) return `[${entry.flag}]`;
+      // Issue #567: a flag whose field has a closed set renders the admitted values from the
+      // same table the validator judges against (swarmClosedSetAdmitted), so the usage line
+      // teaches the set and no refusal is needed to learn it.
+      const admitted = swarmClosedSetAdmitted(entry.field);
+      return admitted === null ? `[${entry.flag} VALUE]` : `[${entry.flag} ${admitted.join('|')}]`;
+    }),
     // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and
     // check verbs both serve it (#313 — the check usage line used to omit what the receipt teaches).
     // The watch leg rides the deployment wake stream, so its usage teaches the stream's own

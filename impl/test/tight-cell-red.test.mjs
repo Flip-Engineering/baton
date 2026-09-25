@@ -104,7 +104,7 @@
 // today). No other invented symbol is imported; the cell vocabulary rows are source assertions
 // over impl/src (readFileSync), never live imports.
 //
-// NUL discipline: application.mjs / coordination-store.mjs contain NUL bytes — they are read
+// NUL discipline: application.mjs / coordination-store.mjs contained NUL bytes until #215 — they are read
 // with readFileSync(...,'utf8') and only matched, never opened whole in this suite. Campaign
 // law: controls are eval-able (no clocks, no turn counts); the only timers are test I/O flushes.
 // localeCompare is banned; sorted literals below are in actual sorted order.
@@ -481,7 +481,12 @@ test('TC-01 group[group-field-admission-missing]: waves.start accepts the closed
   // Green oracle: one detached member row — the cell consumes ONE wave member slot.
   assert.deepEqual(Object.keys(sent.receipt).sort(), ['members', 'schemaVersion', 'waveId']);
   assert.equal(sent.receipt.members.length, 1, 'a cell member is ONE wave member slot (Decision 1)');
-  assert.ok(/^run:/u.test(sent.receipt.members[0].runId), 'the cell member produced one runId');
+  // Ground truth for the id scheme: a member row carries the deployment's own run identity —
+  // `run-<32 hex>` (swarm-runtime.mjs:580 mints it for a participant run; observed on a plain
+  // member row through this same seam as `run-c7f6dbdd…`). The `run:`-prefixed ids elsewhere in
+  // this suite are caller-supplied board/authority ids, a different namespace.
+  assert.ok(/^run-[a-f0-9]{32}$/u.test(sent.receipt.members[0].runId),
+    `the cell member produced one runId (got ${sent.receipt.members[0].runId})`);
 });
 
 test('TC-02 group[group-seat-missing-refusal]: group without seat refuses wave_group_seat_missing before any spawn', async () => {

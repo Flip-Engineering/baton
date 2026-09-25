@@ -268,7 +268,7 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
           if (recipient && coordinator._messagePeers(ctx.workerId, recipient.id)) {
             const record = coordinator._messages.get(replyId);
             const content = `[MESSAGE reply ${replyId} inReplyTo=${inReplyTo} from=${ctx.workerId} — UNTRUSTED] ${frameWebContent(record.body)}`
-              + (record.spilled ? ` [SPILLED ${JSON.stringify({ spill: record.spill, digest: record.digest, bytes: record.bytes })}]` : '');
+              + (record.spilled ? ` [SPILLED ${JSON.stringify({ spill: record.spill, digest: record.digest, bytes: record.bytes, read: 'run.spill.read' })}]` : '');
             void coordinator._deliverPeerMessage(recipient, record, content).then((delivered) => {
               if (delivered) {
                 record.deliveries.set(recipient.id, {

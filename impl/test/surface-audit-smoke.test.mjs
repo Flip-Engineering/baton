@@ -7,6 +7,7 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 
 import { collectSurfaceInventory, renderSurfaceAudit } from '../scripts/surface-audit.mjs';
+import { ORDINARY_COMMANDS } from '../src/mcp-web-bridge.mjs';
 
 const AUDIT_SCRIPT = new URL('../scripts/control-surface-audit.mjs', import.meta.url);
 
@@ -37,8 +38,14 @@ test('SA2: known anchors from each dialect are present', () => {
   }
   assert.ok(inventory.mcpFleetTools.includes('fleet_run_start'));
   assert.ok(inventory.mcpBatonTools.includes('baton_run_start'));
-  assert.deepEqual(inventory.mcpWebBridgeCommands,
-    ['application.help', 'run.act', 'run.inspect', 'run.start', 'run.stop']);
+  // Issue #533: the bridge row IS the bridge's exported ORDINARY_COMMANDS (sorted) — the one
+  // table the bridge admits by — never a hand-kept copy of it; and every entry stays a
+  // namespaced application command, so a drifted or invented entry fails here.
+  assert.deepEqual(inventory.mcpWebBridgeCommands, [...ORDINARY_COMMANDS].sort());
+  for (const command of inventory.mcpWebBridgeCommands) {
+    assert.match(command, /^(?:application|runs|run|waves)\.[a-z][a-z0-9_.]+$/u,
+      `the bridge row carries a namespaced application command, never a stray literal: ${command}`);
+  }
   assert.ok(inventory.embeddedMethods.some((name) => name.startsWith('BatonRun.')));
   for (const phase of ['awaiting_plan_approval', 'selection_required', 'candidate_selected',
     'input_required', 'planning_failed']) {

@@ -61,7 +61,7 @@ export const LSP_CODE_VERBS = Object.freeze([
   'code_symbol', 'code_references', 'code_hover', 'code_index_status',
 ]);
 // The closed M6 output-class → sanitizer map (D4.3). boundedAttentionText lives in
-// application.mjs (not exported; NUL-bearing machinery) — for attention-class text this module
+// application.mjs (not exported; NUL-clean since #215) — for attention-class text this module
 // routes through the exported sanctioned sanitizer verbatim rather than forking a parallel
 // redaction path; the mapping NAME stays the sanctioned one (recorded judgment call).
 export const LSP_SANITIZER_MAPPING = Object.freeze({

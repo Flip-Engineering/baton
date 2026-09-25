@@ -55,7 +55,7 @@
 // condition it claims, so a vacuous pass is impossible (blue-team findings 1, 3, 5, 8a, 8b, 9).
 //
 // ── NUL DISCIPLINE (§8) ────────────────────────────────────────────────────────────────────
-// application.mjs and coordination-store.mjs carry NUL bytes. This suite cites their anchors in
+// application.mjs and coordination-store.mjs carried NUL bytes until #215. This suite cites their anchors in
 // comments only (verified by the contract at HEAD dc569eaa… / 4758d8fa…); source scans target the
 // NUL-free inventories (application-deployment.mjs, application-cli.mjs, mcp-northbound.mjs,
 // wave-driver.mjs, the resolved detection home).
@@ -87,6 +87,7 @@ import { parseBatonCli } from '../src/application-cli.mjs';
 import * as deploymentModule from '../src/application-deployment.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { MockAdapter, openBaton } from '../src/index.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 import {
   WorktreeCapacityAuthority, loadOrCreateWorktreeCapacityIntegrityKey,
   normalizeWorktreeCapacityPolicy,
@@ -167,11 +168,14 @@ function tmpDir(label) {
   return dir;
 }
 // A SHORT absolute root for resident fixtures: the resident protocol bounds socketPath to 103
-// bytes (application-cli.mjs:265 — sun_path), so the config root must be short. os.tmpdir() on
-// this host is deep (the taskwave runtime path); a top-level /tmp root keeps the resident socket
-// path well under the bound.
+// bytes (application-cli.mjs:265 — sun_path), so the config root must be short. os.tmpdir() can
+// be deep (a seat's runtime path), so the root goes through the measure-then-fall-back
+// derivation (fixture-root.mjs): contained under the ambient root when the socket path fits,
+// minted under /tmp when it does not.
 function shortTmpDir(label) {
-  const dir = mkdtempSync(join('/tmp', `baton-pd72-${label}-`));
+  // The spawned resident's socket name is its digest pair (34 bytes), longer than the
+  // 'resident.sock' default, so the probe names it.
+  const dir = fixtureSocketRoot(`baton-pd72-${label}-`, 'xxxxxxxxxxxxxxxx-xxxxxxxxxxxx.sock');
   dirs.push(dir);
   return dir;
 }

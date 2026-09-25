@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -9,8 +10,8 @@ import { openConvergedBaton } from '../src/index-converged.mjs';
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 
-function repository(t) {
-  const root = mkdtempSync('/tmp/baton-real-convergence-repo-');
+function repository() {
+  const root = mkdtempSync(join(tmpdir(), 'baton-real-convergence-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'convergence@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Baton Convergence'], { cwd: root });
@@ -26,7 +27,6 @@ function repository(t) {
   ].join('\n'));
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });
-  t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
 
@@ -60,15 +60,13 @@ function adapter() {
   return value;
 }
 
-function configuration(t, repo) {
-  const deploymentRoot = mkdtempSync('/tmp/baton-real-convergence-deployment-');
-  const configRoot = mkdtempSync('/tmp/baton-real-convergence-config-');
-  const home = mkdtempSync('/tmp/baton-real-convergence-home-');
-  t.after(() => rmSync(deploymentRoot, { recursive: true, force: true }));
-  t.after(() => rmSync(configRoot, { recursive: true, force: true }));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+function configuration(repo) {
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-real-convergence-deployment-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'baton-real-convergence-config-'));
+  const home = mkdtempSync(join(tmpdir(), 'baton-real-convergence-home-'));
   const env = { XDG_CONFIG_HOME: configRoot, HOME: home };
   return {
+    fixtureRoots: [deploymentRoot, configRoot, home],
     advanced: {
       deploymentRoot,
       adapters: { codex: adapter() },
@@ -85,10 +83,16 @@ function configuration(t, repo) {
 }
 
 test('real openBaton deployment preserves doctor, direct Run and admitted resident Web command paths', async (t) => {
-  const repo = repository(t);
-  const configured = configuration(t, repo);
-  const owner = await openConvergedBaton({ repo, advanced: configured.advanced });
-  t.after(async () => { try { await owner.close(); } catch {} });
+  const repo = repository();
+  const configured = configuration(repo);
+  let owner = null;
+  t.after(async () => {
+    try { await owner?.close(); } catch {}
+    for (const root of [repo, ...configured.fixtureRoots]) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  owner = await openConvergedBaton({ repo, advanced: configured.advanced });
   await owner.ready;
 
   const doctor = await owner.doctor();
