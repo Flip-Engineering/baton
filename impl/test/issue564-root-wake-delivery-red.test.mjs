@@ -19,9 +19,11 @@ import {
   HARNESS_WAKE_DELIVERY,
   claudeCrossSessionFrame,
   deliverClaudeSessionWake,
+  deliverRootWakeFrame,
   deliverRootWakeOnce,
   harnessWakeCapability,
   harnessWakeCapabilityRows,
+  normalizeRootWakeTarget,
   parseClaudeAgents,
 } from '../src/wake-delivery.mjs';
 import { SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS } from '../src/swarm-event-schemas.mjs';
@@ -332,4 +334,58 @@ test('every harness with no operator-session delivery channel refuses typed', as
     assert.equal(store.rows[0].payload.kind, 'wake.root_undelivered');
     assert.equal(store.rows[0].payload.code, 'wake_delivery_unavailable');
   }
+});
+
+// Issue #564: an interactive operator session — the human's Claude Code session, a process the
+// session registry does not list — is addressed by the pid that owns its socket, so the wake does
+// not depend on `claude agents --json` finding it.
+
+test('the rootWake target carries the operator session pid, and refuses a pid nothing can use', () => {
+  assert.deepEqual(normalizeRootWakeTarget({ harness: 'claude-code', sessionId: 'session-root', pid: 4242 }),
+    { harness: 'claude-code', sessionId: 'session-root', from: 'baton', pid: 4242 });
+  assert.deepEqual(normalizeRootWakeTarget({ harness: 'claude-code', sessionId: 'session-root' }),
+    { harness: 'claude-code', sessionId: 'session-root', from: 'baton' },
+    'a target without a pid stays the discovery shape');
+  for (const pid of [0, -1, 1.5, '4242']) {
+    assert.throws(() => normalizeRootWakeTarget({ harness: 'claude-code', sessionId: 'session-root', pid }),
+      (error) => error?.code === 'wake_delivery_invalid', `pid ${JSON.stringify(pid)} refuses`);
+  }
+  const noChannel = harnessWakeCapabilityRows().find((row) => row.mechanism === 'none');
+  assert.throws(() => normalizeRootWakeTarget({ harness: noChannel.harness, sessionId: 's', pid: 4242 }),
+    (error) => error?.code === 'wake_delivery_unavailable',
+    'a harness with no turn-starting channel refuses before the pid is read');
+});
+
+test('a named pid is addressed directly, and the frame path carries it', async () => {
+  const sent = [];
+  let discoveryCalls = 0;
+  const discovery = async () => { discoveryCalls += 1; return '[]'; };
+  const direct = await deliverClaudeSessionWake({
+    sessionId: 'session-root', body: 'wake body', from: 'baton-564', pid: 4242,
+    discovery, transport: async ({ socket, line }) => { sent.push({ socket, line }); },
+  });
+  assert.equal(discoveryCalls, 0, 'a named pid never consults the session registry');
+  assert.deepEqual(direct, { delivered: true, pid: 4242, socket: '/tmp/cc-socks/4242.sock' });
+  assert.equal(sent.length, 1, 'the frame reached the socket the pid names');
+  assert.equal(JSON.parse(sent[0].line).session_id, 'session-root');
+
+  const store = memoryStore();
+  const owed = store.recordDriver('swarm.root_attention_owed', {
+    swarmId: 'swarm-564', participantId: 'lead', owed: 'needs_root', contributionId: 'contribution-564',
+    ask: 'the root: inspect contribution-564',
+    next: { command: 'swarm.view', swarmId: 'swarm-564' },
+  }, { actor: 'baton-runtime', key: 'owed-pid-1' }).event;
+  const throughFrame = [];
+  const result = await deliverRootWakeFrame({
+    store,
+    frame: { seq: owed.seq, wakeClass: 'root_owed', swarmId: 'swarm-564' },
+    target: normalizeRootWakeTarget({ harness: 'claude-code', sessionId: 'session-root', pid: 4242 }),
+    discovery,
+    transport: async ({ socket, line }) => { throughFrame.push({ socket, line }); },
+  });
+  assert.equal(discoveryCalls, 0, 'the frame path reaches the socket without discovery too');
+  assert.equal(throughFrame[0].socket, '/tmp/cc-socks/4242.sock');
+  assert.equal(result.delivered, true);
+  assert.equal(store.rows.filter((row) => row.payload.kind === 'wake.root_delivered').length, 1,
+    'and the delivery is still recorded durably once');
 });

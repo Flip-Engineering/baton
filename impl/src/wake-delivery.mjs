@@ -93,13 +93,15 @@ function nonempty(value, field) {
 
 /** Issue #564: the operator session one resident is configured to wake. The declaration is
  * validated at deployment open. A named harness must have a turn-starting channel in the closed
- * capability table, so a resident cannot start with a configured target it cannot reach. */
+ * capability table, so a resident cannot start with a configured target it cannot reach. A
+ * session-socket harness may name the `pid` that owns the session's socket, which is how an
+ * interactive operator session the session registry does not list is addressed. */
 export function normalizeRootWakeTarget(value) {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) {
     throw refusal('advanced rootWake must be an object', 'wake_delivery_invalid');
   }
-  const unknown = Object.keys(value).find((field) => !['harness', 'sessionId', 'from'].includes(field));
+  const unknown = Object.keys(value).find((field) => !['harness', 'sessionId', 'from', 'pid'].includes(field));
   if (unknown !== undefined) {
     throw refusal(`advanced rootWake contains unsupported field ${unknown}`, 'wake_delivery_invalid');
   }
@@ -117,7 +119,17 @@ export function normalizeRootWakeTarget(value) {
   if (!row.canStartTurn) {
     throw refusal(`${harness} cannot start a turn in an idle operator session`, 'wake_delivery_unavailable');
   }
-  return Object.freeze({ harness, sessionId, from });
+  // Issue #564: a session-socket harness may be addressed by the pid that owns its socket. The
+  // session registry (`claude agents --json`) lists background agents only, so an interactive
+  // operator session has no other id-to-pid source, and this is what the operator declares.
+  if (value.pid !== undefined && (row.mechanism !== 'session-socket'
+    || !Number.isSafeInteger(value.pid) || value.pid <= 0)) {
+    throw refusal('advanced rootWake pid must be the positive process id of a session-socket harness',
+      'wake_delivery_invalid');
+  }
+  return Object.freeze({
+    harness, sessionId, from, ...(value.pid === undefined ? {} : { pid: value.pid }),
+  });
 }
 
 export function claudeSessionSocketPath(pid) {
@@ -184,12 +196,15 @@ async function defaultClaudeTransport({ socket, line }) {
   });
 }
 
-/** Discover one live Claude Code session and write one cross-session NDJSON frame to its socket. */
+/** Discover one live Claude Code session and write one cross-session NDJSON frame to its socket.
+ * A caller that already knows the pid (`pid`) skips discovery: the socket path is derived from it
+ * directly, which is how an interactive operator session the registry does not list is reached. */
 export async function deliverClaudeSessionWake({
   sessionId,
   body,
   from,
   messageId = randomUUID(),
+  pid = null,
   discovery = defaultClaudeDiscovery,
   transport = defaultClaudeTransport,
 }) {
@@ -202,19 +217,25 @@ export async function deliverClaudeSessionWake({
     throw refusal('Claude wake discovery and transport must be functions', 'wake_delivery_invalid');
   }
 
-  let discovered;
-  try {
-    const result = await discovery({ sessionId });
-    const stdout = typeof result === 'string' ? result : result?.stdout;
-    discovered = typeof stdout === 'string' ? parseClaudeAgents(stdout, sessionId) : null;
-  } catch (cause) {
-    throw refusal('Claude session discovery failed', 'claude_session_discovery_failed', cause);
-  }
-  if (discovered === null) {
-    throw refusal(`Claude session ${sessionId} is not a unique live agent`, 'claude_session_not_found');
+  let targetPid = pid;
+  if (targetPid === null) {
+    let discovered;
+    try {
+      const result = await discovery({ sessionId });
+      const stdout = typeof result === 'string' ? result : result?.stdout;
+      discovered = typeof stdout === 'string' ? parseClaudeAgents(stdout, sessionId) : null;
+    } catch (cause) {
+      throw refusal('Claude session discovery failed', 'claude_session_discovery_failed', cause);
+    }
+    if (discovered === null) {
+      throw refusal(`Claude session ${sessionId} is not a unique live agent`, 'claude_session_not_found');
+    }
+    targetPid = discovered.pid;
+  } else if (!Number.isSafeInteger(targetPid) || targetPid <= 0) {
+    throw refusal('Claude session pid must be a positive safe integer', 'claude_session_pid_invalid');
   }
 
-  const socket = claudeSessionSocketPath(discovered.pid);
+  const socket = claudeSessionSocketPath(targetPid);
   const frame = claudeCrossSessionFrame({ sessionId, from, body, messageId });
   const line = `${JSON.stringify(frame)}\n`;
   try {
@@ -222,7 +243,7 @@ export async function deliverClaudeSessionWake({
   } catch (cause) {
     throw refusal(`Claude session socket delivery failed for ${socket}`, 'claude_session_transport_failed', cause);
   }
-  return Object.freeze({ delivered: true, pid: discovered.pid, socket });
+  return Object.freeze({ delivered: true, pid: targetPid, socket });
 }
 
 function deliveryPayload(row) {
@@ -480,6 +501,7 @@ export async function deliverRootWakeFrame({
           sessionId: normalizedTarget.sessionId,
           from: normalizedTarget.from,
           body,
+          ...(normalizedTarget.pid === undefined ? {} : { pid: normalizedTarget.pid }),
           ...(discovery === undefined ? {} : { discovery }),
           ...(transport === undefined ? {} : { transport }),
         });
