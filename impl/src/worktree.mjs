@@ -3548,7 +3548,15 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       const crashBaseSha = typeof ownerReceipt?.baseSha === 'string' ? ownerReceipt.baseSha : null;
       if (isPhysicalWorkspaceId(normalizedTaskId) && existsSync(fullDir)) {
         const lane = laneBranchState(repoRoot, normalizedTaskId, fullDir);
-        if (!lane.branchSha || !lane.contained) {
+        // "Contained" is the WHOLE checkout's state, never only its commits: the snapshot a
+        // removal records is the branch tip, so work the tree holds beyond that commit
+        // (modified or untracked paths) is provably uncaptured by it — such a checkout is
+        // LEFT IN PLACE for its resume successor (#517), exactly like an uncontained HEAD.
+        let treeUncaptured = false;
+        try {
+          treeUncaptured = sh('git', ['status', '--porcelain=v1', '--untracked-files=all'], fullDir).length > 0;
+        } catch { treeUncaptured = true; } // an unreadable tree state is never proof of containment
+        if (!lane.branchSha || !lane.contained || treeUncaptured) {
           report.diagnostics.push(Object.freeze({
             code: 'workspace_owner_head_uncontained_retained', physicalOwnerId: normalizedTaskId,
             deploymentId: ownerReceipt?.deploymentId ?? null,
