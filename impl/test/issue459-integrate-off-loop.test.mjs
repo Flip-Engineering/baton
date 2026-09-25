@@ -65,6 +65,16 @@ function write(repo, path, content) {
   writeFileSync(full, content);
 }
 
+/** The landing KEEPS its gate-verdict directory when no document was read (#551), and the rows that
+ * stage an unjudged run reap it here: a fixture-shaped directory left below the file's private temp
+ * root fails the file (#571), and the directory a late verdict would land in is the row's
+ * `verdictPath` — so a row that judged nothing is the one shape that has to give it back. */
+function reapVerdictScratch(t, failures) {
+  const path = failures?.[0]?.detail?.unexpected?.[0]?.verdictPath;
+  if (typeof path !== 'string') return;
+  t.after(() => rmSync(dirname(path), { recursive: true, force: true }));
+}
+
 // The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
 // the base commit — the integration checkout checks them out, and the landing runs them for real.
 const REGENERATORS = Object.freeze([
@@ -586,6 +596,7 @@ test('459i: a gate run whose runner dies mid-flight reports the named partial ve
   assert.ok(error, 'the landing settles on the interrupted run');
   assert.equal(error.code, 'integrate_gates_red');
   const failures = w.failureRows();
+  reapVerdictScratch(t, failures);
   assert.equal(failures.length, 1, 'the interrupted run leaves its outcome in the record');
   assert.equal(failures[0].code, 'integrate_gates_red');
   const row = failures[0].detail.unexpected[0];
@@ -673,6 +684,7 @@ test('577b: a landing whose gate run exits with its pipes held still records its
   assert.ok(elapsedMs < 30_000, `the gate run ends on the runner's own exit (${elapsedMs} ms)`);
   const failures = w.failureRows();
   assert.equal(failures.length, 1, 'the landing leaves its terminal row in the record');
+  reapVerdictScratch(t, failures);
   assert.equal(failures[0].detail.unexpected[0].row, 'suite-did-not-judge');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
 });
