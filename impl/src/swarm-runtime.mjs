@@ -4531,6 +4531,7 @@ export class SwarmRuntime {
         dirty: observation?.dirty ?? false,
         preserved: lastPushed === null ? null
           : Object.freeze({ sha: lastPushed.sha, at: lastPushed.at, work: lastPushed.work }),
+
         removed: custody?.removed ?? null,
         // Issue #438: where this row's live facts came from — the durable rows when nothing was
         // observed, else the seat's wrapper commit, its own turn seam, or an explicit live read.
