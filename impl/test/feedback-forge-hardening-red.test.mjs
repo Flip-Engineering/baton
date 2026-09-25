@@ -80,9 +80,9 @@
 //   Run 1: 8 passed / 8 failed   (P1–P8 green; R1–R8 red)   — stable
 //   Run 2: 8 passed / 8 failed   (P1–P8 green; R1–R8 red)   — stable
 //
-// NUL DISCIPLINE: application.mjs contains literal NUL bytes (line 619 cacheKey); `grep` treats it
-// as binary and fails silently. Manual inspection uses `grep -a` / `sed -n`. This suite reads
-// sources with `readFileSync(..., 'utf8')` + string scanning, which is NUL-tolerant.
+// NUL DISCIPLINE: application.mjs and coordination-store.mjs carried literal NUL bytes until #215
+// spelled them `\0`; plain `grep` reads both files as text now. This suite reads sources with
+// `readFileSync(..., 'utf8')` + string scanning.
 // NO CLOCKS AS CONTROLS: no wall-clock/timeout logic anywhere; workflow progress is driven by the
 // resident openBaton dispatch loop, never by `setTimeout`.
 // HERMETIC: every deployment is a `mkdtemp` repo + `mkdtemp` deployment root torn down by `t.after`;

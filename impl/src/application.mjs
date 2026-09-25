@@ -5,6 +5,7 @@ import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
+import { MAX_CELL_SIZE, normalizeCellDeclaration } from './wave.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
@@ -28,6 +29,7 @@ import {
 import {
   identifyResultExportRoot, ResultExportLifecycle,
 } from './result-export.mjs';
+import * as harvestAccessor from './harvest-accessor.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
   canonicalOperationFields, canonicalOperationForCommand,
@@ -36,6 +38,7 @@ import {
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import * as coordinationLedger from './coordination-ledger.mjs';
 import {
   normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText,
 } from './verifier-diagnostics.mjs';
@@ -182,6 +185,7 @@ export {
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
+
 const MAX_PROFILES = 256;
 
 
@@ -194,10 +198,6 @@ const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
 // ceiling MAX_BOARD_VIEW_BYTES on the serialized projection.
 const MAX_BOARD_VIEW_BYTES = FRAME_LIMITS['view.board.bytes'].value;
 const MAX_BOARD_ITEMS = FRAME_LIMITS['view.board.items'].value;
-// REPL-2 binding-view ceilings (repl23-decisions.md Part D rule 13), the exact same
-// byte/count-ceiling shape MAX_BOARD_VIEW_BYTES/MAX_BOARD_ITEMS use for boards.
-const MAX_REPL_VIEW_BYTES = FRAME_LIMITS['view.repl.bytes'].value;
-const MAX_REPL_BINDING_ITEMS = 512;
 const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 // #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
@@ -298,6 +298,85 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   if (findings.length > 0) {
     throw new TypeError(`application command arguments outside the canonical registry: ${findings.join('; ')}`);
   }
+}
+
+// Issue #66 (D2/K4b): the resolve-binding memory of the knowledge.promote_doubt command seam —
+// per-coordinator, keyed by the resolve idempotency key, holding the request binding digest and
+// the receipt. The same resolve key with a byte-identical request replays its receipt; a CHANGED
+// request binding refuses doubt_promote_conflict before the coordinator's state guard could
+// preempt with doubt_promote_stale.
+const DOUBT_RESOLVE_BINDINGS = new WeakMap();
+
+// Issue #66 (D3): the knowledge.doubts read — orchestrator-addressed, wave-scoped, sorted
+// raisedSeq DESC with doubtId ASC breaking ties, paged by the {c, d} keyset cursor, and shed at
+// the declared item bound with the explicit flag.
+function knowledgeDoubtsPage(coordination, args, principal) {
+  const waveId = typeof args?.waveId === 'string' && args.waveId.length > 0 ? args.waveId : null;
+  if (args?.waveId !== undefined && waveId === null) {
+    throw applicationError('knowledge.doubts waveId is invalid', 'application_doubts_invalid');
+  }
+  const state = args?.state;
+  if (state !== undefined && !['reviewed', 'answered', 'dismissed', 'carried'].includes(state)) {
+    throw applicationError('knowledge.doubts state filter is invalid', 'application_doubts_invalid');
+  }
+  let cursor = null;
+  if (args?.before !== undefined && args.before !== null) {
+    const before = args.before;
+    if (!before || typeof before !== 'object' || Array.isArray(before)
+      || Object.keys(before).sort().join(',') !== 'c,d'
+      || !Number.isSafeInteger(before.c) || typeof before.d !== 'string') {
+      throw applicationError('knowledge.doubts keyset cursor is invalid', 'application_doubts_invalid');
+    }
+    cursor = { c: before.c, d: before.d };
+  }
+  const maxItems = FRAME_LIMITS['view.open_doubts.items'].value;
+  const limit = args?.limit === undefined || args?.limit === null
+    ? maxItems
+    : Number.isSafeInteger(args.limit) && args.limit >= 1 ? Math.min(args.limit, maxItems) : null;
+  if (limit === null) {
+    throw applicationError('knowledge.doubts limit is invalid', 'application_doubts_invalid');
+  }
+  // Authority (D3/HOLE-4): the wave's active settlement lease admits its own session; the
+  // orchestrator actor reads every wave. A caller holding neither refuses typed — never
+  // application_command_unavailable.
+  const runId = waveId === null ? null : `run-settlement:${waveId}`;
+  if (principal.actor !== 'orchestrator') {
+    let admitted = false;
+    if (runId !== null) {
+      try {
+        coordinationLedger.settlementReviewAuthority(coordination, runId, {
+          principalId: principal.principalId, sessionId: principal.sessionId,
+          authorityDigest: digest({
+            kind: 'authenticated-worker-session',
+            principalId: principal.principalId, sessionId: principal.sessionId,
+          }),
+        });
+        admitted = true;
+      } catch (error) {
+        if (error?.code !== 'doubt_promote_not_authorized' && error?.code !== 'run_orchestrator_session_mismatch') throw error;
+      }
+    }
+    if (!admitted) {
+      throw applicationError('the doubt review surface is orchestrator-addressed', 'doubt_surface_unavailable');
+    }
+  }
+  let rows = coordinationLedger.doubtsProjection(coordination);
+  if (waveId !== null) rows = rows.filter((row) => row.waveId === waveId);
+  if (state !== undefined) rows = rows.filter((row) => row.state === state);
+  rows = rows.filter((row) => cursor === null
+    || row.raisedSeq < cursor.c
+    || (row.raisedSeq === cursor.c && compareCanonicalStrings(row.doubtId, cursor.d) > 0));
+  rows.sort((a, b) => (b.raisedSeq - a.raisedSeq) || compareCanonicalStrings(a.doubtId, b.doubtId));
+  const page = rows.slice(0, limit);
+  return {
+    runId,
+    waveId,
+    doubts: page,
+    openDoubtsTruncated: rows.length > page.length,
+    nextBefore: page.length > 0
+      ? { c: page[page.length - 1].raisedSeq, d: page[page.length - 1].doubtId }
+      : null,
+  };
 }
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` (below,
 // `BatonApplication.prototype.contextEval`) is deliberately NOT an entry here and NOT reachable
@@ -539,7 +618,7 @@ export function projectBoardView(snapshot, viewer = {}, cache = null) {
   // Epic #78 Decision 5/7: the view cache keys on BOTH fence components — a claim/report/expiry
   // advances projectionInputFence without moving boardFence, so a cached pre-claim/pre-report
   // view is never served after worker traffic (BW-14).
-  const cacheKey = `${board} ${role}:${workerId ?? ''} ${boardFence} ${projectionInputFence}`;
+  const cacheKey = `${board}\0${role}:${workerId ?? ''}\0${boardFence}\0${projectionInputFence}`;
   if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
 
   const claimByItem = new Map((snapshot?.claims ?? []).map((claim) => [claim.itemId, claim]));
@@ -603,48 +682,10 @@ export function projectBoardView(snapshot, viewer = {}, cache = null) {
   return view;
 }
 
-// REPL-2 (repl23-decisions.md Part D rules 11-13): a bounded, sanitized, per-worker binding
-// projection. Reads are NON-EVENTED (pure — appends nothing) and CACHED by
-// (runId, scope, workerId, bindingFence): while the (runId, scope) fence is unchanged the
-// exact cached view is served; a fence advance is the only thing that recomputes it. `scope`/
-// `name` are attacker-influenced identifiers and route through the same
-// boundedAttentionText/wrapProse untrusted-prose discipline board title/detail/report bodies
-// use (rule 16, P2-6); a resolved cellId is a closed hub-derived token and is never wrapped.
-export function projectReplBindingView(snapshot, viewer = {}, cache = null) {
-  const runId = snapshot?.runId ?? null;
-  const scope = snapshot?.scope ?? null;
-  const bindingFence = Number.isSafeInteger(snapshot?.bindingFence) ? snapshot.bindingFence : 0;
-  const workerId = viewer.workerId ?? null;
-  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
-  const cacheKey = `${runId} ${scope} ${role}:${workerId ?? ''} ${bindingFence}`;
-  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
-
-  // Part D rule 12: a worker sees its own worker:<id> scope plus the shared scope
-  // (read-only), both within its own run; the orchestrator sees every scope in the run.
-  const visibleScope = role === 'orchestrator' || scope === 'shared' || scope === `worker:${workerId}`;
-  const visible = visibleScope ? (snapshot?.bindings ?? []) : [];
-  let replBindingViewTruncated = visible.length > MAX_REPL_BINDING_ITEMS;
-  const project = (binding) => ({
-    scope: wrapProse(binding.scope, boundedAttentionText(binding.scope)),
-    name: wrapProse(binding.scope, boundedAttentionText(binding.name)),
-    bindingVersion: binding.bindingVersion, state: binding.state,
-    cellId: binding.cellId, bindingDigest: binding.bindingDigest,
-  });
-  let items = visible.slice(0, MAX_REPL_BINDING_ITEMS).map(project);
-  const build = () => Object.freeze({
-    runId, scope, bindingFence, viewer: Object.freeze({ workerId, role }),
-    bindings: Object.freeze(items), replBindingViewTruncated,
-  });
-  let view = build();
-  // Byte ceiling: shed the trailing item and re-flag until under MAX_REPL_VIEW_BYTES (never silent).
-  while (Buffer.byteLength(JSON.stringify(view)) > MAX_REPL_VIEW_BYTES && items.length > 0) {
-    items = items.slice(0, items.length - 1);
-    replBindingViewTruncated = true;
-    view = build();
-  }
-  if (cache) cache.set(cacheKey, view);
-  return view;
-}
+// REPL-2's per-worker binding projection lives in coordination-ledger.mjs, beside the snapshot it
+// projects: the coordinator's run-view REPL review (issue #69 D6) reads it there. Kept exported
+// from here as well, because this module stays the application-facing home of the binding view.
+export { projectReplBindingView } from './coordination-ledger.mjs';
 
 
 
@@ -884,6 +925,10 @@ function normalizeIntent(value) {
     // idempotencyKey) rides only the first member's run.start and mints the pre-loop wave.started
     // record. None of these describe what the run IS — same non-identity treatment as driverKind.
     'waveId', 'waveRole', 'waveStart',
+    // #102 Decision 1: `cell` declares that this run IS a tight cell — `size` homogeneous worker
+    // nodes of ONE seat, keyed cell:<waveRole>:<index>. Like driverKind it describes who is
+    // driving the run, never what the run is, so it stays out of the runId derivation.
+    'cell',
   ]);
   const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
   const hasDriverKind = Object.hasOwn(value ?? {}, 'driverKind');
@@ -891,6 +936,17 @@ function normalizeIntent(value) {
   const hasWaveRole = Object.hasOwn(value ?? {}, 'waveRole');
   const hasWaveStart = Object.hasOwn(value ?? {}, 'waveStart');
   const waveStart = value?.waveStart;
+  // #102 Decision 1: a cell is a run-shape declaration, read by the ONE declaration law the wave
+  // seams share (wave.mjs normalizeCellDeclaration, the same refusal codes). The wave role is
+  // required because it names the member nodes the cell's workers are keyed by, and a composition
+  // run already mints its nodes from its team, so the two declarations never combine.
+  let cell = null;
+  if (Object.hasOwn(value ?? {}, 'cell')) {
+    if (!hasWaveRole || !validId(value.waveRole) || Object.hasOwn(value ?? {}, 'composition')) {
+      throw applicationError('run intent is invalid', 'application_intent_invalid');
+    }
+    cell = normalizeCellDeclaration(value.cell, 'run cell');
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
@@ -941,6 +997,7 @@ function normalizeIntent(value) {
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
     ...(hasWaveId ? { waveId: value.waveId } : {}),
     ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
+    ...(cell === null ? {} : { cell }),
     ...(hasWaveStart ? { waveStart: {
       deploymentId: waveStart.deploymentId,
       idempotencyKey: waveStart.idempotencyKey,
@@ -1392,6 +1449,64 @@ function compareRouteTeachingRow(left, right) {
   if (left.model !== right.model) return left.model < right.model ? -1 : 1;
   if (left.effort !== right.effort) return left.effort < right.effort ? -1 : 1;
   return 0;
+}
+
+// #102 Decision 6: the cell quorum aggregate. A cell run carries size homogeneous plan
+// nodes under one runId; the run-status builder derives the cell outcome over ALL of them,
+// never nodes[0]. The outcome is the closed aggregate cell: { size, quorum, survived, lost,
+// degraded } — survived is counted from the work-rest set, and every terminal non-survivor
+// is receipted in cell.lost with its per-member cause. A member the projection never
+// dispatched (no task) is receipted cell_member_lost — a spawn that never started is a loss
+// with its own name, never a silent absence. The aggregate is pure in (declaration,
+// projection, task and rest reads): no clock, no counter. Terminal minting reads it: lost
+// beyond the quorum allowance fails cell_below_quorum, any loss under strict fails
+// cell_exact_breach, and quorum <= survived < size rests cell.degraded.
+//
+// Rest is member-liveness evidence, read at two layers. A rested member usually reads
+// projection state accepted (its task verified through the referee). But a member the drive
+// re-turned before its completion landed holds an open follow-up turn while its completion
+// row sits refused-stale on the worker stream — the task fence protects the task transition,
+// and rightly so, yet the member did rest. The aggregate therefore also reads the worker's
+// durable turn evidence: a lifecycle.turn_completed row on the member's stream counts the
+// member survived even when the task still reads working. Task truth is never rewritten by
+// this — only the quorum count reads the wider evidence.
+const CELL_LOST_PROJECTION_STATES = new Set(['failed', 'cancelled', 'stopped', 'denied']);
+function workerRested(driver, workerId) {
+  if (typeof workerId !== 'string' || typeof driver?.log?.read !== 'function') return false;
+  try {
+    return driver.log.read(workerId)
+      .some((event) => event?.kind === 'lifecycle.turn_completed');
+  } catch {
+    return false;
+  }
+}
+function deriveCellAggregate(cell, nodes, taskOf, dispatchBegun = false, restedOf = null) {
+  if (!cell || typeof cell !== 'object') return null;
+  if (!Number.isSafeInteger(cell.size) || !Number.isSafeInteger(cell.quorum)) return null;
+  const list = Array.isArray(nodes) ? nodes : [];
+  let survived = 0;
+  const lost = [];
+  for (const node of list) {
+    const task = node?.taskId ? taskOf(node.taskId) : null;
+    if (!node?.taskId || !task) {
+      // A taskless member before dispatch began is pending, never lost: the mint has not run
+      // yet, so there is no absence to receipt. Past dispatch, a member with no task never
+      // started — receipted cell_member_lost with its own name, never a silent absence.
+      if (!dispatchBegun) continue;
+      lost.push({ workerId: task?.assignee ?? null, nodeKey: node?.key ?? null, cause: 'cell_member_lost' });
+      continue;
+    }
+    if (node.state === 'accepted' || task.status === 'completed'
+      || (typeof restedOf === 'function' && restedOf(task.assignee))) {
+      survived += 1;
+      continue;
+    }
+    if (CELL_LOST_PROJECTION_STATES.has(node.state)) {
+      lost.push({ workerId: task.assignee ?? null, nodeKey: node.key ?? null, cause: task.status ?? node.state });
+    }
+  }
+  const degraded = survived >= cell.quorum && survived < cell.size;
+  return { size: cell.size, quorum: cell.quorum, survived, lost, degraded };
 }
 
 // Issue #335: the ONE teaching every `application_route_not_allowed` site composes — the
@@ -2190,8 +2305,15 @@ export class BatonApplication {
       // Issue #296: the deployment's landing authority — the repository the driver holds; the
       // runtime derives regenerate/runGates itself. Null on a driver without a repository root,
       // and swarm.integrate then refuses swarm_command_unavailable.
+      // Issue #558: the declared shared remote rides the same authority (null when the
+      // deployment declares none — a real landing then refuses instead of staying local).
       integration: typeof this.driver?.repoRoot === 'string' && this.driver.repoRoot.length > 0
-        ? { repoRoot: this.driver.repoRoot } : null,
+        ? {
+          repoRoot: this.driver.repoRoot,
+          publishRemote: typeof this.driver?.integrationPublishRemote === 'string'
+            && this.driver.integrationPublishRemote.length > 0
+            ? this.driver.integrationPublishRemote : null,
+        } : null,
       // Issue #326: the participant row's crash fact reads the seat's own durable ledger —
       // the same log the debug leg projects — never a second store. Null when unreadable.
       lastCrash: (workerId) => {
@@ -2260,6 +2382,18 @@ export class BatonApplication {
         if (this.driver.coordination.runStop(request.runId)) throw applicationError('Participant was stopped before dispatch', 'swarm_participant_stopped');
         await this._swarmNativeAccess.prepare(request);
         await this.approve(request.runId, current.plan.digest, this.principals.dispatcher, { view: 'narrow' });
+        // Issue #358: the spawn receipt names the objective's spill facts, so the recruit answer
+        // tells the recruiter AT ONCE when the objective an admission spilled (instead of the
+        // seat's confusion reporting it later). The spill id is the SAME content address the
+        // mint stored (coordinationLedger.spillIdForBody), so the receipt reads the durable
+        // truth — spilled only when the artifact exists — never a second admission derivation.
+        const spillId = coordinationLedger.spillIdForBody(objective);
+        const materialized = typeof this.driver.coordination.materializeSpill === 'function'
+          ? this.driver.coordination.materializeSpill(spillId) : null;
+        return { objective: {
+          bytes: Buffer.byteLength(objective), spilled: materialized !== null,
+          spill: materialized !== null ? spillId : null,
+        } };
       },
       // The participant knowledge verbs (#318): the runtime's knowledge dispatch routes into the
       // ONE implementation each verb already has — these very methods, with their own admission
@@ -2369,6 +2503,234 @@ export class BatonApplication {
       queryDigest: filters.query === null ? null : digest(filters.query),
     });
     return searchDeploymentEvidence(this.driver.coordination, filters);
+  }
+
+  // =========================================================================
+  // Issue #99/#179 — the result-materialization accessor (harvest-accessor contract v1.1).
+  // Two DIRECT PORT methods (never APPLICATION_COMMAND_DEFINITIONS keys — the byte-stable
+  // command-table guard) plus the shared record-backed resolution lane. The recorded capture
+  // base (`task.sessionContext.baseSha`) is the only base authority: never HEAD, never `pin^`
+  // (Decision 3). Both lanes re-verify the physical ownership pin through the single-ref lane
+  // before any projection or apply (Decisions 1-2), and every refusal carries a string .code.
+  // =========================================================================
+
+  /** The record-backed result record for one run: the view's result block names the accepted
+   * pin sha, the plan's first node names the owning task (`view.nodes[0].taskId` — the
+   * ceremony-path coordinate, with the live run's worker handle as the fallback), the physical
+   * pin is re-verified through the single-ref lane, and the recorded base comes off the task's
+   * live worker handle (the same session-context object the coordinator mirrors).
+   * Readiness composition per Decision 1: `result_not_ready` covers mid-flight AND
+   * terminal-failed runs (and checkpoint-only runs — they carry no result block). */
+  async _resultRecordForRun(runId) {
+    let current;
+    try {
+      current = this._findRun(runId, { allowUnavailableProfile: true });
+    } catch {
+      throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    }
+    const view = await this._buildView(current, this.principals.observer, {});
+    const result = view?.result ?? null;
+    const sha = result?.sha ?? null;
+    if (!harvestAccessor.SHA1_HEX.test(sha ?? '')) {
+      throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    }
+    const handles = typeof this.driver.coordinator.list === 'function' ? this.driver.coordinator.list() : [];
+    const nodeTaskId = view?.nodes?.[0]?.taskId ?? null;
+    const handle = (nodeTaskId ? handles.find((row) => row?.taskId === nodeTaskId) : null)
+      ?? handles.find((row) => row?.runId === runId) ?? null;
+    const taskId = handle?.taskId ?? nodeTaskId;
+    if (typeof taskId !== 'string' || taskId.length === 0) {
+      throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    }
+    const ref = harvestAccessor.resultRefOf(sha);
+    const state = await harvestAccessor.verifyPin(this.driver.coordinator._worktrees, ref, sha);
+    if (state === 'missing') throw harvestAccessor.typedError(`the result pin ${ref} is missing`, 'pin_not_found');
+    if (state === 'mismatch') throw harvestAccessor.typedError(`the result pin ${ref} resolves elsewhere`, 'pin_mismatch');
+    if (state === 'unverifiable') throw harvestAccessor.typedError('the physical re-verification lane is unavailable', 'pin_unverifiable');
+    if (state !== 'pinned') throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    const baseSha = handle?.sessionContext?.baseSha ?? null;
+    if (!harvestAccessor.SHA1_HEX.test(baseSha ?? '')) {
+      throw harvestAccessor.typedError('the recorded capture base is unavailable', 'result_not_ready');
+    }
+    return { resultSha: sha, taskId, baseSha, retainedResultRef: ref };
+  }
+
+  /** `run.resultpin` (Decision 1): the recorded-base projection. Closed `{runId}` shape, then
+   * the host-policy seam, then the record. The ancestry gate refuses a corrupted base
+   * attribution (`pin_base_mismatch`) — the accessor never silently proceeds on `pin^`. */
+  async resultPin(rawArgs, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'run.resultpin principal');
+    const args = harvestAccessor.validateResultPinArgs(rawArgs);
+    await this._authorize('run.resultpin', principal, args.runId, {});
+    const record = await this._resultRecordForRun(args.runId);
+    const repoRoot = this.driver.repoRoot;
+    if (!harvestAccessor.isAncestor(repoRoot, record.baseSha, record.resultSha)) {
+      throw harvestAccessor.typedError(
+        `the recorded base ${record.baseSha} is not ancestral to the pin ${record.resultSha}`,
+        'pin_base_mismatch',
+      );
+    }
+    let changedPaths;
+    try {
+      changedPaths = this.driver.coordinator._worktrees.changedPathsAtCommit(record.baseSha, record.resultSha);
+    } catch (error) {
+      if (error?.code === 'captured_change_oversize') {
+        throw harvestAccessor.typedError(
+          'the recorded delta exceeds the 1_024 changed-path cap (gracefulPath: re-issue with a higher maxPaths ≤ 100_000)',
+          'result_delta_oversize',
+        );
+      }
+      throw harvestAccessor.typedError('the recorded delta is unreadable', 'result_not_ready');
+    }
+    const page = harvestAccessor.changedFilesPage(repoRoot, record.resultSha, [...changedPaths]);
+    return {
+      ready: true,
+      resultSha: record.resultSha,
+      baseSha: record.baseSha,
+      changedPaths: [...changedPaths],
+      changedFiles: page.changedFiles,
+      ...(page.truncated ? { truncated: true, changedFilesDigest: page.changedFilesDigest, cursor: page.cursor } : {}),
+    };
+  }
+
+  /** `waves.harvest` (Decision 2): the recorded-base delta applied to the deployment's main
+   * checkout with a typed, ordered precondition chain — onto-invalid → pin verification →
+   * ancestry → onto-dirty → already-contained → base-divergence → empty-delta → probe →
+   * engine stage/finalize. The conflict outcome is a typed refusal (never a silent apply,
+   * never a `conflicted` receipt in v1). */
+  async wavesHarvest(rawArgs, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'waves.harvest principal');
+    const args = harvestAccessor.validateHarvestArgs(rawArgs);
+    await this._authorize('waves.harvest', principal, args.runId ?? null, {});
+    const repoRoot = this.driver.repoRoot;
+    const worktrees = this.driver.coordinator._worktrees;
+    let record;
+    if (args.runId !== undefined) {
+      record = await this._resultRecordForRun(args.runId);
+    } else {
+      // Sha source: the ownership pin must resolve back to the SAME sha (a real-but-unpinned
+      // commit refuses pin_not_found), then the pin is attributed to its completed task record.
+      const ref = harvestAccessor.resultRefOf(args.resultSha);
+      const state = await harvestAccessor.verifyPin(worktrees, ref, args.resultSha);
+      if (state === 'missing') throw harvestAccessor.typedError(`no ownership pin exists at ${ref}`, 'pin_not_found');
+      if (state === 'mismatch') throw harvestAccessor.typedError(`the pin ${ref} resolves elsewhere`, 'pin_mismatch');
+      if (state === 'unverifiable') throw harvestAccessor.typedError('the physical re-verification lane is unavailable', 'pin_unverifiable');
+      const attribution = await this._attributingTaskRecord(args.resultSha);
+      if (!attribution) {
+        throw harvestAccessor.typedError('the pin is not attributed to any completed task record', 'result_not_ready');
+      }
+      record = { resultSha: args.resultSha, taskId: attribution.taskId, baseSha: attribution.baseSha, retainedResultRef: ref };
+    }
+    if (!harvestAccessor.isAncestor(repoRoot, record.baseSha, record.resultSha)) {
+      throw harvestAccessor.typedError(
+        `the recorded base ${record.baseSha} is not ancestral to the pin ${record.resultSha}`,
+        'pin_base_mismatch',
+      );
+    }
+    const onto = harvestAccessor.resolveOnto(args.onto, repoRoot);
+    if (!harvestAccessor.isClean(onto)) {
+      throw harvestAccessor.typedError('the onto checkout is dirty', 'harvest_onto_dirty');
+    }
+    const ontoHeadSha = harvestAccessor.headSha(onto);
+    if (!harvestAccessor.SHA1_HEX.test(ontoHeadSha ?? '')) {
+      throw harvestAccessor.typedError('the onto checkout has no HEAD to harvest onto', 'harvest_onto_invalid');
+    }
+    const skippedReceipt = (reason) => ({
+      ok: true,
+      result: 'skipped',
+      reason,
+      baseSha: record.baseSha,
+      changedPaths: [],
+      resultSha: record.resultSha,
+    });
+    // Precondition 2 — containment precedes divergence: a contained pin is skipped, never
+    // "diverged" (Decision 2).
+    if (harvestAccessor.isAncestor(repoRoot, record.resultSha, ontoHeadSha)) {
+      return skippedReceipt('already_integrated');
+    }
+    // Precondition 3 — the wrong-but-applying-tree trap: the computed merge-base MUST equal the
+    // recorded base, so the APPLIED delta is exactly the receipted delta (Decision 3).
+    const mergeBaseSha = harvestAccessor.mergeBaseOf(repoRoot, ontoHeadSha, record.resultSha);
+    if (mergeBaseSha !== record.baseSha) {
+      throw harvestAccessor.typedError(
+        `the onto checkout is not descended from the recorded base `
+        + `(baseSha ${record.baseSha}, mergeBaseSha ${mergeBaseSha ?? 'none'}, ontoHeadSha ${ontoHeadSha}, resultSha ${record.resultSha})`,
+        'harvest_base_diverged',
+      );
+    }
+    let changedPaths;
+    try {
+      changedPaths = worktrees.changedPathsAtCommit(record.baseSha, record.resultSha);
+    } catch (error) {
+      if (error?.code === 'captured_change_oversize') {
+        throw harvestAccessor.typedError('the recorded delta exceeds the changed-path cap', 'result_delta_oversize');
+      }
+      throw harvestAccessor.typedError('the recorded delta is unreadable', 'result_not_ready');
+    }
+    // Precondition 4 — empty delta, computed BEFORE any stage (Decision 2).
+    if (changedPaths.length === 0) {
+      return { ...skippedReceipt('empty_delta'), changedPaths: [] };
+    }
+    // The probe: non-destructive three-way replay in a throwaway worktree. A clean probe
+    // proceeds to the engine stage; a conflicted probe refuses harvest_conflict naming the
+    // exact paths with onto untouched (Decision 2).
+    const probe = harvestAccessor.probeHarvestConflicts(repoRoot, ontoHeadSha, record.resultSha);
+    if (probe.probe === 'failed') {
+      throw harvestAccessor.typedError('the three-way probe could not run', 'harvest_apply_failed', { cause: 'probe_failed', postEffect: false });
+    }
+    if (probe.probe === 'conflict') {
+      throw Object.assign(
+        new Error(`the harvest conflicts on ${probe.conflicts.map((row) => row.path).join(', ')}`),
+        { code: 'harvest_conflict', conflicts: probe.conflicts, ontoHeadSha, resultSha: record.resultSha },
+      );
+    }
+    let stage;
+    try {
+      stage = await worktrees.stageStructuredIntegration(
+        harvestAccessor.stageTaskId(record.taskId, record.resultSha), record.resultSha,
+      );
+    } catch (error) {
+      if (error?.code === 'structured_already_integrated') return skippedReceipt('already_integrated');
+      throw harvestAccessor.translateEngineError(error);
+    }
+    let finalized;
+    try {
+      finalized = await worktrees.finalizeStructuredIntegration(stage);
+    } catch (error) {
+      throw harvestAccessor.translateEngineError(error);
+    }
+    return {
+      ok: true,
+      result: 'applied-clean',
+      reason: null,
+      afterSha: finalized.afterSha,
+      classes: (finalized.classes ?? []).map((row) => row.class),
+      baseSha: record.baseSha,
+      changedPaths: [...changedPaths],
+      resultSha: record.resultSha,
+    };
+  }
+
+  /** The sha-source attribution: one worker-keyed preservation inspection scan finds the
+   * completed task record whose captured sha IS the pinned sha (the wave driver's
+   * attribution law, admitted only on an exact `capturedSha` match). */
+  async _attributingTaskRecord(resultSha) {
+    const coordinator = this.driver.coordinator;
+    const handles = typeof coordinator.list === 'function' ? coordinator.list() : [];
+    for (const handle of handles) {
+      if (typeof coordinator.inspectPreservedResult !== 'function') break;
+      let state = null;
+      try { state = await coordinator.inspectPreservedResult(handle.id, resultSha); } catch { continue; }
+      if (state?.state === 'pinned') {
+        const baseSha = handle?.sessionContext?.baseSha ?? null;
+        if (harvestAccessor.SHA1_HEX.test(baseSha ?? '')) return { taskId: handle.taskId, baseSha };
+      }
+    }
+    return null;
   }
 
   /** #317 (docs/50): the configured provider services — the deployment's authority when one is
@@ -3221,6 +3583,58 @@ export class BatonApplication {
       });
       return this._findRun(refreshed.goal.runId).dispatches;
     }
+    // #102 Decision 2 (TC-04/TC-05): a cell Plan carries `size` homogeneous nodes and is not a
+    // workflow, so it takes the plan-wave dispatch — one worker per node under the ONE runId the
+    // member owns. The wave authority key is the plan digest, so a re-dispatch of the same Plan is
+    // the durable resume; a partial dispatch is refused rather than completed. The branch reads
+    // the mint's own `cell:<waveRole>:<index>` node keys — the only producer of that shape — so
+    // the composition and recovery Plans that predate the cell keep their dispatch path
+    // (phase66 CE rows), and cardinality alone never turns an ordinary multi-node Plan into a
+    // cell.
+    if (refreshed.plan.nodes.length > 1
+      && refreshed.plan.nodes.every((node) => node.key.startsWith('cell:'))) {
+      if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
+      if (refreshed.dispatches.length !== 0) {
+        throw applicationError('cell Plan wave is partially dispatched', 'application_cell_wave_incomplete');
+      }
+      if (typeof this.driver.coordinator.spawnPlanWave !== 'function') {
+        throw applicationError('coordinator lacks durable plan Wave authority', 'application_cell_wave_unavailable');
+      }
+      const members = refreshed.plan.nodes.map((node) => {
+        const gate = {
+          goalId: refreshed.goal.goalId, goalVersion: refreshed.goal.version,
+          goalDigest: refreshed.goal.digest, planId: refreshed.plan.planId,
+          planVersion: refreshed.plan.version, planDigest: refreshed.plan.digest,
+          nodeKey: node.key, expectedDispatchVersion: 0,
+          capabilities: clone(node.capabilities), effects: clone(node.effects),
+          ...(Object.hasOwn(node, 'requiredEffects')
+            ? { requiredEffects: clone(node.requiredEffects) } : {}),
+        };
+        const selectedRoute = exactPlanNodeRoute(node);
+        const route = {
+          vendor: selectedRoute.harness, model: selectedRoute.model, effort: selectedRoute.effort,
+        };
+        const preview = this.driver.coordination.previewPlanDispatch(gate, route);
+        const { goalPlan: ignored, ...brief } = preview.brief;
+        void ignored;
+        const taskId = `baton-${digest({
+          repoId: this.repoId, runId: refreshed.goal.runId,
+          planDigest: refreshed.plan.digest, nodeKey: node.key, dispatchVersion: 1,
+        }).slice(0, 24)}-${node.key.replaceAll(':', '-')}`;
+        return {
+          vendor: route.vendor, model: route.model, effort: route.effort,
+          brief, goalPlan: gate, runId: refreshed.goal.runId, taskId,
+        };
+      });
+      await this.driver.coordinator.spawnPlanWave(members, {
+        actor: this.principals.dispatcher.actor,
+        principalId: this.principals.dispatcher.principalId,
+        sessionId: this.principals.dispatcher.sessionId,
+        powers: ['plan:dispatch'],
+        idempotencyKey: `application:${refreshed.goal.runId}:cell:${refreshed.plan.digest}:v1`,
+      });
+      return this._findRun(refreshed.goal.runId).dispatches;
+    }
     if (refreshed.dispatch) return refreshed.dispatch;
     const node = refreshed.plan.nodes[0];
     const gate = {
@@ -3355,8 +3769,11 @@ export class BatonApplication {
         { actor: owner.actor, key: `run.objective.spill:${digest(requestedIntent.objective)}` });
       const spill = minted?.spill ?? null;
       if (spill) {
+        // The citation names the ONE verb the seat can follow (#358) — a brief renderer never
+        // emits a marker the seat cannot resolve.
         const citation = JSON.stringify({
           spilled: true, bytes: objectiveBytes, digest: spill.digest, spill: spill.spillId,
+          read: 'run.spill.read',
         });
         const suffix = `\n[SPILLED ${citation}]`;
         storedObjective = `${capBytesToScalar(requestedIntent.objective, objectiveCap - Buffer.byteLength(suffix))}${suffix}`;
@@ -3470,7 +3887,15 @@ export class BatonApplication {
         profile, intent.composition.team.length, workflowPolicy.maxRounds,
       )),
       routes: exactPlanRoutes(member.route),
-    })) : [singleNode];
+    })) : intent.cell
+      // #102 Decision 2 (TC-04): ONE member, `size` homogeneous nodes sharing this member's seat,
+      // scope and objective — the cell spends `size` workers under the one runId while the wave
+      // keeps ONE member row for it. Every worker identity stays derivable from the plan.
+      ? Array.from({ length: intent.cell.size }, (_, index) => ({
+        ...clone(singleNode),
+        key: `cell:${intent.waveRole}:${index}`,
+      }))
+      : [singleNode];
     const goalPlanPolicy = this.driver.coordination.goalPlanPolicy();
     const normalizedGoal = normalizeGoalRequest(goalFields, goalPlanPolicy);
     const hypotheticalGoal = {
@@ -3502,6 +3927,10 @@ export class BatonApplication {
         // waves.list seat map can recover it even when the wave was minted by the interpreter seam
         // (createWave mints a role-only string roster, wave.mjs:180 — the route is not in it).
         ...(intent.waveId !== undefined ? { route: clone(intent.route) } : {}),
+        // #102 Decision 6: the cell declaration rides the same record, so the run-status
+        // builder recovers size/quorum/strict for the quorum aggregate from the durable log
+        // (same event-log-only discipline as the wave binding above).
+        ...(intent.cell !== undefined ? { cell: clone(intent.cell) } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
@@ -5069,6 +5498,28 @@ export class BatonApplication {
       if (runStop?.status === 'stopped') phase = 'stopped';
       else if (runStop) phase = 'stopping';
     }
+    // #102 Decision 6: a cell run's terminal truth is the quorum aggregate, never nodes[0].
+    // A stop still wins (above); otherwise the aggregate mints the terminal the count reached:
+    // a strict breach or a quorum-unreachable loss fails, a quorum rest with losses degrades.
+    const cellDeclaration = this._runCellDeclaration(runId);
+    // Dispatch begun is its own observation: any projected task, or any recorded dispatch.
+    // Before it, taskless members are pending (the mint has not run); past it, one is lost.
+    const cellDispatchBegun = projection.nodes.some((node) => node?.taskId)
+      || (current.dispatches?.length ?? 0) > 0 || !!current.dispatch;
+    const cellAggregate = cellDeclaration
+      ? deriveCellAggregate(cellDeclaration, projection.nodes,
+        (taskId) => this.driver.coordination.task(taskId), cellDispatchBegun,
+        (workerId) => workerRested(this.driver, workerId))
+      : null;
+    // The aggregate terminal below survives the single-node accepted refinement further
+    // down: a quorum mint is never re-derived from nodes[0].
+    let cellTerminalPhase = null;
+    if (cellAggregate && !runStop) {
+      if (cellDeclaration.strict === true && cellAggregate.lost.length > 0) phase = 'failed';
+      else if (cellAggregate.lost.length > cellAggregate.size - cellAggregate.quorum) phase = 'failed';
+      else if (cellAggregate.degraded) phase = 'degraded';
+      if (phase === 'failed' || phase === 'degraded') cellTerminalPhase = phase;
+    }
 
     // VR6/RV: inconclusive runtime repair remains repeatable while a candidate-owned diagnostic
     // checkpoint gets exactly one confirmation. The origin is pinned on the checkpoint so a later
@@ -5296,7 +5747,7 @@ export class BatonApplication {
         },
         cancelledAt: durableExport.cancelledAt ?? null,
       } : null;
-    if (!runStop && node.state === 'accepted') {
+    if (!runStop && node.state === 'accepted' && cellTerminalPhase === null) {
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
       else if ((integration || durableExport?.status === 'completed')
@@ -5377,6 +5828,9 @@ export class BatonApplication {
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
+      // #102 Decision 6: a cell run carries its quorum aggregate receipt on the view; other
+      // runs carry no cell key, so their views are byte-identical to before.
+      ...(cellAggregate ? { cell: deepFreeze(cellAggregate) } : {}),
       cursor: projection.coordinationUpperBound,
       knowledge: knowledgeProjection.knowledge,
       knowledgeDigest: knowledgeProjection.knowledgeDigest,
@@ -5436,7 +5890,8 @@ export class BatonApplication {
         dispatchClosed: Boolean(runStop),
       },
       evidence: artifacts.map(publicArtifact),
-      narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
+      narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'degraded' ? 'Cell reached quorum with member losses; the aggregate receipt names the survivors and the lost.'
+        : phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
         : phase === 'stopping' ? 'Run stop is durably admitted and physical ownership is converging.'
           : phase === 'interrupted'
             ? 'Provider turn interrupted; the exact Plan member and native session remain attached for send or stop.'
@@ -7031,6 +7486,10 @@ export class BatonApplication {
     return applicationObservation._runWaveRoute(this, runId, index);
   }
 
+  _runCellDeclaration(runId, index = null) {
+    return applicationObservation._runCellDeclaration(this, runId, index);
+  }
+
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
   // set of runs bound to one waveId through the steering-registered record; waves.start starts each
   // member through the ORDINARY run.start admission (profile routes + scopes — the _resolveIntent
@@ -7179,6 +7638,9 @@ export class BatonApplication {
           driverKind: 'wave',
           waveId,
           waveRole: member.role,
+          // #102 Decision 2: the cell's size rides the member's run intent, so the run mints
+          // `size` homogeneous nodes and spends `size` workers under this ONE member's runId.
+          ...(member.group === undefined ? {} : { cell: member.group }),
           waveStart: { deploymentId: this.deploymentId, roster, idempotencyKey: request.idempotencyKey },
         }, principal, context);
       } catch (cause) {
@@ -7465,6 +7927,17 @@ export class BatonApplication {
   // Bounded closed validation for the wave ergonomics direct ports (the MCP schema and the MCP
   // validator already reject obvious shape failures; these guards keep the embedded direct ports
   // honest under the same closed-shape discipline as the rest of the command table).
+  /** #102 Decision 1: the closed `group` field on a wave member — `{editing?, quorum?, seat, size,
+   * strict?}` (docs/reference/evidence/tight-cell-2026-08-06/tight-cell-contract.md). The seat is
+   * the ONE route every cell worker takes, so a member that names a group and its own route is a
+   * contradiction rather than a precedence question; the closed shape and the strict defaults are
+   * the shared declaration law in wave.mjs. */
+  _normalizeCellGroup(member) {
+    if (member.exact !== undefined) {
+      throw applicationError('wave start member names both a group seat and its own route', 'wave_group_route_conflict');
+    }
+    return normalizeCellDeclaration(member.group, 'wave start member group');
+  }
   _normalizeWaveStart(value) {
     const allowed = new Set(['idempotencyKey', 'members']);
     if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -7480,11 +7953,18 @@ export class BatonApplication {
       // byte law admits oversize with spill at run.start (Decision 2 / OQ5) — never a wall in
       // front of a spill lane (v1.2 blue-team blocker 4).
       if (!member || typeof member !== 'object' || Array.isArray(member)
-        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope'].includes(key))
-        || !validId(member.role)
+        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope', 'group'].includes(key))) {
+        throw applicationError('wave start member is invalid', 'application_wave_start_invalid');
+      }
+      // #102 Decision 1: a member names EITHER its own route (`exact`) or a group seat, never both
+      // and never neither. The group's seat IS the member's route downstream, so the normalized
+      // member carries `exact` either way and every later reader is unchanged.
+      const group = member.group === undefined ? null : this._normalizeCellGroup(member);
+      const exact = group === null ? member.exact : group.seat;
+      if (!validId(member.role)
         || typeof member.objective !== 'string' || member.objective.length === 0 || member.objective.includes('\0')
-        || !member.exact || typeof member.exact !== 'object' || Array.isArray(member.exact)
-        || !['harness', 'model', 'effort'].every((axis) => validText(member.exact[axis]))
+        || !exact || typeof exact !== 'object' || Array.isArray(exact)
+        || !['harness', 'model', 'effort'].every((axis) => validText(exact[axis]))
         || (member.scope !== undefined
           && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
             || member.scope.some((item) => !validText(item))))) {
@@ -7494,8 +7974,9 @@ export class BatonApplication {
       roles.add(member.role);
       members.push(deepFreeze({
         role: member.role, objective: member.objective.normalize('NFKC').trim(),
-        exact: Object.freeze({ harness: member.exact.harness, model: member.exact.model, effort: member.exact.effort }),
+        exact: Object.freeze({ harness: exact.harness, model: exact.model, effort: exact.effort }),
         scope: member.scope === undefined ? null : [...member.scope].sort(),
+        ...(group === null ? {} : { group }),
       }));
     }
     return deepFreeze({ idempotencyKey: value.idempotencyKey, members });
@@ -8171,6 +8652,14 @@ export class BatonApplication {
     // principal validation and authorization every sibling branch below threads.
     if (name === 'evidence.search') return this.evidenceSearch(args, principal);
     if (name === 'services.list') return this.servicesList(args);
+    // Issue #99/#179 (harvest-accessor contract v1.1, Decisions 1-2): the result-materialization
+    // accessor is TWO direct ports — the byte-stable command table gains no keys (the M1 static
+    // guard). Like every direct port they dispatch BEFORE context validation and the
+    // recursive-session gate (the FP-18 pre-gate law), each lane validates its own closed shape
+    // first (application_*_invalid BEFORE any state lookup or authorization), and the host-policy
+    // seam is drawn inside the lane after the shape holds.
+    if (name === 'run.resultpin') return this.resultPin(args, principal);
+    if (name === 'waves.harvest') return this.wavesHarvest(args, principal);
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
@@ -8217,7 +8706,8 @@ export class BatonApplication {
     // allowlists below. The actor is server-derived 'orchestrator'; the settlement session is
     // derived from the calling principal.
     if (name === 'scratchpad.elevate' || name === 'scratchpad.settle'
-      || name === 'knowledge.promote' || name === 'knowledge.settlement_lease') {
+      || name === 'knowledge.promote' || name === 'knowledge.settlement_lease'
+      || name === 'knowledge.promote_doubt' || name === 'knowledge.doubts') {
       return this._settlementCommand(name, args, principal);
     }
     // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Like the
@@ -8425,6 +8915,39 @@ export class BatonApplication {
     }
     if (name === 'knowledge.promote') {
       return coordinator.promoteWorkflowFinding(args.runId, args.candidateFindingId, args.policy, args.lease, session);
+    }
+    if (name === 'knowledge.promote_doubt') {
+      // Issue #66 (D4): the resolve act rides the coordinator's own gate; the seam's own
+      // exactly-once memory wraps it (the binding map above).
+      const runId = args?.runId;
+      const doubtId = args?.doubtId;
+      const disposition = args?.disposition;
+      if (!validId(runId) || !validId(doubtId) || !['answered', 'dismissed'].includes(disposition)) {
+        throw applicationError('knowledge.promote_doubt request is invalid', 'application_promote_doubt_invalid');
+      }
+      const resolution = args?.resolution ?? null;
+      const dismissalReason = args?.dismissalReason ?? null;
+      if ((resolution !== null && (typeof resolution !== 'string' || resolution.includes('\0')))
+        || (dismissalReason !== null && (typeof dismissalReason !== 'string' || dismissalReason.includes('\0')))) {
+        throw applicationError('knowledge.promote_doubt request fields are invalid', 'application_promote_doubt_invalid');
+      }
+      const binding = digest({ dismissalReason, disposition, resolution, runId });
+      const resolveKey = `knowledge.doubt_resolved:${doubtId}`;
+      const prior = DOUBT_RESOLVE_BINDINGS.get(coordinator)?.get(resolveKey);
+      if (prior) {
+        if (prior.binding !== binding) {
+          throw applicationError('the resolve key is already committed with a changed request binding', 'doubt_promote_conflict');
+        }
+        return clone(prior.receipt);
+      }
+      const receipt = coordinator.resolveDoubt(runId, doubtId, disposition, session, { resolution, dismissalReason });
+      const bindings = DOUBT_RESOLVE_BINDINGS.get(coordinator) ?? new Map();
+      bindings.set(resolveKey, { binding, receipt: clone(receipt) });
+      DOUBT_RESOLVE_BINDINGS.set(coordinator, bindings);
+      return receipt;
+    }
+    if (name === 'knowledge.doubts') {
+      return knowledgeDoubtsPage(this.driver?.coordination, args, principal);
     }
     // knowledge.settlement_lease
     return coordinator.settlementLease(args.waveId, session, { members: args.members });

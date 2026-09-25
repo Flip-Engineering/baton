@@ -643,21 +643,60 @@ export class RuntimeIsolation {
   remove(workerId) {
     this.leases.delete(workerId);
     const target = join(this.root, workerId);
-    rmSync(target, { recursive: true, force: true });
-    if (existsSync(target)) {
-      throw Object.assign(new Error('runtime isolation cleanup did not reach an exact absent state'), {
-        code: 'runtime_cleanup_failed',
-      });
-    }
-    return Object.freeze({ state: 'absent', workerId });
+    let refused = null;
+    try { rmSync(target, { recursive: true, force: true }); }
+    catch (error) { refused = error; }
+    if (refused === null && !existsSync(target)) return Object.freeze({ state: 'absent', workerId });
+    // Issue #542: the refusal names the scope and the errno it observed. A scope whose child is
+    // still writing into it returns ENOTEMPTY for one filesystem turn and removes cleanly on the
+    // next pass, so the startup reconciler records it as a pending removal instead of refusing
+    // the whole start.
+    throw Object.assign(new Error('runtime isolation cleanup did not reach an exact absent state'), {
+      code: 'runtime_cleanup_failed',
+      record: workerId,
+      observed: Object.freeze({ code: typeof refused?.code === 'string' ? refused.code : 'residual_path' }),
+      ...(refused === null ? {} : { cause: refused }),
+    });
   }
 
+  /** Every scope outside `expectedWorkerIds` is removed. The scopes that refuse removal are
+   * reported through ONE `runtime_cleanup_failed` error carrying each of them on `pending`, so a
+   * scope a child still holds open never hides another from the caller that records the pending
+   * set (runtime-recovery.mjs). */
   reconcile(expectedWorkerIds = []) {
     const expected = new Set(expectedWorkerIds);
     if (!existsSync(this.root)) return;
+    const refused = [];
     for (const name of readdirSync(this.root)) {
-      if (!expected.has(name)) this.remove(name);
+      if (expected.has(name)) continue;
+      try { this.remove(name); }
+      catch (error) {
+        if (error?.code !== 'runtime_cleanup_failed') throw error;
+        refused.push(Object.freeze({ workerId: name, code: error.code, observed: error.observed ?? null }));
+      }
     }
+    if (refused.length === 0) return;
+    throw Object.assign(new Error(`runtime isolation reconcile could not remove every unexpected scope`
+      + ` (${refused[0].workerId}: ${refused[0].observed?.code ?? 'unknown'})`), {
+      code: 'runtime_cleanup_failed',
+      record: refused[0].workerId,
+      observed: refused[0].observed,
+      pending: Object.freeze(refused),
+    });
+  }
+
+  /** Issue #542: retry the removal of the exact scopes a startup pass reported pending. Every
+   * named scope is attempted, so one that still refuses never hides another, and the scopes that
+   * still refuse come back as their own typed failures — an empty list is absence reached. Only
+   * the names given are touched: a scope a worker admitted after the startup pass created for
+   * itself is never removed here. */
+  retryPendingScopes(workerIds) {
+    const refused = [];
+    for (const workerId of workerIds) {
+      try { this.remove(workerId); }
+      catch (error) { refused.push(error); }
+    }
+    return Object.freeze(refused);
   }
 }
 

@@ -204,7 +204,7 @@ test('CL2: the committed map, the delegates, the exports and the store imports a
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':ledger_port'))) moved.set(`${member.name}\u0000${member.ordinal}`, member.name);
   }
-  assert.equal(moved.size, 241, 'the map must show the observation bucket — every store member whose body left');
+  assert.equal(moved.size, 244, 'the map must show the observation bucket — every store member whose body left');
   const movedNames = new Set(moved.values());
   const wired = delegates();
   const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('\u0000')[0]));
@@ -218,7 +218,7 @@ test('CL2: the committed map, the delegates, the exports and the store imports a
   // delegate each — and every name the store imports from the module exists.
   const helpers = [...wired.values()].map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per ledger helper');
-  assert.equal(helpers.length, 241, 'the port carries one helper per moved member');
+  assert.equal(helpers.length, 244, 'the port carries one helper per moved member');
   const moduleRows = map.files.find((file) => file.file === MAP_MODULE_FILE).members;
   for (const name of new Set(helpers)) {
     assert.equal(moduleRows.filter((member) => member.name === name).length, 1,
@@ -361,8 +361,9 @@ test('CL4: the store reaches every moved member through its own delegate, with i
   ['reverifyKnowledgeRecallAssessment', 5], ['readKnowledge', 3], ['knowledgeContentDigest', 0],
   ['knowledgeCandidateQueue', 0], ['knowledgeRitual', 1], ['invalidateKnowledge', 4],
   ['auditKnowledge', 0],
+  ['replManifestAdmissions', 1], ['holdsRunOrchestratorLease', 1], ['reapRunReplBindings', 1],
   ];
-  assert.equal(MOVED.length, 241, 'the observation bucket is 241 members');
+  assert.equal(MOVED.length, 244, 'the observation bucket is 244 members');
   const wired = delegates();
   for (const [name, arity] of MOVED) {
     assert.ok(wired.has(name), `${name}: the class must still delegate it`);
@@ -377,7 +378,7 @@ test('CL4: the store reaches every moved member through its own delegate, with i
     assert.ok(descriptor, `${name}: the store must still answer on ${name}`);
     assert.equal(descriptor.value?.length ?? descriptor.get?.length, arity, `${name}: the signature must not move with the body`);
   }
-  assert.equal(wired.size, 241, 'the ledger port carries exactly the observation bucket');
+  assert.equal(wired.size, 244, 'the ledger port carries exactly the observation bucket');
 });
 
 test('CL5: the store keeps its exact behavior across the move, and a moved member is still dispatched through the class', () => {
@@ -399,7 +400,10 @@ test('CL5: the store keeps its exact behavior across the move, and a moved membe
       '5ca071974bfd257f484103ab482443d9e5e7994142f10f405104fc2e82c9de72',
       'the durable bytes are the ones the pre-move store wrote for the same fixture');
     const before = createHash('sha256').update(JSON.stringify(store.snapshot())).digest('hex');
-    assert.equal(before, '6f9c213243f5170ee116d2f3ad2a0ee0559ab65ea01607a94aeca9143301bb0a',
+    // Issue #66 (D3): snapshot().knowledge gained the folded `doubts` projection, so the
+    // golden moves with the projection — the fold still builds exactly what the live class
+    // builds, and replay reconstructs the identical bytes (asserted below).
+    assert.equal(before, '7f3c4a340e08aab4060b5ff3eb5b86e098ce905d53be91bd8cf705a6e2dd567b',
       'the projection the moved fold builds is the one the pre-move store built');
     const restarted = new CoordinationStore(root, { clock });
     assert.equal(restarted.healthCheck(), true);

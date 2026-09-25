@@ -6,8 +6,9 @@
 // removed it. `swarm recruit --resume-from ds-385mk` then recorded
 // `workspace.carried_from {paths: [], snapshotSha: b8fb794d}` while the successor's checkout held
 // neither file: the carry branch resolved `repoRoot` from `this.situationGit.repoRoot`, which the
-// deployment never wires (application.mjs `_swarmRuntime()` passes `integration: {repoRoot}` and a
-// `situationGit` with only `head`/`commitsSince`), so `applySnapshotToWorktree` was never called —
+// deployment never wires (application.mjs `_swarmRuntime()` passes `integration: {repoRoot,
+// publishRemote}` and a `situationGit` with only `head`/`commitsSince`), so
+// `applySnapshotToWorktree` was never called —
 // silently, because a missing input skipped the apply and a failing apply was caught to `[]` — and
 // the row still claimed a carry.
 //
@@ -90,7 +91,7 @@ async function allocateCheckout(repo, { label, baseSha }) {
 
 /**
  * ONE swarm runtime over a real repository and a real CoordinationStore, wired the way
- * application.mjs `_swarmRuntime()` wires the deployment: `integration: {repoRoot}` (or the
+ * application.mjs `_swarmRuntime()` wires the deployment: `integration: {repoRoot, publishRemote}` (or the
  * situation seam) carries the repository root, and `situationGit` carries the situation
  * projection (`head`/`commitsSince`) only.
  *

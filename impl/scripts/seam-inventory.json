@@ -207,6 +207,17 @@
           ]
         },
         {
+          "name": "startupCleanupDeferred",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb",
+            "recovery:recovery_port"
+          ]
+        },
+        {
           "name": "startupReady",
           "ordinal": 0,
           "size": 3,
@@ -1192,10 +1203,37 @@
         {
           "name": "_providerBrief",
           "ordinal": 0,
-          "size": 3,
+          "size": 5,
           "seam": "observation",
           "evidence": [
             "observation:brief_port"
+          ]
+        },
+        {
+          "name": "_redriveContinuity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:redrive_port"
+          ]
+        },
+        {
+          "name": "_composeContinuity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:redrive_port"
+          ]
+        },
+        {
+          "name": "_continuityForMember",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:redrive_port"
           ]
         },
         {
@@ -3789,6 +3827,16 @@
           ]
         },
         {
+          "name": "resolveDoubt",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_bumpInteractionGeneration",
           "ordinal": 0,
           "size": 3,
@@ -3948,6 +3996,75 @@
           "seam": "observation",
           "evidence": [
             "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_citedReplObjects",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_assertReplObjectsServed",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_resolveReplSpill",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_replManifestReview",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_assertReplReviewProjection",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:projection_name",
+            "observation:ledger_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_admitSharedFanout",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_promoteReplObject",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -4401,11 +4518,12 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 104,
+          "size": 123,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
-            "observation:durable_read"
+            "observation:durable_read",
+            "observation:ledger_port"
           ]
         },
         {
@@ -4433,6 +4551,44 @@
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "_resultRecordForRun",
+          "ordinal": 0,
+          "size": 33,
+          "seam": "recovery",
+          "evidence": [
+            "delegates:observation",
+            "delegates:recovery"
+          ]
+        },
+        {
+          "name": "resultPin",
+          "ordinal": 0,
+          "size": 36,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "wavesHarvest",
+          "ordinal": 0,
+          "size": 114,
+          "seam": "surface",
+          "evidence": [
+            "admission:typed_refusal",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "_attributingTaskRecord",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -4816,7 +4972,7 @@
         {
           "name": "_dispatchCurrent",
           "ordinal": 0,
-          "size": 172,
+          "size": 224,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -4876,7 +5032,7 @@
         {
           "name": "start",
           "ordinal": 0,
-          "size": 259,
+          "size": 274,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -5290,7 +5446,7 @@
         {
           "name": "_buildView",
           "ordinal": 0,
-          "size": 467,
+          "size": 493,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -5988,6 +6144,15 @@
           ]
         },
         {
+          "name": "_runCellDeclaration",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:application_observation_port"
+          ]
+        },
+        {
           "name": "runWorkflow",
           "ordinal": 0,
           "size": 46,
@@ -6037,7 +6202,7 @@
         {
           "name": "startWave",
           "ordinal": 0,
-          "size": 63,
+          "size": 66,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -6102,9 +6267,18 @@
           ]
         },
         {
+          "name": "_normalizeCellGroup",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
           "name": "_normalizeWaveStart",
           "ordinal": 0,
-          "size": 35,
+          "size": 43,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -6209,7 +6383,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 226,
+          "size": 235,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -6229,7 +6403,7 @@
         {
           "name": "_settlementCommand",
           "ordinal": 0,
-          "size": 22,
+          "size": 55,
           "seam": "surface",
           "evidence": [
             "observation:record_name",
@@ -11811,6 +11985,44 @@
           ]
         },
         {
+          "name": "admitReplFanout",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:admission_port"
+          ]
+        },
+        {
+          "name": "replManifestAdmissions",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_port"
+          ]
+        },
+        {
+          "name": "holdsRunOrchestratorLease",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_port"
+          ]
+        },
+        {
+          "name": "reapRunReplBindings",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_knowledgeFailure",
           "ordinal": 0,
           "size": 1,
@@ -12549,7 +12761,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 52,
+          "size": 54,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12605,7 +12817,7 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 47,
+          "size": 57,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12812,6 +13024,29 @@
           ]
         },
         {
+          "name": "_recordRootAttentionRows",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_reconcileReviewerLossRows",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
           "name": "_recruitMode",
           "ordinal": 0,
           "size": 10,
@@ -12890,7 +13125,7 @@
         {
           "name": "_withRouteRecovery",
           "ordinal": 0,
-          "size": 12,
+          "size": 16,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
@@ -13063,7 +13298,7 @@
         {
           "name": "_settleRouteProbes",
           "ordinal": 0,
-          "size": 17,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -13401,7 +13636,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1102,
+          "size": 1134,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13535,7 +13770,16 @@
         {
           "name": "_seatReadDispatch",
           "ordinal": 0,
-          "size": 13,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_spillRead",
+          "ordinal": 0,
+          "size": 12,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -13655,7 +13899,7 @@
         {
           "name": "_notify",
           "ordinal": 0,
-          "size": 60,
+          "size": 62,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -13854,7 +14098,7 @@
         {
           "name": "_deliverGuidance",
           "ordinal": 0,
-          "size": 22,
+          "size": 33,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -13984,7 +14228,7 @@
         {
           "name": "_landedBy",
           "ordinal": 0,
-          "size": 10,
+          "size": 11,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13993,7 +14237,7 @@
         {
           "name": "_landingFailureDetail",
           "ordinal": 0,
-          "size": 43,
+          "size": 46,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -14002,7 +14246,7 @@
         {
           "name": "_refuseLanding",
           "ordinal": 0,
-          "size": 30,
+          "size": 38,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -14020,7 +14264,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 224,
+          "size": 229,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -14058,7 +14302,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1213,
+          "size": 1245,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -14198,6 +14442,15 @@
           "seam": "observation",
           "evidence": [
             "observation:key_name"
+          ]
+        },
+        {
+          "name": "parseReplCitation",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -15853,7 +16106,7 @@
         {
           "name": "providerBrief",
           "ordinal": 0,
-          "size": 100,
+          "size": 125,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -16396,7 +16649,7 @@
         {
           "name": "_resetProjection",
           "ordinal": 0,
-          "size": 92,
+          "size": 95,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -16831,7 +17084,7 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1252,
+          "size": 1287,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -17440,10 +17693,57 @@
         {
           "name": "sweepSettlementLeases",
           "ordinal": 0,
-          "size": 46,
+          "size": 76,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "doubtIdentity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "doubtsProjection",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "raiseSettlementDoubt",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "settlementReviewAuthority",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "resolveSettlementDoubt",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:store_append"
           ]
         },
         {
@@ -17772,6 +18072,15 @@
           ]
         },
         {
+          "name": "spillIdForBody",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "mintSpill",
           "ordinal": 0,
           "size": 28,
@@ -17937,7 +18246,7 @@
         {
           "name": "elevateTaskScratchpad",
           "ordinal": 0,
-          "size": 152,
+          "size": 165,
           "seam": "observation",
           "evidence": [
             "observation:store_append"
@@ -18156,6 +18465,43 @@
           "seam": "observation",
           "evidence": [
             "observation:projection_name"
+          ]
+        },
+        {
+          "name": "replManifestAdmissions",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "holdsRunOrchestratorLease",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reapRunReplBindings",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "projectReplBindingView",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name"
           ]
         },
         {
@@ -19542,12 +19888,21 @@
         {
           "name": "admitReplManifest",
           "ordinal": 0,
-          "size": 113,
+          "size": 138,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
             "observation:store_append",
             "observation:projection_name"
+          ]
+        },
+        {
+          "name": "admitReplFanout",
+          "ordinal": 0,
+          "size": 68,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
           ]
         },
         {
@@ -19914,7 +20269,7 @@
         {
           "name": "admitReplBinding",
           "ordinal": 0,
-          "size": 101,
+          "size": 117,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -20451,7 +20806,7 @@
         {
           "name": "_startupReconstructionPasses",
           "ordinal": 0,
-          "size": 297,
+          "size": 303,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -20483,9 +20838,27 @@
           ]
         },
         {
+          "name": "deferrableScopeRemovals",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "deferScopeRemovals",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_trackStartupCleanup",
           "ordinal": 0,
-          "size": 18,
+          "size": 27,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
@@ -20493,6 +20866,16 @@
         },
         {
           "name": "startupReady",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "startupCleanupDeferred",
           "ordinal": 0,
           "size": 5,
           "seam": "recovery",
@@ -22335,7 +22718,7 @@
         {
           "name": "writeScratchpad",
           "ordinal": 0,
-          "size": 55,
+          "size": 59,
           "seam": "admission",
           "evidence": [
             "admission:policy_gate",
@@ -22385,7 +22768,7 @@
         {
           "name": "_renderContextRead",
           "ordinal": 0,
-          "size": 48,
+          "size": 51,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -22517,11 +22900,12 @@
         {
           "name": "settlementLease",
           "ordinal": 0,
-          "size": 93,
+          "size": 109,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
-            "observation:durable_read"
+            "observation:durable_read",
+            "observation:ledger_port"
           ]
         },
         {
@@ -22653,6 +23037,65 @@
           ]
         },
         {
+          "name": "contextReadRefusal",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "boundedReplHead",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "replObjectEntry",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_citedReplObjects",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_resolveReplSpill",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:normalize_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_replManifestReview",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "observation",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_lastDeathCertEvidence",
           "ordinal": 0,
           "size": 35,
@@ -22675,7 +23118,7 @@
         {
           "name": "_recordProviderQuotaBlock",
           "ordinal": 0,
-          "size": 24,
+          "size": 31,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -22683,9 +23126,18 @@
           ]
         },
         {
+          "name": "_recordUnclassifiedDeath",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_settleTransportDeath",
           "ordinal": 0,
-          "size": 8,
+          "size": 13,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -22847,7 +23299,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 513,
+          "size": 516,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -23005,7 +23457,7 @@
         {
           "name": "_admitPauseRecord",
           "ordinal": 0,
-          "size": 60,
+          "size": 64,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -23665,6 +24117,88 @@
           ]
         },
         {
+          "name": "_admitSharedFanout",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_promoteReplObject",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "assertReplObjectAddressed",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "assertReplObjectResolved",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "mintReplObjectSpill",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "replOversizedRefusal",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "_assertReplObjectsServed",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_assertReplReviewProjection",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "observation:projection_name",
+            "observation:ledger_name",
+            "observation:durable_read"
+          ]
+        },
+        {
           "name": "list",
           "ordinal": 0,
           "size": 4,
@@ -24167,7 +24701,7 @@
         {
           "name": "_providerRouteOf",
           "ordinal": 0,
-          "size": 7,
+          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -26023,6 +26557,15 @@
           ]
         },
         {
+          "name": "_runCellDeclaration",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_pagePreservedInspections",
           "ordinal": 0,
           "size": 29,
@@ -26038,6 +26581,212 @@
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-redrive.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "refusal",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "boundRefusal",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "digestOf",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "describe",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "admitCarryForwardOption",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "memberDescriptors",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "latestMemberDescriptor",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "latestTerminalTransition",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "checkpointRecords",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "carriedItem",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "terminalCauseOf",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "terminalItems",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "refusalItems",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchpadItems",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchpadEntryText",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "pinItems",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "redriveContinuity",
+          "ordinal": 0,
+          "size": 59,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "composeContinuity",
+          "ordinal": 0,
+          "size": 79,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "continuityForMember",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "armSteeringCycle",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "armSteeringCycles",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "observeSteeringEvidence",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name"
           ]
         }
       ]

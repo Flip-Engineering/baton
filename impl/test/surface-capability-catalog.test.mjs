@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
 import {
   UNIFIED_SURFACE_CATEGORIES,
@@ -90,28 +89,32 @@ test('direct and generic reachability reflect existing live transports rather th
 test('canonical names outrank compatibility aliases and live alias corrections have one owner', () => {
   const closure = assertSurfaceCapabilityNameClosure();
   assert.deepEqual(closure.unresolved, []);
-  assert.equal(resolveSurfaceCapability('run.episode').id, 'run.episode');
-  assert.equal(resolveSurfaceCapability('run.status').id, 'run.status');
-  assert.equal(resolveSurfaceCapability('run.wait').id, 'run.wait');
-  assert.equal(resolveSurfaceCapability('runs.list').id, 'runs.list');
-  assert.equal(resolveSurfaceCapability('baton_decision_list').id, 'decision.list');
-  assert.ok(closure.shadowed.some((row) => row.name === 'run.episode'
-    && row.owner === 'run.episode' && row.shadowedOwner === 'run.view'));
+  assert.deepEqual(closure.shadowed, [], 'every live capability name keeps exactly one owner');
+  assert.equal(resolveSurfaceCapability('run.view').id, 'run.view',
+    'the fold operation keeps its own canonical identity');
+  assert.equal(resolveSurfaceCapability('run.episode').id, 'run.view',
+    'the retired episode spelling follows the run.view fold');
+  assert.equal(resolveSurfaceCapability('run.status').id, 'run.view',
+    'the retired status spelling follows the run.view fold');
+  assert.equal(resolveSurfaceCapability('runs.list').id, 'run.list',
+    'the runs.list compatibility spelling follows its canonical correction');
+  assert.equal(resolveSurfaceCapability('baton_decision_list').id, 'decision.list',
+    'the registered alias correction keeps its decision.list owner');
 });
 
-test('live dotted MCP commands absent from the semantic key set retain exact catalog identities', () => {
-  const semanticKeys = new Set(
-    APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => row.key),
-  );
-  const liveExecutableNames = mcpCombinedToolNames().filter((name) => (
-    name.includes('.') && !semanticKeys.has(name)
-  ));
+test('every served combined tool resolves to a catalog identity with an honest mode', () => {
+  const liveExecutableNames = mcpCombinedToolNames();
   assert.ok(liveExecutableNames.length > 0);
   for (const name of liveExecutableNames) {
-    assert.equal(resolveUnifiedCapability(name).id, name, `${name} lost its base catalog identity`);
-    assert.equal(resolveSurfaceCapability(name).id, name, `${name} lost its complete catalog identity`);
+    let row;
+    try {
+      row = resolveUnifiedCapability(name);
+    } catch (error) {
+      assert.fail(`${name} lost its catalog identity (${error.code})`);
+    }
+    assert.ok(row.mode === 'query' || row.mode === 'effect', `${name} carries an honest mode`);
   }
-  for (const name of ['run.episode', 'run.inspect', 'run.status', 'run.wait', 'run.workstreams', 'runs.list']) {
+  for (const name of ['baton_run_episode', 'baton_run_inspect', 'baton_run_status', 'baton_run_wait', 'baton_knowledge_recall']) {
     assert.equal(resolveUnifiedCapability(name).mode, 'query', `${name} lost its read-only mode`);
   }
 });

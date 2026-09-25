@@ -9,18 +9,22 @@
 // delegate, and a second hop would be noise.
 
 
-import { canonicalDigest } from './coordination-internals.mjs';
+import { canonicalDigest, parseReplCitation } from './coordination-internals.mjs';
+import * as coordinationLedger from './coordination-ledger.mjs';
 import { ContributionService } from './contribution-service.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import {
-  attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createDigest, wrapFact, wrapProse,
+  attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createDigest, replObjectRefusal,
+  sanitizeWebContent, wrapFact, wrapHubDerived, wrapProse,
 } from './messages.mjs';
+import { assertReplObjectAddressed } from './runtime-admission.mjs';
 import { NATIVE_SETTLEMENT_GAP, nativeSubagentView } from './native-subagent-view.mjs';
 import { validProcessClosedPayload } from './process-lifecycle.mjs';
 import { PROVIDER_FAULT_CODES, routeQuotaScope } from './provider-faults.mjs';
 import { providerGovernanceRoute } from './provider-governance.mjs';
 import * as runtimeBriefing from './runtime-briefing.mjs';
 import { PublicationError, WORKTREE_FAILURE } from './runtime-effects.mjs';
+import { observeSteeringEvidence } from './runtime-redrive.mjs';
 import {
   CLOSED_VERIFIER_DIAGNOSTICS, CLOSED_VERIFIER_EXECUTIONS, CLOSED_VERIFIER_OWNERS,
   CLOSED_VERIFIER_OUTCOMES, KILL_RULES, REARM_KINDS, TERMINAL_TASK_STATUSES, addSafeTokenCounts,
@@ -2570,6 +2574,10 @@ export function writeScratchpad(coordinator, recorder, workerId, entry, opts = {
       }, {
         actor: 'worker', principalId: workerId, key: opts.idempotencyKey,
       });
+      // Issue #59 (D4/GT8): the receipt's own content digest is the evidence that answers this
+      // attempt's carried checkpoint — the TG2 law in runtime-redrive.mjs. The observation runs on
+      // the coordinator's real write path, so a receipt that never landed answers nothing.
+      observeSteeringEvidence(coordinator, workerId, receipt.contentDigest ?? receipt.entry?.contentDigest ?? null);
       return {
         ok: true, result: receipt.result, entryId: receipt.entryId,
         entryDigest: receipt.entryDigest, scope: receipt.scope,
@@ -2800,7 +2808,10 @@ export function _renderContextRead(coordinator, recorder, { kind, items, spill }
         body: spill?.body ?? '',
       };
       const deliverable = `[CONTEXT_READ_RESULT spill]\n${frame}\n${JSON.stringify({ body: spill?.body ?? '' })}`;
-      return { rendered, deliverable, truncated: false };
+      // The answer leads with the rendered frame's own fields — the frame is the read's trust
+      // boundary, so a caller reads `answer.frame` without unwrapping — while `rendered` keeps the
+      // object the receipt cites and the delivered text share (BD3-A).
+      return { ...rendered, rendered, deliverable, truncated: false };
     }
     if (kind === 'code') return coordinator._renderCodeOrientation(items);
     const frame = {
@@ -3020,21 +3031,22 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
     const workerId = `settlement-worker:${waveId}`;
     const board = `wave-settlement:${waveId}`;
     const errors = [];
-    try { recorder.coordination.sweepSettlementLeases(coordinator._repoId, { maxLeases: 16, currentWaveId: waveId }); }
-    catch (error) { errors.push({ member: null, step: 'sweep', code: error?.code ?? 'settlement_sweep_failed' }); }
     const members = Array.isArray(options.members) ? options.members : null;
     // Candidacy is derived from each member's SHARED partition — not the elevate return — so that a
     // re-drive (whose worker partition is already reaped) still re-derives the exact same candidate
     // set and completes any board post a crash left missing (exactly-once, KS5).
     const elevatedNotes = [];
+    let openDoubts = 0;
     if (members) {
       for (const memberRunId of members) {
         try {
           const task = coordinator._settlementMemberTask(memberRunId);
           if (!task) { errors.push({ member: memberRunId, step: 'elevate', code: 'settlement_member_task_missing' }); continue; }
           const workerScope = `worker:${task.assignee ?? task.reservedWorkerId}`;
+          // The settle selection is exactly note/plan/doubt — the doubt kind is discriminated
+          // here (issue #66 D1); a link is never selected, never elevated.
           const selected = recorder.coordination.scratchpadSnapshot(memberRunId, workerScope).entries
-            .filter((entry) => entry.kind === 'note' || entry.kind === 'plan').map((entry) => entry.entryId);
+            .filter((entry) => entry.kind === 'note' || entry.kind === 'plan' || entry.kind === 'doubt').map((entry) => entry.entryId);
           // Elevation runs only while the worker partition still holds entries (the first pass); a
           // re-drive replays the reap idempotently, so skipping here never re-elevates.
           if (selected.length > 0) {
@@ -3046,6 +3058,14 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
           for (const entry of recorder.coordination.scratchpadSnapshot(memberRunId, 'shared').entries) {
             if (entry.kind === 'note') {
               elevatedNotes.push({ member: memberRunId, sharedEntryId: entry.entryId, text: entry.content?.text ?? '' });
+            } else if (entry.kind === 'doubt') {
+              // Issue #66 (D2): every shared doubt of the wave rides the review ledger exactly
+              // once — the idempotency key names the wave and the shared entry, and a doubtId
+              // already on the ledger is never re-raised under a later wave.
+              const raised = coordinationLedger.raiseSettlementDoubt(recorder.coordination,
+                { runId: memberRunId, waveId, sharedEntryId: entry.entryId },
+                { actor: 'orchestrator', key: `knowledge.doubt_raised:${waveId}:${entry.entryId}` });
+              if (raised.ok) openDoubts += 1;
             }
           }
         } catch (error) {
@@ -3053,7 +3073,13 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
         }
       }
     }
-    const materialize = members === null || elevatedNotes.length >= 1;
+    // Issue #66 (D5): the raise scan runs BEFORE the carry sweep in one settle invocation —
+    // the wave's own doubts are on the review ledger before a stale window's open doubts carry.
+    try { recorder.coordination.sweepSettlementLeases(coordinator._repoId, { maxLeases: 16, currentWaveId: waveId }); }
+    catch (error) { errors.push({ member: null, step: 'sweep', code: error?.code ?? 'settlement_sweep_failed' }); }
+    // Issue #66: a wave that raised doubts materializes its review window too — a raised
+    // doubt without a live lease could never be answered and would only ever carry.
+    const materialize = members === null || elevatedNotes.length >= 1 || openDoubts >= 1;
     let lease = null;
     if (materialize) {
       const taskReceipt = recorder.coordination.createAndClaimSettlementTask(
@@ -3102,11 +3128,11 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
     return Object.freeze({
       runId, taskId, lease,
       candidatesAwaitingAdmission: elevatedNotes.length,
+      openDoubts,
       settlementRunId: materialize ? runId : null,
       errors,
     });
   }
-
 export function _bumpInteractionGeneration(coordinator, recorder, taskId) {
     if (typeof taskId !== 'string' || taskId.length === 0) return;
     coordinator._interactionGeneration.set(taskId, (coordinator._interactionGeneration.get(taskId) ?? 0) + 1);
@@ -3309,6 +3335,105 @@ export function _replCiteInOwnRun(coordinator, recorder, taskId, citation) {
     }
   }
 
+// ---------------------------------------------------------------------------
+// Issue #69 — the REPL realization's serving path. An orchestrator-authored context object
+// crosses the provider seam as a CLOSED entry ({citation, scope, name, bindingVersion, cellId,
+// digest, head}); these members resolve it from the addressed run and read a shed entry's full
+// text back. What may be SERVED is decided by the lane's guards, which live in
+// runtime-admission.mjs beside the bucket's other deciders.
+// ---------------------------------------------------------------------------
+
+/** The closed context-read lane's own refusals, reused verbatim by the REPL spill read. */
+function contextReadRefusal(message, code) {
+  return Object.assign(new Error(message), { name: 'CoordinationRefusal', code });
+}
+
+/** The bounded head of a resolved context value: one line, sanitized (the R9 discipline), so a
+ * value whose bytes embed a section heading can never escape the bullet. */
+function boundedReplHead(value) {
+  return sanitizeWebContent(typeof value === 'string' ? value : JSON.stringify(value ?? null));
+}
+
+/** The closed entry a citation resolves to: the EXACT binding version's row plus its settled
+ * cell's artifact coordinate and a bounded, hub-derived head. */
+function replObjectEntry(recorder, citation, row, workerId) {
+  const cell = recorder.coordination.contextCell(row.cellId);
+  if (!cell || cell.state !== 'completed') {
+    throw replObjectRefusal(`REPL object ${citation} names a cell that is not settled`, 'repl_object_unresolved');
+  }
+  const outputRef = cell.result?.outputRef ?? null;
+  let value;
+  try { value = recorder.coordination._contextReferenceRead(outputRef); }
+  catch (error) {
+    throw replObjectRefusal(error?.message ?? 'context artifact is unavailable',
+      error?.code ?? 'context_artifact_unavailable');
+  }
+  return Object.freeze({
+    citation, scope: row.scope, name: row.name, bindingVersion: row.bindingVersion,
+    cellId: row.cellId, digest: outputRef?.digest ?? null,
+    head: wrapHubDerived(workerId, boundedReplHead(value)),
+  });
+}
+
+/** D1/D2/D3: the citation-resolution projection. Each `repl:<scope>:<name>@<version>` is
+ * address-checked first (never resolve what is not addressed to this worker), then resolved in the
+ * addressed run to the EXACT binding version (never "latest"), its settled cell's artifact
+ * coordinate, and a bounded hub-derived head — then the serving guard bounds and refuses. */
+export function _citedReplObjects(coordinator, recorder, runId, workerId, citations) {
+    coordinator._assertReadable();
+    const entries = (Array.isArray(citations) ? citations : []).map((citation) => {
+      const parsed = parseReplCitation(citation);
+      if (!parsed) throw replObjectRefusal(`REPL citation ${citation ?? ''} is unparseable`, 'repl_object_unresolved');
+      assertReplObjectAddressed(workerId, parsed.scope);
+      let row;
+      try { row = recorder.coordination.resolveReplCitation(runId, citation); }
+      catch (error) {
+        if (error?.code !== 'repl_binding_citation_not_found') throw error;
+        throw replObjectRefusal(`REPL citation ${citation} does not resolve in this run`, 'repl_object_unresolved');
+      }
+      return replObjectEntry(recorder, citation, row, workerId);
+    });
+    return coordinator._assertReplObjectsServed(workerId, entries, { runId, spillLane: true });
+  }
+
+/** D2/OQ1: the CLOSED lane a shed entry's full text is read through — the same digest-addressed
+ * spill the `CONTEXT_READ {kind:'spill'}` query serves, so the citation in hand resolves it. */
+export function _resolveReplSpill(coordinator, recorder, spillId) {
+    coordinator._assertReadable();
+    if (typeof spillId !== 'string' || !/^spill:sha256:[a-f0-9]{64}$/u.test(spillId)) {
+      throw contextReadRefusal('REPL spill citation is invalid', 'context_read_invalid');
+    }
+    const materialized = typeof recorder.coordination.materializeSpill === 'function'
+      ? recorder.coordination.materializeSpill(spillId) : null;
+    if (!materialized) throw contextReadRefusal('REPL spill is unknown or reaped', 'context_not_found');
+    return coordinator._renderContextRead({ kind: 'spill', spill: materialized });
+  }
+
+/** D6/GT10: the run-view REPL review projection — every manifest the run admitted, in admission
+ * order, through the closed review-shape guard, and per worker its own scope's bindings through
+ * the shipped per-worker projection (scope/name wrapped untrusted; a resolved cellId never
+ * wrapped). The orchestrator approves by promotion, so the run view shows exactly what it
+ * reviews. */
+export function _replManifestReview(coordinator, recorder, runId) {
+    coordinator._assertReadable();
+    const manifests = recorder.coordination.replManifestAdmissions(runId).map((row) => (
+      coordinator._assertReplReviewProjection({
+        manifestDigest: row.manifestDigest, replRole: row.replRole, principal: row.principal,
+        branchCount: Array.isArray(row.branches) ? row.branches.length : 0,
+      })
+    ));
+    const workers = {};
+    for (const row of manifests) {
+      if (!row.replRole.startsWith('worker:')) continue;
+      workers[row.replRole.slice('worker:'.length)] = coordinationLedger.projectReplBindingView(
+        recorder.coordination.replBindingSnapshot(runId, row.replRole), { role: 'orchestrator' },
+      );
+    }
+    return Object.freeze({
+      runId, manifests: Object.freeze(manifests), workers: Object.freeze(workers),
+    });
+  }
+
 export function _lastDeathCertEvidence(coordinator, recorder, row) {
     if (row?.status === 'retry_pending' && typeof recorder.coordination?.events === 'function') {
       const events = recorder.coordination.events();
@@ -3411,10 +3536,16 @@ export function _recordProviderQuotaBlock(coordinator, recorder, handle, fault, 
     if (!fault || fault.code !== PROVIDER_FAULT_CODES.quota) return null;
     const route = fault.detail?.route ?? coordinator._providerRouteOf(handle);
     const resetAt = fault.detail?.resetAt ?? null;
+    // #575: a refusal the provider answered without a reset instant ends at the declared
+    // fault-probe bound, beside the honest `resetAt: null` — the same bound the degrade
+    // episode's probe instant rides, so both facts end together and one probe answers both.
+    const derivedResetAt = resetAt === null
+      ? new Date(coordinator._now() + FRAME_LIMITS['route.fault_probe_ms'].value).toISOString()
+      : null;
     let block = null;
     if (coordinator._providerQuota && route) {
       block = coordinator._providerQuota.record(route, {
-        code: fault.code, resetAt, at: coordinator._now(), workerId: handle.id,
+        code: fault.code, resetAt, derivedResetAt, at: coordinator._now(), workerId: handle.id,
         runId: task?.runId ?? handle.runId ?? null,
       });
     }
@@ -3423,7 +3554,8 @@ export function _recordProviderQuotaBlock(coordinator, recorder, handle, fault, 
         worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
         kind: 'provider.quota_exhausted', actor: 'policy', ...coordinator._routeAttribution(handle, task),
         payload: {
-          code: fault.code, route, resetAt, action: 'block_route_until_reset',
+          code: fault.code, route, resetAt, derivedResetAt,
+          action: 'block_route_until_reset',
           recordedByReadiness: block !== null,
         },
       });
@@ -3432,13 +3564,53 @@ export function _recordProviderQuotaBlock(coordinator, recorder, handle, fault, 
     return block;
   }
 
+/** #550: a death this deployment can NAME but not as a provider fault. A codex worker that
+ * crashed, was killed or exited abnormally carries a terminal cause whose kind is not
+ * `provider_failure`, so `_mintProviderFaultDeath` returns null for it and NOTHING was recorded
+ * anywhere: the seat read with `leftReason` and `fault` both null, and the operator could not tell
+ * a crash from an OOM kill from a CLI bug — three participants died that way on one route in
+ * swarm-bend2-20260921.
+ *
+ * The observation is recorded into the SAME ledger the provider-fault path writes, so
+ * `providerFaultDeathFor` answers for this death too and the swarm runtime folds its seat-level
+ * fault row. It deliberately does NOT mint a provider-fault attention reason and does NOT fold a
+ * route degrade: the diagnostic is real, the route fact is not claimed, and inventing one would
+ * pause recruits on a route the death said nothing about. */
+export function _recordUnclassifiedDeath(coordinator, recorder, handle, task) {
+    const cause = handle?.terminalCause ?? null;
+    if (!cause || cause.kind === 'provider_failure') return null;
+    if (handle.unclassifiedDeathSeq !== undefined && handle.unclassifiedDeathSeq !== null) return null;
+    const seq = ++coordinator._attentionCursor;
+    handle.unclassifiedDeathSeq = seq;
+    coordinator._providerFaultDeaths ??= new Map();
+    coordinator._providerFaultDeaths.set(handle.id, Object.freeze({
+      workerId: handle.id,
+      taskId: task?.id ?? handle.taskId ?? null,
+      runId: task?.runId ?? handle.runId ?? null,
+      seq,
+      at: new Date(coordinator._now()).toISOString(),
+      code: typeof cause.code === 'string' && cause.code.length > 0
+        ? cause.code : 'worker_died_without_fault',
+      route: null,
+      resetAt: null,
+      resetAtText: null,
+      snapshotSha: null,
+    }));
+    return Object.freeze({ workerId: handle.id, seq, code: 'worker_died_without_fault' });
+  }
+
 export function _settleTransportDeath(coordinator, recorder, handle, task, stopEvent = null) {
     if (!handle) return null;
     coordinator._settleObservedNativeChildren(handle, stopEvent);
-    return coordinator._mintProviderFaultDeath(handle, task ?? coordinator._tasks.get(handle.taskId), {
-      preservation: (task ?? coordinator._tasks.get(handle.taskId))?.progressPreservation ?? null,
+    const resolved = task ?? coordinator._tasks.get(handle.taskId);
+    const minted = coordinator._mintProviderFaultDeath(handle, resolved, {
+      preservation: resolved?.progressPreservation ?? null,
       retention: handle.preservationFailure ?? null,
     });
+    // #550: when this was NOT a provider fault the seat used to settle silently. Record the
+    // unclassified death instead, so the diagnostic is visible without a route claim.
+    if (minted === null) _recordUnclassifiedDeath(coordinator, recorder, handle, resolved);
+    return minted;
   }
 
 export function _mintProviderFaultDeath(coordinator, recorder, handle, task, { preservation = null, retention = null } = {}) {

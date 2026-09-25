@@ -720,8 +720,13 @@ export function _providerFaultOf(coordinator, workerResult) {
   }
 
 export function _providerRouteOf(coordinator, handle) {
+    // Issue #575: the route is a routing coordinate, so its harness is the plain id the
+    // deployment's route table names (`omp`), never the version-suffixed diagnostic label
+    // `_harnessOf` reports (`omp@omp/17.4.0`). A route spelled with the version refuses at the
+    // route table (`application_route_not_allowed`) the moment a reader pins a recruit to it.
+    const card = handle?.vendor ? coordinator._adapters[handle.vendor]?.card() : null;
     return normalizeProviderRoute({
-      harness: handle?.vendor ? coordinator._harnessOf(handle.vendor) : null,
+      harness: card ? card.harness : null,
       model: handle?.modelResolved ?? handle?.modelRequested ?? null,
       effort: handle?.effortResolved ?? handle?.effortRequested ?? null,
     });
