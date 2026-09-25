@@ -91,7 +91,7 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // #525 adds the recovered seat's own row (resume_decision_required), minted in the same loop
   // after the re-route arms: a seat whose `resume_decision_requested` has no answer yet.
   // The list below is the mint order the extractor reads.
-  assert.equal(kinds.length, 26, 'the runtime mints twenty-six attention kinds');
+  assert.ok(kinds.length > 0, 'the runtime mints attention kinds');
   assert.deepEqual(kinds, [
     'worker_lost_on_restart',
     'participant_runtime_dead',
