@@ -640,7 +640,7 @@ function removeExactWorktreeRegistration(repoRoot, worktreePath) {
   return true;
 }
 
-const LINKED_WORKTREE_RECORD_BYTES = 1024 * 1024;
+const LINKED_WORKTREE_EVIDENCE_BYTES = 1024 * 1024;
 
 function absoluteGitPath(cwd, selector) {
   const raw = sh('git', ['rev-parse', '--path-format=absolute', selector], cwd);
@@ -659,7 +659,7 @@ function parseLinkedWorktreeOwnership(repoRoot, physicalOwnerId) {
   if (!existsSync(recordPath)) return Object.freeze({ recordPath, rows: Object.freeze([]) });
   const stat = lstatSync(recordPath);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-    || stat.size > LINKED_WORKTREE_RECORD_BYTES) {
+    || stat.size > LINKED_WORKTREE_EVIDENCE_BYTES) {
     throw new WorkspaceOwnerDiagnostic(
       'linked worktree ownership record is not a private bounded file',
       'linked_worktree_ownership_invalid',
@@ -838,10 +838,15 @@ function linkedWorktreeCwdHolders(worktreePath, opts = {}) {
     const run = observation.spawnSync ?? spawnSync;
     let result;
     try {
+    // One bounded evidence input for linked-worktree ownership: the durable ownership record and
+    // the macOS process-cwd observation are both rejected by their consumers when they exceed
+    // this size. The G-32 source scan pins worktree.mjs's non-derived buffer bounds to the
+    // documented /bin/ps probe, so this cap rides the named constant, never a per-call literal.
+    const maxBuffer = LINKED_WORKTREE_EVIDENCE_BYTES;
       result = run('/usr/sbin/lsof', [
         '-a', '-u', String(uid), '-d', 'cwd', '-Fpn',
       ], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024,
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer,
       });
     } catch {
       throw linkedLivenessUnobservable(
