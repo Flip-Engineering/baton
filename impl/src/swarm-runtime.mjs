@@ -4505,20 +4505,10 @@ export class SwarmRuntime {
       // Issue #464: the seat's whole attributed history, read ONCE — the roster row carries its
       // bounded tail, and a read that NAMES this seat carries it whole (the #343/#349 ladder).
       const seatCommits = commitsByParticipant.get(participant.participantId) ?? [];
-      // Issue #594: the seat's last preserved commit and any unpreserved work. `preserved`
-      // names the newest push of any kind; `unpreserved` is true when the seat's newest
-      // attributed commit has no successful branch push behind it (never pushed, or its last
-      // push outcome is a failure).
+      // Issue #594: the seat's last preserved commit — the newest push of any kind the
+      // preservation lane recorded for this seat.
       const preserveRows = preserveByParticipant.get(participant.participantId) ?? [];
       const lastPushed = [...preserveRows].reverse().find((row) => row.outcome === 'pushed') ?? null;
-      const lastBranchPush = [...preserveRows].reverse()
-        .find((row) => row.outcome === 'pushed' && row.work !== 'uncommitted') ?? null;
-      const newestSeatCommit = seatCommits.length > 0 ? seatCommits[seatCommits.length - 1].sha : null;
-      const newestCommitState = newestSeatCommit === null ? null
-        : ([...preserveRows].reverse().find((row) => row.sha === newestSeatCommit)?.outcome ?? null);
-      const unpreserved = newestSeatCommit !== null
-        && (lastBranchPush === null || lastBranchPush.sha !== newestSeatCommit
-          || newestCommitState === 'failed');
       const workspace = workspaceId === null ? null : Object.freeze({
         ...(physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
@@ -4538,7 +4528,6 @@ export class SwarmRuntime {
         dirty: observation?.dirty ?? false,
         preserved: lastPushed === null ? null
           : Object.freeze({ sha: lastPushed.sha, at: lastPushed.at, work: lastPushed.work }),
-        unpreserved,
         removed: custody?.removed ?? null,
         // Issue #438: where this row's live facts came from — the durable rows when nothing was
         // observed, else the seat's wrapper commit, its own turn seam, or an explicit live read.

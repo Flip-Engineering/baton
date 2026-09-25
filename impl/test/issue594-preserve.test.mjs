@@ -166,7 +166,6 @@ test('594-t6: the runtime drains a commit observation into a push, and a turn bo
   const view = await call('view', {});
   const seat = (view.participants ?? []).find((row) => row.participantId === 'lane');
   assert.equal(seat.workspace.preserved.work, 'uncommitted', 'the view names the newest preserved push');
-  assert.equal(seat.workspace.unpreserved, false, 'the seat holds no unpreserved committed work');
   assert.equal(originRef(origin, 'refs/baton/preserve/branches/lane/baton/lane-1'), sha,
     'and the branch ref still names the seat commit');
 });
