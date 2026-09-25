@@ -1,8 +1,8 @@
 # 57 — Durable attention and harness session ownership
 
 Issue: [#592](https://github.com/Flip-Engineering/baton/issues/592).
-Status: native-root revision for review. Stage 2 core work is authorized by the root;
-root integration changes remain subject to this review. The root reviews implementation before landing.
+Status: approved architecture with the 2026-09-25 root correction to delivery storage.
+Stage 2 implementation remains subject to root review before landing.
 Research date: 2026-09-25 UTC. Repository inspected: `67b165685045c8f579fbbaba55d1f95c0f6f30f3`.
 
 ## Approved architecture and native root constraint
@@ -230,8 +230,8 @@ owner-only publication authority. Callers discover that publication from the rep
 
 The host and its resident child exchange explicit ready, commit, receipt, and exit messages over
 an inherited IPC connection. After the child loads its durable store it sends `ready` with the
-current incarnation and sequence. The host then rebinds tool clients, sends stored native
-receipts, and asks the child to reconstruct pending dispatch. A child-exit event starts recovery;
+current incarnation and sequence. The host then rebinds tool clients and asks the child to
+reconstruct pending dispatch from the coordination ledger. A child-exit event starts recovery;
 an explicit startup error is recorded and displayed. Repeated permanent startup refusal remains
 an external fault with its actual cause; it must not be disguised as an eligible recipient.
 
@@ -259,7 +259,7 @@ generation and exact-close machinery must be used and tested; an unproven cleanu
 second writer and produces a visible recovery fault. No elapsed-time constant authorizes takeover.
 
 The host itself performs no agent decisions. Its functions are process supervision, authenticated
-transport, input serialization, and receipt storage. All root reasoning still runs in the selected
+transport and input serialization. All root reasoning still runs in the selected
 Claude Code, Codex, OMP, Kimi, Grok, or Muse harness. Model, effort, permissions, working directory,
 tool configuration, and conversation continuation must remain explicit runtime facts.
 
@@ -443,6 +443,29 @@ the original requirement for one identical per-harness mechanism: native root op
 programmatic seat control have different public interface contracts. A root-only private sender
 remains excluded. Every selected interface must be documented and independently verified.
 
+### Logical root resolution
+
+`{kind: 'root'}` addresses the deployment role. At dispatch, the host resolves that role through
+its authenticated root attachment: the operator principal, selected harness, and the live native
+input interface established by enrollment. The native Claude Code, OMP, or Codex integration
+supplies that interface when its documented connection becomes ready. The attachment is runtime
+state; contribution authors cannot supply a native session address. An ordinary observer MCP
+connection does not bind the root role.
+
+When no root is attached, the coordination source obligation stays owed. The dispatcher records
+`attention.undelivered` with the obligation identity and `root_unattached` as an ordinary
+coordination row. It does not require a native identity to preserve debt. A root attachment's ready
+event immediately rederives the unresolved work. Service restart does the same. A receipt or
+missing attachment never resolves the source request.
+
+New contribution needs carry `{to: 'root', ask}` or
+`{to: 'participant', participantId, ask}`. The contribution schema validates the address and every
+harness receives the same projection. Historical string needs retain their original root-prefix
+interpretation during replay. `swarm.need_answered` records an answer from the addressed
+recipient. A contribution review leaves its unanswered needs open. A turn report is resolved by
+an authorized guide replying to that report or by the reporting seat's completed/stopped
+business disposition. A transport observation alone does not resolve either source.
+
 ### 4.4 Runtime capability and operator presentation
 
 Initialization publishes separate observed facts for:
@@ -493,7 +516,6 @@ The delivery state for one obligation records these independent facts:
 | Fact | Recorded evidence |
 |---|---|
 | Owed | Source row and recipient relationship; no resolving business disposition |
-| Prepared | Immutable input batch, item keys, digest, controller generation, native request key |
 | Accepted | A documented native acknowledgment, with the actual native identity and semantics |
 | Processing observed | A correlated native turn/output event; never a controller's pre-send event |
 | Processed | A correlated native result, including failure when the harness reports one |
@@ -501,27 +523,15 @@ The delivery state for one obligation records these independent facts:
 | Refused | Native or local typed error, safe cause, and retained obligation |
 | Resolved | The underlying action or authorized disposition closed the source obligation |
 
-The host persists prepared batches and native receipts in its existing deployment-owned durable
-storage before acknowledging them across the resident IPC boundary. These are functional
-execution records. The coordination store imports them idempotently by dispatch identity.
-An IPC acknowledgment means the receiving side has committed its copy; only then may the sender
-release its durable receipt. Storage errors reach the operator connection and process stderr;
-the system must not issue a successful delivery receipt when it cannot record the evidence.
+The coordination ledger is the durable source for owed work. The dispatcher derives unresolved
+obligations after each committed source change and supplies them to the attached native session.
+Delivery observations may be recorded as ordinary coordination rows. They do not consume debt.
+A process restart rederives the outstanding work and can send a notice again. Duplicate wake
+notices are acceptable. The dispatcher has no separate receipt journal or prepared-input store.
 
-The host receipt journal needs a single writer, framed records with integrity checks, an fsync
-boundary, and atomic checkpoint replacement with directory synchronization. Recovery may discard
-an incomplete final record; corruption in committed history is a storage fault. Reusing a batch
-key with a different digest refuses. Acknowledged receipt retention and compaction follow durable
-import state. These are requirements for the new host storage component, not features assumed of
-an in-memory IPC queue. Its tests must kill the writer at each persistence boundary.
-
-The guarantee is durable owed work and at-least-once attention under recovery. Harness APIs
-without documented idempotent submission cannot provide exactly-once native turns across the
-send/receipt crash interval. Use native idempotency where specified, such as Muse's command ID.
-Otherwise recover native history through supported APIs where available. If that cannot prove
-processing, record `uncertain` and submit the still-owed items to the restored conversation with
-their original keys. Duplicate attention is possible and disclosed. Business mutations use
-Baton's existing idempotency and expected-state guards.
+The root's 2026-09-25 correction supersedes the earlier journal requirement. Add a delivery
+mechanism only when an observed failure requires it. Business mutations retain their existing
+idempotency and expected-state guards.
 
 Once a batch has a processed result, its items remain visible as unresolved work when appropriate.
 They are not immediately resubmitted merely because a model chose to finish its turn. New work,
@@ -549,10 +559,10 @@ the dispatcher with committed source events; implementing it alone does not deli
    constraint, and does not terminate or park the agent. Native approval requests remain visible
    to their authorized answerer throughout the turn.
 4. At an available input boundary, select pending items in source order, recheck their business
-   state, and persist a prepared batch. Bound each frame by the negotiated transport limit.
+   state, and compose an input batch from the unresolved source items. Bound each frame by the negotiated transport limit.
    Overflow remains eligible for the next batch. Bounded encoding cannot drop older obligations.
-5. Submit through the harness operation in section 3. Persist acceptance, native turn evidence,
-   completion, or refusal as each is observed. Distinguish correlated native output from the
+5. Submit through the harness operation in section 3. Record actual delivery results as ordinary
+   coordination rows when needed for diagnosis. Distinguish correlated native output from the
    current adapters' locally emitted `lifecycle.turn_started` events before a request is sent.
 6. On native exit, restore the exact route and native conversation where supported, using the
    machine-recorded handle. Reconcile uncertain batches before draining pending work. If native
@@ -589,7 +599,9 @@ addresses, and private provider data remain outside attention messages and publi
 
 ## 8. Removal and migration
 
-Stage 2 removes the configured-target architecture in one reviewed change:
+The integration stage, after native root ingress is connected, removes the configured-target
+architecture in the same reviewed implementation. Core dispatcher checkpoints stay unlanded
+until that integration and removal are complete:
 
 - Delete `normalizeRootWakeTarget`, `claudeSessionSocketPath`, `parseClaudeAgents`, the private
   frame encoder and sender, `ROOT_WAKE_DELIVERY_ATTEMPT_CAP`, and root-only delivery wiring.
@@ -664,13 +676,12 @@ Required cases:
    native lifetime it exercised and observe processing after recovery.
 4. **Resident replacement:** kill the actual resident application child while the host and
    native sessions stay up. Produce work through durable test setup, restart the child, and
-   verify replay and receipt import. The host ready event drives recovery.
+   verify replay of unresolved work. The host ready event drives recovery.
 5. **Complete service restart:** kill the complete test deployment process tree, restart
    `baton serve` on its existing durable state, and verify root/seat recovery and all owed work.
    This case prevents passing the previous case by quietly exempting a newly added host process.
-6. **Crash intervals:** stop real subprocesses after source commit, after prepared-batch commit,
-   after native acceptance, and before receipt import. Assert retained debt, truthful uncertain
-   states, documented native deduplication where available, and idempotent business effects.
+6. **Notice replay:** stop a test deployment after committing source work, restart it, and
+   observe the still-unresolved notice. A duplicate notice remains harmless to business state.
 7. **Refusal and recovery:** exercise a real protocol refusal and a broken native connection.
    Assert safe cause, outstanding debt, and delivery after a relevant restoration event.
    More failures than the deleted cap must not suppress later successful delivery.

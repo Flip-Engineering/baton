@@ -160,7 +160,7 @@ test('the runtime preserves distinct complete asks through command replay and st
       items: [{ id: 'deployment', status: 'partial', change: 'Review deployment', files: [],
         test: 'source review', evidence: 'deployment evidence' }],
       verification: { targeted: false, gates: [], fullSuite: false, environmentRed: [] },
-      carriedForward: [], needsFromOthers: asks,
+      carriedForward: [], needsFromOthers: asks.map(ask => ({to: 'root', ask})),
     } },
   };
   await runtime.command('swarm.update', command, principal);

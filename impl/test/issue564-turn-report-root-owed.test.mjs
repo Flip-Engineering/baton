@@ -98,6 +98,19 @@ test('564-t3: a second observation repairs rather than duplicates', async (t) =>
   assert.equal(second.length, 1, 'the pass still answers the row it holds');
 });
 
+test('a root guide can answer the source turn report and closes its owed attention', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'root decides the next turn' });
+  await f.call('recruit', { participantId: 'lead', objective: 'work on the lane' });
+  const report = f.turn({ participantId: 'lead', workerId: 'w-1', turnEpoch: 1, turnSeq: 7,
+    parentId: null, report: 'Ready for review.' });
+  f.runtime._reconcileTurnReportedRows(f.store.swarm('baton'), 'test');
+  await f.call('guide', { participantId: 'lead', inReplyTo: report.event.seq, message: 'Continue with the dispatcher.' });
+  const view = await f.call('view', { projection: 'attention' });
+  const rows = Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [];
+  assert.deepEqual(rows.filter((row) => row.owed === 'turn_reported'), []);
+});
+
 test('564-t4: the participant_left update path reconciles the turn rows too', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'update path reconciles (#572)' });

@@ -1,15 +1,5 @@
-// Issue #411 — carriedForward / needsFromOthers entries must be non-empty strings.
-//
-// The validator only checked Array.isArray for these two hand-off fields, while
-// environmentRed enforces isNonEmptyString per entry — so [42] passed strict
-// validation though no successor can consume it. Every entry must be judged by
-// the SAME per-entry predicate environmentRed uses.
-
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   CONTRIBUTION_CONTRACT_EXAMPLE,
   validateContributionContract,
@@ -46,32 +36,23 @@ for (const field of FIELDS) {
   }
 }
 
-test('#411 (b) valid string entries pass unchanged', () => {
+test('#411 (b) valid handoff text and addressed needs pass unchanged', () => {
   const body = bodyWith('carriedForward', ['HANDOFF-411-1 keeps the iface freeze through the next lane']);
-  body.needsFromOthers = ['NEED-411-1 reviewer verdict on the iface freeze'];
+  body.needsFromOthers = [{ to: 'root', ask: 'NEED-411-1 reviewer verdict on the iface freeze' }];
   assert.doesNotThrow(() => validateContributionContract(body));
   const returned = validateContributionContract(body);
   assert.equal(returned, body, 'the validator returns the body unchanged');
   assert.deepEqual(returned.carriedForward, ['HANDOFF-411-1 keeps the iface freeze through the next lane']);
-  assert.deepEqual(returned.needsFromOthers, ['NEED-411-1 reviewer verdict on the iface freeze']);
+  assert.deepEqual(returned.needsFromOthers, [{ to: 'root', ask: 'NEED-411-1 reviewer verdict on the iface freeze' }]);
 });
 
 test('#411 (b2) empty arrays still pass (the #371 example stays byte-identical)', () => {
   assert.doesNotThrow(() => validateContributionContract(CONTRIBUTION_CONTRACT_EXAMPLE));
 });
 
-test('#411 (c) carriedForward / needsFromOthers use the same per-entry predicate as environmentRed', () => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const source = readFileSync(join(here, '..', 'src', 'contribution-contract.mjs'), 'utf8');
-  const definitions = source.match(/const isNonEmptyString\s*=/g) ?? [];
-  assert.equal(definitions.length, 1, 'one shared per-entry predicate, not a second copy');
-  assert.ok(
-    source.includes('environmentRed') && source.includes('isNonEmptyString'),
-    'environmentRed is judged by the shared predicate',
-  );
-  const block = source.slice(source.indexOf("'carriedForward'"));
-  assert.ok(
-    block.includes('isNonEmptyString'),
-    'carriedForward / needsFromOthers are judged by that same predicate',
-  );
+test('#411 (c) a need names its recipient and carriedForward remains text', () => {
+  assert.throws(() => validateContributionContract(bodyWith('needsFromOthers', ['Root: untyped ask'])),
+    { code: 'contribution_contract_invalid' });
+  assert.throws(() => validateContributionContract(bodyWith('carriedForward', [{ to: 'root', ask: 'text' }])),
+    { code: 'contribution_contract_invalid' });
 });

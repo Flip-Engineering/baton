@@ -160,6 +160,12 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     reviewerId: STRING('the acting identity that reviewed: your own participant name when a member reviews, or the acting orchestrator\'s principal label; the runtime derives it, and a caller-named identity that is not the actor is refused', { required: false, ...AUTO('derived from the actor; you cannot review under another name') }),
     reason: STRING('why this decision', { example: 'verified against the running deployment' }),
   }),
+  'swarm.need_answered': KIND('answer one addressed contribution need', {
+    contributionId: STRING('the contribution containing the need', { required: true, example: 'contribution-ada-1' }),
+    needId: STRING('the need identity from the attention projection', { required: true, example: 'need:source-digest' }),
+    answer: STRING('the answer or decision that resolves this request', { required: true, example: 'Use the existing deployment.' }),
+    answeredBy: STRING('the authenticated answerer', { ...AUTO('derived from the actor') }),
+  }),
   // Issue #443: the swarm-level policy. A row changes the fields it names, so a view reads what an
   // orchestrator declared and the runtime resolves the defaults (manual, no billing preference).
   'swarm.policy_updated': KIND('declare the swarm-level policy a re-route follows when a seat\'s provider kills it', {

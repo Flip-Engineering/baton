@@ -1,4 +1,6 @@
-import { rootAttentionObligations, rootContributionAttention } from './attention-obligations.mjs';
+import { rootAttentionObligations, rootContributionAttention, turnReportAsk } from './attention-obligations.mjs';
+import { contributionNeeds } from './contribution-needs.mjs';
+import { AttentionDispatcher } from './attention-dispatcher.mjs';
 import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
   SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
@@ -408,6 +410,7 @@ const NOTIFICATION_ROW_KIND = 'swarm.notification_sent';
  * `swarm_guidance_reply_target_not_found`. */
 const GUIDANCE_REPLY_TARGET_KINDS = Object.freeze([...GUIDANCE_ROW_KINDS, 'message.sent', 'message.delivered',
   'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_integrated',
+  'swarm.turn_reported', 'swarm.root_attention_owed',
   NOTIFICATION_ROW_KIND]);
 
 /** WHO one guidance is from, for the swarm's own record (#273): the sender's identity is read by
@@ -1010,19 +1013,6 @@ const boundedCarryText = (value) => {
   const text = typeof value === 'string' ? value : '';
   return text.length <= CARRY_REASON_BYTES ? text : text.slice(-CARRY_REASON_BYTES);
 };
-/** Issue #564 x #572: the bounded text a turn-report owed row carries. The report is a
- * WorkerResult OBJECT by the time it is recorded, so the summary is read when it is a string; a
- * string report rides whole; a reporter fallback (its parent guidance refused) falls back to the
- * failure reason. Anything else is null rather than a serialized object the attention row cannot
- * read. */
-function turnReportAsk(payload) {
-  const report = payload?.report;
-  if (typeof report === 'string' && report.length > 0) return report;
-  if (typeof report?.summary === 'string' && report.summary.length > 0) return report.summary;
-  const reason = payload?.deliveryFailure?.reason;
-  return typeof reason === 'string' && reason.length > 0 ? reason : null;
-}
-
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
@@ -1252,6 +1242,7 @@ const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.policy_updated': 'organize',
   'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
+  'swarm.need_answered': 'communicate',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
 });
 // The update table is a third parallel table over the closed event vocabulary; the contract
@@ -1677,8 +1668,8 @@ const PIPELINE_TEXT_BYTES = 240;
  * contributions wait on a review and who can give it, which accepted rows are valid
  * `swarm integrate` targets, and which `needsFromOthers` obligations are still open.
  *
- * An obligation is open while its contribution carries no landing: the need a contract declares is
- * work its author asked of a peer before the row could land, so the landing receipt closes it.
+ * Addressed needs stay open until their recipient answers. Historical unaddressed handoff text
+ * retains its existing display rule through the contribution's landing.
  * Each list is capped at PIPELINE_LIST_CAP rows and each text at PIPELINE_TEXT_BYTES, and the
  * count the cap drops rides `omitted`. */
 export function swarmPipelineRows(contributions = [], participants = []) {
@@ -1708,11 +1699,14 @@ export function swarmPipelineRows(contributions = [], participants = []) {
     else if (row.reviewState === 'accepted' && !landed) {
       add(readyToLand, 'readyToLand', { ...entry, commit: row.commit ?? row.contract?.commit ?? null });
     }
-    if (landed) continue;
-    for (const need of Array.isArray(row.body?.needsFromOthers) ? row.body.needsFromOthers : []) {
+    for (const value of Array.isArray(row.body?.needsFromOthers) ? row.body.needsFromOthers : []) {
+      const need = contributionNeeds({ body: { needsFromOthers: [value] } })[0]
+        ?? { ask: value, needId: null, to: null };
+      if (landed && need.to === null) continue;
+      if (Object.hasOwn(row.answers ?? {}, need.needId)) continue;
       add(openNeeds, 'openNeeds', {
         contributionId: row.contributionId, participantId: row.participantId ?? null,
-        workId: row.workId ?? null, need: bounded(need),
+        workId: row.workId ?? null, need: bounded(need.ask), needId: need.needId, to: need.to,
       });
     }
   }
@@ -2685,9 +2679,9 @@ export class SwarmRuntime {
     const owed = [...this._routeProbeLedger.turns.values()]
       .filter((row) => row.payload.swarmId === swarm.swarmId);
     if (owed.length === 0) return [];
-    return owed.map(({ payload, turn }) => {
+    return owed.map(({ payload, turn, seq }) => {
       const event = this.store.recordDriver('swarm.root_attention_owed', {
-        swarmId: swarm.swarmId, participantId: payload.participantId, owed: 'turn_reported',
+        swarmId: swarm.swarmId, participantId: payload.participantId, owed: 'turn_reported', reportSeq: seq,
         ask: turnReportAsk(payload),
         next: { command: 'swarm.view', swarmId: swarm.swarmId },
       }, { actor, key: `swarm-turn-report-owed:${swarm.swarmId}:${turn}` }).event;
@@ -2985,7 +2979,7 @@ export class SwarmRuntime {
       else if (payload.kind === 'swarm.turn_reported'
         && (payload.parentId === null || payload.parentId === undefined)) {
         const turn = `${payload.participantId}:${payload.workerId ?? ''}:${payload.turnEpoch ?? ''}:${payload.turnSeq ?? ''}`;
-        ledger.turns.set(`${payload.swarmId}|${turn}`, { payload, turn });
+        ledger.turns.set(`${payload.swarmId}|${turn}`, { payload, turn, seq: event.seq });
       }
     }
     ledger.cursor = head;
@@ -5228,12 +5222,18 @@ export class SwarmRuntime {
     return projectSwarmView(view, projection ?? SWARM_VIEW_DEFAULT_PROJECTION);
   }
 
+  startAttentionDelivery({ resolveRecipient, onFault }) {
+    this.attentionDelivery ??= new AttentionDispatcher({ store: this.store, resolveRecipient, onFault }).start();
+    return this.attentionDelivery;
+  }
+
   close() {
     this.watchController.abort();
     // Issue #459: a runtime that owns its own supervised pool (a bare host with no coordinator)
     // kills what it started, exactly as the resident's fence kills the deployment's pooled
     // children. A landing's orphaned gate run is never this close's legacy.
     this._gatePool?.killAll();
+    return this.attentionDelivery?.close();
   }
 
   async _watch(args, principal, context) {
@@ -8564,6 +8564,18 @@ export class SwarmRuntime {
         const actor = this._actorOf(caller, principal);
         if (payload.reviewerId && payload.reviewerId !== actor) refuse('Review author does not match caller', 'swarm_author_mismatch');
         payload.reviewerId = actor;
+      }
+      if (args.event === 'swarm.need_answered') {
+        const contribution = swarm.contributions?.[payload.contributionId];
+        const need = contribution && contributionNeeds(contribution).find((row) => row.needId === payload.needId);
+        if (!need) refuse('The contribution has no such addressed need', 'swarm_payload_invalid');
+        if ((need.to === 'root' && caller !== null)
+          || (need.to === 'participant' && caller?.participantId !== need.participantId)) {
+          refuse('Only the addressed recipient can answer this need', 'swarm_permission_required');
+        }
+        const actor = this._actorOf(caller, principal);
+        if (payload.answeredBy && payload.answeredBy !== actor) refuse('Answer author does not match caller', 'swarm_author_mismatch');
+        payload.answeredBy = actor;
       }
       if (args.event === 'swarm.coupling_updated' && payload.action === 'release') {
         const actor = this._actorOf(caller, principal);
