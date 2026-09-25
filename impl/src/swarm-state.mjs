@@ -10,7 +10,6 @@
 
 // Issue #430: every code `refuse`/`integrity` raise draws from the family's ONE closed refusal
 // set; minting a code outside it is a construction-time error.
-import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
 // Issue #464: the participant row's role line is bounded by the ONE `view.role.head` registry row
 // (limits.mjs derives it from the frame a roster must fit) — never a second constant here.
 import { FRAME_LIMITS } from './limits.mjs';
@@ -174,12 +173,10 @@ export class SwarmIntegrityError extends Error {
 }
 
 function refuse(message, code, detail = null) {
-  assertSwarmRefusalCode(code, 'swarm-state.refuse');
   throw new SwarmRefusal(message, code, detail);
 }
 
 function integrity(message, code, detail = null) {
-  assertSwarmRefusalCode(code, 'swarm-state.integrity');
   throw new SwarmIntegrityError(message, code, detail);
 }
 

@@ -240,11 +240,3 @@ export const SWARM_REFUSAL_SAME_RULE_PAIRS = Object.freeze([
   ['swarm_already_closed', 'swarm_closed'],
 ].map((pair) => Object.freeze(pair)));
 
-/** The construction-time guard the two refusal helpers draw their codes through: minting a code
- * this table does not hold is an error at the moment of minting, the way #372's closed sets
- * refuse — a misspelled or invented code can never reach the ledger or the wire. */
-export function assertSwarmRefusalCode(code, site) {
-  if (!Object.hasOwn(SWARM_REFUSAL_CODES, code)) {
-    throw new Error(`construction-time refusal vocabulary error: ${site} raised '${code}', which the swarm family's ONE closed refusal set (SWARM_REFUSAL_CODES in impl/src/swarm-refusals.mjs) does not hold — declare the code there with its HTTP class and rule instead of minting a second spelling`);
-  }
-}

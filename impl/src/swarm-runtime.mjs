@@ -9,15 +9,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { routeQuotaScope } from './provider-faults.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
-import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
-  contributionContractConflict,
-  isContributionContractBody, projectContributionContract, validateContributionContract,
-  validateContributionContractMode } from './contribution-contract.mjs';
+import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractExample,
+  isContributionContractBody, projectContributionContract } from './contribution-contract.mjs';
 import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
   SWARM_POLICY_FIELDS, SWARM_RESUME_CONTINUATION_MODES, resumeDecisionPending } from './swarm-state.mjs';
-// Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
-// minting a code outside it is a construction-time error.
-import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
 import { pathInScopes } from './path-scope.mjs';
 // Issue #311 (item 2): the peer message's body lane is a cataloged admission like every other, so
 // its hard refusal is composed by the registry's own ONE helper (never a hand-typed sentence) and
@@ -379,11 +374,10 @@ const definedJson = (value) => {
   return Object.fromEntries(Object.entries(value).filter(([, member]) => member !== undefined)
     .map(([key, member]) => [key, definedJson(member)]));
 };
-const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(definedJson(value)))).digest('hex');
 const refuse = (message, code, detail = {}) => {
-  assertSwarmRefusalCode(code, 'swarm-runtime.refuse');
   throw Object.assign(new Error(message), { code, detail });
 };
+const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(definedJson(value)))).digest('hex');
 const childrenByParent = (swarm) => {
   const childrenOf = new Map();
   for (const participant of Object.values(swarm.participants)) {
@@ -7769,21 +7763,15 @@ export class SwarmRuntime {
     // a call the bridge would refuse.
     const collaborationLines = this._briefCollaborationLines(args.permissions);
     if (collaborationLines.length > 0) blocks.push(['## Collaboration', ...collaborationLines].join('\n'));
-    // Issue #310 + #371 + #373: the expected contribution shape rides every brief as one
-    // worked example the validator admits, with the closed sets derived from the schema the
-    // validator reads. A seat recruited read_only — or granted no contribute authority —
-    // publishes commit null by design, so its example is the read-only variant; the read-only
-    // brief also says so, naming the refusal a commit-carrying publish meets.
-    if (args.mode === 'read_only') {
-      blocks.push([
-        '## Read-only mode',
-        'This seat was recruited read_only: its run starts with the read-only result intent, so its brief renders no repository mutation authority — the read-only acceptance applies instead.',
-        'Publish the contribution contract below with commit: null; a body carrying a commit object is refused contribution_mode_mismatch {mode: read_only, field: commit, expectation: null}.',
-      ].join('\n'));
-    }
-    blocks.push(contributionContractBriefSection(
-      { readOnly: args.mode === 'read_only'
-        || !((args.permissions ?? DEFAULT_PERMISSIONS).includes('contribute')) }));
+    // The contribution report shape, taught by one worked example: a subject, an optional
+    // commit, an items array. Tolerant since #598 — the runtime records what a seat reports.
+    blocks.push(['## Contribution report',
+      'Publish your report with swarm.update event swarm.contribution_recorded. The body carries a subject, an optional commit and an items array, and may add the documented fields (base, verification, carriedForward, needsFromOthers). A seat without repository mutation authority publishes commit null. Example:',
+      JSON.stringify(contributionContractExample({
+        readOnly: args.mode === 'read_only'
+          || !((args.permissions ?? DEFAULT_PERMISSIONS).includes('contribute')),
+      }), null, 2),
+    ].join('\n'));
     // Issue #443: a successor recruited for a seat its PROVIDER killed says WHY it exists — the
     // fault, the route it came from, where the runtime's own decision sent it, what was carried and
     // the predecessor's last checkpoint. ONE derivation with the inheritance block below: the same
@@ -8080,59 +8068,18 @@ export class SwarmRuntime {
     return detail;
   }
 
-  /** Translate the git authority's typed landing error into the family's refusal, and nothing else:
-   * the failure row a caller who is gone reads records the error's OWN code, so this switch and that
-   * row can never disagree about which code a landing failed with. `facts` is the #463 context the
-   * runtime derived for the step the error came out of — the same rows the durable row records. */
+  /** Translate the git authority's typed landing error into the family's refusal: the failure
+   * row a caller who is gone reads records the error's OWN integrate_ code, forwarded as the
+   * refusal's code with the same detail (#598 — a literal restatement of twelve codes added a
+   * vocabulary self-check where one typed forward does the work). `facts` is the #463 context
+   * the runtime derived for the step the error came out of — the same rows the durable row
+   * records. An error that is not a typed landing failure is rethrown untouched. */
   _refuseLanding(error, swarm, facts = {}) {
     const raised = typeof error?.code === 'string' && error.code.startsWith('integrate_')
       ? error.code : null;
     if (raised === null) throw error;
-    const detail = this._landingFailureDetail(error, swarm, facts);
-    const message = `Landing did not complete: ${error.message}`;
-    // The code is spelled at each call site, never passed through: the #430 owner table is audited
-    // by reading the LITERAL second argument of every refuse() in this module, so a variable here
-    // would silence the only check that a landing refusal is in the family's closed set at all.
-    switch (raised) {
-      case 'integrate_contribution_not_accepted':
-        refuse(message, 'integrate_contribution_not_accepted', detail); break;
-      case 'integrate_commit_unreachable':
-        refuse(message, 'integrate_commit_unreachable', detail); break;
-      case 'integrate_conflict':
-        refuse(message, 'integrate_conflict', detail); break;
-      case 'integrate_gates_red':
-        refuse(message, 'integrate_gates_red', detail); break;
-      // Issue #459: the gate run could not take the host verify lease within its bound. The landing
-      // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
-      case 'integrate_gates_busy':
-        refuse(message, 'integrate_gates_busy', detail); break;
-      // Issue #558: the landing cannot publish — the deployment declares no shared remote, or
-      // the declared remote was unreachable or refused the push (the local move is rolled back,
-      // so the target holds no unpublished squash). A landing that cannot publish never reports
-      // a local success.
-      case 'integrate_publish_undeclared':
-        refuse(message, 'integrate_publish_undeclared', detail); break;
-      case 'integrate_publish_failed':
-        refuse(message, 'integrate_publish_failed', detail); break;
-      // Issue #573: the publish pre-flight failed before the gate run — the destination is
-      // absent or unreachable, or this environment cannot authenticate to it. The refusal says
-      // which, with the bounded git tail.
-      case 'integrate_publish_unreachable':
-        refuse(message, 'integrate_publish_unreachable', detail); break;
-      case 'integrate_publish_unauthenticated':
-        refuse(message, 'integrate_publish_unauthenticated', detail); break;
-      case 'integrate_target_moved':
-        refuse(message, 'integrate_target_moved', detail); break;
-      // Issue #570: the fetched remote tip and the local target ref went separate ways. The
-      // landing refuses instead of squashing onto a tip the local ref cannot fast-forward to,
-      // and the detail names both heads.
-      case 'integrate_target_diverged':
-        refuse(message, 'integrate_target_diverged', detail); break;
-      case 'integrate_change_invalid':
-        refuse(message, 'integrate_change_invalid', detail); break;
-      default:
-        throw error;
-    }
+    refuse(`Landing did not complete: ${error.message}`, raised,
+      this._landingFailureDetail(error, swarm, facts));
   }
 
   /** The landing comment, composed so `gh issue close <n> --body-file` takes it verbatim (#296 item
@@ -8713,13 +8660,10 @@ export class SwarmRuntime {
       if (caller && args.event === 'swarm.contribution_recorded' && payload.participantId !== caller.participantId) {
         refuse('Contributions must name their actual author', 'swarm_author_mismatch');
       }
-      // Issue #310: a contract-claiming body is validated closed and its commit claim is
-      // verified against the seat's lane branch; commit:null on a dirty worktree is stamped.
-      // Issue #373: the seat's recruit mode gates the commit claim — a read_only seat has no
-      // lane commit to report, so a commit-carrying body refuses by name before admission.
+      // The report shape is tolerant since #598: the runtime records what a seat reports. The
+      // commit claim is still verified against the seat's lane branch, and commit:null on a
+      // dirty worktree is stamped.
       if (args.event === 'swarm.contribution_recorded' && isContributionContractBody(payload.body)) {
-        validateContributionContract(payload.body);
-        validateContributionContractMode(payload.body, this._recruitMode(swarm, payload.participantId));
         const admitted = this._admitContributionContract(swarm, payload);
         payload.body = admitted.body;
         contributionStatus = admitted.status;
@@ -8815,31 +8759,6 @@ export class SwarmRuntime {
       }
       if (caller && permissions.some((permission) => !(caller.permissions ?? DEFAULT_PERMISSIONS).includes(permission))) {
         refuse('Delegation cannot grant authority the caller does not hold', 'swarm_permission_required');
-      }
-      // Issue #502: the objective IS the seat's instructions — it becomes the top of every brief
-      // this recruit writes — so a contribution example in it that names a field outside the
-      // contract is read HERE, before any effect, and refused typed. The #492 audit swarm's
-      // operator-written objective named a `findings` array beside the contract's own keys;
-      // nothing read it, and 40 of that swarm's 46 refusals were seats meeting the contract
-      // validator for the first time, 17 seats independently. The refusal names the field, the
-      // admitted vocabulary and where the content belongs, so the recruiter reads what to change
-      // before a seat exists.
-      const objectiveConflict = contributionContractConflict(args.objective);
-      if (objectiveConflict !== null) {
-        refuse(
-          `Swarm recruit objective is invalid: the contribution example it carries names the field`
-          + ` "${objectiveConflict.field}", which the contribution contract does not admit — the`
-          + ` admitted fields are ${objectiveConflict.admitted.join(', ')}, and per-item detail`
-          + ` belongs in items[].evidence`,
-          'swarm_command_invalid',
-          {
-            field: 'objective', rule: 'contract-field', offending: objectiveConflict.field,
-            admitted: Object.freeze([...objectiveConflict.admitted]),
-            correction: `rename or remove "${objectiveConflict.field}" in the objective's`
-              + ` contribution example — the contract admits ${objectiveConflict.admitted.join(', ')},`
-              + ` and per-item detail belongs in items[].evidence`,
-          },
-        );
       }
       // #316 (a): a route its provider degraded is refused BEFORE any effect — no worktree, no
       // credential projection, no process, and no seat dead within seconds — and the refusal names

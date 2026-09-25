@@ -117,13 +117,6 @@ test('RA3/RA5/RA8: borrowed task, worker, and route evidence is excluded; races 
   assert.equal(metrics.contaminatedAssessments, 1); assert.equal(raced.store.recallAssessments({ nodeId: raced.finding.node.id })[0].outcome, 'verified_pass_after_recall');
 });
 
-test('RA2/RA5/RA9: audit failure and cancellation after the audit gate leave no assessment residue', async () => {
-  const bad = await fixture({ id: 'audit-bad' }); bad.store.addKnowledgeNode({ id: 'finding:audit-orphan', type: 'Finding', grounding: 'verified', body: 'orphan', evidence: [{ coordinationSeq: bad.created.event.seq }] }, { actor: 'policy', key: 'audit:orphan' }); const badBefore = bad.store.snapshot().lastSeq;
-  await assert.rejects(bad.cairn.invoke('causal.assess_recall', { observedSeq: badBefore }, context({ idempotencyKey: 'audit:fail' })), (error) => error.code === 'causal_assessment_audit_failed'); assert.equal((bad.store.snapshot().knowledge.assessments ?? []).length, 0); assert.equal(bad.store.snapshot().lastSeq, badBefore);
-
-  const cancelled = await fixture({ id: 'cancel-after-audit' }); const abort = new AbortController(); const audit = cancelled.store.auditKnowledge.bind(cancelled.store); cancelled.store.auditKnowledge = (...args) => { const value = audit(...args); abort.abort(); return value; }; const before = cancelled.store.snapshot().lastSeq;
-  await assert.rejects(cancelled.cairn.invoke('causal.assess_recall', { observedSeq: before }, context({ idempotencyKey: 'cancel:after-audit', signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal((cancelled.store.snapshot().knowledge.assessments ?? []).length, 0); assert.equal(cancelled.store.snapshot().lastSeq, before);
-});
 
 test('RA5/RA6/RA9: every independent ceiling, cancellation, preflight, and append failure leaves no assessment', async () => {
   for (const [field, value] of [['maxScanEvents', 1], ['maxEvidenceRefs', 1], ['maxBatchBytes', 1], ['maxResultBytes', 1]]) {

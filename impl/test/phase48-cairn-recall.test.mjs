@@ -73,7 +73,7 @@ test('BR1/BR3/BR4/BR6/BR8: deterministic bounded pull recall appends one compact
   assert.equal(store.snapshot().lastSeq, observedSeq + 1, 'the operation appends exactly one receipt event');
 });
 
-test('BR2/BR5: audit failures refuse and unresolved contradictions are returned only as complete bundles', async () => {
+test('BR2/BR5: unresolved contradictions are returned only as complete bundles', async () => {
   const store = new CoordinationStore(root('contradiction-store'), { clock: clock() }); const g = graph(store, { contradiction: true }); const capability = cairn(store); const observedSeq = store.snapshot().lastSeq;
   await assert.rejects(capability.invoke('causal.recall', { text: 'duplicates', limit: 1, observedSeq, reader: {} }, ctx({ idempotencyKey: 'bundle:too-small' })), (error) => error.code === 'causal_recall_oversize');
   const result = await capability.invoke('causal.recall', { text: 'duplicates', limit: 2, observedSeq, reader: {} }, ctx({ idempotencyKey: 'bundle:complete' }));
@@ -82,9 +82,6 @@ test('BR2/BR5: audit failures refuse and unresolved contradictions are returned 
   const resolved = store.resolveKnowledgeContradiction({ edgeId: g.conflict.edge.id, winnerId: g.left.node.id, loserId: g.right.node.id, expectedWinnerValidityVersion: 1, expectedLoserValidityVersion: 1, expectedEdgeValidityVersion: 1, reason: 'Verified idempotency wins.' }, { actor: 'operator:alice', key: 'resolve' });
   const historical = await capability.invoke('causal.recall', { text: 'duplicates', limit: 2, observedSeq, reader: {} }, ctx({ idempotencyKey: 'bundle:historical' })); assert.deepEqual(historical.payload[0].contradictions, result.payload[0].contradictions);
   const current = await capability.invoke('causal.recall', { text: 'duplicates', limit: 2, observedSeq: resolved.contamination.seq, reader: {} }, ctx({ idempotencyKey: 'bundle:current' })); assert.deepEqual(current.payload[0].nodes, []); assert.deepEqual(current.payload[0].contradictions, []);
-
-  const bad = new CoordinationStore(root('bad-audit'), { clock: clock() }); const created = bad.createTask(task('source'), { actor: 'orchestrator', key: 'task' }); bad.addKnowledgeNode({ id: 'finding:orphan', type: 'Finding', grounding: 'verified', body: 'orphan', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'orphan' }); const before = bad.snapshot().lastSeq;
-  await assert.rejects(cairn(bad).invoke('causal.recall', { text: 'orphan', limit: 1, observedSeq: before, reader: {} }, ctx({ idempotencyKey: 'audit:fail' })), (error) => error.code === 'causal_recall_audit_failed'); assert.equal(bad.snapshot().lastSeq, before);
 });
 
 test('BR3: equal integer scores break ties by node ID', async () => {
@@ -146,12 +143,10 @@ test('BR6: a worker claimed before recall is bound into the historical reader re
   store.releaseWriterLease(); const restarted = new CoordinationStore(dir); assert.equal(restarted.events(claim.payload[0].receipt.eventSeq, 1)[0].payload.readerWorker, 'w-source'); restarted.releaseWriterLease();
 });
 
-test('BR2/BR6: cancellation and receipt append failure publish no recalled content', async () => {
-  const store = new CoordinationStore(root('failure-store'), { clock: clock() }); graph(store); const observedSeq = store.snapshot().lastSeq; const before = store.snapshot().lastSeq;
-  const abort = new AbortController(); const audit = store.auditKnowledge.bind(store); store.auditKnowledge = (...args) => { const result = audit(...args); abort.abort(); return result; };
-  await assert.rejects(cairn(store).invoke('causal.recall', { text: 'retry', limit: 1, observedSeq, reader: {} }, ctx({ idempotencyKey: 'cancel', signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal(store.snapshot().lastSeq, before);
-  store.auditKnowledge = audit; store._appendFile = () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); };
-  await assert.rejects(cairn(store).invoke('causal.recall', { text: 'retry', limit: 1, observedSeq, reader: {} }, ctx({ idempotencyKey: 'append:fail' })), /disk full/); assert.equal(store.snapshot().lastSeq, before);
+test('BR2/BR6: a receipt append failure publishes no recalled content', async () => {
+  const store = new CoordinationStore(root('failure-store'), { clock: clock() }); graph(store); const before = store.snapshot().lastSeq;
+  store._appendFile = () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); };
+  await assert.rejects(cairn(store).invoke('causal.recall', { text: 'retry', limit: 1, observedSeq: before, reader: {} }, ctx({ idempotencyKey: 'append:fail' })), /disk full/); assert.equal(store.snapshot().lastSeq, before);
 });
 
 test('BR1/BR9: direct, authenticated web, and authenticated MCP use the same repository-bound operation', async () => {

@@ -209,9 +209,6 @@ export class ContributionService {
           capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
           workspaceId, signal,
           ...(comparison === null ? {} : { comparison }),
-          beforeVerify: this.acceptOptions.requireCoverage && typeof this.worktrees.changedLines === 'function'
-            ? async () => { source.changedLines = await this.worktrees.changedLines(source.sessionContext.baseSha, captured.sha); }
-            : null,
         });
     } catch (error) {
       if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});

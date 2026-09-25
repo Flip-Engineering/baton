@@ -1,10 +1,10 @@
 // Example resident: `baton serve impl/scripts/resident.deployment.mjs`.
 // Native routes are starting choices, not a required swarm roster. Embedders can supply their
 // own routes and verifier; ordinary deployment admission checks each selected route.
-import { openConvergedBaton } from '../src/index-converged.mjs';
+import { openBaton } from '../src/index.mjs';
 
 export async function createBatonDeployment({ repo = process.cwd(), routes, verification } = {}) {
-  return openConvergedBaton({
+  return openBaton({
     repo,
     advanced: {
       routes: routes ?? [
