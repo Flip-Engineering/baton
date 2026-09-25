@@ -2411,11 +2411,12 @@ export function createAndClaimPlanRecoveryRefinement(store, fields, gate, route,
       && claimedEvent.batch?.id === priorAdmission.batch.id && claimedEvent.batch.index === 2 && claimedEvent.batch.count === 3
       && store._recoveryBatchIdentity('goal_plan_recovery_dispatch', [priorAdmission, createdEvent, claimedEvent]) === priorAdmission.batch.id;
     if (!exact) throw new CoordinationRefusal('plan recovery idempotency key is bound differently', 'plan_recovery_conflict');
-    // #400: a triple that IS bound by this key can still fail fold adjudication — a torn hop, an
-    // approval window the live policy no longer covers, an unverified prior. That diagnosis is the
-    // caller's: the fold's own code crosses the surface unchanged, the same way
-    // `_validateGoalPlanReplayTransactions` already lets it cross at replay. Relabelling it
-    // `plan_recovery_conflict` made a torn recorded transaction read as a key reuse.
+    // #400: a triple that IS bound by this key can still fail fold adjudication — the live
+    // predecessor this prospective lane re-reads may no longer be the completed, hub-verified task
+    // the fold requires. That diagnosis is the caller's: the fold's own code crosses the surface
+    // unchanged, the same way `_validateGoalPlanReplayTransactions` already lets it cross at
+    // replay. Relabelling it `plan_recovery_conflict` makes a recorded transaction that can no
+    // longer be adjudicated read as a key reuse.
     store._validateGoalPlanRecoveryTriple(priorAdmission, createdEvent, claimedEvent, false);
     return freeze({
       ok: true, result: 'idempotent', dispatchEvent: clone(priorAdmission),
