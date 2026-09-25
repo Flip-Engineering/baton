@@ -155,6 +155,9 @@ test('CT7 (#41): baton-mcp-web startup failure prints the human cause, not a bar
   const bridge = new URL('../scripts/mcp-web.mjs', import.meta.url).pathname;
   const outcome = await execFileAsync(process.execPath, [bridge], {
     cwd: outside, timeout: 30_000,
+    // The startup-retry window is the resident-restart bridge; this row pins the typed refusal
+    // shape itself, so it runs the one-shot open.
+    env: { ...process.env, BATON_MCP_WEB_STARTUP_WINDOW_MS: '0' },
   }).catch((error) => error);
   assert.match(outcome.stderr ?? '', /startup failed/u);
   assert.match(outcome.stderr ?? '', /cli_config_invalid|cli_transport_failed/u, 'the typed code stays');
