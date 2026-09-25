@@ -1213,7 +1213,7 @@ function refereeFn(runtime, task, result, opts) {
 /**
  * Assemble a runnable fleet driver.
  * @param {{repoRoot:string, logDir:string, adapters:Record<string,object>, now?:()=>number,
- *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
+ *          stopDeadlineMs?:number,
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
  *          advisoryFeedSources?:Record<string,object>,
  *          providerReconciliation?:{budgetTokens:number,indexAuthority:object},
@@ -1355,15 +1355,15 @@ export function createDriver(opts) {
       || !Number.isFinite(policy.defaultPriorSuccessRate) || policy.defaultPriorSuccessRate <= 0 || policy.defaultPriorSuccessRate >= 1) throw new TypeError('route learning policy is invalid');
     routeLearningPolicy = Object.freeze({ ...policy });
   }
+  // #598 F02/F12: startup session recovery carries no count or clock policy — `sessionRecoveryPolicy`
+  // is the opt-in flag and its only admitted shape is the empty object.
   let sessionRecoveryPolicy;
   if (opts.sessionRecoveryPolicy !== undefined) {
-    const policy = opts.sessionRecoveryPolicy; const fields = ['maxAttempts', 'maxSessions', 'maxStateRows', 'timeoutMs'];
-    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
-      || !Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts <= 0 || policy.maxAttempts > 1_000_000
-      || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > 1_000
-      || !Number.isSafeInteger(policy.maxStateRows) || policy.maxStateRows < policy.maxSessions || policy.maxStateRows > 100_000
-      || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0 || policy.timeoutMs > 5 * 60_000) throw new TypeError('session recovery policy is invalid');
-    sessionRecoveryPolicy = Object.freeze({ ...policy });
+    const policy = opts.sessionRecoveryPolicy;
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy) || Object.keys(policy).length > 0) {
+      throw new TypeError('session recovery policy accepts no fields — startup recovery finishes on observed results or explicit stop, never on a count or a clock');
+    }
+    sessionRecoveryPolicy = Object.freeze({});
   }
   const startupRecoveryAuthority = sessionRecoveryPolicy ? Object.freeze({}) : null;
   const log = new Log(opts.logDir, () => new Date(now()).toISOString());
@@ -1702,11 +1702,8 @@ export function createDriver(opts) {
     publisher,
     story: { record: (e) => story.ingest(e) },
     now,
-    approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
     progressNudgeWindowMs: opts.progressNudgeWindowMs ?? 300_000,
-    recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
-    recoveryMaxAttempts: sessionRecoveryPolicy?.maxAttempts ?? opts.recoveryMaxAttempts ?? 3,
     startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
     // #295 item 4: the deployment's exhausted-route authority, shared verbatim with the readiness
@@ -1760,7 +1757,7 @@ export function createDriver(opts) {
   coordinatorReady.catch(() => {});
   let sessionRecovery = null; let ready = coordinatorReady.then(() => Object.freeze({ status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: Object.freeze([]) }));
   if (sessionRecoveryPolicy) {
-    sessionRecovery = new SessionRecoverySupervisor({ coordinator, authority: startupRecoveryAuthority, policy: sessionRecoveryPolicy, onEvent: (event) => log.append({ worker: 'hub-session-recovery', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }) });
+    sessionRecovery = new SessionRecoverySupervisor({ coordinator, authority: startupRecoveryAuthority, onEvent: (event) => log.append({ worker: 'hub-session-recovery', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }) });
     const recoveryReady = sessionRecovery.start();
     ready = Promise.all([coordinatorReady, recoveryReady]).then(([, summary]) => summary);
   }

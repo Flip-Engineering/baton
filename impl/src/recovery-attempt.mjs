@@ -83,14 +83,13 @@ export function recoveryAttemptSeriesId(fields) {
 
 export function normalizeRecoveryAttemptAdmission(value) {
   const fields = [
-    'schemaVersion', 'scope', 'repoId', 'runId', 'seriesId', 'attemptId', 'attempt', 'maxAttempts',
+    'schemaVersion', 'scope', 'repoId', 'runId', 'seriesId', 'attemptId', 'attempt',
     'expectedAttemptHeadEvent', 'priorTask', 'recoveryTaskId', 'verifiedOwner', 'session', 'route',
     'workerPolicy', 'authority', 'requestDigest', 'admissionDigest',
   ];
   if (!closed(value, fields) || value.schemaVersion !== 1 || value.scope !== 'session_recovery'
     || !ID.test(value.repoId ?? '') || (value.runId !== null && !ID.test(value.runId ?? ''))
     || !Number.isSafeInteger(value.attempt) || value.attempt <= 0
-    || !Number.isSafeInteger(value.maxAttempts) || value.maxAttempts <= 0 || value.maxAttempts > 1_000_000
     || (value.expectedAttemptHeadEvent !== null
       && (!Number.isSafeInteger(value.expectedAttemptHeadEvent) || value.expectedAttemptHeadEvent <= 0))) {
     invalid('recovery attempt admission is invalid');
@@ -101,7 +100,6 @@ export function normalizeRecoveryAttemptAdmission(value) {
     repoId: value.repoId,
     runId: value.runId,
     attempt: value.attempt,
-    maxAttempts: value.maxAttempts,
     expectedAttemptHeadEvent: value.expectedAttemptHeadEvent,
     priorTask: normalizePriorTask(value.priorTask),
     verifiedOwner: normalizeVerifiedOwner(value.verifiedOwner),
@@ -140,7 +138,6 @@ export function createRecoveryAttemptAdmission(fields) {
     repoId: fields.repoId,
     runId: fields.runId ?? null,
     attempt: fields.attempt,
-    maxAttempts: fields.maxAttempts,
     expectedAttemptHeadEvent: fields.expectedAttemptHeadEvent ?? null,
     priorTask: clone(fields.priorTask),
     verifiedOwner: clone(fields.verifiedOwner),

@@ -185,8 +185,7 @@ test('CDW2: the injected goal-plan authority is consulted for goal, plan, approv
     effectClasses: Object.freeze(['repository_edit', 'provider_call']),
     capabilityClasses: Object.freeze(['code', 'test']),
     limits: Object.freeze({
-      maxGoalVersions: 4, maxPlanVersions: 4, maxNodes: 8, maxDepsPerNode: 4,
-      maxTextBytes: 4096, maxItems: 16, maxScopePaths: 16, maxRouteValues: 8,
+      maxTextBytes: 4096,
       maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
       maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 60, maxProviderTurns: 100,
     }),
@@ -367,7 +366,6 @@ const EXERCISED_OPTIONS = Object.freeze({
 const UNEXERCISED_OPTIONS = Object.freeze({
   recorderPort: 'the observation-layer port the effect and recovery seams share; passed through by createDriver and composed over the wrapped authorities by the Coordinator constructor when absent',
   advisoryFeedSources: 'consulted by advisory feed projections, which need a feed card',
-  approvalTimeoutMs: 'an interaction deadline, reached only by a pending approval',
   atlas: 'assembled only when the atlas capability is opted in',
   budgetPolicy: 'a threshold policy, reached only by a budget-crossing run',
   canonicalOrderPolicy: 'a policy, reached only by a canonical-order transaction',
@@ -393,8 +391,6 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   providerRead: 'consulted by provider status reads',
   providerReconciliation: 'consulted by provider reconciliation',
   publisher: 'reached only by a landing/push effect',
-  recoveryMaxAttempts: 'reached only by a death-cert retry',
-  recoveryTimeoutMs: 'reached only by a recovery attempt',
   repoId: 'the deployment identity; supplied implicitly by every case',
   repoRoot: 'the deployment checkout; supplied implicitly by every case',
   representationProduction: 'assembled only when representation production is configured',

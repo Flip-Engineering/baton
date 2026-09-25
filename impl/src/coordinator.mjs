@@ -24,7 +24,7 @@ import {
 import {
   attentionItemLine, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse } from './messages.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { observeAdapterEvents } from './adapter.mjs';
@@ -689,8 +689,8 @@ export class Coordinator {
     return runtimeRecovery.beginStartupRecovery(this, this._recorder, authority);
   }
 
-  startupRecoveryCandidates(authority, maxStateRows) {
-    return runtimeRecovery.startupRecoveryCandidates(this, this._recorder, authority, maxStateRows);
+  startupRecoveryCandidates(authority) {
+    return runtimeRecovery.startupRecoveryCandidates(this, this._recorder, authority);
   }
 
   _recoveryDispatchRefusal(handle, task, opts = {}) {
@@ -1729,14 +1729,16 @@ export class Coordinator {
       }
     }
     for (const [requestId, record] of [...this._pending]) {
-      if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
-        this._bestEffort(this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')), 'interaction_expiry');
-      } else if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
+      // #598 F09: no approval/publication auto-deny and no default decision lifetime — a
+      // pending request stays pending for its decision maker. A decision whose caller
+      // DECLARED a deadlineMs still expires at that instant (the requested semantics).
+      if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._bestEffort(this._trackAuthorityPromise(() => this._expireDecision(requestId, record)), 'interaction_expiry');
       } else if (record.kind === 'question' && record.state === 'pending' && record.deadlineAt == null
         && record.acknowledged !== true && record.escalated !== true) {
-        // D3: a blocking question with deadlineAt null gets the bounded deployment default. An
-        // acknowledged interaction is skipped (OQ-1); a previously escalated record never re-fires.
+        // D3: a blocking question with deadlineAt null escalates on the bounded deployment
+        // default. An acknowledged interaction is skipped (OQ-1); a previously escalated
+        // record never re-fires.
         const effectiveDeadlineAt = record.mintedAt + this._watchdog.blockingInteractionTimeoutMs;
         if (now >= effectiveDeadlineAt) {
           this._bestEffort(this._trackAuthorityPromise(() => this._expireQuestion(requestId, record, effectiveDeadlineAt)), 'interaction_expiry');
@@ -3299,10 +3301,9 @@ export class Coordinator {
    * delivers at most one copy per member (bounded fan-out for a run-scoped inform). Delivery =
    * written to the worker's durable stream (adapter prompt acknowledged); read is the worker's
    * next turn_started in the SAME process generation; actedOn is never claimed. Receipts are
-   * process-scoped coordinator state — see messageReceipt. #105 D1: the send declares a per-branch
-   * depth budget (default 1 — byte-identical to today's single-reply admission); the lane is the
-   * single budget authority — a declared budget that is not a safe integer in [1,
-   * MAX_MESSAGE_DEPTH_BUDGET] throws message_budget_invalid at the lane (D3/B-5b). */
+   * process-scoped coordinator state — see messageReceipt. #598 F03: the per-branch reply
+   * budget is removed — a reply chain is bounded by the conversation's participants, never by
+   * a declared count; a worker may reply again, and each reply is its own message. */
     _activeMessageMember(workerId) {
     return runtimeObservation._activeMessageMember(this, this._recorder, workerId);
   }
@@ -3322,13 +3323,8 @@ export class Coordinator {
     return slot;
   }
 
-  async sendMessage({ kind, to, body, budget = 1 } = {}, auth = {}) {
+  async sendMessage({ kind, to, body } = {}, auth = {}) {
     this.tick();
-    if (!Number.isSafeInteger(budget) || budget < 1 || budget > MAX_MESSAGE_DEPTH_BUDGET) {
-      const budgetError = new TypeError('message budget is invalid');
-      budgetError.code = 'message_budget_invalid';
-      throw budgetError;
-    }
     if (!['inform', 'query', 'nudge', 'steer', 'brief', 'result'].includes(kind)) {
       throw new TypeError('message kind must be inform|query|nudge|steer|brief|result');
     }
@@ -3418,8 +3414,8 @@ export class Coordinator {
     const messageId = `message:${canonicalDigest({ kind, to, body, seq: this._messages.size + 1 })}`;
     const record = {
       messageId, kind, body: spilled ? spillRecord.head : body, from: sender, target: { ...to },
-      depth: 0, budget, remaining: budget, deliveries: new Map(), readBy: new Set(), actedOn: false,
-      reply: null, replies: new Map(), lastRefusal: null,
+      deliveries: new Map(), readBy: new Set(), actedOn: false,
+      reply: null, replies: new Map(),
       ...(spilled ? { spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : {}),
     };
     this._messages.set(messageId, record);
@@ -3427,7 +3423,6 @@ export class Coordinator {
       try {
         this._coordination.recordMessage('message.sent', {
           messageId, kind, from: sender, to: { ...to },
-          depth: 0, budget, remaining: budget,
           ...(spilled ? { body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : { body }),
           targetCount: workers.length,
         }, { actor: sender, key: `message.sent:${messageId}` });
@@ -3467,8 +3462,8 @@ export class Coordinator {
         if (this._coordination.recordMessage) {
           try {
             this._coordination.recordMessage('message.delivered', spilled
-              ? { messageId, kind, workerId: handle.id, depth: 0, budget, remaining: budget, body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill }
-              : { messageId, kind, workerId: handle.id, depth: 0, budget, remaining: budget, body },
+              ? { messageId, kind, workerId: handle.id, body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill }
+              : { messageId, kind, workerId: handle.id, body },
             { actor: 'orchestrator', key: `message.delivered:${messageId}:${handle.id}` });
           } catch (error) { this._noteFailure('message_delivered_audit', error); }
         }
@@ -3478,7 +3473,6 @@ export class Coordinator {
     void auth;
     return {
       ok: true, result: 'sent', messageId,
-      budget,
       delivered: deliveries.filter((row) => row.ok).length,
       targetCount: workers.length,
     };
@@ -3487,11 +3481,8 @@ export class Coordinator {
   /** BD3-C: the honest receipt state machine. `delivered` = written to the worker's durable
    * stream; `read` = the worker's first turn_started in the SAME process generation (a
    * respawned worker does not inherit its predecessor's reads); `actedOn` is never claimed;
-   * `reply` carries the worker's closed {messageId, inReplyTo, from, body} when admitted.
    * A spilled send's receipt carries {body: head, bytes, digest, spill} (Decision 4).
-   * #105 D2/D4: the receipt carries the message's own {depth, budget, remaining} (the budget is
-   * a COUNT — the fields move only when a hop lands, never a clock) and, after a depth-exhaustion
-   * refusal, the parent's orchestrator-readable `lastRefusal` (B-5a). */
+   * #598 F03: no depth-coded fields ride the receipt — the reply chain is not budgeted. */
     messageReceipt(messageId) {
     return runtimeObservation.messageReceipt(this, this._recorder, messageId);
   }
@@ -6252,8 +6243,7 @@ export class Coordinator {
       worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'provider.transient_retry', actor: 'policy', ...this._routeAttribution(handle, task),
       payload: {
-        code, route, attempt, of: this._transientTurnRetryLimit, terminalSeq: terminalEvent?.seq ?? null,
-        action: 'new_turn_on_same_session',
+        code, route, attempt, terminalSeq: terminalEvent?.seq ?? null,
       },
     });
     handle.transientTurnRetries = attempt;

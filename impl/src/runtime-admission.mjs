@@ -43,7 +43,6 @@ import { subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
 import { resolveWorkerPolicy } from './worker-policy.mjs';
 
 
-export const TRANSIENT_TURN_RETRY_LIMIT = 1;
 
 export const PHYSICAL_LOG_APPENDS = new WeakMap();
 
@@ -544,19 +543,12 @@ export function constructor(coordinator, opts) {
       coordinator._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes, policyReconcile: Object.freeze({ ...reconcile }) });
     }
     coordinator._now = opts.now || Date.now;
-    coordinator._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     coordinator._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
     // #201 durable member retry: the bounded retry COUNT for death-cert crashes (never a
     // clock — the #163 law). Absent/null = authority OFF (deaths settle failed exactly as
     // today); N>=0 = up to N retry_pending parks per member task before failed.
     coordinator._memberRetryAttempts = Number.isSafeInteger(opts.memberRetryAttempts) && opts.memberRetryAttempts >= 0
       ? opts.memberRetryAttempts : null;
-    // #295 item 2: a transient provider fault re-drives the turn in place — the transport
-    // dropped, the session is alive, and no result was recorded — at most
-    // TRANSIENT_TURN_RETRY_LIMIT times. A deployment that configured its own member retry
-    // authority raises that count; the bound is a declared count, never a clock (#163).
-    coordinator._transientTurnRetryLimit = Number.isSafeInteger(coordinator._memberRetryAttempts)
-      ? Math.max(TRANSIENT_TURN_RETRY_LIMIT, coordinator._memberRetryAttempts) : TRANSIENT_TURN_RETRY_LIMIT;
     // #295 item 4: the deployment's exhausted-route authority. The SAME instance the route
     // readiness derivation and the pre-effect recruit refusal read, so a quota refusal observed
     // here is a fact the next recruit on that route is refused by — and it expires by derivation
@@ -572,12 +564,6 @@ export function constructor(coordinator, opts) {
     // stallTimeoutMs/watchdog. The pause seam no longer uses it — a paused checkpoint never
     // arms a window (see `_admitPauseRecord`).
     coordinator._progressNudgeWindowMs = opts.progressNudgeWindowMs ?? 300_000;
-    coordinator._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
-    coordinator._recoveryMaxAttempts = opts.recoveryMaxAttempts ?? 3;
-    if (!Number.isSafeInteger(coordinator._recoveryMaxAttempts) || coordinator._recoveryMaxAttempts <= 0
-      || coordinator._recoveryMaxAttempts > 1_000_000) {
-      throw new TypeError('recoveryMaxAttempts must be an exact bounded deployment ceiling');
-    }
     coordinator._startupRecoveryAuthority = opts.startupRecoveryAuthority ?? null;
     coordinator._startupRecoveryState = coordinator._startupRecoveryAuthority ? 'idle' : 'disabled';
     coordinator._startupRecoveryError = null;
@@ -2610,7 +2596,9 @@ export function _queueTransientProviderTurnRetry(coordinator, recorder, handle, 
     if (handle.processRef && handle.processRef.state === 'closed') return false;
     if (typeof coordinator._adapters[handle.vendor]?.prompt !== 'function') return false;
     const attempt = (handle.transientTurnRetries ?? 0) + 1;
-    if (attempt > coordinator._transientTurnRetryLimit) return false;
+    // #598 F12: no retry count ceiling — the re-drive rides the member's own turn-budget
+    // admission below, so a transport that keeps failing exhausts the declared budget (a real
+    // resource fact) instead of a retry count.
     if (coordinator._transientRetryPending?.has(handle.id)) return false;
     // The re-driven turn is admitted through the SAME gate every other new provider turn passes
     // (`_admitProviderTurn`: the member's declared budget, its terminal reserve, and the route's

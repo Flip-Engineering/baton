@@ -111,8 +111,9 @@ async function until(predicate, timeoutMs = 60_000) {
   throw new Error('condition not met');
 }
 
-// The coordinator's recovery deadline is deliberately timer-unref'd, and this fixture drives an
-// in-process adapter that owns no child handle, so hold the loop for the bounded recovery await.
+// The recovery attach wait is event-driven (the successor's ready fact or its transport's death
+// fact ends it), and this fixture drives an in-process adapter that owns no child handle, so
+// hold the loop while the recovery await is pending.
 async function withLiveLoop(fn) {
   const hold = setInterval(() => {}, 1_000);
   try { return await fn(); } finally { clearInterval(hold); }
@@ -137,7 +138,7 @@ async function recoverableSession(name) {
       remove: async () => {}, reconcile: async () => {},
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1_000, stopDeadlineMs: 50, recoveryTimeoutMs: 50, recoveryMaxAttempts: 3,
+    stopDeadlineMs: 50,
   });
   const handle = await original.spawn('session', brief(), { taskId, model: 'test-recover', effort: 'high' });
   await until(() => original.list()[0].sessionContext);
@@ -146,6 +147,14 @@ async function recoverableSession(name) {
   await until(async () => (await original.result(handle.id)).ready);
 
   const resumed = recordingAdapter();
+  // A real native reattachment emits the provider-ready identity through the adapter's event
+  // seam; the fixture replays that exact fact so the attach wait ends on evidence, not a clock.
+  const resumedSpawn = resumed.spawn.bind(resumed);
+  resumed.spawn = async (worker, attachBrief, options) => {
+    const ack = await resumedSpawn(worker, attachBrief, options);
+    resumed.emit(worker, 'lifecycle.spawned', { sessionId: nativeId, pid: 111 });
+    return ack;
+  };
   const replay = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { session: resumed }, repoId: `repo-${name}`,
     worktrees: {
@@ -160,7 +169,7 @@ async function recoverableSession(name) {
       remove: () => {},
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1_000, stopDeadlineMs: 50, recoveryTimeoutMs: 50, recoveryMaxAttempts: 3,
+    stopDeadlineMs: 50,
     startupRecoveryAuthority: Object.freeze({}),
   });
   assert.equal(replay.list()[0].status, 'orphaned', 'the replay coordinator adopts the session as orphaned');
@@ -204,10 +213,13 @@ test('#386 behavioural: preserved reattachment hands the adapter no wall-budget 
   };
   // The preserved-reattachment authority predicates need a signature-bound receipt and a durable
   // preserve-turn control; this row stubs only those predicates so the dispatch options stay the
-  // real ones the function builds. A stub that breaks the fixture fails the spawn-count assertion.
+  // real ones the function builds. The attach wait itself stays event-driven: the fixture's
+  // spawn replays the provider-ready observation onto the attach admission exactly as the
+  // event dispatcher does for a live transport. A stub that breaks the fixture fails the
+  // spawn-count assertion.
   const coordinator = {
-    _recoveryTimeoutMs: 50,
     _adapters: { session: adapter },
+    _stopDeadlineMs: 50,
     _preservedProcesslessAttachAuthority: Object.freeze({}),
     _exactPreservedRecoveryContext: () => ({
       ok: true, context: { worktree: '/tmp/issue386-worktree', ownerTaskId: 'issue386-task' },
@@ -215,12 +227,25 @@ test('#386 behavioural: preserved reattachment hands the adapter no wall-budget 
     _exactProcesslessPreservationAuthority: () => ({ ok: true, processless: false, card: card() }),
     _validateSessionContext: async () => {},
     _ensureRuntimeScope: () => ({ env: {}, replaceEnv: false }),
-    _setTimeout: (fn, ms) => setTimeout(fn, ms),
-    _clearTimeout: (timer) => clearTimeout(timer),
     _harnessOf: () => 'session',
     _safeTurnEpoch: () => 1,
     _routeAttribution: () => ({}),
+    _handleEvent: () => {},
+    _semanticControlBinding: () => ({}),
+    _fences: { current: () => ({ fence: 7 }) },
+    _publicHandle: () => ({}),
     _failPreservedReattachment: (_handle, _task, result) => ({ ok: false, result }),
+  };
+  const spawnedAck = adapter.spawn.bind(adapter);
+  adapter.spawn = async (worker, attachBrief, options) => {
+    const ack = await spawnedAck(worker, attachBrief, options);
+    const event = {
+      worker, harness: 'session', turnEpoch: 1, actor: 'worker',
+      kind: 'lifecycle.spawned', payload: { sessionId: handle.sessionRef.id, pid: 222 },
+    };
+    handle.turnAdmission.events.push(event);
+    handle.turnAdmission.resolveSpawned(event);
+    return { ...ack, attached: true };
   };
 
   const outcome = await _reattachPreservedSession(coordinator, recorder, handle, task, {});

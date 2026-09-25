@@ -102,11 +102,10 @@ async function until(predicate, timeoutMs = 2_000) {
   throw new Error('condition not met');
 }
 
-// The coordinator's recovery/stop deadlines are deliberately timer-unref'd — the kernel never pins
-// its host's event loop (docs/24 G4 / C4), and a real spawned child is the handle that normally
-// keeps it alive. These fixtures drive an in-process adapter that owns no child handle, so a
-// recovery whose only settlement is the coordinator's own bounded deadline would be abandoned the
-// moment the loop drains. Hold the loop for exactly that await; the deadline still bounds it.
+// The recovery attach wait ends on observed facts (the successor's ready event or its
+// transport's death event), never on a clock. These fixtures drive an in-process adapter that
+// owns no child handle — the handle that normally keeps the loop alive — so hold the loop while
+// a recovery await is pending.
 async function withLiveLoop(fn) {
   const hold = setInterval(() => {}, 1_000);
   try { return await fn(); } finally { clearInterval(hold); }
@@ -131,8 +130,7 @@ async function recoverableSession(name, options = {}) {
       remove: async () => {}, reconcile: async () => {},
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1_000, stopDeadlineMs: 50, recoveryTimeoutMs: 50,
-    recoveryMaxAttempts: 3,
+    stopDeadlineMs: 50,
   });
   const handle = await original.spawn('session', brief(), {
     taskId, model: 'test-recover', effort: 'high',
@@ -163,10 +161,7 @@ async function recoverableSession(name, options = {}) {
       remove: (worker) => removedScopes.push(worker),
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1_000,
     stopDeadlineMs: options.stopDeadlineMs ?? 50,
-    recoveryTimeoutMs: options.recoveryTimeoutMs ?? 50,
-    recoveryMaxAttempts: options.recoveryMaxAttempts ?? 3,
     startupRecoveryAuthority,
   });
   assert.equal(replay.list()[0].status, 'orphaned');
@@ -187,7 +182,6 @@ function seedAttempt(fixture, state) {
     repoId,
     runId: task.runId ?? null,
     attempt: 1,
-    maxAttempts: 3,
     expectedAttemptHeadEvent: null,
     priorTask: { id: task.id, version: task.version, terminalEvent: task.terminalEvent },
     verifiedOwner: {
@@ -208,7 +202,7 @@ function seedAttempt(fixture, state) {
     authority: {
       gateDigest: digest(null),
       profileDigest: digest({ source: 'startup-policy' }),
-      recoveryPolicyDigest: digest({ maxAttempts: 3 }),
+      recoveryPolicyDigest: digest({ mode: 'manual' }),
     },
   });
   const actor = 'policy:startup-recovery';
@@ -233,10 +227,10 @@ function seedAttempt(fixture, state) {
   return admission;
 }
 
-test('RAI1: application delegates attempt derivation and forwards only deployment-owned maxAttempts', async () => {
+test('RAI1: application delegates attempt derivation to the dedicated Plan recovery seam', async () => {
   const calls = [];
   const recoveryPolicy = {
-    mode: 'manual', maxAttempts: 7, timeoutMs: 4_321,
+    mode: 'manual',
     eligibleSessionModes: ['resume'], ambiguousDispatch: 'operator_required',
   };
   const goal = { goalId: 'goal-phase76', version: 1, digest: 'a'.repeat(64), runId };
@@ -296,10 +290,13 @@ test('RAI1: application delegates attempt derivation and forwards only deploymen
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].workerId, handle.id);
-  assert.equal(calls[0].request.maxAttempts, recoveryPolicy.maxAttempts);
+  assert.deepEqual(Object.keys(calls[0].request).sort(), [
+    'actor', 'gate', 'profileDigest', 'recoveryPolicyDigest', 'runId',
+  ]);
+  assert.equal(calls[0].request.runId, runId);
+  assert.equal(calls[0].request.gate.nodeKey, 'recover');
   assert.equal(Object.hasOwn(calls[0].request, 'attempt'), false,
     'the application must not derive a recovery attempt from a generic ledger count');
-  assert.equal(calls[0].request.timeoutMs, recoveryPolicy.timeoutMs);
   assert.equal(view.recovery.attempt, 4, 'only the Coordinator-derived durable attempt is projected');
 });
 
@@ -373,13 +370,17 @@ test('RAI4: confirmed cleanup is closed while unconfirmed cleanup is unknown', a
     assert.equal(fixture.resumed.calls.kill.length, 1);
   });
 
-  await t.test('timed-out attach with confirmed close', async () => {
-    const fixture = await recoverableSession('timeout-closed', {
-      recoveryTimeoutMs: 20,
-      adapter: { spawn: async () => new Promise(() => {}) },
+  await t.test('transport death before admission commits closes the attempt exactly', async () => {
+    const fixture = await recoverableSession('died-closed', {
+      adapter: {
+        spawn(worker) {
+          this.emit(worker, 'lifecycle.crashed', { code: 1, signal: null });
+          return { ok: true };
+        },
+      },
     });
     const outcome = await withLiveLoop(() => fixture.replay.recover(fixture.handle.id));
-    assert.equal(outcome.result, 'recovery_timeout');
+    assert.equal(outcome.result, 'recovery_transport_closed');
     const admission = attemptEvents(fixture.coordination)[0];
     assert.equal(fixture.coordination.recoveryAttempt(admission.payload.attemptId).state, 'closed');
     assert.equal(fixture.resumed.calls.kill.length, 1);

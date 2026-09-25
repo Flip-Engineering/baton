@@ -114,7 +114,7 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
         // `to` draws the typed refusal and is never rerouted; other smuggled fields are
         // stripped so the closed envelope {messageId, inReplyTo, from, body} never carries
         // them. #105 D1/D2: the admission order is frame shape → caller-named `to` → parent
-        // exists → run-membership (B-2) → depth/slot (the per-branch budget, D1). The reply
+        // exists → run-membership (B-2). The reply
         // record inherits the parent's target verbatim (B-1) so messageRunId resolves every
         // hop to the root's run.
         const frameObj = ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload) ? ctx.payload : null;
@@ -145,10 +145,10 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
           refuse('message_parent_not_found');
           return
         }
-        // B-2: run-membership authorization BEFORE the depth/slot checks. The replying worker is
+        // B-2: run-membership authorization. The replying worker is
         // admitted iff it is the parent's target OR a member of the run messageRunId(parent)
-        // resolves to; otherwise the typed worker-stream refusal `message_target_not_member` fires
-        // (never a slot consumed, never a budget hop spent by a non-member). The parent-exists
+        // resolves to; otherwise the typed worker-stream refusal `message_target_not_member` fires.
+        // The parent-exists
         // check above always precedes this — an unknown id draws message_parent_not_found for every
         // worker (C2 pins the ordering).
         const parentRunId = coordinator.messageRunId(inReplyTo);
@@ -165,21 +165,8 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
           refuse('message_target_not_member');
           return
         }
-        // Depth is per branch. Each sender owns one reply slot on a parent; one responder
-        // never consumes another peer's slot. A repeated reply by the same sender uses the same
-        // depth code, carrying positive remaining where the slot refused and the budget did not.
-        // The refusing parent's receipt carries the orchestrator-readable lastRefusal (B-5a).
-        const parentBudget = parent.budget ?? 1;
-        if (parent.depth >= parentBudget || parent.replies?.has(ctx.workerId)) {
-          const refusal = {
-            depth: parent.depth + 1,
-            budget: parentBudget,
-            remaining: Math.max(0, parentBudget - parent.depth),
-          };
-          refuse('message_depth_exceeded', refusal);
-          parent.lastRefusal = { reason: 'message_depth_exceeded', ...refusal };
-          return
-        }
+        // #598 F03: no per-branch depth budget and no per-sender reply slot — a member may
+        // reply again, and every reply is its own message on the parent's record.
         // Decision 6 (reply-lane parity): the reply direction of the message lane shares the send
         // lane's economy — oversize up to the spill.body ceiling is ADMITTED with spill (head +
         // citation), beyond the ceiling draws the hard coaching refusal on the durable stream.
@@ -216,24 +203,14 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
         const replyId = `message:${canonicalDigest({
           inReplyTo, from: ctx.workerId, body: frameBody, seq: coordinator._messages.size + 1,
         })}`;
-        const replyDepth = parent.depth + 1;
-        const replyRemaining = Math.max(0, parentBudget - replyDepth);
-        // #105 D4: the reply envelope's depth/budget/remaining are NON-ENUMERABLE — the closed
-        // {messageId, inReplyTo, from, body} (+ spill citation) shape survives the deep-equal
-        // identity row (FP-04) and the worker-log JSON round-trip (frame-economics C6 drops the
-        // non-enumerable fields, so the amended-keys check stays closed). The lane reads them
-        // through the accessors (A2/B1/G2); the durable store row below keeps them ENUMERABLE so
-        // replay (B-4) and E1 can rebuild the chain from the audit rows.
-        const replyEnvelope = Object.defineProperties(replySpillRecord
+        // #598 F03: the reply envelope carries no depth/budget/remaining — the closed
+        // {messageId, inReplyTo, from, body} (+ spill citation) shape is the whole envelope.
+        const replyEnvelope = replySpillRecord
           ? {
               messageId: replyId, inReplyTo, from: ctx.workerId, body: replySpillRecord.head,
               spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill,
             }
-          : { messageId: replyId, inReplyTo, from: ctx.workerId, body: frameBody }, {
-          depth: { enumerable: false, value: replyDepth },
-          budget: { enumerable: false, value: parentBudget },
-          remaining: { enumerable: false, value: replyRemaining },
-        });
+          : { messageId: replyId, inReplyTo, from: ctx.workerId, body: frameBody };
         parent.replies ??= new Map();
         parent.replies.set(ctx.workerId, Object.freeze(replyEnvelope));
         parent.reply ??= parent.replies.get(ctx.workerId);
@@ -241,9 +218,9 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
           messageId: replyId, kind: 'reply', body: replySpillRecord ? replySpillRecord.head : frameBody, from: ctx.workerId,
           target: parent.target,
           ...(parent.from !== 'orchestrator' ? { deliveryTarget: { workerId: parent.from } } : {}),
-          depth: replyDepth, budget: parentBudget, remaining: replyRemaining, inReplyTo,
+          inReplyTo,
           ...(replySpillRecord ? { spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill } : {}),
-          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, replies: new Map(), lastRefusal: null,
+          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, replies: new Map(),
         });
         // #105 D5: a reply hop is a durable store-audited message.delivered row carrying inReplyTo
         // (the replay seed, B-4) — beside the worker-log appendAttributed. recordMessage stays
@@ -253,7 +230,6 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
           try {
             recorder.coordination.recordMessage('message.delivered', {
               messageId: replyId, inReplyTo, from: ctx.workerId,
-              depth: replyDepth, budget: parentBudget, remaining: replyRemaining,
               body: replySpillRecord ? replySpillRecord.head : frameBody,
               ...(replySpillRecord ? { spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill } : {}),
             }, { actor: ctx.workerId, key: `message.delivered:${replyId}:${ctx.workerId}` });

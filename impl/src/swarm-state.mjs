@@ -8,13 +8,12 @@
 // Root hooks validateSwarmEvent and foldSwarmEvent to the same durable coordination
 // log, not a parallel journal. Consumers own the log; this module owns the fold.
 
-// Issue #430: every code `refuse`/`integrity` raise draws from the family's ONE closed refusal
-// set; minting a code outside it is a construction-time error.
+
+// Issue #286 G-36: the physical-workspace-id shape has ONE definition (shared-workspace-custody.mjs);
+// every workspace id this fold admits or compares asks that predicate.
 // Issue #464: the participant row's role line is bounded by the ONE `view.role.head` registry row
 // (limits.mjs derives it from the frame a roster must fit) — never a second constant here.
 import { FRAME_LIMITS } from './limits.mjs';
-// Issue #286 G-36: the physical-workspace-id shape has ONE definition (shared-workspace-custody.mjs);
-// every workspace id this fold admits or compares asks that predicate.
 import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 
 export const SWARM_EVENT_KINDS = Object.freeze(new Set([

@@ -12,13 +12,12 @@
 // (de818e3), never on the classification string (the run-m1-wave.mjs:146-149 anti-pin). Liveness
 // is the cursor-stripped status view, per member (#396): the store-global `cursor` is stripped
 // exactly as `semanticViewDigest` strips it, so a deployment-wide cursor flap never reads as
-// liveness; each member's stall clock starts at its OWN last observed progress — one live
-// member never resets a sibling's clock and one hung member never holds a sibling's receipt.
-// The L6 termination law
-// applies a per-member unproductivity budget across a full nudge cycle (park → nudge → re-park
-// with an unchanged `changedPathsDigest`), and `claim_turn` resolves a parked `workerResult` into
+// liveness. The wave ends on declared completion — every member terminal or claim-resolved — or
+// the caller's explicit stop (`signal`); no clock, no nudge budget and no diff digest decides a
+// member's work is finished (#598 F01). `claim_turn` resolves a parked `workerResult` into
 // `work_completed` — opt-in (`finalization: 'claim-on-stall'`) because claim is terminal on a
-// stale checkpoint.
+// stale checkpoint; the claim's own live liveness gate at the runtime, never a digest
+// comparison, decides whether the parked result resolves.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
@@ -35,22 +34,17 @@ const OBJECTIVE_MAX_BYTES = FRAME_LIMITS['wave.member.objective'].value;
 // §2: closed field set, all optional, frozen. Every default mirrors the documented production
 // cadence (a multi-hour wave); the red suite overrides these with short relative timeouts.
 // #163 law (operator ruling 2026-08-14): there is NO hardCapMs — clock-based kill caps are
-// retired; the key is unknown here and refuses loudly. The drive settles on member terminality
-// or the stall finalization the wave author chose, never on a wall-clock cap.
+// retired; the key is unknown here and refuses loudly. #598 F01 retires the rest of the
+// automatic finalization the same way: `stallTimeoutMs`, `unproductiveNudgeBudget` and
+// `refusalNudgeBudget` are unknown keys and refuse loudly. The wave ends on declared
+// completion or the caller's explicit stop; no clock, no count and no digest decides a
+// member's work is finished.
 const DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   completionMessage: 'Continue the current turn.',
   pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 5_000,
   finalization: 'none',
-  unproductiveNudgeBudget: 1,
-  // CP8 (#88): the per-member corrective-nudge COUNT budget drawn on a claim_premature_liveness
-  // refusal (the claim-time liveness preflight). Parallel to unproductiveNudgeBudget; consumed on
-  // DELIVERED acknowledgment only (D8). 2 = the largest legitimate per-member claim cadence
-  // observed in the acceptance suite (phase11-persistent-sessions:372/:379 claims two successive
-  // checkpoints) with one to spare — a third corrective cycle is a permanently diffless worker.
-  refusalNudgeBudget: 2,
   saltObjectives: true,
   preflight: true,
   evidencePath: null,
@@ -117,8 +111,9 @@ function assertInteger(value, field) {
 }
 
 // §2: freeze the closed policy field set, validating each field. Unknown fields reject so a typo
-// (e.g. `stallTimeoutMs` vs `stalltimeoutMs`) fails loudly instead of silently falling back to the
-// default — and the retired `hardCapMs` (#163 law) rejects by the same closed-set discipline.
+// (e.g. `finalization` vs `finalisation`) fails loudly instead of silently falling back to the
+// default — and the retired `hardCapMs` (#163) and stall/nudge-budget keys (#598 F01) reject by
+// the same closed-set discipline.
 function freezePolicy(raw) {
   if (raw === null || raw === undefined) return DEFAULT_POLICY;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -136,19 +131,12 @@ function freezePolicy(raw) {
     throw driverError('wave driver policy completionMessage is invalid', 'wave_driver_policy_invalid');
   }
   assertInteger(policy.pollIntervalMs, 'pollIntervalMs');
-  assertInteger(policy.stallTimeoutMs, 'stallTimeoutMs');
   assertInteger(policy.settleTimeoutMs, 'settleTimeoutMs');
   if (!FINALIZATIONS.has(policy.finalization)) {
     throw driverError(`wave driver policy finalization is invalid: ${String(policy.finalization)}`, 'wave_driver_policy_invalid');
   }
   if (!SETTLEMENTS.has(policy.settlement)) {
     throw driverError(`wave driver policy settlement is invalid: ${String(policy.settlement)}`, 'wave_driver_policy_invalid');
-  }
-  if (!Number.isSafeInteger(policy.unproductiveNudgeBudget) || policy.unproductiveNudgeBudget < 0) {
-    throw driverError('wave driver policy unproductiveNudgeBudget is invalid', 'wave_driver_policy_invalid');
-  }
-  if (!Number.isSafeInteger(policy.refusalNudgeBudget) || policy.refusalNudgeBudget < 0) {
-    throw driverError('wave driver policy refusalNudgeBudget is invalid', 'wave_driver_policy_invalid');
   }
   if (typeof policy.saltObjectives !== 'boolean') {
     throw driverError('wave driver policy saltObjectives is invalid', 'wave_driver_policy_invalid');
@@ -191,14 +179,15 @@ function matchRoute(member, routes) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-// L5: the stall marker is sha256 of the cursor-stripped status view, sliced to 16 hex chars. The
-// store-global `cursor` is stripped exactly as `semanticViewDigest` strips it
-// (application.mjs:191-194) — otherwise any transport/audit event anywhere in the deployment flaps
-// every member's hash and "stall" silently means "deployment-wide silence". progressClass/
-// requiredAction are DERIVED liveness fields (silenceMs grows with wall time) and are stripped
-// exactly as semanticViewDigest strips them, so a silently-waiting member reads byte-static and
-// the stall clock stays honest.
-function stallMarker(outline) {
+// L5: the liveness marker is sha256 of the cursor-stripped status view, sliced to 16 hex chars.
+// The store-global `cursor` is stripped exactly as `semanticViewDigest` strips it
+// (application.mjs:191-194) — otherwise any transport/audit event anywhere in the deployment
+// flaps every member's hash. progressClass/requiredAction are DERIVED liveness fields
+// (silenceMs grows with wall time) and waitingOn is a derived wait field (issue #10 D10) —
+// stripped exactly as semanticViewDigest strips them, so a legitimately waiting member reads
+// byte-static. The marker feeds the per-poll rendering line only; no clock consumes it
+// (#598 F01).
+function livenessMarker(outline) {
   const view = { ...(outline ?? {}) };
   delete view.cursor;
   delete view.progressClass;
@@ -386,50 +375,20 @@ export function createWaveDriver(baton, rawPolicy = null) {
 
     const nudges = [];
     const claims = [];
-    // L6 per-member state across polls: digest = changedPathsDigest at the last nudge; nudges =
-    // unchanged-digest nudge cycles in the current streak (resets when the digest changes); done =
-    // budget exhausted, stop nudging; refusalsNudged = corrective nudges delivered against the
-    // refusalNudgeBudget (CP8); claimed stays per-member ("one claim" vs "settled").
+    // L4 per-member steering state across polls. #598 F01 removed the digest streak, the nudge
+    // counters and the done flag: claimed stays per-member ("one claim" vs "settled") and every
+    // delivery failure or claim refusal is an evidence row, never a budget.
     const memberState = new Map();
-    const freshState = () => ({ digest: null, nudges: 0, done: false, refusalsNudged: 0, claimed: false });
+    const freshState = () => ({ claimed: false });
     const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
-    const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
-    // #414: the retirement ledger for the unsteerable rule above. lastFailureByRequestId keeps
-    // the last delivery failure per pause so the retirement row can name it; retiredRequestIds
-    // keeps the one-row-per-pause discipline; retiredByRole carries the same retirement onto
-    // the settle outcome's per-member row. The budget name is the policy-field-style name of
-    // the consecutive-delivery-failure budget (NOT unproductiveNudgeBudget — that is the L6
-    // treadmill budget). K itself is a literal today (`>= 3` below); #414 leaves it untouched.
-    const DELIVERY_FAILURE_BUDGET = 'deliveryFailureBudget';
-    const lastFailureByRequestId = new Map();
-    const retiredRequestIds = new Set();
-    const retiredByRole = new Map();
-    // #414: retire a member from nudging with ONE steering row on the nudge evidence shape —
-    // role, runId, requestId, outcome 'nudge_retired', the exhausted budget name and the count
-    // that exhausted it (derived from the observed failures, never re-typed), the last delivery
-    // message, and `next` naming the per-member stall clock (#396) that now judges it.
-    const retireNudge = (role, runId, requestId) => {
-      if (retiredRequestIds.has(requestId)) return;
-      retiredRequestIds.add(requestId);
-      const count = failuresByRequestId.get(requestId) ?? 0;
-      const last = lastFailureByRequestId.get(requestId) ?? null;
-      nudges.push({
-        role, runId, requestId, at: new Date().toISOString(), outcome: 'nudge_retired',
-        budget: DELIVERY_FAILURE_BUDGET, count,
-        ...(typeof last?.message === 'string' ? { message: last.message } : {}),
-        next: `stall-clock:${role}`,
-      });
-      retiredByRole.set(role, { budget: DELIVERY_FAILURE_BUDGET, count });
-    };
-    // CP8: claim attempts key per pauseId — a refused claim must not consume the driver's one
-    // claim for the NEXT pause record (the CP6 "claimable later" contract at the driver layer).
+    // Claim attempts key per pauseId — one claim attempt per pause record (a refused claim is
+    // recorded once; the CP6 "claimable later" contract: the NEXT pause record claims again).
     const claimedPauseIds = new Set();
-    // CP8: one corrective nudge per claim_premature_liveness refusal, exempt from the L4
-    // one-nudge-per-pause dedup exactly once, drawn from the per-member refusalNudgeBudget and
-    // consumed on DELIVERED acknowledgment (D8 — a {ok:false} delivery VALUE consumes nothing).
-    // Exhaustion is record-only: the refusal is on the claims evidence, no nudge, and the pause
-    // pends to the driver's PRE-EXISTING stall clock.
-    const correctiveNudge = async (role, runHandle, checkpoint, state, liveness = null, reason = null) => {
+    // One corrective nudge per claim_premature_liveness refusal, exempt from the L4
+    // one-nudge-per-pause dedup: the refusal means the worker is NOT done, so it is coached
+    // with the sanitized liveness counts. No budget bounds it (#598 F01) — a refused delivery
+    // is recorded like any delivery failure and the next pause record starts fresh.
+    const correctiveNudge = async (role, runHandle, checkpoint, liveness = null, reason = null) => {
       const at = new Date().toISOString();
       try {
         // #111-F3: coach with the sanitized {liveness counts, reason: no in-scope diff} — never
@@ -441,19 +400,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
             code: result.result ?? 'nudge_refused',
           });
         }
-        state.refusalsNudged += 1;
         nudges.push({ role, requestId: checkpoint.requestId, at });
         nudgedRequestIds.add(checkpoint.requestId);
-        failuresByRequestId.delete(checkpoint.requestId);
-        lastFailureByRequestId.delete(checkpoint.requestId);
       } catch (error) {
-        // D8: a refused corrective delivery arrives as a VALUE and consumes no budget.
-        failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
-        const message = String(error?.message ?? error);
-        lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
         nudges.push({
           role, requestId: checkpoint.requestId, at,
-          error: { code: error?.code ?? null, message },
+          error: { code: error?.code ?? null, message: String(error?.message ?? error) },
         });
       }
     };
@@ -486,8 +438,8 @@ export function createWaveDriver(baton, rawPolicy = null) {
         reason = error?.reason ?? reason ?? null;
         claims.push({ role, requestId: checkpoint.requestId, at, code });
       }
-      if (code === 'claim_premature_liveness' && state.refusalsNudged < policy.refusalNudgeBudget) {
-        await correctiveNudge(role, runHandle, checkpoint, state, liveness, reason);
+      if (code === 'claim_premature_liveness') {
+        await correctiveNudge(role, runHandle, checkpoint, liveness, reason);
       }
     }
     // Bidirectional v2 rule 3: at-most-once decision-callback dedup, keyed `${runId}:${requestId}`.
@@ -503,15 +455,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // values, not a per-iteration copy that falls out of scope.
     const memberKnowledge = new Map();
 
-    // #396: per-member stall clocks. Each member's clock starts at its OWN last observed
-    // progress (a change in its cursor-stripped marker digest) — never at a roster-shared
-    // start. One live member no longer resets the clock for all, and one hung member no
-    // longer holds its independent siblings' receipts: the loop ends when every unsettled
-    // member has been individually quiet for a full stallTimeoutMs.
-    const memberProgress = new Map(); // role -> { digest, lastProgressAt, lastProgressIso }
     let basis = null;
-    let stalls = [];
-    let waiting = [];
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -613,17 +557,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
       for (;;) {
         if (aborted()) { basis = 'aborted'; break; }
 
-        // L5: ONE status read per member per poll. The cursor-stripped digest doubles as the stall
-        // marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
+        // L5: ONE status read per member per poll. The cursor-stripped digest doubles as the
+        // liveness marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
         const markerParts = [];
         const paused = [];
         const decisions = []; // v2 rule 3: members with a pending decision (onDecision candidates).
         const liveMembers = []; // v2 rule 6: non-terminal members + their status-read cursor.
         const classByRole = new Map(); // v2 rule 7: reducer output drives BOTH rendering and steering.
-        // #396: per-member stall attribution inputs — the named wait (if any) and the gating
-        // interaction (if blocked), read from the same status view the digest hashes.
-        const waitingOnByRole = new Map();
-        const gatedByRole = new Map();
         const statusInfo = new Map();
         const runs = wave.runs;
         for (const [role, runHandle] of runs) {
@@ -637,26 +577,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
             outline = status?.view ?? status ?? {};
             phase = canonicalRunPhase(outline.phase) ?? null;
             terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
-            markerDigest = stallMarker(outline);
+            markerDigest = livenessMarker(outline);
             if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
           } catch {
-            // L5/D10: a transient status failure contributes 'unavailable' (a marker CHANGE from
-            // the prior real digest → resets the wave-level clock); only CONSECUTIVE unavailable
-            // polls leave the marker stable and count toward stall.
+            // L5: a transient status failure contributes 'unavailable' so the rendering line
+            // shows the read failed; the member keeps its roster place and the next poll reads
+            // it again.
             markerDigest = 'unavailable';
           }
           if (outline.knowledge) memberKnowledge.set(role, outline.knowledge);
-          // #396: the member's OWN clock — a digest change is its own observed progress and
-          // resets only its clock. A transient 'unavailable' read changes the digest (resets);
-          // only CONSECUTIVE 'unavailable' polls leave it stable and count toward stall (D10).
-          const seen = memberProgress.get(role);
-          if (!seen || seen.digest !== markerDigest) {
-            memberProgress.set(role, {
-              digest: markerDigest,
-              lastProgressAt: Date.now(),
-              lastProgressIso: new Date().toISOString(),
-            });
-          }
           markerParts.push([role, phase, markerDigest]);
           const claimed = memberState.get(role)?.claimed === true;
           statusInfo.set(role, { terminal: terminal || claimed });
@@ -666,10 +595,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
             const checkpoint = checkpointOf(outline);
             const reduced = reduceMember(interactions, checkpoint, outline.waitingOn ?? null);
             classByRole.set(role, reduced.class);
-            // #396: stall attribution rides the reducer's precedence — a blocked member names
-            // its gating interaction; a waiting (never blocked) member names its wait.
-            waitingOnByRole.set(role, outline.waitingOn ?? null);
-            gatedByRole.set(role, reduced.blocked ? (reduced.gated ?? null) : null);
             // v2 rule 7 × D9: a blocked member is suppressed from nudge AND claim — the checkpoint
             // (if any) is NOT admitted to the steerable `paused` set while an interaction is
             // pending. A WAITING member is suppressed the same way: the `!reduced.waiting` clause
@@ -689,9 +614,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
         }
 
-        // #396: no roster-wide clock is kept — each member's own digest change already reset
-        // ITS clock above, and a sibling-only cursor movement is stripped from every digest,
-        // so it resets none. markerParts below is render-only (the onProgress line).
+        // The cursor-stripped digest is render-only (the onProgress line); a sibling-only
+        // cursor movement is stripped from every digest, so sibling traffic never flaps a
+        // member's rendered marker.
 
         if (typeof policy.onProgress === 'function') {
           // v2 rule 7: the reducer's class is the rendered label (a decision-parked member never
@@ -751,46 +676,23 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
         }
 
-        // L4/L6 steering.
+        // L4 steering. A parked checkpoint is nudged once per pause. A checkpoint that carries
+        // the member's own completed `workerResult` is resolved through `claim_turn` when the
+        // wave author opted into claim finalization — the runtime's live liveness gate decides,
+        // never a digest comparison (#598 F01). A delivery failure is recorded every time it
+        // happens and steering continues; no count stops the nudges.
         if (policy.steering === 'nudge-on-checkpoint') {
           for (const { role, run: runHandle, checkpoint } of paused) {
-            const state = memberState.get(role) ?? freshState();
-            if (state.done) {
-              // L6 done + claim-on-stall: the member's live-rechecked admission (claim) resolves the
-              // parked workerResult into work_completed NOW — no waiting for the stall clock (D6).
-              if (policy.finalization === 'claim-on-stall' && !claimedPauseIds.has(checkpoint.requestId)) {
-                await claimOnce(role, runHandle, checkpoint, claims, state);
-              }
+            if (policy.finalization === 'claim-on-stall' && checkpoint.claim != null) {
+              // The worker declared completion (parked workerResult): resolve it through the
+              // claim's own live admission. A refusal (claim_premature_liveness — the worker is
+              // NOT done) is recorded and coached, never budgeted.
+              const state = memberState.get(role) ?? freshState();
+              await claimOnce(role, runHandle, checkpoint, claims, state);
               memberState.set(role, state);
               continue;
             }
             if (nudgedRequestIds.has(checkpoint.requestId)) continue; // L4: one nudge per pause
-            // Persistent delivery failure is unsteerable, not infinite retry: after K consecutive
-            // failures on the same requestId, stop nudging it and let the stall clock judge (the
-            // retry stream itself keeps the marker alive and starves the stall fan-out).
-            // #414: the retirement is a steering line, not silence — the first poll that sees
-            // the exhausted budget records ONE nudge_retired row naming the budget, the count,
-            // the last failure message and the stall clock that now judges; later polls stay quiet.
-            if ((failuresByRequestId.get(checkpoint.requestId) ?? 0) >= 3) {
-              retireNudge(role, runHandle.id, checkpoint.requestId);
-              continue;
-            }
-            const unchanged = state.digest !== null && state.digest === checkpoint.changedPathsDigest;
-            // v2 rule 7: the treadmill (unproductive budget) is for CLAIM-ABSENT checkpoints. An
-            // unproductive re-park that carries a completed claim is claimed at THIS poll without
-            // burning the remaining budget — the first sighting still nudges (digest unset), so a
-            // productive claim-checkpoint keeps getting work (L6/D1/D6 unchanged).
-            const claimReady = checkpoint.claim != null && policy.finalization === 'claim-on-stall';
-            if (unchanged && (claimReady || state.nudges >= policy.unproductiveNudgeBudget)) {
-              // L6: a re-park with an unchanged changedPathsDigest after the budget is the treadmill
-              // — the member is done; stop nudging it.
-              state.done = true;
-              if (policy.finalization === 'claim-on-stall' && !claimedPauseIds.has(checkpoint.requestId)) {
-                await claimOnce(role, runHandle, checkpoint, claims, state);
-              }
-              memberState.set(role, state);
-              continue;
-            }
             const at = new Date().toISOString();
             try {
               const result = await runHandle.act('nudge_turn', { message: policy.completionMessage });
@@ -804,24 +706,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
               }
               nudges.push({ role, requestId: checkpoint.requestId, at });
               nudgedRequestIds.add(checkpoint.requestId);
-              failuresByRequestId.delete(checkpoint.requestId);
-              lastFailureByRequestId.delete(checkpoint.requestId);
-              if (unchanged) state.nudges += 1;
-              else { state.digest = checkpoint.changedPathsDigest ?? null; state.nudges = 1; }
             } catch (error) {
-              // D8: a nudge rejection (delivery_exception / scope mismatch) is recorded and polling
-              // continues. The requestId is NOT consumed so a one-shot scripted failure recovers on
-              // the next poll; a persistently failing nudge is bounded by the K=3 unsteerable rule
-              // above, then by stall/cap.
-              failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
-              const message = String(error?.message ?? error);
-              lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
+              // D8: a nudge rejection (delivery_exception / scope mismatch) is recorded and
+              // polling continues. The requestId is NOT consumed so a failed delivery retries on
+              // the next poll — the failure row is the report, not a budget.
               nudges.push({
                 role, requestId: checkpoint.requestId, at,
-                error: { code: error?.code ?? null, message },
+                error: { code: error?.code ?? null, message: String(error?.message ?? error) },
               });
             }
-            memberState.set(role, state);
           }
         }
 
@@ -833,83 +726,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
         }
         if (settled === totalMembers) { basis = 'completed'; break; }
 
-        // #396: stall is adjudicated PER MEMBER RELATIONSHIP. A member is stalled when its OWN
-        // clock has been quiet for a full stallTimeoutMs; a member behind a named dependency
-        // (waitingOn, never blocked) reads waiting-on, never stalled. The loop ends when every
-        // unsettled member is individually accounted for — stalled or waiting — never on a
-        // shared start (docs/39 §Loose and tight: independent activities inherit no barrier).
-        const now = Date.now();
-        const stalledNow = [];
-        const waitingNow = [];
-        let rosterAccounted = true;
-        for (const [role] of runs) {
-          if (statusInfo.get(role)?.terminal) continue;
-          const progress = memberProgress.get(role);
-          const lastProgressAt = progress?.lastProgressAt ?? now;
-          const lastProgressIso = progress?.lastProgressIso ?? new Date(now).toISOString();
-          const gated = gatedByRole.get(role) ?? null;
-          const waitingOn = waitingOnByRole.get(role) ?? null;
-          if (gated === null && waitingOn && typeof waitingOn.kind === 'string') {
-            if (now - lastProgressAt >= policy.stallTimeoutMs) {
-              waitingNow.push({ role, waitingOn, lastProgressAt: lastProgressIso });
-            } else {
-              rosterAccounted = false;
-            }
-            continue;
-          }
-          if (now - lastProgressAt >= policy.stallTimeoutMs) {
-            stalledNow.push({
-              role,
-              lastProgressAt: lastProgressIso,
-              dependsOn: gated === null ? null : { kind: gated.kind ?? null, requestId: gated.requestId ?? null },
-            });
-          } else {
-            rosterAccounted = false;
-          }
-        }
-        if (rosterAccounted) {
-          if (policy.finalization === 'claim-on-stall') {
-            // D9: claim fan-out at stall — per stalled member only (a member that just showed
-            // progress is never claimed as stall collateral); scope mismatch tolerated and
-            // recorded. A waiting member is never claimed (the paused admission suppresses it).
-            const stalledRoles = new Set(stalledNow.map((entry) => entry.role));
-            for (const { role, run: runHandle, checkpoint } of paused) {
-              if (!stalledRoles.has(role)) continue;
-              const state = memberState.get(role) ?? freshState();
-              if (!claimedPauseIds.has(checkpoint.requestId)) await claimOnce(role, runHandle, checkpoint, claims, state);
-              memberState.set(role, state);
-            }
-            // Recovered must be measured AFTER the claims: a member whose claim was tolerated as
-            // concurrently-resolved is settled in reality — re-read each member instead of trusting
-            // the pre-claim status snapshot, with a bounded retry so a resolution landing during the
-            // re-read itself can't strand the basis at 'stall'.
-            let recovered = failedToStart;
-            for (let attempt = 0; attempt < 3 && recovered < totalMembers; attempt += 1) {
-              if (attempt > 0) await new Promise((resolveWait) => { setTimeout(resolveWait, 100); });
-              recovered = failedToStart;
-              for (const [role, runHandle] of runs) {
-                if (memberState.get(role)?.claimed === true) { recovered += 1; continue; }
-                try {
-                  const status = await runHandle.status();
-                  const view = status?.view ?? status ?? {};
-                  const phase = canonicalRunPhase(view.phase) ?? null;
-                  if (view.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING) recovered += 1;
-                } catch { /* an unreadable member counts as unrecovered */ }
-              }
-            }
-            basis = recovered === totalMembers ? 'completed' : 'stall';
-          } else {
-            basis = 'stall';
-          }
-          // #396: publish the per-member adjudication — the stall rows name each stalled
-          // member with its own last-progress instant and its dependency (if any); the
-          // waiting rows name each member behind a real dependency (never stalled).
-          stalls = stalledNow;
-          waiting = waitingNow;
-          break;
-        }
-        // #163 law: no wall-clock cap bounds the drive — the loop settles on member terminality
-        // or the stall finalization above, never on elapsed time.
+        // #163 law × #598 F01: no clock, no count and no digest bound the drive — the loop
+        // settles on member terminality or ends on the caller's explicit stop (the abort
+        // signal). A member that parks forever stays parked: the pause is attention the wave
+        // author or orchestrator resolves, never a lifetime the driver decides.
 
         await waitForWake(liveMembers);
       }
@@ -956,11 +776,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
       remainingCount: stop?.remainingCount ?? evidence.stops.length,
       residueUnknown: stop?.residueUnknown ?? false,
       basis,
-      // #396: the per-member stall adjudication — stalls names each stalled member with its
-      // own last-progress instant and its dependency (if any); waiting names each member
-      // behind a real dependency (never stalled). Both are empty on a clean completion.
-      stalls,
-      waiting,
       nudges,
       claims,
       // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
@@ -978,17 +793,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
       },
       settlement: { errors: (settlementResult?.errors ?? []).slice(0, 8) },
     };
-    // #414: the wave settle outcome for a retired member carries the same retirement — its
-    // per-member row names `retired: {budget, count}` beside the #396 waitingOn row (which the
-    // spread above preserves), so `waves progress` renders which budget was exhausted and what
-    // judged it next. Copied onto fresh row objects: the handle's stored outcomes stay pristine.
-    if (retiredByRole.size > 0) {
-      receipt.outcomes = receipt.outcomes.map((outcome) => {
-        const retired = retiredByRole.get(outcome?.role);
-        return retired ? { ...outcome, retired: { ...retired } } : outcome;
-      });
-    }
-
     // D9 (epic #103): the campaign-state record + post-close briefing mint. Both run in the
     // driver's guaranteed post-close window — AFTER wave.close() (the finally above) and the
     // receipt build, BEFORE the receipt file write (D9 §mint-site). They are advisory, never

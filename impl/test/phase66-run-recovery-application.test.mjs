@@ -35,8 +35,6 @@ const route = Object.freeze({ vendor: 'session', model: 'model-a', effort: 'low'
 const applicationRoute = Object.freeze({ harness: 'session', model: 'model-a', effort: 'low' });
 const recoveryPolicy = Object.freeze({
   mode: 'manual',
-  maxAttempts: 2,
-  timeoutMs: 5_000,
   eligibleSessionModes: ['resume'],
   ambiguousDispatch: 'operator_required',
 });
@@ -49,8 +47,7 @@ const goalPlanPolicy = Object.freeze({
   effectClasses: ['provider_call', 'repository_edit'],
   capabilityClasses: ['code', 'native_session_recovery', 'test'],
   limits: Object.freeze({
-    maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
-    maxTextBytes: 4_096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    maxTextBytes: 4_096,
     maxGoalBytes: 64 * 1_024, maxPlanBytes: 256 * 1_024, maxStatusBytes: 256 * 1_024,
     maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
@@ -381,12 +378,10 @@ test('CE6-CE8: one eligible orphan is server-selected, admitted once, and projec
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].selectedWorkerId, workerId);
   assert.deepEqual(Object.keys(f.calls[0].request).sort(), [
-    'actor', 'gate', 'maxAttempts', 'profileDigest', 'recoveryPolicyDigest', 'runId', 'timeoutMs',
+    'actor', 'gate', 'profileDigest', 'recoveryPolicyDigest', 'runId',
   ]);
   assert.equal(f.calls[0].request.runId, runId);
   assert.equal(f.calls[0].request.gate.nodeKey, 'recover');
-  assert.equal(f.calls[0].request.timeoutMs, recoveryPolicy.timeoutMs);
-  assert.equal(f.calls[0].request.maxAttempts, recoveryPolicy.maxAttempts);
   assert.equal(Object.hasOwn(f.calls[0].request, 'attempt'), false);
   assert.equal(f.authorizations.findIndex((row) => row.command === 'run.recover') >= 0, true);
   assert.deepEqual(f.store.events().filter((event) => event.batch?.kind === 'goal_plan_recovery_dispatch')
@@ -404,17 +399,17 @@ test('CE6-CE8: one eligible orphan is server-selected, admitted once, and projec
   assert.equal(JSON.stringify(view.recovery).includes('native-session-phase66'), false);
 });
 
-test('CE2/CE8: application delegates attempt derivation and the ceiling to durable Coordinator authority', async () => {
+test('CE2/CE8: application delegates attempt derivation to durable Coordinator authority', async () => {
   const retry = applicationFixture('durable-second-attempt', { outcomeAttempt: 2 });
   await retry.application.ready;
   // Generic driver testimony is not attempt authority. Only the dedicated Coordinator/store
-  // protocol may derive the head and enforce the deployment-owned ceiling.
+  // protocol may derive the recovery head.
   retry.store.recordDriver('recovery.requested', {
     taskId: 'prior-plan-task', workerId, runId, attempt: 1,
   }, { actor: 'direct:operator', key: 'recovery.requested:prior:1' });
   const retried = await retry.application.recover(runId, principal('operator'));
   assert.equal(Object.hasOwn(retry.calls[0].request, 'attempt'), false);
-  assert.equal(retry.calls[0].request.maxAttempts, recoveryPolicy.maxAttempts);
+  assert.equal(Object.hasOwn(retry.calls[0].request, 'maxAttempts'), false);
   assert.equal(retried.recovery.attempt, 2);
 });
 
@@ -481,7 +476,7 @@ async function coordinatorFixture() {
     log, coordination: store, fences: new FenceTable(), adapters: { session: initial }, worktrees, repoId,
     goalPlanAuthority: { policy: store.goalPlanPolicy(), authorize: async () => true },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1_000, stopDeadlineMs: 100, recoveryTimeoutMs: 500,
+    stopDeadlineMs: 100,
   });
   const preview = store.previewPlanDispatch(state.workGate, route);
   const { goalPlan: _binding, ...brief } = preview.brief;
@@ -508,7 +503,7 @@ async function coordinatorFixture() {
     log, coordination: store, fences: new FenceTable(), adapters: { session: resumed }, worktrees, repoId,
     goalPlanAuthority: { policy: store.goalPlanPolicy(), authorize: async () => true },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1_000, stopDeadlineMs: 100, recoveryTimeoutMs: 500,
+    stopDeadlineMs: 100,
   });
   assert.equal(replay.list()[0].status, 'orphaned');
   return { handle, log, replay, resumed, state, store };
@@ -528,7 +523,7 @@ test('CE7: dedicated Coordinator Plan recovery attaches first, commits the appro
   const recovered = await f.replay.recoverPlanBound(f.handle.id, {
     schemaVersion: 1, runId, gate: f.state.recoveryGate,
     profileDigest: 'a'.repeat(64), recoveryPolicyDigest: 'b'.repeat(64),
-    maxAttempts: 2, timeoutMs: 500, actor: 'direct:operator',
+    actor: 'direct:operator',
   });
   assert.equal(recovered.ok, true);
   assert.equal(recovered.result, 'attached');

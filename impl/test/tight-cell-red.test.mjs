@@ -69,7 +69,7 @@
 //                                             broadcast, worker-attributed claim/report, one result
 //     TC-20  first-node-truth-missing         cell outcome names cell.degraded; never nodes[0] (source)
 //     TC-20b cell-quorum-behavioral-missing   rest/kill/degrade probes the aggregate, never nodes[0]
-//     TC-21  per-member-reply-slot-missing    each delivered member's FIRST reply admitted
+//     TC-21  reply fan-in                       each delivered member's reply admitted, repeats included
 //     TC-22  per-member-mint-key-missing      size mints under one send key never collide
 //     TC-23a cell-editing-division-missing    group.editing -> analysis:true on non-listed briefs
 //     TC-24  cell-delivery-mode-gate-missing  now|turn to a cell refuses wave_cell_delivery_unsupported (source)
@@ -85,7 +85,7 @@
 //     TC-09b C5 fan-out receipt              sendMessage({to:{runId}}) -> delivered/targetCount
 //     TC-17b derivation anchors              wave member bound 64 + MAX_WAVE_PROGRESS_BYTES
 //     TC-18  loose form byte-identical       one run/one worker; 3 delivery modes; single-worker target
-//     TC-18a single-reply slot               non-cell second reply / reply-to-reply refuse depth
+//     TC-18a reply lane                         single-worker repeat replies and chains deliver
 //     TC-22b first-worker resolution          waves.send to a runId targets worker[0] only, no targetCount
 //     TC-23b analysis hatch                  analysis:true skips required_effect even when requiredEffects
 //                                             also lists repository_edit (the pair is BU-2-1-refused, so the
@@ -933,7 +933,7 @@ test('TC-19 loop[cell-end-to-end-loop-missing]: the WHOLE #74 loop is executable
 // E — Broadcast & reply (coordinator seam)
 // ===========================================================================
 
-test('TC-21 reply[per-member-reply-slot-missing]: a runId broadcast admits EACH delivered member\'s FIRST reply', async () => {
+test('TC-21 reply: a runId broadcast admits EVERY member\'s reply — repeats included (no per-member slot)', async () => {
   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter(), capture: noDiff });
   const h1 = await coordinator.spawn('mock', makeBrief(), { runId: 'run:cell' });
   const h2 = await coordinator.spawn('mock', makeBrief(), { runId: 'run:cell' });
@@ -948,23 +948,22 @@ test('TC-21 reply[per-member-reply-slot-missing]: a runId broadcast admits EACH 
   await flush(40);
   const delivered = streamEvents(coordinator, h2, 'message.delivered')
     .filter((e) => e.payload?.inReplyTo === parent.messageId);
-  const rejected = streamEvents(coordinator, h2, 'message.rejected')
-    .filter((e) => e.payload?.inReplyTo === parent.messageId);
   assert.equal(delivered.length, 1,
-    'stage[per-member-reply-slot-missing]: each delivered cell member\'s FIRST reply is admitted against its own '
-    + 'per-member delivery record (Decision 5, TC-21); today the parent message holds ONE reply slot '
-    + `(coordinator.mjs:12511), so member 1\'s reply is refused with `
-    + `${rejected.map((r) => r.payload?.reason).join(',') || 'no rejection recorded'}`);
-  // depth stays 1: member 1's SECOND reply to the same broadcast still refuses message_depth_exceeded
+    'each delivered cell member\'s reply is admitted against the parent record (Decision 5, TC-21)');
+  // #598 F03: no per-member reply slot — a member's SECOND reply to the same broadcast also delivers
   emitWorkerReply(adapter, h2, parent.messageId, 'member 1 second reply');
   await flush(40);
-  const rejectedAgain = streamEvents(coordinator, h2, 'message.rejected')
+  const rejected = streamEvents(coordinator, h2, 'message.rejected')
     .filter((e) => e.payload?.inReplyTo === parent.messageId);
-  assert.ok(rejectedAgain.some((r) => r.payload?.reason === 'message_depth_exceeded'),
-    'a member\'s second reply still refuses message_depth_exceeded (depth stays 1 per member)');
+  assert.equal(rejected.length, 0, 'no slot refusal exists — the depth code is gone with the mechanism');
+  const receipt = coordinator.messageReceipt(parent.messageId);
+  assert.deepEqual(receipt.replies.map((r) => r.from), [h1.id, h2.id], 'replies collects each sender');
+  assert.deepEqual(receipt.replies.map((r) => r.body), ['reply from member 0', 'member 1 second reply'],
+    'replies holds each sender\'s latest reply');
+  assert.equal(receipt.reply.body, 'reply from member 0', 'reply keeps the first reply');
 });
 
-test('TC-18a reply pin: the non-cell single-worker reply lane is byte-identical (one reply slot)', async () => {
+test('TC-18a reply pin: the single-worker reply lane admits repeat replies and chains — no slot, no depth refusal', async () => {
   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter(), capture: noDiff });
   const h1 = await coordinator.spawn('mock', makeBrief());
   const parent = await coordinator.sendMessage(
@@ -979,14 +978,15 @@ test('TC-18a reply pin: the non-cell single-worker reply lane is byte-identical 
   await flush(40);
   const rejected = streamEvents(coordinator, h1, 'message.rejected')
     .filter((e) => e.payload?.inReplyTo === parent.messageId);
-  assert.ok(rejected.some((r) => r.payload?.reason === 'message_depth_exceeded'),
-    'PIN: a single-worker target still refuses a second reply with message_depth_exceeded (TC-18: byte-identical)');
+  assert.equal(rejected.length, 0, 'a second reply by the same sender delivers — no slot refusal exists');
   emitWorkerReply(adapter, h1, delivered[0].payload.messageId, 'reply to reply');
   await flush(40);
-  const rejectedToReply = streamEvents(coordinator, h1, 'message.rejected')
+  const chainRejected = streamEvents(coordinator, h1, 'message.rejected')
     .filter((e) => e.payload?.inReplyTo === delivered[0].payload.messageId);
-  assert.ok(rejectedToReply.some((r) => r.payload?.reason === 'message_depth_exceeded'),
-    'PIN: a reply to a reply still refuses message_depth_exceeded (depth stays 1)');
+  assert.equal(chainRejected.length, 0, 'a reply to a reply delivers — no depth refusal exists');
+  const receipt = coordinator.messageReceipt(parent.messageId);
+  assert.equal(receipt.reply.body, 'first', 'reply keeps the first reply on the parent');
+  assert.deepEqual(receipt.replies.map((r) => r.body), ['second'], 'replies holds the sender\'s latest');
 });
 
 test('TC-09b waves.send pin: the C5 runId fan-out already receipts delivered/targetCount at the coordinator seam', async () => {

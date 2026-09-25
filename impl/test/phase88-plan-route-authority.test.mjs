@@ -235,7 +235,7 @@ test('PR88-3: fresh legacy singleton promotes to v2 while fresh ambiguous axes a
   }), (error) => error.code === 'plan_route_authority_legacy_ambiguous');
 });
 
-test('PR88-4: v2 Plan route schema is closed, unique, nonempty, and policy-bounded', () => {
+test('PR88-4: v2 Plan route schema is closed, unique, and nonempty (#598 F08: no route-count ceiling)', () => {
   const invalid = [
     { schemaVersion: 2, allowed: [] },
     { schemaVersion: 2, allowed: [routeA, routeA] },
@@ -243,9 +243,6 @@ test('PR88-4: v2 Plan route schema is closed, unique, nonempty, and policy-bound
     { schemaVersion: 2, allowed: [{ vendor: routeA.harness, model: routeA.model, effort: routeA.effort }] },
     { schemaVersion: 2, allowed: [routeA], extra: true },
     { schemaVersion: 3, allowed: [routeA] },
-    { schemaVersion: 2, allowed: Array.from({ length: 5 }, (_, index) => ({
-      harness: `h-${index}`, model: `m-${index}`, effort: `e-${index}`,
-    })) },
   ];
   for (const routes of invalid) {
     assert.throws(() => normalizeRoutes(routes), (error) => error.code === 'plan_route_invalid');

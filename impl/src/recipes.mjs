@@ -31,11 +31,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 const DESCRIPTOR_MAX_BYTES = 8 * 1024;
 const TASK_MAX_BYTES = 2 * 1024;
 const CONSTRAINT_MAX_BYTES = 240;
-// Issue #499: the recipe count ceilings are the registry's COUNTS rows — structural admission
-// bounds on one recipe payload (admission audit §4 F7), never a fleet size.
-const MAX_CONSTRAINTS = FRAME_LIMITS['recipe.constraints'].value;
-const MAX_MEMBERS = FRAME_LIMITS['recipe.members'].value;
-const MAX_SCOPE = FRAME_LIMITS['recipe.scope'].value;
 const ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 const RECIPE_TOP_FIELDS = Object.freeze(['name', 'version', 'members', 'policy']);
@@ -43,8 +38,7 @@ const ROLE_FIELDS = Object.freeze(['role', 'exact', 'scope', 'objectiveTemplate'
 const EXACT_FIELDS = Object.freeze(['harness', 'model', 'effort']);
 const TEMPLATE_FIELDS = Object.freeze(['task', 'constraints']);
 const POLICY_FIELDS = Object.freeze([
-  'steering', 'finalization', 'pollIntervalMs', 'stallTimeoutMs',
-  'settleTimeoutMs', 'unproductiveNudgeBudget', 'preflight',
+  'steering', 'finalization', 'pollIntervalMs', 'settleTimeoutMs', 'preflight',
 ]);
 const RUN_OPTION_FIELDS = Object.freeze([
   'task', 'idempotencyKey', 'manifestPath', 'evidencePath', 'callbacks', 'overrides',
@@ -59,14 +53,13 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 // functions, no signals. `saltObjectives` is forced false by the wrapper (the sole salt owner);
 // `evidencePath` is a per-invocation run option; `onProgress`/`signal` are signals, excluded. The
 // defaults mirror createWaveDriver's documented production cadence. #163 law: no hardCapMs —
-// a recipe policy naming the retired clock cap refuses as an unknown field.
+// a recipe policy naming the retired clock cap refuses as an unknown field. #598 F01: the
+// stall clock and the nudge budgets are retired the same way.
 const DEFAULT_RECIPE_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'none',
   pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 5_000,
-  unproductiveNudgeBudget: 1,
   preflight: true,
 });
 
@@ -137,11 +130,7 @@ function admitPolicy(raw) {
     throw recipeError(`recipe policy "finalization" is invalid: ${String(merged.finalization)}`, 'recipe_schema_invalid');
   }
   assertPositiveInt(merged.pollIntervalMs, 'recipe policy "pollIntervalMs"');
-  assertPositiveInt(merged.stallTimeoutMs, 'recipe policy "stallTimeoutMs"');
   assertPositiveInt(merged.settleTimeoutMs, 'recipe policy "settleTimeoutMs"');
-  if (!Number.isSafeInteger(merged.unproductiveNudgeBudget) || merged.unproductiveNudgeBudget < 0) {
-    throw recipeError('recipe policy "unproductiveNudgeBudget" must be a non-negative integer', 'recipe_schema_invalid');
-  }
   if (typeof merged.preflight !== 'boolean') {
     throw recipeError('recipe policy "preflight" must be a boolean', 'recipe_schema_invalid');
   }
@@ -162,7 +151,7 @@ function admitExact(raw, index) {
 }
 
 function admitScope(raw, index) {
-  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SCOPE) {
+  if (!Array.isArray(raw) || raw.length === 0) {
     throw recipeError(`recipe member[${index}] "scope" must be a non-empty array of glob strings`, 'recipe_schema_invalid');
   }
   if (raw.some((entry) => typeof entry !== 'string' || entry.trim().length === 0)) {
@@ -189,11 +178,8 @@ function admitTemplate(raw, index) {
       'recipe_oversize',
     );
   }
-  if (!Array.isArray(raw.constraints) || raw.constraints.length > MAX_CONSTRAINTS) {
-    throw recipeError(
-      `recipe member[${index}] objectiveTemplate "constraints" must be an array of at most ${MAX_CONSTRAINTS} strings`,
-      'recipe_schema_invalid',
-    );
+  if (!Array.isArray(raw.constraints)) {
+    throw recipeError(`recipe member[${index}] objectiveTemplate "constraints" must be an array of strings`, 'recipe_schema_invalid');
   }
   const constraints = raw.constraints.map((constraint, ci) => {
     if (typeof constraint !== 'string' || constraint.trim().length === 0) {
@@ -265,9 +251,6 @@ export function admitRecipe(raw) {
   const policy = admitPolicy(raw.policy);
   if (!Array.isArray(raw.members) || raw.members.length === 0) {
     throw recipeError('recipe "members" must be a non-empty array', 'recipe_schema_invalid');
-  }
-  if (raw.members.length > MAX_MEMBERS) {
-    throw recipeError(`recipe "members" exceeds ${MAX_MEMBERS} member cards`, 'recipe_schema_invalid');
   }
   const members = raw.members.map((member, index) => admitMember(member, index));
   const roles = members.map((member) => member.role);
@@ -613,11 +596,8 @@ const IMPLEMENT_CONSTRAINTS = Object.freeze([
 ]);
 const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
-  finalization: 'claim-on-stall',
   pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 15_000,
-  unproductiveNudgeBudget: 1,
   preflight: true,
 });
 

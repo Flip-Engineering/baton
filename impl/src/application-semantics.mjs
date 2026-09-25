@@ -45,10 +45,8 @@ export const CANONICAL_ATTENTION_KINDS = Object.freeze([
 // The blocking details are pinned to the LIVE projectBlockedInteraction output
 // (application.mjs:321-331): approve_plan/select_candidate are phase-derived, `decision`
 // (answer_decision's live kind) maps to `answer_required`, and turn_checkpoint is attention-
-// derived. The silence boundary is an order of magnitude under the wave driver's deployment-
-// wide stall clock (wave-driver.mjs stallTimeoutMs = 20 min) so a run-view consumer learns of
-// silence long before any driver stall fan-out, and far above per-poll jitter (follow polls at
-// most profile followPolicy.maxWaitMs).
+// derived. The silence boundary is far above per-poll jitter (follow polls at most profile
+// followPolicy.maxWaitMs), so a run-view consumer learns of sustained silence, not poll noise.
 export const PROGRESS_CLASS_PREFIXES = Object.freeze(['terminal:', 'blocked_interaction:']);
 export const PROGRESS_CLASS_LEAVES = Object.freeze(['silent', 'progressing']);
 export const PROGRESS_BLOCKED_INTERACTION_DETAILS = Object.freeze([
@@ -180,16 +178,15 @@ const applicationIntent = objectSchema({
   profile: id,
   route: applicationRoute,
   scope: {
-    // Issue #499: the intent scope is the same 64-path wave/scope payload class the wavefile
-    // grammar bounds with one ceiling (the wave scope IS the member default scope there).
-    type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true,
+    // #598 F08: no fixed scope count ceiling on the intent payload.
+    type: 'array', minItems: 1, uniqueItems: true,
     items: { type: 'string', minLength: 1, maxLength: 4096 },
   },
   composition: objectSchema({
     strategy: { const: 'parallel_attempts' }, workspace: { const: 'isolated' },
     join: { const: 'operator_selected' },
     team: {
-      type: 'array', minItems: 2, maxItems: FRAME_LIMITS['workflow.team.members'].value,
+      type: 'array', minItems: 2,
       items: objectSchema({ role: id, route: objectSchema({
         harness: id, model: id, effort: id,
       }) }),
@@ -1649,7 +1646,7 @@ const CANONICAL_OPERATION_SPECS = [
   ['knowledge.settlement_lease', {
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      waveId: id, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: id },
+      waveId: id, members: { type: 'array', items: id },
     }, ['waveId']),
     authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
     liveMethod: 'settlementLease',
@@ -1707,7 +1704,7 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       waveId: id,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: objectSchema({
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -1731,7 +1728,7 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       idempotencyKey: id,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: objectSchema({
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -1742,12 +1739,12 @@ const CANONICAL_OPERATION_SPECS = [
           // second enforcement copy.
           group: objectSchema({
             seat: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
-            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
-            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            size: { type: 'integer', minimum: 2 },
+            quorum: { type: 'integer', minimum: 1 },
             strict: { type: 'boolean' },
-            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+            editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective']),
       },
     }, ['idempotencyKey', 'members']),

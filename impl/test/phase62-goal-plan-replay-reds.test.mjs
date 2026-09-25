@@ -600,7 +600,6 @@ test('GP3/GP8: plan verification is closed direct-exec authority with bounded cw
     credential_env: { ...verification(), envAllowlist: ['GLM_API_KEY', 'PATH'] },
     credential_argument: { ...verification(), arguments: ['--test', 'access_token=abcdefghijklmnopqrstuvwx'] },
     predecessor_mismatch: { ...verification(), requiredPredecessorEvidence: ['missing-node'] },
-    argv_oversize: { ...verification(), arguments: Array(policy.limits.maxItems + 1).fill('x') },
     output_oversize: { ...verification(), maxOutputBytes: 16 * 1024 * 1024 + 1 },
   };
   for (const [name, candidate] of Object.entries(invalid)) {

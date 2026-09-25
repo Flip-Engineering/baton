@@ -1135,20 +1135,19 @@ function normalizeFollowPolicy(value) {
 }
 function normalizeRecoveryPolicy(value) {
   if (value === undefined) return deepFreeze({
-    mode: 'none', maxAttempts: 0, timeoutMs: 0,
-    eligibleSessionModes: [], ambiguousDispatch: 'operator_required',
+    mode: 'none', eligibleSessionModes: [], ambiguousDispatch: 'operator_required',
   });
   exactObject(value, [
-    'mode', 'maxAttempts', 'timeoutMs', 'eligibleSessionModes', 'ambiguousDispatch',
+    'mode', 'eligibleSessionModes', 'ambiguousDispatch',
   ], 'application_profile_invalid', 'profile recoveryPolicy');
-  if (value.mode === 'none' && value.maxAttempts === 0 && value.timeoutMs === 0
-    && Array.isArray(value.eligibleSessionModes) && value.eligibleSessionModes.length === 0
+  if (value.mode === 'none' && Array.isArray(value.eligibleSessionModes)
+    && value.eligibleSessionModes.length === 0
     && value.ambiguousDispatch === 'operator_required') {
     return deepFreeze(clone(value));
   }
+  // #598 F02: no attempt count and no timeout in the operator's recovery policy — a recovery
+  // finishes on the observed result or an explicit stop.
   if (value.mode !== 'manual'
-    || !Number.isSafeInteger(value.maxAttempts) || value.maxAttempts <= 0
-    || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0
     || !Array.isArray(value.eligibleSessionModes) || value.eligibleSessionModes.length === 0
     || value.eligibleSessionModes.some((mode) => mode !== 'resume')
     || new Set(value.eligibleSessionModes).size !== value.eligibleSessionModes.length
@@ -4680,10 +4679,6 @@ export async function _proposeContextMap(application, current, inputs, caller) {
     if (!Array.isArray(items) || items.length < 2) {
       throw applicationError('Context map is parallel and needs at least two immutable items; inspect this cell or use one ordinary Run/review for singleton input',
         'context_map_not_parallel');
-    }
-    if (items.length > goalPlanPolicy.limits.maxNodes) {
-      throw applicationError('Context map partitions exceed the successor Plan authority',
-        'application_context_map_capacity');
     }
     const definition = application._workflowDefinition(current);
     const roleCatalog = application._workflowRoleCatalog(current, definition);

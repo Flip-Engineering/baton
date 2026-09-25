@@ -681,11 +681,11 @@ function dispatchFailure(cause, command = null) {
     }
     return { httpStatus: 400, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan precondition failed' } } };
   }
-  if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_version_limit', 'goal_weakened',
+  if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_weakened',
     'plan_approval_conflict', 'plan_approval_expired', 'plan_approval_stale', 'plan_brief_mismatch', 'plan_conflict',
     'plan_dependency_incomplete', 'plan_dependency_mismatch', 'plan_dispatch_conflict', 'plan_dispatch_stale',
     'plan_effect_mismatch', 'plan_not_approved', 'plan_predecessor_required', 'plan_route_mismatch', 'plan_self_approval',
-    'plan_stale', 'plan_version_limit', 'goal_plan_required'].includes(goalPlanCode)) {
+    'plan_stale', 'goal_plan_required'].includes(goalPlanCode)) {
     return { httpStatus: 409, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan state conflict' } } };
   }
   // #160 R3 (the #170 P10 dependency): the pre-TypeError workflow_* arm — a bare workflow_* throw
@@ -730,10 +730,6 @@ function dispatchFailure(cause, command = null) {
     }
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
-  // #105 D3 (reply-chains-2026-08-06): the message lane's budget refusal maps to the same
-  // "command precondition failed" class as the capability_*_invalid family — a declared budget
-  // outside [1, MAX_MESSAGE_DEPTH_BUDGET] is a send-side precondition violation (400).
-  if (cause?.code === 'message_budget_invalid') return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   if (cause?.code === 'capability_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   if (['capability_op_unavailable', 'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid'].includes(cause?.code)) {

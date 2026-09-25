@@ -14,9 +14,8 @@
 // interactions — failed receipts, pending interactions, board.claim_result and lifecycle
 // markers never count); CP4's pause-epoch window (epoch AND seq bounds); CP6's typed
 // rollback-clean claimable-later refusal; CP9's honest-registry flip; CP8's wave-driver
-// composition (per-pauseId claim attempts, a COUNTED corrective-nudge budget
-// `refusalNudgeBudget: 2` consumed on delivery, exhaustion → record-only → the driver's
-// PRE-EXISTING stall clock reaps); CP10's untouched silent-worker path.
+// composition (claim-on-first-sighting per pauseId, exactly one corrective nudge per
+// refused pause, no budget); CP10's untouched silent-worker path.
 //
 // Red-first: written against the v1.1 contract BEFORE implementation. Every RED row fails
 // for the named stage and goes green on the contract's implementation ONLY; every PIN row is
@@ -111,19 +110,12 @@
 //   WD1   PIN — a claim_premature_liveness refusal is recorded on the claims evidence with
 //         its code (the recording lane exists today: claimOnce maps code ← error?.code;
 //         green today, kills an impl that drops/mangles the code on the corrective path)
-//   WD2   exactly ONE corrective nudge for the SAME pause, exempt from the L4
-//         one-nudge-per-pause dedup exactly once (the pause was ordinarily nudged pre-stall,
-//         so the D9-path corrective nudge must bypass nudgedRequestIds) (RED — today:
-//         policy field refusalNudgeBudget unknown → wave_driver_policy_invalid)
-//   WD3   a refused corrective-nudge DELIVERY consumes NO budget (D8 symmetry), and the
-//         NEXT pauseId is claimed again (per-pauseId claimAttempted — four fresh pauseIds
-//         draw four claim attempts; today per-member keying stops after one) (RED)
-//   WD4   budget exhaustion → honest closure: refusal recorded with NO nudge, nothing
-//         settles the worker (act counts frozen), no new pauseId is claimed into existence,
-//         the PRE-EXISTING stall clock fires (basis 'stall' — never a wall-clock cap; the
-//         #163 law retired hardCapMs), the D9 fan-out no-ops (the per-pauseId attempt was
-//         consumed), the guaranteed close reaps. Also pins the DEFAULT budget: no policy
-//         field passed, exactly TWO corrective nudges. (RED)
+//   WD2   exactly ONE corrective nudge for a refused claim — one per pause, and no budget
+//         bounds it (the claim branch runs before any ordinary nudge; later polls of the
+//         SAME pause draw nothing — per-pauseId claim-once)
+//   WD3   a refused corrective-nudge DELIVERY is recorded, not budgeted (D8 symmetry), and
+//         EVERY fresh pauseId is claimed again on its first sighting; the fixture member
+//         turns terminal so the wave closes
 //
 // §G Exoneration pins (acceptance (c): the six non-suite claimTurn call sites' behavior
 //   classes stay byte-identical)
@@ -161,18 +153,14 @@
 //    and the claim_premature_liveness refusal (:513); irreversible/idempotent unmoved;
 //    registry version stays '1.3.0'. Observable via APPLICATION_SEMANTIC_REGISTRY.actions
 //    .claim_turn and APPLICATION_DIGEST_PROJECTIONS.authority.actions.claim_turn.
-// 4. Wave-driver budget surface (CP8): new policy field `refusalNudgeBudget` (integer ≥ 0,
-//    DEFAULT 2, parallel to unproductiveNudgeBudget — freezePolicy must accept and validate
-//    it). claimAttempted keys per pauseId (checkpoint.requestId), claimed stays per-member.
-//    On claims-evidence code 'claim_premature_liveness' the driver issues exactly ONE
-//    corrective nudge_turn for the SAME pause, exempt from the nudgedRequestIds (L4) dedup
-//    exactly once per refusal, budget consumed on DELIVERED acknowledgment (a {ok:false,
-//    result:'delivery_exception'} VALUE consumes nothing). Exhaustion: refusal recorded,
-//    NO nudge; the pause pends to the driver's PRE-EXISTING stall clock → basis 'stall' →
-//    the guaranteed close reaps. No new clock anywhere.
-//
-// Split against the pre-implementation tree (node --test, repo root): see the Verification
-// comment at the bottom of this file.
+// 4. Wave-driver claim surface (CP8, #598 F01): a claim-carrying checkpoint is claimed on
+//    FIRST sighting — the claim branch runs before any ordinary nudge. claimOnce keys per
+//    pauseId (checkpoint.requestId); claimed stays per-member. On claims-evidence code
+//    'claim_premature_liveness' the driver issues exactly ONE corrective nudge_turn for the
+//    SAME pause — no budget bounds it: a refused delivery ({ok:false,
+//    result:'delivery_exception'} VALUE) is a recorded row and the NEXT pause still draws
+//    its corrective nudge. There is no stall clock anywhere; a row whose member never
+//    settles ends through the caller's stop or a fixture-terminal member.
 //
 // ===========================================================================
 
@@ -418,7 +406,6 @@ function claimOutcomeGuarded(coordinator, pauseId, ms = 3000) {
   ]);
 }
 
-const GATE_EVENT_CODES = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
 function streamAfter(coordinator, handle, seq) {
   return coordinator._log.read(handle.id).filter((event) => event.seq > seq);
 }
@@ -449,23 +436,20 @@ function assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcom
   assert.equal(record?.state, 'pending', 'the refusal rolls the record back to pending');
   assert.equal(record?.consumer, null, 'nothing is consumed');
   assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'the task stays paused');
-  assertWorkerAlive(coordinator, adapter, handle, 'the refusal');
   assert.equal(streamAfter(coordinator, handle, preClaimSeq).length, 0,
     'a refusal mints ZERO events (no turn.settled, no gate event, no verdict, no expiry)');
 }
-function assertGateKill(coordinator, adapter, handle, task, outcome, label) {
-  // Today's claim on a silent diffless pause runs the FULL gate, which maps
-  // required_effect_absent into the policy-failure kill set INTERNALLY; claimTurn then
-  // commits and returns its claimed envelope carrying the gate's verdict (outcome 'failed').
-  assert.equal(outcome?.ok, true, `${label}: the claim itself succeeds — the gate's verdict is the failure`);
-  assert.equal(outcome?.result, 'claimed', `${label}: the claim envelope, exactly as today`);
-  assert.equal(outcome?.outcome, 'failed',
-    `${label}: the full gate ran and judged required_effect_absent (no refusal intercepted the claim)`);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed', `${label}: the worker dies at the gate`);
-  assert.ok(adapter.calls.kill.length >= 1, `${label}: the policy kill lands`);
-  const cause = coordinator._tasks.get(handle.taskId).terminalCause ?? null;
-  assert.equal(cause?.kind, 'policy_failure', `${label}: the terminal cause names the failure kind`);
-  assert.equal(cause?.code, 'required_effect_absent', `${label}: the terminal cause names its gate (T11)`);
+function assertClaimCommits(coordinator, adapter, handle, outcome, label) {
+  // #598 (lead17's a-f removals): the fatal required_effect_absent claim gate is gone — a
+  // diffless pause commits, the changed-path result rides the turn report, and the
+  // orchestrator decides. The row's target is the PREFLIGHT: none of the row's receipt
+  // classes bought a claim_premature_liveness refusal.
+  assert.equal(outcome?.ok, true, `${label}: the claim itself succeeds`);
+  assert.equal(outcome?.result, 'claimed', `${label}: the claim envelope`);
+  assert.notEqual(outcome?.outcome, 'refused', `${label}: no premature-liveness refusal fired`);
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed',
+    `${label}: the diffless pause settles completed (the fatal gate is gone)`);
+  assert.equal(adapter.calls.kill.length, 0, `${label}: the worker is never killed`);
 }
 
 // The per-class rows' sole-liveness fixture check: the row's named class must be the ONLY
@@ -700,7 +684,7 @@ test('T18b (#64 control, PIN): a SILENT diffless drivered claim still dies requi
   const { coordinator, adapter: ad, handle, task, pauseId } = await driveredPause({ adapter });
   void ad;
   const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the silent worker');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'the silent worker');
 });
 
 test('T18d (PIN, the anti-stale law): liveness from BEFORE the pause\'s own epoch never counts', async () => {
@@ -721,7 +705,7 @@ test('T18d (PIN, the anti-stale law): liveness from BEFORE the pause\'s own epoc
   // A whole-stream reader with no epoch/seq restriction finds the 5 epoch-1 tool_calls and
   // refuses — this row is the only pin that kills it: the preflight must NOT engage.
   const outcome = await claimOutcome(coordinator, pauseId2);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the stale-epoch window');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'the stale-epoch window');
 });
 
 test('T18s (PIN, the seq bound): a scratchpad receipt minted AFTER the pause — same epoch, seq > mintedEvent — never counts', async () => {
@@ -741,7 +725,7 @@ test('T18s (PIN, the seq bound): a scratchpad receipt minted AFTER the pause —
   assert.equal(receipt.turnEpoch, record.turnEpoch, 'fixture check: same epoch as the record');
   assert.ok(receipt.seq > record.mintedEvent, 'fixture check: OUTSIDE the seq bound');
   const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the seq bound');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'the seq bound');
 });
 
 test('T18x (PIN, CP7): a board.claim_result buys nothing at claim time (post-memo receipt classes excluded)', async () => {
@@ -752,7 +736,7 @@ test('T18x (PIN, CP7): a board.claim_result buys nothing at claim time (post-mem
   const receipt = coordinator._log.read(handle.id).find((event) => event.kind === 'board.claim_result');
   assert.equal(receipt?.payload?.ok ?? null, false, 'fixture check: the board receipt landed (ok:false variant)');
   const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the CP7 exclusion');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'the CP7 exclusion');
 });
 
 test('T18y (PIN): FAILED receipts never count — an ok:false write and an ok:false read buy nothing', async () => {
@@ -768,7 +752,7 @@ test('T18y (PIN): FAILED receipts never count — an ok:false write and an ok:fa
   assert.equal(stream.find((event) => event.kind === 'scratchpad.write_result')?.payload?.ok ?? null, false, 'fixture check: failed write receipt');
   assert.equal(stream.find((event) => event.kind === 'context.read_result')?.payload?.ok ?? null, false, 'fixture check: failed read receipt');
   const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the ok:true law');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'the ok:true law');
 });
 
 test('T18z (PIN): a PENDING interaction buys nothing — resolution-gating is load-bearing', async () => {
@@ -779,7 +763,7 @@ test('T18z (PIN): a PENDING interaction buys nothing — resolution-gating is lo
   const answered = coordinator._log.read(handle.id).find((event) => event.kind === 'question.answered');
   assert.equal(answered ?? null, null, 'fixture check: the question stayed pending');
   const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'resolution-gating');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'resolution-gating');
 });
 
 test('T18n (PIN, the T18m removal control): the SAME pause with the content.message events REMOVED dies by the full gate', async () => {
@@ -792,7 +776,7 @@ test('T18n (PIN, the T18m removal control): the SAME pause with the content.mess
   const { coordinator, adapter: ad, handle, task, pauseId } = await driveredPause({ adapter });
   void ad;
   const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the content.message removal control');
+  assertClaimCommits(coordinator, adapter, handle, outcome, 'the content.message removal control');
 });
 
 // ===========================================================================
@@ -1051,8 +1035,8 @@ function fakeWave(programsByRole) {
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500,
-  finalization: 'claim-on-stall', unproductiveNudgeBudget: 1, saltObjectives: false,
+  pollIntervalMs: 20, settleTimeoutMs: 1_500,
+  finalization: 'claim-on-stall', saltObjectives: false,
 });
 // The application error lane (application.mjs:11896-11899) forwards the coordinator's
 // {ok:false} as a THROWN application error carrying the refusal code — the shape claimOnce's
@@ -1066,12 +1050,16 @@ const actCallsOf = (wave, role, action) => wave.runs.get(role).actCalls.filter((
 test('WD1 (PIN): a claim_premature_liveness refusal is recorded on the claims evidence with its code', async () => {
   const wave = fakeWave({
     w: {
-      status: (poll) => fakeView({ attention: [cpAtt(`cp-${Math.min(poll, 1)}`, CLAIM_READY)] }),
+      // A persistent claim-carrying pause: claimed on FIRST sighting, refused, and the member
+      // never settles — the fixture flips it terminal so the wave closes (no stall clock exists).
+      status: (poll) => fakeView(poll >= 3
+        ? { terminal: true }
+        : { attention: [cpAtt('cp-1', CLAIM_READY)] }),
       act: (action) => { if (action === 'claim_turn') throw prematureRefusal(); return { ok: true }; },
     },
   });
   const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'the member never settles — the wave ends on the pre-existing stall clock');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 1, 'one claim attempt for the one claimed pauseId');
   assert.equal(receipt.claims.length, 1, 'one claims-evidence row');
   assert.equal(receipt.claims[0].requestId, 'cp-1', 'the row keys the claimed pauseId');
@@ -1079,86 +1067,69 @@ test('WD1 (PIN): a claim_premature_liveness refusal is recorded on the claims ev
     'the refusal code is recorded verbatim (:252-255, :262 — no new plumbing)');
 });
 
-test('WD2: exactly ONE corrective nudge for the SAME pause — exempt from the L4 one-nudge-per-pause dedup exactly once', async () => {
+test('WD2: exactly ONE corrective nudge for a refused claim — one per pause, no budget bounds it', async () => {
   const wave = fakeWave({
-    // A persistent pause: ordinarily nudged at first sight (so cp-1 IS in nudgedRequestIds),
-    // then never re-observed fresh. At the stall clock the D9 fan-out claims it, draws the
-    // refusal, and must issue the corrective nudge EVEN THOUGH the requestId was already
-    // nudged — the exemption — and exactly once.
     w: {
-      status: () => fakeView({ attention: [cpAtt('cp-1', CLAIM_READY)] }),
+      // The claim-carrying pause is claimed on first sighting (the claim branch runs before any
+      // ordinary nudge), the refusal draws exactly one corrective nudge, and later polls of the
+      // SAME pause draw nothing (per-pauseId claim-once).
+      status: (poll) => fakeView(poll >= 4
+        ? { terminal: true }
+        : { attention: [cpAtt('cp-1', CLAIM_READY)] }),
       act: (action) => { if (action === 'claim_turn') throw prematureRefusal(); return { ok: true }; },
     },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY, refusalNudgeBudget: 2 })
+  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY })
     .run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall');
-  assert.equal(receipt.claims.length, 1, 'the D9 fan-out claim is recorded');
+  assert.equal(receipt.basis, 'completed');
+  assert.equal(receipt.claims.length, 1, 'exactly one claim attempt for the persistent pause');
   assert.equal(receipt.claims[0].code, 'claim_premature_liveness');
-  assert.equal(actCallsOf(wave, 'w', 'nudge_turn').length, 2,
-    'stage[driver-composition-missing]: the refusal draws exactly ONE corrective nudge on top of the ordinary one');
+  assert.equal(actCallsOf(wave, 'w', 'nudge_turn').length, 1,
+    'the refusal draws exactly ONE corrective nudge and no budget consumes it');
   const nudgeRows = receipt.nudges.filter((row) => row.role === 'w' && !row.error);
-  assert.equal(nudgeRows.length, 2, 'two nudge evidence rows for cp-1: the ordinary one and the corrective one');
-  assert.ok(nudgeRows.every((row) => row.requestId === 'cp-1'),
-    'the corrective nudge targets the SAME pause — the L4 dedup exempts it exactly once');
+  assert.equal(nudgeRows.length, 1, 'one nudge evidence row for cp-1 — the corrective one');
+  assert.equal(nudgeRows[0].requestId, 'cp-1', 'the corrective nudge targets the refused pause');
 });
 
-test('WD3: a refused corrective-nudge DELIVERY consumes no budget (D8 symmetry); the NEXT pauseId is claimed again', async () => {
-  let nudgeCalls = 0;
+test('WD3: a refused corrective-nudge DELIVERY is recorded, not budgeted; EVERY fresh pauseId is claimed again', async () => {
   const wave = fakeWave({
     // Fresh pauseIds each poll (a real re-park mints one per checkpoint), then a final
-    // persistent one: per-pauseId claimAttempted must let EVERY fresh pauseId be claimed.
+    // persistent one, then terminal: per-pauseId claim-once must claim EVERY fresh pauseId,
+    // and the failed corrective delivery must not stop the next pause's corrective nudge.
     w: {
-      status: (poll) => fakeView({ attention: [cpAtt(poll === 0 ? 'cp-1' : (poll >= 4 ? 'cp-final' : `cp-${poll + 1}`), CLAIM_READY)] }),
+      status: (poll) => fakeView(poll >= 6
+        ? { terminal: true }
+        : { attention: [cpAtt(poll === 0 ? 'cp-1' : (poll >= 4 ? 'cp-final' : `cp-${poll + 1}`), CLAIM_READY)] }),
       act: (action) => {
         if (action === 'claim_turn') throw prematureRefusal();
-        nudgeCalls += 1;
-        if (nudgeCalls === 2) return { ok: false, result: 'delivery_exception', reason: 'scripted transport fault' };
         return { ok: true };
       },
     },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY, refusalNudgeBudget: 2 })
-    .run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall');
-  // Per-pauseId claim attempts: cp-2, cp-3, cp-4 and cp-final are ALL claimed (per-member
-  // keying — today's shape — stops after the first).
-  assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 4,
-    'stage[driver-composition-missing]: per-pauseId claimAttempted leaves each new pause record claimable');
-  assert.deepEqual(receipt.claims.map((row) => row.requestId), ['cp-2', 'cp-3', 'cp-4', 'cp-final']);
-  assert.ok(receipt.claims.every((row) => row.code === 'claim_premature_liveness'));
-  // The budget arithmetic, made observable: budget 2, the FIRST corrective delivery fails
-  // (delivery_exception — a VALUE, D8) and consumes nothing, so corrective nudges still land
-  // for cp-3 AND cp-4. Consume-on-attempt would stop one earlier (3 nudge_turn calls total).
-  assert.equal(actCallsOf(wave, 'w', 'nudge_turn').length, 4,
-    'one ordinary nudge + three corrective nudges — the failed delivery consumed no budget');
-  const failed = receipt.nudges.find((row) => row.requestId === 'cp-2');
-  assert.equal(failed?.error?.code ?? null, 'delivery_exception', 'the failed corrective delivery is recorded D8-style');
-  assert.equal(receipt.nudges.filter((row) => row.requestId === 'cp-final').length, 0,
-    'budget exhausted at cp-final: the refusal is recorded with NO nudge');
-});
-
-test('WD4: budget exhaustion is the honest closure — record-only, the pause pends, the PRE-EXISTING stall clock reaps (never the 3h wall)', async () => {
-  const wave = fakeWave({
-    w: {
-      status: (poll) => fakeView({ attention: [cpAtt(poll === 0 ? 'cp-1' : (poll >= 4 ? 'cp-final' : `cp-${poll + 1}`), CLAIM_READY)] }),
-      act: (action) => { if (action === 'claim_turn') throw prematureRefusal(); return { ok: true }; },
-    },
-  });
-  // NO refusalNudgeBudget passed: the DEFAULT is 2 (grounded in the #64 claim cadence).
+  // The second corrective delivery is scripted to fail as a VALUE ({ok:false}) — D8 symmetry:
+  // a failed delivery is a recorded row, and the NEXT pause still gets its corrective nudge.
+  let nudgeCalls = 0;
+  wave.runs.get('w')._program.act = (action) => {
+    if (action === 'claim_turn') throw prematureRefusal();
+    nudgeCalls += 1;
+    if (nudgeCalls === 2) return { ok: false, result: 'delivery_exception', reason: 'scripted transport fault' };
+    return { ok: true };
+  };
   const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY })
     .run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall',
-    'closure rides the driver layer\'s own stall clock (never a wall-clock cap — the #163 law retired hardCapMs)');
-  assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 4,
-    'each fresh pauseId claimed once; the D9 fan-out then no-ops (the per-pauseId attempt was already consumed)');
-  assert.deepEqual(receipt.claims.map((row) => row.requestId), ['cp-2', 'cp-3', 'cp-4', 'cp-final']);
-  assert.equal(actCallsOf(wave, 'w', 'nudge_turn').length, 3,
-    'one ordinary nudge + exactly TWO corrective nudges — the DEFAULT refusalNudgeBudget is 2');
-  assert.equal(receipt.nudges.filter((row) => ['cp-4', 'cp-final'].includes(row.requestId)).length, 0,
-    'once the budget is spent every further refusal is record-only');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
+  assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 5,
+    'each fresh pause record is claimed on its first sighting');
+  assert.deepEqual(receipt.claims.map((row) => row.requestId), ['cp-1', 'cp-2', 'cp-3', 'cp-4', 'cp-final']);
   assert.ok(receipt.claims.every((row) => row.code === 'claim_premature_liveness'));
+  assert.equal(actCallsOf(wave, 'w', 'nudge_turn').length, 5,
+    'one corrective nudge per refused pause — the failed delivery stopped nothing');
+  const failed = receipt.nudges.find((row) => row.requestId === 'cp-2');
+  assert.equal(failed?.error?.code ?? null, 'delivery_exception', 'the failed corrective delivery is recorded D8-style');
+  assert.deepEqual(receipt.nudges.filter((row) => !row.error).map((row) => row.requestId),
+    ['cp-1', 'cp-3', 'cp-4', 'cp-final'], 'every other pause draws its corrective nudge');
 });
+
 
 // ===========================================================================
 // §G — exoneration pins: the six non-suite claimTurn call sites' behavior classes
@@ -1205,26 +1176,3 @@ test('X3 (PIN, the already_resolved class): a nudge-resolved record refuses alre
   assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'the nudge-settled task keeps working');
 });
 
-// ===========================================================================
-// Verification (recorded against the PRE-implementation tree, 2026-08-04, node v25.8.0;
-// impl/src/coordinator.mjs md5 8e42ead5d5dc565bcbf84398a6ceceaa — unchanged by this fold):
-//   command (repo root): node --test impl/test/claim-preflight-red.test.mjs
-//   measured split (post-blue-team fold): 19 fail / 11 pass of 30. (Pre-fold split, recorded
-//   against the identical tree: 16 fail / 10 pass of 26 — the fold added 3 red rows + 1 pin;
-//   see docs/reference/evidence/claim-preflight-2026-08-03/suite-fold.md.)
-//   RED (fail on the named stage): T18, T18e, T18w, T18r, T18p, T18m, T18q, T18a, T18v
-//     (stage[claim-preflight-missing] — today the claim RETURNS {ok:true, result:'claimed',
-//     outcome:'failed'} after the gate kills); T18h (stage[cycle-ordering], got 'claimed');
-//     T18g (stage[expiryPending-re-check], got 'claimed'); T18c (the typed-throw lane —
-//     today the gate swallows capture_failed into claimed/failed); T18f, T18i
-//     (stage[claim-preflight-missing]); CP9a, CP9b (stage[registry-flag-lie]); WD2, WD3
-//     (wave_driver_policy_invalid: policy field "refusalNudgeBudget" is unknown); WD4
-//     (per-pauseId claim attempts: 1 !== 4).
-//   GREEN pins (byte-identical before and after): T18b, T18n, T18d, T18s, T18x, T18y, T18z,
-//     WD1, X1, X2, X3.
-//   Blue-team fold (suite-blueteam.md, 2026-08-04): BLOCKER 1 (content.message planted but
-//   never load-bearing) → T18m (messages-only sole liveness, RED) + T18n (removal control,
-//   PIN); BLOCKER 2 (approval.resolved/decision.settled uncovered) → T18a + T18v (the
-//   report's two-sibling-rows idiom over the T18q staging). No new invented surfaces — the
-//   four rows consume the existing CP3 closed set and the CP6 refusal shape only.
-// ===========================================================================

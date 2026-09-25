@@ -212,7 +212,7 @@ const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 // the production cadence is uncapped; the drive settles on terminality, handled-decision
 // stuck, or observed quiescence, never on a wall clock.
 const PRODUCTION_WORKFLOW_DRIVER = Object.freeze({
-  pollIntervalMs: 20_000, stallTimeoutMs: 20 * 60_000, hardCapMs: null,
+  pollIntervalMs: 20_000, hardCapMs: null,
 });
 const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 // Issue #31 §2.2(4): the closed set of run drivers. Only the wave path exists today — an
@@ -1284,7 +1284,6 @@ export function validateApplicationCommandArgs(name, args) {
       || Object.keys(args).some((key) => !allowed.has(key))
       || typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
       || !Array.isArray(args.members) || args.members.length === 0
-      || args.members.length > FRAME_LIMITS['wave.members'].value
       || (args.timeoutMs !== undefined
         && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0))
       || (args.repoRoot !== undefined
@@ -4119,8 +4118,6 @@ export class BatonApplication {
     if (preservedHandles.length === 1) {
       const outcome = await this.driver.coordinator.recover(preservedHandles[0].id, {
         actor: principal.actor,
-        ...(Number.isSafeInteger(policy.timeoutMs) && policy.timeoutMs > 0
-          ? { timeoutMs: policy.timeoutMs } : {}),
       });
       const result = outcome?.result ?? 'recovery_failed';
       const recovery = outcome?.ok === true ? {
@@ -4214,11 +4211,9 @@ export class BatonApplication {
     const outcome = await this.driver.coordinator.recoverPlanBound(selected.id, {
       actor: principal.actor,
       gate,
-      maxAttempts: policy.maxAttempts,
       profileDigest: current.profile.digest,
       recoveryPolicyDigest: digest(policy),
       runId,
-      timeoutMs: policy.timeoutMs,
     });
     const result = outcome?.result ?? 'recovery_failed';
     const recoveredHandle = outcome?.handle ?? null;
@@ -7947,7 +7942,7 @@ export class BatonApplication {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).some((key) => !allowed.has(key))
       || !validId(value.idempotencyKey) || !Array.isArray(value.members)
-      || value.members.length === 0 || value.members.length > FRAME_LIMITS['wave.members'].value) {
+      || value.members.length === 0) {
       throw applicationError('wave start request is invalid', 'application_wave_start_invalid');
     }
     const roles = new Set();
@@ -9021,16 +9016,13 @@ export class BatonApplication {
         'application_message_send_invalid',
       );
     }
-    // #105 D6/B-5b: budget is passed RAW (value.budget ?? 1) — the lane is the single budget
-    // authority for shape AND range (1.5 and "3" both reach the lane's message_budget_invalid,
-    // never the facade's shape code). No range check here; the facade stays exactly as
-    // permissive as the lane.
+    // #598 F03: no budget field — the reply chain is not budgeted, so the facade passes
+    // {kind, to, body} only.
     return deepFreeze({
       ...(Object.hasOwn(value, 'runId') ? { runId: value.runId } : {}),
       ...(Object.hasOwn(value, 'workerId') ? { workerId: value.workerId } : {}),
       kind: value.kind,
       body: value.body,
-      budget: value.budget ?? 1,
     });
   }
 
@@ -9250,7 +9242,6 @@ export class BatonApplication {
       to: Object.hasOwn(request, 'workerId')
         ? { workerId: request.workerId } : { runId: request.runId },
       body: request.body,
-      budget: request.budget,
     }, { actor: principal.actor });
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
@@ -9269,10 +9260,7 @@ export class BatonApplication {
     }
     await this._authorize('run.message.receipt', principal, resolvedRunId, { messageId: request.messageId });
     const receipt = this.driver.coordinator.messageReceipt(request.messageId);
-    // #105 D4/H1: the facade receipt must carry {depth, budget, remaining, lastRefusal} EXPLICITLY
-    // — the lane serves them as non-enumerable accessor properties (the FP-04 identity row), so a
-    // plain ...receipt spread would drop them. The projection reads the accessors and re-emits
-    // them as enumerable data fields, preserving the exact lane shape plus the spill citation.
+    // #598 F03: the receipt is the lane's honest shape — no depth-coded fields.
     return deepFreeze({
       schemaVersion: 1,
       messageId: request.messageId,
@@ -9281,10 +9269,6 @@ export class BatonApplication {
       actedOn: receipt.actedOn,
       reply: receipt.reply,
       replies: receipt.replies,
-      depth: receipt.depth,
-      budget: receipt.budget,
-      remaining: receipt.remaining,
-      lastRefusal: receipt.lastRefusal,
       ...(Object.hasOwn(receipt, 'spill')
         ? { body: receipt.body, bytes: receipt.bytes, digest: receipt.digest, spill: receipt.spill }
         : {}),

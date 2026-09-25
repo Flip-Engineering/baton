@@ -13,11 +13,11 @@ import { Log } from '../src/log.mjs';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-session-recovery-${name}-`));
 const until = async (fn, label, timeoutMs = 5000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error(`timed out waiting for ${label}`); };
 
-// The recovery supervisor's bounded handshake and the coordinator's stop machinery are
-// deliberately timer-unref'd — nothing here pins the host's event loop (docs/24 G4 / C4), and the
-// fixture's native children are spawned detached AND unref'd on purpose. With no live handle left,
-// a bounded wait would be abandoned the moment the loop drains; hold the loop for exactly such an
-// await, so the supervisor's own deadline settles it instead of cancelling the file.
+// The coordinator's stop machinery is deliberately timer-unref'd — nothing here pins the host's
+// event loop (docs/24 G4 / C4) — and the fixture's native children are spawned detached AND
+// unref'd on purpose. With no live handle left, a pending wait would be abandoned the moment the
+// loop drains; hold the loop for exactly such an await, so the event-driven recovery settles it
+// instead of cancelling the file.
 async function withLiveLoop(fn) {
   const hold = setInterval(() => {}, 1_000);
   try { return await fn(); } finally { clearInterval(hold); }
@@ -75,7 +75,7 @@ function stub({ candidates = ['w-1', 'w-2'], outcomes = {} } = {}) {
   const calls = { begin: 0, candidates: 0, active: 0, maxActive: 0, recover: [], complete: [], kill: [] };
   const coordinator = {
     beginStartupRecovery(authority) { assert.ok(authority); calls.begin += 1; },
-    startupRecoveryCandidates(authority, maxStateRows) { assert.ok(authority); assert.equal(maxStateRows, 8); calls.candidates += 1; return [...candidates]; },
+    startupRecoveryCandidates(authority) { assert.ok(authority); calls.candidates += 1; return [...candidates]; },
     async recover(workerId, opts) { calls.active += 1; calls.maxActive = Math.max(calls.maxActive, calls.active); calls.recover.push({ workerId, opts }); await Promise.resolve(); calls.active -= 1; return outcomes[workerId] ?? { ok: true, result: 'attached' }; },
     completeStartupRecovery(authority, code = null) { assert.ok(authority); calls.complete.push(code); },
     async kill(workerId, actor, opts) { calls.kill.push({ workerId, actor, opts }); return { ok: true, result: 'confirmed' }; },
@@ -85,38 +85,33 @@ function stub({ candidates = ['w-1', 'w-2'], outcomes = {} } = {}) {
 
 test('SR1/SR3/SR5/SR6: one bounded sequential scan reports honest degraded results and starts once', async () => {
   const { coordinator, calls } = stub({ outcomes: { 'w-2': { ok: false, result: 'session_identity_mismatch' } } }); const authority = {}; const events = [];
-  const supervisor = new SessionRecoverySupervisor({ coordinator, authority, policy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 50 }, onEvent: (event) => events.push(event) });
+  const supervisor = new SessionRecoverySupervisor({ coordinator, authority, onEvent: (event) => events.push(event) });
   const first = supervisor.start(); const second = supervisor.start(); assert.equal(first, second); const summary = await first;
   assert.deepEqual(summary, { status: 'degraded', eligible: 2, attached: 1, failed: 1, skipped: 0, failures: [{ workerId: 'w-2', code: 'session_identity_mismatch' }] });
-  assert.equal(calls.begin, 1); assert.equal(calls.candidates, 1); assert.equal(calls.maxActive, 1); assert.deepEqual(calls.recover.map((row) => row.workerId), ['w-1', 'w-2']); assert.ok(calls.recover.every((row) => row.opts.timeoutMs === 50 && row.opts.actor === 'policy:startup-recovery' && row.opts.startupAuthority === authority)); assert.deepEqual(calls.complete, [null]); assert.deepEqual(events.map((event) => event.kind), ['session.recovery_started', 'session.recovery_completed']);
+  assert.equal(calls.begin, 1); assert.equal(calls.candidates, 1); assert.equal(calls.maxActive, 1); assert.deepEqual(calls.recover.map((row) => row.workerId), ['w-1', 'w-2']); assert.ok(calls.recover.every((row) => row.opts.actor === 'policy:startup-recovery' && row.opts.startupAuthority === authority && Object.hasOwn(row.opts, 'timeoutMs') === false)); assert.deepEqual(calls.complete, [null]); assert.deepEqual(events.map((event) => event.kind), ['session.recovery_started', 'session.recovery_completed']);
   assert.equal(await supervisor.close(), true); assert.equal(await supervisor.close(), false); assert.deepEqual(calls.kill.map((row) => row.workerId), ['w-1']); assert.equal(calls.kill[0].opts.startupAuthority, authority); assert.equal(calls.kill[0].opts.emergency, true);
 });
 
-test('SR2/SR3: max plus one fails readiness without attempting a prefix', async () => {
-  const { coordinator, calls } = stub(); const authority = {}; const supervisor = new SessionRecoverySupervisor({ coordinator, authority, policy: { maxAttempts: 3, maxSessions: 1, maxStateRows: 8, timeoutMs: 50 } });
-  const summary = await supervisor.start(); assert.equal(summary.status, 'failed'); assert.equal(summary.failures[0].code, 'session_recovery_capacity'); assert.deepEqual(calls.recover, []); assert.deepEqual(calls.complete, ['session_recovery_capacity']); assert.equal(await supervisor.close(), true); assert.deepEqual(calls.kill, []);
-});
-
-test('SR5/SR7: close during a bounded attempt skips the suffix and reaps the attached prefix', async () => {
+test('SR5/SR7: close during an in-flight attempt skips the suffix and reaps the attached prefix', async () => {
   const { coordinator, calls } = stub(); const authority = {}; let release; const gate = new Promise((resolve) => { release = resolve; }); coordinator.recover = async (workerId, opts) => { calls.recover.push({ workerId, opts }); await gate; return { ok: true, result: 'attached' }; };
-  const supervisor = new SessionRecoverySupervisor({ coordinator, authority, policy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 50 } }); const ready = supervisor.start(); await Promise.resolve(); const closing = supervisor.close(); release(); const summary = await ready; assert.deepEqual(summary, { status: 'ready', eligible: 2, attached: 1, failed: 0, skipped: 1, failures: [] }); assert.equal(await closing, true); assert.deepEqual(calls.recover.map((row) => row.workerId), ['w-1']); assert.deepEqual(calls.kill.map((row) => row.workerId), ['w-1']);
+  const supervisor = new SessionRecoverySupervisor({ coordinator, authority }); const ready = supervisor.start(); await Promise.resolve(); const closing = supervisor.close(); release(); const summary = await ready; assert.deepEqual(summary, { status: 'ready', eligible: 2, attached: 1, failed: 0, skipped: 1, failures: [] }); assert.equal(await closing, true); assert.deepEqual(calls.recover.map((row) => row.workerId), ['w-1']); assert.deepEqual(calls.kill.map((row) => row.workerId), ['w-1']);
 });
 
 test('SR2/SR5: authoritative recovery-write loss fails readiness instead of degrading', async () => {
   const { coordinator, calls } = stub({ candidates: ['w-1'] }); const authority = {}; coordinator.recover = async () => { throw Object.assign(new Error('disk unavailable'), { code: 'coordination_write_unavailable' }); };
-  const supervisor = new SessionRecoverySupervisor({ coordinator, authority, policy: { maxAttempts: 3, maxSessions: 1, maxStateRows: 8, timeoutMs: 50 } }); const summary = await supervisor.start(); assert.equal(summary.status, 'failed'); assert.deepEqual(summary.failures, [{ workerId: null, code: 'coordination_write_unavailable' }]); assert.deepEqual(calls.complete, ['coordination_write_unavailable']); assert.equal(await supervisor.close(), true);
+  const supervisor = new SessionRecoverySupervisor({ coordinator, authority }); const summary = await supervisor.start(); assert.equal(summary.status, 'failed'); assert.deepEqual(summary.failures, [{ workerId: null, code: 'coordination_write_unavailable' }]); assert.deepEqual(calls.complete, ['coordination_write_unavailable']); assert.equal(await supervisor.close(), true);
 });
 
 test('SR2/SR3: Coordinator readiness barrier blocks ordinary authority but permits its private bounded scan', async () => {
   const authority = {}; const log = new Log(root('barrier-log')); const coordination = new CoordinationStore(root('barrier-coordination'));
   const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(), adapters: {}, worktrees: { reconcile: async () => {} }, referee: async () => ({}), route: () => null, startupRecoveryAuthority: authority });
-  coordinator.beginStartupRecovery(authority); assert.throws(() => coordinator.list(), (error) => error.code === 'session_recovery_pending'); assert.deepEqual(coordinator.startupRecoveryCandidates(authority, 1), []); assert.throws(() => coordinator.startupRecoveryCandidates({}, 1), (error) => error.code === 'session_recovery_authority'); coordinator.completeStartupRecovery(authority); assert.deepEqual(coordinator.list(), []); await coordinator.startupReady(); assert.equal(coordinator.closeAuthority(), true);
+  coordinator.beginStartupRecovery(authority); assert.throws(() => coordinator.list(), (error) => error.code === 'session_recovery_pending'); assert.deepEqual(coordinator.startupRecoveryCandidates(authority), []); assert.throws(() => coordinator.startupRecoveryCandidates({}), (error) => error.code === 'session_recovery_authority'); coordinator.completeStartupRecovery(authority); assert.deepEqual(coordinator.list(), []); await coordinator.startupReady(); assert.equal(coordinator.closeAuthority(), true);
 });
 
 test('SR1/SR7/SR8: public driver validates opt-in policy, exposes readiness, and requires async close', async () => {
   const repoRoot = root('repo'); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repoRoot }); const logDir = root('driver-log');
-  assert.throws(() => createDriver({ repoRoot, logDir: root('invalid-log'), adapters: {}, sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 1, maxStateRows: 1, timeoutMs: 0 } }), /session recovery policy/);
-  const driver = createDriver({ repoRoot, logDir, adapters: {}, sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 50 } }); const summary = await driver.ready; assert.deepEqual(summary, { status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: [] }); assert.equal(driver.sessionRecovery.status().status, 'ready'); assert.throws(() => driver.close(), (error) => error.code === 'driver_async_close_required'); assert.equal(await driver.closeAsync(), true); assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false);
+  assert.throws(() => createDriver({ repoRoot, logDir: root('invalid-log'), adapters: {}, sessionRecoveryPolicy: { maxAttempts: 3 } }), /session recovery policy/);
+  const driver = createDriver({ repoRoot, logDir, adapters: {}, sessionRecoveryPolicy: {} }); const summary = await driver.ready; assert.deepEqual(summary, { status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: [] }); assert.equal(driver.sessionRecovery.status().status, 'ready'); assert.throws(() => driver.close(), (error) => error.code === 'driver_async_close_required'); assert.equal(await driver.closeAsync(), true); assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false);
   const plain = createDriver({ repoRoot, logDir: root('plain-log'), adapters: {} }); assert.equal(plain.sessionRecovery, null); assert.equal((await plain.ready).status, 'ready'); assert.equal(plain.close(), true);
 });
 
@@ -124,7 +119,7 @@ test('SR2-SR8: public startup automatically reattaches one exact native session 
   const repoRoot = root('live-repo'); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repoRoot }); const logDir = root('live-log');
   const first = createDriver({ repoRoot, logDir, adapters: { fixture: new ResumeMock(101) } }); const handle = await first.coordinator.spawn('fixture', brief(), { taskId: 'auto-rejoin', taskType: 'implementation', model: 'resume-fixture-model', effort: 'low' }); await until(async () => (await first.coordinator.result(handle.id)).ready, 'first verified turn'); const firstHandle = first.coordinator.list()[0]; const firstContext = firstHandle.sessionContext; const firstRuntime = join(repoRoot, '.baton', 'runtime', handle.id); assert.equal(firstHandle.sessionRef.id, 'resume-native-1'); assert.equal(firstHandle.runtimeScope.root, undefined); assert.equal(first.coordinator._workers.get(handle.id).runtimeLease.paths.root, firstRuntime); assert.ok(existsSync(firstContext.worktree)); assert.ok(existsSync(firstRuntime));
   first.coordination.releaseWriterLease();
-  const replay = createDriver({ repoRoot, logDir, adapters: { fixture: new ResumeMock(202) }, sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 500 } });
+  const replay = createDriver({ repoRoot, logDir, adapters: { fixture: new ResumeMock(202) }, sessionRecoveryPolicy: {} });
   const readiness = await withLiveLoop(() => replay.ready);
   assert.deepEqual(readiness, { status: 'ready', eligible: 1, attached: 1, failed: 0, skipped: 0, failures: [] });
   const attached = replay.coordinator.list()[0];

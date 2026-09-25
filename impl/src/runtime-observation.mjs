@@ -1223,7 +1223,8 @@ export function requestPublication(coordinator, recorder, workerId, target = {},
     do { requestId = `publication-${workerId}-${++coordinator._publicationSeq}`; }
     while (coordinator._pending.has(requestId) || coordinator._replayedIds.requests.has(requestId));
     const publication = Object.freeze({ remote, ref, sha });
-    const deadlineAt = coordinator._now() + coordinator._approvalTimeoutMs;
+    // #598 F09: no publication timer — the request stays pending for its decision maker.
+    const deadlineAt = null;
     const record = {
       kind: 'publication', worker: workerId, state: 'pending', resolution: null, consumer: null,
       turnEpochAtAsk: stamp.turnEpoch, fenceAtAsk: stamp.fence,
@@ -1292,12 +1293,8 @@ export function messageReceipt(coordinator, recorder, messageId) {
     const read = targetWorkerId
       ? (record.readBy.has(targetWorkerId) ? true : null)
       : (record.readBy.size > 0 ? true : null);
-    // #105 D4: {depth, budget, remaining, lastRefusal} ride the receipt as NON-ENUMERABLE
-    // accessor properties. deepEqual (node:assert/strict) compares only enumerable own keys —
-    // the identity row (FP-04/FP-05) deep-equals the honest {delivered, read, actedOn, reply}
-    // object (plus the spill citation when spilled), while B1/F1/A6 read the depth-coded fields
-    // through the accessors. The accessors close over the live record so lastRefusal moves when
-    // a refusal lands (B-5a); depth/budget/remaining are a COUNT and never change after mint.
+    // #598 F03: the receipt is the honest {delivered, read, actedOn, reply, replies} object
+    // (plus the spill citation when spilled) — no depth-coded fields, no lastRefusal.
     const receipt = {
       delivered: delivered ? true : null,
       read,
@@ -1306,12 +1303,7 @@ export function messageReceipt(coordinator, recorder, messageId) {
       replies: [...(record.replies?.values() ?? [])],
       ...(record.spilled ? { body: record.body, bytes: record.bytes, digest: record.digest, spill: record.spill } : {}),
     };
-    return Object.defineProperties(receipt, {
-      depth: { enumerable: false, get: () => record.depth ?? 0 },
-      budget: { enumerable: false, get: () => record.budget ?? 1 },
-      remaining: { enumerable: false, get: () => record.remaining ?? (record.budget ?? 1) },
-      lastRefusal: { enumerable: false, get: () => record.lastRefusal ?? null },
-    });
+    return receipt;
   }
 
 export function _isReviewAuthority(coordinator, recorder, principal, runId) {

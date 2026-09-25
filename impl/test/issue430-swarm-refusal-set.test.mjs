@@ -5,10 +5,11 @@
 // retried as told and could not tell a request fault from a dead resident.
 //
 // The fix: one owner table (SWARM_REFUSAL_CODES in impl/src/swarm-refusals.mjs) lists every code
-// the fold OR the runtime can raise with its HTTP class and a one-line rule; `refuse()` and
-// `integrity()` draw their codes from it (an unknown code is a construction-time error), the web
-// layer's SWARM_FOLD_REFUSAL_HTTP_STATUS is DERIVED from it, and the 503 fallthrough narrates the
-// unmapped code (and the command) on the resident's stderr once per code.
+// the fold OR the runtime can raise with its HTTP class and a one-line rule; the web layer's
+// SWARM_FOLD_REFUSAL_HTTP_STATUS is DERIVED from it, and the 503 fallthrough narrates the
+// unmapped code (and the command) on the resident's stderr once per code. #598 F11: the table is
+// the HTTP-status derivation for the codes the family raises — there is no construction-time
+// vocabulary guard and no same-rule spelling ledger.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -21,9 +22,8 @@ import { SWARM_FOLD_REFUSAL_HTTP_STATUS } from '../src/web-northbound.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 // The owner table may not exist at the red-before HEAD; the rows below show their own red then.
 let SWARM_REFUSAL_CODES = null;
-let SWARM_REFUSAL_SAME_RULE_PAIRS = null;
 try {
-  ({ SWARM_REFUSAL_CODES, SWARM_REFUSAL_SAME_RULE_PAIRS } = await import('../src/swarm-refusals.mjs'));
+  ({ SWARM_REFUSAL_CODES } = await import('../src/swarm-refusals.mjs'));
 } catch { /* red-before: the single owner module does not exist yet */ }
 
 const NOW = Date.parse('2026-09-14T12:00:00.000Z');
@@ -263,16 +263,6 @@ test('#430 (b): the web fold table is DERIVED from the owner — no hand-kept se
     'SWARM_FOLD_REFUSAL_HTTP_STATUS must equal the owner table projected to the fold-raised codes');
 });
 
-test('#430 (b): the same-rule note names real rows, and each pair agrees on its HTTP class', () => {
-  assert.notEqual(SWARM_REFUSAL_SAME_RULE_PAIRS, null,
-    'the owner must name which spelling pairs are the same rule (the later collapse lane)');
-  for (const [left, right] of SWARM_REFUSAL_SAME_RULE_PAIRS) {
-    assert.ok(Object.hasOwn(SWARM_REFUSAL_CODES, left), `pair half ${left} is in the table`);
-    assert.ok(Object.hasOwn(SWARM_REFUSAL_CODES, right), `pair half ${right} is in the table`);
-    assert.equal(SWARM_REFUSAL_CODES[left].status, SWARM_REFUSAL_CODES[right].status,
-      `pair ${left} / ${right} agrees on its HTTP class`);
-  }
-});
 
 // ── (c) the three observed refusals cross the REAL served transport ──────────────────────────
 

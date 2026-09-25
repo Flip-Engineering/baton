@@ -70,9 +70,8 @@ export function goalPlanPage(rows, limit, cursor = 0) {
  * by FRAME_LIMITS['run.objective']; a 16 KiB policy literal refused every recruit after #358). */
 export const GOAL_PLAN_CEILINGS = Object.freeze({
   // One goal/plan text is one durable body: the registry's spill.body substrate row.
-  textBytes: FRAME_LIMITS['spill.body'].value,
-  // A goal record holds up to maxNodes texts' worth of goal material; a plan and a status
-  // record hold the plan's node briefs — sixteen and sixty-four bodies respectively.
+  // A goal record holds a bounded amount of goal material; a plan and a status
+  // record hold the plan's node briefs.
   goalBytes: 16 * FRAME_LIMITS['spill.body'].value,
   planBytes: 64 * FRAME_LIMITS['spill.body'].value,
   statusBytes: 64 * FRAME_LIMITS['spill.body'].value,
@@ -104,8 +103,8 @@ function normalizedText(value, maxBytes, label) {
   if (secretShapedText(normalized)) fail(`${label} contains credential-shaped content`, 'goal_plan_secret_rejected');
   return normalized;
 }
-function normalizedSet(values, limit, maxBytes, label, { empty = true } = {}) {
-  if (!Array.isArray(values) || values.length > limit || (!empty && values.length === 0)) fail(`${label} is invalid`, 'goal_plan_invalid');
+function normalizedSet(values, maxBytes, label, { empty = true } = {}) {
+  if (!Array.isArray(values) || (!empty && values.length === 0)) fail(`${label} is invalid`, 'goal_plan_invalid');
   const normalized = values.map((value) => normalizedText(value, maxBytes, label));
   if (new Set(normalized).size !== normalized.length) fail(`${label} contains duplicates`, 'goal_plan_invalid');
   return normalized.sort();
@@ -152,7 +151,10 @@ export function normalizeGoalPlanPolicy(value) {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? clone(value) : value;
   if (raw && typeof raw === 'object') delete raw.policyDigest;
   exactObject(raw, ['schemaVersion', 'repoId', 'mandatory', 'approvalTtlMs', 'riskClasses', 'effectClasses', 'capabilityClasses', 'limits']);
-  exactObject(raw.limits, ['maxGoalVersions', 'maxPlanVersions', 'maxNodes', 'maxDepsPerNode', 'maxTextBytes', 'maxItems', 'maxScopePaths', 'maxRouteValues', 'maxGoalBytes', 'maxPlanBytes', 'maxStatusBytes', 'maxTokens', 'maxUsd', 'maxWallMin', 'maxProviderTurns']);
+  // #598 F08: the count keys are removed from the admitted limits — a stale policy still
+  // carrying them is read for the surviving byte/budget bounds and the counts are ignored,
+  // matching this validator's tolerate-unknown convention for the top-level shape.
+  exactObject(raw.limits, ['maxTextBytes', 'maxGoalBytes', 'maxPlanBytes', 'maxStatusBytes', 'maxTokens', 'maxUsd', 'maxWallMin', 'maxProviderTurns']);
   if (raw.schemaVersion !== 1 || !validId(raw.repoId) || typeof raw.mandatory !== 'boolean'
     || !Number.isSafeInteger(raw.approvalTtlMs) || raw.approvalTtlMs <= 0 || raw.approvalTtlMs > 30 * 24 * 60 * 60 * 1000) fail('goal/plan policy is invalid', 'goal_plan_policy_invalid');
   // Risk order is semantic, so retain deployment order while still requiring unique values.
@@ -160,16 +162,11 @@ export function normalizeGoalPlanPolicy(value) {
   if (new Set(risks).size !== risks.length) fail('riskClasses contains duplicates', 'goal_plan_policy_invalid');
   const effectClasses = normalizedSet(raw.effectClasses, 128, 128, 'effectClasses');
   const capabilityClasses = normalizedSet(raw.capabilityClasses, 128, 128, 'capabilityClasses');
-  const integerLimits = ['maxGoalVersions', 'maxPlanVersions', 'maxNodes', 'maxDepsPerNode', 'maxTextBytes', 'maxItems', 'maxScopePaths', 'maxRouteValues', 'maxGoalBytes', 'maxPlanBytes', 'maxStatusBytes', 'maxTokens', 'maxWallMin', 'maxProviderTurns'];
+  const integerLimits = ['maxTextBytes', 'maxGoalBytes', 'maxPlanBytes', 'maxStatusBytes', 'maxTokens', 'maxWallMin', 'maxProviderTurns'];
   const maxUsdNanos = usdToNanos(raw.limits.maxUsd);
   const canonicalMaxUsd = maxUsdNanos === null ? null : usdFromNanos(maxUsdNanos);
   if (integerLimits.some((key) => !Number.isSafeInteger(raw.limits[key]) || raw.limits[key] <= 0)
     || canonicalMaxUsd === null
-    // 1M versions / 100K nodes: structural ceilings for the coordination store's
-    // index and DAG validation — beyond these the topological sort and version
-    // history scan exceed the per-request time budget.
-    || raw.limits.maxGoalVersions > 1_000_000 || raw.limits.maxPlanVersions > 1_000_000
-    || raw.limits.maxNodes > 100_000 || raw.limits.maxDepsPerNode > 100_000
     || raw.limits.maxTextBytes > GOAL_PLAN_CEILINGS.textBytes || raw.limits.maxGoalBytes > GOAL_PLAN_CEILINGS.goalBytes
     || raw.limits.maxPlanBytes > GOAL_PLAN_CEILINGS.planBytes || raw.limits.maxStatusBytes > GOAL_PLAN_CEILINGS.statusBytes) fail('goal/plan policy limits are invalid', 'goal_plan_policy_invalid');
   raw.limits.maxUsd = canonicalMaxUsd;
@@ -183,8 +180,8 @@ export function normalizeGoalRequest(value, policy) {
   exactObject(value, ['objective', 'definitionOfDone', 'constraints', 'risk', 'budget', 'predecessor']);
   const result = {
     objective: normalizedText(value.objective, policy.limits.maxTextBytes, 'objective'),
-    definitionOfDone: normalizedSet(value.definitionOfDone, policy.limits.maxItems, policy.limits.maxTextBytes, 'definitionOfDone', { empty: false }),
-    constraints: normalizedSet(value.constraints, policy.limits.maxItems, policy.limits.maxTextBytes, 'constraints'),
+    definitionOfDone: normalizedSet(value.definitionOfDone, policy.limits.maxTextBytes, 'definitionOfDone', { empty: false }),
+    constraints: normalizedSet(value.constraints, policy.limits.maxTextBytes, 'constraints'),
     risk: value.risk,
     budget: normalizeBudget(value.budget, policy, 'goal'),
     predecessor: normalizePredecessor(value.predecessor, 'goal'),
@@ -211,15 +208,15 @@ function normalizeVerification(value, policy, deps) {
   const command = normalizedText(value.command, policy.limits.maxTextBytes, 'verification.command');
   if (command.startsWith('/') || command.includes('\\') || command.split('/').includes('..')
     || /[\s|&;<>`$()]/u.test(command)) fail('verification executable must be direct and repository-safe', 'plan_verification_invalid');
-  if (!Array.isArray(value.arguments) || value.arguments.length > policy.limits.maxItems
+  if (!Array.isArray(value.arguments)
     || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0') || Buffer.byteLength(argument) > policy.limits.maxTextBytes)) fail('verification arguments are invalid', 'plan_verification_invalid');
   if (value.arguments.some((argument) => secretShapedText(argument.normalize('NFKC')))) fail('verification arguments contain credential-shaped content', 'goal_plan_secret_rejected');
   const cwd = normalizedText(value.cwd, policy.limits.maxTextBytes, 'verification.cwd');
   if (cwd.startsWith('/') || cwd.includes('\\') || cwd.split('/').includes('..')) fail('verification cwd is outside repository scope', 'plan_verification_invalid');
-  const envAllowlist = normalizedSet(value.envAllowlist, policy.limits.maxItems, 128, 'verification.envAllowlist');
+  const envAllowlist = normalizedSet(value.envAllowlist, 128, 'verification.envAllowlist');
   if (envAllowlist.some((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
     || /(?:auth|cookie|credential|key|password|secret|token)/i.test(name))) fail('verification environment allowlist contains a credential-shaped name', 'plan_verification_invalid');
-  const requiredPredecessorEvidence = normalizedSet(value.requiredPredecessorEvidence, policy.limits.maxDepsPerNode, 256, 'verification.requiredPredecessorEvidence');
+  const requiredPredecessorEvidence = normalizedSet(value.requiredPredecessorEvidence, 256, 'verification.requiredPredecessorEvidence');
   if (!Number.isSafeInteger(value.expectExit) || value.expectExit < 0 || value.expectExit > 255
     || value.expectResult !== 'exit_code'
     || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0 || value.timeoutMs > 24 * 60 * 60 * 1000
@@ -232,7 +229,7 @@ function normalizeVerification(value, policy, deps) {
   };
 }
 function normalizeScope(values, policy) {
-  const scope = normalizedSet(values, policy.limits.maxScopePaths, policy.limits.maxTextBytes, 'pathScope', { empty: false });
+  const scope = normalizedSet(values, policy.limits.maxTextBytes, 'pathScope', { empty: false });
   if (scope.some((item) => item.startsWith('/') || item.split('/').includes('..') || item.includes('\\'))) fail('plan scope is not repository relative', 'plan_scope_invalid');
   return scope;
 }
@@ -253,19 +250,18 @@ function normalizePlanRouteTuple(value) {
 function normalizedLegacyRoutes(value, policy) {
   exactObject(value, ['harnesses', 'models', 'efforts'], 'plan_route_invalid');
   return {
-    harnesses: normalizedSet(value.harnesses, policy.limits.maxRouteValues, 256,
+    harnesses: normalizedSet(value.harnesses, 256,
       'routes.harnesses', { empty: false }),
-    models: normalizedSet(value.models, policy.limits.maxRouteValues, 256,
+    models: normalizedSet(value.models, 256,
       'routes.models', { empty: false }),
-    efforts: normalizedSet(value.efforts, policy.limits.maxRouteValues, 64,
+    efforts: normalizedSet(value.efforts, 64,
       'routes.efforts', { empty: false }),
   };
 }
 function normalizeRoutes(value, policy, { preserveLegacyRoutes = false } = {}) {
   if (value?.schemaVersion === 2 || Object.hasOwn(value ?? {}, 'allowed')) {
     exactObject(value, ['schemaVersion', 'allowed'], 'plan_route_invalid', { rejectUnknown: true });
-    if (value.schemaVersion !== 2 || !Array.isArray(value.allowed) || value.allowed.length === 0
-      || value.allowed.length > policy.limits.maxRouteValues) {
+    if (value.schemaVersion !== 2 || !Array.isArray(value.allowed) || value.allowed.length === 0) {
       fail('Plan route tuple allowlist is invalid', 'plan_route_invalid');
     }
     const allowed = value.allowed.map(normalizePlanRouteTuple).sort(comparePlanRouteTuples);
@@ -358,7 +354,7 @@ function normalizeNode(value, policy, goal, options) {
   exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : []), ...(hasAnalysis ? ['analysis'] : [])]);
   const key = normalizedText(value.key, 256, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
-  const deps = normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps');
+  const deps = normalizedSet(value.deps, 256, 'node.deps');
   let revision;
   if (hasRevision) {
     try { revision = normalizeWorkflowRevision(value.revision); }
@@ -380,7 +376,7 @@ function normalizeNode(value, policy, goal, options) {
   const result = {
     key,
     objective: normalizedText(value.objective, policy.limits.maxTextBytes, 'node.objective'),
-    definitionOfDone: normalizedSet(value.definitionOfDone, policy.limits.maxItems, policy.limits.maxTextBytes, 'node.definitionOfDone'),
+    definitionOfDone: normalizedSet(value.definitionOfDone, policy.limits.maxTextBytes, 'node.definitionOfDone'),
     deps,
     pathScope: normalizeScope(value.pathScope, policy),
     ...(hasContextScope ? { contextScope: normalizeScope(value.contextScope, policy) } : {}),
@@ -388,10 +384,10 @@ function normalizeNode(value, policy, goal, options) {
     budget: normalizeBudget(value.budget, policy, 'plan node'),
     verification: normalizeVerification(value.verification, policy, deps),
     routes: normalizeRoutes(value.routes, policy, options),
-    capabilities: normalizedSet(value.capabilities, policy.limits.maxItems, 128, 'node.capabilities'),
-    effects: normalizedSet(value.effects, policy.limits.maxItems, 128, 'node.effects'),
+    capabilities: normalizedSet(value.capabilities, 128, 'node.capabilities'),
+    effects: normalizedSet(value.effects, 128, 'node.effects'),
     ...(hasRequiredEffects ? {
-      requiredEffects: normalizedSet(value.requiredEffects, policy.limits.maxItems, 128, 'node.requiredEffects'),
+      requiredEffects: normalizedSet(value.requiredEffects, 128, 'node.requiredEffects'),
     } : {}),
     ...(hasWorkerPolicy ? { workerPolicy: normalizeWorkerPolicyRequest(value.workerPolicy) } : {}),
     ...(hasRevision ? { revision } : {}),
@@ -450,7 +446,7 @@ export function normalizePlanRequest(value, policy, goal, options = {}) {
   exactObject(value, ['goal', 'predecessor', 'nodes']);
   const goalRef = normalizeRef(value.goal, 'goal');
   if (goalRef.goalId !== goal.goalId || goalRef.version !== goal.version || goalRef.digest !== goal.digest) fail('plan goal reference is stale', 'goal_stale');
-  if (!Array.isArray(value.nodes) || value.nodes.length === 0 || value.nodes.length > policy.limits.maxNodes) fail('plan node count is invalid', 'plan_node_limit');
+  if (!Array.isArray(value.nodes) || value.nodes.length === 0) fail('plan node count is invalid', 'plan_node_limit');
   const nodes = value.nodes.map((node) => normalizeNode(node, policy, goal, options))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   assertDag(nodes);

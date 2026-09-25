@@ -584,13 +584,14 @@ test('P-A9 pin: the D6 receipt is the closed seven-key shape — outcomes audit-
 
 test('P-A10 pin: refusal constancy — the facade capability refusal, the closed five, the #105 boundary, and the reply frame stay byte-unchanged; no sorted-key literal, no clock in any refusal', () => {
   // A10: the facade capability refusal stays `application_unauthorized`
-  // (application.mjs:3222, in `_authorize`'s tail — :3214); the closed five
-  // WAITING_ON_KINDS and the #105 boundary (`message_depth_exceeded` at
-  // coordinator.mjs:12813, the reply frame 'body,inReplyTo' at claude-session.mjs:161)
-  // are byte-unchanged; the D6 receipt adds no sorted-key literal; no clock enters any
-  // refusal. The load-bearing alarms are the byte strings + EXISTENCE (blueteam §3.2);
-  // the tight absolute windows are dropped (re-base churn). A drift-immune RELATIVE bound
-  // stays: the authz throw must sit inside `_authorize` (after the def at :3214).
+  // (in `_authorize`'s tail); the closed five WAITING_ON_KINDS and the reply-lane
+  // boundaries (the #105 admission order — `message_parent_not_found` /
+  // `message_target_not_member` in observation-events.mjs; the reply frame
+  // 'body,inReplyTo' at claude-session.mjs:161) are byte-unchanged; the D6 receipt
+  // adds no sorted-key literal; no clock enters any refusal. The load-bearing alarms
+  // are the byte strings + EXISTENCE (blueteam §3.2). #598 F03 removed the depth
+  // budget, so the former message_depth_exceeded anchor is gone — the membership
+  // ordering codes are the lane's remaining constant surface.
   assert.deepEqual([...WAITING_ON_KINDS].sort(), ['capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning']);
   const authz = srcAnchor('application.mjs', 'application command is not authorized');
   const authorizeDef = srcAnchor('application.mjs', '^  async _authorize(');
@@ -598,8 +599,10 @@ test('P-A10 pin: refusal constancy — the facade capability refusal, the closed
   assert.ok(authz.text.includes("'application_unauthorized'"), 'facade capability refusal byte-stable');
   // Issue #259 slice 14: the refusal site moved with the message.send arm to
   // runtime-event-handlers/observation-events.mjs — the pin follows it.
-  const depth = srcAnchor('runtime-event-handlers/observation-events.mjs', 'message_depth_exceeded');
-  assert.ok(depth.text.includes("refuse('message_depth_exceeded'"), '#105 boundary refusal site byte-stable');
+  const parentCode = srcAnchor('runtime-event-handlers/observation-events.mjs', "refuse('message_parent_not_found'");
+  assert.ok(parentCode.text.includes('message_parent_not_found'), 'the parent-exists refusal stays on the lane');
+  const memberCode = srcAnchor('runtime-event-handlers/observation-events.mjs', "refuse('message_target_not_member'");
+  assert.ok(memberCode.text.includes('message_target_not_member'), 'the run-membership refusal site stays byte-stable');
   const frame = srcAnchor('claude-session.mjs', 'body,inReplyTo');
   assert.ok(frame.text.includes("'body,inReplyTo'"), 'reply frame closed keys byte-stable');
   // No clock enters a refusal: the interpreter\'s workflow_* and the authorize seam

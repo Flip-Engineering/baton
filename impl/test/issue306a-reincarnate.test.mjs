@@ -149,9 +149,10 @@ class StubSuccessor extends EventEmitter {
       registryDigest: selector.registryDigest, startedAt: selector.startedAt,
       ownerPid: process.pid, ownerPidStart: 'successor',
     })}\n`);
-    writeFileSync(this.spec.tokenPath, `${'a'.repeat(48)}\n`);
-    this.journal.publishedAt = Date.now();
   }
+  /** #599: a successor whose open cannot proceed says so — the stand-down marker state the
+   * publication window reads as the handoff's terminal fact (never a deadline). */
+  standDown() { this.writeMarker('lease_held_by_predecessor'); this.journal.stoodDownAt = Date.now(); }
   crash({ code = 7, tail = 'boom: the successor refused to start\n' } = {}) {
     this.stderr.emit('data', Buffer.from(tail));
     this.exitCode = code;
@@ -310,8 +311,9 @@ test('306a-d: a successor that dies before publishing is named with its tail, an
 test('306a-e: the four refusals are typed and drawn before any effect', async (t) => {
   const f = world('e');
   let stubs = 0;
+  let stub = null;
   const { deployment, driver } = await resident(t, f, {
-    onSpawn: (spec) => { stubs += 1; return new StubSuccessor(spec); },
+    onSpawn: (spec) => { stubs += 1; stub = new StubSuccessor(spec); return stub; },
   });
   await deployment.host();
   const refusalOf = async (thunk) => { try { await thunk(); return null; } catch (error) { return error; } };
@@ -343,6 +345,8 @@ test('306a-e: the four refusals are typed and drawn before any effect', async (t
   assert.equal(second.code, REINCARNATION_REFUSALS.inFlight);
   assert.ok(Number.isSafeInteger(second.detail.successorPid), JSON.stringify(second.detail));
   assert.ok(typeof second.detail.since === 'string');
+  // The readiness wait has no deadline: the abandoned successor settles the handoff by dying.
+  stub.crash({ code: 7, tail: 'the abandoned successor exits before publishing\n' });
   const failed = await pending;
   assert.equal(failed.code, 'reincarnation_failed', 'the abandoned handoff fails without a publication');
 });
@@ -386,7 +390,7 @@ test('306a-f: the reincarnation rows replay byte-identically through a reopened 
   const f = world('f');
   let stub = null;
   const first = await resident(t, f, {
-    onSpawn: (spec) => { stub = new StubSuccessor(spec); stub.becomeReady(); return stub; },
+    onSpawn: (spec) => { stub = new StubSuccessor(spec); stub.becomeReady(); setTimeout(() => stub.standDown(), 250); return stub; },
   });
   await first.deployment.host();
   const pending = first.deployment.reincarnate({ target: f.base });

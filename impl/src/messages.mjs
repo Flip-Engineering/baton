@@ -328,10 +328,11 @@ export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
       errors.push('recommended must name an existing option id');
     }
   }
-  // F6/F5: v1 decisions are always blocking; an unbounded wait is the documented gating
-  // deadlock. deadlineMs is mandatory, never inferred, never "never".
-  if (!Number.isSafeInteger(fields?.deadlineMs) || fields.deadlineMs <= 0) {
-    errors.push('deadlineMs is required and must be a positive safe integer');
+  // #598 F09: no mandatory decision lifetime — a request without deadlineMs stays pending for
+  // its decision maker; an operator-declared deadlineMs is honored where the caller wants it.
+  if (fields?.deadlineMs !== undefined
+    && (!Number.isSafeInteger(fields.deadlineMs) || fields.deadlineMs <= 0)) {
+    errors.push('deadlineMs must be a positive safe integer when declared');
   }
   if (errors.length) {
     if (sizeRow) throw coachingValidationError(errors, sizeRow.row, sizeRow.actual, sizeRow.row.value);
@@ -344,7 +345,7 @@ export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
     })),
     allowFreeResponse: fields.allowFreeResponse ?? false,
     recommended: fields.recommended ?? null,
-    deadlineMs: fields.deadlineMs,
+    ...(fields?.deadlineMs !== undefined ? { deadlineMs: fields.deadlineMs } : {}),
   });
 }
 

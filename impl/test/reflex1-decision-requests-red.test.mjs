@@ -158,12 +158,14 @@ function emitDecisionRequested(adapter, handle, requestId, request, turnEpoch = 
 // Part C — closed-shape refusals (messages.mjs createDecisionRequest/createDecisionAnswer)
 // ============================================================
 
-test('createDecisionRequest refuses a missing deadlineMs (F5/F6: mandatory, no unbounded wait)', () => {
+test('createDecisionRequest admits a missing deadlineMs — no mandatory lifetime (#598 F09)', () => {
   const { deadlineMs, ...rest } = decisionRequestFields();
-  assert.throws(() => createDecisionRequest(rest), ValidationError);
+  const request = createDecisionRequest(rest);
+  assert.equal(Object.hasOwn(request, 'deadlineMs'), false,
+    'the returned request carries deadlineMs only when the caller declared one');
 });
 
-test('createDecisionRequest refuses deadlineMs: null, 0, and negative — mandatory means a positive integer, never an opt-out', () => {
+test('createDecisionRequest refuses a DECLARED deadlineMs of null, 0, negative, or non-integer — declared means a positive safe integer', () => {
   for (const bad of [null, 0, -1, 'never', Infinity]) {
     assert.throws(() => createDecisionRequest(decisionRequestFields({ deadlineMs: bad })), ValidationError);
   }
@@ -529,24 +531,29 @@ test('F4: duplicate rejection also applies to question.asked and approval.reques
   assert.ok(kinds.includes('control.duplicate_interaction_rejected'));
 });
 
-test('closed-shape refusal at admission: a malformed decision.requested payload is rejected loudly and mints no pending record', async () => {
+test('closed-shape admission: an undeclared deadline still mints the record (deadlineAt null); a truly malformed payload is rejected loudly', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, log } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
 
-  const requestId = 'decision-malformed-1';
-  const { deadlineMs, ...malformed } = decisionRequestFields();
-  emitDecisionRequested(adapter, handle, requestId, malformed);
+  // #598 F09: deadlineMs is optional — a payload with no deadlineMs is a VALID request; its
+  // record carries a null deadline and the expiry sweep never fires for it.
+  const noDeadline = decisionRequestFields();
+  delete noDeadline.deadlineMs;
+  emitDecisionRequested(adapter, handle, 'decision-undated-1', noDeadline);
   await Promise.resolve();
+  const undated = coordinator.interactionStatus('decision-undated-1');
+  assert.ok(undated, 'an undeclared deadline does not refuse the request');
+  assert.equal(undated.deadlineAt ?? null, null, 'the record carries a null deadline');
 
-  assert.equal(coordinator.interactionStatus(requestId), null, 'a malformed request must never mint a pending record');
+  // A payload that IS malformed (zero options) is still rejected loudly and mints no record.
+  const malformed = { ...decisionRequestFields(), options: [] };
+  emitDecisionRequested(adapter, handle, 'decision-malformed-1', malformed);
+  await Promise.resolve();
+  assert.equal(coordinator.interactionStatus('decision-malformed-1'), null,
+    'a malformed request must never mint a pending record');
   const kinds = log.read(handle.id).map((e) => e.kind);
   assert.ok(kinds.includes('control.malformed_interaction_rejected'));
-  assert.ok(!kinds.includes('decision.requested'), 'the admitted event kind itself must not appear for a rejected malformed payload');
-
-  // The worker must not be parked — no task/handle wedge from a phantom request.
-  const result = await coordinator.result(handle.id);
-  assert.notEqual(result.status, 'input_required');
 });
 
 // ============================================================
@@ -681,9 +688,11 @@ test('emulated grammar: malformed JSON after the marker is ignored as ordinary p
   assert.equal(scanForDecisionRequest(null), null);
 });
 
-test('emulated grammar: a schema-invalid request body (missing deadlineMs) is ignored identically to "no grammar found"', () => {
+test('emulated grammar: a request body without deadlineMs parses — the deadline is optional on the wire too', () => {
   const text = `DECISION_REQUEST: ${JSON.stringify({ question: 'x', options: [{ id: 'a', label: 'A' }] })}`;
-  assert.equal(scanForDecisionRequest(text), null);
+  const request = scanForDecisionRequest(text);
+  assert.ok(request, 'a deadline-less DECISION_REQUEST is well-formed now (#598 F09)');
+  assert.equal(request.question, 'x');
 });
 
 test('emulated grammar: only the FIRST well-formed request is admitted — a second contradictory DECISION_REQUEST line never wins a silent race', () => {

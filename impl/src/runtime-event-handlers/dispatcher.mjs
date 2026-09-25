@@ -39,6 +39,13 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
       if (!['dead', 'stopping', 'exited'].includes(handle.status)) coordinator._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
       return;
     }
+    // #598 F02: a recovery attach waits on the successor's own ready event or its transport's
+    // death event. Exit-class observations skip the turn-admission buffer below, so the death
+    // resolver is woken here — an observation only; every handler below runs unchanged.
+    if (handle.turnAdmission?.resolveDeath
+      && ['lifecycle.crashed', 'lifecycle.exited', 'lifecycle.process_closed', 'kill.confirmed'].includes(kind)) {
+      handle.turnAdmission.resolveDeath(event);
+    }
     if (actor === 'worker'
       && ['lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)
       && handle.currentIncarnation !== true

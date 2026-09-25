@@ -832,7 +832,7 @@ test('WC19: refused supervised closeAsync leaves recovery authority running for 
   driver = createDriver({
     repoRoot: f.repo, logDir: f.logDir, adapters: { mock: adapter }, worktreeCapacity: validPolicy,
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
-    sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 100 },
+    sessionRecoveryPolicy: {},
   });
   await driver.ready;
   const handle = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-supervised-close' });

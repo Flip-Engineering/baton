@@ -1463,8 +1463,8 @@ export function _workflowRevisionAuthority(store, plan, node, throughSeq = store
   let cursor = plan;
   while (cursor) {
     const key = store._planVersionKey(cursor.planId, cursor.version);
-    if (seenPlans.has(key) || lineage.length >= store._goalPlanPolicy.limits.maxPlanVersions) {
-      fail('workflow revision Plan ancestry is cyclic or exceeds structural authority');
+    if (seenPlans.has(key)) {
+      fail('workflow revision Plan ancestry is cyclic');
     }
     seenPlans.add(key);
     lineage.push(cursor);
@@ -3931,7 +3931,6 @@ export function defineGoal(store, fields, auth) {
   const scopeKey = store._goalScopeKey(auth.repoId, auth.runId ?? null); const head = store._goalHeads.get(scopeKey);
   if (request.predecessor === null && head) throw new CoordinationRefusal('goal predecessor is required', 'goal_predecessor_required');
   if (request.predecessor !== null && (!head || head.goalId !== request.predecessor.goalId || head.version !== request.predecessor.version || head.digest !== request.predecessor.digest)) throw new CoordinationRefusal('goal predecessor is stale', 'goal_stale');
-  if ((head?.version ?? 0) >= store._goalPlanPolicy.limits.maxGoalVersions) throw new CoordinationRefusal('goal version ceiling reached', 'goal_version_limit');
   if (head) {
     try { assertGoalSuccessor(head, request, store._goalPlanPolicy); }
     catch (error) { if (error instanceof GoalPlanValidationError) throw new CoordinationRefusal(error.message, error.code); throw error; }
@@ -3975,7 +3974,6 @@ export function proposePlan(store, fields, auth) {
   const headKey = store._planHeadKey(request.goal); const head = store._planHeads.get(headKey);
   if (request.predecessor === null && head) throw new CoordinationRefusal('plan predecessor is required', 'plan_predecessor_required');
   if (request.predecessor !== null && (!head || head.planId !== request.predecessor.planId || head.version !== request.predecessor.version || head.digest !== request.predecessor.digest)) throw new CoordinationRefusal('plan predecessor is stale', 'plan_stale');
-  if ((head?.version ?? 0) >= store._goalPlanPolicy.limits.maxPlanVersions) throw new CoordinationRefusal('plan version ceiling reached', 'plan_version_limit');
   const version = (head?.version ?? 0) + 1; const digestValue = goalPlanDigest(coreBase);
   const planId = head?.planId ?? `plan:${goalPlanDigest({ schemaVersion: 1, goal: request.goal, firstDigest: digestValue })}`;
   const fixedTs = store._clock(); const plan = {
@@ -4201,7 +4199,6 @@ export function createPlanGatedWave(store, rawEntries, auth) {
     throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
   }
   if (!Array.isArray(rawEntries) || rawEntries.length < 2
-    || rawEntries.length > store._goalPlanPolicy.limits.maxNodes
     || !auth || typeof auth !== 'object' || Array.isArray(auth)) {
     throw new CoordinationRefusal('plan wave dispatch is invalid', 'plan_wave_invalid');
   }

@@ -389,7 +389,7 @@ test('PL7/PL10: pre-close Kimi timeout retains runtime, worktree, and local auth
       remove: async () => { worktreeRemovals += 1; }, reconcile: async () => {},
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'kimi',
-    approvalTimeoutMs: 100, stopDeadlineMs: 500,
+    stopDeadlineMs: 500,
   });
   const handle = await coordinator.spawn('kimi', brief('FAKE:STAY_OPEN'), {
     taskId: 'phase51-kimi-preclose-timeout', model: 'kimi-code/k3', effort: 'max',
@@ -617,7 +617,7 @@ function stubAdapter(overrides = {}) {
 function coordinatorFixture(adapter, log = new Log(mkdtempSync(join(tmpdir(), 'phase51-log-')))) {
   const coordination = coordinationForLog(log);
   const worktrees = { create: async () => ({ path: mkdtempSync(join(tmpdir(), 'phase51-wt-')) }), capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {} };
-  const make = () => new Coordinator({ log, coordination, fences: new FenceTable(), adapters: { stub: adapter }, worktrees, referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'stub', approvalTimeoutMs: 100, stopDeadlineMs: 100 });
+  const make = () => new Coordinator({ log, coordination, fences: new FenceTable(), adapters: { stub: adapter }, worktrees, referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'stub', stopDeadlineMs: 100 });
   return { coordinator: make(), make, log, coordination };
 }
 
@@ -644,7 +644,7 @@ test('PL7: each observed unconfirmed reap drives a bounded coordinator kill and 
   const coordinator = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { codex: adapter }, worktrees,
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'codex',
-    approvalTimeoutMs: 100, stopDeadlineMs: 100,
+    stopDeadlineMs: 100,
   });
   const handle = await coordinator.spawn('codex', brief('FAKE:STAY_OPEN'), {
     taskId: 'phase51-current-generation-retry',
@@ -1257,7 +1257,7 @@ test('PL5/PL7: coordinator keeps setup-failed Codex ownership until exact close 
   const adapter = new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], env: { FAKE_CODEX_HANG: '1' }, requestTimeoutMs: 120, versionProbe: () => 'fake' });
   const log = new Log(mkdtempSync(join(tmpdir(), 'phase51-coordinator-codex-log-'))); const removals = [];
   const worktrees = { create: async () => ({ path: mkdtempSync(join(tmpdir(), 'phase51-coordinator-codex-wt-')) }), capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {}, remove: async (taskId) => { removals.push({ taskId, lastSeq: log.read('w-1').at(-1)?.seq ?? 0 }); }, reconcile: async () => {} };
-  const coordinator = new Coordinator({ log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { codex: adapter }, worktrees, referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'codex', approvalTimeoutMs: 100, stopDeadlineMs: 1000 });
+  const coordinator = new Coordinator({ log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { codex: adapter }, worktrees, referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'codex', stopDeadlineMs: 1000 });
   const handle = await coordinator.spawn('codex', brief(), { taskId: 'phase51-coordinator-setup-fail' });
   await until(() => (coordinator.list()[0]?.processRef?.state === 'closed' && removals.length > 0), 'coordinator close before reap');
   const events = log.read(handle.id); const start = events.find((event) => event.kind === 'lifecycle.process_started'); const close = events.find((event) => event.kind === 'lifecycle.process_closed'); const confirmed = events.find((event) => event.kind === 'kill.confirmed');

@@ -414,8 +414,8 @@ const GOAL_PLAN_POLICY = Object.freeze({
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 30, stallTimeoutMs: 5000, settleTimeoutMs: 1500,
-  finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false,
+  pollIntervalMs: 30, settleTimeoutMs: 1500,
+  finalization: 'none', saltObjectives: false,
 });
 
 // ── facadeFixture (workflow-surface pattern; no wave driving — the resolve-lane rows only need a
@@ -510,7 +510,7 @@ const waveMember = (role) => ({
 });
 
 const WAVE_POLICY = Object.freeze({
-  ...DRIVER_POLICY, settlement: 'kg-ritual', stallTimeoutMs: 8000, pollIntervalMs: 25,
+  ...DRIVER_POLICY, settlement: 'kg-ritual', pollIntervalMs: 25,
 });
 
 // ── mcpSetup (mcp-packaging pattern — the initialize-only rows) ─────────────────────────────────

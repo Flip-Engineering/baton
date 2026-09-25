@@ -434,45 +434,14 @@ const REINCARNATION = Object.freeze({
   'host.reincarnation.wait_ms': { lane: 'host.reincarnation.wait_ms', class: 'substrate', value: REINCARNATION_WAIT_MS, unit: 'ms', graceful: null,
     enforcedAt: 'application-deployment.mjs (openDriverForHandoff/openResidentAuthorityForHandoff: the successor\'s lease waits; BatonDeployment.#awaitInFlightTurns/#awaitSuccessorReady/#completeReincarnationHandoff: the old incarnation\'s waits)' },
 });
-
 // ---------------------------------------------------------------------------
-// Issue #499: the item/row/member-count family. These rows are COUNTS over one
-// operation's payload, not byte measures and not fleet sizes. The wave member
-// ceiling (64) is a structural admission bound on ONE wave payload — the largest
-// member roster a single wavefile/wave-start/attach request may carry — and the
-// recipe, route-inventory, and workflow-team rows are the same operation-bound
-// class (docs/audits/2026-09-13-runtime-policy/admission.md §4 F7: keep the
-// bound, declare it once, document it as an operation bound).
-// ---------------------------------------------------------------------------
-const COUNTS = Object.freeze({
-  'wave.members': { lane: 'wave.members', class: 'admission', value: 64, unit: 'members', graceful: null,
-    enforcedAt: 'workflow-dsl.mjs wavefile admission, workflow-interpreter.mjs spec admission, application.mjs waves.attach admission and _normalizeWaveStart, application-semantics.mjs waves.attach/waves.start/knowledge.settlement_lease schemas, mcp-northbound.mjs baton_waves_attach/baton_waves_start schemas' },
-  'wave.member.scope': { lane: 'wave.member.scope', class: 'admission', value: 64, unit: 'paths', graceful: null,
-    enforcedAt: 'workflow-dsl.mjs member scope admission, workflow-interpreter.mjs member scope admission, application-semantics.mjs waves.start scope schema, mcp-northbound.mjs baton_waves_start scope schema' },
-  'recipe.members': { lane: 'recipe.members', class: 'admission', value: 8, unit: 'member_cards', graceful: null,
-    enforcedAt: 'recipes.mjs recipe member-card admission' },
-  'recipe.scope': { lane: 'recipe.scope', class: 'admission', value: 64, unit: 'paths', graceful: null,
-    enforcedAt: 'recipes.mjs member scope glob admission' },
-  'deployment.routes': { lane: 'deployment.routes', class: 'admission', value: 64, unit: 'routes', graceful: null,
-    enforcedAt: 'application-deployment.mjs normalizeRoutes (one deployment\'s declared route inventory)' },
-  'workflow.team.members': { lane: 'workflow.team.members', class: 'admission', value: 16, unit: 'members', graceful: null,
-    enforcedAt: 'application-semantics.mjs workflow composition team schema (the two-to-sixteen role-addressed Attempts bound)' },
-  'recipe.constraints': { lane: 'recipe.constraints', class: 'admission', value: 8, unit: 'strings', graceful: null,
-    enforcedAt: 'recipes.mjs admitTemplate (the objectiveTemplate constraints array admission)' },
-});
-
-/** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
- * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION, ...COUNTS });
+// #598 F08: the COUNTS block is removed — waves, recipe cards, scopes, routes, team and
+// constraints carry no fixed request-admission ceilings; measured resource admission governs
+// what actually starts.
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION });
 
 export const FRAME_LIMITS_VERSION = '1.4.0';
 
-/** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
- * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's
- * MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES window bounds one frame scan, and 8 is the smallest power
- * of two whose per-branch hop ceiling composes with the per-frame invariant; it is a COUNT,
- * never a clock (the campaign control law). */
-export const MAX_MESSAGE_DEPTH_BUDGET = 8;
 
 /** Named-export `code` (a string) so the suite's `assertLimitsModule` helper — which reads
  * `module?.code ?? module` when stringifying its red-stage message — is safe once the module

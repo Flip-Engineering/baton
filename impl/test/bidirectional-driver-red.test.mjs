@@ -947,8 +947,8 @@ const decisionAsk = (overrides = {}) => ({
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 30, stallTimeoutMs: 800, settleTimeoutMs: 1_500,
-  finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false,
+  pollIntervalMs: 30, settleTimeoutMs: 1_500,
+  finalization: 'none', saltObjectives: false,
 });
 
 function settledEvents(driver, requestId) {
@@ -965,9 +965,7 @@ test('BD-3 (callback lifecycle): async onDecision awaited, fired once, {optionId
   const kit = realWaveKit(t, decisionAsk());
   const calls = [];
   const receipt = await createWaveDriver(kit.baton, {
-    // A generous stall budget: the post-answer turn/verify/rest must not be cut short by the stall
-    // clock when the test host is under concurrent load (node runs test files in parallel).
-    ...DRIVER_POLICY, stallTimeoutMs: 8_000, pollIntervalMs: 25,
+    ...DRIVER_POLICY, pollIntervalMs: 25,
     onDecision: async (payload) => {
       calls.push(payload);
       await new Promise((resolve) => setTimeout(resolve, 5)); // async: the driver must AWAIT this
@@ -995,7 +993,8 @@ test('BD-3 (callback lifecycle): async onDecision awaited, fired once, {optionId
 });
 
 // BD-3 — undefined leaves attention-required; invalid return and a throw are recorded as evidence
-// with the interaction still pending and the wave NEVER closed/superseded because a callback failed.
+// with the interaction still pending — a pending decision never ends the wave; only the caller's
+// stop does.
 test('BD-3 (deferred / invalid / throw): a failed or absent callback answer never closes the wave, decision stays pending', async (t) => {
   const cases = [
     { name: 'deferred', ret: () => undefined, evidence: null, outcome: 'deferred' },
@@ -1005,13 +1004,15 @@ test('BD-3 (deferred / invalid / throw): a failed or absent callback answer neve
   ];
   for (const scenario of cases) {
     const kit = realWaveKit(t, decisionAsk(), scenario.name);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 350);
     let seen = null;
     const receipt = await createWaveDriver(kit.baton, {
-      ...DRIVER_POLICY, stallTimeoutMs: 350,
+      ...DRIVER_POLICY, signal: controller.signal,
       onDecision: async (payload) => { seen = payload; return scenario.ret(); },
     }).run({ repoRoot: kit.repo, members: [waveMember('w')] });
 
-    assert.equal(receipt.basis, 'stall', `${scenario.name}: the wave never completed a pending decision`);
+    assert.equal(receipt.basis, 'aborted', `${scenario.name}: a pending decision never ends the wave — the caller stop does`);
     assert.ok(seen, `${scenario.name}: onDecision fired`);
     const row = receipt.decisions.find((entry) => entry.requestId === seen.requestId);
     assert.ok(row, `${scenario.name}: an evidence line is recorded`);
@@ -1305,44 +1306,42 @@ test('BD-7 (reducer): multiple pending interactions surface in stable requestId 
     'only the gated (first-by-requestId) decision fires; a decision behind an earlier interaction waits');
 });
 
-test('BD-7 (claim-checkpoint): a claim-checkpoint with no interaction is claimed at the next poll WITHOUT waiting for the unproductive budget', async (t) => {
+test('BD-7 (claim-checkpoint): a claim-carrying checkpoint with no interaction is claimed on its FIRST sighting', async (t) => {
   void t;
   const wave = fakeWave({
-    // Each re-park mints a fresh pauseId (as a real pausable worker does) but keeps the SAME
-    // changedPathsDigest — an unproductive re-park carrying a completed claim.
-    w: { status: (poll) => fakeView({ attention: [cpAtt(`cp-${Math.min(poll, 1)}`, { claim: { status: 'completed', summary: null }, changedPathsDigest: 'd0' })] }) },
+    // A persistent claim-carrying pause (a pausable worker that declared completion): the claim
+    // branch runs before any ordinary nudge, and the claimed member settles the wave.
+    w: { status: () => fakeView({ attention: [cpAtt('cp-1', { claim: { status: 'completed', summary: null }, changedPathsDigest: 'd0' })] }) },
   });
   const receipt = await createWaveDriver(wave.baton, {
-    // Budget 5 would nudge five unproductive re-parks for a claim-ABSENT checkpoint; the claim
-    // bypasses it and settles at the next poll.
-    ...DRIVER_POLICY, pollIntervalMs: 20, stallTimeoutMs: 10_000,
-    finalization: 'claim-on-stall', unproductiveNudgeBudget: 5,
+    ...DRIVER_POLICY, pollIntervalMs: 20, finalization: 'claim-on-stall',
   }).run({ members: wave.members });
 
   assert.equal(receipt.basis, 'completed');
-  assert.equal(receipt.nudges.length, 1, 'the first sighting nudges once; the claim then bypasses the remaining budget');
+  assert.equal(receipt.nudges.length, 0, 'a claim-carrying checkpoint is claimed, never nudged first');
   assert.equal(receipt.claims.length, 1);
+  assert.equal(receipt.claims[0].requestId, 'cp-1');
   assert.equal(receipt.claims[0].code, 'claimed');
 });
 
 // ---------------------------------------------------------------------------
-// BD-8 (no regression) — the treadmill still governs a CLAIM-ABSENT checkpoint;
-// nudge dedup per requestId holds. (wave-driver-policy-red D1–D10 is the
-// authoritative regression gate and stays green — see this suite's Verification.)
+// BD-8 (no regression) — a CLAIM-ABSENT checkpoint is nudged once per pause and never
+// claimed; the wave waits until the caller stops it (no budget and no clock ends it).
 // ---------------------------------------------------------------------------
-test('BD-8 (no regression): a claim-absent checkpoint still rides the unproductive budget to stall; nudge dedup per requestId holds', async (t) => {
+test('BD-8 (no regression): a claim-absent checkpoint is nudged exactly once and never claimed; the caller stop ends the wave', async (t) => {
   void t;
   const wave = fakeWave({
     // A single persistent pauseId (cp-1) across polls: the requestId dedup must nudge it exactly
-    // once even though it is re-observed every poll; a claim-absent checkpoint then rides to stall.
+    // once even though it is re-observed every poll, and no claim may fire.
     w: { status: () => fakeView({ attention: [cpAtt('cp-1', { changedPathsDigest: 'd0' })] }) }, // no claim
   });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 300);
   const receipt = await createWaveDriver(wave.baton, {
-    ...DRIVER_POLICY, pollIntervalMs: 20, stallTimeoutMs: 300,
-    finalization: 'none', unproductiveNudgeBudget: 1,
+    ...DRIVER_POLICY, pollIntervalMs: 20, finalization: 'none', signal: controller.signal,
   }).run({ members: wave.members });
 
-  assert.equal(receipt.basis, 'stall', 'a claim-absent checkpoint is not claimed — the treadmill judges it');
-  assert.equal(receipt.nudges.length, 1, 'the pause is nudged exactly once (requestId dedup), then the budget stops nudging');
+  assert.equal(receipt.basis, 'aborted', 'a claim-absent checkpoint is not claimed — the wave waits for its caller');
+  assert.equal(receipt.nudges.length, 1, 'the pause is nudged exactly once (requestId dedup holds across every poll)');
   assert.equal(receipt.claims.length, 0);
 });

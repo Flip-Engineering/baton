@@ -2197,16 +2197,12 @@ export function _validateRecoveryAttemptAdmissionPayload(store, payload, event, 
     if (['attached', 'unknown'].includes(head.state)) {
       fail('recovery attempt outcome forbids automatic continuation', 'recovery_attempt_continuation_forbidden');
     }
-    if (head.maxAttempts !== p.maxAttempts
-      || canonicalDigest(head.authority) !== canonicalDigest(p.authority)
+    if (canonicalDigest(head.authority) !== canonicalDigest(p.authority)
       || canonicalDigest(head.route) !== canonicalDigest(p.route)
       || canonicalDigest(head.workerPolicy) !== canonicalDigest(p.workerPolicy)
       || head.session.idDigest !== p.session.idDigest
       || head.session.contextDigest !== p.session.contextDigest) {
       fail('recovery attempt series authority changed', 'recovery_attempt_authority_changed');
-    }
-    if (head.attempt >= head.maxAttempts || p.attempt > p.maxAttempts) {
-      fail('recovery attempt ceiling is exhausted', 'recovery_attempt_exhausted');
     }
     if (p.attempt !== head.attempt + 1) {
       fail('recovery attempt sequence is not contiguous', 'recovery_attempt_sequence');

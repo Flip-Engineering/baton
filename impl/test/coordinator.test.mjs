@@ -1337,9 +1337,9 @@ test('respond() on an unknown requestId returns not_found without throwing', asy
   assert.equal(result.result, 'not_found');
 });
 
-test('an unanswered approval auto-resolves to a fixed \'deny\' default after approvalTimeoutMs; a late respond() is already_resolved', async () => {
+test('a pending approval NEVER auto-resolves — no clock denies an approval; a later respond() applies', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator, advance } = setup({ adapters: { mock: adapter }, approvalTimeoutMs: 1000 });
+  const { coordinator, advance } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
 
   const requestId = 'appr-2';
@@ -1353,18 +1353,17 @@ test('an unanswered approval auto-resolves to a fixed \'deny\' default after app
   });
   await Promise.resolve();
 
+  // #598 F09: the deadline sweep no longer carries an approval/publication auto-deny branch —
+  // time passing alone never resolves a pending approval.
   advance(1001);
   coordinator.tick();
+  await Promise.resolve();
 
-  const approveCall = adapter.calls.approve.find((c) => c.requestId === requestId);
-  assert.ok(approveCall, 'tick() must sweep the expired approval and deliver the default decision');
-  // core#8: the default is pinned to exactly 'deny' (fail-closed) — an exact match, not
-  // an includes() over ['deny','cancel'], so two spec-compliant implementations cannot
-  // disagree on live behavior for every timed-out approval in the system.
-  assert.equal(approveCall.decision, 'deny');
+  assert.equal(adapter.calls.approve.filter((c) => c.requestId === requestId).length, 0,
+    'the sweep must leave the unanswered approval pending — no default deny');
 
-  const late = await coordinator.respond(requestId, { decision: 'allow' });
-  assert.equal(late.result, 'already_resolved');
+  const decision = await coordinator.respond(requestId, { decision: 'allow' });
+  assert.equal(decision.result, 'applied', 'the decision maker still holds the authority to respond');
 });
 
 test('an answer arriving after the asking turn has ended is consumed (single-consumer holds) but not delivered to adapter.answer()', async () => {

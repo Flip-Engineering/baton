@@ -531,21 +531,18 @@ test('P3 (guard): createWaveDriver accepts the shipped steering/finalization voc
   const fx = await wadFixture(t);
   const driver = createWaveDriver(fx.baton, {
     steering: 'nudge-on-checkpoint', finalization: 'claim-on-stall',
-    pollIntervalMs: 15, stallTimeoutMs: 400,
+    pollIntervalMs: 15,
   });
   assert.equal(typeof driver.run, 'function', 'the driver exposes run over the shipped vocabulary');
 });
-
-test('P4 (guard): MAX_WAVE_PROGRESS_BYTES and the 64-member ceiling hold', async () => {
+test('P4 (guard): MAX_WAVE_PROGRESS_BYTES holds and member admission is not count-bounded (#598 F08)', async () => {
   assert.equal(waveModule.MAX_WAVE_PROGRESS_BYTES, 7 * 1024 * 1024,
     'the progress envelope is 7 MiB (wave.mjs)');
   const dummy = { runs: { start: async () => { throw new Error('unused'); } } };
   const members = Array.from({ length: 65 }, (_, i) => wadMember(`p4-${i}`));
-  await assert.rejects(
-    () => waveModule.createWave(dummy, { members }),
-    /bounded non-empty array/u,
-    'a 65-member wave is refused by the wave-machinery ceiling (createWave)',
-  );
+  // A 65-member roster passes member admission and createWave completes over the dummy facade —
+  // no member-count ceiling stands between the caller and waves.start (#598 F08).
+  await waveModule.createWave(dummy, { members });
 });
 
 // ---------------------------------------------------------------------------

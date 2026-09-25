@@ -2770,8 +2770,7 @@ export function _validateContextMapCallAdmissionPayload(store, payload, event, i
     || normalizedPlan.predecessor?.version !== predecessor.version
     || normalizedPlan.predecessor?.digest !== predecessor.digest
     || normalizedPlan.nodes.length !== call.partitions.length
-    || normalizedPlan.nodes.length < 2
-    || normalizedPlan.nodes.length > store._goalPlanPolicy.limits.maxNodes) {
+    || normalizedPlan.nodes.length < 2) {
     store._contextFailure('Context map successor Plan identity changed',
       integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
   }
@@ -3148,8 +3147,7 @@ export function _validateContextEffectCallAdmissionPayload(store, payload, event
     || normalizedPlan.predecessor?.version !== predecessor.version
     || normalizedPlan.predecessor?.digest !== predecessor.digest
     || normalizedPlan.nodes.length !== call.executionUnitIds.length
-    || normalizedPlan.nodes.length === 0
-    || normalizedPlan.nodes.length > store._goalPlanPolicy.limits.maxNodes) {
+    || normalizedPlan.nodes.length === 0) {
     return fail('Context effect-call successor Plan identity changed',
       'context_call_plan_invalid');
   }

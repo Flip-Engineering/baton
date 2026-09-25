@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { replObjectRefusal } from './messages.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
@@ -484,11 +484,6 @@ function stateFailureCode(cause) {
   if (['invalid_wake_filter', 'wake_stream_unavailable', 'wake_stream_closed', 'wake_stream_refused',
     'wake_subscription_not_found', 'wake_notifications_unavailable', 'wake_page_invalid'].includes(cause?.code)) return cause.code;
   if (cause?.code === 'run_stopping') return cause.code;
-  // #105 D3 (reply-chains-2026-08-06): the message lane's budget refusal is the ONE new
-  // allowlisted message_* code — the orchestrator's send-side refusal surfaces typed on the
-  // wire. The worker-stream codes (message_depth_exceeded / message_target_not_member /
-  // message_parent_not_found) deliberately stay stream-only, never MCP tool errors.
-  if (cause?.code === 'message_budget_invalid') return cause.code;
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid',
@@ -509,13 +504,13 @@ function stateFailureCode(cause) {
     'reuse_borrow_blocked', 'reuse_decision_conflict', 'reuse_decision_exists', 'reuse_recheck_unavailable', 'reuse_recheck_forbidden',
     'invalid_reuse_recheck', 'reuse_risk_conflict', 'reuse_ttl_conflict', 'reuse_risk_guarded', 'reuse_risk_stale', 'reuse_not_expired', 'reuse_decision_not_found', 'stale_version',
     'goal_plan_invalid', 'goal_plan_secret_rejected', 'goal_plan_unauthorized', 'goal_plan_unavailable', 'goal_plan_required', 'goal_plan_status_invalid', 'goal_plan_status_oversize', 'not_found', 'duplicate_task',
-    'goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_too_large', 'goal_version_limit', 'goal_weakened',
+    'goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_too_large', 'goal_weakened',
     'plan_approval_conflict', 'plan_approval_expired', 'plan_approval_invalid', 'plan_approval_stale', 'plan_brief_mismatch', 'plan_budget_exceeded',
     'plan_conflict', 'plan_cycle', 'plan_dangling_dependency', 'plan_dependency_incomplete', 'plan_dependency_mismatch', 'plan_dispatch_conflict',
     'plan_dispatch_invalid', 'plan_dispatch_stale', 'plan_duplicate_node', 'plan_effect_invalid', 'plan_effect_mismatch', 'plan_goal_mismatch',
     'plan_node_invalid', 'plan_node_limit', 'plan_node_not_found', 'plan_not_approved', 'plan_predecessor_required', 'plan_risk_mismatch', 'plan_route_mismatch',
     'plan_route_invalid', 'plan_route_authority_legacy_ambiguous',
-    'plan_scope_invalid', 'plan_self_approval', 'plan_stale', 'plan_too_large', 'plan_verification_invalid', 'plan_version_limit',
+    'plan_scope_invalid', 'plan_self_approval', 'plan_stale', 'plan_too_large', 'plan_verification_invalid',
     'coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
   // Part F (R5, typed-error reach) — board/package reflex codes (mcp-reflex-surface-decisions.md
   // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part D/E tools;
@@ -626,9 +621,8 @@ const applicationIntentSchema = schema({
   resultIntent: { type: 'string', enum: ['change', 'read_only_evidence'], default: 'change' },
   profile: runId,
   route: applicationRouteSchema,
-  // Issue #499: the intent scope is the same 64-path wave/scope payload class the wavefile
-  // grammar bounds with one ceiling (the wave scope IS the member default scope there).
-  scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
+  // #598 F08: no fixed scope count ceiling on the intent payload.
+  scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
 }, ['objective']);
 const applicationAnswerSchema = {
   oneOf: [
@@ -760,7 +754,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       ...repo,
       waveId: runId,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: schema({
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -780,7 +774,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, ...idem,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: schema({
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -789,12 +783,12 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
           // the shape guard's own law below (the schema() idiom carries no XOR).
           group: schema({
             seat: applicationRouteSchema,
-            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
-            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            size: { type: 'integer', minimum: 2 },
+            quorum: { type: 'integer', minimum: 1 },
             strict: { type: 'boolean' },
-            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+            editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective']),
       },
     }, ['repoId', 'idempotencyKey', 'members']),
@@ -916,18 +910,17 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     name: 'baton_knowledge_settlement_lease',
     description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
     inputSchema: schema({
-      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: runId },
+      ...repo, ...idem, waveId: runId, members: { type: 'array', items: runId },
     }, ['repoId', 'idempotencyKey', 'waveId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   // Issue #206: the message lane's ordinary tools (restored per the final-landing ruling).
   {
     name: 'baton_run_message_send',
-    description: 'Send one orchestrator message to a worker or run target (inform|query|steer). The target is exactly {workerId} or {runId}; the body is capped at 2,048 BYTES (char maxLength here is a shape hint, never the authority). budget is optional (default 1). Returns the lane outcome verbatim.',
+    description: 'Send one orchestrator message to a worker or run target (inform|query|steer). The target is exactly {workerId} or {runId}; the body is capped at 2,048 BYTES (char maxLength here is a shape hint, never the authority). Returns the lane outcome verbatim.',
     inputSchema: schema({
       ...repo, runId, workerId: runId, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
       body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
-      budget: { type: 'integer', minimum: 1, maximum: MAX_MESSAGE_DEPTH_BUDGET },
     }, ['repoId', 'kind', 'body']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -1931,12 +1924,10 @@ function validateArguments(name, args, maxWaitMs = null) {
         || (hasGroup && (!record(member.group) || !record(member.group.seat)
           || !nonempty(member.group.seat.harness) || !nonempty(member.group.seat.model)
           || !nonempty(member.group.seat.effort)
-          || !Number.isSafeInteger(member.group.size) || member.group.size < 2
-          || member.group.size > FRAME_LIMITS['wave.members'].value))
+          || !Number.isSafeInteger(member.group.size) || member.group.size < 2))
         || (Object.hasOwn(member, 'scope')
-          && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
+          && (!Array.isArray(member.scope) || member.scope.length === 0
             || member.scope.some((item) => !nonempty(item))))) {
-        // #160 M3 (error-actionability-2026-08-13/contract-fold.md §2 D4 M3): the refusal names the
         // offending member by POSITION so the caller can fix exactly the bad wave member.
         return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: member ${index} is invalid` };
       }

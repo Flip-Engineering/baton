@@ -1,23 +1,18 @@
-const HARD_MAX_SESSIONS = 1_000;
-const HARD_MAX_STATE_ROWS = 100_000;
-const HARD_MAX_TIMEOUT_MS = 5 * 60_000;
-
 function codeOf(error) {
   const code = typeof error?.code === 'string' ? error.code : 'session_recovery_failed';
   return /^[a-z0-9_]{1,64}$/.test(code) ? code : 'session_recovery_failed';
 }
 
-/** One deployment-owned startup scan. It has no adapter handle and uses only Coordinator authority. */
+/** One deployment-owned startup scan. It has no adapter handle and uses only Coordinator authority.
+ * #598 F12: no count ceiling and no deadline govern the scan — every admissible candidate is
+ * recovered, each recovery finishing on its observed result, an explicit stop, or the worker's
+ * own process facts. */
 export class SessionRecoverySupervisor {
-  constructor({ coordinator, authority, policy, onEvent = () => {} }) {
-    const fields = ['maxAttempts', 'maxSessions', 'maxStateRows', 'timeoutMs'];
-    if (!coordinator || !authority || !policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
-      || !Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts <= 0 || policy.maxAttempts > 1_000_000
-      || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > HARD_MAX_SESSIONS
-      || !Number.isSafeInteger(policy.maxStateRows) || policy.maxStateRows < policy.maxSessions || policy.maxStateRows > HARD_MAX_STATE_ROWS
-      || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0 || policy.timeoutMs > HARD_MAX_TIMEOUT_MS
-      || typeof onEvent !== 'function') throw new TypeError('session recovery requires exact bounded deployment policy');
-    this.coordinator = coordinator; this.authority = authority; this.policy = Object.freeze({ ...policy }); this.onEvent = onEvent;
+  constructor({ coordinator, authority, onEvent = () => {} }) {
+    if (!coordinator || !authority || typeof onEvent !== 'function') {
+      throw new TypeError('session recovery requires a coordinator, the startup authority, and an event sink');
+    }
+    this.coordinator = coordinator; this.authority = authority; this.onEvent = onEvent;
     this._promise = null; this._closing = false; this._closed = false; this._attached = new Set(); this._summary = null;
   }
 
@@ -32,14 +27,13 @@ export class SessionRecoverySupervisor {
   async _run() {
     let candidates;
     try {
-      candidates = this.coordinator.startupRecoveryCandidates(this.authority, this.policy.maxStateRows);
-      if (candidates.length > this.policy.maxSessions) throw Object.assign(new Error('startup session recovery exceeds deployment capacity'), { code: 'session_recovery_capacity' });
+      candidates = this.coordinator.startupRecoveryCandidates(this.authority);
       let attached = 0; let failed = 0; let skipped = 0; const failures = [];
       for (const workerId of candidates) {
         if (this._closing) { skipped += 1; continue; }
         let result;
         try {
-          result = await this.coordinator.recover(workerId, { timeoutMs: this.policy.timeoutMs, actor: 'policy:startup-recovery', startupAuthority: this.authority });
+          result = await this.coordinator.recover(workerId, { actor: 'policy:startup-recovery', startupAuthority: this.authority });
         } catch (error) {
           if (error?.code === 'coordination_write_unavailable') throw error;
           result = { ok: false, result: codeOf(error) };

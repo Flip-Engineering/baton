@@ -422,7 +422,7 @@ test('P91-7: processless replay refuses a receipt without exact durable Plan con
     adapters: { session: resumed }, providerGovernance: governance,
     worktrees: f.worktrees,
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
-    route: () => 'session', stopDeadlineMs: 80, recoveryTimeoutMs: 80,
+    route: () => 'session', stopDeadlineMs: 80,
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal(replay.list()[0].status, 'orphaned');
@@ -774,7 +774,7 @@ test('P91-16: unplanned processless reattachment refuses before a wrong-session 
     adapters: { session: resumed }, providerGovernance: governance,
     worktrees: f.worktrees,
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
-    route: () => 'session', stopDeadlineMs: 80, recoveryTimeoutMs: 80,
+    route: () => 'session', stopDeadlineMs: 80,
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
 

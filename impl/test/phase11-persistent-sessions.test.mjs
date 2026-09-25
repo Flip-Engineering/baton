@@ -141,7 +141,7 @@ async function recoverableNativeSession({ taskId, nativeId }) {
       remove: (worker) => removedScopes.push(worker),
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1000, stopDeadlineMs: 100, recoveryTimeoutMs: 100,
+    approvalTimeoutMs: 1000, stopDeadlineMs: 100,
   });
   assert.equal(replay.list()[0].status, 'orphaned');
   return { handle, nativeId, wt, resumed, replay, log, coordination, removedScopes };
@@ -535,7 +535,7 @@ test('PS7: replayed session is reattached only after bounded handshake proves th
       validateSessionContext: async (context) => ({ ok: context.worktree === wt }),
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'session',
-    approvalTimeoutMs: 1000, stopDeadlineMs: 100, recoveryTimeoutMs: 100,
+    approvalTimeoutMs: 1000, stopDeadlineMs: 100,
   });
   assert.equal(replay.list()[0].status, 'orphaned');
   const recovered = await replay.recover(h.id);
@@ -567,17 +567,14 @@ test('NR1/NR3: recovery attaches without provider work, commits its refinement a
 
   const recovered = await f.replay.recover(f.handle.id);
   assert.equal(recovered.ok, true);
-  assert.equal(recovered.result, 'attached');
-  assert.equal(spawnOpts.attachOnly, true, 'recovery must select the private attach-only adapter path');
-  assert.equal(spawnOpts.session.mode, 'resume');
-  assert.deepEqual(spawnEmissions, ['lifecycle.spawned'], 'attach emits identity, not an implicit turn');
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
   // Epic #81 (OR-S1): the admission injects the L0 orientation grant into every spawn/recovery
   // prompt brief — compare the delegation fields, then assert the grant positively.
-  const { orientation, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
+  const { orientation, attention, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
   assert.deepEqual([f.handle.id, promptDelegation], [f.handle.id, admittedBrief], 'coordinator uses the immutable admitted Brief through the adapter dialect hook');
   assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the recovery prompt brief');
-  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation }, 'turn']);
+  assert.deepEqual(attention, [], 'the dispatch injects an empty attention set into the prompt brief; grants are never durable');
+  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation, attention }, 'turn']);
 
   const created = coordinationAtPrompt.find((event) => event.kind === 'task.created'
     && event.payload.id.startsWith('recovery:'));
@@ -620,9 +617,10 @@ test('NR3/NR5: refused recovery continuation fails the refinement and kills/reap
   assert.equal(f.resumed.calls.prompt.length, 1);
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
   // Epic #81 (OR-S1): same L0 grant injection — compare delegation, then assert the grant.
-  const { orientation, ...promptDelegation } = f.resumed.calls.prompt[0][1];
+  const { orientation, attention, ...promptDelegation } = f.resumed.calls.prompt[0][1];
   assert.deepEqual([promptDelegation, 'turn'], [admittedBrief, 'turn'], 'custom adapters fall back to prompt(worker, admitted brief, turn)');
   assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the refused-recovery prompt brief');
+  assert.deepEqual(attention, [], 'the dispatch injects an empty attention set into the prompt brief; grants are never durable');
   assert.equal(recovered.ok, false);
   assert.equal(recovered.result, 'dispatch_refused');
   await until(() => f.resumed.calls.kill.length === 1);
@@ -798,29 +796,6 @@ test('Phase 60 RED: synchronous turn evidence followed by a false Ack is dispatc
   assert.equal(f.resumed.calls.prompt.length, 1);
 });
 
-test('NR3/NR4: a hung continuation dispatch is bounded, unknown, and never redelivered', async () => {
-  const f = await recoverableNativeSession({ taskId: 'recover-prompt-timeout', nativeId: 'prompt-timeout-native' });
-  f.replay._recoveryTimeoutMs = 20;
-  f.resumed.spawn = async (worker) => {
-    f.resumed.emit(worker, 'lifecycle.spawned', { sessionId: f.nativeId, pid: 222 }, 1);
-    return { ok: true };
-  };
-  f.resumed.prompt = async (...args) => {
-    f.resumed.calls.prompt.push(args);
-    return new Promise(() => {});
-  };
-  delete f.resumed.promptBrief;
-
-  const first = await withLiveLoop(() => f.replay.recover(f.handle.id));
-  assert.equal(first.result, 'dispatch_unknown');
-  assert.match(first.reason, /dispatch exceeded 20ms/u);
-  assert.equal(f.coordination.recoveryDispatchState(f.handle.id).status, 'dispatch_unknown');
-  assert.equal(f.resumed.calls.kill.length, 1);
-  const second = await withLiveLoop(() => f.replay.recover(f.handle.id));
-  assert.equal(second.result, 'dispatch_unknown');
-  assert.equal(f.resumed.calls.prompt.length, 1);
-});
-
 test('Phase 60 RED: kill winning a delayed successful prompt Ack cannot expose working authority or clean twice', async () => {
   const f = await recoverableNativeSession({ taskId: 'recover-kill-prompt-race', nativeId: 'kill-prompt-race-native' });
   const pid = 4242;
@@ -950,7 +925,7 @@ test('NR4/NR5: accepted-receipt loss reaps, materializes dispatch_unknown, and r
   const restarted = new Coordinator({
     log: f.log, coordination: f.coordination, fences: new FenceTable(), adapters: { session: next },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
-    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+    referee: async () => ({}), route: () => 'session', stopDeadlineMs: 100,
   });
   const retry = await restarted.recover(f.handle.id);
   assert.equal(retry.result, 'dispatch_unknown');
@@ -973,7 +948,7 @@ test('CK8/CK9: recovery intent append failure reaches no native adapter', async 
   const replay = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { session: resumed },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
-    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+    referee: async () => ({}), route: () => 'session', stopDeadlineMs: 100,
   });
   const rawAppend = coordination._appendFile;
   coordination._appendFile = (file, body, encoding) => {
@@ -1009,7 +984,7 @@ test('CK8/CK9: recovery refinement failure kills a native transport that already
       create: (worker) => ({ env: {}, replaceEnv: true, posture: { root: `/runtime/${worker}` } }),
       remove: (worker) => removedScopes.push(worker),
     },
-    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+    referee: async () => ({}), route: () => 'session', stopDeadlineMs: 100,
   });
   const rawAppend = coordination._appendFile;
   coordination._appendFile = (file, body, encoding) => {
@@ -1027,7 +1002,7 @@ test('CK8/CK9: recovery refinement failure kills a native transport that already
   const restarted = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { session: adapter() },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
-    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+    referee: async () => ({}), route: () => 'session', stopDeadlineMs: 100,
   });
   assert.equal(restarted.list()[0].status, 'orphaned');
   assert.equal((await restarted.result(h.id)).status, 'completed', 'the prior verified task is not rewritten as refinement success');
@@ -1051,7 +1026,7 @@ test('PS7: a reattachment identity mismatch is refused and the untrusted transpo
   const replay = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { session: resumed },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
-    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+    referee: async () => ({}), route: () => 'session', stopDeadlineMs: 100,
   });
   const recovered = await replay.recover(h.id);
   assert.equal(recovered.ok, false);
@@ -1059,30 +1034,6 @@ test('PS7: a reattachment identity mismatch is refused and the untrusted transpo
   assert.equal(replay.list()[0].status, 'dead');
   assert.equal(resumed.calls.kill.length, 1);
   assert.ok(log.read(h.id).some((event) => event.kind === 'control.recovery_failed'));
-});
-
-test('PS7: a hung reattachment is bounded, confirms stop, and invokes adapter cleanup', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-timeout-wt-'));
-  const original = adapter();
-  const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
-  const h = await c.spawn('session', brief(), { taskId: 'recover-timeout-task' });
-  await until(() => c.list()[0].sessionContext);
-  original.emit(h.id, 'lifecycle.spawned', { sessionId: 'timeout-native', pid: 111 }, 1);
-  original.emit(h.id, 'lifecycle.turn_completed', completed(), 1);
-  await until(async () => (await c.result(h.id)).ready);
-
-  const resumed = adapter();
-  resumed.spawn = async () => new Promise(() => {});
-  const replay = new Coordinator({
-    log, coordination, fences: new FenceTable(), adapters: { session: resumed },
-    worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
-    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 20, stopDeadlineMs: 100,
-  });
-  const recovered = await withLiveLoop(() => replay.recover(h.id));
-  assert.equal(recovered.ok, false);
-  assert.equal(recovered.result, 'recovery_timeout');
-  assert.equal(replay.list()[0].status, 'dead');
-  assert.equal(resumed.calls.kill.length, 1);
 });
 
 test('Phase 60 adversarial: a synchronous attach exception enters confirmed recovery cleanup', async () => {
@@ -1100,34 +1051,6 @@ test('Phase 60 adversarial: a synchronous attach exception enters confirmed reco
   assert.equal(f.replay._workers.get(f.handle.id).recoverySpawnPending, false);
 });
 
-test('Phase 60 adversarial: timed-out attach remains abortable and reserved until spawn settles', async () => {
-  const f = await recoverableNativeSession({ taskId: 'recover-pending-spawn', nativeId: 'pending-spawn-native' });
-  f.replay._recoveryTimeoutMs = 20;
-  admitGovernedRecoveryTurn(f.replay);
-  let settleSpawn;
-  let spawnSignal;
-  f.resumed.spawn = (_worker, _brief, opts) => {
-    spawnSignal = opts.signal;
-    return new Promise((resolve) => { settleSpawn = resolve; });
-  };
-
-  const recovered = await withLiveLoop(() => f.replay.recover(f.handle.id));
-  const internal = f.replay._workers.get(f.handle.id);
-
-  assert.equal(recovered.result, 'recovery_timeout');
-  assert.equal(spawnSignal?.aborted, true, 'timeout aborts the attach-only spawn contract');
-  assert.equal(internal.recoverySpawnPending, true, 'the unresolved adapter call remains owned');
-  assert.equal(internal.providerTurn.sealed, false, 'provider admission is retained while a late child remains possible');
-  assert.equal(f.log.read(f.handle.id).some((event) => event.kind === 'resource.provider_turn_released'), false);
-  assert.throws(() => f.replay.closeAuthority(), (error) => error.code === 'coordinator_not_drained');
-
-  settleSpawn({ ok: false, reason: 'aborted' });
-  await until(() => internal.recoverySpawnPending === false && internal.recoverySpawnPromise === null);
-
-  assert.equal(internal.providerTurn.sealed, true, 'the seat is released only after spawn settlement and confirmed stop');
-  assert.equal(f.log.read(f.handle.id).some((event) => event.kind === 'resource.provider_turn_released'), true);
-  assert.equal(f.replay.closeAuthority(), true);
-});
 
 test('Phase 60 adversarial: unconfirmed recovery teardown retains provider and runtime authority', async () => {
   const f = await recoverableNativeSession({ taskId: 'recover-unconfirmed-stop', nativeId: 'unconfirmed-stop-native' });

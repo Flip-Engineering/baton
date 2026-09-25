@@ -24,12 +24,8 @@
 //
 // Codes are NOT renamed (the fold's `participant_not_found` and the runtime's
 // `swarm_participant_not_found` both stay as spelled — renaming breaks pinned tests and recorded
-// ledgers). SWARM_REFUSAL_SAME_RULE_PAIRS names the spelling pairs that are the SAME rule, so a
-// later lane can collapse them deliberately.
-//
-// A code not in this table is a construction-time error: the helpers refuse to mint it (the
-// #372 closed-set rule), and the web layer derives its status maps from this table — a code
-// added to a helper without a row fails the issue430 rows instead of crossing as a transient 503.
+// ledgers). #598 F11: no construction-time vocabulary policing and no duplicate-spelling ledger —
+// the table is the HTTP-status derivation for the codes the family raises, nothing more.
 
 const row = (status, raisedBy, rule) => Object.freeze({ status, raisedBy: Object.freeze([...raisedBy]), rule });
 
@@ -227,16 +223,4 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // the same runtime/fold split the context-package rows above carry.
   swarm_spill_not_found: row(404, ['runtime'], 'the request names a spill this deployment does not hold'),
 });
-
-// The spelling pairs that are the SAME rule under two names (fold spelling first) — both stay as
-// spelled for the recorded ledgers and the pinned tests, and this note is what a later collapse
-// lane reads instead of re-deriving the equivalences.
-export const SWARM_REFUSAL_SAME_RULE_PAIRS = Object.freeze([
-  ['participant_not_found', 'swarm_participant_not_found'],
-  ['participant_duplicate', 'swarm_participant_exists'],
-  ['invalid_payload', 'swarm_command_invalid'],
-  ['invalid_payload', 'swarm_payload_invalid'],
-  ['contribution_author_mismatch', 'swarm_author_mismatch'],
-  ['swarm_already_closed', 'swarm_closed'],
-].map((pair) => Object.freeze(pair)));
 

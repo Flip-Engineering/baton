@@ -137,30 +137,18 @@ export const SWARM_BRIDGE_GUIDANCE = [
   `A refusal answers {"ok":false,"error":{"message","code","detail"}} on the same stream, and its message begins "${SWARM_BRIDGE_NOTHING_RECORDED}" followed by what to change. node "$BATON_SWARM_CLIENT" --help renders the full command help locally, before any credential is read.`,
 ].join('\n\n');
 
-/** What the caller must change, from the refusal's own rule: the closed argument vocabulary
- * already names the field and its expectation, and the runtime's dispatch decisions ship their own
- * `correction`. Never re-spelled per call site, so a new rule cannot land an unactionable refusal. */
+/** What the caller must change: the raising seam's own `correction` passes through verbatim
+ * (#598 F11 — never overridden by a re-spelling here); the bridge's own transport rules fall
+ * back to their fixed guidance, and anything else reads as no-op. */
 function refusalChange(detail) {
-  const field = typeof detail?.field === 'string' ? detail.field : null;
+  if (typeof detail?.correction === 'string' && detail.correction.length > 0) return detail.correction;
   switch (detail?.rule) {
-    case 'unknown-field': return `remove ${field}`;
-    case 'required-field': return `add ${(Array.isArray(detail.required) && detail.required.length > 1
-      ? detail.required : [field]).join(', ')} (${detail.expectation ?? 'a value'})`;
-    case 'field-predicate': return `${field} must be ${detail.expectation ?? 'a valid value'}`;
-    case 'closed-set': return `${field} must be ${detail.expectation ?? 'one of the values this command accepts'}`;
-    case 'payload-required': return `send a payload object naming ${(detail.required ?? []).join(', ')}`;
-    case 'payload-unknown-field': return `remove ${field}`;
-    case 'payload-field-required': return `add ${field} (${detail.expectation ?? 'a value'})`;
-    case 'identity-keyed': return 'drop idempotencyKey — this command takes its identity from its coordinates';
-    case 'arguments-shape': return 'send one JSON object as the request arguments';
-    case 'request-shape': return 'send one JSON object naming a command and its arguments';
     case 'bridge-token': return 'use an active bridge token for this participant';
     case 'bridge-method': return 'send the request as POST';
     case 'bridge-closed': return 'the bridge is closed; no request can be admitted';
     case 'bridge-frame': return 'ask again with a smaller projection or a narrower scope';
     case 'bridge-scope': return 'use the swarm this bridge token is bound to';
-    default: return typeof detail?.correction === 'string' && detail.correction.length > 0
-      ? detail.correction : 'no swarm state changed';
+    default: return 'no swarm state changed';
   }
 }
 

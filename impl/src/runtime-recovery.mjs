@@ -1050,11 +1050,12 @@ export function beginStartupRecovery(coordinator, recorder, authority) {
     coordinator._startupRecoveryState = 'pending';
   }
 
-export function startupRecoveryCandidates(coordinator, recorder, authority, maxStateRows) {
+export function startupRecoveryCandidates(coordinator, recorder, authority) {
     if (authority !== coordinator._startupRecoveryAuthority || coordinator._startupRecoveryState !== 'pending') throw Object.assign(new Error('startup session recovery authority is unavailable'), { code: 'session_recovery_authority' });
-    if (!Number.isSafeInteger(maxStateRows) || maxStateRows <= 0 || coordinator._workers.size > maxStateRows) throw Object.assign(new Error('startup session recovery state exceeds deployment capacity'), { code: 'session_recovery_capacity' });
+    // #598 F12: no count ceiling rejects the scan — every admissible candidate is returned and
+    // the supervisor works through them; the recovery-attempt ledger it reads is state, not a
+    // budget.
     const recoveryAttempts = recorder.coordination.snapshot().recoveryAttempts ?? [];
-    if (recoveryAttempts.length > maxStateRows) throw Object.assign(new Error('startup recovery attempt state exceeds deployment capacity'), { code: 'session_recovery_capacity' });
     const rows = [];
     for (const handle of coordinator._workers.values()) {
       const task = coordinator._tasks.get(handle.taskId); const adapter = coordinator._adapters[handle.vendor];
@@ -1261,7 +1262,6 @@ export function recover(coordinator, recorder, workerId, opts = {}) {
       model: handle?.modelResolved ?? null,
       effort: handle?.effortResolved ?? null,
       actor: opts.actor ?? 'orchestrator',
-      timeoutMs: opts.timeoutMs ?? coordinator._recoveryTimeoutMs,
     });
     const existing = coordinator._recoveryAttempts.get(workerId);
     if (existing) {
@@ -1284,7 +1284,7 @@ export function recover(coordinator, recorder, workerId, opts = {}) {
 
 export function recoverPlanBound(coordinator, recorder, workerId, rawRequest) {
     const fields = [
-      'actor', 'gate', 'maxAttempts', 'profileDigest', 'recoveryPolicyDigest', 'runId', 'timeoutMs',
+      'actor', 'gate', 'profileDigest', 'recoveryPolicyDigest', 'runId',
     ];
     const receivedFields = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest)
       ? Object.keys(rawRequest).filter((field) => field !== 'schemaVersion').sort()
@@ -1295,9 +1295,6 @@ export function recoverPlanBound(coordinator, recorder, workerId, rawRequest) {
       || typeof rawRequest.actor !== 'string' || rawRequest.actor.length === 0
       || Buffer.byteLength(rawRequest.actor) > 256 || rawRequest.actor.includes('\0')
       || typeof rawRequest.runId !== 'string' || rawRequest.runId.length === 0
-      || !Number.isSafeInteger(rawRequest.maxAttempts) || rawRequest.maxAttempts <= 0
-      || rawRequest.maxAttempts > 1_000_000
-      || !Number.isSafeInteger(rawRequest.timeoutMs) || rawRequest.timeoutMs <= 0
       || !/^[a-f0-9]{64}$/u.test(rawRequest.profileDigest ?? '')
       || !/^[a-f0-9]{64}$/u.test(rawRequest.recoveryPolicyDigest ?? '')
       || !rawRequest.gate || typeof rawRequest.gate !== 'object' || Array.isArray(rawRequest.gate)) {
@@ -1306,11 +1303,9 @@ export function recoverPlanBound(coordinator, recorder, workerId, rawRequest) {
     const request = Object.freeze({
       actor: rawRequest.actor,
       gate: Object.freeze(JSON.parse(JSON.stringify(rawRequest.gate))),
-      maxAttempts: rawRequest.maxAttempts,
       profileDigest: rawRequest.profileDigest,
       recoveryPolicyDigest: rawRequest.recoveryPolicyDigest,
       runId: rawRequest.runId,
-      timeoutMs: rawRequest.timeoutMs,
     });
     const handle = coordinator._workers.get(workerId);
     const task = handle ? coordinator._tasks.get(handle.taskId) : null;
@@ -1334,7 +1329,6 @@ export function recoverPlanBound(coordinator, recorder, workerId, rawRequest) {
       try {
         const outcome = await coordinator._recover(workerId, {
           actor: request.actor,
-          timeoutMs: request.timeoutMs,
           planRecovery: { authority: coordinator._planRecoveryAuthority, request },
         });
         const recovered = coordinator._workers.get(workerId);
@@ -1400,10 +1394,8 @@ export function _admitDurableRecoveryAttempt(coordinator, recorder, handle, task
       });
     }
     const repoId = coordinator._repoId ?? 'baton-local';
-    const maxAttempts = planRecovery?.maxAttempts ?? coordinator._recoveryMaxAttempts;
     const recoveryPolicyDigest = planRecovery?.recoveryPolicyDigest ?? canonicalDigest({
-      schemaVersion: 1, mode: 'direct', maxAttempts: coordinator._recoveryMaxAttempts,
-      timeoutMs: coordinator._recoveryTimeoutMs,
+      schemaVersion: 1, mode: 'direct',
     });
     const authority = {
       gateDigest: planRecovery ? canonicalDigest(planRecovery.gate) : canonicalDigest({
@@ -1442,7 +1434,6 @@ export function _admitDurableRecoveryAttempt(coordinator, recorder, handle, task
     const request = createRecoveryAttemptAdmission({
       ...base,
       attempt: head ? head.attempt + 1 : 1,
-      maxAttempts,
       expectedAttemptHeadEvent: head?.completedEvent ?? null,
     });
     if (coordinator._taskTopologyPolicy) {
@@ -1591,9 +1582,12 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
         return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code, attempt: durableRecoveryAttempt.attempt };
       }
 
-      const timeoutMs = opts.timeoutMs ?? coordinator._recoveryTimeoutMs;
       const admission = { events: [] };
       admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
+      // #598 F02: no recovery timer arms here — the attach wait ends on the successor's own
+      // ready event or its transport's death event (the dispatcher wakes resolveDeath on
+      // exit-class observations), and an explicit stop settles it through the spawn signal.
+      admission.dead = new Promise((resolve) => { admission.resolveDeath = resolve; });
       handle.turnAdmission = admission;
     let recoveryRequested;
     let runtime;
@@ -1622,12 +1616,6 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
       throw releaseError ?? error;
     }
 
-    let timerHandle;
-    let timedOut = false;
-    const timeout = new Promise((resolve) => {
-      timerHandle = coordinator._setTimeout(() => { timedOut = true; resolve({ timeout: true }); }, timeoutMs);
-      if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
-    });
     const exactRecoveredProcess = handle.processRef?.state === 'unconfirmed_after_restart'
       && handle.processRef.generation === handle.processGeneration
       && handle.recoveredProcessAuthority === true
@@ -1675,19 +1663,18 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
     handle.recoverySpawnPromise = trackedAttempt;
     coordinator._bestEffort(trackedAttempt, 'recovery_attempt_observer');
 
-    let outcome = await Promise.race([attempt, timeout]);
-    if (outcome?.ack?.ok === true && !timedOut) {
+    let outcome = await attempt;
+    if (outcome?.ack?.ok === true) {
       outcome = await Promise.race([
         admission.spawned.then((event) => ({ ack: outcome.ack, spawned: event })),
-        timeout,
+        admission.dead.then((event) => ({ ack: outcome.ack, dead: event })),
       ]);
     }
-    if (timerHandle != null) coordinator._clearTimeout(timerHandle);
 
     const expectedId = handle.sessionRef.id;
     const observedId = outcome?.spawned?.payload?.threadId ?? outcome?.spawned?.payload?.sessionId;
-    let failed = outcome?.timeout
-      ? { result: 'recovery_timeout', reason: `native reattachment exceeded ${timeoutMs}ms` }
+    let failed = outcome?.dead
+      ? { result: 'recovery_transport_closed', reason: 'native reattachment transport died before admission committed' }
       : outcome?.error
         ? { result: 'recovery_exception', reason: String(outcome.error?.message ?? outcome.error) }
         : outcome?.ack?.ok !== true
@@ -1826,23 +1813,21 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
     // Native prompt methods can synchronously emit turn events before their Ack resolves. Keep
     // those observations private until the accepted receipt is durable.
     const dispatchAdmission = { events: [] };
+    dispatchAdmission.dead = new Promise((resolve) => { dispatchAdmission.resolveDeath = resolve; });
     handle.turnAdmission = dispatchAdmission;
     let dispatchAck;
     let dispatchError = null;
-    let dispatchTimer;
     const promptAttempt = Promise.resolve().then(() => (typeof adapter.promptBrief === 'function'
       ? adapter.promptBrief(workerId, providerBrief)
       : adapter.prompt(workerId, providerBrief, 'turn'))).then(
       (ack) => ({ ack }),
       (error) => ({ error }),
     );
-    const promptTimeout = new Promise((resolvePromptTimeout) => {
-      dispatchTimer = coordinator._setTimeout(() => resolvePromptTimeout({ timeout: true }), timeoutMs);
-      if (dispatchTimer && typeof dispatchTimer.unref === 'function') dispatchTimer.unref();
-    });
-    const dispatchOutcome = await Promise.race([promptAttempt, promptTimeout]);
-    if (dispatchTimer != null) coordinator._clearTimeout(dispatchTimer);
-    if (dispatchOutcome.timeout) dispatchError = Object.assign(new Error(`recovery continuation dispatch exceeded ${timeoutMs}ms`), { code: 'dispatch_timeout' });
+    const dispatchOutcome = await Promise.race([
+      promptAttempt,
+      dispatchAdmission.dead.then((event) => ({ dead: event })),
+    ]);
+    if (dispatchOutcome.dead) dispatchError = Object.assign(new Error('the recovery continuation transport died during dispatch'), { code: 'dispatch_transport_closed' });
     else if (dispatchOutcome.error) dispatchError = dispatchOutcome.error;
     else dispatchAck = dispatchOutcome.ack;
     const stopWonDuringDispatch = () => coordinator._stopWaiters.has(handle.id)
@@ -2028,6 +2013,9 @@ export async function _reattachPreservedSession(coordinator, recorder, handle, t
     const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
     const admission = { events: [] };
     admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
+    // #598 F02: the preserved reattach waits on the successor's own ready event or its
+    // transport's death event — no fixed window.
+    admission.dead = new Promise((resolve) => { admission.resolveDeath = resolve; });
     handle.turnAdmission = admission;
     const requested = recorder.log.append({
       worker: workerId, harness: coordinator._harnessOf(handle.vendor),
@@ -2055,12 +2043,6 @@ export async function _reattachPreservedSession(coordinator, recorder, handle, t
     const abort = new AbortController();
     handle.recoverySpawnAbort = abort;
     handle.recoverySpawnPending = true;
-    const timeoutMs = opts.timeoutMs ?? coordinator._recoveryTimeoutMs;
-    let timer;
-    const timeout = new Promise((resolve) => {
-      timer = coordinator._setTimeout(() => resolve({ timeout: true }), timeoutMs);
-      if (timer && typeof timer.unref === 'function') timer.unref();
-    });
     const spawned = Promise.resolve().then(() => adapter.spawn(workerId, task.brief, {
       worktree: context.worktree,
       // #163 law (operator ruling): no wall-time clock feeds a member's fate. The ordinary spawn
@@ -2079,19 +2061,19 @@ export async function _reattachPreservedSession(coordinator, recorder, handle, t
       processGeneration: handle.processGeneration,
       processReapTimeoutMs: Math.max(1, Math.floor(coordinator._stopDeadlineMs * 0.8)),
     })).then((ack) => ({ ack }), (error) => ({ error }));
-    let outcome = await Promise.race([spawned, timeout]);
-    if (outcome?.ack?.ok === true && !outcome.timeout) {
+    let outcome = await spawned;
+    if (outcome?.ack?.ok === true) {
       outcome = await Promise.race([
-        admission.spawned.then((event) => ({ ...outcome, spawned: event })), timeout,
+        admission.spawned.then((event) => ({ ...outcome, spawned: event })),
+        admission.dead.then((event) => ({ ...outcome, dead: event })),
       ]);
     }
-    if (timer != null) coordinator._clearTimeout(timer);
     handle.recoverySpawnPending = false;
     handle.recoverySpawnAbort = null;
 
     const observed = outcome?.spawned?.payload?.threadId ?? outcome?.spawned?.payload?.sessionId;
     const unexpected = admission.events.filter((event) => event.kind !== 'lifecycle.spawned');
-    const failed = outcome?.timeout ? 'recovery_timeout'
+    const failed = outcome?.dead ? 'recovery_transport_closed'
       : outcome?.error ? 'recovery_exception'
         : outcome?.ack?.ok !== true ? 'recovery_refused'
           : outcome.ack.attached !== true ? 'recovery_attachment_unproven'
@@ -2101,9 +2083,6 @@ export async function _reattachPreservedSession(coordinator, recorder, handle, t
                 : handle.processRef?.state === 'closed' ? 'recovery_transport_closed' : null;
     if (failed) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
-      if (outcome?.timeout && !abort.signal.aborted) {
-        abort.abort({ reason: 'preserved_session_reattachment_timeout' });
-      }
       return coordinator._failPreservedReattachment(handle, task, failed);
     }
 
@@ -3457,9 +3436,10 @@ export function* _replay(coordinator, recorder) {
                 // coordinator's injected clock are two independently configurable sources (a
                 // fake test clock never redefines Log.clock) and must never be mixed to derive
                 // an authoritative wall-time comparison.
-                deadlineAt: interactionKind === 'approval' ? (coordinator._now() + coordinator._approvalTimeoutMs)
-                  : interactionKind === 'decision' ? (coordinator._now() + (e.payload?.request?.deadlineMs ?? 0)) : null,
-                ...(interactionKind === 'decision' ? {
+                deadlineAt: interactionKind === 'approval' ? null
+                  : interactionKind === 'decision' && Number.isSafeInteger(e.payload?.request?.deadlineMs)
+                    ? (coordinator._now() + e.payload.request.deadlineMs) : null,
+                  ...(interactionKind === 'decision' ? {
                   options: e.payload.request.options,
                   allowFreeResponse: e.payload.request.allowFreeResponse,
                   question: e.payload.request.question,

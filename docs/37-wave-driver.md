@@ -8,6 +8,15 @@ the 2026-07-23/24 evidence envelopes themselves (every close ended `paused`/`run
 `work_completed`). v2 folds all twelve findings; the termination law (L6) is new and is the
 reason this spec exists at all.
 
+**Update, 2026-09-25 (#598 F01):** the termination law is simplified — the wave ends on
+declared completion (every member terminal or claim-resolved) or the caller's explicit stop.
+The stall clock (`stallTimeoutMs`), the unproductive/refusal nudge budgets and the
+unchanged-digest done inference are removed; the policy keys refuse loudly. A parked member
+stays parked: its pause is attention the wave author or orchestrator resolves. A checkpoint
+that carries the member's own completed `workerResult` is resolved through `claim_turn` when
+the wave author opted into claim finalization — the runtime's live liveness gate decides,
+never a digest comparison.
+
 ## 1. Laws
 
 - **L1 — One loop, shipped once.** The poll/steer/settle/close skeleton exists exactly once in

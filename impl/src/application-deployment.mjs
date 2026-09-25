@@ -516,8 +516,7 @@ function repositorySnapshot(repoRoot, stateRoot, providerKeyFiles = DEFAULT_OMP_
 const ROUTE_BILLING_BASES = Object.freeze(['subscription', 'api']);
 
 function normalizeRoutes(value = DEFAULT_ROUTES) {
-  if (!Array.isArray(value) || value.length === 0
-    || value.length > FRAME_LIMITS['deployment.routes'].value) {
+  if (!Array.isArray(value) || value.length === 0) {
     throw deploymentError('advanced routes must be a non-empty bounded array');
   }
   const seen = new Set();
@@ -1931,12 +1930,11 @@ function goalPlanPolicy(repoId) {
     effectClasses: ['provider_call', 'repository_edit'],
     capabilityClasses: ['baton_orchestrator', 'code', 'test'],
     limits: {
-      maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 16, maxDepsPerNode: 16,
-      // #362: a recruit's run objective is its whole composed brief, admitted up to the
-      // run.objective lane (the registry's one objective ceiling), so the goal text bound IS
-      // that lane's value — never a literal below it. The goal and plan byte bounds are the
-      // goal/plan substrate's own ceilings (GOAL_PLAN_CEILINGS), declared once in goal-plan.mjs.
-      maxTextBytes: FRAME_LIMITS['run.objective'].value, maxItems: 128, maxScopePaths: 128, maxRouteValues: 64,
+      // #598 F08: the version/node/item/scope/route count ceilings are gone; the byte bounds
+      // remain the #362 substrate ceilings — a recruit's run objective is its whole composed
+      // brief, admitted up to the run.objective lane (the registry's one objective ceiling),
+      // so the goal text bound IS that lane's value — never a literal below it.
+      maxTextBytes: FRAME_LIMITS['run.objective'].value,
       maxGoalBytes: GOAL_PLAN_CEILINGS.goalBytes, maxPlanBytes: GOAL_PLAN_CEILINGS.planBytes,
       // A status record is one durable body: the registry's spill.body substrate row.
       maxStatusBytes: FRAME_LIMITS['spill.body'].value,
@@ -5355,21 +5353,26 @@ class BatonDeployment {
 
   /** #306: readiness — the successor's marker file (its own declaration that it is up and waiting
    * on the leases) versus the child's exit. A child that dies first fails the handoff with the
-   * bounded stderr tail (#326's bound, the same derivation the crash rows use). */
+   * bounded stderr tail (#326's bound, the same derivation the crash rows use). #599: no fixed
+   * window — the wait ends on the successor's ready marker or its exit event, so a loaded host
+   * delays the handoff instead of failing it. */
   async #awaitSuccessorReady(child, spec, tail) {
-    const deadline = Date.now() + this.#reincarnationWait();
     let exited = null;
-    const onExit = (code, signal) => { exited = { code, signal }; };
+    let wake = null;
+    const exitPromise = new Promise((resolveWake) => { wake = resolveWake; });
+    const onExit = (code, signal) => {
+      exited = { code, signal };
+      wake();
+    };
     if (typeof child.once === 'function') child.once('exit', onExit);
     try {
-      while (Date.now() < deadline) {
+      for (;;) {
         if (exited !== null) {
           return { ok: false, cause: Object.freeze({ exit: exited.code, signal: exited.signal, stderrTail: tail.text }) };
         }
         if (existsSync(spec.markerPath)) return { ok: true };
-        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+        await Promise.race([exitPromise, new Promise((resolveWait) => setTimeout(resolveWait, 25))]);
       }
-      return { ok: false, cause: Object.freeze({ exit: null, signal: null, stderrTail: tail.text, reason: 'readiness_timeout' }) };
     } finally {
       if (typeof child.removeListener === 'function') child.removeListener('exit', onExit);
     }
@@ -6858,7 +6861,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     contextProgram: contextRuntime.driverConfiguration(),
     workflowPolicy,
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
-    approvalTimeoutMs: DEFAULT_BUDGET.wallMin * 60_000,
     // #500: the stop path's 15 s deadline; each worker wait inside it takes at most the two
     // bounded attempts STOP_WAIT_ATTEMPT_BOUND names (above) before the stop proceeds with
     // the worker named abandoned. Operator-declared with no derivation elsewhere; the #500

@@ -62,7 +62,7 @@ function validRecipe(overrides = {}) {
         report: 'reports/alpha.md',
       },
     ],
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, settleTimeoutMs: 5_000, preflight: false },
     ...overrides,
   };
 }
@@ -191,7 +191,8 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
   // EXACT routes only in v2 — a manual route (harness/model/effort) is non-exact AND unknown.
   refused((r) => { r.members[0] = { role: 'alpha', harness: 'mock', model: 'mock-model', effort: 'low', scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }; return r; }, 'exact');
 
-  // Oversize: descriptor > 8KiB, task > 2KiB, constraint > 240B, > 8 constraints, > 8 cards.
+  // Oversize: descriptor > 8KiB, task > 2KiB, constraint > 240B — the byte caps stay; the
+  // constraint/card COUNT ceilings are gone with the COUNTS registry (#598 F08).
   assert.throws(
     () => admitRecipe(structuredClone(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 'x'.repeat(2_049), constraints: [] } }] }))),
     (error) => error?.code === 'recipe_oversize' && /task/u.test(error.message),
@@ -201,16 +202,6 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
     () => admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: ['y'.repeat(241)] } }] })),
     (error) => error?.code === 'recipe_oversize' && /constraint/u.test(error.message),
     'oversize constraint refuses with the cap',
-  );
-  assert.throws(
-    () => admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: Array.from({ length: 9 }, (_, i) => `c${i}`) } }] })),
-    (error) => error?.code === 'recipe_schema_invalid' && /constraint/u.test(error.message),
-    'more than 8 constraints refuses',
-  );
-  assert.throws(
-    () => admitRecipe({ name: 'big', version: '1', members: Array.from({ length: 9 }, (_, i) => ({ role: `m${i}`, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } })), policy: {} }),
-    (error) => error?.code === 'recipe_schema_invalid' && /member/u.test(error.message),
-    'more than 8 cards refuses',
   );
   // The descriptor cap (8KiB) fires when every per-field cap holds but the whole exceeds it —
   // reachable via many cards (8 × a sub-2KiB task), never via one oversize field (that trips the
@@ -234,7 +225,7 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
   // Function value anywhere in the recipe refuses (R-DC-6: data, not code) — runtime deep scan.
   // Built inline (no structuredClone — functions are not structurally cloneable, which is the point).
   assert.throws(
-    () => admitRecipe({ name: 'fn', version: '1', members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }], policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false, unproductiveNudgeBudget: () => 1 } }),
+    () => admitRecipe({ name: 'fn', version: '1', members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }], policy: { steering: 'none', pollIntervalMs: () => 1, settleTimeoutMs: 5_000, preflight: false } }),
     (error) => error?.code === 'recipe_schema_invalid' && /function/ui.test(error.message),
     'a function value in policy refuses (data, not code)',
   );
@@ -407,7 +398,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     scope: ['impl/**'],
     idempotencyKey: 'rc6-key',
     manifestPath,
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, settleTimeoutMs: 5_000, preflight: false },
   });
   assert.equal(tracker.calls.length, 1, 'the preset starts exactly one implementer seat');
 
@@ -427,7 +418,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     task: 'the assigned contract rung',
     route: { harness: 'mock', model: 'mock-model', effort: 'low' },
     scope: ['impl/**'],
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, settleTimeoutMs: 5_000, preflight: false },
   }))), 'the preset recipe digest is stable');
 
   const firstRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
@@ -440,7 +431,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     scope: ['impl/**'],
     idempotencyKey: 'rc6-key',
     manifestPath,
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, settleTimeoutMs: 5_000, preflight: false },
   });
   assert.equal(tracker.calls.length, 0, 'the idempotencyKey retry attaches — zero additional starts');
   const retryRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();

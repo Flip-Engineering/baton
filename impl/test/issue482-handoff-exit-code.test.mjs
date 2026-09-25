@@ -41,8 +41,9 @@ const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 // The warning Node prints when the loop drains under a top-level await it never settled.
 const UNSETTLED = /unsettled top-level await/u;
-// The handoff's own bound (host.reincarnation.wait_ms) is minutes; a fixture handoff on an idle
-// machine is seconds, so this wait is generous by an order of magnitude.
+// The successor-start wait is event-driven (the successor's ready marker or its exit event ends
+// it), and the remaining handoff windows keep their frame bound (host.reincarnation.wait_ms, in
+// minutes); a fixture handoff on an idle machine is seconds, so this wait is generous.
 const STOP_BOUND_MS = 60_000;
 // Comfortably past the successor's own predecessor watch poll: a successor that the old's exit had
 // touched would show it by now.

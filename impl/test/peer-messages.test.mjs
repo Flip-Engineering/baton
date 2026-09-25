@@ -133,7 +133,7 @@ test('native peer initiation delivers with derived authorship and returns correl
   const fx = laneFixture();
   const a = await fx.coordinator.spawn('mock', makeBrief(), {runId:'run:team'});
   const b = await fx.coordinator.spawn('mock', makeBrief(), {runId:'run:team'});
-  emit(fx, a, {to:{workerId:b.id}, kind:'query', body:'Which interface can we share?', budget:3});
+  emit(fx, a, {to:{workerId:b.id}, kind:'query', body:'Which interface can we share?'});
   await flush();
   const root = sent(fx,a);
   assert.equal(root.ok,true);
@@ -165,12 +165,17 @@ test('broadcast independently collects each sender once and rebuilds fan-in afte
   let receipt=fx.coordinator.messageReceipt(root.messageId);
   assert.deepEqual(receipt.replies.map((r)=>r.from),[a.id,b.id]);
   assert.equal(JSON.parse(JSON.stringify(receipt)).replies.length,2);
+  // #598 F03: no per-sender reply slot — a duplicate reply by the same sender DELIVERS and
+  // becomes that sender's latest reply; `reply` keeps the first.
   emit(fx,a,{inReplyTo:root.messageId,body:'duplicate'});
   await flush();
-  assert.equal(rejected(fx,a),'message_depth_exceeded');
+  assert.equal(rejected(fx,a),undefined);
+  receipt=fx.coordinator.messageReceipt(root.messageId);
+  assert.deepEqual(receipt.replies.map((r)=>r.body),['duplicate','B finding']);
+  assert.equal(receipt.reply.body,'A finding');
   const replay=replayCoordinator(fx);
   receipt=replay.messageReceipt(root.messageId);
-  assert.deepEqual(receipt.replies.map((r)=>r.body),['A finding','B finding']);
+  assert.deepEqual(receipt.replies.map((r)=>r.body),['duplicate','B finding']);
   assert.equal(receipt.reply.body,'A finding');
 });
 

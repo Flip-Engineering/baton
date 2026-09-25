@@ -37,7 +37,7 @@ const sessionContextDigest = digest({ worktree: '/redacted/worktree', ownerTaskI
 
 const admissionPayloadFields = Object.freeze([
   'admissionDigest', 'attempt', 'attemptId', 'authority', 'expectedAttemptHeadEvent',
-  'maxAttempts', 'priorTask', 'recoveryTaskId', 'repoId', 'requestDigest', 'route',
+  'priorTask', 'recoveryTaskId', 'repoId', 'requestDigest', 'route',
   'runId', 'schemaVersion', 'scope', 'seriesId', 'session', 'verifiedOwner', 'workerPolicy',
 ].sort());
 
@@ -144,7 +144,7 @@ function requestFor(f, overrides = {}) {
   const authority = overrides.authority ?? {
     gateDigest: digest({ plan: 'phase76', node: 'recover' }),
     profileDigest: digest({ profile: 'phase76-recoverable' }),
-    recoveryPolicyDigest: digest({ mode: 'manual', maxAttempts: overrides.maxAttempts ?? 4 }),
+    recoveryPolicyDigest: digest({ mode: 'manual' }),
   };
   const recoveryTaskId = overrides.recoveryTaskId ?? `recovery:${digest({
     seriesId, attempt, priorTask, verifiedOwner, session: selectedSession,
@@ -161,7 +161,6 @@ function requestFor(f, overrides = {}) {
     seriesId,
     attemptId,
     attempt,
-    maxAttempts: overrides.maxAttempts ?? 4,
     expectedAttemptHeadEvent: Object.hasOwn(overrides, 'expectedAttemptHeadEvent')
       ? overrides.expectedAttemptHeadEvent : null,
     priorTask,
@@ -203,7 +202,6 @@ function completionFor(request, state, overrides = {}) {
 function nextRequestFor(f, prior, overrides = {}) {
   return requestFor(f, {
     attempt: prior.attempt + 1,
-    maxAttempts: prior.maxAttempts,
     seriesId: prior.seriesId,
     expectedAttemptHeadEvent: prior.completedEvent,
     sessionIdDigest: prior.session.idDigest,
@@ -273,7 +271,9 @@ test('RA2: exact admission/completion retries replay; same key or identity with 
   );
 
   const beforeConflict = f.store.snapshot().lastSeq;
-  const changedCore = { ...request, maxAttempts: request.maxAttempts + 1 };
+  // Same attempt identity (the idempotency key), changed deployment meaning: the head
+  // compare-and-set expectation rides the same attemptId but carries a different digest.
+  const changedCore = { ...request, expectedAttemptHeadEvent: 99 };
   const changed = {
     ...changedCore,
     requestDigest: digest(Object.fromEntries(Object.entries(changedCore)
@@ -417,31 +417,22 @@ test('RA6: the completion state and minimal receipt are closed and semantically 
   f.store.releaseWriterLease();
 });
 
-test('RA7: maxAttempts is immutable within a series and is an effective exact ceiling', () => {
-  const f = fixture('maximum');
-  const firstRequest = requestFor(f, { maxAttempts: 2 });
+test('RA7: series authority is immutable across the attempts of one series', () => {
+  const f = fixture('authority-series');
+  const firstRequest = requestFor(f);
   f.store.admitRecoveryAttempt(firstRequest, authFor(firstRequest));
   f.store.completeRecoveryAttempt(
     completionFor(firstRequest, 'not_started'), completionAuthFor(firstRequest),
   );
   const first = f.store.recoveryAttempt(firstRequest.attemptId);
 
-  const changedCeiling = nextRequestFor(f, first, { maxAttempts: 3 });
+  const changedAuthority = nextRequestFor(f, first, {
+    authority: { ...first.authority, recoveryPolicyDigest: digest({ mode: 'manual', generation: 2 }) },
+  });
+  assert.notEqual(changedAuthority.attemptId, first.attemptId);
   assert.equal(
-    refusalCode(() => f.store.admitRecoveryAttempt(changedCeiling, authFor(changedCeiling))),
+    refusalCode(() => f.store.admitRecoveryAttempt(changedAuthority, authFor(changedAuthority))),
     'recovery_attempt_authority_changed',
-  );
-
-  const secondRequest = nextRequestFor(f, first);
-  f.store.admitRecoveryAttempt(secondRequest, authFor(secondRequest));
-  f.store.completeRecoveryAttempt(
-    completionFor(secondRequest, 'closed'), completionAuthFor(secondRequest),
-  );
-  const second = f.store.recoveryAttempt(secondRequest.attemptId);
-  const exhausted = nextRequestFor(f, second);
-  assert.equal(
-    refusalCode(() => f.store.admitRecoveryAttempt(exhausted, authFor(exhausted))),
-    'recovery_attempt_exhausted',
   );
   f.store.releaseWriterLease();
 });

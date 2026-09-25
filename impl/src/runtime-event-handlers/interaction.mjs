@@ -103,7 +103,9 @@ const requestId = ctx.payload?.requestId;
           resolution: null,
           consumer: null,
           turnEpochAtAsk: coordinator._safeTurnEpoch(ctx.handle),
-          deadlineAt: coordinator._now() + coordinator._approvalTimeoutMs,
+          // #598 F09: no approval timer — the request stays pending for its decision maker;
+          // denial is the result of an actual decision.
+          deadlineAt: null,
         };
         const evidence = recorder.mapEvent(askedEvent);
         if (ctx.payload?.blocking !== false) {
@@ -215,7 +217,9 @@ export function decisionRequested(coordinator, recorder, ctx) {
           resolution: null,
           consumer: null,
           turnEpochAtAsk: coordinator._safeTurnEpoch(ctx.handle),
-          deadlineAt: coordinator._now() + request.deadlineMs,
+          // #598 F09: the decision stays pending without a declared lifetime; an
+          // operator-declared deadlineMs is honored.
+          deadlineAt: Number.isSafeInteger(request.deadlineMs) ? coordinator._now() + request.deadlineMs : null,
           options: request.options,
           allowFreeResponse: request.allowFreeResponse,
           question: request.question,

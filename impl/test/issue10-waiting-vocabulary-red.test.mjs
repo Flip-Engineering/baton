@@ -32,9 +32,8 @@
 //   CC-HONEST  reduceMember([], null, waitingOn.capacity_ceiling) → {class:'capacity_ceiling',
 //              blocked:false, waiting:true, gated:null, interactions:[]}, never working.
 //              (RED: stage[reduceMember-missing])
-//   CC-STRIP   a view that churns ONLY waitingOn.capacity_ceiling never moves the wave marker —
-//              the stall clock fires (basis 'stall'), never the cap. (RED:
-//              stage[stallMarker-missing])
+//   CC-STRIP   a view that churns ONLY waitingOn.capacity_ceiling renders a byte-static wave
+//              marker (the digest strips the derived wait field).
 //
 // §B dispatch_pending (Arm-2, no receipt — silent exits)
 //   DP-START   a claimed-but-undispatched task (patched _resolveVendor → null, so NO receipt)
@@ -49,7 +48,7 @@
 //              mid-queue. (RED: stage[waiting-on-exit-missing])
 //   DP-EXIT-c  stop → cancelled → waitingOn null. (RED: stage[waiting-on-exit-missing])
 //   DP-HONEST  reduceMember classes dispatch_pending, never working. (RED: stage[reduceMember-missing])
-//   DP-STRIP   waitingOn.dispatch_pending churn never moves the marker. (RED: stage[stallMarker-missing])
+//   DP-STRIP   waitingOn.dispatch_pending churn never moves the rendered marker.
 //
 // §C spawning (the D6 union worktreeCreationPending||nativeSpawnPending||recoverySpawnPending)
 //   SP-START-WT       a deferred worktree creation projects spawnPending true + spawnWindow
@@ -70,7 +69,7 @@
 //                     workerId, runId} in EVERY window (worktree/spawn/recovery); an unknown
 //                     worker still refuses worker_not_active (PIN). (RED: stage[spawn-refusal-missing])
 //   SP-HONEST         reduceMember classes spawning, never working. (RED: stage[reduceMember-missing])
-//   SP-STRIP          waitingOn.spawning churn never moves the marker. (RED: stage[stallMarker-missing])
+//   SP-STRIP          waitingOn.spawning churn never moves the rendered marker.
 //
 // §D plan_approval (the pure fold)
 //   PA-START   a run awaiting_plan_approval projects waitingOn.plan_approval (since = the
@@ -81,7 +80,7 @@
 //   PA-EXIT    approve → dispatched → waitingOn null, phase moved (PIN). (RED:
 //              stage[waiting-on-exit-missing])
 //   PA-HONEST  reduceMember classes plan_approval, never working. (RED: stage[reduceMember-missing])
-//   PA-STRIP   waitingOn.plan_approval churn never moves the marker. (RED: stage[stallMarker-missing])
+//   PA-STRIP   waitingOn.plan_approval churn never moves the rendered marker.
 //
 // §E provider_stalled (health.stall_suspected, watchdog stallAction 'none')
 //   PS-START   a watchdog stall suspicion projects waitingOn.provider_stalled with since = the
@@ -94,7 +93,7 @@
 //   PS-HONEST  a blocked member reads honest null — the interaction owns the projection, never
 //              provider_stalled; reduceMember classes provider_stalled, never working. (RED:
 //              stage[reduceMember-missing] + stage[waiting-on-honest-null-missing])
-//   PS-STRIP   waitingOn.provider_stalled churn never moves the marker. (RED: stage[stallMarker-missing])
+//   PS-STRIP   waitingOn.provider_stalled churn never moves the rendered marker.
 //
 // §F D9 — the reduced flags, suppression, and the checkpoint⇒not-waiting invariant
 //   D9-INVARIANT  PIN: a drivered paused task reads the three raw spawn flags false — the
@@ -130,9 +129,9 @@
 //    gains a third argument; a non-null waitingOn yields {class:<kind>, blocked:false,
 //    waiting:true, gated:null, interactions:[]}; the checkpoint/working shapes gain
 //    waiting:false. Exported.
-// 3. wave-driver.mjs stallMarker — the existing (:168-174) hash strips waitingOn (additive
-//    delete). The STRIP rows drive the REAL driver end-to-end (D10's either path); the export
-//    is optional.
+// 3. wave-driver.mjs livenessMarker — the hash strips waitingOn (additive delete) and feeds the
+//    per-poll rendering line only. The STRIP rows drive the REAL driver end-to-end and read the
+//    rendered marker through onProgress.
 // 4. application.mjs semanticViewDigest — exported (module-private :259-264 today); still strips
 //    ONLY cursor/progressClass/requiredAction, so a waitingOn transition moves the digest.
 // 5. coordinator.mjs task.dispatch_deferred — the ceiling-skip receipt, idempotency key
@@ -568,12 +567,9 @@ function fakeWave(programsByRole) {
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500,
-  finalization: 'claim-on-stall', unproductiveNudgeBudget: 1, saltObjectives: false,
+  pollIntervalMs: 20, settleTimeoutMs: 1_500,
+  finalization: 'claim-on-stall', saltObjectives: false,
 });
-// STRIP rows: a churning waitingOn must not reset the clock (stallTimeoutMs fires first); today
-// the churn resets it every poll and the wave rides to the cap.
-const STRIP_POLICY = { ...DRIVER_POLICY, stallTimeoutMs: 250 };
 const actCallsOf = (wave, role, action) => wave.runs.get(role).actCalls.filter((call) => call.action === action);
 
 // A canonical waitingOn value for a kind (the D3 since-stamp shape). provider_stalled rides a
@@ -588,7 +584,11 @@ function WAIT(kind, detailSeed = 'x') {
 function stripWave(kind) {
   return fakeWave({
     w: {
-      status: (poll) => fakeView({ waitingOn: poll % 2 === 0 ? WAIT(kind, 'a') : WAIT(kind, 'b') }),
+      // The waitingOn detail churns every poll; the fixture turns the member terminal after a
+      // few polls so the wave closes (no stall clock exists to end it).
+      status: (poll) => fakeView(poll >= 6
+        ? { terminal: true }
+        : { waitingOn: poll % 2 === 0 ? WAIT(kind, 'a') : WAIT(kind, 'b') }),
       act: () => ({ ok: true }),
     },
   });
@@ -691,10 +691,23 @@ test('CC-HONEST (RED): reduceMember classes capacity_ceiling, never working', ()
     'stage[reduceMember-missing]: the waiting shape for capacity_ceiling');
 });
 
-test('CC-STRIP (RED): waitingOn.capacity_ceiling transitions never move the wave marker — the stall clock fires, never the cap', async () => {
+test('CC-STRIP: waitingOn.capacity_ceiling transitions never move the rendered wave marker', async () => {
   const wave = stripWave('capacity_ceiling');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+  let polls = 0;
+  const lines = new Set();
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY,
+    // Collect only the pre-terminal rendering lines: the terminal poll legitimately renders a
+    // different class, and the churn rows pin marker stability across the WAITING polls only.
+    onProgress: (line, meta) => {
+      polls += 1;
+      if (new Map(meta.classes).get('w') === 'terminal') return;
+      lines.add(line);
+    },
+  }).run({ members: wave.members });
+  assert.ok(polls >= 3, 'the row observed several polls of churn');
+  assert.equal(lines.size, 1, 'the rendered marker is byte-static across the churn');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
 });
 
 // ===========================================================================
@@ -844,10 +857,23 @@ test('DP-HONEST (RED): reduceMember classes dispatch_pending, never working', ()
     'stage[reduceMember-missing]: the waiting shape for dispatch_pending');
 });
 
-test('DP-STRIP (RED): waitingOn.dispatch_pending transitions never move the wave marker', async () => {
+test('DP-STRIP: waitingOn.dispatch_pending transitions never move the rendered wave marker', async () => {
   const wave = stripWave('dispatch_pending');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+  let polls = 0;
+  const lines = new Set();
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY,
+    // Collect only the pre-terminal rendering lines: the terminal poll legitimately renders a
+    // different class, and the churn rows pin marker stability across the WAITING polls only.
+    onProgress: (line, meta) => {
+      polls += 1;
+      if (new Map(meta.classes).get('w') === 'terminal') return;
+      lines.add(line);
+    },
+  }).run({ members: wave.members });
+  assert.ok(polls >= 3, 'the row observed several polls of churn');
+  assert.equal(lines.size, 1, 'the rendered marker is byte-static across the churn');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
 });
 
 // ===========================================================================
@@ -1007,10 +1033,23 @@ test('SP-HONEST (RED): reduceMember classes spawning, never working', () => {
     'stage[reduceMember-missing]: the waiting shape for spawning');
 });
 
-test('SP-STRIP (RED): waitingOn.spawning transitions never move the wave marker', async () => {
+test('SP-STRIP: waitingOn.spawning transitions never move the rendered wave marker', async () => {
   const wave = stripWave('spawning');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+  let polls = 0;
+  const lines = new Set();
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY,
+    // Collect only the pre-terminal rendering lines: the terminal poll legitimately renders a
+    // different class, and the churn rows pin marker stability across the WAITING polls only.
+    onProgress: (line, meta) => {
+      polls += 1;
+      if (new Map(meta.classes).get('w') === 'terminal') return;
+      lines.add(line);
+    },
+  }).run({ members: wave.members });
+  assert.ok(polls >= 3, 'the row observed several polls of churn');
+  assert.equal(lines.size, 1, 'the rendered marker is byte-static across the churn');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
 });
 
 // ===========================================================================
@@ -1072,10 +1111,23 @@ test('PA-HONEST (RED): reduceMember classes plan_approval, never working', () =>
     'stage[reduceMember-missing]: the waiting shape for plan_approval');
 });
 
-test('PA-STRIP (RED): waitingOn.plan_approval transitions never move the wave marker', async () => {
+test('PA-STRIP: waitingOn.plan_approval transitions never move the rendered wave marker', async () => {
   const wave = stripWave('plan_approval');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+  let polls = 0;
+  const lines = new Set();
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY,
+    // Collect only the pre-terminal rendering lines: the terminal poll legitimately renders a
+    // different class, and the churn rows pin marker stability across the WAITING polls only.
+    onProgress: (line, meta) => {
+      polls += 1;
+      if (new Map(meta.classes).get('w') === 'terminal') return;
+      lines.add(line);
+    },
+  }).run({ members: wave.members });
+  assert.ok(polls >= 3, 'the row observed several polls of churn');
+  assert.equal(lines.size, 1, 'the rendered marker is byte-static across the churn');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
 });
 
 // ===========================================================================
@@ -1172,10 +1224,23 @@ test('PS-HONEST (RED): a blocked member reads honest null — the interaction ow
     'stage[waiting-on-honest-null-missing]: a blocked member reads honest null — never provider_stalled');
 });
 
-test('PS-STRIP (RED): waitingOn.provider_stalled transitions never move the wave marker', async () => {
+test('PS-STRIP: waitingOn.provider_stalled transitions never move the rendered wave marker', async () => {
   const wave = stripWave('provider_stalled');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+  let polls = 0;
+  const lines = new Set();
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY,
+    // Collect only the pre-terminal rendering lines: the terminal poll legitimately renders a
+    // different class, and the churn rows pin marker stability across the WAITING polls only.
+    onProgress: (line, meta) => {
+      polls += 1;
+      if (new Map(meta.classes).get('w') === 'terminal') return;
+      lines.add(line);
+    },
+  }).run({ members: wave.members });
+  assert.ok(polls >= 3, 'the row observed several polls of churn');
+  assert.equal(lines.size, 1, 'the rendered marker is byte-static across the churn');
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
 });
 
 // ===========================================================================
@@ -1193,17 +1258,20 @@ test('D9-INVARIANT (PIN): a drivered paused task reads the three raw spawn flags
   assert.equal(raw.recoverySpawnPending, false, 'PIN: a paused task is never mid-recovery');
 });
 
-test('D9-COMPOUND (RED): a member with BOTH a claim-ready checkpoint AND waitingOn is never claimed — waiting beats checkpoint', async () => {
+test('D9-COMPOUND: a member with BOTH a claim-ready checkpoint AND waitingOn is never claimed — waiting beats checkpoint', async () => {
   const wave = fakeWave({
     w: {
-      status: () => fakeView({ attention: [cpAtt('cp-1', CLAIM_READY)], waitingOn: WAIT('capacity_ceiling') }),
+      status: (poll) => fakeView(poll >= 4
+        ? { terminal: true }
+        : { attention: [cpAtt('cp-1', CLAIM_READY)], waitingOn: WAIT('capacity_ceiling') }),
       act: () => ({ ok: true }),
     },
   });
   const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 0,
-    'stage[waiting-not-suppressed]: a waitingOn member is never claimed — the suppression gains `!reduced.waiting`');
-  assert.equal(receipt.claims.length, 0, 'stage[waiting-not-suppressed]: no claims evidence for a suppressed member');
+    'a waitingOn member is never claimed — the suppression carries `!reduced.waiting`');
+  assert.equal(receipt.claims.length, 0, 'no claims evidence for a suppressed member');
 });
 
 test('D9-SHAPE (RED): reduceMember exposes BOTH flags — blocked and waiting — and a checkpoint without waitingOn keeps its class', () => {
@@ -1263,14 +1331,15 @@ test('EXO-1 (PIN): a checkpoint WITHOUT waitingOn still claims exactly once — 
 test('EXO-2 (PIN): a blocking interaction WITHOUT waitingOn suppresses claim — the interaction precedence is unchanged', async () => {
   const wave = fakeWave({
     w: {
-      status: () => fakeView({ attention: [qAtt('q-1')] }),
+      status: (poll) => fakeView(poll >= 4 ? { terminal: true } : { attention: [qAtt('q-1')] }),
       act: () => ({ ok: true }),
     },
   });
   const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
+  assert.equal(receipt.basis, 'completed', 'the fixture member turns terminal and the wave closes');
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 0, 'a blocked member is never claimed');
 });
 
-// ===========================================================================
+
 // Verification (recorded against the PRE-implementation tree; see the header)
 // ===========================================================================

@@ -499,7 +499,7 @@ test('C1b: the reply carries a derived {inReplyTo, from, body} envelope and noth
   assert.equal(replyReceipt.reply?.cc ?? null, null);
 });
 
-test('C2: reply depth is 1 (a reply to a reply refuses)', async () => {
+test('C2: replies chain freely — a reply to a reply delivers (no depth budget)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -510,7 +510,9 @@ test('C2: reply depth is 1 (a reply to a reply refuses)', async () => {
   });
   await flush(40);
   const firstReply = coordinator.messageReceipt(sent.messageId).reply;
-  assert.ok(firstReply, 'the first reply delivers (the depth counter starts at one, not zero)');
+  assert.ok(firstReply, 'the first reply delivers');
+  // #598 F03: no per-branch depth budget and no per-sender reply slot — the worker may reply
+  // again, and every reply is its own message on the parent's record.
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
     payload: { inReplyTo: firstReply.messageId, body: 'a reply to my own reply' },
@@ -518,9 +520,29 @@ test('C2: reply depth is 1 (a reply to a reply refuses)', async () => {
   await flush(40);
   const rejected = coordinator._log.read(handle.id).filter((event) => event.kind === 'authority.rejected'
     || (event.kind === 'message.rejected'));
-  assert.ok(rejected.length >= 1, 'reply-to-reply refuses with the typed code (depth 1 in v1)');
-  assert.ok(rejected.some((event) => String(event.payload?.reason ?? event.payload?.code ?? '').includes('depth')),
-    'the refusal is DEPTH, not unknown-parent');
+  assert.equal(rejected.length, 0, 'reply-to-reply never refuses — the lane has no depth ceiling');
+  // The second reply is its own message record: the first hop's receipt answers through it.
+  const chainReceipt = coordinator.messageReceipt(firstReply.messageId);
+  assert.equal(chainReceipt.reply?.body ?? null, 'a reply to my own reply',
+    'the second hop lands on the first reply\'s record as its own message');
+  assert.match(chainReceipt.reply?.messageId ?? '', /^message:[a-f0-9]{64}$/u,
+    'the second reply mints its own message id');
+  assert.deepEqual(Object.keys(chainReceipt.reply ?? {}).sort(), ['body', 'from', 'inReplyTo', 'messageId'],
+    'the reply envelope is the closed {messageId, inReplyTo, from, body} shape');
+  assert.deepEqual(chainReceipt.replies?.map((row) => row.messageId), [chainReceipt.reply?.messageId],
+    'the parent\'s receipts tabulate its replies');
+  // A second reply by the SAME sender to the SAME parent also delivers: latest wins on
+  // `replies`, while `reply` keeps the first.
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
+    payload: { inReplyTo: sent.messageId, body: 'an update, superseding my ack' },
+  });
+  await flush(40);
+  const parentReceipt = coordinator.messageReceipt(sent.messageId);
+  assert.equal(parentReceipt.reply?.body ?? null, 'working on it',
+    'the parent message\'s receipt keeps the first reply');
+  assert.deepEqual(parentReceipt.replies?.map((row) => row.body), ['an update, superseding my ack'],
+    'replies holds the sender\'s latest reply');
 });
 
 test('C3: receipts are honest across process death (delivered ≠ read; acted-on never claimed)', async () => {

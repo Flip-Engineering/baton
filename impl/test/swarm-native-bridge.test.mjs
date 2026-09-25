@@ -396,21 +396,33 @@ test('contract admission refuses forged identity fields and malformed args befor
   });
 });
 
-test('the bridge refusal names every missing required field and its remedy follows (#43 AX, R1/R2)', async () => {
+test('the bridge refusal passes the seam through verbatim and keeps the missing set named (#43 AX, F11)', async () => {
   await withBridge({}, async ({ bridge, runtime }) => {
     runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     await assert.rejects(call(issued, 'swarm.guide', { swarmId: 'swarm-1' }), (error) => {
       assert.equal(error.code, 'swarm_command_invalid');
       assert.deepEqual(error.detail.required, ['participantId', 'message', 'idempotencyKey']);
+      // #598 F11: the bridge no longer re-spells a validator's remedy — a required-field refusal
+      // ships no correction of its own, so the change line reads as no-op and the seam message
+      // below it still names the whole missing set.
       assert.match(error.message,
-        /^Nothing was recorded: add participantId, message, idempotencyKey \(participantId: a participant identity; message: non-empty text; idempotencyKey: an idempotency key\)\n/u,
-        'the remedy line renders the whole missing set once');
+        /^Nothing was recorded: no swarm state changed\n/u,
+        'the change line is the honest no-op when the raising seam ships no correction');
       assert.match(error.message, /participantId, message, idempotencyKey are required/u);
       return true;
     });
     assert.equal(runtime.refusals.at(-1)?.args.rule, 'required-field',
       'the plural refusal is reported to the durable lane under its rule');
+    // A seam that DOES ship its own correction has it passed through verbatim (first priority):
+    // the unknown-field refusal's remove-and-accepted-set remedy is the seam's own words.
+    await assert.rejects(call(issued, 'swarm.view', { swarmId: 'swarm-1', idempotencyKey: 'op-x' }), (error) => {
+      assert.equal(error.code, 'swarm_command_invalid');
+      assert.match(error.message,
+        /^Nothing was recorded: remove idempotencyKey — swarm\.view accepts swarmId, participantId, projection, cursor\n/u,
+        'the raising seam\'s correction rides the change line verbatim (never re-spelled)');
+      return true;
+    });
   });
 });
 

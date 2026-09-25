@@ -50,10 +50,8 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // workflow_spec_invalid naming both byte counts — fail-loud at the seam, never a per-member
 // phantom start failure.
 const OBJECTIVE_REF_MAX_BYTES = 64 * 1024;
-// Issue #499: the member/scope ceilings are the registry's COUNTS rows — a structural admission
-// bound on ONE wave payload (admission audit §4 F7), never a fleet size.
-const MAX_MEMBERS = FRAME_LIMITS['wave.members'].value;
-const MAX_SCOPE = FRAME_LIMITS['wave.member.scope'].value;
+// #598 F08: no member/scope count ceilings — a spec carries the roster and scope its wave
+// author declares; measured resource admission still governs what actually starts.
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const MESSAGE_KINDS = new Set(['inform', 'query', 'steer', 'brief', 'result']); // coordinator.mjs:6795 + #74 D4 (brief/result).
@@ -156,7 +154,6 @@ export function admitSpec(raw, repoRoot) {
     throw specInvalid('the workflow spec "idempotencyKey" must be a non-empty identifier string');
   }
   if (!Array.isArray(raw.members) || raw.members.length === 0) throw specInvalid('the workflow spec "members" must be a non-empty array');
-  if (raw.members.length > MAX_MEMBERS) throw specInvalid(`the workflow spec "members" exceeds the ${MAX_MEMBERS}-member ceiling`);
   const steering = raw.steering === undefined ? {} : assertObject(raw.steering, specInvalid, 'steering');
   const harvest = raw.harvest === undefined ? { paths: [] } : assertObject(raw.harvest, specInvalid, 'harvest');
 
@@ -199,7 +196,7 @@ function admitMember(raw, index) {
   }
   // scope — the UNION of wave.mjs's laws and the path-scope class (F12).
   const scope = raw.scope;
-  if (!Array.isArray(scope) || scope.length === 0 || scope.length > MAX_SCOPE) throw memberInvalid(`workflow member "${named}" "scope" must be a non-empty bounded array`);
+  if (!Array.isArray(scope) || scope.length === 0) throw memberInvalid(`workflow member "${named}" "scope" must be a non-empty array`);
   if (new Set(scope).size !== scope.length) throw memberInvalid(`workflow member "${named}" "scope" entries must be unique`);
   for (const entry of scope) {
     if (typeof entry !== 'string' || entry.trim().length === 0) throw memberInvalid(`workflow member "${named}" "scope" entries must be non-empty strings`);
@@ -459,20 +456,19 @@ async function materializeSha(handle, member, repoRoot, startedAtMs, excludeShas
 // The lane's driver policy — configurable, pinned fast by the caller (F11).
 // ---------------------------------------------------------------------------
 
-const DEFAULT_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: null });
+const DEFAULT_DRIVER = Object.freeze({ pollIntervalMs: 15, hardCapMs: null });
 
 function normalizeDriver(driver) {
   const base = driver && typeof driver === 'object' ? driver : {};
   const pollIntervalMs = Number.isSafeInteger(base.pollIntervalMs) && base.pollIntervalMs > 0 ? base.pollIntervalMs : DEFAULT_DRIVER.pollIntervalMs;
-  const stallTimeoutMs = Number.isSafeInteger(base.stallTimeoutMs) && base.stallTimeoutMs > 0 ? base.stallTimeoutMs : DEFAULT_DRIVER.stallTimeoutMs;
   // #163 law (operator ruling 2026-08-14): clock-based kill caps are RETIRED — a numeric hardCapMs
   // refuses at admission naming the law; the null sentinel (or an omitted key) is the only accepted
-  // form. Settlement requires observed terminality or explicit handled attention.
+  // form. Settlement requires observed terminality or explicit handled attention. #598 F01: the
+  // retired stall key is not normalized either — the lane settles on observed terminality.
   if (base.hardCapMs !== undefined && base.hardCapMs !== null) {
     throw specInvalid('the workflow driver "hardCapMs" is retired under the #163 law — clock-based caps never decide the fate of agentic work; omit the key or pass hardCapMs: null (the drive waits for terminality or handled attention, never a clock)');
   }
-  const hardCapMs = base.hardCapMs === null ? null : DEFAULT_DRIVER.hardCapMs;
-  return { pollIntervalMs, stallTimeoutMs, hardCapMs };
+  return { pollIntervalMs, hardCapMs: null };
 }
 
 // #180 (per-wave verification profile): driver.verification accepts the closed vocabulary
