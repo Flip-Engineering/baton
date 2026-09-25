@@ -4309,6 +4309,14 @@ export class Coordinator {
     return runtimeApi.predecessorWorkspaceContext(this, workspaceId);
   }
 
+  /** Issue #595: detach dead holders from a checkout a successor is now bound to. */
+  async releaseDeadWorkspaceHolds(holderIds, successorWorkerId) {
+    for (const id of holderIds) {
+      const handle = this._workers.get(id);
+      if (handle) await this._detachSharedWorkspace(handle, [successorWorkerId]);
+    }
+  }
+
   /** Whether this handle's checkout is exactly usable under its own session context — the
    * precondition for a borrowed holder to close the checkout as the last holder. */
   _checkoutExactUnderContext(handle, task) {

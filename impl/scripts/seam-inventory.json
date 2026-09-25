@@ -2353,6 +2353,15 @@
           ]
         },
         {
+          "name": "releaseDeadWorkspaceHolds",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
+          ]
+        },
+        {
           "name": "_checkoutExactUnderContext",
           "ordinal": 0,
           "size": 8,
@@ -13992,7 +14001,7 @@
         {
           "name": "_predecessorWorkspace",
           "ordinal": 0,
-          "size": 56,
+          "size": 59,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -14101,7 +14110,7 @@
         {
           "name": "_performDeferredStart",
           "ordinal": 0,
-          "size": 219,
+          "size": 223,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -14193,7 +14202,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 375,
+          "size": 377,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -14323,7 +14332,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1253,
+          "size": 1256,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -24605,7 +24614,7 @@
         {
           "name": "predecessorWorkspaceContext",
           "ordinal": 0,
-          "size": 13,
+          "size": 19,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
