@@ -72,13 +72,17 @@ test('the verdict document lists every failure for comparison, and unexpected na
   assert.equal(Object.hasOwn(document, 'expectedRed'), false);
 });
 
-test('file-level failures compare by file and type, test failures by key', () => {
+test('a failure identity is its file, its test, its kind and its code', () => {
   assert.deepEqual([...FILE_LEVEL_FAILURE_TYPES].sort(), ['fileCrashed', 'fileHung', 'fixtureLeak']);
   const hungA = { key: 'test/x.test.mjs :: (file hung: no test event for 10 ms after start)', file: 'test/x.test.mjs', name: '(file hung: no test event for 10 ms after start)', failureType: 'fileHung' };
   const hungB = { ...hungA, key: 'test/x.test.mjs :: (file hung: no test event for 99 ms after a)', name: '(file hung: no test event for 99 ms after a)' };
   assert.equal(failureIdentity(hungA), failureIdentity(hungB), 'two runs of one hung file are the same failure');
   const testFailure = { key: 'test/x.test.mjs :: adds', file: 'test/x.test.mjs', name: 'adds', failureType: 'testCodeFailure' };
-  assert.equal(failureIdentity(testFailure), testFailure.key);
+  assert.equal(failureIdentity(testFailure), 'test/x.test.mjs :: adds :: assertion :: testCodeFailure');
+  assert.notEqual(failureIdentity(testFailure), failureIdentity({ ...testFailure, failureType: 'testTimeoutFailure' }),
+    'the same file and test failing with a different kind is a different failure');
+  assert.equal(failureIdentity({ key: 'no file', file: null, name: 'adds', failureType: 'testCodeFailure' }), null,
+    'a failure that names no file has no identity');
 });
 
 const FIXTURE_ROUTES = [

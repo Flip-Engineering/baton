@@ -16,20 +16,10 @@
 import { readFileSync } from 'node:fs';
 
 import {
-  FILE_LEVEL_FAILURE_TYPES, failureIdentity, readVerdictDocument, rowKey,
+  FILE_LEVEL_FAILURE_TYPES, HANG_FAILURE_TYPES, failureIdentity, readVerdictDocument, rowKey,
 } from '../src/suite-comparison.mjs';
 
 export { FILE_LEVEL_FAILURE_TYPES, failureIdentity, readVerdictDocument, rowKey };
-
-// A hang is a test the RUNNER had to stop: its file emitted nothing until the progress deadline
-// (fileHung, minted by run-suite) or node's own per-test timeout fired (testTimeoutFailure /
-// testAborted). `cancelledByParent` is different: an earlier test in the file awaited something
-// that can never settle, the event loop drained, and node cancelled the rest (its message reads
-// "Promise resolution is still pending but the event loop has already resolved"). The file
-// finishes in milliseconds, so it is a deterministic red (a dangling await that must be fixed)
-// and the verdict names it as cancelled so the count stays visible. Classification reads node's typed
-// `failureType` only — never the message prose.
-const HANG_FAILURE_TYPES = new Set(['testTimeoutFailure', 'testAborted', 'fileHung']);
 
 export function isHang(failure) {
   return HANG_FAILURE_TYPES.has(failure.failureType);
@@ -108,14 +98,23 @@ export function computeVerdict(summaries, { environment = null } = {}) {
   const failed = [];
   const hung = [];
   const skipped = [];
+  const reported = new Set();
+  const reportedFile = (file) => {
+    if (typeof file === 'string' && file.length > 0) reported.add(file);
+  };
   let cancelled = 0;
   let passed = 0;
   for (const summary of summaries) {
     // Issue #508: files the runner declined to schedule (not test files) ride the summary as
     // skipped rows, named by the verdict and judged by nothing.
     for (const row of summary.skipped ?? []) skipped.push({ file: row.file, reason: row.reason });
+    // The files this run ACCOUNTED for: every file whose own rows reached the summary, plus the
+    // files it declined to schedule. The landing gate reads this to check that the run judged the
+    // whole selection it was handed (revision 11).
+    for (const row of summary.passed) reportedFile(row.file);
     passed += summary.passed.length;
     for (const row of summary.failed) {
+      reportedFile(row.file);
       const entry = {
         key: rowKey(row.file, row.name), file: row.file, name: row.name,
         failureType: row.failureType ?? null, message: row.message ?? null,
@@ -125,10 +124,12 @@ export function computeVerdict(summaries, { environment = null } = {}) {
       failed.push(entry);
     }
   }
+  for (const row of skipped) reportedFile(row.file);
   return Object.freeze({
     green: failed.length === 0 && hung.length === 0,
     passed, failed, hung, cancelled, environment,
     skipped: Object.freeze(skipped),
+    reportedFiles: Object.freeze([...reported].sort()),
   });
 }
 
@@ -163,6 +164,9 @@ export function verdictDocument(verdict) {
     failures,
     unexpected: failures.map((row) => row.key),
     skipped: (verdict.skipped ?? []).map((row) => ({ file: row.file, reason: row.reason })),
+    // `reportedFiles` is the set of files this run accounted for, so a landing gate can tell the
+    // run it started from any other document (revision 11).
+    reportedFiles: [...(verdict.reportedFiles ?? [])],
     environment: verdict.environment
       ? { absent: [...verdict.environment.absent], present: [...verdict.environment.present], declared: [...verdict.environment.declared], prerequisites: verdict.environment.prerequisites.map((row) => ({ ...row })) }
       : null,

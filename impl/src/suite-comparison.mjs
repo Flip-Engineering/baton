@@ -41,11 +41,47 @@ export function rowKey(file, name) {
   return `${file} :: ${name}`;
 }
 
-/** The identity one failure is compared by across two runs (the change and its base). */
+// A hang is a test the RUNNER had to stop: its file emitted nothing until the progress deadline
+// (fileHung, minted by run-suite) or node's own per-test timeout fired (testTimeoutFailure /
+// testAborted). `cancelledByParent` is different: an earlier test in the file awaited something
+// that can never settle, the event loop drained, and node cancelled the rest (its message reads
+// "Promise resolution is still pending but the event loop has already resolved"). The file
+// finishes in milliseconds, so it is a deterministic red (a dangling await that must be fixed) and
+// the verdict names it as cancelled so the count stays visible. Classification reads node's typed
+// `failureType` only — never the message prose.
+export const HANG_FAILURE_TYPES = new Set(['testTimeoutFailure', 'testAborted', 'fileHung']);
+
+/** The coarse failure kind a failure type names (the law's FailureKind): a hang is the class the
+ * verdict already knows (#521) — a file the runner's own deadline reaped, or a test node's timeout
+ * stopped. */
+export function failureKind(failureType) {
+  if (failureType === 'fixtureLeak') return 'leak';
+  if (failureType === 'fileCrashed') return 'crash';
+  return HANG_FAILURE_TYPES.has(failureType) ? 'hang' : 'assertion';
+}
+
+/** The test a failure names, or '' when the run names none. A file-level failure's name carries
+ * run-specific detail (an idle time, an exit status), so it is diagnostics, not identity. */
+function failureTestName(failure) {
+  if (FILE_LEVEL_FAILURE_TYPES.includes(failure?.failureType)) return '';
+  return typeof failure?.name === 'string' ? failure.name : '';
+}
+
+/** The stable semantic code a failure carries: the failure type the runner typed for it, or '' when
+ * it typed none (a bare key an older document wrote). */
+function failureCode(failure) {
+  return typeof failure?.failureType === 'string' ? failure.failureType : '';
+}
+
+/** The identity one failure is compared by across two runs (the change and its base, revision 11):
+ * the file, the test where the run names one, the failure kind and the semantic code. Two failures
+ * on one file and test whose kinds or codes differ are different failures, so neither matches the
+ * other. A failure that names no file names nothing to compare, so it matches nothing. */
 export function failureIdentity(failure) {
-  return FILE_LEVEL_FAILURE_TYPES.includes(failure.failureType)
-    ? `${failure.file} :: [${failure.failureType}]`
-    : rowKey(failure.file, failure.name);
+  const file = typeof failure?.file === 'string' && failure.file.length > 0 ? failure.file : null;
+  if (file === null) return null;
+  return [file, failureTestName(failure), failureKind(failure.failureType), failureCode(failure)]
+    .join(' :: ');
 }
 
 /** The failures one verdict document names, each with its file and failure type, and the entry as
@@ -72,6 +108,17 @@ export function verdictFailures(document) {
 /** Read a verdict document the runner wrote, or null. */
 export function readVerdictDocument(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+}
+
+/** The selected files a run did not account for (revision 11): every file a gate handed the run
+ * must appear among the rows the run reported, whether it passed, failed or was declined as not a
+ * test file. A document that carries no `reportedFiles` array is a runner older than the
+ * declaration — it names its files only through the rows it wrote, so a passed file and a file that
+ * never ran cannot be told apart and the selection is not compared. */
+export function unaccountedFiles(document, selected) {
+  if (!Array.isArray(document?.reportedFiles)) return [];
+  const reported = new Set(document.reportedFiles);
+  return [...new Set(selected ?? [])].filter((file) => !reported.has(file)).sort();
 }
 
 /**

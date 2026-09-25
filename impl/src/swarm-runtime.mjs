@@ -49,7 +49,9 @@ import { renderRouteUsageLines } from './adapter.mjs';
 // landing composes the two — never a second table — so a lane that ships a test with its change
 // runs that test, which is the rule the landing's region table alone could not carry.
 import { gateSetForPaths, issueNumberOf } from './landing-table.mjs';
-import { NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, verdictFailures } from './suite-comparison.mjs';
+import {
+  NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, unaccountedFiles, verdictFailures,
+} from './suite-comparison.mjs';
 import { selectFromRepository } from './verification-selection.mjs';
 import { landContribution } from './worktree.mjs';
 // Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
@@ -178,11 +180,6 @@ async function runGateFiles(dir, files, { pool = null, holder = null, leaseAutho
   }
 }
 
-/** Issue #580/#593: the failure vocabulary and the comparison a landing gate judges by live in ONE
- * module, shared with the contribution check (impl/src/suite-comparison.mjs) — the same reading of
- * a verdict document, the same failure identity, the same "the base does not have it" rule. */
-
-
 /** Issue #580: switch the landing checkout between the squash and its target, so the change's
  * failing test files can be re-run on the target in the same directory with the same
  * dependencies. The squash commit holds every change, the regenerated artifacts included, so
@@ -208,7 +205,13 @@ function checkoutLandingTree(dir, sha) {
  * it and the resident answers throughout.
  *
  * Issue #463: the run's own last words and exit status are read back WITH the verdict, so a RED
- * gate is as actionable as a crashed one. */
+ * gate is as actionable as a crashed one.
+ *
+ * Revision 11: the gate decides from the observations the runs made. The comparison it judges by —
+ * the failure identity of file, test, failure kind and semantic code, and the rule that a target
+ * which does not have a failure shares nothing — is `compareSuiteVerdicts` in
+ * impl/src/suite-comparison.mjs, the module the contribution check reads too. On top of it this
+ * gate requires that the change's run accounted for every file the gate selected. */
 async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   const change = await runGateFiles(dir, files, supervision);
   const { result, document, stderrTail, exit } = change;
@@ -240,7 +243,11 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   }
   const squashNote = context?.squashSha ? `, squash ${`${context.squashSha}`.slice(0, 12)}` : '';
   const failures = verdictFailures(document);
-  if (failures.length === 0) {
+  // Revision 11: the run must account for every file the gate selected. A selected file the
+  // document reports no row for never ran, so the run did not judge the selection the gate handed
+  // it, and nothing it reports can authorize a landing.
+  const unaccounted = unaccountedFiles(document, files);
+  if (failures.length === 0 && unaccounted.length === 0) {
     return { files, verdictLine: `green — passed ${document.passed}${squashNote}`, unexpected: [], stderrTail, exit };
   }
   const target = typeof context?.targetHeadBefore === 'string' ? context.targetHeadBefore : null;
@@ -250,6 +257,10 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   // files — the last of which has nothing to share, so every failure blocks with no note.
   let base = null;
   let targetNote = '';
+  // Revision 11: the sentence a target run that judged none of the compared files earns. It is the
+  // landing gate's own fact — `compareSuiteVerdicts` returns a note only for the states of the BASE
+  // side, and a comparison that ran carries none — so it rides beside `comparison.note`.
+  let unjudgedNote = '';
   if (target !== null && squash !== null) {
     checkoutLandingTree(dir, target);
     try {
@@ -263,6 +274,15 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
         base = { document: baseline.document };
         if (baseline.document === null) {
           targetNote = '; the target run did not judge, so every failure blocks';
+        } else {
+          // Revision 11: a target run that names no row for a compared file did not judge that
+          // file, so it supplies no matching failure for it and the refusal says which files those
+          // were rather than leaving the reader to guess why nothing matched.
+          const unjudged = unaccountedFiles(baseline.document, failingFiles);
+          if (unjudged.length > 0) {
+            unjudgedNote = `; the target run did not judge ${unjudged.length} of the `
+              + `${failingFiles.length} file(s) compared, so their failures block`;
+          }
         }
       } else {
         base = NO_BASE_FILES;
@@ -274,12 +294,18 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
     targetNote = '; no target to compare against, so every failure blocks';
   }
   const comparison = compareSuiteVerdicts({ change: document, base, note: targetNote });
+  // Revision 11: a selected file the change's run never reported is named where the failures are,
+  // so the refusal carries it and no reader has to reconstruct which of the selection ran.
+  const unaccountedRows = unaccounted.map((file) => ({
+    row: 'selected-file-unaccounted', file, script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
+  }));
   return {
     files,
-    verdictLine: `${comparison.blocking.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
+    verdictLine: `${comparison.blocking.length + unaccounted.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
       + comparisonCountsLine({ blocking: comparison.blocking, shared: comparison.shared, baseNoun: 'the target' })
-      + `${squashNote}${comparison.note}`,
-    unexpected: comparison.blocking.map((failure) => failure.original),
+      + `${unaccounted.length > 0 ? `, ${unaccounted.length} selected file(s) the run did not account for` : ''}`
+      + `${squashNote}${comparison.note}${unjudgedNote}`,
+    unexpected: [...comparison.blocking.map((failure) => failure.original), ...unaccountedRows],
     failingOnTarget: comparison.shared.map((failure) => failure.original),
     stderrTail, exit,
   };
