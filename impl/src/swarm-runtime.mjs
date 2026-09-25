@@ -1942,6 +1942,23 @@ function watchAbortMessage(departure) {
   return 'the watch was torn down: the incarnation holding it is leaving; re-arm the watch against the resident that serves this deployment next';
 }
 
+/** The seat a management act acts on (revision 12c): the ONE derivation dispatch reads and every
+ * effect-time recheck reads with it, so the relation is judged against the same subject both
+ * times. Most acts name their seat directly; `swarm.integrate` and a recorded review name a
+ * CONTRIBUTION, and the seat is its author, read from the swarm's own fold — the caller supplies
+ * no seat and no relation, exactly as it can supply no `parentId`. A prospective recruit names the
+ * seat it would create, which carries no `parentId` yet, so the relation never judges it. */
+function managementActTarget(swarm, command, args) {
+  if (typeof args?.participantId === 'string' && args.participantId.length > 0) {
+    return args.participantId;
+  }
+  const contributionId = command === 'swarm.integrate' ? args?.contributionId
+    : command === 'swarm.update' && args?.event === 'swarm.contribution_reviewed'
+      ? args?.payload?.contributionId : null;
+  return typeof contributionId === 'string'
+    ? (swarm?.contributions?.[contributionId]?.participantId ?? null) : null;
+}
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -2312,16 +2329,23 @@ export class SwarmRuntime {
     return participant;
   }
 
-  _permit(swarm, principal, context, permission, targetParticipantId = null) {
+  _permit(swarm, principal, context, permission, targetParticipantId = null, command = null) {
     const member = this._caller(swarm, principal, context);
     if (member && !(member.permissions ?? DEFAULT_PERMISSIONS).includes(permission)) {
-      // Issue #584: a lead holds every management act over the seats it leads (the parentId
-      // subtree — docs/46 §4.1) and stop over itself. The flat permission list is the root's
-      // grant TO this seat; the join-time delegation cap (a recruiter cannot grant authority it
-      // does not hold) would otherwise make `stop` structurally unreachable for every non-root
-      // seat, and the management relation — not the flat list — is what the law grants.
-      const actsOverLedSeats = permission === 'stop' || permission === 'review'
-        || permission === 'integrate' || permission === 'recruit';
+      // Issues #584 and revision 12c: a CURRENT delegation holds EVERY management act over the
+      // seats it leads (the parentId subtree — docs/46 §4.1) and stop over itself. The flat
+      // permission list is the root's grant TO this seat; the join-time delegation cap (a
+      // recruiter cannot grant authority it does not hold) would otherwise make `stop`
+      // structurally unreachable for every non-root seat, and the management relation — not the
+      // flat list — is what the law grants. The acts are the law's six (Recruit, Guide, Stop,
+      // Review, Integrate, Resume): Recruit and Resume ride `recruit` (their subject is a
+      // prospective seat, which has no relation yet), Guide rides `communicate`, Stop `stop`,
+      // Review `review`, and Integrate the `organize` authority `swarm.integrate` is admitted at
+      // — named by its OWN command so no other organizing request that happens to name a led
+      // seat is widened with it.
+      const actsOverLedSeats = permission === 'recruit' || permission === 'communicate'
+        || permission === 'stop' || permission === 'review'
+        || (permission === 'organize' && command === 'swarm.integrate');
       const namesLedSeat = typeof targetParticipantId === 'string' && targetParticipantId.length > 0
         && this._leads(swarm, member.participantId, targetParticipantId);
       const stopsItself = permission === 'stop' && targetParticipantId === member.participantId;
@@ -8536,11 +8560,12 @@ export class SwarmRuntime {
       }
       permission = 'contribute';
     }
-    // Issue #584: the commands that name a target seat pass it, so a management act over a
-    // seat the caller leads (and a self-stop) is judged against the relation, not just the
-    // caller's flat grant.
+    // Issues #584 and revision 12c: the management act's SUBJECT is derived here (the seat the
+    // verb names, or the author of the contribution it names), never supplied as a relation, and
+    // a management act over a seat the caller leads (and a self-stop) is judged against the
+    // relation, not just the caller's flat grant.
     const caller = this._permit(swarm, principal, context, permission,
-      typeof args?.participantId === 'string' ? args.participantId : null);
+      managementActTarget(swarm, command, args), command);
     // Issue #296: the landing verb. Idempotent under its operation key: the first attempt lands and
     // records its result, a retry under the same key returns that result, and a retry over an
     // attempt whose outcome was never confirmed refuses (the family's own rule — only swarm.recruit
@@ -9415,9 +9440,13 @@ export class SwarmRuntime {
       return this._notificationsRead(swarm, args, caller);
     }
     const participant = this._participant(swarm, args.participantId);
-    if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
-      && !(caller.permissions ?? []).includes('review')) {
-      refuse('Capturing another participant requires review authority', 'swarm_permission_required');
+    // Revision 12c: the effect rechecks the CURRENT authority through the ONE derivation dispatch
+    // used — the caller's relation to the seat the act names — and not through the flat list,
+    // which is a second permission and can never deny an act a lawful grant admitted. Observed
+    // run (2026-09-25): a lead without the flat `review` grant, capturing a contribution authored
+    // by the seat it leads, was admitted at dispatch and refused here.
+    if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId) {
+      this._permit(swarm, principal, context, 'review', participant.participantId, 'swarm.capture');
     }
     // Issue #525 D3: a guide to a decision-pending seat is the answer — it bypasses
     // the worker lookup and performs the deferred start inside the guide handler. The pending
@@ -9637,6 +9666,12 @@ export class SwarmRuntime {
           try { stopped = await this.stopRun(participant.runId, args.reason, principal); }
           catch (error) { throw this._runStopRefusal(error, participant.runId); }
         }
+        // Revision 12c: the effect rechecks the CURRENT authority before it settles the seat —
+        // the run drain above is an await, so the caller's delegation may have ended while it ran
+        // and a grant is authority only while it is current. Observed run (2026-09-25): a lead
+        // settled mid-drain still settled the seat it had led.
+        this._permit(this._swarm(args.swarmId), principal, context, 'stop',
+          participant.participantId, command);
         // Issue #350: a stop settles membership — ONE representation, the existing
         // swarm.participant_left fold (reason stopped|completed, never a second status
         // field), so the seat reads status left on every projection and no "active"
