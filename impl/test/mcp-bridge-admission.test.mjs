@@ -103,15 +103,15 @@ async function ready(mcp) {
 }
 
 test('a server given an admission predicate advertises only the tools whose command it admits', async (t) => {
-  const mcp = server(t, { admitsCommand: (command) => command !== 'run.status' });
+  const mcp = server(t, { admitsCommand: (command) => command !== 'run.start' });
   await ready(mcp);
   const listed = await request(mcp, 'l1', 'tools/list', {});
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.includes('baton_run_status'), false, 'the tool whose command is refused is not advertised');
+  assert.equal(names.includes('baton_run_start'), false, 'the tool whose command is refused is not advertised');
   assert.ok(names.includes('baton_swarm_view'), 'admitted tools stay advertised');
   const everything = server(t);
   await ready(everything);
-  assert.ok((await request(everything, 'l2', 'tools/list', {})).result.tools.map((tool) => tool.name).includes('baton_run_status'), 'without a predicate the surface inventory is unchanged');
+  assert.ok((await request(everything, 'l2', 'tools/list', {})).result.tools.map((tool) => tool.name).includes('baton_run_start'), 'without a predicate the surface inventory is unchanged');
 });
 
 test('the resident wire card keeps the host-local settlement tools off the bridge, by their own commands', () => {
