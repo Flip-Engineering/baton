@@ -181,7 +181,7 @@ function withdrawPartial(path, expected, ownerUid) {
   catch (error) { return `failed:${error?.code ?? error?.name ?? 'error'}`; }
 }
 
-function acquireLease(root, repoId, deploymentId, ownerUid, now, {
+export function acquireResidentLease(root, repoId, deploymentId, ownerUid, now, {
   name = 'host.lease', bindDeployment = true,
 } = {}) {
   const path = join(root, name);
@@ -322,7 +322,7 @@ export class ResidentAuthority {
     this.commonDir = realpathSync(commonDir);
     this.root = privateDirectory(join(deploymentRoot, 'resident'), ownerUid);
     this.deploymentId = stableDeploymentId(this.root, repoId, ownerUid);
-    this.lease = acquireLease(this.root, repoId, this.deploymentId, ownerUid, now);
+    this.lease = acquireResidentLease(this.root, repoId, this.deploymentId, ownerUid, now);
     this.incarnation = this.lease.incarnation;
     this.startedAt = this.lease.startedAt;
     this.origin = 'https://baton.local';
@@ -345,7 +345,7 @@ export class ResidentAuthority {
     this.tokenPath = join(this.configRoot, `${this.profile}.token`);
     this.selectorPath = join(this.selectorRoot, 'connection.json');
     try {
-      this.publicationLease = acquireLease(
+      this.publicationLease = acquireResidentLease(
         this.selectorRoot, repoId, this.deploymentId, ownerUid, now,
         { name: 'publication.lease', bindDeployment: false },
       );
