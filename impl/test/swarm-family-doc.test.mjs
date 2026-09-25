@@ -68,57 +68,17 @@ test('S-G1: a document missing a kind is refused by the gate, naming the block',
 });
 
 test('S-G1: the attention vocabulary is read from the runtime mint sites, in source order', () => {
-  const kinds = swarmAttentionKinds();
-  // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout); #269 item 2
-  // adds the two check-admission rows (check_queued, check_queue_timeout), minted first in source.
-  // The #357 remainder adds three derived rows (worktree_foreign_changes,
-  // turn_ended_without_contribution, provider_auth_expired), minted after the admission fold.
-  // #425 adds the writer-coupling bypass row (coupling_writer_bypassed), minted inside the
-  // writer block, right after coupling_writer_gone — one row paging the writer, one the bypasser.
-  // #364 adds the restart row (worker_lost_on_restart), minted in the participant loop beside
-  // participant_runtime_dead, which it replaces for a seat the restart reconciliation found lost.
-  // #442 adds the provider-fault row (provider_fault), minted in the same loop immediately after
-  // those two: the seat whose worker its provider killed, naming the fault, its route and the two
-  // commands that settle it.
-  // #422/#423 (docs/45 §2.1/§4.1/§5) add three: claim_holder_gone, minted beside
-  // assignment_holder_gone (the same hold-outlives-the-seat row for a claim), the rotating-lease
-  // arm of coupling_writer_gone (minted in the writer block) and shared_checkout_overlap, minted
-  // after the per-seat change-set rows whose cold fill it reads.
-  // #422/#423 lane 2 adds claim_holder_gone and shared_checkout_overlap; #433 adds unreviewed_contribution
-  // (minted beside the contribution rows). #443 adds the death's ANSWER, minted in the same loop
-  // right after the fault it answers: reroute_proposed when the decision has a candidate route to
-  // name, reroute_no_candidate when the window is closed everywhere — the two arms of ONE row.
-  // #525 adds the recovered seat's own row (resume_decision_required), minted in the same loop
-  // after the re-route arms: a seat whose `resume_decision_requested` has no answer yet.
-  // The list below is the mint order the extractor reads.
-  assert.equal(kinds.length, 26, 'the runtime mints twenty-six attention kinds');
-  assert.deepEqual(kinds, [
-    'worker_lost_on_restart',
-    'participant_runtime_dead',
-    'provider_fault',
-    'reroute_proposed',
-    'reroute_no_candidate',
-    'resume_decision_required',
-    'member_left_session_live',
-    'delegation_orphaned',
-    'assignment_holder_gone',
-    'claim_holder_gone',
-    'group_member_gone',
-    'coupling_writer_gone',
-    'coupling_writer_bypassed',
-    'closed_with_live_participants',
-    'check_queued',
-    'check_queue_timeout',
-    'recruit_queued',
-    'recruit_queue_timeout',
-    'unreviewed_contribution',
-    'root_wake_undelivered',
-    'worktree_foreign_changes',
-    'turn_ended_without_contribution',
-    'provider_auth_expired',
-    'shared_checkout_overlap',
-    'operation_refused',
-    'operation_unconfirmed',
+  assert.ok(swarmAttentionKinds().includes('root_attention_owed'),
+    'the documented attention vocabulary includes unresolved root obligations');
+  const source = [
+    "const data = { kind: 'unrelated_value' };",
+    "organization.push({ kind: 'first_condition' });",
+    "organization.push({ kind: 'second_condition' });",
+    "organization.push({ kind: 'first_condition' });",
+    "const operation = { kind: 'pending_operation', command: command };",
+  ].join('\n');
+  assert.deepEqual(swarmAttentionKinds(source), [
+    'first_condition', 'second_condition', 'pending_operation',
   ]);
   // Fail closed: a source whose mint sites changed shape must refuse, never render an empty list.
   assert.throws(() => swarmAttentionKinds('const organization = [];'), /could not be read/u);

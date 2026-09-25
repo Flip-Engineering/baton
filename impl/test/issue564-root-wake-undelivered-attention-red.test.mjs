@@ -1,13 +1,4 @@
-// issue564-root-wake-undelivered-attention-red.test.mjs — issue #564's reporting half: a
-// root-addressed wake that reached no session is attention the swarm view reports.
-//
-// The addressing half records a durable owed row when work waits on the root
-// (`swarm.root_attention_owed`, with `owed: 'review_owed' | 'needs_root'`). The delivery half
-// records what became of the attempt (`wake.root_delivered` / `wake.root_undelivered`) against the
-// SAME wake identity: the ledger seq of the row the frame came from. This projection joins the
-// two row sets, so a delivered wake clears on the next read and an undelivered or failed one stays
-// visible with the code it failed under. Nothing is stored here and nothing is retracted: the
-// durable rows stay the one source, exactly as the `unreviewed_contribution` row already works.
+// Historical delivery receipts remain visible until the source obligation is resolved.
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,7 +40,7 @@ function fixture(t) {
     return Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [];
   };
   const rootWakeRow = async (seq) => (await attentionRows())
-    .find((row) => row.kind === 'root_wake_undelivered' && row.seq === seq) ?? null;
+    .find((row) => row.kind === 'root_attention_owed' && row.seq === seq) ?? null;
   return { directory, store, runtime, call, attentionRows, rootWakeRow,
     record: (kind, payload) => store.recordDriver(kind, payload, { actor: owner.actor, key: `root-wake-${++key}` }) };
 }
@@ -77,7 +68,7 @@ test('564-u1: an owed root wake with no delivery record is reported as attention
     'the row carries the owed row own next act, so a reader can settle the item from the attention row');
 });
 
-test('564-u2: a durable delivery record for the same wake identity clears the row, and only for that identity', async (t) => {
+test('564-u2: a historical transport receipt retains the obligation and names its evidence', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'root-addressed wake attention (#564)' });
   await f.call('recruit', { participantId: 'lead', objective: 'hold the lane' });
@@ -95,8 +86,8 @@ test('564-u2: a durable delivery record for the same wake identity clears the ro
     seq: first.event.seq, swarmId: 'baton', wakeClass: 'root_owed',
     harness: 'claude-code', mechanism: 'session-socket', sessionId: 'session-1',
   });
-  assert.equal(await f.rootWakeRow(first.event.seq), null,
-    'a durable delivery record for the wake own seq clears the row on the next read — nothing is retracted');
+  assert.deepEqual((await f.rootWakeRow(first.event.seq)).delivery,
+    { state: 'transport_reported', code: null });
   assert.ok(await f.rootWakeRow(second.event.seq),
     'a delivery record for another wake never clears this one: the identity is the wake own ledger seq');
 });
@@ -131,7 +122,7 @@ test('564-u4: only this swarm owed rows are reported', async (t) => {
     'another swarm owed wake never rides this swarm attention projection');
 });
 
-test('564-u5: a later successful attempt clears the attention left by a transient failure', async (t) => {
+test('564-u5: transport recovery retains the unresolved source obligation', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'retry root-addressed wake attention (#564)' });
   await f.call('recruit', { participantId: 'lead', objective: 'hold the lane' });
@@ -156,6 +147,7 @@ test('564-u5: a later successful attempt clears the attention left by a transien
   const recovered = await deliverRootWakeOnce({ store: f.store, frame, target, deliver });
   assert.equal(recovered.delivered, true);
   assert.equal(recovered.attempt, 2);
-  assert.equal(await f.rootWakeRow(owed.event.seq), null);
+  assert.deepEqual((await f.rootWakeRow(owed.event.seq)).delivery,
+    { state: 'transport_reported', code: null });
   assert.equal(sends, 2);
 });

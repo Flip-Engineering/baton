@@ -69,7 +69,7 @@ test('564-t1: a top-level turn end (parentId null) is owed to the root, and ride
   // The reporting half's join surfaces it as attention with no delivery record yet.
   const view = await f.call('view', { projection: 'attention' });
   const attention = (Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [])
-    .filter((row) => row.kind === 'root_wake_undelivered' && row.owed === 'turn_reported');
+    .filter((row) => row.kind === 'root_attention_owed' && row.owed === 'turn_reported');
   assert.equal(attention.length, 1, 'the reporting half renders the turn_reported owed row');
   assert.deepEqual(attention[0].delivery, { state: 'none', code: null }, 'no delivery attempt yet');
   assert.equal(attention[0].participantId, 'lead');

@@ -228,7 +228,7 @@ test('564-w2: a failed resident delivery records its typed code and remains swar
 
   const view = await f.call('view', { projection: 'attention' });
   const attention = (Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [])
-    .find((row) => row.kind === 'root_wake_undelivered' && row.seq === owedSeq);
+    .find((row) => row.kind === 'root_attention_owed' && row.seq === owedSeq);
   assert.ok(attention, 'the failed root wake remains visible in swarm attention');
   assert.deepEqual(attention.delivery,
     { state: 'failed', code: 'claude_session_transport_failed' });
