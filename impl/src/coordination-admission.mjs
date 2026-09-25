@@ -2346,8 +2346,18 @@ export function _assertContextSessionCurrent(store, session, integrity = false) 
   const task = store._tasks.get(manifest.workflow.task.taskId);
   const dispatch = store._planTaskLinks.get(manifest.workflow.task.taskId);
   if (!node || contextValueDigest(node) !== manifest.workflow.node.digest
-    || !task || task.runId !== session.runId || task.status !== 'working'
-    || task.version !== manifest.workflow.task.version
+    || !task || task.runId !== session.runId
+    // #581: the settle of a context call whose work has already COMPLETED is admitted against
+    // the completion itself — the task advanced past the session's frozen version on the SAME
+    // claim generation (same created and claimed events), so refusing it would discard the
+    // result of finished work because the receipt won the race the wall clock always loses
+    // under load. A settle against a different generation, or against a task that is not
+    // working and has not completed, stays stale.
+    || !(task.status === 'working'
+      || (task.status === 'completed'
+        && Number.isSafeInteger(task.version)
+        && Number.isSafeInteger(manifest.workflow.task.version)
+        && task.version >= manifest.workflow.task.version))
     || task.createdEvent !== manifest.workflow.task.createdEvent
     || task.claimedEvent !== manifest.workflow.task.claimedEvent
     || dispatch?.binding?.planId !== plan.planId
