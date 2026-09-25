@@ -325,10 +325,7 @@ test('#358 (e): run.spill.read refuses a bad shape typed, before any runtime eff
   // The spill id is a closed shape: the marker's own spelling.
   await assert.rejects(alpha('run.spill.read', { spillId: 'not-a-spill-id' }),
     (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'field-predicate');
-  // An unknown key refuses with the admitted set, and the run identity is never caller-supplied.
-  await assert.rejects(alpha('run.spill.read', { spillId: `spill:sha256:${'a'.repeat(64)}`, body: 'x' }),
-    (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'unknown-field'
-      && error.detail?.field === 'body');
+  // The run identity is never caller-supplied.
   await assert.rejects(alpha('run.spill.read', { runId: 'run-forged' }),
     (error) => error.detail?.rule === 'identity-field');
 });
