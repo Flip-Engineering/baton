@@ -3,17 +3,6 @@
 // Source of truth: docs/reference/evidence/mcp-profile-parity-2026-08-13/
 //   mcp-profile-parity-contract.md (v1.1 FOLDED) + fold-156.md + redteam-156.md.
 //
-// FOLD RECORD (row-sf156, fold-suite-156.md): this suite was folded per the wave-a blue-team
-// (blueteam-156.md, NEEDS-FOLD) and its QA (blueteam-qa.md #156, UPHELD). The four named folds are
-// applied IN PLACE: RG-06's inherited filter is restricted to the pre-spread uncovered set; the
-// sibling-inclusion/dispatch-binding/prefix-lead checks derive from a new pre-spread
-// `uncoveredCommands()` export (never the grown served set, which is empty of uncovered at green);
-// RG-03 gains a second anchor proving LIFECYCLE_ORDINARY_SIBLINGS feeds ORDINARY_APPLICATION_TOOL_DEFINITIONS
-// (the #159 hand-inline hole); the count pins tie to composition (35+14 / 86+2+14). Fold pass 2:
-// RG-07's wait/follow byte-string anchor is comment-stripped as well (the blue-team's RG-07 decoy
-// note), so a comment-placed decoy cannot satisfy it. RED honesty is preserved — every capability
-// row still fails at HEAD at a NAMED stage; the PIN rows stay green.
-//
 // The rung: the default MCP application profile becomes a superset of the web bus, per op,
 // mechanically derived from the two admission maps (D1/D3 — never a hand list); the two hard-missing
 // fleet tools land (D2); the doc half renders the final shape (D4: 5 alias rows + the renderer's
@@ -21,33 +10,23 @@
 // (the exports, siblings, fleet tools, alias rows, and fallback are absent from this tree) and
 // fails at a NAMED stage; the PIN rows are green today and must stay green under a correct impl.
 //
-// Row inventory (21 rows — 13 RED / 8 PIN):
+// Row inventory:
 //   RG-01  RED  mcpApplicationCommandNames + mcpApplicationDispatch exports exist; served covers
-//               every web-bus command (content pin, fold)                                 (stage: served-set export)
-//   RG-02  RED  application tools/list = 49 (35 + 14, composition fold) including every
-//               pre-spread-uncovered sibling                                               (stage: application-tools-count-49)
-//   RG-03  RED  bus − served = [] (the D3 law) + pre-spread snapshot = 14 + construction-order/
-//               feed anchors (comment-stripped, fold)                                      (stage: uncovered-set-empty)
-//   RG-04  RED  combined includes fleet_run_resume_work / _retry_verification; the D2 sibling
-//               spellings derive from the closed op set (fold)                             (stage: combined-includes-fleet-resume-retry)
-//   RG-05  RED  dispatch binds every pre-spread-uncovered sibling tool to its bus command (fold)(stage: dispatch-binds-siblings)
-//   RG-06  RED  the fleet-sourced lifecycle siblings (12 at the contract floor, 14 after D2)
-//               byte-inherit the fleet_run_* wire schema (filter restricted to the uncovered
-//               set — fold)                                                               (stage: sibling-schema-inherits-source)
+//               every web-bus command                                                     (stage: served-set export)
+//   RG-02  RED  application tools/list includes every pre-spread-uncovered sibling         (stage: application-tools-count-49)
+//   RG-03  RED  bus − served = [] (the D3 law) + pre-spread snapshot + construction-order/
+//               feed anchors                                                              (stage: uncovered-set-empty)
+//   RG-04  RED  combined includes fleet_run_resume_work / _retry_verification              (stage: combined-includes-fleet-resume-retry)
+//   RG-05  RED  dispatch binds every pre-spread-uncovered sibling tool to its bus command  (stage: dispatch-binds-siblings)
+//   RG-06  RED  the fleet-sourced lifecycle siblings byte-inherit the fleet_run_* wire
+//               schema (filter restricted to the uncovered set)                            (stage: sibling-schema-inherits-source)
 //   RG-07  RED  wait/follow lists admit the siblings + invalid_run_wait bounds              (stage: wait-follow-lists-admit-siblings)
 //   RG-08  RED  fleet resume/retry dispatch, typed refusal, idem required, replay           (stage: fleet-resume-retry-dispatch)
-//   RG-09  RED  combined tools/list = 102 (86 + 2 + 14, composition fold), the 14 siblings
-//               lead the ordinary prefix (derived from the uncovered set — fold)            (stage: combined-102-includes-siblings)
+//   RG-09  RED  combined tools/list includes the siblings                                  (stage: combined-102-includes-siblings)
 //   RG-10a RED  5 non-canonical mcp.baton surfaceAlias rows registered                  (stage: alias-rows-registered)
-//   RG-10b RED  renderer canonical-miss fallback byte-string present in EXECUTABLE source
-//               (comment-stripped, fold)                                                 (stage: renderer-fallback-absent)
+//   RG-10b RED  renderer canonical-miss fallback byte-string present in EXECUTABLE source (stage: renderer-fallback-absent)
 //   RG-10c RED  renderMcpToolInventory resolves the 5 ops to their operation keys       (stage: non-canonical-ops-render-operation-keys)
 //   RG-P1  PIN  surface-conformance main stays green                                    (stage: conformance-main-green)
-//   RG-P4  PIN  phase16 application tool list == mcpApplicationToolNames()              (stage: phase16-application-tool-list-pin)
-//   RG-P5  PIN  mcp-reflex application tool list == mcpApplicationToolNames()           (stage: mcp-reflex-application-tool-list-pin)
-//   RG-P6  PIN  phase67 application tool list == mcpApplicationToolNames()              (stage: phase67-application-tool-list-pin)
-//   RG-P7  PIN  phase72 application tool list == mcpApplicationToolNames()              (stage: phase72-application-tool-list-pin)
-//   RG-P8  PIN  phase16 combined-count pin == mcpCombinedToolNames().length             (stage: phase16-combined-count-pin)
 //
 // Invented surfaces (every one absent at HEAD — the first assertion on each is a behavior
 // assertion so the row fails at the NAMED stage, never on a vacuous shape assertion):
@@ -79,15 +58,8 @@
 // controls (maxWaitMs is the deployment-approved wait bound, not a test timer). The fixtures build
 // an McpFleetServer with a stub coordinator ({}) — no real Coordinator is constructed, so no
 // watchdog knob exists in these fixtures (the suite law's watchdog.stallMs clause is vacuous here).
-// The byte-string/ORDER anchors run on COMMENT-STRIPPED source (fold #2/#3, RG-10b): a byte-string
-// that appears only in a comment must not satisfy a source anchor. Verified split is recorded below
-// after two consecutive runs from the repo root.
-//
-// VERIFIED SPLIT — two consecutive runs from the repo root (`node --test impl/test/mcp-profile-parity-red.test.mjs`):
-//   run 1: tests 21 · pass 8 · fail 13 · cancelled 0 · skipped 0 · todo 0
-//   run 2: tests 21 · pass 8 · fail 13 · cancelled 0 · skipped 0 · todo 0
-//   stable — the identical 13 rows fail at their NAMED stages on both runs; the 8 PIN rows
-//   (RG-P1..RG-P8) stay green.
+// The byte-string/ORDER anchors run on COMMENT-STRIPPED source: a byte-string
+// that appears only in a comment must not satisfy a source anchor.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -444,9 +416,8 @@ test('RG-09 RE-DERIVED (#566): combined tools/list is the served combined table 
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  // Issue #566 composition: the combined surface carries the restored ordinary table (55 + the
-  // harvest pair) plus the fleet/advanced/reflex families and the #233 canonical dot twins — the
-  // 14 minted baton_run_* lifecycle siblings left with the regression restore.
+  // Issue #566 composition: the combined surface carries the restored ordinary table plus the
+  // fleet/advanced/reflex families and the #233 canonical dot twins.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
