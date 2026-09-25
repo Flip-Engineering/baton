@@ -10,8 +10,8 @@ This increment states ten quantified model obligations in [laws.bend](laws.bend)
 parts of M-5, M-10, M-14 and M-18. [laws-proof.bend](examples/laws-proof.bend) discharges those
 obligations, and [laws-transition.bend](examples/laws-transition.bend) drives the real review append
 and the real worker admission against those models on an enumerated corpus.
-**Application proof status is open for all 16 laws.** The remaining 12 entries have trace and
-obligation records below; they have no checked Bend proposition. The ten compiler TODOs in
+**Each entry below records its own application status.** The remaining 12 entries have trace and
+obligation records; they have no checked Bend proposition. The ten compiler TODOs in
 `laws.bend` count the model obligations only.
 
 Language evidence uses [the reference pin](reference/README.md),
