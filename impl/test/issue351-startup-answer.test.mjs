@@ -407,3 +407,55 @@ test('SA5: the restore refuses a coherent-but-divergent cache \u2014 without re-
     'including the text the divergent body had pointed at the wrong row');
   reopened.releaseWriterLease({ requireOwned: true });
 });
+
+test('SA6: the abandon fold reads its tail from the covered stretch \u2014 rows past an unadoptable checkpoint still replay', (t) => {
+  const root = fixtureRoot(t, 'abandon-tail');
+  const directory = join(root, 'coordination');
+  const store = new CoordinationStore(directory, { checkpointInterval: 16 });
+  store.claimWriterLease();
+  for (let index = 0; index < 30; index += 1) {
+    store.recordMcpAudit({ entry: index }, { actor: 'test:issue351', key: `issue351:tail:${index}` });
+  }
+  store.admitWebCommand({
+    commandId: 'cmd-351', scopeKey: 'scope-351', requestDigest: createHash('sha256').update('cmd-351').digest('hex'),
+    command: 'swarm_view', repoId: 'repo-issue351', runId: null, userId: 'user-1', sessionId: 'session-1',
+    credentialId: 'cred-1', origin: 'cli', expectedFence: null, requestAxes: { request: 'digest' },
+  }, { actor: 'web:user-1', key: 'issue351:web:admit' });
+  store.completeWebCommand('cmd-351', { httpStatus: 200, body: { ok: true, answer: 'the ledger holds this' } },
+    { actor: 'web:user-1', key: 'issue351:web:complete' });
+  store.releaseWriterLease({ requireOwned: true });
+  const ledgerPath = join(directory, 'events.jsonl');
+  const covered = readFileSync(ledgerPath, 'utf8');
+  const coveredRows = covered.slice(0, -1).split('\n');
+  assert.equal(coveredRows.length, 32, 'the fixture holds 30 audit rows and the two web rows');
+
+  // The #587 shape: the checkpoint stays envelope-coherent while its body is re-pointed at a
+  // row the ledger cannot back (SA5's divergence), and the ledger then grows past the coverage
+  // the checkpoint proved. The two grown rows are `mcp.audit`, the kind whose fold owns no
+  // state, so the open's duty is exactly to fold them from their real positions.
+  const checkpointPath = join(directory, 'projection.checkpoint');
+  const envelope = deserialize(readFileSync(checkpointPath));
+  const projection = deserialize(envelope.projectionBytes);
+  const row = projection._webCommands.get('cmd-351');
+  row.outcome.bodyRef = { kind: 'web.command_completed', seq: 30 };
+  envelope.projectionBytes = serialize(projection);
+  envelope.projectionDigest = createHash('sha256').update(envelope.projectionBytes).digest('hex');
+  writeFileSync(checkpointPath, serialize(envelope));
+  const first = JSON.parse(coveredRows[0]);
+  const grown = [33, 34]
+    .map((seq) => JSON.stringify({ ...first, seq, idempotencyKey: `issue351:grown:${seq}` }));
+  writeFileSync(ledgerPath, `${covered}${grown.join('\n')}\n`);
+
+  const reopened = new CoordinationStore(directory);
+  const status = reopened.startupStatus();
+  assert.equal(status.checkpoint, 'stale_ledger', 'the divergent body is refused');
+  assert.equal(status.checkpointReason, 'reference_unresolved', 'and the row names the invariant that failed');
+  assert.equal(status.source, 'ledger_fallback', 'the ledger stays authoritative');
+  assert.equal(status.totalEvents, 34, 'the plan counts the covered rows and the tail');
+  assert.equal(status.checkpointEvents, 0, 'the report names nothing as adopted');
+  assert.equal(status.replayedEvents, 34, 'the abandon path folds every row, the tail included');
+  assert.equal(reopened.snapshot().lastSeq, 34, 'the grown rows answer from the ledger bytes');
+  assert.deepEqual(reopened.webCommand('cmd-351').outcome.body, { ok: true, answer: 'the ledger holds this' },
+    'including the text the divergent body had pointed at the wrong row');
+  reopened.releaseWriterLease({ requireOwned: true });
+});
