@@ -159,31 +159,10 @@ if (clockFindings.length > 0) {
   }
   process.exit(1);
 }
-
-const ledgerPath = new URL('./surface-divergence-ledger.json', import.meta.url);
-let currentLedger;
-try {
-  currentLedger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-} catch (error) {
-  process.stderr.write(`surface-conformance: could not read divergence ledger: ${error.message}\n`);
-  process.exit(1);
-}
-
-// The surface machinery loads here, in the runner proper: the thin re-executing parent (#77)
-// exits before this line and never pays these modules' load cost.
-const { collectSurfaceInventory } = await import(new URL('./surface-audit.mjs', import.meta.url).href);
-const { checkEnumStrings, checkLedgerMonotone, classifySurfaces } = await import(
-  new URL('./surface-conformance.mjs', import.meta.url).href
-);
-const inventory = collectSurfaceInventory();
-const surfaceFindings = classifySurfaces(inventory, currentLedger).novel;
-const enumFindings = checkEnumStrings(inventory.phaseLiterals, currentLedger).novel;
-for (const finding of [...surfaceFindings, ...enumFindings]) {
-  process.stderr.write(
-    `surface-conformance: novel divergence: ${finding.surface}:${finding.name}:${finding.dimension}\n`,
-  );
-}
-if (surfaceFindings.length > 0 || enumFindings.length > 0) process.exit(1);
+// Issue #582: the hand-maintained divergence ledger and its HEAD monotone check are removed —
+// the ledger-comparison gates above every suite run were the banned bookkeeping pattern. What
+// remains is the registry-derived surface gate below (#262), which derives everything it
+// judges from the live registry and never reads a committed census.
 
 // Issue #262: the surface gate (grammar lint, artifact/doc/parity staleness, MCP dispatch
 // resolvability) runs before any test so a surface change is refused when it is made.
@@ -194,37 +173,6 @@ for (const finding of gateFindings) process.stderr.write(`surface-gate: ${findin
 if (gateFindings.length > 0) {
   process.stderr.write('surface-gate: refused — regenerate artifacts with `node scripts/surface-gate.mjs --write` and fix the remaining findings\n');
   process.exit(1);
-}
-
-const repositoryRoot = new URL('../../', import.meta.url);
-let previousLedger = null;
-try {
-  previousLedger = JSON.parse(execFileSync(
-    'git',
-    ['show', 'HEAD:impl/scripts/surface-divergence-ledger.json'],
-    {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-      timeout: 2_000,
-      maxBuffer: 8 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  ));
-} catch (error) {
-  const missingBaseline = error?.status === 128
-    && String(error?.stderr).includes('exists on disk, but not in');
-  if (!missingBaseline) {
-    process.stderr.write(`surface-conformance: could not read the HEAD ledger: ${error.message}\n`);
-    process.exit(1);
-  }
-}
-if (previousLedger) {
-  try {
-    checkLedgerMonotone(previousLedger, currentLedger);
-  } catch (error) {
-    process.stderr.write(`surface-conformance: ${error.message}\n`);
-    process.exit(1);
-  }
 }
 
 // Unix-domain socket fixtures need their paths to remain below sockaddr_un.sun_path. `/tmp` is

@@ -4,9 +4,16 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
-import { CLI_WEB_COMMANDS, cliDispatchCommandNames, parseBatonCli } from '../src/application-cli.mjs';
-import { mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northbound.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, canonicalOperationForCommand } from '../src/application-semantics.mjs';
+import {
+  CLI_WEB_COMMANDS, HOST_CLI_VERBS, cliDispatchCommandNames, parseBatonCli,
+} from '../src/application-cli.mjs';
+import {
+  HOST_CLI_CAPABILITIES, unifiedCapabilityCatalog,
+} from '../src/surface-capability-catalog.mjs';
+import { resolveOperationSurfaces } from '../src/surface-resolution.mjs';
+import { commandForTool, mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northbound.mjs';
+import { ORDINARY_COMMANDS } from '../src/mcp-web-bridge.mjs';
 import { servedCliOrdinaryKeys } from './render-surface-docs.mjs';
 import {
   APPLICATION_UNIFIED_REGISTRY_DIGEST,
@@ -19,7 +26,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = resolve(here, '..', 'src');
 const mcpSource = readFileSync(resolve(src, 'mcp-northbound.mjs'), 'utf8');
 const cliSource = readFileSync(resolve(src, 'application-cli.mjs'), 'utf8');
-const native = JSON.parse(readFileSync(resolve(here, 'native-surface-capabilities.json'), 'utf8'));
 
 function same(left, right) {
   return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
@@ -43,35 +49,19 @@ for (const [argv, expected] of cliCases) {
   if (parsed.name !== expected) throw new Error(`control-surface-audit: CLI ${argv.join(' ')} resolved ${parsed.name}, expected ${expected}`);
 }
 
-if (native.schemaVersion !== 3 || !Array.isArray(native.mcpNative) || !Array.isArray(native.cliNative)
-  || !Array.isArray(native.registryCliExceptions) || !Array.isArray(native.mcpDispatchOnlyAliases)
-  || !Array.isArray(native.registryMcpExceptions)) {
-  throw new Error('control-surface-audit: native surface capability manifest is invalid');
-}
-for (const row of [...native.mcpNative, ...native.cliNative]) {
-  if (!row || typeof row.name !== 'string' || !row.name || typeof row.owner !== 'string' || !row.owner
-    || typeof row.reason !== 'string' || !row.reason) {
-    throw new Error('control-surface-audit: native capability rows require name, owner, and reason');
-  }
-}
-for (const row of native.registryCliExceptions) {
-  if (!row || typeof row.key !== 'string' || !row.key || typeof row.classification !== 'string' || !row.classification
-    || typeof row.reason !== 'string' || !row.reason) {
-    throw new Error('control-surface-audit: registry CLI exception rows require key, classification, and reason');
-  }
-}
-for (const row of native.mcpDispatchOnlyAliases) {
-  if (!row || typeof row.name !== 'string' || !row.name || typeof row.canonicalKey !== 'string' || !row.canonicalKey
-    || typeof row.reason !== 'string' || !row.reason) {
-    throw new Error('control-surface-audit: MCP dispatch-only aliases require name, canonicalKey, and reason');
-  }
-}
-for (const row of native.registryMcpExceptions) {
-  if (!row || typeof row.key !== 'string' || !row.key || typeof row.classification !== 'string' || !row.classification
-    || typeof row.reason !== 'string' || !row.reason) {
-    throw new Error('control-surface-audit: registry MCP exception rows require key, classification, and reason');
-  }
-}
+// ── Issue #582: the native-surface census is DERIVED ───────────────────────────────────────────
+// The deleted ledger classified five residues by hand. Every classification below is computed from
+// the authority that owns the fact, so no row can drift from what the surfaces really serve: the
+// CLI's own host-verb table and the registry CLI spellings naming its verbs (the catalog's
+// HOST_CLI_CAPABILITIES), the parser witness surface-resolution.mjs probes for every declared
+// spelling, the assembled MCP composition and its dispatch table, and the seat bridge.
+const cliNative = HOST_CLI_CAPABILITIES;
+const cliWitnesses = new Map(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+  .filter((operation) => operation.surfaces.includes('cli'))
+  .map((operation) => [operation.key, resolveOperationSurfaces(operation).witnesses.cli ?? null]));
+const mcpNative = unifiedCapabilityCatalog()
+  .filter((row) => row.kind === 'mcp_native')
+  .map((row) => Object.freeze({ name: row.id, owner: row.owner, reason: row.description }));
 
 const canonicalKeys = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => row.key));
 const registryCli = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
@@ -82,7 +72,7 @@ const servedCliSet = new Set(servedCliOrdinaryKeys());
 for (const command of APPLICATION_SEMANTIC_REGISTRY.cli.commands) {
   if (canonicalKeys.has(command.id)) servedCliSet.add(command.id);
 }
-for (const row of native.cliNative) {
+for (const row of cliNative) {
   if (row.canonicalKey) servedCliSet.add(row.canonicalKey);
 }
 // Issue #519: "served" is the CLI's own DISPATCH authority — the transports `command()` gates on
@@ -91,16 +81,29 @@ for (const row of native.cliNative) {
 // dispatches but the card deliberately omits (`deployment.reincarnate`, admitted by #306 lane W)
 // read as "no served implementation", and the third check below fired on a row that was served.
 for (const name of cliDispatchCommandNames()) servedCliSet.add(name);
-const exceptionKeys = new Set(native.registryCliExceptions.map((row) => row.key));
-for (const key of exceptionKeys) {
-  if (!registryCli.includes(key)) throw new Error(`control-surface-audit: stale registry CLI exception is not declared on CLI: ${key}`);
-  if (servedCliSet.has(key)) throw new Error(`control-surface-audit: registry CLI exception became served and must be removed: ${key}`);
+// What the three projections above still do not carry is served by the CLI spelling
+// surface-resolution.mjs resolves for the operation — a semantic-action verb (`baton run interrupt`
+// compiles to the run.do action) or a host verb the CLI runs in process.
+const cliSurfaceExceptions = registryCli
+  .filter((key) => !servedCliSet.has(key) && cliWitnesses.get(key) === null)
+  .map((key) => Object.freeze({ key, classification: 'unserved' }));
+if (cliSurfaceExceptions.length > 0) {
+  throw new Error(`control-surface-audit: registry declares CLI operations with no served spelling: ${cliSurfaceExceptions.map((row) => row.key).join(', ')}`);
 }
-const missingCli = registryCli.filter((key) => !servedCliSet.has(key) && !exceptionKeys.has(key));
-if (missingCli.length > 0) {
-  throw new Error(`control-surface-audit: registry declares unclassified CLI operations with no served implementation: ${missingCli.join(', ')}`);
+// Each host verb must still resolve through the parser that serves it, and the registry row its
+// spelling names must really declare a served CLI spelling — the two authorities the derivation
+// joins are checked against each other, so a moved verb or a moved registry spelling is a red row
+// here rather than a silently dropped capability.
+for (const row of cliNative) {
+  const verb = HOST_CLI_VERBS.find((candidate) => candidate.token === row.name);
+  const parsed = parseBatonCli(verb.argv);
+  if (!parsed || typeof parsed.kind !== 'string') {
+    throw new Error(`control-surface-audit: native CLI capability disappeared from the parser: ${row.name}`);
+  }
+  if (row.canonicalKey !== null && cliWitnesses.get(row.canonicalKey) === null) {
+    throw new Error(`control-surface-audit: native CLI capability ${row.name} names registry operation ${row.canonicalKey}, which declares no served CLI spelling`);
+  }
 }
-
 const appAliases = new Map(APPLICATION_SEMANTIC_REGISTRY.surfaceAliases
   .filter((row) => row.surface === 'application.commands')
   .map((row) => [row.name, row.canonical]));
@@ -129,58 +132,50 @@ function actionDispatchedOnMcp(operation) {
 const indirectMcp = registryMcp.filter(actionDispatchedOnMcp).map((operation) => Object.freeze({
   key: operation.key, action: operation.liveMethod, via: 'run.do',
 }));
-// An MCP-declaring registry operation that is deliberately absent from the operator composition
-// is classified in the manifest (seat_side or host_local), with the same staleness guards as the
-// CLI exceptions: the key must still be declared, and a listed operation that became a live tool
-// makes the entry stale.
-const mcpExceptionKeys = new Set(native.registryMcpExceptions.map((row) => row.key));
-for (const key of mcpExceptionKeys) {
-  if (!registryMcp.some((operation) => operation.key === key)) {
-    throw new Error(`control-surface-audit: stale registry MCP exception is not declared on MCP: ${key}`);
-  }
-  if (liveMcpTools.has(key)) {
-    throw new Error(`control-surface-audit: registry MCP exception became served and must be removed: ${key}`);
-  }
-}
-const missingMcp = registryMcp
-  .filter((operation) => !directMcpOperationPresent(operation) && !actionDispatchedOnMcp(operation)
-    && !mcpExceptionKeys.has(operation.key))
-  .map((operation) => operation.key);
-if (missingMcp.length > 0) {
-  throw new Error(`control-surface-audit: registry declares MCP operations with no direct tool or run.do action path: ${missingMcp.sort().join(', ')}`);
+// An MCP-declaring registry operation absent from the operator composition is served by the SEAT
+// bridge the resident admits (mcp-web-bridge ORDINARY_COMMANDS) — the seat-side class the census
+// recorded by hand. An operation that neither the composition, nor the run.do action path, nor the
+// bridge admits is a real divergence and refuses here.
+const seatBridgeCommands = new Set(ORDINARY_COMMANDS);
+const mcpSurfaceExceptions = registryMcp
+  .filter((operation) => !directMcpOperationPresent(operation) && !actionDispatchedOnMcp(operation))
+  .map((operation) => Object.freeze({
+    key: operation.key,
+    classification: seatBridgeCommands.has(operation.key) ? 'seat_side' : null,
+  }));
+const unclassifiedMcp = mcpSurfaceExceptions.filter((row) => row.classification === null);
+if (unclassifiedMcp.length > 0) {
+  throw new Error(`control-surface-audit: registry declares MCP operations with no direct tool, no run.do action path and no seat-bridge admission: ${unclassifiedMcp.map((row) => row.key).sort().join(', ')}`);
 }
 
 // APPLICATION_TOOL contains compatibility/internal dispatcher spellings in addition to advertised
-// tools. Require every such dispatch-only spelling to be explicitly classified and bound to an
-// existing canonical operation. This retains the #233 stale-dispatch guard without falsely
-// requiring internal aliases to appear in tools/list.
+// tools. Every such dispatch-only spelling is bound to the canonical operation its dispatch table
+// routes it to — the classification is the table's own value, so the #233 stale-dispatch guard
+// holds without a ledger of names.
 const dispatchOnly = [...liveMcpDispatch].filter((name) => !liveMcpTools.has(name)).sort();
-const dispatchAliasRows = new Map(native.mcpDispatchOnlyAliases.map((row) => [row.name, row]));
-for (const name of dispatchOnly) {
-  const row = dispatchAliasRows.get(name);
-  if (!row) throw new Error(`control-surface-audit: unclassified MCP dispatch-only alias: ${name}`);
-  if (!canonicalKeys.has(row.canonicalKey)) throw new Error(`control-surface-audit: MCP dispatch-only alias ${name} targets unknown canonical operation ${row.canonicalKey}`);
-}
-for (const [name] of dispatchAliasRows) {
-  if (!liveMcpDispatch.has(name)) throw new Error(`control-surface-audit: stale MCP dispatch-only alias classification: ${name}`);
-  if (liveMcpTools.has(name)) throw new Error(`control-surface-audit: MCP dispatch-only alias became advertised and classification must be removed: ${name}`);
+const dispatchAliasRows = dispatchOnly.map((name) => Object.freeze({
+  name,
+  canonicalKey: canonicalOperationForCommand(commandForTool(name))?.key ?? null,
+  reason: `internal application dispatch spelling routed to ${commandForTool(name)}`,
+}));
+for (const row of dispatchAliasRows) {
+  if (row.canonicalKey === null || !canonicalKeys.has(row.canonicalKey)) {
+    throw new Error(`control-surface-audit: MCP dispatch-only alias ${row.name} targets unknown canonical operation ${row.canonicalKey}`);
+  }
+  if (liveMcpTools.has(row.name)) {
+    throw new Error(`control-surface-audit: MCP dispatch-only alias became advertised and classification must be removed: ${row.name}`);
+  }
 }
 
-for (const row of native.mcpNative) {
+for (const row of mcpNative) {
   if (!liveMcpTools.has(row.name)) throw new Error(`control-surface-audit: native MCP capability disappeared from assembled tools: ${row.name}`);
-}
-for (const row of native.cliNative) {
-  const first = row.name.split(' ')[0];
-  if (!cliSource.includes(`args[0] === '${first}'`) && !cliSource.includes(`args[0] === "${first}"`)) {
-    throw new Error(`control-surface-audit: native CLI capability disappeared from parser: ${row.name}`);
-  }
 }
 
 for (const sentinel of ["name: 'run.message.send'", "name: 'run.message.receipt'", "name: 'run.attention.watch'", "name: 'run.answer'"]) {
   if (!cliSource.includes(sentinel)) throw new Error(`control-surface-audit: CLI implementation is missing ${sentinel}`);
 }
 // baton_run_attention_watch left the operator composition with the #156 D4 cut; the attention
-// watch stays pinned on the CLI implementation above and classified seat_side in the manifest.
+// watch stays pinned on the CLI implementation above and admitted seat-side by the bridge.
 for (const sentinel of ['baton_run_message_send', 'baton_run_message_receipt', 'baton_decision_answer']) {
   if (!liveMcpTools.has(sentinel)) throw new Error(`control-surface-audit: MCP assembled tools are missing ${sentinel}`);
 }
@@ -189,21 +184,22 @@ if (!mcpSource.includes('CANONICAL_DOT_TOOL_DEFINITIONS') || !mcpSource.includes
 }
 
 process.stdout.write(`${JSON.stringify({
-  schemaVersion: 7,
+  schemaVersion: 8,
   registryDigest: APPLICATION_UNIFIED_REGISTRY_DIGEST,
   parity,
   registry: {
     cliDeclared: registryCli.length,
     cliServed: servedCliSet.size,
-    cliSurfaceExceptions: native.registryCliExceptions,
+    cliSurfaceExceptions,
     mcpDeclared: registryMcp.length,
     mcpAssembledTools: liveMcpTools.size,
     mcpApplicationDispatchEntries: liveMcpDispatch.size,
     mcpDirectDeclared: registryMcp.length - indirectMcp.length,
     mcpActionDispatched: indirectMcp,
-    mcpDispatchOnlyAliases: native.mcpDispatchOnlyAliases,
+    mcpSurfaceExceptions,
+    mcpDispatchOnlyAliases: dispatchAliasRows,
   },
-  native: { cli: native.cliNative, mcp: native.mcpNative },
+  native: { cli: cliNative, mcp: mcpNative },
   notifications: cliNotifications,
   liveCliCases: cliCases.length,
   ambiguousLegacyAliases: ambiguousLegacyAliases(),

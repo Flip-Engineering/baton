@@ -42,11 +42,7 @@
 //   RG-10b RED  renderer canonical-miss fallback byte-string present in EXECUTABLE source
 //               (comment-stripped, fold)                                                 (stage: renderer-fallback-absent)
 //   RG-10c RED  renderMcpToolInventory resolves the 5 ops to their operation keys       (stage: non-canonical-ops-render-operation-keys)
-//   RG-11R RED  surface-inventory-artifact encodes mcp.application 49 / mcp.combined 102,
-//               tied to composition (35 + 14 / 86 + 2 + 14, fold)                        (stage: artifact-counts-49-102)
 //   RG-P1  PIN  surface-conformance main stays green                                    (stage: conformance-main-green)
-//   RG-P2  PIN  committed artifact mcp.application count == live application surface    (stage: artifact-application-count-pin)
-//   RG-P3  PIN  committed artifact mcp.combined count == live combined surface          (stage: artifact-combined-count-pin)
 //   RG-P4  PIN  phase16 application tool list == mcpApplicationToolNames()              (stage: phase16-application-tool-list-pin)
 //   RG-P5  PIN  mcp-reflex application tool list == mcpApplicationToolNames()           (stage: mcp-reflex-application-tool-list-pin)
 //   RG-P6  PIN  phase67 application tool list == mcpApplicationToolNames()              (stage: phase67-application-tool-list-pin)
@@ -507,21 +503,6 @@ test('RG-10c RE-DERIVED (#566): the 5 non-canonical ops derive to their fleet to
   }
 });
 
-// ── RG-11-R — the regenerated artifact encodes the final counts (D4 item 3) ────────────────────
-
-test('RG-11-R RE-FOLDED (#314/#555): the artifact encodes the conformance derivation counts - the core application projection and the live combined surface (stage: artifact-counts-49-102)', () => {
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  // Landing re-fold (Main, #555/#314 adjudication): the artifact's mcp.application count is the
-  // #314 CORE projection the conformance reader serves (never the raw flat list); the RAW flat
-  // ordinary/combined counts stay pinned live by RG-02/RG-09 (58/111, derivation-tied).
-  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
-    'artifact mcp.application count is the #314 core projection (stage: artifact-counts-49-102)');
-  assert.equal(artifact.counts.mcpCombinedTools, mcpNorthbound.mcpCombinedToolNames().length,
-    'artifact mcp.combined count equals the live combined surface (stage: artifact-counts-49-102)');
-  assert.ok(ORDINARY_TOOL_NAMES.length > CORE_TOOL_NAMES.length,
-    'the raw ordinary table stays the wider dispatch roster the parity rows pin');
-});
-
 // ── RG-P1 (PIN) — the conformance gate stays a citizen ──────────────────────────────────────────
 
 test('RG-P1 PIN: surface-conformance.mjs executable main is green (stage: conformance-main-green)', () => {
@@ -530,22 +511,6 @@ test('RG-P1 PIN: surface-conformance.mjs executable main is green (stage: confor
   });
   assert.match(String(result), /surface-conformance: ok/,
     'surface-conformance main is green (stage: conformance-main-green)');
-});
-
-// ── RG-P2/RG-P3 (PIN) — the committed artifact matches the live counts (D4 item 3) ──────────────
-
-test('RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)', () => {
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  // Issue #314 (docs/49 §2): the live application surface is the SHIPPED core table the production
-  // wrapper advertises — the seven verb-tools — never the raw flat list the northbound keeps for dispatch.
-  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
-    'artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)');
-});
-
-test('RG-P3 PIN: committed artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)', () => {
-  const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.equal(artifact.counts.mcpCombinedTools, mcpNorthbound.mcpCombinedToolNames().length,
-    'artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)');
 });
 
 // ── RG-P4..RG-P7 (PIN) — the four RAW application-table pins tie to the ONE derivation ───────────

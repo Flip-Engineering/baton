@@ -14,6 +14,9 @@ import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
 // Issue #464: the participant row's role line is bounded by the ONE `view.role.head` registry row
 // (limits.mjs derives it from the frame a roster must fit) — never a second constant here.
 import { FRAME_LIMITS } from './limits.mjs';
+// Issue #286 G-36: the physical-workspace-id shape has ONE definition (shared-workspace-custody.mjs);
+// every workspace id this fold admits or compares asks that predicate.
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 
 export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.created',
@@ -138,11 +141,6 @@ const CLAIM_PATHS_COORDINATES = Object.freeze({ field: 'paths', rule: 'claimed-p
 const SCOPE_CLAIM_PREFIX = 'scope:';
 export const scopeClaimId = (participantId) => `${SCOPE_CLAIM_PREFIX}${participantId}`;
 const isScopeClaimId = (claimId) => typeof claimId === 'string' && claimId.startsWith(SCOPE_CLAIM_PREFIX);
-
-// One physical workspace identity (`ws-…`): the checkout a participant works in, as recorded at
-// recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
-// shape is named once here rather than re-spelled at each site that carries it.
-const WORKSPACE_ID = /^ws-[a-f0-9]{32}$/u;
 
 // Issue #453: the closed set of outcomes a `resume-from` workspace carry records — `bound` (the
 // successor works in the predecessor's own checkout), `applied` (the checkout was gone and the
@@ -438,7 +436,7 @@ export function validateSwarmEvent(kind, payload) {
     // The physical checkout this participant deliberately shares with others, when it was
     // recruited into one. A durable organizational record, never custody: whether the checkout
     // may close is decided by the controller's live handles, not by swarm membership.
-    if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
+    if (p.workspaceId !== undefined && !isPhysicalWorkspaceId(p.workspaceId)) {
       refuse('participant workspaceId must be one physical workspace identity', 'invalid_payload');
     }
     validOptionalNonEmptyString(p.runId, 'participant runId', refuse);
@@ -479,7 +477,7 @@ export function validateSwarmEvent(kind, payload) {
     validOptionalNonEmptyString(p.sessionId, 'participant sessionId', refuse);
     // The checkout this binding observed for the participant's worker. The first recruit into a
     // checkout is armed here: without it the exclusive-writer guarantee had nothing to compare.
-    if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
+    if (p.workspaceId !== undefined && !isPhysicalWorkspaceId(p.workspaceId)) {
       refuse('participant binding workspaceId must be one physical workspace identity', 'invalid_payload');
     }
     return;
@@ -620,7 +618,7 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.couplingId)) refuse('swarm.coupling_writer_bypassed requires couplingId', 'invalid_payload');
     // The checkout the bypass happened in: the coupling record's own identity, so the row can
     // never describe a different resource than the writer record it lands on.
-    if (typeof p.workspaceId !== 'string' || !WORKSPACE_ID.test(p.workspaceId)) {
+    if (!isPhysicalWorkspaceId(p.workspaceId)) {
       refuse('swarm.coupling_writer_bypassed requires one physical workspace identity', 'invalid_payload');
     }
     if (!isNonEmptyString(p.writer)) refuse('swarm.coupling_writer_bypassed requires writer', 'invalid_payload');
@@ -727,7 +725,7 @@ export function validateSwarmEvent(kind, payload) {
 
   if (kind === 'workspace.carried_from') {
     if (!isNonEmptyString(p.participantId)) refuse('workspace.carried_from requires participantId', 'invalid_payload');
-    if (!WORKSPACE_ID.test(p.workspaceId)) refuse('workspace.carried_from requires a valid workspaceId', 'invalid_payload');
+    if (!isPhysicalWorkspaceId(p.workspaceId)) refuse('workspace.carried_from requires a valid workspaceId', 'invalid_payload');
     if (!isNonEmptyString(p.predecessor)) refuse('workspace.carried_from requires predecessor', 'invalid_payload');
 
     // Issue #453: a carry is a FACT or a REFUSAL. `how` is the closed outcome (SWARM_CARRY_HOW),
@@ -928,7 +926,7 @@ export function validateSwarmEvent(kind, payload) {
     // authorship claim; `sha`/`ref` alone stay the retained revision. `mergeBase` is the commit
     // the captured revision and the deployment's target branch descend from (issue #301), so the
     // row answers "integrate from where" without re-deriving git topology at read time.
-    if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
+    if (p.workspaceId !== undefined && !isPhysicalWorkspaceId(p.workspaceId)) {
       refuse('A contribution revision workspace must be one physical workspace identity', 'invalid_payload');
     }
     if (p.observedHead !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.observedHead)) {
@@ -1036,7 +1034,7 @@ function assertAttribution(swarm, identity, meta, field) {
 function writerCheckouts(record) {
   if (record.coupling !== 'writer') return [];
   if (Array.isArray(record.workspaces)) return record.workspaces;
-  return WORKSPACE_ID.test(record.workspaceId ?? '') ? [record.workspaceId] : [];
+  return isPhysicalWorkspaceId(record.workspaceId) ? [record.workspaceId] : [];
 }
 
 /** The live roster a rotating lease reads for eligibility to take (docs/45 §4.1): the group's
@@ -1127,7 +1125,7 @@ function recordedCheckouts(swarm, memberIds) {
   const covered = new Set();
   for (const memberId of memberIds) {
     const workspaceId = ownGet(swarm.participants, memberId)?.workspaceId;
-    if (WORKSPACE_ID.test(workspaceId ?? '')) covered.add(workspaceId);
+    if (isPhysicalWorkspaceId(workspaceId)) covered.add(workspaceId);
   }
   return [...covered].sort();
 }
@@ -1617,7 +1615,7 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
         // inert exactly where it is promised (docs/39 §Declared coupling) — so at admission it
         // refuses and names the remedy. A row already in the ledger was admitted under the rules
         // of its day and replays as recorded (workspaceId null), never as a startup refusal.
-        if (admission && !WORKSPACE_ID.test(writerRow.workspaceId ?? '')) {
+        if (admission && !isPhysicalWorkspaceId(writerRow.workspaceId)) {
           integrity(`participant ${p.participantId} has no recorded checkout, so an exclusive writer claim over it could not be enforced; record the checkout its participant works in (a participant is recorded in its checkout when it is recruited into one) before claiming it`, 'swarm_writer_workspace_unrecorded');
         }
         workspaceId = writerRow.workspaceId;
@@ -1627,7 +1625,7 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       // Exclusivity is per checkout across BOTH record families (docs/45 §4.1) — the one-writer
       // guarantee cannot depend on which spelling declared it.
       if (conflicting === null && p.coupling === 'writer') {
-        const coverage = workspaces ?? (WORKSPACE_ID.test(workspaceId ?? '') ? [workspaceId] : []);
+        const coverage = workspaces ?? (isPhysicalWorkspaceId(workspaceId) ? [workspaceId] : []);
         conflicting = conflictingWriterRecord(swarm, p.couplingId, coverage, exclusiveWriter);
       }
       if (conflicting !== null) {
