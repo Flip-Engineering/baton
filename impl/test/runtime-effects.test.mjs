@@ -33,6 +33,7 @@ import test from 'node:test';
 import * as runtimeEffects from '../src/runtime-effects.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import * as indexModule from '../src/index.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -40,7 +41,6 @@ const { Lang, parse } = require('@ast-grep/napi');
 const MEMBER_FILE = 'impl/src/runtime-effects.mjs';
 const ADMISSION_FILE = 'impl/src/runtime-admission.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -130,7 +130,7 @@ test('RE1: the module imports neither monolith and keeps no implicit receiver ou
 });
 
 test('RE2: every effects_port delegate keeps the member name, parameter list, arity, and hands over the recorder', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegated = coordinatorFile.members
     .filter((member) => member.evidence.includes('effect:effects_port'))
@@ -322,7 +322,7 @@ test('RE4b: a driver-built coordinator\'s port fronts the coordinator\'s own wra
     'the port fronts the poisoning coordination proxy, not the raw store');
 });
 
-test('RE5: the map sees the move', () => {const map = JSON.parse(read(MAP_FILE));
+test('RE5: the map sees the move', () => {const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-effects target');
   const byName = new Map(target.members.map((member) => [member.name, member]));

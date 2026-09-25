@@ -1,40 +1,31 @@
 // seam-inventory.test.mjs — issue #259 slice 0. Pins the machine-checked seam map that
-// impl/scripts/seam-inventory.mjs produces and the check mode that keeps it honest.
+// impl/scripts/seam-inventory.mjs produces, collected live from the targets' source (#582).
 //
-// Three claims are load-bearing:
-//   1. COMPLETE — every top-level member of the three classes appears in the committed artifact,
+// Two claims are load-bearing:
+//   1. COMPLETE — every top-level member of the declared classes appears in the map,
 //      in source order, exactly once. The map is the input to a later split, so a member the map
 //      silently dropped is a member the split would silently leave behind in the monolith.
-//   2. STALE-DETECTING — a regeneration of the committed artifact is clean, and the check mode
-//      refuses a committed artifact that has drifted (a moved line, a changed seam, changed
-//      evidence, a member that vanished). A map that cannot fail is documentation, not a check.
-//   3. EVIDENCE-BASED — classification follows the catalogue in the script, not a per-member
+//   2. EVIDENCE-BASED — classification follows the catalogue in the script, not a per-member
 //      table: the pins below name members whose seam is readable from what they call.
 
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
-
 import {
-  FALLBACK_EVIDENCE, INVENTORY_PATH, SCHEMA_VERSION, SEAMS, TARGETS,
-  checkSeamInventory, collectMembers, collectSeamInventory, renderSeamInventory,
+  FALLBACK_EVIDENCE, SCHEMA_VERSION, SEAMS, TARGETS,
+  checkSeamInventory, collectMembers, collectSeamInventory,
 } from '../scripts/seam-inventory.mjs';
 
 const IMPL_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const READABLE_SEAM = new RegExp(`^(?:${SEAMS.join('|')}|delegates):[a-z_]+$`, 'u');
 
-function committed() {
-  return JSON.parse(readFileSync(INVENTORY_PATH, 'utf8'));
-}
-
 function withMutation(mutate) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-seam-inventory-'));
   const path = join(directory, 'seam-inventory.json');
-  const inventory = committed();
+  const inventory = collectSeamInventory();
   mutate(inventory);
   writeFileSync(path, `${JSON.stringify(inventory, null, 2)}\n`);
   return { path, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
@@ -76,95 +67,7 @@ test('SI1: the committed map classifies every member of every declared class exa
   }
 });
 
-test('SI1b: the committed artifact carries no line numbers, so ordinary edits never stale it', () => {
-  for (const file of committed().files) {
-    for (const member of file.members) {
-      assert.equal(member.line, undefined, `${member.name}: committed map carries no line`);
-      assert.equal(member.endLine, undefined, `${member.name}: committed map carries no endLine`);
-      assert.ok(Number.isSafeInteger(member.ordinal) && Number.isSafeInteger(member.size), `${member.name}: ordinal and size`);
-    }
-  }
-});
 
-test('SI2: the committed map regenerates clean, deterministically, and the check mode fails when it is stale', () => {
-  assert.deepEqual(checkSeamInventory(), [], 'the committed artifact must match a fresh regeneration');
-  assert.equal(renderSeamInventory(collectSeamInventory()), renderSeamInventory(collectSeamInventory()), 'classification must be deterministic');
-  assert.equal(readFileSync(INVENTORY_PATH, 'utf8'), renderSeamInventory(collectSeamInventory()), 'the committed bytes must be the rendered artifact');
-
-  const cases = [
-    {
-      name: 'a reclassified member',
-      mutate: (inventory) => {
-        const member = inventory.files[0].members[0];
-        member.seam = member.seam === 'effect' ? 'observation' : 'effect';
-      },
-      expect: /classifies as/u,
-    },
-    {
-      name: 'a dropped member',
-      mutate: (inventory) => { inventory.files[0].members.pop(); },
-      expect: /is uncommitted/u,
-    },
-    {
-      name: 'a member that no longer exists',
-      mutate: (inventory) => { inventory.files[0].members.push({ name: 'ghostMember', ordinal: 0, size: 1, seam: 'effect', evidence: ['effect:action_verb'] }); },
-      expect: /no longer exists/u,
-    },
-    {
-      name: 'a renamed member',
-      mutate: (inventory) => { inventory.files[1].members[0].name = `${inventory.files[1].members[0].name}Renamed`; },
-      expect: /is uncommitted|no longer exists/u,
-    },
-    {
-      name: 'drifted evidence',
-      mutate: (inventory) => { inventory.files[2].members[0].evidence.push('effect:timer_arm'); },
-      expect: /evidence drifted/u,
-    },
-  ];
-  for (const { name, mutate, expect } of cases) {
-    const fixture = withMutation(mutate);
-    try {
-      const findings = checkSeamInventory({ path: fixture.path });
-      assert.ok(findings.length > 0, `${name}: the check must not accept a stale artifact`);
-      assert.ok(findings.some((finding) => expect.test(finding)), `${name}: expected ${expect} in ${findings.join(' | ')}`);
-    } finally {
-      fixture.cleanup();
-    }
-  }
-
-  const corrupt = withMutation(() => {});
-  writeFileSync(corrupt.path, '{ not json');
-  try {
-    assert.match(checkSeamInventory({ path: corrupt.path }).join(' '), /not JSON/u);
-  } finally {
-    corrupt.cleanup();
-  }
-  assert.match(checkSeamInventory({ path: join(tmpdir(), 'baton-absent-seam-inventory.json') }).join(' '), /unreadable/u);
-});
-
-test('SI3: the check mode is the same one the CLI runs, and it exits non-zero on a stale artifact', () => {
-  // Green: the committed artifact.
-  const ok = execFileSync(process.execPath, ['scripts/seam-inventory.mjs'], { cwd: IMPL_ROOT, encoding: 'utf8' });
-  assert.equal(ok.trim(), 'seam-inventory: ok');
-  // Green: the report the doc's tables are read from.
-  const report = execFileSync(process.execPath, ['scripts/seam-inventory.mjs', '--report'], { cwd: IMPL_ROOT, encoding: 'utf8' });
-  assert.match(report, /"entangled"/u);
-
-  // Red: a stale artifact. The CLI resolves the artifact by path, so the fixture is written over
-  // the committed file and restored immediately — the check mode is what a suite/CI run sees.
-  const original = readFileSync(INVENTORY_PATH, 'utf8');
-  try {
-    const inventory = JSON.parse(original);
-    inventory.files[0].members[0].seam = inventory.files[0].members[0].seam === 'effect' ? 'observation' : 'effect';
-    writeFileSync(INVENTORY_PATH, `${JSON.stringify(inventory, null, 2)}\n`);
-    const failure = spawnSync(process.execPath, ['scripts/seam-inventory.mjs'], { cwd: IMPL_ROOT, encoding: 'utf8' });
-    assert.equal(failure.status, 1, 'a stale artifact must exit 1');
-    assert.match(failure.stderr, /seam-inventory: /u);
-  } finally {
-    writeFileSync(INVENTORY_PATH, original);
-  }
-  assert.deepEqual(checkSeamInventory(), [], 'the committed artifact must be restored exactly');
-});
 
 test('SI4: the classifier reads the seams off the source, not off a per-member table', () => {
   const inventory = collectSeamInventory();

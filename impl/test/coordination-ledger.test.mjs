@@ -35,6 +35,7 @@ import test from 'node:test';
 import * as coordinationLedger from '../src/coordination-ledger.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { memberSource, memberSpans } from './seam-member-source.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -197,7 +198,7 @@ test('CL1: the moved module is context-free — no this, no mutable module state
 });
 
 test('CL2: the committed map, the delegates, the exports and the store imports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  const map = collectSeamInventory();
   // Identity is (name, ordinal), and a name may itself begin with `#`: the separator is a NUL, the
   // same one the inventory's own identity uses.
   const moved = new Map();

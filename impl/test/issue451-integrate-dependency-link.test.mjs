@@ -52,11 +52,10 @@ function write(repo, path, content) {
   writeFileSync(full, content);
 }
 
-/** The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
+/** The scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
  * the base commit, so the integration checkout checks them out; each one imports a package that
  * only the repository's own install carries — resolution is the whole point of the row. */
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
@@ -208,8 +207,9 @@ test('451a: an install under a sub-directory is linked and the landing regenerat
     assert.ok(existsSync(linked), 'the link exists inside the checkout');
     assert.ok(lstatSync(linked).isSymbolicLink(), 'a link, never a copy (the #296 landing rule)');
     // The regenerator step, run by hand in the checkout: the import that died in the issue.
-    execFileSync(process.execPath, ['impl/scripts/seam-inventory.mjs', '--write'], { cwd: checkout.dir, stdio: 'pipe' });
-    assert.equal(readFileSync(join(checkout.dir, 'impl/data/seam-inventory.json'), 'utf8').trim(),
+    const byHand = REGENERATORS[0];
+    execFileSync(process.execPath, [byHand, '--write'], { cwd: checkout.dir, stdio: 'pipe' });
+    assert.equal(readFileSync(join(checkout.dir, `impl/data/${byHand.split('/').at(-1).replace(/\.mjs$/u, '')}.json`), 'utf8').trim(),
       'installed-dependency-reachable', 'the regenerator resolved its package out of the linked install');
     assert.doesNotMatch(git(checkout.dir, 'status', '--porcelain'), /node_modules/u,
       'the link is not repository content: the checkout\'s own status never names it');
@@ -220,8 +220,8 @@ test('451a: an install under a sub-directory is linked and the landing regenerat
 
   const answer = await w.integrate();
   assert.deepEqual(answer.integration.regenerated.sort(), [
-    'impl/data/render-surface-docs.json', 'impl/data/seam-inventory.json', 'impl/data/surface-gate.json',
-  ], 'all three landing regenerators ran inside the squash and their artifacts are folded into it');
+    'impl/data/render-surface-docs.json', 'impl/data/surface-gate.json',
+  ], 'the landing regenerators ran inside the squash and their artifacts are folded into it');
   assert.doesNotMatch(git(w.repo, 'show', '--name-only', '--format=', 'master'), /node_modules/u,
     'the linked install never lands: the squash carries the lane\'s work and nothing else');
   assert.equal(git(w.repo, 'show', '--format=', 'master:impl/src/lane.mjs'), 'export const lane = 1;',
@@ -238,7 +238,7 @@ test('451b: a failing regenerator refuses typed with script, exit and a bounded 
 
   assert.ok(error, 'the landing refuses');
   assert.equal(error.code, 'integrate_change_invalid');
-  assert.equal(error.detail.script, 'impl/scripts/seam-inventory.mjs', 'the failing script is named');
+  assert.equal(error.detail.script, 'impl/scripts/surface-gate.mjs', 'the failing script is named');
   assert.equal(error.detail.exit, 3, 'its exit status is named');
   assert.equal(typeof error.detail.stderrTail, 'string', 'the tail is carried');
 
@@ -307,11 +307,11 @@ test('451c: the lane worktree and the integration checkout derive the same depen
 test('451d: the CLI prints the refusal tail under the refusal line', () => {
   const wires = [
     // The wire shape the CLI receives from the resident: the runtime's detail rides nested.
-    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/seam-inventory.mjs --write failed in the landing checkout',
-      detail: { script: 'impl/scripts/seam-inventory.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` }, retryable: false },
+    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/surface-gate.mjs --write failed in the landing checkout',
+      detail: { script: 'impl/scripts/surface-gate.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` }, retryable: false },
     // The embedded shape: the refusal's own detail, unwrapped.
-    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/seam-inventory.mjs --write failed in the landing checkout',
-      script: 'impl/scripts/seam-inventory.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` },
+    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/surface-gate.mjs --write failed in the landing checkout',
+      script: 'impl/scripts/surface-gate.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` },
   ];
   const parsed = parseBatonCli([
     'swarm', 'integrate', 's1', 'contribution:1', '--onto', 'master', '--idempotency-key', 'i451:cli',
@@ -326,7 +326,7 @@ test('451d: the CLI prints the refusal tail under the refusal line', () => {
     const error = await runBatonCli(parsed, client).then(() => null, (thrown) => thrown);
     assert.ok(error, 'the refusal still propagates');
     assert.ok(error.message.includes('--write failed in the landing checkout'), 'the refusal line survives');
-    assert.match(error.message, /impl\/scripts\/seam-inventory\.mjs exited 3/u, 'the cause is named under it');
+    assert.match(error.message, /impl\/scripts\/surface-gate\.mjs exited 3/u, 'the cause is named under it');
     assert.ok(error.message.includes(FINAL_MARKER), 'and the tail is printed');
     assert.ok(error.message.indexOf(FINAL_MARKER) > error.message.indexOf('--write failed in the landing checkout'),
       'the tail renders UNDER the refusal line');

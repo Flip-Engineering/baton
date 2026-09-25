@@ -39,10 +39,9 @@ function write(repo, path, content) {
   writeFileSync(full, content);
 }
 
-/** The three regenerators the landing's default set runs inside the checkout; tracked on the
+/** The regenerators the landing's default set runs inside the checkout; tracked on the
  * base commit exactly as this repository tracks its own. */
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
