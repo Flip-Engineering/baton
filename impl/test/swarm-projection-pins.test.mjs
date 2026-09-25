@@ -44,8 +44,7 @@ const profile = Object.freeze({
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['impl/**'] };
 
-// turnDelayMs keeps a resumed mock turn alive long enough that a guide issued right after a resume
-// reaches the receipted delivery lane instead of writing no lane receipt at all.
+// turnDelayMs keeps the resumed mock turn active for the following mid-turn guides.
 async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-projection-pins-'));
   const repo = join(directory, 'repo');
@@ -109,11 +108,11 @@ async function builders(t, options = {}) {
 test('the view pins what a participant was told, and the guide receipt that wrote each row', async (t) => {
   const { swarm, delegated, leadWorker } = await builders(t, { turnDelayMs: 250 });
   const leadActor = `worker:${leadWorker.id}`;
-  // Issue #273: the first guide resumes the paused turn — the lane writes no message.sent receipt,
-  // and the guide's OWN row is what the projection carries (the delivery says so with lane: null).
+  // The first guide resumes the paused turn and names its message-lane receipt (#601).
   const resumed = await delegated.guide('alpha', 'Resume on the interface');
   assert.equal(resumed.guide.kind, 'swarm.guidance_sent');
-  assert.deepEqual(resumed.guide.delivery, { state: 'delivered', lane: null });
+  assert.equal(resumed.guide.delivery.state, 'delivered');
+  assert.equal(resumed.guide.delivery.lane.kind, 'turn');
   let view = await swarm.view();
   assert.deepEqual(view.participants.find((row) => row.participantId === 'alpha').guidance.map((row) => row.seq),
     [resumed.guide.seq], 'the paused-lane guide is pinned on the seat it was sent to');
