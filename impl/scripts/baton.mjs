@@ -35,6 +35,7 @@ import {
   assertSurfaceCapabilityNameClosure,
   resolveSurfaceCapability,
 } from '../src/surface-capability-resolution.mjs';
+import { writeFollowPage } from '../src/wake-render.mjs';
 
 const TTY = process.stderr.isTTY === true;
 const surfaceRuntime = new ProductionConvergenceRuntime({ repoRoot: process.cwd() });
@@ -524,10 +525,18 @@ try {
       let result;
       try {
         result = await runBatonCli(parsed, client, streaming ? {
-          signal: controller.signal,
           onFollowPage: async (page) => {
             followPages += 1;
-            process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, page))}\n`);
+            // docs/55 S9 (issue #585): a wake frame is also announced on the human channel, so an
+            // operator following the stream reads rows instead of JSON. stdout keeps its one
+            // machine frame per row; stderr carries the human line on a TTY only.
+            writeFollowPage({
+              page,
+              project: (value) => projectBatonCliResult(parsed, value),
+              stdout: process.stdout,
+              stderr: process.stderr,
+              tty: TTY,
+            });
           },
         } : {});
       } finally {

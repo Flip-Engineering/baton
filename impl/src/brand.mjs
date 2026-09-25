@@ -87,6 +87,12 @@ const STATUS_DERIVATION = Object.freeze({
   selection_required: 'needs you', paused: 'needs you',
   resume_decision_required: 'needs you', reroute_proposed: 'needs you',
   capacity_pressure: 'needs you', root_owed: 'needs you',
+  // The canonical run phases that wait on a person, together with the legacy spelling the run's
+  // own projection still carries: `awaiting_approval` holds a Plan for the operator and
+  // `awaiting_selection` an accepted result for one; the generic `awaiting` row above anticipated
+  // them by name only.
+  awaiting_approval: 'needs you', awaiting_selection: 'needs you',
+  awaiting_plan_approval: 'needs you',
   // refused — the typed-refusal family and terminal-crash worker states
   refused: 'refused', failed: 'refused', denied: 'refused', error: 'refused',
   invalid: 'refused', dead: 'refused', exited: 'refused',
@@ -118,6 +124,18 @@ export function flipStatus(statusClass, { color = false } = {}) {
   const row = STATUS_ROWS[status];
   const text = color ? `${ANSI.gold}${row.glyph}${ANSI.reset} ${row.word}` : `${row.glyph} ${row.word}`;
   return { ...row, text };
+}
+
+/** The ONE derivation as plain data: `{derivation, rows}` with no color and no ANSI. A renderer that
+ * runs where this module cannot (the browser Run desk, whose page is served as text) carries this
+ * projection and applies it at render time, so it names a class with the same words as every other
+ * surface while the table itself stays in this one module. */
+export function flipStatusTable() {
+  return Object.freeze({
+    derivation: STATUS_DERIVATION,
+    rows: Object.freeze(Object.fromEntries(Object.entries(STATUS_ROWS)
+      .map(([status, row]) => [status, Object.freeze({ status, glyph: row.glyph, word: row.word })]))),
+  });
 }
 
 /** The statused prefix a human-facing wake row carries for one projection class: `<glyph> <word> —
