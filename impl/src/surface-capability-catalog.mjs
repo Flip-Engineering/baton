@@ -32,18 +32,28 @@ export const UNIFIED_SURFACE_CATEGORIES = Object.freeze([
 // CLI's own host-verb table and the registry rows whose CLI spellings name those verbs — never read
 // from a checked-in census. A registry row whose CLI spelling names a host verb describes that
 // host-local capability: the verb supplies the CLI spelling, the row supplies the key it serves.
-const hostVerbKey = (token) => APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-  .filter((operation) => operation.surfaces.includes('cli'))
-  .find((operation) => [operation.names?.cli, ...(operation.aliases ?? [])
-    .filter((alias) => alias.surface === 'cli').map((alias) => alias.name)]
-    .some((spelling) => typeof spelling === 'string' && spelling.split(' ').slice(1).includes(token)))
-  ?.key ?? null;
-export const HOST_CLI_CAPABILITIES = Object.freeze(HOST_CLI_VERBS.map((row) => Object.freeze({
-  name: row.token,
-  canonicalKey: hostVerbKey(row.token),
-  owner: 'cli-host',
-  reason: row.summary,
-})));
+// The link is single-valued by construction: a token several rows name yields no key rather than a
+// silent first pick, and the control-surface audit refuses that ambiguity.
+const cliSpellingsOf = (operation) => [
+  operation.names?.cli,
+  ...(operation.aliases ?? []).filter((alias) => alias.surface === 'cli').map((alias) => alias.name),
+].filter((spelling) => typeof spelling === 'string');
+/** Every registry CLI operation whose own CLI spelling names `token` (a host verb's first token). */
+export function registryOperationsNamedByHostVerb(token) {
+  return Object.freeze(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .filter((operation) => operation.surfaces.includes('cli')
+      && cliSpellingsOf(operation).some((spelling) => spelling.split(' ').slice(1).includes(token)))
+    .map((operation) => operation.key));
+}
+export const HOST_CLI_CAPABILITIES = Object.freeze(HOST_CLI_VERBS.map((row) => {
+  const named = registryOperationsNamedByHostVerb(row.token);
+  return Object.freeze({
+    name: row.token,
+    canonicalKey: named.length === 1 ? named[0] : null,
+    owner: 'cli-host',
+    reason: row.summary,
+  });
+}));
 const operationAliases = applicationOperationAliasMap();
 const semanticByKey = new Map(
   APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => [row.key, row]),

@@ -9,7 +9,7 @@ import {
   CLI_WEB_COMMANDS, HOST_CLI_VERBS, cliDispatchCommandNames, parseBatonCli,
 } from '../src/application-cli.mjs';
 import {
-  HOST_CLI_CAPABILITIES, unifiedCapabilityCatalog,
+  HOST_CLI_CAPABILITIES, registryOperationsNamedByHostVerb, unifiedCapabilityCatalog,
 } from '../src/surface-capability-catalog.mjs';
 import { resolveOperationSurfaces } from '../src/surface-resolution.mjs';
 import { commandForTool, mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northbound.mjs';
@@ -90,15 +90,19 @@ const cliSurfaceExceptions = registryCli
 if (cliSurfaceExceptions.length > 0) {
   throw new Error(`control-surface-audit: registry declares CLI operations with no served spelling: ${cliSurfaceExceptions.map((row) => row.key).join(', ')}`);
 }
-// Each host verb must still resolve through the parser that serves it, and the registry row its
-// spelling names must really declare a served CLI spelling — the two authorities the derivation
-// joins are checked against each other, so a moved verb or a moved registry spelling is a red row
-// here rather than a silently dropped capability.
+// Each host verb must still resolve through the parser that serves it, the registry spelling that
+// names it must be single-valued, and the row that spelling names must really declare a served CLI
+// spelling — the two authorities the derivation joins are checked against each other, so a moved
+// verb or a moved registry spelling is a red row here rather than a silently dropped capability.
 for (const row of cliNative) {
   const verb = HOST_CLI_VERBS.find((candidate) => candidate.token === row.name);
   const parsed = parseBatonCli(verb.argv);
   if (!parsed || typeof parsed.kind !== 'string') {
     throw new Error(`control-surface-audit: native CLI capability disappeared from the parser: ${row.name}`);
+  }
+  const named = registryOperationsNamedByHostVerb(row.name);
+  if (named.length > 1) {
+    throw new Error(`control-surface-audit: the host verb ${row.name} is named by several registry operations (${named.sort().join(', ')}) — the capability link is ambiguous`);
   }
   if (row.canonicalKey !== null && cliWitnesses.get(row.canonicalKey) === null) {
     throw new Error(`control-surface-audit: native CLI capability ${row.name} names registry operation ${row.canonicalKey}, which declares no served CLI spelling`);
