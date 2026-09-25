@@ -2971,15 +2971,11 @@ export async function reap(repoRoot, taskId, opts = {}) {
     // never the retention of content that no capture recorded and never another live holder's
     // checkout.
     assertRemovableContent(repoRoot, taskId, opts);
-  } else {
-    const holders = liveWorkspaceHolders(opts, taskId);
-    if (holders.length > 0) {
-      throw new WorkspaceCustodyError(
-        `worktree "${taskId}" was retained: ${holders.length} other live holder(s) still work in it`,
-        holders,
-      );
-    }
   }
+  // An ABSENT checkout takes no custody refusal: the content a live holder could work in no
+  // longer exists, so this boundary removes administration only (a restart-reconstructed handle
+  // whose recorded workspace is already gone — phase65 SR3/SR10 — must not block integrate
+  // cleanup; a genuinely live holder keeps its checkout present and is refused above).
   cleanupSeatLinkedWorktrees(repoRoot, taskId, {
     snapshotUncommitted: true, verifyOnly: true,
     ...(opts.linkedWorktreeHolders ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
