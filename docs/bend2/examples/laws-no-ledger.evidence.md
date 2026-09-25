@@ -180,7 +180,8 @@ already has.
 ## Scope
 
 The laws constrain the model gate. They do not import Baton's gate
-(`defaultIntegrationGates` in `impl/src/swarm-runtime.mjs`), whose implementation is #580. The
+(`defaultIntegrationGates` in `impl/src/swarm-runtime.mjs`), which #580 rewrote at master
+`a7ae93e9` to compare a change's failures with the target's. The
 laws do not prove that the observations are real test runs: an `Outcome` value in this model can
 be written by any caller. Whether the rewrite can make an outcome constructible only by the runner
 is review question 2 in [../laws-proposed.md](../laws-proposed.md), revision 11.
@@ -371,7 +372,8 @@ Location: every_selected_invocation_is_accounted
 The laws constrain the model's selection, comparison, accounting and landing decision.
 The observations are still values a caller can write, and the derivation of the failure
 key from the run is the observer's obligation. The runtime's own gate is
-`defaultIntegrationGates` in `impl/src/swarm-runtime.mjs`, whose replacement is #580. The
+`defaultIntegrationGates` in `impl/src/swarm-runtime.mjs`; #580 rewrote it at master `a7ae93e9`
+to compare a change's failures with the target's. The
 census test in `astra-r11-probes/census-test.bend` observes a real difference and is a
 legitimate test of a prohibited obligation; no law distinguishes it, and the repository
 test-policy clause covers it.

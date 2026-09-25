@@ -330,8 +330,9 @@ failure blocks.
   SI6 counts after a functional landing). SI6 also asserted corpus coverage; its incidental
   totals are removed and the coverage property is checked directly. `5df1acf5` removed SI6 and
   `CORPUS_COUNTS` and added the AGENTS.md ban; `c66098c1` removed the count literals in five
-  further tests (#579). #580 deletes the manifest and re-runs the change's failing files on the
-  target; the manifest gate still runs at both reviewed bases, so that deletion is pending.
+  further tests (#579). #580 deleted the manifest and landed the target comparison at master
+  `a7ae93e9` (follow-ups `f849019d` and `67b16568`); the two reviewed bases above and this
+  branch's `impl` still carry the manifest.
 
 **Operator decision.** The pattern is banned in AGENTS.md ("No bookkeeping ledgers in place of
 function") with the direction "If the solution is removal please remove." On 2026-09-24 the
