@@ -359,13 +359,13 @@ registry's style:
   Derivation: the list is an operator's "what will I pick up" reading — a page, never the
   history; the count is always exact regardless.
 
-## 10. Landing order and the manifest
+## 10. Landing order
 
 - The red-before skeleton (`impl/test/issue306-reincarnation-red.test.mjs`) was observed red at
   HEAD 1a830bfe by the design lane (14/14). The implementation lanes landed BEFORE the design
   package integrated, so the pins moved to the landed truth (the 374aa9d8 precedent) and the
-  file is GREEN on master — no expected-red manifest rows are needed for it. Its filename keeps
-  the red-before record for archaeology; the header comment carries the history.
+  file is GREEN on master. Its filename keeps the red-before record for archaeology; the header
+  comment carries the history.
 - Lane order: ds-306a (the verb) and ds-306b (the advisories and wake class) touch
   `application-deployment.mjs` and `limits.mjs` in DISJOINT regions (A: host/publication/
   reincarnation + the wait/poll bound rows; B: the `served`/`behind` derivation + the
