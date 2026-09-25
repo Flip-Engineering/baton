@@ -32,13 +32,13 @@ import test from 'node:test';
 import * as runtimeAdmission from '../src/runtime-admission.mjs';
 import * as coordinatorModule from '../src/coordinator.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/runtime-admission.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -83,7 +83,7 @@ test('RA1: the module imports neither monolith and keeps no implicit receiver ou
 });
 
 test('RA2: every runtime_admission_port delegate keeps the member name, parameter list, arity, and hands over the recorder', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegated = coordinatorFile.members
     .filter((member) => member.evidence.includes('admission:runtime_admission_port'))
@@ -209,7 +209,7 @@ test('RA4: the relocated declarations moved once; the export surface is unchange
 });
 
 test('RA5: the map sees the move', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-admission target');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
@@ -248,7 +248,7 @@ test('RA6: slice 12 — the three tranche-2 admission prefixes are admission-sea
       `${name}: sync — no adopted-promise hop between admission and the act`);
   }
   // The prefixes classify admission on their own evidence.
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const byName = new Map(map.files.find((file) => file.file === MEMBER_FILE)
     .members.map((member) => [member.name, member]));
   for (const name of Object.keys(EXPECTED)) {

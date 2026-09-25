@@ -30,15 +30,15 @@ import test from 'node:test';
 
 import * as applicationObservation from '../src/application-observation.mjs';
 import { BatonApplication } from '../src/application.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/application-observation.mjs';
 const HOST_FILE = 'impl/src/application.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
-const read = (relative) => readFileSync(new URL('../../' + relative, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
+const read = (relative) => readFileSync(new URL('../../' + relative, import.meta.url), 'utf8');
 
 const ARITIES = Object.freeze({"_loadProfileRegistry":0,"_semanticControlTargets":1,"_runControls":0,"_controlOperationalState":1,"_beginRunControlEffect":1,"_acknowledgeRunControl":3,"_settleRunControl":3,"_runControlView":2,"_findRun":1,"_workflowPlanHistoryPolicyBound":1,"_workflowPlanHistory":1,"_completedResultExport":1,"openResultExportArchive":1,"registerResultExportDelivery":1,"_performResultExport":1,"_semanticTarget":2,"_performResultAdoption":1,"_performRunStop":1,"_recursiveLease":2,"_recursiveAuth":3,"_goalPlanStatus":2,"_buildWorkflowEvidence":2,"_performRunVerificationRetry":1,"_cancelRunVerificationRetry":1,"_finalizeRunView":2,"_planningView":1,"_historicalProfileView":2,"_workflowDefinitionAncestors":1,"_workflowDefinition":1,"_workflowSuccessorDefinitionCore":1,"_workflowRevisionDefinition":1,"_workflowCandidates":3,"_workflowSelection":3,"_workflowFeedback":3,"_workflowMemberStops":2,"_performWorkflowMemberStop":3,"_workflowRevisionFeedbackRows":2,"_workflowRoundSummaries":2,"_buildWorkflowView":2,"_eventBelongsToRun":2,"_knowledgeProjection":1,"_activityProjection":1,"_progressTiming":2,"_semanticProgressProjection":3,"_followPage":3,"_contextState":1,"_withContextProjection":2,"_contextTargets":2,"_contextEvalTargets":2,"_contextSectionItems":1,"_contextItemDetail":1,"_contextItemContent":3,"_contextItemEvidence":2,"_contextProviderResultRequests":3,"_proposeContextMap":3,"_proposeContextReduce":3,"_proposeContextRetry":3,"contextEval":2,"contextPackageBranch":3,"_semanticActions":3,"_episodeContext":2,"_episodeGraph":2,"_episodeItem":3,"_episodeEvidence":3,"_closedVerdictProjection":4,"_semanticSectionItems":3,"_runTimelineContent":3,"_episodeOutputContent":3,"_runProgressContent":2,"_historicalProfileInspection":3,"_debugMember":3,"_debugReceipt":1,"_activeWorkstream":2,"_waveDriverDetached":1,"_runWaveIndex":0,"_runWaveId":1,"_runCellDeclaration":1,"_runWaveRole":1,"_runWaveRoute":1,"_pagePreservedInspections":2,"_runIdForWaveMember":2});
 
@@ -66,7 +66,7 @@ test('AO1: the module imports neither monolith and contains no implicit receiver
 });
 
 test('AO2: every observation_port delegate keeps the member name, parameter list, and arity', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const hostFile = map.files.find((file) => file.file === HOST_FILE);
   const delegated = hostFile.members
     .filter((member) => member.evidence.includes('observation:application_observation_port'))
@@ -150,7 +150,7 @@ test("AO4: the helpers moved once; the host imports back its staying readers and
 });
 
 test('AO5: the map sees the move — a new target, the host unchanged, every delegate on the port rule', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact must carry the application-observation target');
   const hostFile = map.files.find((file) => file.file === HOST_FILE);

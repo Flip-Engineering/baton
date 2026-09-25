@@ -29,13 +29,13 @@ import test from 'node:test';
 
 import * as runtimeApi from '../src/runtime-api.mjs';
 import { Coordinator, WorkerNotFoundError } from '../src/coordinator.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/runtime-api.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -175,7 +175,7 @@ test('AP3: the inverse-transform residue — module bodies read as the members t
 });
 
 test('AP4: the map sees the move — the target carries the surface members, _publicHandle keeps its evidence', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-api target');
   for (const member of target.members) {

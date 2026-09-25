@@ -85,10 +85,9 @@ function write(repo, path, content) {
   writeFileSync(full, content);
 }
 
-// The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`), TRACKED on the base
+// The scripts a landing regenerates with (`INTEGRATION_REGENERATORS`), TRACKED on the base
 // commit: the landing checks them out and runs them for real.
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);

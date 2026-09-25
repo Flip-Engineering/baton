@@ -27,6 +27,7 @@ import test from 'node:test';
 import * as runtimeRecovery from '../src/runtime-recovery.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { memberSource } from './seam-member-source.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -34,7 +35,6 @@ const { Lang, parse } = require('@ast-grep/napi');
 const MEMBER_FILE = 'impl/src/runtime-recovery.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
 const OBSERVATION_FILE = 'impl/src/runtime-observation.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -84,7 +84,7 @@ test('RR1: the recovery module imports neither monolith and keeps no implicit re
 });
 
 test('RR2: every recovery_port delegate keeps the member name, parameter list, and hands over the recorder', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegated = coordinatorFile.members
     .filter((member) => member.evidence.includes('recovery:recovery_port'))
@@ -310,7 +310,7 @@ test('RR7 (slice 12): the base-layer declarations are defined once, and the obse
 });
 
 test('RR5: the map sees the move — every recovery_port delegate is recovery, and the module is a target', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   assert.ok(
     map.files.some((file) => file.file === MEMBER_FILE),
     'the committed seam artifact must carry the runtime-recovery.mjs target',
