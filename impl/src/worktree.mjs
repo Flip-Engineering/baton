@@ -2493,14 +2493,15 @@ export async function landContribution(repoRoot, request) {
     targetHeadBefore = moved;
   }
 
-  const { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead: gateBase } = attempt;
+  let { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead: gateBase } = attempt;
+  let activeCheckout = checkout;
   try {
     // Issue #570: the gate verdict names the base commit it judged — the head the squash
     // descends from, which is the fetched remote tip when the local ref sat behind the declared
     // remote. A red verdict rides the refusal detail, so a refused landing shows which base
     // produced it; a green one lands on the receipt's gates row.
     const gates = request.runGates
-      ? await request.runGates(checkout.dir, changed, { base, targetHeadBefore, squashSha })
+      ? await request.runGates(activeCheckout.dir, changed, { base, targetHeadBefore, squashSha })
       : { files: [], verdictLine: null, unexpected: [] };
     const unexpected = Array.isArray(gates?.unexpected) ? gates.unexpected : [];
     if (unexpected.length > 0) {
@@ -2516,13 +2517,70 @@ export async function landContribution(repoRoot, request) {
         `the deployment declares no shared remote for landings (advanced.integration.publishRemote), so ${target} cannot be published`,
         'integrate_publish_undeclared');
     }
+    let targetMoveHandled = null;
     if (!dryRun) {
       // One atomic compare-and-swap: if anything moved the target after the gates, this fails
-      // rather than landing a squash computed against a head the branch no longer has.
+      // rather than landing a squash computed against a head the branch no longer has. Issue #596:
+      // a CAS failure no longer discards the verdict — the target's delta is checked against the
+      // gate selection's covered surface, and the verdict is reused when the delta is disjoint or
+      // only the affected tests are re-run.
       try {
         gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
-      } catch (error) {
-        throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: error });
+      } catch (casError) {
+        const movedHead = sh('git', ['rev-parse', '--verify', ref], repoRoot);
+        const delta = sh('git', ['diff', '--name-only', targetHeadBefore, movedHead], repoRoot)
+          .split('\n').filter((line) => line.length > 0);
+        const coveredSet = new Set(gates?.coveredPaths ?? []);
+        if (coveredSet.size === 0) {
+          throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: casError });
+        }
+        const affectedTests = [];
+        if (gates?.testDeps) {
+          const deltaSet = new Set(delta);
+          for (const [testFile, deps] of Object.entries(gates.testDeps)) {
+            if (deps.some((d) => deltaSet.has(d))) affectedTests.push(testFile);
+          }
+        }
+        await activeCheckout.cleanup();
+        const reattempt = await prepare(movedHead);
+        const originalTarget = targetHeadBefore;
+        squashSha = reattempt.squashSha;
+        changed = reattempt.changed;
+        regenerated = reattempt.regenerated;
+        overlaps = reattempt.overlaps;
+        inherited = reattempt.inherited;
+        gateBase = reattempt.ontoHead;
+        activeCheckout = reattempt.checkout;
+        targetHeadBefore = movedHead;
+        if (affectedTests.length > 0 && request.runGates) {
+          const rerunResult = await request.runGates(activeCheckout.dir, changed, {
+            base, targetHeadBefore, squashSha, rerunSubset: affectedTests,
+          });
+          const rerunUnexpected = Array.isArray(rerunResult?.unexpected) ? rerunResult.unexpected : [];
+          if (rerunUnexpected.length > 0) {
+            throw Object.assign(
+              mergeError(`the derived gate set ran red: ${rerunUnexpected.length} test(s) fail with the change and pass on the target`, 'integrate_gates_red'),
+              { verdictLine: rerunResult?.verdictLine ?? null, unexpected: rerunUnexpected, baseSha: gateBase,
+                ...(Array.isArray(rerunResult?.unconfirmed) && rerunResult.unconfirmed.length > 0
+                  ? { unconfirmed: [...rerunResult.unconfirmed] } : {}) },
+            );
+          }
+          targetMoveHandled = {
+            from: originalTarget, to: movedHead, delta,
+            reused: gates.files.filter((f) => !affectedTests.includes(f)),
+            rerun: affectedTests, rerunVerdictLine: rerunResult?.verdictLine ?? null,
+          };
+        } else {
+          targetMoveHandled = {
+            from: originalTarget, to: movedHead, delta,
+            reused: [...gates.files], rerun: [], rerunVerdictLine: null,
+          };
+        }
+        try {
+          gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
+        } catch (retryError) {
+          throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: retryError });
+        }
       }
       // Issue #558: publish the landed ref to the declared remote. The push names the declared
       // value itself, never a remote name, so no local remote configuration the resident holds
@@ -2586,11 +2644,13 @@ export async function landContribution(repoRoot, request) {
         // receipt rather than dropped in silence.
         ...(Array.isArray(gates?.unconfirmed) && gates.unconfirmed.length > 0
           ? { unconfirmed: [...gates.unconfirmed] } : {}),
+        // Issue #596: what the landing did when the target moved after the gate verdict.
+        ...(targetMoveHandled !== null ? { targetMoveHandled } : {}),
       },
       dryRun,
     };
   } finally {
-    await checkout.cleanup();
+    await activeCheckout.cleanup();
   }
 }
 
