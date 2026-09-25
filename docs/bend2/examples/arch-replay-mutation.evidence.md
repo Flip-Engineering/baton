@@ -19,8 +19,6 @@ rejected mutations with preserved history (`arch-replay-stop.evidence.md` and
 | `arch-replay-mutation.expect` | the required logical behaviour per case, read by neither half |
 | `arch-replay-mutation.bend` | the Bend2 half: a pure decision model over the case file |
 | `arch-replay-mutation.mjs` | the reference half: it seeds a store per case and offers the request |
-| `arch-replay-mutation.reference.txt` | the reference half's RESULT lines |
-| `arch-replay-mutation.prototype.txt` | the Bend2 half's RESULT lines |
 
 There is no frozen ledger here: the trace is not recorded rows but a request. Each case seeds a store
 holding two rows (a working parent task and its claim) and offers one run-orchestrator lease request

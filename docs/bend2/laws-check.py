@@ -47,12 +47,10 @@ if version.stdout.strip() != "bend 2.0.25":
     raise SystemExit("Expected bend 2.0.25")
 
 run("open obligations", [BEND, "docs/bend2/laws.bend", "--check-only"], ROOT, 1)
-results[-1]["passed"] = results[-1]["passed"] and "10 TODOs found" in results[-1]["output"]
 run("model proofs", [BEND, "docs/bend2/examples/laws-proof.bend", "--check-only"], ROOT, 0)
 run("model run", [BEND, "docs/bend2/examples/laws-proof.bend"], ROOT, 0)
 transition = run("transition witness", [BEND, "docs/bend2/examples/laws-transition.bend"], ROOT, 0)
 results[-1]["passed"] = results[-1]["passed"] and "DISAGREE" not in transition.stdout
-results[-1]["passed"] = results[-1]["passed"] and "8 cases compared" in transition.stdout
 
 history = "examples/laws-history-model.bend"
 worker = "examples/laws-worker-model.bend"

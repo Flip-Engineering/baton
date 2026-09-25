@@ -1,4 +1,0 @@
-RESULT|lease-same-basis|admitted=true|refusal=none|classification=none|quarantine=false|cursor=3|owed=1|doctor=clean|doctorCode=none|remedy=none
-RESULT|lease-changed-basis|admitted=false|refusal=run_orchestrator_lease_integrity|classification=replay_refused|quarantine=false|cursor=2|owed=0|doctor=clean|doctorCode=none|remedy=none
-RESULT|lease-missing-basis|admitted=true|refusal=none|classification=none|quarantine=false|cursor=3|owed=1|doctor=clean|doctorCode=none|remedy=none
-RESULT|lease-invalid-row|admitted=false|refusal=run_orchestrator_lease_integrity|classification=replay_refused|quarantine=false|cursor=2|owed=0|doctor=refused|doctorCode=run_orchestrator_lease_integrity|remedy=none

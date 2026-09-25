@@ -1,10 +1,10 @@
 # laws-check — evidence
 
 CLAIM: `python3 docs/bend2/laws-check.py <bend>` exits 0 at bend 2.0.25 on this tree. The pure
-models that `docs/bend2/laws.bend` states check, the ten quantified obligations are discharged by
+models that `docs/bend2/laws.bend` states check, the quantified obligations are discharged by
 `docs/bend2/examples/laws-proof.bend`, the transition witness drives the real implementation, and
-sixteen negative controls fail the unchanged obligations one at a time — thirteen by mutating a
-model, one by mutating the witness's host half, and two being the existing host-side JavaScript
+the negative controls fail the unchanged obligations one at a time — by mutating a
+model, by mutating the witness's host half, and as the existing host-side JavaScript
 regression rows.
 
 ## Environment

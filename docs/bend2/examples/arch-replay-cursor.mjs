@@ -8,14 +8,15 @@
 // the rows a consumer that read through seq 1 is still owed.
 //
 //   node docs/bend2/examples/arch-replay-cursor.mjs --emit-ledger   write the frozen trace
-//   node docs/bend2/examples/arch-replay-cursor.mjs --run           print and record the RESULT lines
-//   node docs/bend2/examples/arch-replay-cursor.mjs --compare       compare expect/reference/prototype
+//   node docs/bend2/examples/arch-replay-cursor.mjs --run           print the RESULT lines
+//   node docs/bend2/examples/arch-replay-cursor.mjs --compare       run both halves live and compare them against expect
 //
 // Working state is written under the system temp directory and removed on exit. It imports impl/src
 // read-only and writes nothing into it.
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -26,8 +27,8 @@ const HERE = dirname(new URL(import.meta.url).pathname);
 const LEDGER = join(HERE, 'arch-replay-cursor.ledger.jsonl');
 const CASES = join(HERE, 'arch-replay-cursor.cases');
 const EXPECT = join(HERE, 'arch-replay-cursor.expect');
-const REFERENCE = join(HERE, 'arch-replay-cursor.reference.txt');
-const PROTOTYPE = join(HERE, 'arch-replay-cursor.prototype.txt');
+const BEND = join(HERE, '../../../node_modules/.bend/bin/bend');
+const PROTOTYPE_SOURCE = join(HERE, 'arch-replay-cursor.bend');
 
 const REPO = 'repo-arch-replay-cursor';
 const CLOCK_ISO = '2026-09-23T00:00:00.000Z';
@@ -141,15 +142,18 @@ const resultLine = (id, r) => [
   `owed=${r.owed}`,
 ].join('|');
 
-async function run() {
+async function referenceLines(verbose) {
   const lines = [];
   for (const caseRow of readCases()) {
     const outcome = await replay(caseRow);
     lines.push(resultLine(caseRow.id, outcome));
-    process.stderr.write(`${caseRow.id}: ${JSON.stringify(outcome)}\n`);
+    if (verbose) process.stderr.write(`${caseRow.id}: ${JSON.stringify(outcome)}\n`);
   }
-  writeFileSync(REFERENCE, `${lines.join('\n')}\n`);
-  process.stdout.write(`${lines.join('\n')}\n`);
+  return lines;
+}
+
+async function run() {
+  process.stdout.write(`${(await referenceLines(true)).join('\n')}\n`);
   cleanScratch();
 }
 
@@ -164,9 +168,9 @@ function readExpect() {
   return out;
 }
 
-function readResults(file) {
+function parseResults(text) {
   const out = new Map();
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
+  for (const line of text.split('\n')) {
     if (!line.startsWith('RESULT|')) continue;
     const [, id, ...fields] = line.trim().split('|');
     out.set(id, Object.fromEntries(fields.map((field) => field.split('='))));
@@ -174,12 +178,27 @@ function readResults(file) {
   return out;
 }
 
+/** The prototype half, run live at the pinned toolchain: the corpus's own bend program answers the
+ * same case file, and its stdout is the only prototype answer this comparison reads. */
+function bendResults() {
+  if (!existsSync(BEND)) {
+    process.stderr.write(`the pinned bend binary is missing: ${BEND}\n`);
+    process.exit(1);
+  }
+  const out = spawnSync(BEND, [PROTOTYPE_SOURCE], { env: { ...process.env, BEND_NO_TELEMETRY: '1' }, encoding: 'utf8' });
+  if (out.error || out.status !== 0) {
+    process.stderr.write(`the bend run failed: ${out.error?.message ?? out.stderr ?? ''}\n`);
+    process.exit(1);
+  }
+  return parseResults(out.stdout);
+}
+
 const REQUIRED = ['source', 'checkpoint', 'cursor', 'owed'];
 
-function compare() {
+async function compare() {
   const expect = readExpect();
-  const reference = readResults(REFERENCE);
-  const prototype = readResults(PROTOTYPE);
+  const reference = parseResults((await referenceLines(false)).join('\n'));
+  const prototype = bendResults();
   let disagreements = 0;
   for (const [id, want] of expect) {
     const differs = (row) => REQUIRED.filter((field) => String(row?.[field]) !== String(want[field]));
@@ -197,12 +216,13 @@ function compare() {
     if (prototypeDiffers.length > 0) process.stdout.write(`  prototype differs on: ${prototypeDiffers.join(', ')}\n`);
   }
   process.stdout.write(`cases compared: ${expect.size}; disagreements: ${disagreements}\n`);
+  cleanScratch();
 }
 
 const mode = process.argv[2] ?? '--run';
 if (mode === '--emit-ledger') emitLedger();
 else if (mode === '--run') await run();
-else if (mode === '--compare') compare();
+else if (mode === '--compare') await compare();
 else {
   process.stderr.write('usage: node docs/bend2/examples/arch-replay-cursor.mjs [--emit-ledger|--run|--compare]\n');
   process.exit(2);
