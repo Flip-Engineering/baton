@@ -42,6 +42,29 @@ test('renderer provides distinct topology, timeline and telemetry views with pro
   assert.match(telemetry, /Route readiness/u);
 });
 
+test('timeline wake rows carry the derived status word, and the bare class when the class derives none', () => {
+  const value = projectBatonVisualModel({
+    snapshot,
+    watch,
+    width: 100,
+    wakes: {
+      attached: true,
+      lastSeq: 5,
+      items: [
+        { seq: 4, wakeClass: 'resume_decision_required', subject: 'worker:render' },
+        { seq: 5, wakeClass: 'contribution_recorded', subject: 'worker:render', next: 'contribution.settle worker:render' },
+      ],
+    },
+  });
+  const timeline = renderBatonVisual(value, { width: 100, view: 'timeline', motion: false });
+  const lines = timeline.trimEnd().split('\n');
+  assert.ok(lines.includes('  #4  ▲ needs you  worker:render'), timeline);
+  assert.ok(lines.includes('  #5  contribution_recorded  worker:render'), timeline);
+  assert.ok(lines.includes('      → contribution.settle worker:render'), timeline);
+  // A derivable class renders the closed status word, never the raw class name.
+  assert.equal(timeline.includes('resume_decision_required'), false);
+});
+
 test('MCP presentation carries static text, optional animation frames and refresh arguments', () => {
   const value = model(96);
   const presentation = createBatonMcpPresentation(value, { width: 96 });
@@ -52,4 +75,13 @@ test('MCP presentation carries static text, optional animation frames and refres
   assert.equal(presentation.refresh.arguments.follow, true);
   assert.equal(presentation.text.includes('\u001b'), false);
   assert.match(presentation.accessibleSummary, /Flip is quietly/u);
+});
+
+test('the rendered header names its own seat: baton for the MCP presentation, baton top for the operator frame', () => {
+  const value = model(96);
+  const presentation = createBatonMcpPresentation(value, { width: 96 });
+  assert.match(presentation.text, /baton · overview/u);
+  assert.equal(presentation.text.includes('baton top'), false);
+  const operatorFrame = renderBatonVisual(value, { width: 96, view: 'overview', motion: false });
+  assert.match(operatorFrame, /baton top · overview/u);
 });

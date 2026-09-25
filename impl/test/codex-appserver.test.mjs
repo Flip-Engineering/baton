@@ -789,3 +789,57 @@ test('A-F8: interrupt() of a terminal session returns the typed settled Ack and 
     await cleanup(adapter, worker);
   }
 });
+
+// ---------------------------------------------------------------------------
+// #585 D8: the brief's definition of done is pinned as first-class thread state at spawn
+// ---------------------------------------------------------------------------
+
+test('#585 D8: spawn pins the brief definition of done on the thread as the exact goal objective', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'ws585-codex-goal-pin';
+  const definitionOfDone = 'D8: exactly this text, unpadded and unparaphrased';
+  try {
+    const ack = await adapter.spawn(
+      worker,
+      { ...makeBrief('pin the definition of done'), definitionOfDone },
+      { worktree: freshWorktree() },
+    );
+    assert.equal(ack.ok, true, `spawn must succeed: ${ack.reason}`);
+    const firstTurn = await until(events, (event) => event.kind === 'lifecycle.turn_completed');
+
+    // The fixture stores what thread/goal/set carried and echoes it for a turn that asks.
+    assert.equal((await adapter.prompt(worker, 'FAKE:REPORT_GOAL', 'turn')).ok, true);
+    const echoed = await until(events, (event) => event.kind === 'content.message'
+      && event.payload.turnId !== firstTurn.payload.turnId
+      && String(event.payload.text ?? '').startsWith('goal:'));
+    assert.equal(echoed.payload.text, `goal:${definitionOfDone}`,
+      'the pinned objective is the brief definition of done verbatim — no paraphrase, prefix or suffix');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('#585 D8: a build that refuses thread/goal/set still spawns, records the refusal, and keeps running turns', async () => {
+  const adapter = makeAdapter({ env: { FAKE_CODEX_GOAL_FAIL: '1' } });
+  const events = collect(adapter);
+  const worker = 'ws585-codex-goal-refused';
+  try {
+    const ack = await adapter.spawn(worker, makeBrief('spawn despite the goal refusal'), { worktree: freshWorktree() });
+    assert.deepEqual(ack, { ok: true },
+      'a refused pin never fails the spawn — the brief still carries the definition of done in its turn');
+    const firstTurn = await until(events, (event) => event.kind === 'lifecycle.turn_completed');
+    assert.equal(adapter._sessions.get(worker).goalPinRefusal.code, -32600,
+      'the refusal is recorded on the session with the wire code it arrived with');
+
+    // A further turn proves the child was not killed, and the fixture's echo proves nothing was
+    // stored under the refusal — the thread simply has no pinned objective.
+    assert.equal((await adapter.prompt(worker, 'FAKE:REPORT_GOAL after the refusal', 'turn')).ok, true);
+    const echoed = await until(events, (event) => event.kind === 'content.message'
+      && event.payload.turnId !== firstTurn.payload.turnId
+      && String(event.payload.text ?? '').startsWith('goal:'));
+    assert.equal(echoed.payload.text, 'goal:(none)');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});

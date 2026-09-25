@@ -20,6 +20,9 @@
 //                                     to stdout: one invalid-JSON line and one well-formed
 //                                     unknown-method notification. Both must be silently ignored.
 //   - env FAKE_CODEX_OMIT_THREAD_MODEL=1 -> thread creation omits native model testimony.
+//   - env FAKE_CODEX_GOAL_FAIL=1   -> `thread/goal/set` answers the unknown-method refusal a
+//                                     build without the method sends; every other method is
+//                                     unaffected
 //   - directives embedded in the first `text` UserInput of `turn/start`/`turn/steer` input
 //     (baton tests put these in `brief.goal` or the raw prompt() content):
 //       FAKE:CRASH                       -> turn/completed{status:"failed"}
@@ -37,6 +40,8 @@
 //                                           shortly after, proving the steer took effect)
 //       FAKE:REPORT_CWD                  -> completes with an agentMessage `cwd:<thread/start cwd>`
 //                                           (phase10 SC1: proves which cwd the thread was pinned to)
+//       FAKE:REPORT_GOAL                 -> completes with an agentMessage `goal:<objective stored
+//                                           by thread/goal/set>` (or `goal:(none)` with no pin)
 //       FAKE:OVERSIZE_ITEM               -> emits one method-first oversized item/completed
 //                                           command notification, then completes normally
 //       FAKE:OVERSIZE_AMBIGUOUS          -> starts like a known notification, then appends a
@@ -60,6 +65,7 @@ const TURN_START_FAIL = process.env.FAKE_CODEX_TURN_START_FAIL === '1';
 const HANG = process.env.FAKE_CODEX_HANG === '1';
 const MALFORMED = process.env.FAKE_CODEX_MALFORMED === '1';
 const OMIT_THREAD_MODEL = process.env.FAKE_CODEX_OMIT_THREAD_MODEL === '1';
+const GOAL_FAIL = process.env.FAKE_CODEX_GOAL_FAIL === '1';
 const OVERSIZE_BYTES = Number.parseInt(process.env.FAKE_CODEX_OVERSIZE_BYTES ?? '8192', 10);
 
 let busyConsumed = false;
@@ -70,6 +76,10 @@ let serverReqSeq = 0;
 let threadId = null;
 /** @type {string|null} phase10 SC1: the cwd received in thread/start, echoed by FAKE:REPORT_CWD */
 let threadCwd = null;
+/** @type {string|null} #585 D8: the objective received in thread/goal/set, echoed by FAKE:REPORT_GOAL */
+let goalObjective = null;
+/** @type {string|null} #585 D8: the threadId that goal pin named */
+let goalThreadId = null;
 /** @type {{id:string, timer:NodeJS.Timeout|null}|null} */
 let activeTurn = null;
 /** @type {{id:number, kind:'command'|'fileChange', turnId:string}|null} */
@@ -224,6 +234,14 @@ function runTurn(turnId, input) {
     return;
   }
 
+  if (text.includes('FAKE:REPORT_GOAL')) {
+    setTimeout(() => {
+      itemCompleted(turnId, { id: `${turnId}-goal`, type: 'agentMessage', text: `goal:${goalObjective ?? '(none)'}` });
+      finishTurn(turnId, { status: 'completed' });
+    }, 10);
+    return;
+  }
+
   if (text.includes('FAKE:STAY_OPEN')) {
     // Stays open until turn/interrupt or turn/steer arrives; no auto-completion timer.
     return;
@@ -362,6 +380,18 @@ rl.on('line', (line) => {
       });
       break;
     }
+    case 'thread/goal/set': {
+      if (GOAL_FAIL) {
+        // What a build that does not serve the method answers: the same -32600 unknown-variant
+        // refusal the default branch sends for an unserved method.
+        send({ id: obj.id, error: { code: -32600, message: `Invalid request: unknown variant \`thread/goal/set\`, expected one of \`initialize\`, \`thread/start\`, \`turn/start\`` } });
+        break;
+      }
+      goalObjective = obj.params?.objective ?? null;
+      goalThreadId = obj.params?.threadId ?? null;
+      send({ id: obj.id, result: { threadId: goalThreadId, goal: { objective: goalObjective } } });
+      break;
+    }
     case 'turn/start': {
       if (TURN_START_FAIL) {
         send({ id: obj.id, error: { code: -32099, message: 'phase10.1 forced turn/start failure' } });
@@ -401,7 +431,7 @@ rl.on('line', (line) => {
       // ("Invalid request: unknown variant `X`, expected one of `initialize`, ..."), not the
       // id-less error this fixture previously claimed. Id-less errors remain a modeled hazard
       // for lines the server cannot correlate — see the MALFORMED branch in runTurn.
-      send({ id: obj.id, error: { code: -32600, message: `Invalid request: unknown variant \`${obj.method}\`, expected one of \`initialize\`, \`thread/start\`, \`turn/start\`` } });
+      send({ id: obj.id, error: { code: -32600, message: `Invalid request: unknown variant \`${obj.method}\`, expected one of \`initialize\`, \`thread/start\`, \`turn/start\`, \`thread/goal/set\`` } });
   }
 });
 

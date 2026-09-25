@@ -43,6 +43,9 @@ import {
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
 // can never spell the same rows differently.
 import { renderRouteUsageLines } from './adapter.mjs';
+// Issue #585 (docs/56 D6.2): the seat's wake lines carry the same derived status prefix every
+// other wake-row rendering reads, so one class spells the same word wherever a seat meets it.
+import { flipStatusPrefix } from './brand.mjs';
 // Issue #296: the landing verb's two collaborators. `gateSetForPaths` turns the squash's changed
 // paths into the tests that cover them, and `landContribution` is the #301 git authority's own
 // landing mechanism — this module never spawns git for a landing, exactly as it never spawns git
@@ -7561,7 +7564,9 @@ export class SwarmRuntime {
       }
       const participantLabel = frame.participantId ?? '';
       const contributionLabel = frame.subject?.kind === 'contribution' ? ` ${frame.subject.id}` : '';
-      wakeLines.push(`- [seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
+      // Issue #585 (docs/56 D6.2): the line body opens with the class's derived status word (the
+      // ONE prefix spelling, brand.mjs) and reads unchanged for an event-shaped class.
+      wakeLines.push(`- ${flipStatusPrefix(frame.wakeClass)}[seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
         + ` ${participantLabel}${participantLabel === '' ? '' : ' — '}${classRow.summary}`
         + `${frame.next === null ? '' : ` · next: ${frame.next}`}`);
     }

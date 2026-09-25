@@ -152,7 +152,7 @@ test('the timeline consumes the wake stream through ONE attachment, classified b
   // The frames land classified: class, subject, terminal, and the table's next action.
   const text = stdout.value;
   assert.match(text, /Wake stream/u);
-  assert.match(text, /#41  attention  request:9  terminal/u);
+  assert.match(text, /#41  ▲ needs you  request:9  terminal/u);
   assert.match(text, /→ baton run answer run:a request:9 --text TEXT/u);
   assert.match(text, /#40  contribution_recorded  contribution:c1  terminal/u);
   assert.match(text, /→ baton swarm check \{swarmId\} \{participantId\} \{contributionId\} CHECK_ID/u);
