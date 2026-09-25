@@ -15,6 +15,15 @@ wake. An existing instance is a `priority:high` bug to remove (#572). The first 
 the turn-end park recorded under the actor `policy`, which waits for a claim or nudge and wakes no
 one.
 
+## No bookkeeping ledgers in place of function
+
+Do not model code changes or test outcomes as entries in a hand-maintained ledger. That means no
+checked-in list of expected test failures, no "converged" declarations, no census file, and no test
+that pins counts or line numbers of other code. A landing gate answers one question: does this change
+break something that works on the target? It runs the selected tests on the target and on the
+change, and blocks only on a test that passes on the target and fails with the change. Known breakage
+lives in the issue tracker. The existing expected-red manifest is being removed (#580); do not add to it.
+
 # Writing rules
 
 These rules apply to any prose written for or checked into this repository: README, CONTRIBUTING,
