@@ -191,9 +191,13 @@ test('564-w4: a contribution-less turn_reported row crosses the resident attachm
   assert.equal(outcome[0].payload.kind, 'wake.root_delivered');
   await waitFor(() => received, (rows) => rows.length === 1, { label: 'turn_reported socket frame' });
   const message = JSON.parse(received[0]);
-  assert.match(message.message.content, /"owed": "turn_reported"/u);
-  assert.match(message.message.content, /"participantId": "lead"/u);
-  assert.doesNotMatch(message.message.content, /contributionId/u);
+  // Issue #585 (docs/56 D6): the delivered body is a human message composed through the mark
+  // rule, so the row's facts are pinned as they render. A turn_reported row carries no
+  // contribution, and the message names none.
+  assert.match(message.message.content,
+    /✦\(◕‿◕\)✦ ▲ needs you — root owed: turn_reported in swarm-564/u);
+  assert.match(message.message.content, /^  seat: lead$/mu);
+  assert.doesNotMatch(message.message.content, /contribution/u);
 
   const source = f.store.eventsView(owedSeq, 1)[0];
   const replay = await deliverRootWakeFrame({
@@ -334,7 +338,10 @@ test('572-w5: a deployment-scoped worker turn report reaches the root socket exa
     harness: 'claude-code', mechanism: 'session-socket',
     sessionId: TARGET.sessionId, at: '<at>',
   });
-  assert.match(JSON.parse(received[0]).message.content, /deployment turn is ready for root/u);
+  // Issue #585 (docs/56 D6): the message names the report's own result and worker, the run it
+  // came from, and the run view command that reads the report — never a JSON payload dump.
+  assert.match(JSON.parse(received[0]).message.content,
+    /✦\(◕‿◕\)✦ turn reported: completed · worker-root-572\n  run: run-root-572\n  next: baton run view run-root-572\n<\/cross-session-message>$/u);
 
   const replay = await deliverRootWakeFrame({
     store: f.store, frame, target: TARGET, discovery, transport,
@@ -398,5 +405,8 @@ test('572-w7: a direct coordinator turn report is addressed by worker with no ru
     harness: 'claude-code', mechanism: 'session-socket', sessionId: TARGET.sessionId, at: '<at>',
   });
   assert.equal(sent.length, 1);
-  assert.match(sent[0].message.content, /direct coordinator turn is ready/u);
+  // Issue #585 (docs/56 D6): a report with no run renders the report's own result and worker and
+  // no run command — there is no run to view.
+  assert.match(sent[0].message.content,
+    /✦\(◕‿◕\)✦ turn reported: completed · worker-direct-572\n<\/cross-session-message>$/u);
 });

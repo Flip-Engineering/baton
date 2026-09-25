@@ -5,6 +5,7 @@ import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frame
 import { replObjectRefusal } from './messages.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
+import { APPLICATION_RUN_TERMINAL_PHASES, PROVIDER_EXECUTION_SETTLED_PHASES } from './application-observation.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY,
@@ -1008,6 +1009,147 @@ function wakeStreamUnavailable(verb) {
     new Error(`this deployment cannot ${verb} the wake stream: the connection carries no wake authority`),
     { code: 'wake_stream_unavailable', wireSafe: true },
   );
+}
+
+// ── Issue #585 stage 3 (docs/56 §D2): progress on the bounded blocking reads ─────────────────────
+//
+// The MCP progress affordance needs no capability negotiation: a client that wants progress puts
+// `_meta.progressToken` on the `tools/call` params, and a server that honors it emits
+// `notifications/progress` carrying that token. A call with no token is served exactly as it was
+// before this landed — the leg's own single read at the leg's own bound, no slice, no frame.
+//
+// With a token the read is served in slices of max(1000, bound / 8), derived from the call's own
+// bound, and ONE frame is offered between slices. The cadence decides only how often a frame is
+// offered; what ends the call is the leg's own verdict (`done`), so the wire result and the end
+// condition stay the leg's, and the deadline ends every leg.
+
+/** The progress frame method (MCP 2025-11-25). */
+const PROGRESS_NOTIFICATION_METHOD = 'notifications/progress';
+
+/** The progress token a `tools/call` params object carries, or null. The spec admits a string or
+ * an integer token; anything else — an absent `_meta` included — is a client that asked for no
+ * progress, and that call never enters the slicing loop below. */
+export function progressTokenOf(params) {
+  const meta = record(params) ? params._meta : null;
+  if (!record(meta)) return null;
+  const token = meta.progressToken;
+  return typeof token === 'string' || Number.isSafeInteger(token) ? token : null;
+}
+
+/** Serve ONE blocking read in slices, offering a progress frame between them.
+ *
+ * `read(sliceMs)` performs one slice and returns the leg's own result; `done(result)` is the leg's
+ * own verdict that the read is over; `observed(result)` describes what that slice saw as
+ * `{count, seq, kind}` (the call's own count of observations is the sum of those counts), or null
+ * for a slice that ended with nothing to report. What a frame says is what the call observed —
+ * never an estimate: `progress` is the number of observations so far, `total` is absent (no total
+ * exists for an open-ended wait), and `message` names the latest observation, or says there is
+ * none yet, beside the elapsed and bound seconds of this call's own deadline. */
+export async function sliceBlockingRead({
+  bound, token, subject, read, done, observed, notify, now = Date.now,
+}) {
+  // A call with no token, or with a bound no slice can be derived from, makes the leg's own single
+  // read at that bound: no slice and no frame.
+  if (token === null || !Number.isSafeInteger(bound) || bound <= 0) return read(bound);
+  const sliceMs = Math.max(1000, Math.ceil(bound / 8));
+  const started = now();
+  let progress = 0;
+  let latest = null;
+  let result = await read(Math.min(sliceMs, bound));
+  for (;;) {
+    if (done(result)) return result;
+    const elapsed = Math.min(bound, Math.max(0, now() - started));
+    const remaining = bound - elapsed;
+    if (remaining <= 0) return result;
+    const seen = observed(result);
+    if (seen !== null) {
+      progress += seen.count;
+      latest = { seq: seen.seq, kind: seen.kind };
+    }
+    offerProgressFrame({ notify, token, progress, latest, subject, elapsed, bound });
+    result = await read(Math.min(sliceMs, remaining));
+  }
+}
+
+function offerProgressFrame({ notify, token, progress, latest, subject, elapsed, bound }) {
+  const state = latest === null
+    ? 'no events yet'
+    : `last ${latest.seq === null ? '' : `#${latest.seq} `}${latest.kind}`;
+  const message = `waiting on ${subject} · ${state}`
+    + ` · ${Math.round(elapsed / 1000)}s of ${Math.round(bound / 1000)}s`;
+  try {
+    notify(PROGRESS_NOTIFICATION_METHOD, { progressToken: token, progress, message });
+  } catch (cause) {
+    // A transport that cannot deliver server notifications answers the typed refusal, and the
+    // frame is all it costs: progress is additive chrome and the call's result is the machine
+    // channel. Any other fault is the transport's own and is not swallowed here.
+    if (cause?.code !== 'wake_notifications_unavailable') throw cause;
+  }
+}
+
+/** Whether a `run.follow` page ended the follow on its own authority: the application marks a
+ * page `timedOut` exactly when its deadline passed with no change, no further page and a
+ * non-terminal Run (application.mjs follow()), so a page that is not timed out carries one. */
+export function runFollowEnded(result) {
+  return result?.follow?.timedOut !== true;
+}
+
+/** The latest change a `run.follow` page observed, as `{count, seq, kind}` — the page's own
+ * change rows, the last of them named. Null for a page that carried none. */
+export function runFollowObservation(result) {
+  const changes = Array.isArray(result?.follow?.changes) ? result.follow.changes : [];
+  const change = changes.at(-1) ?? null;
+  if (!record(change) || typeof change.kind !== 'string') return null;
+  return { count: changes.length, seq: Number.isSafeInteger(change.seq) ? change.seq : null, kind: change.kind };
+}
+
+/** Whether a `run.wait` view ended the wait: the application's own arm exits on the phase its
+ * caller asked for — the provider-execution settlement by default, the Run's terminal phase for
+ * `until: 'terminal'` (application.mjs wait()). One vocabulary: the phase sets the application
+ * itself reads. */
+function runWaitEnded(result, until = null) {
+  if (typeof result?.phase !== 'string') return false;
+  return (until === 'terminal' ? APPLICATION_RUN_TERMINAL_PHASES : PROVIDER_EXECUTION_SETTLED_PHASES)
+    .has(result.phase);
+}
+
+/** The slice reader for `run.wait`, whose result is the Run view: a view that moved since the
+ * previous slice is one observation, named by the coordinate and phase the view itself carries.
+ * The first slice sets the baseline, so a call that has seen no movement yet reports none. */
+function runWaitObserver() {
+  let previous = null;
+  return (result) => {
+    const state = record(result) ? {
+      seq: Number.isSafeInteger(result.cursor) ? result.cursor : null,
+      kind: typeof result.phase === 'string' ? result.phase : null,
+    } : null;
+    const moved = state !== null && previous !== null
+      && (state.seq !== previous.seq || state.kind !== previous.kind);
+    previous = state;
+    return moved ? { count: 1, seq: state.seq, kind: state.kind } : null;
+  };
+}
+
+/** The digest rows a wait observed, across the three lanes the coordinator's own wait loop reads
+ * (runtime-admission.mjs wait()). A lane that is absent or not an array contributes none. */
+function waitDigestRows(result) {
+  return [result?.attention, result?.facts, result?.prose]
+    .flatMap((lane) => (Array.isArray(lane) ? lane : []))
+    .filter((row) => record(row));
+}
+
+/** What a `fleet_wait` digest observed, as `{count, seq, kind}`: the highest-sequence row of the
+ * slice, named by its own kind (a hub fact carries `kind`, an attention row its `type`). */
+function waitDigestObservation(result) {
+  const rows = waitDigestRows(result);
+  if (rows.length === 0) return null;
+  let latest = null;
+  for (const row of rows) {
+    const seq = Number.isSafeInteger(row.seq) ? row.seq : null;
+    if (latest !== null && (seq ?? -1) < (latest.seq ?? -1)) continue;
+    latest = { seq, kind: typeof row.kind === 'string' ? row.kind : typeof row.type === 'string' ? row.type : 'event' };
+  }
+  return { count: rows.length, seq: latest.seq, kind: latest.kind };
 }
 
 /** The SHAPE of a wake filter, validated here; its VOCABULARY (the closed class set) is the
@@ -2481,12 +2623,15 @@ export class McpFleetServer {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('rate_limited'));
     }
-    return protocolResult(id, await this._callTool(params.name, args, id, semanticAuthority, dispatchCallId));
+    return protocolResult(id, await this._callTool(
+      params.name, args, id, semanticAuthority, dispatchCallId, progressTokenOf(params),
+    ));
   }
 
   // `dispatchCallId` is the identity the run.act authority read minted before admission (U-E17):
   // the same callId then rides the admission and the application context of this tool call.
-  async _callTool(name, args, requestId, semanticAuthority = null, dispatchCallId = null) {
+  // `progressToken` is the token this request's `_meta` carried (issue #585 stage 3), or null.
+  async _callTool(name, args, requestId, semanticAuthority = null, dispatchCallId = null, progressToken = null) {
     if (!STATEFUL.has(name)) {
       try {
         const observeCallId = `observe-${hash({
@@ -2496,7 +2641,7 @@ export class McpFleetServer {
           tool: name,
           requestId,
         })}`;
-        const value = await this._dispatch(name, args, null, observeCallId, this.principal);
+        const value = await this._dispatch(name, args, null, observeCallId, this.principal, null, progressToken);
         const refused = ['run.follow', 'run.wait'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;
         if (refused) {
           this._audit('tool_refused_after_wait', name, args, refused);
@@ -2702,22 +2847,41 @@ export class McpFleetServer {
     return this.coordinator._replCiteInOwnRun(taskId, args.citation);
   }
 
-  async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
+  async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null, progressToken = null) {
     let value;
     if (APPLICATION_TOOL[name]) {
-      value = await this.application.command(
-        APPLICATION_TOOL[name],
-        applicationArgs(name, args),
-        {
-          actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-          principalId: principal.userId,
-          sessionId: principal.sessionId,
-        },
-        {
-          ...this._applicationDispatchContext(args, callId, principal),
-          ...(APPLICATION_TOOL[name] === 'run.act' ? { semanticAuthority } : {}),
-        },
-      );
+      const command = APPLICATION_TOOL[name];
+      const request = applicationArgs(name, args);
+      const context = {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      };
+      const dispatchContext = {
+        ...this._applicationDispatchContext(args, callId, principal),
+        ...(command === 'run.act' ? { semanticAuthority } : {}),
+      };
+      // Issue #585 stage 3 (docs/56 §D2): the two Run-scoped bounded reads are served in slices
+      // when the client asked for progress; each slice is the same command at the slice bound, so
+      // the wire result and the end condition stay the command's own (runFollowEnded /
+      // runWaitEnded above mirror the arms' own exits). Without a token this is the one call it
+      // has always been.
+      if (command === 'run.wait' || command === 'run.follow') {
+        const observeWaitedRun = command === 'run.wait' ? runWaitObserver() : null;
+        value = await sliceBlockingRead({
+          bound: request.timeoutMs,
+          token: progressToken,
+          subject: 'run events',
+          read: (sliceMs) => this.application.command(command, { ...request, timeoutMs: sliceMs }, context, dispatchContext),
+          done: command === 'run.follow'
+            ? runFollowEnded
+            : (result) => runWaitEnded(result, request.until ?? null),
+          observed: command === 'run.follow' ? runFollowObservation : observeWaitedRun,
+          notify: (method, frame) => this.notify(method, frame),
+        });
+      } else {
+        value = await this.application.command(command, request, context, dispatchContext);
+      }
     }
     // Reflex surface contract Part B: an explicit branch (never an APPLICATION_COMMAND_DEFINITIONS
     // key — Part A.2) calling the direct command port `application.contextEval(...)`. The branch
@@ -3006,7 +3170,22 @@ export class McpFleetServer {
       planId: args.planId, planVersion: args.planVersion, planDigest: args.planDigest, throughSeq: args.throughSeq,
     }, this._goalPlanContext(name, args, actor, callId, principal));
     else if (name === 'fleet_send') value = await this.coordinator.send(args.workerId, args.message, args.mode, { expectedFence: args.expectedFence, actor });
-    else if (name === 'fleet_wait') value = await this.coordinator.wait(Math.min(args.timeoutMs ?? this.maxWaitMs, this.maxWaitMs));
+    // Issue #585 stage 3 (docs/56 §D2): the fleet-wide wait is served in slices when the client
+    // asked for progress. A slice that observed anything ends the call, which is what the
+    // coordinator's own wait loop does (runtime-admission.mjs wait()), and the deadline ends it
+    // otherwise; without a token this is the one call it has always been.
+    else if (name === 'fleet_wait') {
+      const bound = Math.min(args.timeoutMs ?? this.maxWaitMs, this.maxWaitMs);
+      value = await sliceBlockingRead({
+        bound,
+        token: progressToken,
+        subject: 'fleet events',
+        read: (sliceMs) => this.coordinator.wait(sliceMs),
+        done: (result) => waitDigestObservation(result) !== null,
+        observed: waitDigestObservation,
+        notify: (method, frame) => this.notify(method, frame),
+      });
+    }
     else if (name === 'fleet_respond') value = await this.coordinator.respond(args.requestId, args.answer, actor);
     else if (name === 'fleet_interrupt') value = await this.coordinator.interrupt(args.workerId, args.then, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_result') value = await this.coordinator.result(args.workerId);

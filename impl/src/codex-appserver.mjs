@@ -842,6 +842,7 @@ export class CodexAppServerCli {
       processGeneration, processClosedEmitted: false, processClosePending: false, providerReady: false, setupFailed: false,
       processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
       timeoutFailure: null, processFailure: null,
+      goalPinRefusal: null,
       reqSeq: 0, reqIdSeq: 0,
       pendingRequests: new Map(),
       threadId: null, activeTurn: null, turnEpoch: 0,
@@ -967,6 +968,25 @@ export class CodexAppServerCli {
 
     if (session.killing || session.terminal) {
       return { ok: false, code: 'provider_ready_refused', reason: 'provider readiness was rejected by coordinator policy' };
+    }
+
+    // #585 D8: the brief's definition of done is pinned as first-class thread state, so a
+    // transcript compaction mid-turn cannot drop it. The objective is the brief's own text —
+    // verbatim, with no paraphrase and no appended instruction. A codex build that does not serve
+    // `thread/goal/set` refuses the call: that refusal is recorded on the session and the launch
+    // continues, because the brief still carries the definition of done in its turn input.
+    if (typeof brief?.definitionOfDone === 'string' && brief.definitionOfDone.trim() !== '') {
+      try {
+        await this._sendRequest(session, 'thread/goal/set', {
+          threadId: session.threadId,
+          objective: brief.definitionOfDone,
+        });
+      } catch (error) {
+        session.goalPinRefusal = {
+          code: error?.code ?? 'goal_pinning_unavailable',
+          message: String(error?.message ?? error),
+        };
+      }
     }
 
     // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.

@@ -17,7 +17,7 @@
 //   P5  No renderer gesture bypasses authority; action hints lower through the
 //       existing `run.answer` / `baton_surface_visualize` commands.
 
-import { flipFace, flipStatus } from './brand.mjs';
+import { flipHumanLine, flipStatus } from './brand.mjs';
 
 // ---------------------------------------------------------------------------
 // Display width
@@ -177,11 +177,13 @@ function styled(text, color, codes) {
 // Views
 // ---------------------------------------------------------------------------
 
-function header(model, view, { width, color, motion }) {
+function header(model, view, { width, color, motion, seat }) {
   const runId = model?.run?.runId ?? 'run:unknown';
   // P4 / operator decision 2026-09-14: Flip is brand identity — the static smile mark in
-  // the header, never a pose. Motion stays the low-amplitude sparkle hint.
-  let line = `${flipFace('smile', { color })} baton top · ${view} · ${runId}`;
+  // the header, never a pose. Motion stays the low-amplitude sparkle hint. The mark rides the
+  // header through the ONE mark composer. The header names its own seat (docs/56 D5): the
+  // operator seat renders `baton top`, an MCP client renders `baton`.
+  let line = flipHumanLine(`${seat} · ${view} · ${runId}`, { color });
   if (motion) line += ' ✦';
   return styled(fitToWidth(line, width), color, ['bold', 'cyan']);
 }
@@ -190,9 +192,10 @@ function rule(width) {
   return '─'.repeat(Math.max(width, 0));
 }
 
-function renderOverview(model, { width, color, motion }) {
+function renderOverview(model, ctx) {
+  const { width, color, motion } = ctx;
   const lines = [];
-  lines.push(header(model, 'overview', { width, color, motion }));
+  lines.push(header(model, 'overview', ctx));
   lines.push(styled(fitToWidth(rule(width), width), color, ['dim']));
 
   // The seat's status: the closed status word for the class the model carries — attention
@@ -315,9 +318,10 @@ function renderOverview(model, { width, color, motion }) {
   return lines;
 }
 
-function renderTopology(model, { width, color, motion }) {
+function renderTopology(model, ctx) {
+  const { width, color, motion } = ctx;
   const lines = [];
-  lines.push(header(model, 'topology', { width, color, motion }));
+  lines.push(header(model, 'topology', ctx));
   lines.push(styled(fitToWidth(rule(width), width), color, ['dim']));
 
   lines.push(styled('Fleet graph', color, ['bold']));
@@ -375,9 +379,10 @@ function renderTopology(model, { width, color, motion }) {
   return lines;
 }
 
-function renderTimeline(model, { width, color, motion }) {
+function renderTimeline(model, ctx) {
+  const { width, color, motion } = ctx;
   const lines = [];
-  lines.push(header(model, 'timeline', { width, color, motion }));
+  lines.push(header(model, 'timeline', ctx));
   lines.push(styled(fitToWidth(rule(width), width), color, ['dim']));
 
   lines.push(styled('Wake stream', color, ['bold']));
@@ -390,7 +395,10 @@ function renderTimeline(model, { width, color, motion }) {
   for (const item of wakes.items ?? []) {
     const subject = item?.subject ?? '—';
     const terminal = item?.terminal ? '  terminal' : '';
-    lines.push(fitToWidth(`  #${item?.seq ?? '?'}  ${item?.wakeClass ?? '?'}  ${subject}${terminal}`, width));
+    // The class renders through the one status derivation: the closed status word when the class
+    // derives, the bare class name otherwise (docs/56 D1) — the same `statusWord` the model's own
+    // status rows use.
+    lines.push(fitToWidth(`  #${item?.seq ?? '?'}  ${statusWord(item?.wakeClass)}  ${subject}${terminal}`, width));
     if (item?.next) lines.push(fitToWidth(`      → ${item.next}`, width));
   }
 
@@ -414,9 +422,10 @@ function renderTimeline(model, { width, color, motion }) {
   return lines;
 }
 
-function renderTelemetry(model, { width, color, motion }) {
+function renderTelemetry(model, ctx) {
+  const { width, color, motion } = ctx;
   const lines = [];
-  lines.push(header(model, 'telemetry', { width, color, motion }));
+  lines.push(header(model, 'telemetry', ctx));
   lines.push(styled(fitToWidth(rule(width), width), color, ['dim']));
 
   lines.push(styled('Route readiness', color, ['bold']));
@@ -477,7 +486,7 @@ export function renderBatonVisual(model, options = {}) {
   const color = Boolean(options.color);
   const motion = Boolean(options.motion);
   const view = options.view ?? model?.view ?? 'overview';
-  const ctx = { width, color, motion };
+  const ctx = { width, color, motion, seat: options.seat ?? 'baton top' };
 
   let lines;
   switch (view) {
@@ -516,7 +525,7 @@ const FLIP_SPARKLE_FRAMES = [
  */
 export function createBatonMcpPresentation(model, options = {}) {
   const width = options.width ?? model?.width ?? 96;
-  const text = renderBatonVisual(model, { width, color: false, motion: false });
+  const text = renderBatonVisual(model, { width, color: false, motion: false, seat: 'baton' });
   const run = model?.run ?? {};
   const controls = model?.controls ?? {};
 

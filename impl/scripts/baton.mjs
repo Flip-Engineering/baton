@@ -12,6 +12,7 @@ import {
   isReadOnlyCliDispatch, parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
 import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
+import { BATON_STATUSLINE_HELP, resolveStatuslineConnection, runBatonStatusline } from '../src/baton-statusline.mjs';
 import { reincarnationProcessAlive } from '../src/application-deployment.mjs';
 import { BatonWebHost, SignalLifecycleOwner, describeDrainWait, signalIntentLine } from '../src/application-host.mjs';
 import { flipAnnounce, flipLine } from '../src/brand.mjs';
@@ -485,6 +486,13 @@ try {
         // issue #315): the timeline consumes GET /v1/wakes through the wake module.
         connection,
       });
+    } else if (parsed.kind === 'statusline_help') {
+      process.stdout.write(`${BATON_STATUSLINE_HELP}\n`);
+    } else if (parsed.kind === 'statusline') {
+      // docs/56 D3 — the Claude Code status line: one derived line on stdout when the resident
+      // answers, nothing at all otherwise, exit 0 either way. The harness pipes its session JSON
+      // to stdin, which this verb never reads.
+      await runBatonStatusline({ client: statuslineClient(), stdout: process.stdout });
     } else if (parsed.kind === 'serve') {
       if (parsed.configPath === null) {
         await serveCheckout();
@@ -553,6 +561,24 @@ try {
   process.exitCode = error?.code === 'cli_invalid' || error?.code === 'cli_config_invalid' || error?.code === 'cli_command_unavailable' ? 2 : 1;
 }
 
+// ── statusline-verb helper ─────────────────────────────────────────────────────────────────────
+// Declared after the entry block for the same reason the doctor helpers below are: function
+// declarations hoist, so the statusline verb above calls this while no connection discovery call
+// site precedes the parse (U-E8/PT-8).
+/** The resident `baton statusline` reads: this directory's connection, else the one published for
+ * this CLI's own checkout (resolveStatuslineConnection). Null when neither resolves or the client
+ * cannot be built — the verb then prints nothing and exits 0 (docs/56 D3). */
+function statuslineClient() {
+  const connection = resolveStatuslineConnection({
+    discover: (options) => discoverBatonConnection({ tolerateRegistryDrift: true, ...options }),
+  });
+  if (connection === null) return null;
+  try {
+    return clientFor(connection);
+  } catch {
+    return null;
+  }
+}
 
 // ── doctor-verb helpers ───────────────────────────────────────────────────────────────────────
 // Declared after the entry block on purpose: function declarations hoist, so the doctor verb above

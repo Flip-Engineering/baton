@@ -5,6 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
 
+// Issue #585 (stage 3): the root wake message is a human message, so it is composed through the
+// ONE mark rule rather than spelled here (brand.mjs).
+import { flipHumanLine } from './brand.mjs';
+
 const execFileAsync = promisify(execFile);
 
 const capability = (mechanism, canStartTurn, note) => Object.freeze({
@@ -459,11 +463,93 @@ function rootTurnReportedPayload(store, frame) {
   return Object.freeze({ ...payload });
 }
 
-function rootWakeBody(payload, wakeClass) {
-  if (wakeClass === 'root_turn_reported') {
-    return `Baton root turn report.\n${JSON.stringify(payload, null, 2)}`;
+// The root wake message is what a person reads inside their own harness session, so it is
+// composed by the ONE mark rule (brand.mjs flipHumanLine) and carries no JSON: the facts the
+// root needs to act, one line each, every interpolated value bounded and the whole body bounded.
+
+/** The bound one rendered value carries; a longer value ends in `…`. */
+const ROOT_WAKE_VALUE_CHARS = 200;
+/** The bound the whole composed message carries. */
+const ROOT_WAKE_BODY_CHARS = 2000;
+
+function boundedRootValue(value) {
+  const text = typeof value === 'string' ? value : `${value ?? ''}`;
+  return text.length <= ROOT_WAKE_VALUE_CHARS ? text : `${text.slice(0, ROOT_WAKE_VALUE_CHARS)}…`;
+}
+
+/** Apply the message bound to one composed body. */
+function boundRootWakeBody(body) {
+  return body.length <= ROOT_WAKE_BODY_CHARS ? body
+    : `${body.slice(0, ROOT_WAKE_BODY_CHARS - 1)}…`;
+}
+
+/** The identity arguments a next command renders, taken from the payload's own `next` object with
+ * the payload's validated fields as the fallback. Null when one is missing: a command with a hole
+ * in it is not a command the root can run. */
+function rootNextIdentity(payload, names) {
+  const next = payload.next;
+  if (next === null || typeof next !== 'object' || Array.isArray(next)) return null;
+  const values = names.map((name) => (typeof next[name] === 'string' && next[name].length > 0
+    ? next[name] : payload[name]));
+  return values.every((entry) => typeof entry === 'string' && entry.length > 0) ? values : null;
+}
+
+/** The command a root_owed row asks for, in the CLI spelling the seat guidance teaches. The
+ * caller supplies CHECK_ID itself, so the check command names the placeholder rather than a
+ * check id it would have to invent. */
+function rootOwedNextCommand(payload) {
+  const command = payload.next?.command;
+  if (command === 'swarm.check') {
+    const identity = rootNextIdentity(payload, ['swarmId', 'participantId', 'contributionId']);
+    return identity === null ? null : `baton swarm check ${identity.map(boundedRootValue).join(' ')} CHECK_ID`;
   }
-  return `Baton root attention is owed.\n${JSON.stringify(payload, null, 2)}`;
+  if (command === 'swarm.view') {
+    const identity = rootNextIdentity(payload, ['swarmId']);
+    return identity === null ? null : `baton swarm view ${boundedRootValue(identity[0])}`;
+  }
+  return null;
+}
+
+/** The message a swarm.root_attention_owed row owes the root. */
+function rootOwedBody(payload, wakeClass) {
+  const lines = [flipHumanLine(
+    `root owed: ${boundedRootValue(payload.owed)} in ${boundedRootValue(payload.swarmId)}`,
+    { statusClass: wakeClass })];
+  const seat = [payload.participantId, payload.contributionId]
+    .filter((entry) => typeof entry === 'string' && entry.length > 0)
+    .map(boundedRootValue).join(' · ');
+  if (seat.length > 0) lines.push(`  seat: ${seat}`);
+  if (typeof payload.ask === 'string' && payload.ask.length > 0) {
+    lines.push(`  ask: ${boundedRootValue(payload.ask)}`);
+  }
+  const command = rootOwedNextCommand(payload);
+  if (command !== null) lines.push(`  next: ${command}`);
+  return boundRootWakeBody(lines.join('\n'));
+}
+
+/** The message a worker.turn_reported row owes the root. The result status is the row's own
+ * `resultStatus`, or the status its `report` carries; the run view command is the class's own
+ * next action, and a report with no run has none. */
+function rootTurnReportedBody(payload, wakeClass) {
+  const resultStatus = typeof payload.resultStatus === 'string' && payload.resultStatus.length > 0
+    ? payload.resultStatus
+    : payload.report?.status;
+  const subject = [resultStatus, payload.worker]
+    .filter((entry) => typeof entry === 'string' && entry.length > 0)
+    .map(boundedRootValue).join(' · ');
+  const lines = [flipHumanLine(`turn reported: ${subject}`, { statusClass: wakeClass })];
+  if (typeof payload.runId === 'string' && payload.runId.length > 0) {
+    lines.push(`  run: ${boundedRootValue(payload.runId)}`);
+    lines.push(`  next: baton run view ${boundedRootValue(payload.runId)}`);
+  }
+  return boundRootWakeBody(lines.join('\n'));
+}
+
+/** The message the frame's class asks the root to read: the owed attention, or the turn report. */
+function rootWakeBody(payload, wakeClass) {
+  return wakeClass === 'root_turn_reported'
+    ? rootTurnReportedBody(payload, wakeClass)
+    : rootOwedBody(payload, wakeClass);
 }
 
 /** Consume one root-addressed frame. The frame resolves only through its public source row kind

@@ -70,7 +70,7 @@ test('every top-level verb row resolves through the parser that serves it (#340)
     assert.equal(parsed?.kind, row.kind, `${row.token} resolves to its declared parser result`);
   }
   assert.deepEqual(HOST_CLI_VERBS.map((row) => row.token),
-    ['doctor', 'serve', 'setup', 'route', 'credentials', 'quarantine', 'top'], 'the host half is the U-G7 table');
+    ['doctor', 'serve', 'setup', 'route', 'credentials', 'quarantine', 'top', 'statusline'], 'the host half is the U-G7 table');
 });
 
 test('the taught verb set is ONE derivation: --help, the unknown-verb refusal and CLI.md agree (#340)', () => {

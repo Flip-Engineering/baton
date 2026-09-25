@@ -10,6 +10,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { TextDecoder } from 'node:util';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalOperationForCommand, canonicalRunPhase } from './application-semantics.mjs';
 import { parseBatonTopCli } from './baton-top.mjs';
+import { parseBatonStatuslineCli } from './baton-statusline.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
@@ -1538,6 +1539,12 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     host: true, token: 'top', verb: 'baton top', argv: Object.freeze(['top']), kind: 'top',
     parser: 'baton-cli',
     summary: 'The operator seat: a live human view over runs and swarms (docs/38).',
+  }),
+  // docs/56 D3: the Claude Code status-line command — one derived line on stdout, or nothing.
+  Object.freeze({
+    host: true, token: 'statusline', verb: 'baton statusline', argv: Object.freeze(['statusline']),
+    kind: 'statusline', parser: 'baton-cli',
+    summary: 'The Claude Code status line: one derived line on stdout, or nothing (docs/56 D3).',
   }),
   // The application verbs: each is the CLI transport of canonical operations the resident serves.
   Object.freeze({
@@ -3853,6 +3860,12 @@ export function parseBatonCli(rawArgs) {
   // dispatches through the resident client in scripts/baton.mjs).
   const top = parseBatonTopCli(args);
   if (top !== null) return top;
+  // docs/56 D3 — `baton statusline` is the Claude Code status-line command. It parses in
+  // baton-statusline.mjs and returns null for any other argv, so the ordinary CLI below is never
+  // swallowed (its kind statusline/statusline_help dispatches in scripts/baton.mjs). Both
+  // branches are parse-time decisions: neither reaches a transport.
+  const statusline = parseBatonStatuslineCli(args);
+  if (statusline !== null) return statusline;
   const idempotencyKey = take(args, '--idempotency-key') ?? randomUUID();
   if (args[0] === 'credentials') {
     args.shift();

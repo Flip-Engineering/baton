@@ -92,6 +92,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton credentials install kimi` | `credentials install kimi` | Install the Kimi provider credential interactively; credentials are never CLI arguments. |
 | `baton quarantine <SEQ> --reason TEXT [--restart]` | `quarantine 2 --reason participant_not_found` | Record the coordination fold refusal the startup probe reported (issue #290) so the deployment can start, and optionally host the resident afterward (`--restart`). |
 | `baton top` | `top` | The operator seat: a live human view over runs and swarms (docs/38). |
+| `baton statusline` | `statusline` | The Claude Code status line: one derived line on stdout, or nothing (docs/56 D3). |
 | `baton run` | `run view RUN_ID` | Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`). |
 | `baton review OBJECTIVE` | `review objective --exact mock/model-a@low --exact mock/model-b@low` | The objective-first read-only preset: one reviewer/challenger Workflow on two exact routes. |
 | `baton explore OBJECTIVE` | `explore objective` | The single-route read-only evidence preset. |
@@ -252,6 +253,7 @@ truth. Each row is resolved live by `parseBatonCli` in `impl/test/host-verb-inve
 | `baton credentials install kimi` | `credentials install kimi` | Install the Kimi provider credential interactively; credentials are never CLI arguments. |
 | `baton quarantine <SEQ> --reason TEXT [--restart]` | `quarantine 2 --reason participant_not_found` | Record the coordination fold refusal the startup probe reported (issue #290) so the deployment can start, and optionally host the resident afterward (`--restart`). |
 | `baton top` | `top` | The operator seat: a live human view over runs and swarms (docs/38). |
+| `baton statusline` | `statusline` | The Claude Code status line: one derived line on stdout, or nothing (docs/56 D3). |
 
 <!-- END GENERATED: cli-host-verb-inventory -->
 

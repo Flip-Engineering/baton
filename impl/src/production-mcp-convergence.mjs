@@ -5,7 +5,13 @@ import {
   coreToolDefinitions,
   resolveCoreCall,
 } from './mcp-core-tools.mjs';
-import { nearestToolName } from './mcp-northbound.mjs';
+import {
+  nearestToolName,
+  progressTokenOf,
+  runFollowEnded,
+  runFollowObservation,
+  sliceBlockingRead,
+} from './mcp-northbound.mjs';
 
 import { randomUUID } from 'node:crypto';
 
@@ -330,11 +336,23 @@ async function surfaceWatch(target, runtime, input, message) {
   const args = validateWatchArgs(input, target);
   const principal = actorContext(target);
   const context = applicationContext(target, message, input);
-  const follow = await target.application.command('run.follow', {
-    runId: args.runId,
-    afterCursor: args.afterCursor,
-    timeoutMs: args.timeoutMs,
-  }, principal, context);
+  // Issue #585 stage 3 (docs/56 §D2): the watch's own blocking leg is the Run follow, so that is
+  // the leg served in slices when the client asked for progress on its tools/call. The page the
+  // watch answers is the follow's own (runFollowEnded / runFollowObservation are that arm's
+  // contract), and a call with no token makes the one call it has always made.
+  const follow = await sliceBlockingRead({
+    bound: args.timeoutMs,
+    token: progressTokenOf(message?.params),
+    subject: 'run events',
+    read: (sliceMs) => target.application.command('run.follow', {
+      runId: args.runId,
+      afterCursor: args.afterCursor,
+      timeoutMs: sliceMs,
+    }, principal, context),
+    done: runFollowEnded,
+    observed: runFollowObservation,
+    notify: (method, frame) => target.notify(method, frame),
+  });
   const attention = await target.application.command('run.attention.watch', {
     runId: args.runId,
     cursor: args.attentionCursor,
@@ -476,7 +494,7 @@ async function surfaceVisualize(target, runtime, args, message) {
     snapshot, ...(watch === null ? {} : { watch }), width: validated.width,
   });
   const text = rendererModule.renderBatonVisual(model, {
-    width: validated.width, color: false, motion: false, view: validated.view,
+    width: validated.width, color: false, motion: false, view: validated.view, seat: 'baton',
   });
   const accessibleSummary = typeof model?.accessibleSummary === 'string'
     ? model.accessibleSummary : text;
