@@ -255,7 +255,7 @@ posture is not what the pin is about):
 ## 6. Verification
 
 - `impl/test/issue525-resume-decision-red.test.mjs` pins the contract in seven rows, red at
-  8ff5bf09, listed in the expected-red manifest with reason `#525`:
+  8ff5bf09:
   - 525-a: the closed sets carry the contract — the two runtime-recorded swarm kinds
     (SWARM_EVENT_KINDS, absent from UPDATE_PERMISSIONS), the wake class keyed on the request
     kind, the policy field. Red: none exist.
@@ -280,6 +280,5 @@ posture is not what the pin is about):
   - 525-g: `swarm.create --policy '{"resumeContinuation":"auto"}'` is admitted and a resume-from
     under it binds in the same command, exactly as today. Red: the policy field is refused by the
     closed set today.
-- The implementation lane turns the rows green, retires the manifest entries, and drops the
-  `-red` suffix (docs/44).
+- The implementation lane turns the rows green and drops the `-red` suffix (docs/44).
 - The deployment gate: `npm test --prefix impl`.
