@@ -1,6 +1,9 @@
 # CLAIM: two M-5 obligations, one M-10 obligation, four M-14 obligations and three
 # M-18 decision obligations are stated over pure example functions;
-# examples/laws-proof.bend supplies their proofs.
+# examples/laws-proof.bend supplies their proofs. The revision 11 and 12 statements the
+# operator adopted on 2026-09-25 are carried by the example modules imported below; each
+# of those modules states and proves its own obligations, so importing it discharges them
+# here. Those entries stay proposed and are not part of the operative set.
 # Approval: all 16 operative entries at 1fab9a1d, operator authorization
 # relayed in the bend2-laws-lead4 brief; final Codex review r9.1 APPROVED.
 # Actual application proofs remain open for all 16 entries; see laws-trace.md.
@@ -11,6 +14,12 @@ import ./examples/laws-history-model.bend as History
 import ./examples/laws-worker-model.bend as Worker
 import ./examples/laws-refusal-model.bend as Refusal
 import ./examples/laws-decision-model.bend as Decision
+import ./examples/laws-no-ledger.bend as NoLedger
+import ./examples/laws-no-ceiling.bend as NoCeiling
+import ./examples/laws-derived-catalog.bend as DerivedCatalog
+import ./examples/laws-orchestrator-authority.bend as OrchestratorAuthority
+import ./examples/laws-annotation-independence.bend as AnnotationIndependence
+import ./examples/laws-prerequisite-enabling.bend as PrerequisiteEnabling
 
 # M-5: every prior review row, including identity, author, artifact, basis
 # and decision, is preserved in order by this model transition.

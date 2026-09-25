@@ -1,7 +1,13 @@
-# CLAIM: an orchestrator holds every management act over the seats it leads - recruit, guide,
-# stop, review, integrate and resume - so no work it directs waits on the root to perform one of
-# those acts for it. A seat can stop itself. A grant table that leaves an orchestrator without one
-# of the acts makes the law false at that act.
+# CLAIM: for every relation and every act the model's grant is the specification's: an orchestrator
+# holds every management act over the seats it leads, a seat can stop itself, and no act is granted
+# over a seat the actor does not lead. The extension below states the scope derivation and the
+# dispatch boundary the operator adopted on 2026-09-25: the relation is derived from the
+# authenticated current delegation, the caller's claimed relation does not change the dispatch
+# decision, the effect-time check uses the same relation, no second check denies a lawful grant, a
+# current delegation holds every management act, and a seat stops itself under its own scope. Scope
+# at this level: the authenticated delegation is a model value, and the runtime that issues and
+# revokes it, the resource instance and generation M-8 requires, and the full management-action
+# universe are not modelled.
 # Status: proposed addition (revision 12c, 2026-09-25), from the operator ruling of 2026-09-21
 # (leads get their swarm's whole scope and full authority, including landing their own work) and
 # revision 10's shape (a seat stops when it declares itself done or its orchestrator stops it).
@@ -81,3 +87,88 @@ def orchestrator_holds_management(rel, act):
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print("orchestrator-authority: an orchestrator holds every management act; law checked.")
+
+# --- Revision 12c adopted scope derivation and dispatch boundary (2026-09-25) ---
+
+# The scope an authenticated delegation names.
+type Scope is Data:
+  Delegated{}
+  Own{}
+  Bare{}
+
+# The authenticated delegation the runtime holds for an actor: its granted scope and
+# whether that grant is current.
+type Grant is Data:
+  Grant{scope: Scope, current: Bool}
+
+# The relation the runtime derives from the authenticated delegation.
+def relation_of(grant: Grant) -> Relation:
+  match grant:
+    case Grant{Delegated{}, False{}}: Other{}
+    case Grant{Delegated{}, True{}}: Leads{}
+    case Grant{Own{}, False{}}: Other{}
+    case Grant{Own{}, True{}}: Itself{}
+    case Grant{Bare{}, False{}}: Other{}
+    case Grant{Bare{}, True{}}: Other{}
+
+# The dispatch check: the runtime uses the relation derived from the authenticated
+# delegation. The caller's claimed relation is an input the check discards.
+def dispatch(grant: Grant, claimed: Relation, act: Act) -> Bool:
+  granted(relation_of(grant), act)
+
+# The effect-time recheck under the current authority.
+def effect(grant: Grant, act: Act) -> Bool:
+  granted(relation_of(grant), act)
+
+# A second check cannot deny an act its lawful grant admitted.
+def allow(authorized: Bool, additional_permission: Bool) -> Bool:
+  authorized
+
+law a_stale_grant_confers_no_authority:
+  for scope: Scope
+  for act: Act
+  {dispatch(Grant{scope, False{}}, Other{}, act) == False{} : Bool}
+
+def a_stale_grant_confers_no_authority(scope, act):
+  match scope:
+    case Delegated{}: {==}
+    case Own{}: {==}
+    case Bare{}: {==}
+
+law the_caller_cannot_supply_the_relation:
+  for grant: Grant
+  for claimed: Relation
+  for act: Act
+  {dispatch(grant, claimed, act) == dispatch(grant, Other{}, act) : Bool}
+
+def the_caller_cannot_supply_the_relation(grant, claimed, act):
+  {==}
+
+law the_effect_rechecks_the_current_authority:
+  for grant: Grant
+  for act: Act
+  {effect(grant, act) == dispatch(grant, Other{}, act) : Bool}
+
+def the_effect_rechecks_the_current_authority(grant, act):
+  {==}
+
+law no_second_permission_after_a_lawful_grant:
+  for authorized: Bool
+  for additional: Bool
+  {allow(authorized, additional) == authorized : Bool}
+
+def no_second_permission_after_a_lawful_grant(authorized, additional):
+  {==}
+
+law a_current_delegation_holds_every_management_act:
+  for act: Act
+  {dispatch(Grant{Delegated{}, True{}}, Other{}, act) == expected(Leads{}, act) : Bool}
+
+def a_current_delegation_holds_every_management_act(act):
+  {==}
+
+law a_seat_stops_itself_under_its_own_scope:
+  {dispatch(Grant{Own{}, True{}}, Other{}, Stop{}) == True{} : Bool}
+
+def a_seat_stops_itself_under_its_own_scope():
+  {==}

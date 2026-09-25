@@ -14,12 +14,20 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs/bend2"
 BEND = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path("bend")
+# The corpus a mutation case carries. It holds laws.bend, the modules it imports and the
+# proof file, so a mutated model is compiled exactly as the law gate compiles it.
 FILES = [
     "laws.bend",
     "examples/laws-history-model.bend",
     "examples/laws-worker-model.bend",
     "examples/laws-refusal-model.bend",
     "examples/laws-decision-model.bend",
+    "examples/laws-no-ledger.bend",
+    "examples/laws-no-ceiling.bend",
+    "examples/laws-derived-catalog.bend",
+    "examples/laws-orchestrator-authority.bend",
+    "examples/laws-annotation-independence.bend",
+    "examples/laws-prerequisite-enabling.bend",
     "examples/laws-proof.bend",
     "examples/laws-transition.bend",
     "examples/laws-transition.js",

@@ -39,9 +39,9 @@ fails on a named case. Each control replaces only `decide` in a scratch copy.
 ## Control A: a size ceiling
 
 ```diff
-28a29
+32a33
 > # Control A: a size ceiling (for example maxTextBytes). Work above the ceiling is refused.
-30c31,33
+34c35,37
 <   expected(authorized, available)
 ---
 >   match size:
@@ -70,10 +70,10 @@ recruit brief (2026-09-20) and every entry of the goal/plan `policy.limits` sche
 ## Control B: a deadline on waiting work
 
 ```diff
-28a29,30
+32a33,34
 > # Control B: a deadline. Work that has waited past the deadline is refused (a queue timeout,
 > # a caller deadline, the 90 s run-stop deadline of #583).
-30c32,37
+34c36,41
 <   expected(authorized, available)
 ---
 >   match elapsed:
@@ -108,7 +108,7 @@ The bound is the host's capacity for the work (`physical_capacity()`), stated wi
 derivation. Its proof splits size one level further so a size above capacity is reached.
 
 ```diff
-28a29,46
+32a33,50
 > # Control C: a ceiling derived from a physical resource. The bound is the host's capacity for
 > # the work, stated with its derivation; work larger than it is refused.
 > def physical_capacity() -> Nat:
@@ -127,15 +127,15 @@ derivation. Its proof splits size one level further so a size above capacity is 
 >     case True{}: Refused{}
 >     case False{}: otherwise
 > 
-30c48
+34c52
 <   expected(authorized, available)
 ---
 >   refuse_when(exceeds(size, physical_capacity()), expected(authorized, available))
-67c85
+71c89
 <       match elapsed:
 ---
 >       match s:
-69,87c87,129
+73,91c91,133
 <           match authorized:
 <             case True{}:
 <               match available:
@@ -226,3 +226,147 @@ M-10's derivation exception. A physical shortage observed now makes work wait (`
 The model decides one work item. It does not model the queue, the order of admission, or a
 caller's own cancellation, which M-10 keeps as separate semantics. It does not import Baton's
 admission code (`goal-plan.mjs` `policy.limits`, the host-capacity gate, `drainPolicy`).
+
+## Revision 12a adopted admission inputs and transition obligations
+
+The adopted statement of 2026-09-25 adds to the scalar decision above two things: the
+decision's inputs derive from the authenticated authority and the measured resource, not
+from a magnitude or a clock; and the transitions are constrained as well as the decision.
+The declarations above are unchanged. The extension declares `authorized_from`,
+`available_from`, `admitted`, a work record (`Disposition`, `Request`, `Work`) and the
+events `Tick`, `Completion`, `Cancellation`, `ExternalFailure` and `AttemptTimeout`, with
+`named_disposition` and `step`. Six laws are discharged:
+
+| Law | Proposition |
+|---|---|
+| `admission_inputs_derive_from_authority_and_measurement` | the admission input is the authenticated grant and the measured availability; size and elapsed time are not inputs |
+| `a_work_event_sets_the_disposition_it_names` | a completion, a cancellation and an external failure name their own disposition; a tick and an attempt timeout name the current one |
+| `a_tick_preserves_the_work_disposition`, `an_attempt_timeout_preserves_the_work_disposition` | a tick and an attempt timeout preserve the work disposition while telemetry and retry scheduling may change |
+| `pending_work_keeps_its_request_across_a_tick`, `pending_work_keeps_its_request_across_an_attempt_timeout` | pending work keeps its owner, owed data and continuation across a tick and across an attempt timeout |
+
+The model under the laws, re-run at this revision:
+
+```sh
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ceiling.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ceiling.bend
+no-ceiling: the decision ignores magnitude and clock; law checked.
+exit=0
+```
+
+### Control 1: size becomes false authority
+
+```diff
+103,104c103,106
+< def admitted(grant: Bool, measured: Bool, size: Nat, elapsed: Nat) -> Decision:
+<   decide(size, elapsed, authorized_from(grant), available_from(measured))
+---
+> def admitted(grant: Bool, measured: Bool, size: Nat, elapsed: Nat) -> Decision:
+>   match size:
+>     case 0n: decide(0n, elapsed, grant, measured)
+>     case 1n+s: decide(1n+s, elapsed, False{}, measured)
+```
+
+```sh
+$ BEND_NO_TELEMETRY=1 $BEND .scratch/controls/a12-size-becomes-false-authority.bend --check-only
+Error:
+- expected : admitted(grant, measured, size, elapsed)
+- observed : expected(grant, measured)
+Context:
+- grant    : Bool
+- measured : Bool
+- size     : Nat
+- elapsed  : Nat
+Location: admission_inputs_derive_from_authority_and_measurement
+115 | def admission_inputs_derive_from_authority_and_measurement(grant, measured, size, elapsed):
+116>|   {==}
+117 |
+```
+
+### Control 2: timer terminalizes pending work
+
+```diff
+138,139c138,139
+<     case Tick{}: current
+<     case Completion{}: Completed{}
+---
+>     case Tick{}: Failed{0n}
+>     case Completion{}: Completed{}
+```
+
+```sh
+$ BEND_NO_TELEMETRY=1 $BEND .scratch/controls/a12-timer-terminalizes-pending-work.bend --check-only
+Error:
+- expected : Failed{0n}
+- observed : disposition
+Context:
+- disposition : Disposition
+- telemetry   : Nat
+- retry       : Nat
+- request     : Request
+Location: a_tick_preserves_the_work_disposition
+177 |   match w:
+178>|     case Work{+disposition, +telemetry, +retry, +request}: {==}
+179 |
+```
+
+### Control 3: timeout terminalizes pending work
+
+```diff
+141,142c141,142
+<     case ExternalFailure{+id}: Failed{id}
+<     case AttemptTimeout{}: current
+---
+>     case ExternalFailure{+id}: Failed{id}
+>     case AttemptTimeout{}: Failed{0n}
+```
+
+```sh
+$ BEND_NO_TELEMETRY=1 $BEND .scratch/controls/a12-timeout-terminalizes-pending-work.bend --check-only
+Error:
+- expected : Failed{0n}
+- observed : disposition
+Context:
+- disposition : Disposition
+- telemetry   : Nat
+- retry       : Nat
+- request     : Request
+Location: an_attempt_timeout_preserves_the_work_disposition
+185 |   match w:
+186>|     case Work{+disposition, +telemetry, +retry, +request}: {==}
+187 |
+```
+
+### Control 4: transition drops the request
+
+```diff
+147c147,147
+<       Work{named_disposition(e, disposition), telemetry, retry, request}
+---
+>       Work{named_disposition(e, disposition), telemetry, retry, Request{0n, 0n, []}}
+```
+
+```sh
+$ BEND_NO_TELEMETRY=1 $BEND .scratch/controls/a12-transition-drops-the-request.bend --check-only
+Error:
+- expected : Request{0n, 0n, []}
+- observed : request
+Context:
+- disposition : Disposition
+- telemetry   : Nat
+- retry       : Nat
+- request     : Request
+Location: pending_work_keeps_its_request_across_a_tick
+193 |   match w:
+194>|     case Work{+disposition, +telemetry, +retry, +request}: {==}
+195 |
+```
+
+## Scope
+
+The laws constrain one admission decision and one work record's transitions. The model has
+no scheduler, queue, admission order or clock: a measured shortage makes work wait, and the
+measurement itself is a host effect. The work record is a pure value, and the attempt is
+modelled as the retry counter on that record. The runtime's own limits are
+`goal-plan.mjs` `policy.limits`, the host-capacity gate, `drainPolicy` and the budget stop.
