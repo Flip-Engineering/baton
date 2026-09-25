@@ -121,27 +121,6 @@ test('273-a: a delivered guide answers with its own row, naming the lane receipt
   assert.equal(lane.payload.messageId, guided.guide.messageId);
 });
 
-test('273-a: a guide to a paused seat answers with its own row, and says the lane wrote none', async (t) => {
-  const f = await seated(t);
-  // The paused lane (nudgeTurn) writes no message.sent receipt — the case that used to answer
-  // `guide: null` for the most common delivery there is.
-  f.ports.coordinator.guideParticipant = async (workerId, message, options = {}) => {
-    f.guides.push({ workerId, message, priority: options.priority ?? null, actor: options.actor ?? null });
-    return { ok: true, result: 'nudged', pauseId: workerId };
-  };
-  const guided = await f.call('guide', { participantId: 'builder', message: 'Resume on the interface.' });
-  assert.equal(guided.result.result, 'nudged');
-  assert.equal(guided.guide.kind, 'swarm.guidance_sent');
-  assert.deepEqual(guided.guide.delivery, { state: 'delivered', lane: null },
-    'the turn itself carried the guidance: delivered, with no lane receipt to name');
-  assert.deepEqual(await f.guidanceFor('builder'), [{
-    seq: guided.guide.seq, ts: guided.guide.sentAt, kind: 'swarm.guidance_sent',
-    messageId: guided.guide.messageId, from: { kind: 'root', participantId: null },
-    priority: 'next_boundary', thread: { root: guided.guide.seq, parent: null },
-    delivery: { state: 'delivered', lane: null, reason: null, deliveredTo: null, at: null },
-  }], 'the guide shows on the seat\'s own guidance field');
-});
-
 test('273-a: a lane that refuses on a deliverable harness answers a refused row, never null', async (t) => {
   const f = await seated(t, { deliver: 'worker_stopping' });
   const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });

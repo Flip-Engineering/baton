@@ -91,7 +91,7 @@ async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
     }
   };
   const asWorker = (worker) => bindBaton(app, { actor: `worker:${worker.id}`, principalId: `worker:${worker.id}`, sessionId: `${worker.id}-session` });
-  return { app, driver, directory, root: bindBaton(app, principal('root')), paused, asWorker };
+  return { app, driver, adapter, directory, root: bindBaton(app, principal('root')), paused, asWorker };
 }
 
 // A lead with every permission and two builders with work, an assignment, and a group —
@@ -117,14 +117,12 @@ async function builders(t, options = {}) {
 test('guidance rows appear for every receipted guide, and a guide returns the row it wrote', async (t) => {
   const { swarm, delegated, leadActor } = await builders(t, { turnDelayMs: 250 });
 
-  // Issue #273: a guide to a paused participant rides the resume lane, which writes no
-  // message.sent receipt — the guide now writes its OWN durable row regardless, so the projection
-  // shows it and the receipt names it instead of answering `guide: null`.
+  // A paused participant receives a fresh turn and a message-lane receipt (#601).
   const resumed = await delegated.guide('alpha', 'Resume on the interface');
   assert.equal(resumed.result.result, 'nudged');
   assert.equal(resumed.guide.kind, 'swarm.guidance_sent', 'the guide always leaves its own row');
-  assert.deepEqual(resumed.guide.delivery, { state: 'delivered', lane: null },
-    'the paused turn carried the guidance: delivered, with no lane receipt to name');
+  assert.equal(resumed.guide.delivery.state, 'delivered');
+  assert.equal(resumed.guide.delivery.lane.kind, 'turn');
   let view = await swarm.view();
   const first = view.participants.find((row) => row.participantId === 'alpha').guidance;
   assert.equal(first.length, 1, 'the paused-lane guide shows on the seat\'s guidance');
@@ -237,3 +235,33 @@ test('every projected row family carries its seq and ts; a solo live checkout sh
     assert.equal(row.workspace.holderCount, 1);
   }
 });
+
+// #601: root guidance to paused mcp-lead18 on 2026-09-25 reported delivery with no lane.
+for (const priority of [undefined, 'next_boundary', 'now']) {
+  test(`#601: a paused seat starts a turn and names its lane for ${priority ?? 'default'} guidance`, async (t) => {
+    const { app, root, driver, adapter, paused } = await fixture(t);
+    const swarm = await root.swarms.create('Paused guide delivery');
+    const member = await swarm.recruit('member', 'Receive root guidance', selection);
+    const worker = await paused(member.runId);
+    const pauseId = driver.coordinator.pausedTurns({ workerId: worker.id })[0].pauseId;
+    const prompts = [];
+    const prompt = adapter.prompt.bind(adapter);
+    adapter.prompt = async (...args) => { prompts.push(args); return prompt(...args); };
+    const message = 'Continue with the root assignment.';
+    const result = await app.command('swarm.guide', { swarmId: swarm.id, participantId: 'member',
+      message, idempotencyKey: 'guide-paused-seat', ...(priority ? { priority } : {}) }, principal('root'));
+    assert.equal(result.result.result, 'nudged');
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0][0], worker.id);
+    assert.equal(prompts[0][2], 'turn');
+    assert.ok(prompts[0][1].includes(message));
+    assert.equal(driver.coordinator.pausedTurnStatus(pauseId).state, 'resolved');
+    assert.equal(result.guide.delivery.state, 'delivered');
+    assert.equal(result.guide.delivery.lane?.kind, 'turn');
+    const lane = driver.coordination.eventsView().find((row) => row.seq === result.guide.delivery.lane.seq);
+    assert.equal(lane.kind, 'message.sent');
+    assert.equal(lane.payload.messageId, result.guide.messageId);
+    assert.equal(lane.payload.to.workerId, worker.id);
+    assert.equal(lane.payload.body, prompts[0][1]);
+  });
+}
