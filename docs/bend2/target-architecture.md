@@ -99,9 +99,9 @@ three specific decisions to the remaining findings:
 - `F4` is conditional. One Scheduler may own the plan graph only while knowledge promotion remains
   an explicit operation, deliberately separated agents retain separate information views, and
   parent-child agent relations remain represented and enforced.
-- `F16` and `F17` use a checked declaration. Every change declares its affected effects and paths in
-  a typed field. A background structural scan compares that declaration with the code shape and
-  records a typed mismatch. Gate selection consumes only the checked result.
+- `F16` and `F17` use a background structural scan. The scan reads the change source snapshot and
+  reports the effects, ownership edges, transitive imports, and calls the change reaches. Gate
+  selection consumes its result directly.
 
 These decisions are constraints on the subsystem contracts below. A later phase may not reinterpret
 the rejected store merge or weaken the two conditional designs.
@@ -123,7 +123,7 @@ disappear from the final tree.
 | `FenceTable`, custody booleans, opaque startup tokens, drain tokens, and northbound bearer strings | Consolidate authority admission and retain issuance, scope, generation, and holder checks until ARCH-CLOSE-02 proves their replacement. Domain Kernel defines authority records; the owning effect validates them. |
 | `host-capacity` and `worktree-capacity` publication protocols | Delete both implementations. Workspace and Artifacts owns one resource lease substrate with resource-specific floor policy. |
 | `holistic-runtime`, `index-converged`, and `production-*` wrapper succession | Delete the parallel runtimes and decorators. The eight runtime subsystems below form the only deployment. |
-| Seam inventory generator, committed inventory, delegate bijection tests, and landing-table inventory branch | Delete the committed textual inventory and hard-coded member tables. Verification and Landing owns a typed change declaration plus a background structural scanner; a mismatch refuses gate selection. |
+| Seam inventory generator, committed inventory, delegate bijection tests, and landing-table inventory branch | Delete the committed textual inventory and hard-coded member tables. Verification and Landing owns a background structural scanner, and the scan result selects the gates. |
 | ESM re-export shims, Node timer loops, hand-written WebSocket server, `v8.serialize` repair, `/bin/ps` lease probe, and event-loop yield choreography | Delete each implementation after its native replacement passes ARCH-CLOSE-03 through ARCH-CLOSE-07. Process lifetime, incarnation, transport security, and persistence remain required behavior. |
 | Atlas modules, context engines, browser tools, advisory feeds, LSP, and representation producers | Delete their core-runtime wiring. Capability Services retains each capability behind one typed call and evidence protocol. |
 
@@ -305,13 +305,9 @@ behavior is pinned by `shared-workspace-custody.test.mjs`,
 - immutable verification requests containing executable, arguments, working directory, environment,
   expected result, source commit, and requester identity;
 - verifier isolation and execution evidence;
-- the typed affected-effect and path declaration supplied by each change;
-- a background structural scanner that derives the effects and ownership edges present in the
-  changed code;
-- comparison of the declaration with the scan, including a typed mismatch that names the undeclared
-  or unsupported effect;
-- gate selection from `CheckedChangeImpact`, which exists only after the declaration and structural
-  scan agree;
+- a background structural scanner that reads the change source snapshot and derives the effects,
+  ownership edges, transitive imports, and calls the change reaches;
+- gate selection from the scan result, bound to the source snapshot and the scanner version;
 - contribution contracts, independent review verdicts, dependency checks, integration, result
   adoption, and landing receipts;
 - one publication operation with one owner, from local preparation through shared delivery: it binds
@@ -326,9 +322,7 @@ behavior is pinned by `shared-workspace-custody.test.mjs`,
 - the contributor's worker session, scheduler policy, provider routing, public surface rendering, or
   workspace custody outside a scoped verifier lease;
 - accepting a contributor's reported test result as execution evidence;
-- selecting gates from an unchecked declaration or from scanner output that has no author
-  declaration;
-- allowing a declaration-versus-scan mismatch to proceed to review or integration;
+- selecting gates from anything other than the scan result bound to the submitted source snapshot;
 - reviewing or approving a contribution under the same authority that authored it;
 - integrating a commit that differs from the verified commit.
 - reporting shared-destination completion from a local compare-and-swap, a local integration
@@ -337,26 +331,24 @@ behavior is pinned by `shared-workspace-custody.test.mjs`,
 This subsystem merges contribution service, contribution verification, referee, landing table,
 verification selection, diagnostics, result adoption, and integration effects. The committed AST
 inventory and hard-coded member tables disappear. A Bend2 structural scanner runs in the background
-against the submitted source snapshot and checks the change's typed declaration. A mismatch is a
-typed refusal with the declaration, observed shape, affected field, and remedy. Both inputs are
-mandatory, and the gate selector accepts their resulting `CheckedChangeImpact`. The recovery result
-distinguishes executed failure, infrastructure failure, interrupted execution, and absence of
+against the submitted source snapshot and derives the effects, ownership edges, transitive imports,
+and calls that snapshot reaches. The gate selector consumes that scan result, and the selected
+tests under the target comparison decide the landing. The recovery result distinguishes executed
+failure, infrastructure failure, interrupted execution, and absence of
 execution as required by
 [`docs/41-verification-recovery-review.md`](../41-verification-recovery-review.md#L69).
-The current declaration anchor is the plan node's `effects` field in
-[`coordinator-plan-effects-red.test.mjs`](../../impl/test/coordinator-plan-effects-red.test.mjs#L166).
 The current structural and gate-selection anchors are
 [`seam-inventory.test.mjs`](../../impl/test/seam-inventory.test.mjs#L145) and
 [`issue463-integrate-gate-paths.test.mjs`](../../impl/test/issue463-integrate-gate-paths.test.mjs#L249).
 
-`CheckedChangeImpact` is an evidence-bearing result of that comparison. LANG-F-28's second-producer
-probe shows that a shared return type establishes no unique producer. The consumer must validate
-the source snapshot, declaration digest, scanner version, coverage result, and gate mapping. A
-stale, incomplete, unavailable, or mismatched scan cannot authorize gate selection or integration.
+`ChangeScanResult` is the evidence-bearing result of one scan over one source snapshot. LANG-F-28's
+second-producer probe shows that a shared return type establishes no unique producer. The consumer
+must validate the source snapshot, scanner version, coverage result, and gate mapping. A stale or
+incomplete scan cannot authorize gate selection or integration.
 The background job may run asynchronously while review waits for its result. The scanner must
 follow transitive imports and calls to affected effects; unknown reachability produces a typed
-unresolved result. Tests must show that adding an undeclared effect or ownership edge fails the
-check and that changing the snapshot invalidates the earlier result (ARCH-CLOSE-09).
+unresolved result that widens the gate set. Tests must show that changing the snapshot
+invalidates the earlier result (ARCH-CLOSE-09).
 
 ### 7. Northbound Gateway
 
@@ -428,7 +420,7 @@ the exchange.
 | Event Stores and Projectors / Capability Services | Store-specific `CapabilityEvent` and `EvidenceRef`; health projection reads committed events through their source cursors. |
 | Scheduler / Worker Gateway | Checked `WorkerSession` plus typed command/event channels. A cancel request records intent; close and reap outcomes acknowledge the actual child state. Consuming or dropping a session does not acknowledge cleanup. |
 | Scheduler / Workspace and Artifacts | Checked `ResourceLease` and `WorkspaceLease`, immutable `SnapshotRef`, `ArtifactRef`, and `CustodyReceipt`. The effect checks issuance, generation, and holders; resource-kind policy carries the host worker admission law. |
-| Scheduler / Verification and Landing | Immutable `VerificationRequest`, `ContributionRef`, and `EffectDeclaration`; Verification returns `CheckedChangeImpact`, `VerificationOutcome`, or `LandingOutcome`. |
+| Scheduler / Verification and Landing | Immutable `VerificationRequest` and `ContributionRef`; Verification returns `ChangeScanResult`, `VerificationOutcome`, or `LandingOutcome`. |
 | Scheduler / Northbound Gateway | `CommandEnvelope -> CommandReceipt` and `ControlStream`. Gateway authentication produces a principal value consumed by command admission. |
 | Scheduler / Capability Services | Checked `Capability` plus `CapabilityCall -> CapabilityResult`; the service validates issuance and scope, and scheduler owns retry and continuation policy. |
 | Worker Gateway / Workspace and Artifacts | Scoped runtime descriptor, input `ArtifactRef`, output `ArtifactRef`, and `ProcessEvidence`. A workspace lease is passed through Scheduler. |
@@ -497,7 +489,7 @@ IDs for each affected deletion and record the evidence that closes them.
 | ARCH-CLOSE-06 | F6, F11, F23; Northbound and Worker Gateways | Complete LANG-CAP-08 HTTP, HTTPS/TLS, WebSocket and bridge framing with native dependencies recorded. Test real client/server exchange, certificate/hostname rejection, authentication, partial and malformed frames, reconnect cursors, backpressure with continuation, and provider stream cancellation. Base TCP and JSON evidence supplies only the byte/framing primitives. |
 | ARCH-CLOSE-07 | F8, F11, F16, F20, F22 and tokens, digests, receipts; Domain Kernel plus native effect owners | Complete LANG-CAP-10 hashing, HMAC, secure randomness, constant-time comparison and required signature operations through audited native effects. Record dependency versions, known-answer vectors, rejected invalid inputs, entropy failure handling, and review of comparison and secret handling. Bind digest versions to historical replay and receipt identity; `IO.random_u32` alone does not satisfy this contract. |
 | ARCH-CLOSE-08 | F4; Scheduler | Test explicit knowledge promotion with source/destination attribution, reader-relative isolated views, and parent-child delegation before and after restart. Preserve distinct ID variants and historical graph decoding. A unified scheduler must reject cross-scope reads and child authority elevation. Cite the plan, knowledge and delegated-completion fixtures with native equivalents. |
-| ARCH-CLOSE-09 | F16/F17; Verification and Landing | Implement typed declarations, independent structural scans, and consumer validation of `CheckedChangeImpact` for the exact source snapshot. Demonstrate declaration/scan agreement, transitive effect coverage, added undeclared calls, unsupported syntax, missing scan, stale digests and altered gate mappings. Cover a pure decision helper change, a schema change, a shared library change, and an altered C effect; each selects the contracts and tests its change reaches, or refuses with a typed unresolved result. Unknown coverage or disagreement leaves a typed unresolved/refused result. Delete the committed inventory only after coverage is demonstrated against the existing gate-selection fixtures. |
+| ARCH-CLOSE-09 | F16/F17; Verification and Landing | Implement the independent structural scan and consumer validation of its result for the exact source snapshot. Demonstrate transitive effect coverage, including a changed call that reaches a further effect, unsupported syntax, a missing scan, a stale snapshot, and altered gate mappings. Cover a pure decision helper change, a schema change, a shared library change, and an altered C effect; each selects the contracts and tests its change reaches, and unknown reachability widens the gate set with a typed unresolved result. Delete the committed inventory only after coverage is demonstrated against the existing gate-selection fixtures. |
 | ARCH-CLOSE-10 | F2's retained stores, F18, F20; Event Stores and Workspace | Inventory the native journal and replacement operations and define the supported-platform durability contract: supported platforms and filesystems, append and partial-write behavior, file synchronization, atomic replacement, directory persistence, interprocess serialization, and stale-writer exclusion. Fault-inject crash and concurrent writers at each step. The `File` surface's fixed-width quantities require a segmentation and chunking design for large logical journals, so a segment size never becomes an unexplained maximum on retained history. |
 | ARCH-CLOSE-11 | F9, F13, F22 and the diagnostic paths; Event Stores and recovery owner | Give startup, doctor, and recovery one recorded schema and policy basis and a cause classification. Drive the same valid ledger through all three entry points and require equivalent logical projections. A missing or unreconstructible basis refuses to diagnose corruption and refuses to recommend destructive repair; it reports the basis it could not reconstruct. |
 | ARCH-CLOSE-12 | F16 and the landing path; Verification and Landing with Workspace and Artifacts | Own the whole publication operation against the admitted destination: validate the destination's identity before dispatch, claim completion only from evidence about that destination's content at the target rather than from a ref read or a push acknowledgement, and record which of holds-the-ref, superseded-but-preserved, or absent the receipt asserts. Cover destination substitution, a lost response reconciled without a second effect, target contention on both the local compare-and-swap and the destination update, and an absent destination. The corpora in `examples/arch-publish-*.evidence.md` measure these at the pin; the deployment's own publication path must reproduce them before Phase 4 moves publication authority. |
@@ -534,8 +526,8 @@ core:
 - static imports of optional capability dependencies from the core deployment.
 
 BATON2 retains the background structural scanner owned by Verification and Landing. The scanner
-checks typed change declarations and emits per-change `CheckedChangeImpact`. Its durable output is a
-check result bound to one source snapshot, declaration digest, scanner version, and gate set.
+reads the change source snapshot and emits a per-change `ChangeScanResult`. Its durable output is a
+check result bound to one source snapshot, scanner version, and gate set.
 
 Deleting an item before its owner and synchronization seam exist would remove the behavior named in
 [`architecture-review.md`](architecture-review.md). The rewrite plan must therefore sequence each
