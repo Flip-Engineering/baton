@@ -41,7 +41,7 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { materializeContextCallBrief } from './context-call.mjs';
-import { openBatonDeployment, DEFAULT_BUDGET } from './application-deployment.mjs';
+import { openBatonDeployment, DEFAULT_BUDGET, normalizeIntegrationPublishRemote } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
 
@@ -1196,7 +1196,8 @@ function refereeFn(runtime, task, result, opts) {
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
  *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
- *          repoId?:string, deploymentBaseSha?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
+ *          repoId?:string, deploymentBaseSha?:string, integrationPublishRemote?:string,
+ *          reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          runLineagePolicy?:object, taskTopologyPolicy?:object,
  *          providerGovernance?:object,
@@ -1243,6 +1244,9 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+  // Issue #558: the declared shared remote, normalized by the deployment module that owns the
+  // derivation — a direct createDriver caller gets the same open-time validation.
+  const integrationPublishRemote = normalizeIntegrationPublishRemote(opts.integrationPublishRemote ?? null);
   const atlasDeployment = normalizeAtlasDeployment(opts.atlas, opts.repoRoot);
   if (opts.deploymentBaseSha !== undefined) {
     if (!/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha)) {
@@ -1639,6 +1643,8 @@ export function createDriver(opts) {
     coordination,
     repoRoot: opts.repoRoot,
     repoId: deploymentRepoId,
+    // Issue #558: the declared shared remote the landing authority publishes to (null declares none).
+    integrationPublishRemote,
     scratchOraclePolicy: opts.scratchOraclePolicy,
     reuseDecisionPolicy: opts.reuseDecisionPolicy,
     resolveEnvironmentRef: opts.reuseDecisionPolicy === undefined ? null : ({ repoId, indexEpoch, overlayDigest, lockfileDigest }) => {
@@ -1876,6 +1882,12 @@ export function createDriver(opts) {
   return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
-    repoRoot: opts.repoRoot };
+    repoRoot: opts.repoRoot,
+    // Issue #558: the declared shared remote landings publish to. The landing authority
+    // application.mjs assembles reads it off THIS object (`this.driver.integrationPublishRemote`),
+    // so the value validated above and handed to the Coordinator must also be returned here:
+    // without it the authority reads null and every real landing refuses
+    // integrate_publish_undeclared however the deployment declared its remote.
+    integrationPublishRemote };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

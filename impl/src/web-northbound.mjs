@@ -92,6 +92,9 @@ const WORKFLOW_WEB_ENTRIES = Object.freeze([
   ['run_board_post', 'run.board.post', Object.freeze(['control', 'observe'])],
   ['run_board_read', 'run.board.read', Object.freeze(['observe'])],
   ['run_knowledge_seed', 'run.knowledge.seed', Object.freeze(['control', 'observe'])],
+  // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's web-bus admission.
+  ['run_resultpin', 'run.resultpin', Object.freeze(['observe'])],
+  ['waves_harvest', 'waves.harvest', Object.freeze(['control', 'observe'])],
 ]);
 // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
 // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument

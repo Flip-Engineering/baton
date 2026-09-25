@@ -47,8 +47,8 @@
 // test.after cleanup); the deployment-verification stub is the brief's `true` command; sorted-key
 // literals in ACTUAL order; `localeCompare` banned; no clocks as controls (a fixed microtask drain
 // drives the real coordinator event path exactly as production does; no wall-clock assertion);
-// NUL discipline — application.mjs and coordination-store.mjs (3 NUL bytes each) are never read
-// whole, only their exports are imported. Verified split is recorded below after two consecutive
+// NUL discipline — application.mjs and coordination-store.mjs (NUL-clean since #215) are never
+// read whole, only their exports are imported. Verified split is recorded below after two consecutive
 // runs from the repo root.
 
 import test from 'node:test';

@@ -13,6 +13,7 @@
 // _providerBrief is not here: it is already slice 3's briefing-port delegate, and a second hop
 // would be noise.
 
+import { armSteeringCycle } from './runtime-redrive.mjs';
 
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -22,7 +23,7 @@ import { normalizeBrowserUseUrl } from './browser-use.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { goalPlanDigest, GoalPlanValidationError, normalizeGoalPlanContext } from './goal-plan.mjs';
 import { composeFrameLimitRefusal, FRAME_LIMITS, frameLimitRefusalPath } from './limits.mjs';
-import { boundedAttentionText, isAttentionSpillItem, wrapProse } from './messages.mjs';
+import { boundedAttentionText, isAttentionSpillItem, replObjectLine, replObjectRefusal, shedReplObjects, wrapProse } from './messages.mjs';
 import { nativeSubagentView } from './native-subagent-view.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { KILL_ESCALATION_GRACE_MS, processAuthorityState, recoveryProcessAbsentPayload, validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload, validRecoveryProcessReapedPayload } from './process-lifecycle.mjs';
@@ -34,6 +35,7 @@ import {
   RUN_TIMELINE_OPERATIONAL_KINDS, TERMINAL_TASK_STATUSES,
   canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, typedTerminalCode,
 } from './runtime-recovery.mjs';
+import { parseReplCitation } from './coordination-internals.mjs';
 import { resolveEffort } from './route-tuple.mjs';
 import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
@@ -969,6 +971,10 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
       // and replay share one shape (replay seeds origin from the event payload).
       origin,
     };
+    // Issue #59 (D4/GT8): a member whose re-drive carried a dead attempt's state parks on this
+    // checkpoint with that carry as the evidence to answer — its own distinct scratchpad receipt
+    // resolves the park (armSteeringCycle arms only a member that actually carries something).
+    armSteeringCycle(coordinator, workerId, record);
     coordinator._pausedTurns.set(pauseId, record);
     coordinator._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
       recorder.mapEvent(pausedEvent), 'policy');
@@ -2364,6 +2370,170 @@ export function admitReplBinding(coordinator, recorder, fields, opts = {}) {
     return recorder.coordination.admitReplBinding(fields, {
       actor: opts.actor ?? 'worker', principalId: opts.principalId ?? opts.actor ?? 'worker',
       key: opts.idempotencyKey,
+    });
+  }
+
+/** Issue #69 (R11/F5): the spawn-time per-member fan-out of a `shared` REPL object. The
+ * orchestrator admitted the object ONCE, over a settled cell; a multi-run wave's members carry
+ * distinct runIds, so this facade replicates that admission into every member run and each
+ * member's own brief then resolves `repl:shared:<name>@<version>` in ITS OWN run. The authority is
+ * the source admission's own principal — read from the durable record here, never named by a
+ * caller — so the fan-out can only ever replicate an act the orchestrator already committed. */
+export function _admitSharedFanout(coordinator, recorder, fields) {
+    coordinator._assertReadable();
+    const source = recorder.coordination.replManifestAdmission(fields?.manifestDigest);
+    if (!source) {
+      throw replObjectRefusal('shared REPL fan-out cites an unadmitted manifestDigest',
+        'repl_object_manifest_unadmitted');
+    }
+    return recorder.coordination.admitReplFanout({
+      sourceManifestDigest: fields.manifestDigest, name: fields.name,
+      cellId: fields.cellId, members: fields.members,
+    }, {
+      actor: source.principal.actor, principalId: source.principal.principalId,
+      key: `repl.fanout:${fields.manifestDigest}:${fields.name}`,
+    });
+  }
+
+/** Issue #69 (D5): the task → workflow promotion. The orchestrator rebinds a worker's own object
+ * onto `shared` — a NEW bindingVersion over the same settled cell, the worker's binding untouched
+ * — which is what makes a worker-authored object run-visible. The act is the lease-pinned
+ * orchestrator identity's, it is idempotent by the caller's key, and it carries the promoted
+ * worker coordinates so "which worker authored, from which binding" is a property of the durable
+ * row rather than a transitive read. */
+export function _promoteReplObject(coordinator, recorder, workerBinding, caller) {
+    coordinator._assertReadable();
+    const fields = workerBinding && typeof workerBinding === 'object' ? workerBinding : {};
+    if (!recorder.coordination.holdsRunOrchestratorLease({
+      principalId: caller?.principalId ?? null, runId: fields.runId ?? null,
+    })) {
+      throw replObjectRefusal('REPL object promotion requires the run orchestrator lease',
+        'repl_object_unauthorized');
+    }
+    if (typeof caller?.key !== 'string' || caller.key.length === 0) {
+      throw Object.assign(new Error('REPL object promotion requires an idempotency key'), {
+        name: 'CoordinationRefusal', code: 'invalid_repl_binding',
+      });
+    }
+    return recorder.coordination.admitReplBinding({
+      scope: 'shared', name: fields.name, cellId: fields.cellId, manifestDigest: fields.manifestDigest,
+      promotedFrom: {
+        scope: fields.scope, name: fields.name, bindingVersion: fields.bindingVersion,
+      },
+    }, { actor: caller.actor, principalId: caller.principalId, key: caller.key });
+  }
+
+// ---------------------------------------------------------------------------
+// Issue #69 — the cited-REPL-object serving guards. A guard DECIDES what may be served, so the
+// seam map files it in this bucket ("a validator that only reads is still a decider"); the
+// resolution and the rendering of the same lane stay in runtime-observation.mjs.
+// ---------------------------------------------------------------------------
+
+const REPL_REVIEW_ENTRY_KEYS = Object.freeze(['branchCount', 'manifestDigest', 'principal', 'replRole']);
+
+/** D3: a `worker:<id>` object belongs to its owner's brief only. Checked BEFORE any resolution,
+ * so another worker's binding is never read and its object can never render. */
+export function assertReplObjectAddressed(workerId, scope) {
+    if (typeof scope === 'string' && scope.startsWith('worker:') && scope !== `worker:${workerId}`) {
+      throw replObjectRefusal(`${scope} is not addressed to ${workerId}`, 'repl_object_not_addressed');
+    }
+  }
+/** D2: a served entry must name a cell this store still holds settled — the resolution the
+ * renderer would otherwise perform silently. */
+function assertReplObjectResolved(recorder, entry) {
+    const cell = typeof entry?.cellId === 'string' ? recorder.coordination.contextCell(entry.cellId) : null;
+    if (!cell || cell.state !== 'completed') {
+      throw replObjectRefusal(`REPL object ${entry?.citation ?? ''} does not resolve to a settled cell`,
+        'repl_object_unresolved');
+    }
+  }
+
+/** The digest-cited artifact that keeps every entry the block cannot hold reachable in full, or
+ * null when the spill lane is unavailable (the caller then refuses rather than losing text). */
+function mintReplObjectSpill(recorder, spilled) {
+  if (!recorder.coordination || typeof recorder.coordination.mintSpill !== 'function') return null;
+  const body = spilled.map((entry) => replObjectLine(entry)).join('\n');
+  let minted;
+  try {
+    minted = recorder.coordination.mintSpill(
+      { body, lane: 'view.repl_object.items' },
+      { actor: 'hub', key: `repl.object.spill:${canonicalDigest(body)}` },
+    );
+  } catch { return null; }
+  const spillId = minted?.spill?.spillId;
+  return typeof spillId === 'string' && spillId.length > 0 ? spillId : null;
+}
+
+/** D7: the over-bound set with no spill lane refuses typed, and the coaching names the row, the
+ * actual and the cap — so the caller learns which bound it crossed and how to fit. */
+function replOversizedRefusal(entries, overItems, maxBytes) {
+  const row = overItems ? FRAME_LIMITS['view.repl_object.items'] : FRAME_LIMITS['view.repl_object.bytes'];
+  const actual = overItems
+    ? entries.length
+    : entries.reduce((sum, entry) => sum + Buffer.byteLength(replObjectLine(entry)) + 1, 0);
+  return replObjectRefusal(composeFrameLimitRefusal(row, actual, row.value), 'repl_object_oversized', {
+    cap: row.value, actual, unit: row.unit, gracefulPath: frameLimitRefusalPath(row, row.value),
+    ...(overItems ? {} : { maxBytes }),
+  });
+}
+
+/** D2/D3/D7: the serving-path guard. Addressing is checked first (never resolve what is not
+ * addressed here), then resolution, then the two independent bounds — the item row spills the
+ * excess digest-cited, the byte row sheds the trailing leaves with the marker. The result is the
+ * in-block entries as the array itself, carrying `inBlock` and the `spill` address/`spillCitations`
+ * that reach everything the block could not hold. */
+export function _assertReplObjectsServed(coordinator, recorder, workerId, records, opts = {}) {
+    coordinator._assertReadable();
+    const entries = Array.isArray(records) ? records : [];
+    for (const entry of entries) {
+      assertReplObjectAddressed(workerId, parseReplCitation(entry?.citation)?.scope ?? entry?.scope);
+      assertReplObjectResolved(recorder, entry);
+    }
+    const itemCap = FRAME_LIMITS['view.repl_object.items'].value;
+    const maxItems = Number.isSafeInteger(opts.maxItems) ? opts.maxItems : itemCap;
+    const maxBytes = Number.isSafeInteger(opts.maxBytes)
+      ? opts.maxBytes : FRAME_LIMITS['view.repl_object.bytes'].value;
+    const { inBlock, spill } = shedReplObjects(entries, { maxBytes, maxItems });
+    const overItems = entries.length > maxItems;
+    let spillAddress = null;
+    if (spill.length > 0) {
+      if (opts.spillLane !== false) spillAddress = mintReplObjectSpill(recorder, spill);
+      if (spillAddress === null) throw replOversizedRefusal(entries, overItems, maxBytes);
+    }
+    const served = [...inBlock];
+    served.inBlock = inBlock;
+    served.spill = spillAddress;
+    served.spillCitations = Object.freeze(spill.map((entry) => entry?.citation ?? ''));
+    return Object.freeze(served);
+  }
+
+/** D6: the closed review-shape guard. The orchestrator approves by promotion, so a review record
+ * carrying a field the projection cannot display would make the approval cover something the hub
+ * never showed — the shape is closed, and the cited manifest must be one the store admitted. */
+export function _assertReplReviewProjection(coordinator, recorder, record) {
+    coordinator._assertReadable();
+    const closed = record && typeof record === 'object' && !Array.isArray(record)
+      ? Object.keys(record).sort().join(',') : '';
+    const principal = record?.principal;
+    const principalClosed = principal && typeof principal === 'object' && !Array.isArray(principal)
+      ? Object.keys(principal).sort().join(',') : '';
+    if (closed !== REPL_REVIEW_ENTRY_KEYS.join(',') || principalClosed !== 'actor,principalId'
+      || !/^[a-f0-9]{64}$/u.test(record?.manifestDigest ?? '')
+      || typeof record?.replRole !== 'string' || record.replRole.length === 0
+      || typeof principal.actor !== 'string' || principal.actor.length === 0
+      || typeof principal.principalId !== 'string' || principal.principalId.length === 0
+      || !Number.isSafeInteger(record?.branchCount) || record.branchCount < 0) {
+      throw replObjectRefusal('REPL review record is not the closed projection the orchestrator reviews',
+        'repl_object_manifest_unadmitted');
+    }
+    if (!recorder.coordination.replManifestAdmission(record.manifestDigest)) {
+      throw replObjectRefusal('REPL review record cites an unadmitted manifestDigest',
+        'repl_object_manifest_unadmitted');
+    }
+    return Object.freeze({
+      manifestDigest: record.manifestDigest, replRole: record.replRole,
+      principal: Object.freeze({ actor: principal.actor, principalId: principal.principalId }),
+      branchCount: record.branchCount,
     });
   }
 

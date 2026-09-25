@@ -2292,8 +2292,14 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     }
     // A contribution lands once. Re-landing is a new contribution (or an explicit revert), never a
     // silent second receipt that leaves the first one describing a commit the target no longer
-    // descends from.
-    if (contribution.integration) {
+    // descends from. What makes a receipt a LANDING is the commit it records the target holding
+    // AFTER it: a rehearsal moves no ref, so its `targetHeadAfter` is null and the real landing that
+    // follows supersedes it. `dryRun` is never read here — it is the writer's own claim about the
+    // same act, and the schema above admits `dryRun: false` beside a null `targetHeadAfter`, so a
+    // receipt the target never moved for must not be able to refuse the landing that moves it.
+    // Refusing that landing would make the rehearsal the only receipt the contribution could ever
+    // carry, and the target would never receive the change the gate already passed.
+    if ((contribution.integration?.targetHeadAfter ?? null) !== null) {
       integrity(`contribution ${p.contributionId} is already integrated`, 'contribution_duplicate');
     }
     const integration = Object.freeze({

@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { ORDINARY_COMMANDS } from '../src/mcp-web-bridge.mjs';
 
 const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'latin1');
 
@@ -80,10 +81,10 @@ export function collectSurfaceInventory() {
   );
   const webCommands = [...new Set([...applicationWebCommands, ...webLiterals])].sort();
   const mcpNames = extractAll(mcpText, /'((?:fleet|baton)_[a-z0-9_]+)'/gu);
-  const mcpWebBridgeCommands = extractAll(
-    extractDelimited(src('mcp-web-bridge.mjs'), 'const ORDINARY_COMMANDS', ']);'),
-    /'([a-z][a-z0-9_.]+)'/gu,
-  );
+  // Issue #533: the bridge's own exported constant IS the row — the text scrape this replaces
+  // went stale the moment the constant grew, and the audit pinned the stale copy (the #381
+  // hand-kept-second-table shape).
+  const mcpWebBridgeCommands = [...ORDINARY_COMMANDS].sort();
   const clientText = src('application-client.mjs');
   const embedded = [];
   {

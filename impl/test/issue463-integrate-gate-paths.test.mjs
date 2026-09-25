@@ -222,6 +222,11 @@ async function world(t, { change = 'impl/src/coordinator.mjs', gate = {} } = {})
   git(repo, 'checkout', '-q', 'master');
   const targetHead = git(repo, 'rev-parse', 'master');
 
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
+
   const store = new CoordinationStore(join(directory, 'ledger'));
   const pool = new SupervisedProcesses();
   const G = 1024 ** 3;
@@ -237,7 +242,7 @@ async function world(t, { change = 'impl/src/coordinator.mjs', gate = {} } = {})
     prepareRun: (request) => request,
     startRun: async () => { throw new Error('no native runs in this fixture'); },
     stopRun: async () => {},
-    integration: { repoRoot: repo },
+    integration: { repoRoot: repo, publishRemote },
   });
   t.after(() => {
     runtime.close();
