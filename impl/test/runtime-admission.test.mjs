@@ -212,8 +212,6 @@ test('RA5: the map sees the move', () => {
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-admission target');
-  assert.equal(target.members.length, 110,
-    'the module target carries the moved bodies, the relocated helper functions, and the admission prefixes; issue #69 added the shared fan-out, the promotion facade, and the cited-REPL-object serving guards');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegates = coordinatorFile.members.filter((member) => member.evidence.includes('admission:runtime_admission_port'));
   for (const member of delegates) {

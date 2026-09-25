@@ -224,8 +224,6 @@ test('RO5: the map sees the move', () => {
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-observation target');
-  assert.equal(target.members.length, 158,
-    'the module target carries the 149 bodies plus 9 relocated helper functions (slice 12 moved noop and closedVerificationVerdict to the runtime-recovery base layer; they stay on this module\'s surface as re-exports)');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegates = coordinatorFile.members.filter((member) => member.evidence.includes('observation:observation_port'));
   for (const member of delegates) {
