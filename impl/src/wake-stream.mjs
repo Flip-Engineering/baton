@@ -115,7 +115,9 @@ function wakeRow(row) {
 }
 
 function ledgerKind(kind) { return Object.freeze({ kind }); }
-function operationalKind(payloadKind) { return Object.freeze({ payloadKind }); }
+function operationalKind(payloadKind, overrides = null) {
+  return Object.freeze({ payloadKind, ...(overrides ?? {}) });
+}
 
 export const WAKE_CLASS_TABLE = Object.freeze([
   wakeRow({
@@ -280,6 +282,13 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'incarnation', kind: 'resident', fallback: { field: 'deploymentId', kind: 'deployment' } },
   }),
   wakeRow({
+    wakeClass: 'turn_reported', scope: 'deployment', terminal: true,
+    next: 'baton swarm view {swarmId}',
+    summary: 'a participant turn ended and its report was recorded for the orchestrator',
+    rows: [operationalKind('swarm.turn_reported'), operationalKind('run.turn_reported', { next: 'baton run view {runId}' })],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
     next: 'baton swarm guide {swarmId} {participantId}',
     summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
@@ -307,8 +316,8 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // the row names the act (run the check, read the view), and the acknowledgement is that act.
     wakeClass: 'root_owed', scope: 'deployment', terminal: true,
     next: 'baton swarm view {swarmId}',
-    summary: 'a contribution waits on the root — a check no other active seat can review, or a needsFromOthers item addressed to the root',
-    rows: [operationalKind('swarm.root_attention_owed')],
+    summary: 'a contribution, request, or turn report needs the root orchestrator',
+    rows: [operationalKind('swarm.root_attention_owed'), operationalKind('run.root_attention_owed', { next: 'baton run view {runId}' })],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
@@ -528,9 +537,9 @@ function subjectOf(row, payload) {
   return null;
 }
 
-function renderNext(row, coordinates) {
-  if (row.next === null) return null;
-  return row.next.replace(/\{(\w+)\}/gu, (match, field) => (
+function renderNext(template, coordinates) {
+  if (template === null) return null;
+  return template.replace(/\{(\w+)\}/gu, (match, field) => (
     typeof coordinates[field] === 'string' && coordinates[field].length > 0 ? coordinates[field] : match
   ));
 }
@@ -548,6 +557,24 @@ function servedHeader(value) {
   return Object.freeze({ commit, behind: Number.isSafeInteger(value.behind) ? value.behind : null });
 }
 
+function turnReportPreview(event) {
+  const payload = event.payload ?? {};
+  if (['turn_report', 'worker_idle'].includes(payload.owed) && payload.turnReport) return Object.freeze({ ...payload.turnReport });
+  const reported = payload.kind === 'swarm.turn_reported';
+  const rootAsk = payload.kind === 'swarm.root_attention_owed' && payload.owed === 'turn_reported';
+  if (!reported && !rootAsk) return null;
+  const content = reported ? JSON.stringify(payload.report) ?? 'null' : payload.ask ?? '';
+  const bytes = Buffer.from(content);
+  let end = Math.min(bytes.length, FRAME_LIMITS['swarm.notify.body'].value);
+  while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return Object.freeze({
+    ...(reported ? { reportSeq: event.seq, workerId: payload.workerId, turnSeq: payload.turnSeq,
+      turnEpoch: payload.turnEpoch, assignmentDone: payload.assignmentDone } : {}),
+    read: { command: 'swarm.view', args: { swarmId: payload.swarmId, participantId: payload.participantId } },
+    text: bytes.subarray(0, end).toString('utf8'), omittedBytes: bytes.length - end,
+  });
+}
+
 /** One wake frame from one coordination ledger row. `attribution` maps a run id, worker id, or
  * task id to the swarm and participant that own it, so a run-scoped row arrives carrying the swarm
  * coordinates a consumer actually acts on. `served` is the deployment's served-commit header (the
@@ -557,6 +584,7 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
   const row = wakeClassFor(event);
   if (row === null) return null;
   const payload = event.payload ?? {};
+  const turnReport = turnReportPreview(event);
   const owner = attribution.get(stringField(payload.runId) ?? '')
     ?? attribution.get(stringField(payload.worker) ?? '')
     ?? attribution.get(stringField(payload.taskId) ?? '') ?? null;
@@ -569,6 +597,9 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     contributionId: stringField(payload.contributionId),
     requestId: stringField(payload.requestId),
   };
+  // A row matcher may carry its own next spelling: a class that spans a swarm-scoped and a
+  // run-scoped payload kind renders the command the row's own scope can actually act on.
+  const matcher = row.rows.find((candidate) => (candidate.payloadKind ?? candidate.kind) === payload.kind) ?? null;
   return Object.freeze({
     schemaVersion: WAKE_SCHEMA_VERSION,
     kind: 'baton.wake',
@@ -581,8 +612,9 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     runId,
     actor: event.actor ?? null,
     subject: subjectOf(row, payload),
+    ...(turnReport ? { turnReport } : {}),
     next: row.wakeClass === 'root_turn_reported' && runId === null
-      ? null : renderNext(row, coordinates),
+      ? null : renderNext(matcher?.next ?? row.next, coordinates),
     observation: false,
     served: servedHeader(served),
     // The bounded row identity: what woke the consumer, never a copy of a 60 KiB view (the wake
@@ -637,7 +669,7 @@ export function deriveObservationFrame(row, observation, seq, ts, served = null)
     swarmId: null, participantId: null, workerId: null, runId: null,
     actor: observation?.actor ?? 'deployment',
     subject: subjectOf(row, payload),
-    next: renderNext(row, {}),
+    next: renderNext(row.next, {}),
     observation: true,
     served: servedHeader(served),
     row: Object.freeze({

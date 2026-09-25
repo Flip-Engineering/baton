@@ -276,7 +276,7 @@ test('OMP native accounting reaches Coordinator budgets, route observation and g
   // `_admitPauseRecord`). The gate this row measures still runs — on the explicit claim, which is
   // the only act that may spend a verdict, exactly as the pause contract says.
   const task = fx.coordinator._tasks.get(fx.handle.taskId);
-  assert.equal(task.status, 'paused', 'the completed turn parks — no implicit claim');
+  assert.equal(task.status, 'working', 'the completed turn parks — no implicit claim');
   assert.equal(captures, 0, 'no gate dispatch at the checkpoint');
   const rows = fx.coordinator.pausedTurns({ taskId: fx.handle.taskId });
   assert.equal(rows.length, 1, 'the checkpoint is visible to the orchestrator');

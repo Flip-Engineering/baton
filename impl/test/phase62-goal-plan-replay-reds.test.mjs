@@ -791,7 +791,8 @@ test('GP5/GP8: unauthorized Plan follow-up and recovery precede physical-owner c
 
   const adapter = new MockAdapter({
     harness: 'mock',
-    scenario: { outcome: 'completed', delayMs: 60_000, summary: 'must be stopped', files: {} },
+    scenario: { outcome: 'completed', summary: 'must be stopped',
+      edits: [{ path: 'impl/holding.txt', content: 'pending\n', delayMs: 60_000 }] },
   });
   const baseCard = adapter.card.bind(adapter);
   adapter.card = () => ({

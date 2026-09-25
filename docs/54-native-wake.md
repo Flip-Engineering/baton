@@ -37,7 +37,7 @@ The complete set of wake classes at HEAD:
 `knowledge`, `closed`, `refused`, `queued`, `dead`, `reroute_proposed`,
 `resume_decision_required`.
 
-**Deployment-scoped:** `incarnation_changed`, `paused`, `attention`, `guidance_delivered`,
+**Deployment-scoped:** `incarnation_changed`, `turn_reported`, `paused`, `attention`, `root_owed`, `guidance_delivered`,
 `integrated`, `checkpoint`, `capacity_pressure`, `resident_lifecycle`.
 
 Each class carries a `subject` (the entity it concerns), a `terminal` flag (whether the consumer

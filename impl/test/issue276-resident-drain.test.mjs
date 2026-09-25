@@ -185,7 +185,7 @@ export const createBatonDeployment = async () => {
       await swarm.recruit('holder', 'HOLD_UNTIL_INTERRUPT; stay available', { exact: ROUTE, resultIntent: 'read_only_evidence' });
       for (;;) {
         const view = await swarm.view();
-        if (['working', 'paused'].includes(view.participants[0]?.runtime?.turn)) break;
+        if (view.participants[0]?.runtime?.turn === 'running') break;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       process.stderr.write('issue276: participant hosted\\n');

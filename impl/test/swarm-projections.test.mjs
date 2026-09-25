@@ -85,8 +85,9 @@ async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
     const deadline = Date.now() + 5000;
     for (;;) {
       const worker = driver.coordinator.list().find((row) => row.runId === runId);
-      if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length) return worker;
-      if (Date.now() > deadline) throw new Error(`participant of ${runId} did not pause`);
+      if (worker && driver.coordination.eventsView().some((event) => event.payload?.kind === 'swarm.turn_reported'
+        && event.payload.workerId === worker.id)) return worker;
+      if (Date.now() > deadline) throw new Error(`participant of ${runId} did not report a completed turn`);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };
@@ -123,8 +124,7 @@ test('guidance rows appear for every receipted guide, and a guide returns the ro
   const resumed = await delegated.guide('alpha', 'Resume on the interface');
   assert.equal(resumed.result.result, 'nudged');
   assert.equal(resumed.guide.kind, 'swarm.guidance_sent', 'the guide always leaves its own row');
-  assert.deepEqual(resumed.guide.delivery, { state: 'delivered', lane: null },
-    'the paused turn carried the guidance: delivered, with no lane receipt to name');
+  assert.deepEqual(resumed.guide.delivery, { state: 'delivered', lane: null });
   let view = await swarm.view();
   const first = view.participants.find((row) => row.participantId === 'alpha').guidance;
   assert.equal(first.length, 1, 'the paused-lane guide shows on the seat\'s guidance');

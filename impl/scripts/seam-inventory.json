@@ -472,13 +472,23 @@
           ]
         },
         {
-          "name": "_admitPauseRecord",
+          "name": "_admitTurnReport",
           "ordinal": 0,
           "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
             "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_reportRunTurn",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -618,7 +628,7 @@
         {
           "name": "_nudgeReservedTurn",
           "ordinal": 0,
-          "size": 86,
+          "size": 87,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -4518,7 +4528,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 123,
+          "size": 131,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -13648,7 +13658,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1134,
+          "size": 1144,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -14069,6 +14079,17 @@
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reportTurnEnd",
+          "ordinal": 0,
+          "size": 108,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:reconcile_call",
+            "observation:record_name",
+            "admission:swarm_refusal"
           ]
         },
         {
@@ -16029,7 +16050,7 @@
         {
           "name": "_validateGoalPlanDispatchPair",
           "ordinal": 0,
-          "size": 200,
+          "size": 198,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -17308,7 +17329,7 @@
         {
           "name": "_planDispatchState",
           "ordinal": 0,
-          "size": 74,
+          "size": 73,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -21251,7 +21272,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 1012,
+          "size": 1014,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -21686,7 +21707,7 @@
         {
           "name": "_deliver",
           "ordinal": 0,
-          "size": 102,
+          "size": 110,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -21913,7 +21934,7 @@
         {
           "name": "_claimReservedTurn",
           "ordinal": 0,
-          "size": 51,
+          "size": 52,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -22216,6 +22237,15 @@
           "seam": "admission",
           "evidence": [
             "delegates:admission"
+          ]
+        },
+        {
+          "name": "_reportRunTurn",
+          "ordinal": 0,
+          "size": 63,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
@@ -23311,7 +23341,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 516,
+          "size": 517,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -23467,9 +23497,9 @@
           ]
         },
         {
-          "name": "_admitPauseRecord",
+          "name": "_admitTurnReport",
           "ordinal": 0,
-          "size": 64,
+          "size": 43,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -24281,7 +24311,7 @@
         {
           "name": "_admitDelivery",
           "ordinal": 0,
-          "size": 96,
+          "size": 99,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -24785,9 +24815,18 @@
       "class": null,
       "members": [
         {
+          "name": "reportTurn",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "turnCompleted",
           "ordinal": 0,
-          "size": 87,
+          "size": 90,
           "seam": "effect",
           "evidence": [
             "admission:authority_check",
@@ -24798,7 +24837,7 @@
         {
           "name": "crashed",
           "ordinal": 0,
-          "size": 71,
+          "size": 78,
           "seam": "effect",
           "evidence": [
             "effect:event_handlers_port"
@@ -24807,7 +24846,7 @@
         {
           "name": "exited",
           "ordinal": 0,
-          "size": 20,
+          "size": 24,
           "seam": "effect",
           "evidence": [
             "effect:event_handlers_port"

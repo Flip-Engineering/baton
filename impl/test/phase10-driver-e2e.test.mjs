@@ -103,7 +103,7 @@ test('SC3: claude session vendor through createDriver — spawn, mid-turn steer,
     const steer = await coordinator.send(h.id, 'stop holding and wrap up now', 'steer');
     assert.equal(steer.ok, true, `mid-turn steer must deliver into the running turn (erratum E2 semantics): ${JSON.stringify(steer)}`);
     // The steered turn completes → the drivered checkpoint pause pends.
-    await waitForLogEvent(log, h.id, (e) => e.kind === 'turn.paused', 'checkpoint pause');
+    await waitForLogEvent(log, h.id, (e) => e.kind === 'turn.reported', 'checkpoint pause');
     const pause = coordinator.pausedTurns({ taskId: h.taskId })[0];
     assert.ok(pause, 'the checkpoint pause pends for the driver claim');
     await coordinator.claimTurn(pause.pauseId, { actor: 'orchestrator' });
@@ -130,7 +130,7 @@ test('SC10: codex app-server vendor through createDriver — thread pinned to th
   });
   const h = await coordinator.spawn('codex', fullBrief('FAKE:REPORT_CWD'));
   try {
-    await waitForLogEvent(log, h.id, (event) => event.kind === 'turn.paused', 'native checkpoint');
+    await waitForLogEvent(log, h.id, (event) => event.kind === 'turn.reported', 'native checkpoint');
     const pause = coordinator.pausedTurns({ taskId: h.taskId })[0];
     assert.ok(pause, 'native completion is available for explicit verification');
     assert.equal((await coordinator.claimTurn(pause.pauseId, { actor: 'orchestrator' })).ok, true);
@@ -152,7 +152,7 @@ test('SC10: grok ACP vendor through createDriver — child AND session pinned to
   });
   const h = await coordinator.spawn('grok', fullBrief('FAKE:REPORT_CWD'));
   try {
-    await waitForLogEvent(log, h.id, (event) => event.kind === 'turn.paused', 'native checkpoint');
+    await waitForLogEvent(log, h.id, (event) => event.kind === 'turn.reported', 'native checkpoint');
     const pause = coordinator.pausedTurns({ taskId: h.taskId })[0];
     assert.ok(pause, 'native completion is available for explicit verification');
     assert.equal((await coordinator.claimTurn(pause.pauseId, { actor: 'orchestrator' })).ok, true);

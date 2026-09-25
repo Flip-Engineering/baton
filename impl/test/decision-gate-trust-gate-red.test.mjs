@@ -187,6 +187,8 @@ test('DG2: after the settlement the continuation turn DOES face the trust gate (
   const task = coordinator._tasks.get(handle.taskId);
   assert.ok(['verifying', 'completed'].includes(task.status),
     `the post-settlement completed turn reaches capture/verification (got ${task.status})`);
+  const reports = coordinator._coordination.eventsView().filter((event) => event.payload?.kind === 'run.turn_reported');
+  assert.deepEqual(reports.map((event) => event.payload.turnEpoch), [1, 2]);
 });
 
 // ---------------------------------------------------------------------------

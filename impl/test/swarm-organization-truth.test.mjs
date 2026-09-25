@@ -64,8 +64,9 @@ async function fixture(t) {
     const deadline = Date.now() + 5000;
     for (;;) {
       const worker = driver.coordinator.list().find((row) => row.runId === runId);
-      if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length) return worker;
-      if (Date.now() > deadline) throw new Error(`participant of ${runId} did not pause`);
+      if (worker && driver.coordination.eventsView().some((event) => event.payload?.kind === 'swarm.turn_reported'
+        && event.payload.workerId === worker.id)) return worker;
+      if (Date.now() > deadline) throw new Error(`participant of ${runId} did not report a completed turn`);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };
@@ -87,7 +88,9 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   await paused(beta.runId);
   await delegated.work({ workId: 'W-A', objective: 'Part A', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
-  assert.deepEqual(kinds(await swarm.view()), [], 'a healthy delegation raises no attention');
+  const initialAttention = kinds(await swarm.view());
+  assert.ok(initialAttention.length > 0 && initialAttention.every((kind) => kind === 'root_wake_undelivered'),
+    'the fixture records reports owed to its root session');
 
   // Stopping alpha settles its membership (issue #350): the row reads left/stopped, so its dead
   // runtime is no longer attention — the stop was the organization's own act — while its
@@ -100,7 +103,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   assert.equal(alphaRow.runtime.state, 'dead');
   assert.equal(alphaRow.runtime.turn, null, 'a dead worker has no paused turn to guide');
   assert.equal(driver.coordinator.pausedTurns({ workerId: alphaWorker.id }).length >= 0, true);
-  assert.deepEqual(kinds(view).sort(), ['assignment_holder_gone']);
+  assert.deepEqual(kinds(view).filter((kind) => kind !== 'root_wake_undelivered'), ['assignment_holder_gone']);
   assert.deepEqual(view.attention.find((row) => row.kind === 'assignment_holder_gone'),
     { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A',
       next: { event: 'swarm.holder_released', participantId: 'alpha' } });

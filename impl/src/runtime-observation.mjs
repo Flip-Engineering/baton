@@ -535,7 +535,7 @@ export function _pausedActTargets(coordinator, recorder, record) {
     const handle = coordinator._workers.get(record.worker);
     const task = coordinator._tasks.get(record.taskId);
     if (!handle || !task) return { ok: false, result: 'not_found' };
-    if (task.status !== 'paused') return { ok: false, result: 'not_paused', status: task.status };
+    if (task.status !== 'paused' && !(record.reported && task.status === 'working')) return { ok: false, result: 'not_paused', status: task.status };
     return { ok: true, handle, task };
   }
 
@@ -609,8 +609,9 @@ export async function _claimReservedTurn(coordinator, recorder, { record, commit
       kind: 'turn.settled', actor, ...coordinator._routeAttribution(handle, task),
       payload: { actor, basis: 'claim', pauseId },
     });
-    coordinator._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
-      recorder.mapEvent(settledEvent), actor);
+    const evidence = recorder.mapEvent(settledEvent);
+    if (!record.reported) coordinator._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      evidence, actor);
     task.status = 'working';
     try {
       await Promise.resolve(handle.worktreeReady).then(() => (
@@ -1364,6 +1365,71 @@ export function _attentionPage(coordinator, recorder, runId, targetKinds, afterC
     }
     reasons.sort((a, b) => a.seq - b.seq);
     return reasons;
+  }
+
+/** Address a non-swarm turn report through its Run lineage or the root wake stream. */
+export async function _reportRunTurn(coordinator, recorder, handle, terminalEvent, report) {
+    const store = recorder.coordination;
+    const task = coordinator._tasks.get(handle.taskId);
+    const attention = terminalEvent.attention;
+    const prefix = attention ? `run-idle-pressure:${attention.seq}` : 'run-turn-report';
+    const key = `${prefix}:${handle.id}:${terminalEvent.turnEpoch}:${terminalEvent.seq}`;
+    coordinator._runTurnReportDeliveries ??= new Map();
+    const pending = coordinator._runTurnReportDeliveries.get(key);
+    if (pending) return pending;
+    const deliver = async () => {
+    const prior = store.priorCoordinationEvent(key);
+    if (store.priorCoordinationEvent(`${key}:delivered`) || store.priorCoordinationEvent(`${key}:root`)) return;
+    let lineage = task?.runId ? store.runLineage?.(task.runId) : null;
+    let parent = null;
+    const visited = new Set([task?.runId]);
+    while (lineage && !visited.has(lineage.parentRunId)) {
+      visited.add(lineage.parentRunId);
+      const candidate = coordinator._workers.get(lineage.parent?.workerId);
+      if (candidate && ['working', 'blocked'].includes(candidate.status)
+        && !TERMINAL_TASK_STATUSES.has(coordinator._tasks.get(candidate.taskId)?.status)) { parent = candidate; break; }
+      lineage = store.runLineage?.(lineage.parentRunId);
+    }
+    const event = prior ?? store.recordDriver(attention ? 'run.worker_idle_prompted' : 'run.turn_reported', {
+      runId: task?.runId ?? null, worker: handle.id, taskId: handle.taskId,
+      turnSeq: terminalEvent.seq, turnEpoch: terminalEvent.turnEpoch, report, ...(attention ? { attention } : {}),
+      parentWorkerId: parent?.id ?? null,
+    }, { actor: 'baton-runtime', key }).event;
+    report = event.payload.report;
+    const serialized = JSON.stringify(report) ?? 'null';
+    const bytes = Buffer.from(serialized);
+    let end = Math.min(bytes.length, FRAME_LIMITS['swarm.notify.body'].value);
+    while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
+    const text = bytes.subarray(0, end).toString('utf8');
+    const turnReport = { reportSeq: event.seq, workerId: handle.id,
+      turnSeq: terminalEvent.seq, turnEpoch: terminalEvent.turnEpoch,
+      text, omittedBytes: bytes.length - end };
+    if (parent) {
+      let result;
+      try {
+        result = await coordinator.guideParticipant(parent.id,
+          `Turn report from ${handle.id} (report seq ${event.seq}):\n${text}`,
+          { actor: 'baton-runtime' });
+      } catch (error) {
+        result = { ok: false, result: error?.code ?? 'turn_report_delivery_failed' };
+      }
+      if (result?.ok === true) {
+        store.recordDriver('run.turn_report_delivered', {
+          runId: task?.runId ?? null, worker: handle.id, parentWorkerId: parent.id, reportSeq: event.seq,
+        }, { actor: 'baton-runtime', key: `${key}:delivered` });
+        return;
+      }
+      turnReport.parentFailure = { workerId: parent.id, code: result?.result ?? 'delivery_refused' };
+    }
+    store.recordDriver('run.root_attention_owed', {
+      runId: task?.runId ?? null, worker: handle.id, taskId: handle.taskId,
+      owed: attention ? 'worker_idle' : 'turn_report', turnReport,
+    }, { actor: 'baton-runtime', key: `${key}:root` });
+    };
+    const delivery = deliver();
+    coordinator._runTurnReportDeliveries.set(key, delivery);
+    try { return await delivery; }
+    finally { coordinator._runTurnReportDeliveries.delete(key); }
   }
 
 export function _mintMemberTerminal(coordinator, recorder, handle, task, result) {

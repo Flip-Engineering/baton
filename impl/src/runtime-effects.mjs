@@ -1198,6 +1198,14 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     if (admission.handoff === 'nudgeTurn') {
       return coordinator.nudgeTurn(admission.pause.pauseId, message, { actor: opts.actor });
     }
+    if (admission.handoff === 'reportedTurn') {
+      // The per-worker send queue owns this continuation. Reuse native turn admission,
+      // fence advancement, and post-delivery checks for the active reported assignment.
+      return coordinator._nudgeReservedTurn({
+        record: { reported: true, worker: workerId, taskId: handle.taskId },
+        commit: () => {}, rollback: () => {},
+      }, null, message, opts);
+    }
     if (admission.handoff === 'interruptThenGoverned') {
       return coordinator._interruptThenGoverned(handle, message, opts.actor ?? 'orchestrator');
     }

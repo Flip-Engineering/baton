@@ -82,7 +82,7 @@ test('capture and checking preserve a continuing participant and its next turn',
   const pauseId = f.coordinator.pausedTurns({ workerId: f.handle.id })[0].pauseId;
   const capture = await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
   assert.equal(capture.sha, SHA);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
   assert.equal(f.coordinator.pausedTurnStatus(pauseId).state, 'pending');
   const checking = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
   const duplicate = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
@@ -114,7 +114,7 @@ test('unavailable verification preserves the contribution and leaves the author 
   }), { code: 'worktree_capacity_exceeded' });
   assert.equal(f.checks(), 0);
   assert.equal(await f.worktrees.resolveCheckpoint(capture.ref), SHA);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
   const events = f.log.read(f.handle.id);
   assert.equal(events.filter((e) => e.kind === 'contribution.checked').length, 0);
   assert.equal(events.find((e) => e.kind === 'contribution.check_unavailable').payload.attempt.verifierStarted, false);
@@ -149,7 +149,7 @@ test('native subagent observations are durably mapped and remain read-only worke
   assert.equal(f.coordination.eventsView().some((event) => event.kind === 'evidence.mapped'
     && event.payload.kind === 'native.subagent_observed'), true);
   assert.equal(f.coordinator.list().length, 1, 'observed native children are not fake Baton-owned workers');
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
 });
 
 test('a failed pin leaves the pause available and does not claim retained work', async (t) => {
@@ -157,7 +157,7 @@ test('a failed pin leaves the pause available and does not claim retained work',
   f.worktrees.retainCheckpoint = async () => { throw new Error('pin write failed'); };
   await assert.rejects(f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' }), /pin write failed/);
   assert.equal(f.coordinator.pausedTurns({ workerId: f.handle.id }).length, 1);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
   assert.equal(f.log.read(f.handle.id).some((e) => e.kind === 'contribution.captured'), false);
 });
 
@@ -234,7 +234,7 @@ test('queued guidance resolves a turn that pauses while an earlier delivery is i
   f.emit({ worker: f.handle.id, actor: 'worker', kind: 'lifecycle.turn_completed', turnEpoch: 2,
     payload: { status: 'completed', output: 'Another partial finding.' } });
   await new Promise(setImmediate);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
   release.resolve();
   await earlier;
   assert.equal((await guidance).ok, true);

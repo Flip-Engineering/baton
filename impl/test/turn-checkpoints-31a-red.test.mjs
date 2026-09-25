@@ -317,7 +317,7 @@ test('B1/D4: an unregistered pausable checkpoint parks with durable origin and n
   await until(() => kit.coordinator._pausedTurns.size > 0);
 
   const entries = kit.coordinator._log.read(handle.id);
-  const pausedEntry = entries.find((e) => e.kind === 'turn.paused');
+  const pausedEntry = entries.find((e) => e.kind === 'turn.reported');
   assert.ok(pausedEntry, 'turn.paused must be appended to the per-worker log');
   assert.equal(pausedEntry.actor, 'worker');
   // Contract Part B rule 2 + BD v2's durable pause-origin: FOUR payload fields; `workerId`
@@ -346,8 +346,8 @@ test('B1/D4: an unregistered pausable checkpoint parks with durable origin and n
   assert.equal(record.steering, undefined, 'the checkpoint has no automatic steering cycle');
 
   // Deferral is non-dispatch: the task stays paused — no verdict, no state minted.
-  assert.equal(kit.coordination.task(task.id).status, 'paused');
-  assert.equal(kit.coordinator._tasks.get(handle.taskId).status, 'paused');
+  assert.equal(kit.coordination.task(task.id).status, 'working');
+  assert.equal(kit.coordinator._tasks.get(handle.taskId).status, 'working');
 });
 
 test('B3: changedPathsDigest is canonicalDigest([]) when the task has no baseSha — every '
@@ -364,7 +364,7 @@ test('B3: changedPathsDigest is canonicalDigest([]) when the task has no baseSha
   completeTurn(kit, handle);
   await until(() => kit.coordinator._pausedTurns.size > 0);
 
-  const pausedEntry = kit.coordinator._log.read(handle.id).find((e) => e.kind === 'turn.paused');
+  const pausedEntry = kit.coordinator._log.read(handle.id).find((e) => e.kind === 'turn.reported');
   assert.equal(pausedEntry.payload.changedPathsDigest, DIGEST_OF_EMPTY);
 });
 
@@ -387,7 +387,7 @@ test('D5: a pausable card on a run WITH a live steering.registered marker stays 
   await new Promise((resolve) => setTimeout(resolve, 200));
 
   const entries = kit.coordinator._log.read(handle.id);
-  assert.ok(entries.some((e) => e.kind === 'turn.paused'), 'the pause is still minted');
+  assert.ok(entries.some((e) => e.kind === 'turn.reported'), 'the pause is still minted');
   assert.ok(!entries.some((e) => e.kind === 'turn.settled'), 'a live driver must NOT auto-settle');
 
   const key = [...kit.coordinator._pausedTurns.keys()].find((k) => k.startsWith(`pause:${task.id}:`));
@@ -395,7 +395,7 @@ test('D5: a pausable card on a run WITH a live steering.registered marker stays 
   assert.equal(kit.coordinator._pausedTurns.get(key).state, 'pending');
   assert.equal(kit.coordinator._pausedTurns.get(key).consumer, null);
 
-  assert.equal(kit.coordination.task(task.id).status, 'paused');
+  assert.equal(kit.coordination.task(task.id).status, 'working');
   // The positive pin the contract demands: the verification hook was never called.
   assert.equal(kit.refereeCalls.length, 0);
 });
@@ -408,7 +408,7 @@ test('D-compat: a `claim`-carded turn (the default, every existing card) never m
   await until(() => kit.refereeCalls.length > 0);
 
   const entries = kit.coordinator._log.read(handle.id);
-  assert.ok(!entries.some((e) => e.kind === 'turn.paused'));
+  assert.ok(!entries.some((e) => e.kind === 'turn.reported'));
   assert.ok(!entries.some((e) => e.kind === 'turn.settled'));
   assert.equal(kit.coordinator._pausedTurns.size, 0);
   assert.equal(kit.refereeCalls.length, 1);
@@ -430,8 +430,8 @@ test('C2: every named guard site treats a `paused` task as live, exactly as it t
     'orchestrator',
   );
   completeTurn(kit, handle);
-  await until(() => kit.coordination.task(task.id).status === 'paused');
-  assert.equal(kit.coordinator._tasks.get(handle.taskId).status, 'paused');
+  await until(() => kit.coordinator.pausedTurns({ taskId: task.id }).length > 0);
+  assert.equal(kit.coordinator._tasks.get(handle.taskId).status, 'working');
 
   // Each wrapper checks the task-status guard BEFORE its idempotencyKey/fence TypeError. So a
   // TypeError proves the guard admitted `paused`; `{result:'task_not_active'}` proves it refused.
@@ -647,7 +647,7 @@ test('R1: a coordinator restarted mid-pause reconstructs _pausedTurns with state
   );
 
   emitTurnCompleted(first.adapter, handle);
-  await until(() => first.coordination.task(task.id).status === 'paused');
+  await until(() => first.coordinator.pausedTurns({ taskId: task.id }).length > 0);
   const livePauseId = [...first.coordinator._pausedTurns.keys()].find((k) => k.startsWith(`pause:${task.id}:`));
   assert.ok(livePauseId);
   assert.equal(first.coordinator._pausedTurns.get(livePauseId).state, 'pending');
@@ -691,7 +691,7 @@ test('R2: a pause already settled before the restart is NOT reconstructed as an 
     `run.steering_registered:${task.runId ?? 'null'}`, 'orchestrator',
   );
   emitTurnCompleted(first.adapter, handle);
-  await until(() => first.coordination.task(task.id).status === 'paused');
+  await until(() => first.coordinator.pausedTurns({ taskId: task.id }).length > 0);
   const pauseId = [...first.coordinator._pausedTurns.keys()].find((k) => k.startsWith(`pause:${task.id}:`));
   assert.ok(pauseId);
   await first.coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});

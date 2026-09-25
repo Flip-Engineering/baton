@@ -138,11 +138,13 @@ test('an external orchestrator discovers and guides a living swarm through the e
   await swarm.recruit('reviewer', 'Review the repository and remain available', {
     exact: ROUTE, resultIntent: 'read_only_evidence',
   });
-  async function paused() {
+  let reportsSeen = 0;
+  async function reported() {
     for (;;) {
-      const view = await swarm.view();
+      const view = await swarm.view({ participantId: 'reviewer' });
       const worker = view.participants[0].runtime;
-      if (worker.turn === 'paused') return;
+      const count = view.participants[0].turnReports.length;
+      if (count > reportsSeen) { reportsSeen = count; return; }
       if (['dead', 'exited'].includes(worker.state)) {
         const records = ['w-1.jsonl', 'coordination/events.jsonl'].flatMap((file) =>
           readFileSync(join(configured.deploymentRoot, 'state', file), 'utf8').trim().split('\n').map(JSON.parse));
@@ -154,8 +156,8 @@ test('an external orchestrator discovers and guides a living swarm through the e
       await swarm.watch({ timeoutMs: 100 });
     }
   }
-  await paused();
-  t.diagnostic('initial participant turn paused');
+  await reported();
+  t.diagnostic('initial participant turn reported');
   const source = `
     import { connectBaton } from ${JSON.stringify(new URL('../src/index.mjs', import.meta.url).href)};
     const [repo, home, configRoot, swarmId] = process.argv.slice(1);
@@ -170,9 +172,9 @@ test('an external orchestrator discovers and guides a living swarm through the e
     repo, configured.connection.advanced.home, configured.configRoot, swarm.id]);
   t.diagnostic('external guidance completed');
   assert.deepEqual(JSON.parse(child.stdout), {
-    swarmId: swarm.id, participant: 'reviewer', turnBeforeGuide: 'paused',
+    swarmId: swarm.id, participant: 'reviewer', turnBeforeGuide: 'running',
   });
-  await paused();
+  await reported();
   const view = await swarm.view();
   assert.equal(view.participants[0].status, 'active');
   assert.equal(view.participants[0].runtime.state, 'working');

@@ -147,8 +147,8 @@ test('564-a: wakeClassFor maps the swarm.root_attention_owed driver row to the r
   assert.equal(row.terminal, true, 'the row names the act; the wake is terminal');
   assert.equal(row.next, 'baton swarm view {swarmId}');
   assert.deepEqual(
-    row.rows.map((matcher) => matcher.payloadKind), ['swarm.root_attention_owed'],
-    'the class derives from exactly its one operational row kind');
+    row.rows.map((matcher) => matcher.payloadKind), ['swarm.root_attention_owed', 'run.root_attention_owed'],
+    'the class covers swarm and ordinary Run reports');
   assert.ok(typeof row.summary === 'string' && row.summary.length > 0, 'root_owed is documented');
   // The payload-kind form, in both containers one operational event is projected into.
   assert.equal(wakeClassFor({ kind: 'driver.recorded', payload: { kind: 'swarm.root_attention_owed' } })?.wakeClass,

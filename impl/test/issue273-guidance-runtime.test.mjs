@@ -113,7 +113,7 @@ test('273-a: a delivered guide answers with its own row, naming the lane receipt
       ts: guided.guide.delivery.lane.ts, messageId: guided.guide.messageId } },
   }, 'the guide\'s own row, with the provenance and the lane it rode — never null');
   assert.equal(guided.guide.sentAt, guided.receipt.event.ts, 'the row is the send: its instant IS sentAt');
-  assert.deepEqual(guided.next.observation, { wakeClass: 'paused', participantId: 'builder' },
+  assert.deepEqual(guided.next.observation, { wakeClass: 'turn_reported', participantId: 'builder' },
     'next names the seat\'s next turn boundary');
 
   const lane = f.store.eventsView().find((event) => event.seq === guided.guide.delivery.lane.seq);
@@ -318,7 +318,7 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
   const guided = await f.call('guide', { participantId: 'builder', message: 'Read the shape.', priority: 'now' });
   const rendered = swarmGuideRendering(guided);
   assert.equal(rendered.guide.rendering,
-    'guidance for builder: priority now, delivered to the seat; watch for the paused row');
+    'guidance for builder: priority now, delivered to the seat; watch for the turn_reported row');
   assert.equal(rendered.guide.seq, guided.guide.seq, 'the row itself prints untouched');
 
   const parked = swarmGuideRendering({
@@ -333,7 +333,7 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
   const refused = swarmGuideRendering({
     guide: { seq: 8, participantId: 'builder', priority: 'next_boundary',
       delivery: { state: 'refused', lane: null, reason: 'worker_stopping' }, },
-    next: { command: 'swarm.watch', args: { swarmId: 'baton' }, observation: { wakeClass: 'paused', participantId: 'builder' } },
+    next: { command: 'swarm.watch', args: { swarmId: 'baton' }, observation: { wakeClass: 'turn_reported', participantId: 'builder' } },
   });
   assert.match(refused.guide.rendering, /refused — the seat received nothing/u);
 

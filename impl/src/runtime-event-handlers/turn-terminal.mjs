@@ -3,12 +3,30 @@
 // lifecycle.exited), verbatim over the dispatcher's ctx record. Recording through the port;
 // receiver explicit; no sibling family imports.
 
+import { IdleWorkerAttention, deliverIdleReport } from '../idle-worker-attention.mjs';
 import { PROVIDER_FAULT_CODES } from '../provider-faults.mjs';
 import {
   KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze, typedTerminalCode,
 } from '../runtime-recovery.mjs';
 
+/** Deliver a turn report through its swarm extension or Run lineage under terminal authority. */
+function reportTurn(coordinator, ctx, event, report) {
+  ctx.handle.reportedTurnEpoch = event.turnEpoch;
+  const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
+  const deliver = (observedReport = report, attention = null) =>
+    deliverIdleReport(coordinator, ctx.handle, event, observedReport, attention);
+  const retained = report?.status === 'completed' && participantRuntime?.isDone?.() !== true
+    && (typeof participantRuntime?.onTurnCompleted === 'function' || coordinator._turnCompletionOf(ctx.handle) === 'pausable');
+  if (retained) coordinator._idleWorkerAttention ??= new IdleWorkerAttention(coordinator);
+  coordinator._trackAuthorityPromise(() => retained
+    ? coordinator._idleWorkerAttention.report(ctx.handle, event, report, deliver) : deliver(), true)
+    .catch((error) => coordinator._recordOperationFailure(
+      'turn.report_delivery_failed', ctx.handle, 'turn_report_delivery_failed', error,
+      { turnSeq: event.seq }));
+}
+
 export function turnCompleted(coordinator, recorder, ctx) {
+        const turnWasReported = ctx.turnWasTerminal && ctx.handle.reportedTurnEpoch === ctx.turnEpoch;
 // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
         const wr = (ctx.payload && ctx.payload.result !== undefined && ctx.payload.status === undefined) ? ctx.payload.result : ctx.payload;
@@ -23,6 +41,8 @@ export function turnCompleted(coordinator, recorder, ctx) {
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
+        const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
+        if (!turnWasReported) reportTurn(coordinator, ctx, terminalEvent, wr);
         // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
@@ -31,6 +51,7 @@ export function turnCompleted(coordinator, recorder, ctx) {
           coordinator._failTerminalProviderGovernance(ctx.handle, terminalEvent, sealVerdict.code);
           return
         }
+        if (turnWasReported) return;
         if (sealVerdict.seal) {
           ctx.handle.providerTerminalSeal = sealVerdict.seal;
           if (ctx.handle.providerTurn) ctx.handle.providerTurn.sealed = true;
@@ -64,25 +85,18 @@ export function turnCompleted(coordinator, recorder, ctx) {
             && [...coordinator._pending.values()].some((record) => record.worker === ctx.handle.id && record.state === 'pending');
           if (parkedUnsettled) return
         }
-        // Issue #31 §2.1(1)-(2), as revised 2026-09-12: a 'pausable' card's completed turn is a
-        // CHECKPOINT, not an implicit claim — the trust gate does not dispatch, no gate event is
-        // written, and (native-completion-loop) the coordinator does not self-drive the pause
-        // either: no policy nudge, no window, no expiry verdict. A 'claim' card (the default —
-        // every card without the field) never reaches this branch and falls straight through to
-        // the pre-existing gate below, byte-identically to before. A driven and an un-driven
-        // checkpoint are now identical: both park visibly for an explicit `claim_turn` (the real
-        // verifier) or `nudge_turn` (a real continuation).
+        // Swarm turn completion reports to the orchestrator and keeps the assignment available
+        // for guidance. A declared completion proceeds to verification and worker cleanup.
+        if (typeof participantRuntime?.onTurnCompleted === 'function'
+          && participantRuntime.isDone?.() !== true) return;
+        // Non-swarm turn reports keep a continuation record for explicit nudge and claim acts.
         {
           const task = coordinator._tasks.get(ctx.handle.taskId);
-          // A turn can legally end AFTER its task was already terminalized (run stop, fleet
-          // drain, a provider turn landing post-cancellation). Parking a terminal task is
-          // impossible by TRANSITIONS and would throw `terminal` out of transitionTask — so skip
-          // the pause entirely and fall through, mirroring the interaction family's own
-          // `if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;` precedent.
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)
+            && participantRuntime?.isDone?.() !== true
             && coordinator._turnCompletionOf(ctx.handle) === 'pausable') {
-            const settled = coordinator._admitPauseRecord(ctx.handle, task, terminalEvent, wr, ctx.appendAttributed);
-            if (!settled) return
+            const settled = coordinator._admitTurnReport(ctx.handle, task, terminalEvent, wr, ctx.appendAttributed);
+            if (!settled) return;
           }
         }
         if (coordinator._drainState === 'open' && ctx.handle.status !== 'stopping' && ctx.handle.status !== 'dead') {
@@ -91,17 +105,30 @@ export function turnCompleted(coordinator, recorder, ctx) {
           // correct even for a native/test adapter that emits completion before that promise's
           // bookkeeping callback runs. Never capture through the logical placeholder path.
           Promise.resolve(ctx.handle.worktreeReady).then(() => coordinator._runTrustGate(ctx.handle, wr))
+            .then(() => {
+              if (participantRuntime?.isDone?.() === true
+                && !['stopping', 'dead', 'exited'].includes(ctx.handle.status)) {
+                coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.terminalObservation);
+              }
+            })
             .catch((error) => coordinator._recordTrustGateEscape(ctx.handle, error))
             .finally(releaseAuthority);
         }
 }
 
 export function crashed(coordinator, recorder, ctx) {
+ctx.handle.turnInFlight = false;
+        coordinator._clearWatchdog(ctx.handle);
 const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.payload?.usageSeal ?? null);
         const terminalEvent = ctx.appendAttributed({
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...ctx.payload, usageSeal: sealVerdict.seal } : ctx.payload,
         });
+        // Issue #572: a crashed turn is a turn end — the orchestrator is woken with the failure
+        // report exactly as for a completed turn. A crash landing after the turn already settled
+        // (turnWasTerminal) reported at that settlement and does not report twice.
+        if (!ctx.turnWasTerminal || ctx.handle.reportedTurnEpoch !== ctx.turnEpoch) reportTurn(coordinator, ctx, terminalEvent,
+          { ...ctx.payload, status: 'failed' });
         // #295: the crash cert is a provider-shaped payload — the adapter types the same fault and
         // the same bounded detail (route, reset instant) it typed on the turn, so a rate-limited
         // death that arrives as a dead transport still reads with its class, its route and its
@@ -170,6 +197,10 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
 
 export function exited(coordinator, recorder, ctx) {
 const terminalEvent = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
+        // Issue #572: an exit that ends the turn reports to the orchestrator like any turn end;
+        // an exit after the turn already settled reported at that settlement.
+        if (!ctx.turnWasTerminal || ctx.handle.reportedTurnEpoch !== ctx.turnEpoch) reportTurn(coordinator, ctx, terminalEvent,
+          { ...ctx.payload, status: 'failed' });
         const task = coordinator._tasks.get(ctx.handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
           && task.status !== 'verifying' && !ctx.turnWasTerminal;

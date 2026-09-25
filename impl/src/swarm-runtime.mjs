@@ -4211,6 +4211,14 @@ export class SwarmRuntime {
     // Issue #464: the caller-side facts the brief reach's exposure class reads — gathered ONCE
     // per view (above the map), never once per roster row.
     const exposureFacts = this._briefExposureFacts(swarm, caller);
+    const turnReportsByParticipant = new Map();
+    for (const event of ledger) {
+      if (event.kind !== 'driver.recorded' || !['swarm.turn_reported', 'swarm.worker_idle_prompted'].includes(event.payload?.kind)
+        || event.payload.swarmId !== swarm.swarmId || event.payload.originalReportSeq !== undefined) continue;
+      const rows = turnReportsByParticipant.get(event.payload.participantId) ?? [];
+      rows.push({ seq: event.seq, ts: event.ts, ...event.payload });
+      turnReportsByParticipant.set(event.payload.participantId, rows);
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       // docs/46 §1.2 (#268): this seat's half of the ONE derivation above.
@@ -4333,6 +4341,8 @@ export class SwarmRuntime {
         // to. The #337 parked rows ride the same fold: a park is one row whose delivery state
         // becomes `delivered` when the composition that carries it writes the marker.
         guidance: guidanceByParticipant.get(participant.participantId) ?? [],
+        // A named participant read resolves the full reports cited by guidance and root wakes.
+        ...(scopedHere ? { turnReports: turnReportsByParticipant.get(participant.participantId) ?? [] } : {}),
         // Drift before capture (issue #301): the base this seat's checkout shows against the
         // deployment's target. The WHOLE record and the seat the caller named read the
         // repository now; a slice serves the seat's own last observation (its cached head, and
@@ -6657,6 +6667,116 @@ export class SwarmRuntime {
       }
     }
     return parked.filter((row) => !delivered.has(row.messageId));
+  }
+
+  /** Deliver a turn report to the nearest live orchestrator, or address the root wake stream. */
+  async reportTurnEnd({ swarmId, participantId, workerId, turnSeq, turnEpoch, report, assignmentDone = false, attention = null }) {
+    const swarm = this._swarm(swarmId);
+    const participant = this._participant(swarm, participantId);
+    if (!Number.isSafeInteger(turnSeq) || turnSeq < 0
+      || !Number.isSafeInteger(turnEpoch) || turnEpoch < 0
+      || typeof workerId !== 'string'
+      || (!(participant.bindings ?? []).some((binding) => binding.workerId === workerId)
+        && !this.coordinator.list().some((worker) => worker.id === workerId && worker.runId === participant.runId))) {
+      refuse('Turn report needs the participant worker and recorded turn identity',
+        'swarm_payload_invalid', { rule: 'turn-report-identity', swarmId, participantId });
+    }
+    const rowKind = attention ? 'swarm.worker_idle_prompted' : 'swarm.turn_reported';
+    const prefix = attention ? `swarm-idle-pressure:${attention.seq}` : 'swarm-turn-report';
+    const key = `${prefix}:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
+    const rootPrefix = attention ? `swarm-idle-pressure-owed:${attention.seq}` : 'swarm-turn-report-owed';
+    const rootKey = `${rootPrefix}:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
+    this._turnReportDeliveries ??= new Map();
+    if (this._turnReportDeliveries.has(key)) return this._turnReportDeliveries.get(key);
+    const prior = this.store.priorCoordinationEvent(`${key}:root`)
+      ?? this.store.priorCoordinationEvent(key);
+    const delivered = this.store.priorCoordinationEvent(`${key}:delivered`);
+    if (delivered) return { event: prior, delivery: { state: 'delivered', parentId: delivered.payload.parentId } };
+    const rootOwed = this.store.priorCoordinationEvent(rootKey);
+    if (rootOwed) return { event: this.store.priorCoordinationEvent(`${key}:root`) ?? prior,
+      delivery: { state: 'root_addressed' } };
+
+    let parentId = prior?.payload.parentId === null ? null : participant.parentId ?? null;
+    const workers = this.coordinator.list();
+    const visited = new Set([participantId]);
+    while (parentId !== null) {
+      if (visited.has(parentId)) { parentId = null; break; }
+      visited.add(parentId);
+      const parent = swarm.participants[parentId];
+      if (!parent) { parentId = null; break; }
+      const worker = this._workerFor(parent, workers);
+      if (parent.status === 'active' && swarmParticipantLiveness(worker).live
+        && worker.status !== 'stopping') break;
+      parentId = parent.parentId ?? null;
+    }
+    let event = prior ?? this.store.recordDriver(rowKind, {
+      swarmId, participantId, parentId, workerId, turnSeq, turnEpoch, report, assignmentDone, ...(attention ? { attention } : {}),
+    }, { actor: 'baton-runtime', key }).event;
+    // Retries carry the original report, including its completion declaration.
+    ({ report, assignmentDone } = event.payload);
+    const reportText = JSON.stringify(report) ?? 'null';
+    const text = sliceUtf8(reportText, FRAME_LIMITS['swarm.notify.body'].value);
+    const turnReport = { reportSeq: event.seq, workerId, turnSeq, turnEpoch, assignmentDone,
+      read: { command: 'swarm.view', args: { swarmId, participantId } },
+      text, omittedBytes: Buffer.byteLength(reportText) - Buffer.byteLength(text) };
+    const addressRoot = (failure) => {
+      if (event.payload.parentId !== null) {
+        event = this.store.recordDriver(rowKind, {
+          swarmId, participantId, parentId: null, workerId, turnSeq, turnEpoch, report,
+          assignmentDone, originalReportSeq: event.seq, ...(attention ? { attention } : {}),
+          ...(failure ? { deliveryFailure: failure } : {}),
+        }, { actor: 'baton-runtime', key: `${key}:root` }).event;
+      }
+      if (attention) {
+        this.store.recordDriver('swarm.root_attention_owed', {
+          swarmId, participantId, owed: 'worker_idle', ask: report?.summary ?? null, turnReport,
+          next: { command: 'swarm.view', swarmId },
+        }, { actor: 'baton-runtime', key: rootKey });
+      } else if (typeof this._reconcileTurnReportedRows === 'function') {
+        this._reconcileTurnReportedRows(swarm, 'baton-runtime');
+      } else {
+        const reported = event.payload.report;
+        const reason = event.payload.deliveryFailure?.reason;
+        const ask = typeof reported === 'string' && reported.length > 0 ? reported
+          : typeof reported?.summary === 'string' && reported.summary.length > 0 ? reported.summary
+            : typeof reason === 'string' && reason.length > 0 ? reason : null;
+        this.store.recordDriver('swarm.root_attention_owed', {
+          swarmId, participantId, owed: 'turn_reported', ask,
+          next: { command: 'swarm.view', swarmId },
+        }, { actor: 'baton-runtime', key: rootKey });
+      }
+      return { event, delivery: { state: 'root_addressed' } };
+    };
+    if (parentId === null) return addressRoot(null);
+    const delivery = (async () => {
+      const message = `Turn report from ${participantId} (report seq ${turnReport.reportSeq}):\n`
+        + `${text}\n`
+        + (turnReport.omittedBytes > 0 ? `Report preview omits ${turnReport.omittedBytes} bytes.\n` : '')
+        + (assignmentDone ? 'The seat declared its assignment complete.'
+          : 'The assignment remains active for your continuation decision.');
+      let result;
+      try {
+        result = await this._deliverGuidance({ swarmId, participant: swarm.participants[parentId],
+          worker: this._workerFor(swarm.participants[parentId], this.coordinator.list()), message,
+          principal: { actor: 'baton-runtime', principalId: 'baton-runtime' },
+          args: { swarmId, participantId: parentId, message, idempotencyKey: key },
+          guidance: { from: { kind: 'peer', participantId },
+            priority: SWARM_GUIDANCE_DEFAULT_PRIORITY, inReplyTo: event.seq },
+        });
+      } catch (error) {
+        result = { guide: { delivery: { state: 'refused', reason: error?.code ?? 'turn_report_delivery_failed' } } };
+      }
+      if (result.guide?.delivery?.state === 'delivered') {
+        this.store.recordDriver('swarm.turn_report_delivered', {
+          swarmId, participantId, parentId, turnSeq, reportSeq: event.seq,
+          guidanceSeq: result.guide.seq,
+        }, { actor: 'baton-runtime', key: `${key}:delivered` });
+        return { event, delivery: { state: 'delivered', parentId } };
+      }
+      return addressRoot({ parentId, reason: result.guide?.delivery?.reason ?? 'undelivered' });
+    })();
+    this._turnReportDeliveries.set(key, delivery);
+    try { return await delivery; } finally { this._turnReportDeliveries.delete(key); }
   }
 
   /** Park one guide message durably (#337, #273): the swarm.guidance_parked row names the seat,

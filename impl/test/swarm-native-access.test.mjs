@@ -3,6 +3,26 @@ import assert from 'node:assert/strict';
 import { SwarmNativeAccess } from '../src/swarm-native-access.mjs';
 import { SWARM_BRIDGE_ENV_KEYS } from '../src/swarm-native-bridge.mjs';
 
+test('turn reports and completion reads use the registered participant identity', async (t) => {
+  const registrations = new Map();
+  const reports = [];
+  const reads = [];
+  const access = new SwarmNativeAccess({
+    coordinator: { registerParticipantRuntime: (id, entry) => registrations.set(id, entry),
+      unregisterParticipantRuntime: (id) => registrations.delete(id) },
+    dispatch: async () => ({}),
+    onTurnCompleted: (report) => reports.push(report),
+    isDone: (identity) => { reads.push(identity); return true; },
+  });
+  t.after(() => access.close());
+  await access.prepare({ swarmId: 'swarm', participantId: 'builder', runId: 'run' });
+  const extension = registrations.get('run');
+  assert.equal(extension.isDone(), true);
+  await extension.onTurnCompleted({ swarmId: 'other', participantId: 'forged', turnSeq: 7 });
+  assert.deepEqual(reports, [{ swarmId: 'swarm', participantId: 'builder', turnSeq: 7 }]);
+  assert.deepEqual(reads, [{ swarmId: 'swarm', participantId: 'builder' }]);
+});
+
 test('stop during native access preparation cannot install credentials after revocation', async (t) => {
   const registrations = new Map();
   const access = new SwarmNativeAccess({

@@ -137,7 +137,7 @@ async function seated(driver, runId) {
   const deadline = Date.now() + 5000;
   for (;;) {
     const worker = driver.coordinator.list().find((row) => row.runId === runId);
-    if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length) return worker;
+    if (worker && driver.coordination.eventsView().some((event) => event.payload?.kind === 'swarm.turn_reported' && event.payload.workerId === worker.id)) return worker;
     if (Date.now() >= deadline) {
       throw Object.assign(new Error(`fixture_wait_unsettled: a seat for ${runId} within 5000ms`),
         { code: 'fixture_wait_unsettled' });
