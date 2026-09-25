@@ -1368,6 +1368,48 @@ function assertRemovableContent(repoRoot, physicalOwnerId, opts = {}) {
   return observation;
 }
 
+/** Issue #563: how a recorded base commit relates to the checkout that carries it — the ONE
+ * reading of that fact. The session verdict (index.mjs, `validateSessionContext`) and the
+ * owned-worktree check below both answer with it, so the same mismatch can never be described two
+ * ways:
+ *   `contained` — the base is the checkout's past, so the recorded identity still holds;
+ *   `unknown`   — the base is not a commit in this repository at all;
+ *   `rewound`   — HEAD is an ancestor of the base: the branch moved BEHIND the commit the
+ *                 checkout was admitted on (#563's own case);
+ *   `diverged`  — neither revision contains the other.
+ * `head` is the checkout's own HEAD, read in the same pass. `null` — never a guess — when the
+ * checkout or its HEAD cannot be read at all: the caller's own existence check answers that. */
+export function sessionBaseRelation(dir, baseSha) {
+  let head;
+  try { head = sh('git', ['rev-parse', 'HEAD'], dir); } catch { return null; }
+  const reaches = (ancestor, descendant) => {
+    try { sh('git', ['merge-base', '--is-ancestor', ancestor, descendant], dir); return true; }
+    catch { return false; }
+  };
+  try { sh('git', ['rev-parse', '--verify', '--quiet', `${baseSha}^{commit}`], dir); }
+  catch { return Object.freeze({ relation: 'unknown', head }); }
+  if (reaches(baseSha, 'HEAD')) return Object.freeze({ relation: 'contained', head });
+  return Object.freeze({ relation: reaches(head, baseSha) ? 'rewound' : 'diverged', head });
+}
+
+/** Issue #563: what each relation MEANS, in one sentence, and the remedies the issue names for it
+ * — "restore the recorded base as an ancestor of HEAD, or admit a fresh seat at <head>". Both the
+ * session verdict and the owned-worktree refusal compose their answer from this, so an operator
+ * reads the same fact and the same two ways out wherever the runtime refuses. */
+export function sessionBaseRelationReason(relation, baseSha, head) {
+  if (relation === 'unknown') {
+    return `the recorded base ${baseSha} is not a commit in this repository (HEAD ${head});`
+      + ` admit a fresh seat at ${head}`;
+  }
+  if (relation === 'rewound') {
+    return `the branch is rewound behind the recorded base ${baseSha}: HEAD ${head} is an`
+      + ` ancestor of it; restore the recorded base as an ancestor of HEAD, or admit a fresh seat at ${head}`;
+  }
+  return `the history diverged from the recorded base ${baseSha}: neither HEAD ${head} nor the`
+    + ` recorded base contains the other; restore the recorded base as an ancestor of HEAD, or`
+    + ` admit a fresh seat at ${head}`;
+}
+
 export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
   const dir = authorityChild(repoRoot, 'wt', taskId, { kind: 'directory', mustExist: true });
@@ -1395,8 +1437,17 @@ export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
   if (sh('git', ['branch', '--show-current'], dir) !== meta.branch) throw new UnknownWorktreeError('owned worktree branch identity mismatch');
   if (opts.expectedBranch !== undefined && meta.branch !== opts.expectedBranch) throw sparseError('owned worktree branch metadata disagrees with admitted branch', 'worker_sparse_metadata_invalid');
   if (opts.expectedBaseSha !== undefined && meta.baseSha !== opts.expectedBaseSha) throw sparseError('owned worktree base metadata disagrees with admitted base', 'worker_sparse_metadata_invalid');
-  try { gitFile(['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], dir, { stdio: 'ignore' }); }
-  catch { throw new UnknownWorktreeError('owned worktree base identity mismatch'); }
+  // Issue #563: the recorded base must be this checkout's past, and a base that is not is one of
+  // three facts with three remedies — none of them guessable from a bare "identity mismatch".
+  // Named here through the same reading the session verdict uses, so an operator who meets this
+  // refusal from a capture or landing path gets the fact and the way out the session path gives.
+  const baseRelation = sessionBaseRelation(dir, meta.baseSha);
+  if (baseRelation === null || baseRelation.relation !== 'contained') {
+    const named = baseRelation === null
+      ? `the recorded base ${meta.baseSha} could not be read against HEAD`
+      : sessionBaseRelationReason(baseRelation.relation, meta.baseSha, baseRelation.head);
+    throw new UnknownWorktreeError(`owned worktree base identity mismatch: ${named}`);
+  }
   const expectedIdentity = opts.sparseCheckoutIdentity === undefined ? meta.sparseCheckoutIdentity : normalizeSparseCheckoutIdentity(opts.sparseCheckoutIdentity);
   if (!sameSparseIdentity(meta.sparseCheckoutIdentity, expectedIdentity)) throw sparseError('owned worktree sparse deployment identity mismatch', 'worker_sparse_projection_changed');
   let liveIdentity;

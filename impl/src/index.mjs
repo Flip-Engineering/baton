@@ -1069,31 +1069,27 @@ function worktreeManager(repoRoot, opts = {}) {
         // that is no longer an ancestor of HEAD is three different facts — the commit is not in
         // this repository, the branch was rewound behind it, or the histories diverged — and each
         // has its own remedy. Answered as one generic session_context_mismatch, a rewind reads as
-        // a foreign context and leaves the caller with no direction.
+        // a foreign context and leaves the caller with no direction. The classification is the
+        // worktree authority's ONE reading (`sessionBaseRelation`), which the owned-worktree check
+        // the capture and landing paths run answers with too: the same mismatch is never described
+        // two ways.
         if (context.baseSha) {
-          const head = localGit(['rev-parse', 'HEAD'], worktree, { encoding: 'utf8' }).trim();
-          const reaches = (ancestor, descendant) => {
-            try {
-              localGit(['merge-base', '--is-ancestor', ancestor, descendant], worktree, { stdio: 'ignore' });
-              return true;
-            } catch { return false; }
-          };
-          const recordedKnown = (() => {
-            try {
-              localGit(['rev-parse', '--verify', '--quiet', `${context.baseSha}^{commit}`], worktree, { stdio: 'ignore' });
-              return true;
-            } catch { return false; }
-          })();
-          if (!recordedKnown) {
+          const relation = worktreeMod.sessionBaseRelation(worktree, context.baseSha);
+          if (relation === null) {
+            return { ok: false, reason: 'session worktree base could not be read against HEAD' };
+          }
+          const { relation: kind, head } = relation;
+          if (kind === 'unknown') {
             return { ok: false, code: 'session_worktree_base_unknown',
               reason: `session worktree records base ${context.baseSha}, which is not a commit in this repository; HEAD is ${head}` };
           }
-          if (!reaches(context.baseSha, 'HEAD')) {
-            return reaches(head, context.baseSha)
-              ? { ok: false, code: 'session_worktree_base_rewound',
-                reason: `session worktree branch was rewound behind its recorded base: HEAD ${head} is an ancestor of base ${context.baseSha}; restore the recorded base as an ancestor of HEAD, or admit a fresh seat at ${head}` }
-              : { ok: false, code: 'session_worktree_base_diverged',
-                reason: `session worktree history diverged from its recorded base ${context.baseSha}: neither HEAD ${head} nor the recorded base contains the other` };
+          if (kind === 'rewound') {
+            return { ok: false, code: 'session_worktree_base_rewound',
+              reason: `session worktree branch was rewound behind its recorded base: HEAD ${head} is an ancestor of base ${context.baseSha}; restore the recorded base as an ancestor of HEAD, or admit a fresh seat at ${head}` };
+          }
+          if (kind === 'diverged') {
+            return { ok: false, code: 'session_worktree_base_diverged',
+              reason: `session worktree history diverged from its recorded base ${context.baseSha}: neither HEAD ${head} nor the recorded base contains the other` };
           }
         }
         if (!Array.isArray(context.sparsePaths) && opts.workerSparseCheckoutIdentity.mode !== 'full') return { ok: false, reason: 'session sparse checkout identity is missing' };
