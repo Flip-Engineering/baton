@@ -548,9 +548,14 @@ try {
       }
       // Issue #365: a follow that ended through its ended row (an aborted signal, or a wake
       // stream that closed) prints that row even when pages already streamed — the ended row is
-      // the leg's own verdict, never swallowed by the pages it delivered.
-      if (followPages === 0 || (typeof result?.kind === 'string' && result.kind.endsWith('_ended'))) {
+      // the leg's own verdict, never swallowed by the pages it delivered. A follow that streamed
+      // pages already established the line-oriented frame stream (#294, docs/46 §3.4), so its
+      // ended row rides that stream as one compact JSON line; the pretty form is the renderer for
+      // a result that is the command's only output.
+      if (followPages === 0) {
         process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result), null, 2)}\n`);
+      } else if (typeof result?.kind === 'string' && result.kind.endsWith('_ended')) {
+        process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result))}\n`);
       }
     }
   }
