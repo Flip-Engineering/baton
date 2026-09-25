@@ -7,9 +7,10 @@
 //
 // Two inputs, both declared:
 //
-//   • the seam inventory (impl/scripts/seam-inventory.json, #301/#292) — the ONLY source of which
-//     modules are inventoried seams and which seam each of their members belongs to. A changed path
-//     the inventory does not carry is not a seam module, and is judged by the region table alone.
+//   • the seam inventory, derived live from `impl/scripts/seam-inventory.mjs` (#301/#292) — the
+//     only source of which modules are inventoried seams and which seam each of their members
+//     belongs to. A changed path the inventory does not carry is not a seam module, and is
+//     judged by the region table alone.
 //
 //   • the region table below — a small, declared mapping from the regions this repository actually
 //     has (the coordinator/worktree custody lane, the application lane, the swarm family, the
@@ -25,11 +26,11 @@
 // the order the runner should take it (regions in table order, then issue rows, then a stable sort
 // inside each group). Nothing here runs anything.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const INVENTORY_PATH = fileURLToPath(new URL('../scripts/seam-inventory.json', import.meta.url));
 const TEST_DIR = fileURLToPath(new URL('../test/', import.meta.url));
 
 /** Does the checkout under judgement carry this test file? The table's universe is the repository's
@@ -142,9 +143,13 @@ function matchesRegion(region, path) {
  * to the region table alone, and `inventoried` reads empty rather than inventing coverage.
  */
 function inventoryReading(paths) {
+  // E02 (#598): the committed seam-inventory.json is gone — the table derives the inventory
+  // live from the collector the landing regenerator used to render it from. A collector that
+  // cannot answer is NOT a refusal — the gate set falls back to the region table alone, and
+  // `inventoried` reads empty rather than inventing coverage.
   let inventory = null;
   try {
-    inventory = JSON.parse(readFileSync(INVENTORY_PATH, 'utf8'));
+    inventory = collectSeamInventory();
   } catch {
     return { inventoried: Object.freeze([]), seams: Object.freeze([]) };
   }

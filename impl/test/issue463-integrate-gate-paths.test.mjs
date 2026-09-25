@@ -85,10 +85,11 @@ function write(repo, path, content) {
   writeFileSync(full, content);
 }
 
-// The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`), TRACKED on the base
-// commit: the landing checks them out and runs them for real.
+// The two scripts a landing regenerates with (`INTEGRATION_REGENERATORS`), TRACKED on the base
+// commit: the landing checks them out and runs them for real. The seam inventory is not one of
+// them (E02 of the #598 audit): the committed artifact is deleted and the landing table derives
+// the map live from the collector.
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
