@@ -488,10 +488,11 @@ export async function runSupervisedGateRun({
   const poll = setInterval(observeAhead, 25);
   if (typeof poll.unref === 'function') poll.unref();
   let lease = null;
-  let degraded = null;
-  // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of it
-  // release, never refused for having waited. A host that cannot fund a suite at all (a standing
-  // memory shortfall) answers `degraded` at once and the gate run proceeds without a lease.
+  // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of
+  // it release, never refused for having waited. #598 (observed 2026-09-25T21:51Z, the third
+  // near-crash): a tight memory no longer answers `degraded` so the gate would start without a
+  // lease — the start HOLDS in the admission queue, with no deadline, until the measured memory
+  // can fund one more suite, and the gates already running finish.
   lease = await acquireSuiteVerifyLease({
     authority, holder, log: () => {},
     onQueued: (row) => {
@@ -500,9 +501,6 @@ export async function runSupervisedGateRun({
     },
   });
   clearInterval(poll);
-  if (lease.degraded) {
-    degraded = Object.freeze({ reason: lease.degraded.dimension ?? 'memory', shortfall: lease.degraded });
-  }
   try {
     const digest = lease === null || lease.token === null ? null : suiteLeaseTokenDigest(lease.token);
     const layout = gateRunnerLayout(file);
@@ -6285,33 +6283,6 @@ export class Coordinator {
     return runtimeObservation._mintProviderFaultDeath(this, this._recorder, handle, task, { preservation, retention });
   }
 
-  /**
-   * #316 (a): the deployment's provider-failure fold. A provider stall is a fact about the ROUTE,
-   * not about the seat that happened to hit it: when N participants die on one exact route with
-   * the same typed fault class inside ONE window, that is ONE episode, and the operator needs one
-   * row naming every participant it took — never N rows a reader has to correlate by hand.
-   *
-   * The window bound is the deployment's OWN declared provider-failure bound — the resolved
-   * watchdog budget that already judges every silent turn (`watchdogConfig()`, and the `elapsedMs`
-   * every `health.stall_suspected` row stamps). It is read here, never re-declared: a deployment
-   * that narrows its stall budget narrows this fold with it.
-   *
-   * The row is deployment-level (`runId: null`), because the fact is about the route: every run's
-   * attention page reads it, and the durable `provider.degraded` row beside it is what the
-   * deployment's route table derives its degraded state from (so a recruit on the route can be
-   * refused before any effect). The row's `next` pauses recruits on the route until a probe
-   * succeeds — the readiness tier the route's own admission already consults.
-   */
-    _foldProviderDegrade(handle, task, death) {
-    return runtimeObservation._foldProviderDegrade(this, this._recorder, handle, task, death);
-  }
-
-  /** The durable half of the #316 fold: the deployment's route table derives its degraded state
-   * from THIS row (never from the coordinator's memory), so the route an operator reads degraded
-   * and the route a recruit is refused on are one fact. */
-    _recordProviderDegrade(handle, task, row) {
-    return runtimeObservation._recordProviderDegrade(this, this._recorder, handle, task, row);
-  }
   /**
    * #265 item 2: killing a member settles every native child it had been observed to run. The
    * kill reaps the OMP process group, so the session that would have carried a child's terminal

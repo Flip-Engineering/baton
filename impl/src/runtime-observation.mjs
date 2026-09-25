@@ -3706,77 +3706,7 @@ export function _mintProviderFaultDeath(coordinator, recorder, handle, task, { p
       snapshotSha: checkpoint?.sha ?? null,
       retainedWorktree,
     }));
-    // #316 (a): the death is ALSO evidence about the ROUTE. The fold below turns a run of them
-    // into one deployment-level row — the same fault class, one route, one window — which is what
-    // the root acts on (pause recruits on that route) instead of N anonymous dead runtimes.
-    coordinator._foldProviderDegrade(handle, task, reason);
     return Object.freeze({ ...reason });
-  }
-
-export function _foldProviderDegrade(coordinator, recorder, handle, task, death) {
-    const route = death?.route ?? null;
-    if (!route || typeof route.harness !== 'string' || typeof route.model !== 'string'
-      || typeof route.effort !== 'string') return null;
-    const faultClass = death.fault?.code ?? null;
-    if (faultClass === null) return null;
-    const scope = routeQuotaScope(route);
-    if (scope === null) return null;
-    const at = Number.isFinite(death.mintedAt) ? death.mintedAt : coordinator._now();
-    const windowMs = coordinator._watchdog.stallMs;
-    const key = scope;
-    const open = coordinator._providerDegrades.get(key) ?? null;
-    const same = open !== null && open.faultClass === faultClass && (at - open.to) <= windowMs;
-    const next = Object.freeze({ action: 'pause_recruits_until_probe', route });
-    if (same && Array.isArray(open.row.participants)) {
-      if (!open.row.participants.includes(handle.id)) open.row.participants.push(handle.id);
-      open.row.count = open.row.participants.length;
-      open.to = at;
-      open.row.window = Object.freeze({
-        from: open.row.window.from, to: new Date(at).toISOString(),
-      });
-      if (death.fault?.resetAt && death.fault.resetAt !== open.row.resetAt) open.row.resetAt = death.fault.resetAt;
-      if (death.fault?.resetAtText && death.fault.resetAtText !== open.row.resetAtText) {
-        open.row.resetAtText = death.fault.resetAtText;
-      }
-      return open.row;
-    }
-    const row = {
-      seq: ++coordinator._attentionCursor,
-      kind: 'provider_degraded',
-      scope,
-      runId: null,
-      mintEpoch: ++coordinator._attentionMintEpoch,
-      mintedAt: at,
-      route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
-      faultClass,
-      participants: [handle.id],
-      count: 1,
-      window: Object.freeze({ from: new Date(at).toISOString(), to: new Date(at).toISOString() }),
-      next,
-      resetAt: death.fault?.resetAt ?? null,
-      resetAtText: death.fault?.resetAtText ?? null,
-    };
-    coordinator._providerDegrades.set(key, { faultClass, from: at, to: at, row });
-    coordinator._attentionReasons.push(row);
-    coordinator._recordProviderDegrade(handle, task, row);
-    return row;
-  }
-
-export function _recordProviderDegrade(coordinator, recorder, handle, task, row) {
-    try {
-      recorder.log.append({
-        worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-        kind: 'provider.degraded', actor: 'policy', ...coordinator._routeAttribution(handle, task),
-        harnessResolved: row.route.harness, modelResolved: row.route.model,
-        effortResolved: row.route.effort,
-        payload: {
-          scope: row.scope, route: row.route, faultClass: row.faultClass,
-          participants: Object.freeze([...row.participants]),
-          window: row.window, count: row.count, next: row.next,
-          resetAt: row.resetAt ?? null, resetAtText: row.resetAtText ?? null,
-        },
-      });
-    } catch { /* the fold itself is already authoritative in memory; the ledger read is additive */ }
   }
 
 export function _settleObservedNativeChildren(coordinator, recorder, handle, stopEvent = null) {
