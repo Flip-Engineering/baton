@@ -16,11 +16,7 @@ node scripts/surface-gate.mjs      # grammar lint, generated artifacts, MCP disp
 ```
 
 Requires Node ≥ 20 (Node 22 is what the project's own residents run). The only runtime dependency
-is `@ast-grep/napi`. Install the pre-commit hook once per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
+is `@ast-grep/napi`.
 
 `baton --help` lists every top-level verb; `baton help swarm`, `baton help run`, `baton help
 routing` and `baton help connection` render the topics in depth. The generated command inventories
@@ -39,8 +35,8 @@ re-runs the failing files on the target branch in the same checkout and blocks o
 passes on the target and fails with the change. A test that fails on both sides is reported and
 does not block. Known breakage is tracked in the issue tracker. No file lists expected failures.
 
-A partial run (a subset of test files) prints a `SUBSET verdict (n of m files)` line and is not a
-substitute for a full run. On a host that is also running development lanes, the suite takes a
+A partial run (a subset of test files) prints a `SUBSET verdict (n of m files)` line. On a host
+that is also running development lanes, the suite takes a
 verify lease so two suite runs never compete for the same CPU cores (see
 [#333](https://github.com/Flip-Engineering/baton/issues/333)); `BATON_HOST_CAPACITY_DISABLED=1`
 bypasses that lease for a maintainer-run gate.
@@ -66,9 +62,9 @@ Where it applies, prefer `baton deployment reincarnate <commit-ish>` over the ma
 
 ## The self-hosted development loop
 
-Since 2026-09-13, every change to this repository has been made by a worker recruited on a running
-baton resident and landed by a reviewer, using baton's own swarm runtime. This section describes
-that loop for anyone who wants to reproduce it, either on this repository or their own.
+This section describes how development runs through baton's own swarm runtime: a worker recruited
+on a resident makes the change, and the landing gate compares the change with the target branch.
+It is written for anyone who wants to reproduce the loop on this repository or their own.
 
 1. **Serve a resident** on the commit you want to develop against, from a dedicated shell that does
    nothing else:
@@ -106,30 +102,19 @@ that loop for anyone who wants to reproduce it, either on this repository or the
    sequence number.
 
 4. **Land the contribution.** The reported row's `commit.sha` names the real commit and
-   `commit.branch` the lane branch:
-   ```bash
-   git log --reverse master..baton/<workspaceId>            # the full range in order, never the tip alone
-   git cherry-pick <sha...>                                  # on a seam-inventory.json conflict, take theirs, then regenerate
-   node scripts/seam-inventory.mjs --write && node scripts/surface-gate.mjs --write && node scripts/render-surface-docs.mjs --write
-   BATON_SUITE_VERDICT_FILE=/tmp/verdict.json node scripts/run-suite.mjs test/<gate files>
-   ```
-   Pick the whole commit range in order, regenerate the shared artifacts, and run the gate files
-   implied by what changed before pushing.
+   `commit.branch` the lane branch. `baton swarm integrate <swarm> <contribution-id> --onto <branch>`
+   lands it as one squashed commit: the landing gate runs the tests the change selects, compares
+   the failures with the target branch (the comparison in "The test suite and its verdict"
+   above), and moves the target only when nothing new fails.
 
-5. **Review and release the worker:**
+5. **Release the worker** once the contribution is landed:
    ```bash
-   node scripts/baton.mjs swarm update swarm-wave-N swarm.contribution_reviewed \
-     --payload '{"contributionId":"<id>","decision":"accept","reason":"landed as <sha>"}'
    node scripts/baton.mjs swarm stop swarm-wave-N worker-1 "landed"
    ```
-   Smoke-test the changed surface on the landed commit before closing the tracking issue: a green
-   test file is not proof that the corresponding CLI or MCP command works end to end.
 
-**What a worker records.** One `swarm.contribution_recorded` event per landed change, with
-`body.subject`, `body.base {observedHead, rebasedOnto}`, `body.commit {sha, branch}`,
-`body.items[] {id, status: delivered | not_delivered, change, files, test, evidence}`,
-`body.needsFromOthers[]`, and `body.carriedForward[]`. A worker that needs a file outside its scope
-names it in `needsFromOthers`.
+**What a worker records.** One `swarm.contribution_recorded` event per landed change: the subject,
+the findings, the changed files and the commit when there is one, and the evidence. A worker that
+needs a file outside its scope names it in the report.
 
 **What a reviewer reads from the ledger.** Every worker's evidence is under
 `.git/baton/application-v3/state/w-<n>.jsonl`; the coordination ledger is

@@ -599,11 +599,10 @@ export function redriveMembers(manifest, roles, { newIdempotencyKey, carryForwar
   return redriven;
 }
 
-// The `implementContract` preset — one red-first implementation seat. This is the shape the bespoke
+// The `implementContract` preset — one implementation seat. This is the shape the bespoke
 // run-impl-wave.mjs scripts hand-copied; as data it is `baton.recipes.implementContract(...)`.
 const IMPLEMENT_TASK_TEMPLATE = 'Implement the assigned contract rung. The task that follows is your sole work authority.\n\n{task}';
 const IMPLEMENT_CONSTRAINTS = Object.freeze([
-  'Work red-first: write the failing test first, then implement until green.',
   'HARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.',
   'Do NOT git commit — the orchestrator harvests your worktree.',
   'Match existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.',

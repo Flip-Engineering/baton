@@ -20,9 +20,9 @@ PM is a **typed knowledge graph for long-horizon research**: nodes are Phases, E
 
 Three of its design choices are genuinely good and portable:
 
-1. **Enforced causal backbone.** A Decision *must* trace to upstream evidence (`why` is required, min length; `finding_ids`/`experiment_id` create `Informed` edges). The audit flags orphan findings and decisions-without-evidence. → Baton lesson: **every control action and every accepted result should carry a provenance edge to the event(s) that justified it.** "Worker w3's PR was merged because its verification command exited 0 (event #4471) and reviewer w5 approved (event #4520)" is the audit trail that makes a fleet trustworthy.
-2. **Temporal-coherence integrity.** The audit catches a Decision "informed by" a Finding created *after* it — a real logical-integrity invariant, not a lint nicety (execution-engine scored 0/100 on this axis with 20 violations, surfacing that its provenance was back-filled). → Baton lesson: provenance edges must respect the event clock; a steering action can't cite an event that hadn't happened. Cheap to enforce with the ledger's monotonic `seq`, and it catches fabricated/hallucinated justifications automatically.
-3. **Health score with metric breakdown, not pass/fail.** Edge density, hypothesis coverage, literature utilization, temporal coherence each scored 0–100 with a bar chart. → Baton lesson: a fleet's *run* deserves the same — a post-run scorecard (coverage of the brief, verification-backed vs asserted completions, unaddressed approvals, budget efficiency) beats a green check.
+1. **Enforced causal backbone.** A Decision *must* trace to upstream evidence (`why` is required, min length; `finding_ids`/`experiment_id` create `Informed` edges). The audit flags orphan findings and decisions-without-evidence. → Baton lesson: the ledger is the provenance record — an accepted result's rows name the verification run and the approval that justified it ("merged because its verification command exited 0, event #4471, and reviewer w5 approved, event #4520").
+2. **Temporal-coherence integrity.** The audit catches a Decision "informed by" a Finding created *after* it — a real logical-integrity invariant, not a lint nicety (execution-engine scored 0/100 on this axis with 20 violations, surfacing that its provenance was back-filled). → Baton lesson: a citation respects the event clock — an action cites events that already happened, which the ledger's monotonic `seq` states directly.
+3. **Health score with metric breakdown, not pass/fail.** Edge density, hypothesis coverage, literature utilization, temporal coherence each scored 0–100 with a bar chart. → Baton lesson: the run's own records already carry the breakdown — the verdict line names each failure, and the receipts and budget rows state what the run produced and spent.
 
 Three places PM is the wrong shape for baton, which sharpen the requirements:
 
@@ -140,7 +140,7 @@ a slow epistemic graph**, with Git-backed artifacts as the third leg.
 
 | System | Layer it nails | Concurrency story | Steal | Reject |
 |---|---|---|---|---|
-| project-manager (KG) | epistemic | single-curator | causal backbone, temporal integrity, health score | topic-retrieval as worker context; hand-curation cadence |
+| project-manager (KG) | epistemic | single-curator | causal backbone, temporal integrity | topic-retrieval as worker context; hand-curation cadence |
 | Anthropic agent teams | coordinative | file-lock task claims, mailbox | ready-work claim via lock; mailbox as `input_required` transport | single-vendor; one-team-per-session; no nested teams |
 | OpenAI codex plugin ledger | operational (jobs) | session-scoped job records | job record schema, status-poll (`--wait`), session scoping | poll-only; single-harness |
 | claude-squad | (none — git + tmux) | git worktrees | worktree-per-worker isolation; git-as-result-channel | no structured memory at all; scrape-to-observe |

@@ -1042,8 +1042,13 @@ test('renderBrief: the ONE renderer gives every dialect the same authority, tool
   // never saw before this renderer was unified (A-F1).
   const evidenceOnly = makeFullBrief({ effects: [], requiredEffects: [] });
   for (const dialect of dialects) {
-    assert.match(renderBrief(evidenceOnly, dialect),
+    const evidenceRendered = renderBrief(evidenceOnly, dialect);
+    assert.match(evidenceRendered,
       /Repository mutation is not authorized\. Inspect\/read and return evidence only; do not create, modify, or delete files\./u, dialect);
+    // A read-only brief carries no pinned-verification instruction: the hub runs no command for
+    // a capture that changed no path (#334, #598 D01).
+    assert.equal(evidenceRendered.includes('## Verification'), false, dialect);
+    assert.doesNotMatch(evidenceRendered, /The hub re-runs this exact command/u, dialect);
   }
 });
 

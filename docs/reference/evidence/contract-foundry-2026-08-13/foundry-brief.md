@@ -1,4 +1,6 @@
 # CONTRACT FOUNDRY — shared frame (multi-member workflow dogfood, 2026-08-13)
+> Archived historical record (2026-08-13 dispatch). This brief documents how that session was
+> run; it is not a template, and its process steps are not current policy.
 
 Every member reads this first. This wave drafts FOUR implementation contracts in parallel —
 one per row — with a heavyweight coordinator cross-checking. It is also the campaign's second

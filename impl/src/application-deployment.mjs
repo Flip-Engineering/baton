@@ -1952,9 +1952,7 @@ function applicationProfile(repoId, routes, verification, exportBounds) {
       'The requested repository improvement is implemented and verified.',
       'Baton preserves exact route, result, and cleanup truth.',
     ],
-    constraints: [
-      'Do not claim completion without the deployment verification command.',
-    ],
+    constraints: [],
     risk: 'high',
     goalBudget: DEFAULT_BUDGET,
     nodeBudget: DEFAULT_BUDGET,

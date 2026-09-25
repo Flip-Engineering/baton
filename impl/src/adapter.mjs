@@ -578,10 +578,13 @@ export function renderBrief(brief, dialect) {
     'Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches.',
     'Report an environmental blocker instead of repairing the host.',
   ].join(' '));
+  // A read-only brief (#334) carries the acceptance text and no pinned-verification instruction:
+  // the hub runs no command for a seat whose capture changed no path.
+  const readOnlyBrief = Array.isArray(brief.effects) && !brief.effects.includes('repository_edit');
   if (Array.isArray(brief.requiredEffects) && brief.requiredEffects.includes('repository_edit')) {
     lines.push('## Repository mutation authority');
     lines.push('The approved Plan requires an in-scope repository edit for acceptance. Objective prose does not weaken this requirement.');
-  } else if (Array.isArray(brief.effects) && !brief.effects.includes('repository_edit')) {
+  } else if (readOnlyBrief) {
     lines.push('## Repository mutation authority');
     lines.push('Repository mutation is not authorized. Inspect/read and return evidence only; do not create, modify, or delete files.');
   }
@@ -589,9 +592,9 @@ export function renderBrief(brief, dialect) {
   // the worker never trades prose for a diff. The condition mirrors the trust gate's own
   // read-only signal (coordinator.mjs: effects without repository_edit), and the receipt
   // names the exact typed verdict the gate records.
-  if (Array.isArray(brief.effects) && !brief.effects.includes('repository_edit')) {
+  if (readOnlyBrief) {
     lines.push('## Acceptance');
-    lines.push('Acceptance checks the captured diff, not prose: when the capture changed no path the hub runs no pinned verification and records {outcome: passed, diagnosticCode: verification_not_required, reason: read_only_no_change}, and the textual result completes the run; when the capture changed paths the scope gates apply and the hub re-runs the pinned verification below.');
+    lines.push('Acceptance checks the captured diff, not prose: when the capture changed no path the hub runs no pinned verification and records {outcome: passed, diagnosticCode: verification_not_required, reason: read_only_no_change}, and the textual result completes the run; when the capture changed paths the scope gates apply and the hub re-runs the pinned verification command.');
   }
   if (Array.isArray(brief.constraints) && brief.constraints.length > 0) {
     lines.push(...presentation.constraints(brief));
@@ -600,14 +603,16 @@ export function renderBrief(brief, dialect) {
   lines.push(...presentation.definitionOfDone(brief));
   lines.push(...presentation.worktree(brief));
   lines.push(...renderBudgetSection(brief.budget));
-  lines.push('## Verification (preserve this execution contract; also satisfy the assigned work)');
-  lines.push(...presentation.verificationLead(brief));
-  const contract = renderVerificationExecution(brief.verification);
-  if (contract) {
-    lines.push(contract);
-    // A-N4: the trust boundary, stated in every dialect. The pinned check is never trusted from the
-    // worker — the hub re-runs it, and the worker's own claim about it is not evidence.
-    lines.push('The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence — make the command itself pass.');
+  if (!readOnlyBrief) {
+    lines.push('## Verification (preserve this execution contract; also satisfy the assigned work)');
+    lines.push(...presentation.verificationLead(brief));
+    const contract = renderVerificationExecution(brief.verification);
+    if (contract) {
+      lines.push(contract);
+      // A-N4: the trust boundary, stated in every dialect. The pinned check is never trusted from the
+      // worker — the hub re-runs it, and the worker's own claim about it is not evidence.
+      lines.push('The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence — make the command itself pass.');
+    }
   }
   if (brief.outputFormat) {
     lines.push('## Output format');
