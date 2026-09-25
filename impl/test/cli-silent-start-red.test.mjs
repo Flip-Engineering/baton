@@ -13,11 +13,10 @@
  * clock, no host state, no mkdtemp fixture needed); no absolute line-window anchors (#166) —
  * ORDER/EXISTENCE/byte-string source assertions only; split-twice (recorded below).
  *
- * ROW INVENTORY (contract PT-1..PT-10):
+ * ROW INVENTORY (contract PT-1..PT-9; PT-10 left with the #582 render-surface-docs check removal):
  *   PIN rows (GREEN at HEAD):        PT-1 objective-first byte-identical · PT-3 never-a-guess ·
  *                                    PT-6 exit-code bucket 2 · PT-7 canonical aliases unchanged ·
- *                                    PT-8 parse-before-connection · PT-9 follow/steer keep refusing ·
- *                                    PT-10 conformance gate unchanged
+ *                                    PT-8 parse-before-connection · PT-9 follow/steer keep refusing
  *   Capability rows (RED at HEAD):   PT-2a pinned transposition typos · PT-2b refused-position
  *                                    typos · PT-2c generated Damerau-1 sweep · PT-4 derivation
  *                                    symbol source-scan · PT-5 bare/unknown-sub member
@@ -51,7 +50,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseBatonCli } from '../src/index.mjs';
-import { checkSurfaceDocs } from '../scripts/render-surface-docs.mjs';
+import { CLI_CONNECTION_CAUSES, cliConnectionCauseRow } from '../src/application-cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..');
@@ -374,30 +373,22 @@ test('PT-4 capability [derivation-symbol-source-scan] — the recognition set is
     failures.push('stage[guard-replaces-naked-fallthrough]: the naked run-branch fall-through into parseStart is still present — the typo-guard must replace it');
   }
 
-  // (e) no new cli_* code is minted (the F-8 taxonomy is unchanged). The allowed set is the F-8
-  // taxonomy UNION the committed CLI-local tooling-code ledger — the same record the conformance
-  // suite's S2 check reads (scripts/cli-local-tooling-codes.json) — rather than a retyped
-  // snapshot: the snapshot had drifted from the ledger (cli_continuation_exhausted, #227, is
-  // ledgered but was absent here, making this leg red for a pre-existing code instead of for a
-  // newly minted one).
-  const taxonomyCodes = ['cli_action_inputs_invalid', 'cli_command_failed', 'cli_command_host_local',
-    'cli_command_pending', 'cli_command_unavailable', 'cli_config_invalid', 'cli_connection_incompatible',
-    'cli_export_archive_digest_mismatch', 'cli_export_archive_invalid', 'cli_export_delivery_invalid',
-    'cli_export_destination_exists', 'cli_export_destination_invalid', 'cli_export_download_failed',
-    'cli_export_extract_failed', 'cli_invalid', 'cli_protocol_failed', 'cli_setup_conflict',
-    'cli_setup_failed', 'cli_setup_remote_invalid', 'cli_setup_remote_refused',
-    'cli_setup_remote_unavailable', 'cli_transport_failed'];
-  const toolingCodes = JSON.parse(
-    readFileSync(join(REPO_ROOT, 'impl', 'scripts', 'cli-local-tooling-codes.json'), 'utf8'),
-  ).codes;
-  const headCliCodes = [...new Set([...taxonomyCodes, ...toolingCodes])];
-  const actualCodes = [...new Set([...cli.matchAll(/'cli_([a-z_]+)'/gu)].map((m) => m[1]))];
-  // prefix-corrected (blue-team finding 1): actualCodes holds BARE codes, headCliCodes holds the
-  // `cli_`-prefixed forms — the old bare-vs-prefixed `includes` comparison was red at HEAD for the
-  // wrong reason and could never go green under any correct implementation.
-  const minted = actualCodes.filter((c) => !headCliCodes.some((hc) => hc === `cli_${c}`)).sort();
+  // (e) no new cli_* code is minted (issue #582: the CLI-local tooling-code ledger is gone and the
+  // vocabulary is DERIVED from the CLI's own tables). The actionable half is the connection-cause
+  // table application-cli.mjs exports; the code-only half is every other `cli_` code the CLI source
+  // COMPOSES — a wire-safe `cliError` refusal, the `code` field of a structured result row, or a
+  // row of that cause table. The typo-guard must reuse a composed code rather than mint a bare
+  // literal, and this leg fails on any `cli_` string the composition does not carry.
+  const composedCodes = new Set(
+    CLI_CONNECTION_CAUSES.map((cause) => cliConnectionCauseRow(cause).code),
+  );
+  for (const match of cli.matchAll(/cliError\([^;]{0,400}?['"](cli_[a-z0-9_]+)['"]/gsu)) composedCodes.add(match[1]);
+  for (const match of cli.matchAll(/code:\s*['"](cli_[a-z0-9_]+)['"]/gsu)) composedCodes.add(match[1]);
+  for (const match of cli.matchAll(/cliCauseRow\(['"](cli_[a-z0-9_]+)['"]/gsu)) composedCodes.add(match[1]);
+  const minted = [...new Set([...cli.matchAll(/['"](cli_[a-z0-9_]+)['"]/gu)].map((match) => match[1]))]
+    .filter((code) => !composedCodes.has(code)).sort();
   if (minted.length > 0) {
-    failures.push(`stage[new-cli-code-minted]: ${minted.join(',')} — the refusal must reuse cli_command_unavailable, no new code`);
+    failures.push(`stage[uncomposed-cli-code]: ${minted.join(',')} — the refusal must reuse a composed CLI code (cli_command_unavailable), no new bare literal`);
   }
 
   assert.deepEqual(failures, [], `capability row PT-4 — ${failures.length} source-scan failure(s): ${failures.join(' | ')}`);
@@ -493,10 +484,4 @@ test('PT-9 pin [refused-positions-unchanged] — run follow and run steer keep r
       && /steer was deleted at the M5 alias sunset; use run send/u.test(e?.message ?? ''),
     'stage[steer-refuses] run steer <RUN_ID> must keep the existing M5-alias-sunset refusal'
   );
-});
-
-// ── PT-10 — conformance unchanged ──
-
-test('PT-10 pin [surface-docs-conformance] — the generated CLI inventory conformance gate is unchanged', () => {
-  assert.deepEqual(checkSurfaceDocs(), [], 'stage[surface-docs-conformance] checkSurfaceDocs() must return [] — a parse-only change adds/removes no served verb');
 });

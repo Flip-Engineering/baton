@@ -38,8 +38,8 @@
 //                    decision_text_exceeded with the coaching triple in detail on the replay path
 //   C1  F4 × CLI   — cli_transport_failed message names the transport class + a next action
 //   C2  F8 × CLI   — baton run shwo → cli_command_unavailable + closed verb set (no silent run.start)
-//   C3  F9 × CLI   — the 20 CLI-local tooling codes (§3) are ledgered deliberately code-only in
-//                    surface-divergence-ledger.json
+//   C3  F9 × CLI   — the CLI's local tooling codes are code-only by construction: the vocabulary
+//                    the CLI source raises minus the connection-cause rows it composes
 //   X1  sanitization negative — a triple-absent refusal (code-only, no field, no next action)
 //                    fails the assertion helper
 //   X2  sanitization negative — a coaching refusal quoting a value/secret fails assertNoBodyContent
@@ -47,7 +47,7 @@
 //                    own field value passes the sanitization negative; a lane-authored refusal
 //                    quoting a secret- or third-party-shaped value still fails
 //   S1  static — node impl/scripts/surface-conformance.mjs prints `surface-conformance: ok` (exit 0)
-//   S2  static — a novel unledgered cli_* tooling code is a red conformance finding (closure)
+//   S2  static — the CLI refusal vocabulary is closed over the CLI implementation (closure)
 //   S3  static — the scanner/assertion apparatus is shape-only: it never quotes body content
 //
 // INVENTED SURFACES — stub `application.command` on the real transport surfaces. The web and MCP
@@ -86,6 +86,7 @@ import {
   APPLICATION_COMMAND_DEFINITIONS, BatonWebClient, CoordinationStore,
   McpFleetServer, WebNorthbound, parseBatonCli,
 } from '../src/index.mjs';
+import { CLI_CONNECTION_CAUSES, cliConnectionCauseRow } from '../src/application-cli.mjs';
 
 // -------------------------------------------------------------------------------------------
 // Fixed fixtures (hermetic — injected clocks everywhere; no wall-clock control anywhere).
@@ -561,23 +562,38 @@ test('C2 (F8 × CLI): baton run shwo -> cli_command_unavailable + the closed ver
   );
 });
 
-test('C3 (F9 × CLI, B1/B5): the 21 CLI-local tooling codes are ledgered deliberately code-only in cli-local-tooling-codes.json', () => {
-  const codesUrl = new URL('../scripts/cli-local-tooling-codes.json', import.meta.url);
-  const codes = JSON.parse(readFileSync(codesUrl, 'utf8'));
-  for (const code of CLI_LOCAL_TOOLING_CODES) {
-    assert.ok(codes.codes.includes(code), `C3: ${code} must be ledgered as deliberately code-only (S2 escape hatch)`);
+// The CLI's refusal vocabulary is DERIVED (issue #582: the code ledger is gone). The actionable
+// half is the connection-cause table application-cli.mjs exports — every row carrying the code, the
+// field it judged, the rule and the remedy. The code-only half is every other `cli_` code the CLI
+// implementation raises. Both are computed from the source that composes them, so a code is in the
+// derivation the moment it is minted and neither half can drift from the other.
+const CLI_ACTIONABLE_CODES = new Set(
+  CLI_CONNECTION_CAUSES.map((cause) => cliConnectionCauseRow(cause).code),
+);
+function cliRaisedCodes(source) {
+  return [...new Set([...source.matchAll(/['"](cli_[a-z0-9_]+)['"]/gu)].map((match) => match[1]))].sort();
+}
+function cliCodeOnlyCodes(source) {
+  return cliRaisedCodes(source).filter((code) => !CLI_ACTIONABLE_CODES.has(code));
+}
+
+test('C3 (F9 × CLI, B1/B5): the CLI-local tooling codes are the code-only half of the CLI vocabulary the connection-cause table leaves', () => {
+  const cliSource = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'utf8');
+  const raised = cliRaisedCodes(cliSource);
+  const codeOnly = cliCodeOnlyCodes(cliSource);
+  assert.ok(codeOnly.length > 0, 'C3: the CLI composes a local tooling vocabulary');
+  for (const code of codeOnly) {
+    assert.match(code, /^cli_[a-z0-9_]+$/u, `C3: ${code} is a typed CLI code`);
+    assert.equal(CLI_ACTIONABLE_CODES.has(code), false,
+      `C3: ${code} carries no connection-cause row — it is code-only by construction`);
+  }
+  // The actionable half is the table the refusals compose with: its codes are all raised by the
+  // CLI source, and none of them falls into the code-only half — the halves are disjoint.
+  for (const code of CLI_ACTIONABLE_CODES) {
+    assert.ok(raised.includes(code), `C3: the cause code ${code} is raised by the CLI source`);
+    assert.equal(codeOnly.includes(code), false, `C3: ${code} is a transport cause, never code-only`);
   }
 });
-
-const CLI_LOCAL_TOOLING_CODES = Object.freeze([
-  'cli_invalid', 'cli_config_invalid', 'cli_setup_remote_unavailable', 'cli_setup_remote_invalid',
-  'cli_setup_remote_refused', 'cli_setup_conflict', 'cli_setup_failed',
-  'cli_export_archive_invalid', 'cli_export_archive_digest_mismatch', 'cli_export_destination_exists',
-  'cli_export_destination_invalid', 'cli_export_extract_failed', 'cli_export_delivery_invalid',
-  'cli_export_download_failed', 'cli_command_host_local', 'cli_command_pending', 'cli_command_failed',
-  'cli_protocol_failed', 'cli_action_inputs_invalid', 'cli_connection_incompatible',
-  'cli_continuation_exhausted',
-]);
 
 // -------------------------------------------------------------------------------------------
 // X1-X3 — sanitization negatives / carve-out (assertion-apparatus pins)
@@ -628,14 +644,22 @@ test('S1 (static): node impl/scripts/surface-conformance.mjs prints `surface-con
   assert.match(result, /surface-conformance:\s*ok/u, 'S1: the conformance main prints its ok line');
 });
 
-test('S2 (static closure): a novel unledgered cli_* tooling code is a red conformance finding — every cli_* code in the CLI source is ledgered or in-scope', () => {
+test('S2 (static closure): the CLI refusal vocabulary is closed over the CLI implementation — cause rows and code-only tooling codes, and nothing the entry raises beyond them', () => {
   const cliSource = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'utf8');
-  const codes = JSON.parse(readFileSync(new URL('../scripts/cli-local-tooling-codes.json', import.meta.url), 'utf8'));
-  const inScope = new Set(['cli_command_unavailable', 'cli_transport_failed']);
-  const found = new Set([...cliSource.matchAll(/['"](cli_[a-z0-9_]+)['"]/gu)].map((match) => match[1]));
-  for (const code of found) {
-    assert.ok(inScope.has(code) || codes.codes.includes(code),
-      `S2: ${code} is thrown in the CLI source but is neither in-scope nor ledgered — a red conformance finding (S2)`);
+  const raised = cliRaisedCodes(cliSource);
+  // The two derived halves partition the vocabulary the CLI source raises: every actionable cause
+  // code and every code-only tooling code, with no code left outside the derivation.
+  assert.deepEqual(
+    [...CLI_ACTIONABLE_CODES, ...cliCodeOnlyCodes(cliSource)].sort(),
+    raised,
+    'S2: the derived halves are exactly the cli_* codes the CLI implementation raises',
+  );
+  // The operator's entry point is closed over that vocabulary: a code minted at the entry, or one
+  // the implementation no longer raises, is a red finding here — the closure the ledger used to pin.
+  const entry = readFileSync(new URL('../scripts/baton.mjs', import.meta.url), 'utf8');
+  for (const code of cliRaisedCodes(entry)) {
+    assert.ok(raised.includes(code),
+      `S2: the CLI entry raises ${code}, which the CLI implementation does not raise — a red conformance finding`);
   }
 });
 

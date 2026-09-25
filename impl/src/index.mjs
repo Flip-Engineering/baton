@@ -14,6 +14,7 @@ import { FenceTable } from './fence.mjs';
 import { Coordinator } from './coordinator.mjs';
 export { WorkerPolicySelectionError } from './coordinator.mjs';
 import * as worktreeMod from './worktree.mjs';
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime, withVerificationLane } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
@@ -692,7 +693,7 @@ function worktreeManager(repoRoot, opts = {}) {
         try { physicalOwnerId = worktreeMod.normalizePhysicalOwnerId(context.ownerTaskId, 'physical workspace owner'); }
         catch { return false; }
         const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
-        if (/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)
+        if (isPhysicalWorkspaceId(physicalOwnerId)
           && (!receipt || receipt.logicalTaskId !== taskId || receipt.state !== 'ready'
             || context.ownerReceiptDigest !== receipt.receiptDigest
             || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
@@ -723,7 +724,7 @@ function worktreeManager(repoRoot, opts = {}) {
           expectedBranch: captureOpts.expectedBranch,
           sparseCheckoutIdentity: captureOpts.workerSparseCheckoutIdentity,
         });
-        if (/^ws-[a-f0-9]{32}$/u.test(ownerId)) {
+        if (isPhysicalWorkspaceId(ownerId)) {
           const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, ownerId);
           if (!receipt || receipt.state !== 'ready'
             || receipt.receiptDigest !== captureOpts.ownerReceiptDigest
@@ -1045,7 +1046,7 @@ function worktreeManager(repoRoot, opts = {}) {
         if (worktree !== managedRoot && !worktree.startsWith(`${managedRoot}${sep}`)) return { ok: false, reason: 'session worktree is outside Baton ownership' };
         if (context.ownerTaskId && basename(worktree) !== context.ownerTaskId) return { ok: false, reason: 'session worktree owner mismatch' };
         let physicalOwnerReceipt = null;
-        if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+        if (isPhysicalWorkspaceId(context.ownerTaskId)) {
           physicalOwnerReceipt = worktreeMod.physicalWorkspaceOwnerReceipt(
             repoRoot, context.ownerTaskId,
           );
@@ -1100,7 +1101,7 @@ function worktreeManager(repoRoot, opts = {}) {
     },
     reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = []) {
       if (!Array.isArray(knownPhysicalOwnerIds)
-        || knownPhysicalOwnerIds.some((id) => !/^ws-[a-f0-9]{32}$/u.test(id))) {
+        || knownPhysicalOwnerIds.some((id) => !isPhysicalWorkspaceId(id))) {
         throw new TypeError('known physical workspace owners are invalid');
       }
       const expectedEntries = expectedActiveOwners.map((entry) => (

@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-
+import { HOST_CLI_VERBS } from './application-cli.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   applicationOperationAliasMap,
@@ -29,10 +28,22 @@ export const UNIFIED_SURFACE_CATEGORIES = Object.freeze([
   'notifications',
 ]);
 
-const nativeManifest = JSON.parse(readFileSync(
-  new URL('../scripts/native-surface-capabilities.json', import.meta.url),
-  'utf8',
-));
+// Issue #582: the native surface capabilities are DERIVED from the authorities that own them — the
+// CLI's own host-verb table and the registry rows whose CLI spellings name those verbs — never read
+// from a checked-in census. A registry row whose CLI spelling names a host verb describes that
+// host-local capability: the verb supplies the CLI spelling, the row supplies the key it serves.
+const hostVerbKey = (token) => APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+  .filter((operation) => operation.surfaces.includes('cli'))
+  .find((operation) => [operation.names?.cli, ...(operation.aliases ?? [])
+    .filter((alias) => alias.surface === 'cli').map((alias) => alias.name)]
+    .some((spelling) => typeof spelling === 'string' && spelling.split(' ').slice(1).includes(token)))
+  ?.key ?? null;
+export const HOST_CLI_CAPABILITIES = Object.freeze(HOST_CLI_VERBS.map((row) => Object.freeze({
+  name: row.token,
+  canonicalKey: hostVerbKey(row.token),
+  owner: 'cli-host',
+  reason: row.summary,
+})));
 const operationAliases = applicationOperationAliasMap();
 const semanticByKey = new Map(
   APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => [row.key, row]),
@@ -47,8 +58,6 @@ const combinedMcpNameSet = new Set(combinedMcpNames);
 const dispatchMcpNames = new Set(mcpDispatchToolNames());
 const semanticKeys = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => row.key));
 const webCommandNames = new Set(webAdmittedCommandNames());
-const cliExceptionKeys = new Set((nativeManifest.registryCliExceptions ?? []).map((row) => row.key));
-const nativeOwnership = new Map((nativeManifest.mcpNative ?? []).map((row) => [row.name, row]));
 
 const freeze = (value) => {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -113,7 +122,11 @@ function applicationRow(row) {
   const mcpDeclared = row.surfaces.includes('mcp');
   const webDeclared = row.surfaces.includes('web');
   const embeddedDirect = row.surfaces.includes('embedded');
-  const cliDirect = cliDeclared && !cliExceptionKeys.has(row.key);
+  // Every CLI-declared registry operation resolves a live CLI spelling — the command transport the
+  // CLI's dispatch authority gates on, the run.do semantic-action verb, or the host verb that
+  // implements the capability in process (surface-resolution.mjs probes exactly this). Issue #582:
+  // the census that excepted one key from the declaration is gone; the declaration is the truth.
+  const cliDirect = cliDeclared;
   const mcpDirect = candidateNames(row, 'mcp').some((name) => combinedMcpNameSet.has(name));
   const webDirect = candidateNames(row, 'web').some((name) => webCommandNames.has(name));
   const cliAction = row.admission?.cli?.authorizedAction ?? null;
@@ -206,8 +219,6 @@ function nativeMode(name) {
 }
 
 function nativeOwner(name) {
-  const declared = nativeOwnership.get(name);
-  if (declared) return declared.owner;
   if (name.startsWith('fleet_')) return 'fleet-kernel';
   if (name.startsWith('baton_board_')) return 'board-kernel';
   if (name.startsWith('baton_package_')) return 'package-kernel';
@@ -219,11 +230,10 @@ function nativeOwner(name) {
 }
 
 function nativeMcpRow(name) {
-  const declared = nativeOwnership.get(name);
   const mode = nativeMode(name);
   const profile = applicationMcpNames.has(name) ? 'application'
     : advancedMcpNames.has(name) ? 'advanced' : 'combined';
-  const description = declared?.reason ?? `Existing ${profile} MCP tool ${name}`;
+  const description = `Existing ${profile} MCP tool ${name}`;
   const row = {
     key: name,
     mode,
@@ -265,6 +275,8 @@ function nativeMcpRow(name) {
   });
 }
 
+/** One CLI-native capability from HOST_CLI_CAPABILITIES: the verb the CLI serves for itself, its
+ * owner-local spelling, and the registry key the verb's own spelling names when it serves one. */
 function nativeCliRow(row) {
   const key = row.canonicalKey ?? `cli.${row.name.replaceAll(' ', '.')}`;
   const description = row.reason;
@@ -349,7 +361,7 @@ const NATIVE_MCP_ROWS = Object.freeze(combinedMcpNames
   // broader operation never erases the live command.
   .filter((name) => !semanticKeys.has(name) && !APPLICATION_OWNED_NAMES.has(name))
   .map(nativeMcpRow));
-const NATIVE_CLI_ROWS = Object.freeze((nativeManifest.cliNative ?? []).map(nativeCliRow));
+const NATIVE_CLI_ROWS = Object.freeze(HOST_CLI_CAPABILITIES.map(nativeCliRow));
 const ALL_ROWS = Object.freeze([...APPLICATION_ROWS, ...NATIVE_MCP_ROWS, ...NATIVE_CLI_ROWS, ...META_ROWS]);
 
 const NAME_PRIORITY = Object.freeze({ alias: 1, transport: 2, canonical: 3 });
@@ -503,7 +515,7 @@ export function assertUnifiedCapabilityCoverage() {
       liveMcpToolCount: combinedMcpNames.length,
       liveMcpDispatchCount: dispatchMcpNames.size,
       liveWebCommandCount: webCommandNames.size,
-      cliExceptionCount: cliExceptionKeys.size,
+      liveCliHostVerbCount: HOST_CLI_CAPABILITIES.length,
     },
     categories: categoryCoverage,
     totalCapabilities: ALL_ROWS.length,

@@ -2179,10 +2179,6 @@
       "reason": "#43"
     },
     {
-      "file": "test/surface-parity-191-red.test.mjs",
-      "reason": "#191"
-    },
-    {
       "file": "test/surfacing-matrix-red.test.mjs",
       "reason": "#289"
     },
