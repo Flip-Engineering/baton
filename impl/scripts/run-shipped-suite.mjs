@@ -1,22 +1,18 @@
 #!/usr/bin/env node
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Issue #580: the shipped suite is every test file, run as-is — no manifest, no expected-red
+// ledger, and no filename-suffix exclusion. What ships is what the gate runs.
 const here = dirname(fileURLToPath(import.meta.url));
 const implRoot = resolve(here, '..');
 const testRoot = resolve(implRoot, 'test');
-const manifest = JSON.parse(readFileSync(resolve(here, 'expected-red.json'), 'utf8'));
-const expectedRed = new Set(manifest.contracts
-  .filter((entry) => typeof entry?.file === 'string' && entry.file.length > 0)
-  .map((entry) => entry.file.replace(/^test\//u, '')));
 
 const tests = readdirSync(testRoot)
   .filter((name) => name.endsWith('.test.mjs'))
-  .filter((name) => !name.endsWith('-red.test.mjs'))
-  .filter((name) => !expectedRed.has(name))
   .sort()
   .map((name) => resolve(testRoot, name));
 

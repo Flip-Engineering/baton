@@ -7,7 +7,7 @@
     "parserLifecycleActions": 30,
     "mcpApplicationTools": 8,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 110,
+    "mcpCombinedTools": 111,
     "mcpDispatchTools": 111,
     "webBusCommands": 46,
     "applicationCommandDefinitions": 41
@@ -167,6 +167,7 @@
       "baton_run_adopt",
       "baton_run_answer",
       "baton_run_approve",
+      "baton_run_attention_watch",
       "baton_run_episode",
       "baton_run_evidence",
       "baton_run_export",

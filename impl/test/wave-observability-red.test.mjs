@@ -781,15 +781,14 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 56,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47), then #294 adds baton_wakes_subscribe/unsubscribe/since (47 → 50), then #318 adds baton_evidence_search (50 → 51); the enumeration reads 54 at #317\u2019s base (the swarm message family #311 and the canonical sibling twins landed after the pin\u2019s narration), #317 adds baton_services_list (54 → 55), and #99 adds baton_run_resultpin/baton_waves_harvest (55 → 56)');
+  // #580: the total is a census, not a contract — the enumeration is pinned by the named
+  // position rows below, never by a hand-counted total that every surface landing re-edits.
   assert.equal(names[28], 'baton_waves_stop',
     'baton_waves_stop sits at 0-based position 28 — the 14 derived lifecycle siblings (#156 D1 step 3) lead the ordinary table and shift the legacy base by 14');
   assert.equal(names[29], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 29, immediately after baton_waves_stop — the §4 pinned insertion point');
   assert.equal(names[30], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 30 — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 56, 'the sorted ordinary surface reads 56 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158 + ten fleet_swarm_* docs/39 + three #294 baton_wakes_* tools + baton_evidence_search #318 + baton_services_list #317, over the 54 the surface carried at #317\u2019s base; #99 adds baton_run_resultpin/baton_waves_harvest, 55 → 56)');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

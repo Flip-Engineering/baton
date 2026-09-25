@@ -377,10 +377,6 @@
       "reason": "#571"
     },
     {
-      "key": "test/mcp-reflex-surface-red.test.mjs :: Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table",
-      "reason": "#261"
-    },
-    {
       "key": "test/mcp-refusals-named.test.mjs :: a missing required argument is named by the refusal",
       "reason": "#566"
     },
