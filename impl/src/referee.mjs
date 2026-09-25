@@ -14,8 +14,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
-  NO_BASE_FILES, SUITE_COMPARISON, SUITE_VERDICT_ENV, compareSuiteVerdicts, confirmSuiteFailures, readVerdictDocument,
-  verdictFailures,
+  NO_BASE_FILES, SUITE_COMPARISON, SUITE_VERDICT_ENV, compareSuiteVerdicts, confirmSuiteFailures,
+  readVerdictDocument, unaccountedFiles, verdictFailures,
 } from './suite-comparison.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
@@ -405,6 +405,9 @@ async function comparisonVerdict(task, sandbox, opts, ctx) {
     ctx.spent('candidate');
     if (signal?.aborted || changeRun.aborted) throw ctx.abortError();
     const changeDocument = readVerdictDocument(changePath);
+    // Issue #597: a document that does not account for every file this check handed the run has
+    // not judged the selection, and nothing it reports can authorize a pass.
+    const changeUnaccounted = unaccountedFiles(changeDocument, files);
     const changeExit = changeRun.timedOut ? null : changeRun.exitCode;
     const failures = changeDocument === null ? [] : verdictFailures(changeDocument);
     let baseFiles = [];
@@ -439,6 +442,8 @@ async function comparisonVerdict(task, sandbox, opts, ctx) {
     // a row the second run does not report blocks nothing.
     let blocking = comparison.blocking;
     let unconfirmed = [];
+    let confirmationUnaccounted = [];
+    let confirmationNovel = [];
     if (blocking.length > 0) {
       const blockingFiles = [...new Set(blocking.map((failure) => failure.file))]
         .filter((file) => typeof file === 'string' && file.length > 0
@@ -452,12 +457,16 @@ async function comparisonVerdict(task, sandbox, opts, ctx) {
         if (signal?.aborted || confirmRun.aborted) throw ctx.abortError();
         const confirmed = confirmSuiteFailures({
           blocking, confirmation: readVerdictDocument(join(scratch, 'confirm.json')),
+          files: blockingFiles,
         });
         blocking = confirmed.confirmed;
         unconfirmed = confirmed.unconfirmed;
+        confirmationUnaccounted = confirmed.unaccounted;
+        confirmationNovel = confirmed.novel;
       }
     }
-    const judged = changeDocument !== null;
+    // Issue #597: an unaccounted change document is an UNJUDGED run, not a pass.
+    const judged = changeDocument !== null && changeUnaccounted.length === 0;
     const passed = judged && blocking.length === 0;
     const execution = executionOf(changeRun);
     const baseExecution = baseRun === null ? null : executionOf(baseRun);
@@ -523,6 +532,9 @@ async function comparisonVerdict(task, sandbox, opts, ctx) {
         blocking: Object.freeze(blocking.map((failure) => failure.original)),
         shared: Object.freeze(comparison.shared.map((failure) => failure.original)),
         unconfirmed: Object.freeze(unconfirmed.map((failure) => failure.original)),
+        unaccounted: Object.freeze([...changeUnaccounted]),
+        confirmationUnaccounted: Object.freeze([...confirmationUnaccounted]),
+        novel: Object.freeze(confirmationNovel.map((failure) => failure.original)),
         note: comparison.note,
       }),
     };

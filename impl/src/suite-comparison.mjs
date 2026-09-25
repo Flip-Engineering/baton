@@ -110,15 +110,19 @@ export function readVerdictDocument(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
 }
 
-/** The selected files a run did not account for (revision 11): every file a gate handed the run
- * must appear among the rows the run reported, whether it passed, failed or was declined as not a
- * test file. A document that carries no `reportedFiles` array is a runner older than the
- * declaration — it names its files only through the rows it wrote, so a passed file and a file that
- * never ran cannot be told apart and the selection is not compared. */
+/** The selected files a run did not account for: every file a gate handed the run must appear
+ * among the rows the run reported, whether it passed, failed or was declined as not a test file.
+ *
+ * Issue #597: a document that carries no `reportedFiles` array accounted for NONE of the files it
+ * was handed. It names its files only through the rows it wrote, so a passed file and a file that
+ * never ran cannot be told apart — and reading that as "nothing unaccounted" certified a whole
+ * selection from a verdict that judged none of it. The strict reading is the only one that lets a
+ * gate tell an unjudged run from a green one. */
 export function unaccountedFiles(document, selected) {
-  if (!Array.isArray(document?.reportedFiles)) return [];
+  const selectedFiles = [...new Set(selected ?? [])];
+  if (!Array.isArray(document?.reportedFiles)) return selectedFiles.sort();
   const reported = new Set(document.reportedFiles);
-  return [...new Set(selected ?? [])].filter((file) => !reported.has(file)).sort();
+  return selectedFiles.filter((file) => !reported.has(file)).sort();
 }
 
 /**
@@ -151,35 +155,58 @@ export function compareSuiteVerdicts({ change, base = null, note = '' } = {}) {
 /** The confirmation of a blocking row: the change's own run must reproduce it.
  *
  * A gate runs the change's selection with nine lanes over a ten-core host, beside whatever else
- * the machine is doing. A row that asserts something about the CALLER's own event loop, or about a
- * deadline measured in milliseconds, can therefore redden on the change side while the same row
+ * the machine is doing. A row that asserts something about the CALLER's own event loop, or about
+ * a deadline measured in milliseconds, can therefore redden on the change side while the same row
  * passes in the base run that has fewer files to schedule — and a landing would refuse on a
  * failure the change does not carry. The rule both gates apply now: after the comparison names its
  * blocking rows, the gate re-runs ONLY those rows' files on the change side once more, and a row
  * blocks only when the change run reproduces it. `confirmation` is that second run's verdict
- * document (null when it did not judge, in which case every blocking row stands). An unconfirmed
- * row is reported, never dropped in silence. */
-export function confirmSuiteFailures({ blocking = [], confirmation = null } = {}) {
+ * document (`null` when it did not judge, in which case every blocking row stands) and `files` are
+ * the files the gate handed it.
+ *
+ * Issue #597: the second run excuses a row ONLY by accounting for that row's file and reporting no
+ * failure with that row's identity. A row with no file could not be re-run; a row whose file the
+ * gate did not hand the run, or whose file the document does not account for, was never judged by
+ * it — every one of those keeps standing. A failure the second run DID report that the comparison
+ * never produced is a red this gate's own run observed, so it joins the blocked set rather than
+ * being dropped. Every outcome is reported, never dropped in silence. */
+export function confirmSuiteFailures({ blocking = [], confirmation = null, files = null } = {}) {
   if (confirmation === null) {
-    return Object.freeze({ confirmed: Object.freeze([...blocking]), unconfirmed: Object.freeze([]) });
+    return Object.freeze({ confirmed: Object.freeze([...blocking]), unconfirmed: Object.freeze([]),
+      unaccounted: Object.freeze([]), novel: Object.freeze([]) });
   }
+  const handed = files === null ? null : new Set(files);
+  const unaccounted = files === null ? [] : unaccountedFiles(confirmation, files);
+  const unaccountedSet = new Set(unaccounted);
   const onSecondRun = new Set(verdictFailures(confirmation).map(failureIdentity));
   const confirmed = [];
   const unconfirmed = [];
   for (const failure of blocking) {
-    // A row that names no file could not be re-run, so it is never excused.
-    if (typeof failure.file !== 'string' || failure.file.length === 0
+    const file = typeof failure.file === 'string' && failure.file.length > 0 ? failure.file : null;
+    if (file === null
+      || (handed !== null && !handed.has(file))
+      || unaccountedSet.has(file)
       || onSecondRun.has(failureIdentity(failure))) confirmed.push(failure);
     else unconfirmed.push(failure);
   }
+  const known = new Set(blocking.map(failureIdentity));
+  const novel = verdictFailures(confirmation).filter((failure) => !known.has(failureIdentity(failure)));
   return Object.freeze({
-    confirmed: Object.freeze(confirmed), unconfirmed: Object.freeze(unconfirmed),
+    confirmed: Object.freeze([...confirmed, ...novel]),
+    unconfirmed: Object.freeze(unconfirmed),
+    unaccounted: Object.freeze([...unaccounted]),
+    novel: Object.freeze(novel),
   });
 }
 
-/** The sentence a gate reports when a blocking row did not reproduce. */
-export function confirmationLine({ unconfirmed = [] } = {}) {
-  return unconfirmed.length === 0 ? '' : `, ${unconfirmed.length} not reproduced`;
+/** The sentence a gate reports for what the confirmation fold left standing: the rows the second
+ * run did not reproduce, the files it did not account for, and the failures only it reported. */
+export function confirmationLine({ unconfirmed = [], unaccounted = [], novel = [] } = {}) {
+  const parts = [];
+  if (unconfirmed.length > 0) parts.push(`${unconfirmed.length} not reproduced`);
+  if (unaccounted.length > 0) parts.push(`${unaccounted.length} file(s) the confirmation did not account for`);
+  if (novel.length > 0) parts.push(`${novel.length} failure(s) only the confirmation run reported`);
+  return parts.length === 0 ? '' : `, ${parts.join(', ')}`;
 }
 
 /** The base-side input for a change whose failing files the base does not have at all: there is

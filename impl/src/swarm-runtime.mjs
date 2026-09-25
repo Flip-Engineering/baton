@@ -238,8 +238,13 @@ function checkoutLandingTree(dir, sha) {
  * which does not have a failure shares nothing — is `compareSuiteVerdicts` in
  * impl/src/suite-comparison.mjs, the module the contribution check reads too. On top of it this
  * gate requires that the change's run accounted for every file the gate selected. */
-async function defaultIntegrationGates(dir, files, context, supervision = {}) {
-  const change = await runGateFiles(dir, files, supervision);
+export async function defaultIntegrationGates(dir, files, context, supervision = {}) {
+  // Issue #597: the two runs this gate commissions are read from the supervision bundle, so the
+  // gate's own regression suite can drive it with scripted verdict documents; a landing passes
+  // neither and gets the supervised out-of-process runner and the real tree switch.
+  const runFiles = supervision.runGateFiles ?? runGateFiles;
+  const switchTree = supervision.checkoutLandingTree ?? checkoutLandingTree;
+  const change = await runFiles(dir, files, supervision);
   const { result, document, verdictPath, stderrTail, exit } = change;
   if (document === null) {
     // A runner that died before it could judge is not a green gate set. No resident-side wall
@@ -291,7 +296,7 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   // side, and a comparison that ran carries none — so it rides beside `comparison.note`.
   let unjudgedNote = '';
   if (target !== null && squash !== null) {
-    checkoutLandingTree(dir, target);
+    switchTree(dir, target);
     try {
       // A failing file the target does not have is new with the change; it has nothing to compare
       // against, so its failures block.
@@ -299,7 +304,7 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
         .filter((file) => typeof file === 'string' && file.length > 0
           && existsSync(join(dir, GATE_RUNNER_LAYOUT.suiteRoot, file)));
       if (failingFiles.length > 0) {
-        const baseline = await runGateFiles(dir, failingFiles, supervision);
+        const baseline = await runFiles(dir, failingFiles, supervision);
         base = { document: baseline.document };
         if (baseline.document === null) {
           targetNote = '; the target run did not judge, so every failure blocks';
@@ -317,7 +322,7 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
         base = NO_BASE_FILES;
       }
     } finally {
-      checkoutLandingTree(dir, squash);
+      switchTree(dir, squash);
     }
   } else {
     targetNote = '; no target to compare against, so every failure blocks';
@@ -337,15 +342,23 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   // away, and it keeps its own row below.
   let blocking = comparison.blocking;
   let unconfirmed = [];
+  // Issue #597: what the confirmation run failed to account for, and the failures only it
+  // reported — both named on the refusal so a reader never has to guess why a row stood.
+  let confirmationUnaccounted = [];
+  let confirmationNovel = [];
   if (blocking.length > 0) {
     const blockingFiles = [...new Set(blocking.map((failure) => failure.file))]
       .filter((file) => typeof file === 'string' && file.length > 0
         && existsSync(join(dir, GATE_RUNNER_LAYOUT.suiteRoot, file)));
     if (blockingFiles.length > 0) {
-      const again = await runGateFiles(dir, blockingFiles, supervision);
-      const confirmed = confirmSuiteFailures({ blocking, confirmation: again.document });
+      const again = await runFiles(dir, blockingFiles, supervision);
+      const confirmed = confirmSuiteFailures({
+        blocking, confirmation: again.document, files: blockingFiles,
+      });
       blocking = confirmed.confirmed;
       unconfirmed = confirmed.unconfirmed;
+      confirmationUnaccounted = confirmed.unaccounted;
+      confirmationNovel = confirmed.novel;
     }
   }
   return {
@@ -353,10 +366,11 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
     verdictLine: `${blocking.length + unaccounted.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
       + comparisonCountsLine({ blocking, shared: comparison.shared, baseNoun: 'the target' })
       + `${unaccounted.length > 0 ? `, ${unaccounted.length} selected file(s) the run did not account for` : ''}`
-      + `${confirmationLine({ unconfirmed })}${squashNote}${comparison.note}${unjudgedNote}`,
+      + `${confirmationLine({ unconfirmed, unaccounted: confirmationUnaccounted, novel: confirmationNovel })}${squashNote}${comparison.note}${unjudgedNote}`,
     unexpected: [...blocking.map((failure) => failure.original), ...unaccountedRows],
     failingOnTarget: comparison.shared.map((failure) => failure.original),
     ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map((failure) => failure.original) }),
+    ...(confirmationUnaccounted.length === 0 ? {} : { confirmationUnaccounted: [...confirmationUnaccounted] }),
     stderrTail, exit,
   };
 }
