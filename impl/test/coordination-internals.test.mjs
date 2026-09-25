@@ -28,6 +28,7 @@ import test from 'node:test';
 import * as coordinationInternals from '../src/coordination-internals.mjs';
 import * as coordinationReplay from '../src/coordination-replay.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -185,7 +186,7 @@ test('CI1: the moved modules are context-free — no this, no mutable module sta
 });
 
 test('CI2: the committed map, the delegates, and the exports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  const map = collectSeamInventory();
   const moved = new Map();
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     const port = member.evidence.find((entry) => entry.endsWith(':internals_port') || entry.endsWith(':replay_port'));
@@ -415,7 +416,7 @@ test('CI6: the 14 members slice 2 relocated are delegates, and the pins that key
     '_validateRecoverySessionRequest', 'createAndClaimPlanRecoveryRefinement',
   ];
   const wired = delegates();
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  const map = collectSeamInventory();
   const store = read(STORE_FILE);
   for (const name of RELOCATED) {
     assert.ok(wired.has(name), `${name}: the class must now delegate it`);

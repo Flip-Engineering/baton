@@ -64,7 +64,6 @@ import { basename, join } from 'node:path';
 // gate's outputs and the rendered docs. They run INSIDE the squash so the target never carries a
 // commit whose generated artifacts disagree with its source.
 const INTEGRATION_REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);

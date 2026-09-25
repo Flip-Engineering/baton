@@ -52,11 +52,10 @@ function write(repo, path, content) {
   writeFileSync(full, content);
 }
 
-/** The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
+/** The scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
  * the base commit, so the integration checkout checks them out; each one imports a package that
  * only the repository's own install carries — resolution is the whole point of the row. */
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
@@ -220,8 +219,8 @@ test('451a: an install under a sub-directory is linked and the landing regenerat
 
   const answer = await w.integrate();
   assert.deepEqual(answer.integration.regenerated.sort(), [
-    'impl/data/render-surface-docs.json', 'impl/data/seam-inventory.json', 'impl/data/surface-gate.json',
-  ], 'all three landing regenerators ran inside the squash and their artifacts are folded into it');
+    'impl/data/render-surface-docs.json', 'impl/data/surface-gate.json',
+  ], 'the landing regenerators ran inside the squash and their artifacts are folded into it');
   assert.doesNotMatch(git(w.repo, 'show', '--name-only', '--format=', 'master'), /node_modules/u,
     'the linked install never lands: the squash carries the lane\'s work and nothing else');
   assert.equal(git(w.repo, 'show', '--format=', 'master:impl/src/lane.mjs'), 'export const lane = 1;',

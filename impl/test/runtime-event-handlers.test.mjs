@@ -30,7 +30,6 @@ const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
 
 const DIR = 'impl/src/runtime-event-handlers';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 

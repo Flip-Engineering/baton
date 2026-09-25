@@ -7,9 +7,10 @@
 //
 // Two inputs, both declared:
 //
-//   • the seam inventory (impl/scripts/seam-inventory.json, #301/#292) — the ONLY source of which
-//     modules are inventoried seams and which seam each of their members belongs to. A changed path
-//     the inventory does not carry is not a seam module, and is judged by the region table alone.
+//   • the seam inventory (#301/#292, collected live by impl/scripts/seam-inventory.mjs since
+//     #582) — the source of which modules are inventoried seams and which seam each of their
+//     members belongs to. A changed path the inventory does not carry is not a seam module, and
+//     is judged by the region table alone.
 //
 //   • the region table below — a small, declared mapping from the regions this repository actually
 //     has (the coordinator/worktree custody lane, the application lane, the swarm family, the
@@ -25,10 +26,10 @@
 // the order the runner should take it (regions in table order, then issue rows, then a stable sort
 // inside each group). Nothing here runs anything.
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
-const INVENTORY_PATH = fileURLToPath(new URL('../scripts/seam-inventory.json', import.meta.url));
 const TEST_DIR = fileURLToPath(new URL('../test/', import.meta.url));
 
 /** A changed path as the table reads it: repo-relative, `/`-separated, no leading `./`. */
@@ -120,13 +121,15 @@ function matchesRegion(region, path) {
 
 /**
  * The seam-inventory half: which of `paths` the inventory carries, and the seam classes their
- * members belong to. A missing or unreadable inventory is NOT a refusal — the gate set falls back
- * to the region table alone, and `inventoried` reads empty rather than inventing coverage.
+ * members belong to. The inventory is collected live from the targets' source (#582) — there is
+ * no committed artifact to be missing — and a collection failure is NOT a refusal: the gate set
+ * falls back to the region table alone, and `inventoried` reads empty rather than inventing
+ * coverage.
  */
 function inventoryReading(paths) {
-  let inventory = null;
+  let inventory;
   try {
-    inventory = JSON.parse(readFileSync(INVENTORY_PATH, 'utf8'));
+    inventory = collectSeamInventory();
   } catch {
     return { inventoried: Object.freeze([]), seams: Object.freeze([]) };
   }
