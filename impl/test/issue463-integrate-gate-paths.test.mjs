@@ -148,6 +148,18 @@ function runnerSource({ mode, recordPath }) {
     lines.push("const failures = failing ? [{ key, file: names[0], name: '580 fixture test', failureType: 'testCodeFailure' }] : [];");
     lines.push("writeFileSync(verdict, JSON.stringify({ schemaVersion: 2, green: !failing, passed: names.length - failures.length, failures, unexpected: failures.map((row) => row.key) }));");
     lines.push('process.exit(failing ? 1 : 0);');
+  } else if (mode === 'red-flake') {
+    // Issue #593: the row is reported only by this checkout's FIRST gate run. The counter file
+    // lives in the checkout (the landing switches trees inside it but never clears it), so the
+    // base run and the confirmation pass both see a row that does not reproduce.
+    lines.push("const counter = join(process.cwd(), '.gate-runs');");
+    lines.push('const first = !existsSync(counter);');
+    lines.push("writeFileSync(counter, 'ran\\n');");
+    lines.push('const key = `${names[0]} :: 593 fixture flake`;');
+    lines.push("const failures = first ? [{ key, file: names[0], name: '593 fixture flake', failureType: 'testCodeFailure' }] : [];");
+    lines.push('writeFileSync(verdict, JSON.stringify({ schemaVersion: 2, green: !first,'
+      + ' passed: names.length - failures.length, failures, unexpected: failures.map((row) => row.key) }));');
+    lines.push('process.exit(first ? 1 : 0);');
   } else if (mode === 'red') {
     lines.push(`process.stderr.write(${JSON.stringify(`${RED_TAIL}\n`)});`);
     lines.push('writeFileSync(verdict, JSON.stringify({ green: false, passed: 0, expectedRed: 0,'
@@ -475,4 +487,20 @@ test('580b: a test that passes on the target and fails with the change blocks, n
   assert.match(String(error.detail.unexpected[0]), / :: 580 fixture test$/u);
   assert.match(error.detail.verdictLine ?? '', /1 failing only with the change, 0 failing on the target too/u);
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'a red gate never moves the target');
+});
+
+test('593i: a blocking row the change run does not reproduce does not block the landing, and is named', needsGit, async (t) => {
+  const w = await world(t, { change: 'impl/src/coordinator.mjs', gate: { mode: 'red-flake' } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const answer = await w.integration();
+
+  assert.equal(w.failureRows().length, 0, 'no landing failure is recorded: the row did not reproduce');
+  assert.notEqual(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target moved: the change landed');
+  assert.match(answer.integration.gates.verdictLine ?? '', /green — .*1 not reproduced/u,
+    'the verdict line names the row that did not reproduce');
+  assert.deepEqual(answer.integration.gates.unconfirmed, [`test/${w.expected[0]} :: 593 fixture flake`],
+    'and the receipt carries the row itself');
+  assert.deepEqual(w.recorded().names, [`test/${w.expected[0]}`],
+    'the confirmation pass re-ran exactly the blocking file');
 });

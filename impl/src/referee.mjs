@@ -14,7 +14,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
-  NO_BASE_FILES, SUITE_COMPARISON, SUITE_VERDICT_ENV, compareSuiteVerdicts, readVerdictDocument,
+  NO_BASE_FILES, SUITE_COMPARISON, SUITE_VERDICT_ENV, compareSuiteVerdicts, confirmSuiteFailures, readVerdictDocument,
   verdictFailures,
 } from './suite-comparison.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -433,8 +433,32 @@ async function comparisonVerdict(task, sandbox, opts, ctx) {
       ? '; no base to compare against, so every failure blocks'
       : baseRun === null ? '' : '; the base run did not judge, so every failure blocks';
     const comparison = compareSuiteVerdicts({ change: changeDocument, base, note });
+    // Issue #593: the rule the landing gate applies applies here too — a blocking row must be one
+    // the change's own run reproduces. The blocking files are re-run once in the candidate sandbox
+    // (the candidate, never the base: the question is whether THIS change still shows the row), and
+    // a row the second run does not report blocks nothing.
+    let blocking = comparison.blocking;
+    let unconfirmed = [];
+    if (blocking.length > 0) {
+      const blockingFiles = [...new Set(blocking.map((failure) => failure.file))]
+        .filter((file) => typeof file === 'string' && file.length > 0
+          && roots.some((root) => existsSync(join(resolve(sandbox.dir, root), file))));
+      if (blockingFiles.length > 0) {
+        const confirmRun = await runComparisonHalf(
+          verification, sandbox.dir, blockingFiles, ctx.budgetFor('confirm'), ctx.runtime,
+          ctx.maxOutputBytes, signal, join(scratch, 'confirm.json'),
+        );
+        ctx.spent('confirm');
+        if (signal?.aborted || confirmRun.aborted) throw ctx.abortError();
+        const confirmed = confirmSuiteFailures({
+          blocking, confirmation: readVerdictDocument(join(scratch, 'confirm.json')),
+        });
+        blocking = confirmed.confirmed;
+        unconfirmed = confirmed.unconfirmed;
+      }
+    }
     const judged = changeDocument !== null;
-    const passed = judged && comparison.blocking.length === 0;
+    const passed = judged && blocking.length === 0;
     const execution = executionOf(changeRun);
     const baseExecution = baseRun === null ? null : executionOf(baseRun);
     // The exit a comparison reports is its OWN: the contract's expected exit when nothing blocks,
@@ -496,8 +520,9 @@ async function comparisonVerdict(task, sandbox, opts, ctx) {
           judged: baseDocument !== null,
           failures: Object.freeze(verdictFailures(baseDocument).map((failure) => failure.original)),
         }),
-        blocking: Object.freeze(comparison.blocking.map((failure) => failure.original)),
+        blocking: Object.freeze(blocking.map((failure) => failure.original)),
         shared: Object.freeze(comparison.shared.map((failure) => failure.original)),
+        unconfirmed: Object.freeze(unconfirmed.map((failure) => failure.original)),
         note: comparison.note,
       }),
     };
