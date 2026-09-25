@@ -26,7 +26,7 @@ import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from '.
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
 import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
-import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
+import { hostCapacityShortfall, hostProcessGroupBytes, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
 // pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
 // run takes the host verify lease through the suite runner's seam.
@@ -1834,6 +1834,11 @@ export class SwarmRuntime {
    * without them refuses the verbs it cannot serve or omits the facts it cannot derive. */
   constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
     hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null, lastCrash = null,
+    // Issue #561: how the runtime measures what each running worker actually holds — a probe
+    // answering a Map of process-group id to resident-set bytes (production: one `ps` table read;
+    // a fixture stages its own). Null keeps the fleet unmeasured (the first worker stays
+    // weight-free, the honest fallback).
+    workerBytesProbe = null,
     // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
     // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
     // `swarm_command_unavailable` rather than pretending.
@@ -1848,6 +1853,14 @@ export class SwarmRuntime {
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
     this.deploymentSummary = deploymentSummary;
+    this.workerBytesProbe = workerBytesProbe;
+    // #561: the lease tokens this incarnation's admitted workers hold, holder → token, so the
+    // measurement loop can land each seat's measured bytes on ITS lease (observeWorkerBytes is
+    // exact: holder + nonce). Entries are pruned when the seat leaves the live set — the lease
+    // itself is returned by the holder-keyed reconciliation (releaseWorkersExcept).
+    this._workerLeaseTokens = new Map();
+    this._workerMeasureTimer = null;
+    this._workerMeasureRunning = false;
     this.pending = new Map();
     this.watchController = new AbortController();
     // Issue #438: the ONE change-driven workspace observation cache every workspace row derives
@@ -1927,6 +1940,42 @@ export class SwarmRuntime {
     return this._gatePool;
   }
 
+  /** The pool this runtime's landings already use, WITHOUT minting one (#576): at close time a
+   * runtime that never landed must not construct a pool just to fence it. */
+  _existingSupervisedPool() {
+    const coordinator = this.coordinator;
+    if (coordinator && typeof coordinator.supervisedProcesses === 'function') {
+      const pool = coordinator.supervisedProcesses();
+      if (pool && typeof pool.run === 'function') return pool;
+    }
+    return this._gatePool ?? null;
+  }
+
+  /** #576: track ONE in-flight landing so a stopping runtime can wait for it to unwind — the
+   * abandoned-attempt row it records is what lets the lead retry the landing. Returns the
+   * release the landing's `finally` calls; the tracked promise resolves then, never rejects. */
+  _trackLanding() {
+    let release;
+    const settled = new Promise((resolve) => { release = resolve; });
+    this._inflightLandings ??= new Set();
+    const entry = { settled };
+    this._inflightLandings.add(entry);
+    return () => { this._inflightLandings.delete(entry); release(); };
+  }
+
+  /** #576: wait out every in-flight landing. Called by the application's shutdown AFTER close()
+   * (which fences the gate pool and kills its children, so each landing unwinds to its own
+   * abandoned-attempt row) and BEFORE the driver's drain releases the writer lease — the row
+   * a lead retries from never races the lease release. No new landing can enter behind close():
+   * _dispatch refuses a closed runtime, and _integrate refuses it too. */
+  async settleLandings() {
+    for (;;) {
+      const inflight = [...(this._inflightLandings ?? [])];
+      if (inflight.length === 0) return;
+      await Promise.all(inflight.map((entry) => entry.settled));
+    }
+  }
+
   /** Issue #459: sweep the integration checkouts a previous incarnation left under this
    * repository's authority, ONCE per runtime incarnation — the first operation is the open. What
    * was swept is named twice: durably on the runtime's own driver row (the deployment-scope record
@@ -1954,6 +2003,62 @@ export class SwarmRuntime {
     if (!this.hostCapacity || typeof this.hostCapacity.releaseWorkersExcept !== 'function') return;
     this.hostCapacity.releaseWorkersExcept(this._activeWorkerHolders())
       .catch(() => { /* a busy host lock is retried by the next reconciliation */ });
+    // #561: the same event freshens the fleet's measured weights.
+    this._measureWorkerBytes();
+  }
+
+  /** Issue #561: land each live worker's MEASURED footprint on its host lease — the memory each
+   * running worker actually holds, read through the runtime's ONE probe (production: the `ps`
+   * process-group table; a fixture stages its own). A seat's weight is its process GROUP's sum:
+   * its own process plus every child it spawned. A worker whose group reads nothing keeps its
+   * lease unmeasured; a holder that left the live set has its token pruned (the lease itself is
+   * the reconciliation's to release). Re-entrancy-guarded, never throws: a missed sample is a
+   * lag the next pass catches, never a failure. */
+  async _measureWorkerBytes() {
+    if (this._workerMeasureRunning) return;
+    if (!this.hostCapacity || typeof this.hostCapacity.observeWorkerBytes !== 'function') return;
+    if (this._workerLeaseTokens.size === 0) return;
+    this._workerMeasureRunning = true;
+    try {
+      const probe = this.workerBytesProbe ?? hostProcessGroupBytes;
+      const groups = await probe();
+      if (!(groups instanceof Map) || groups.size === 0) return;
+      const workers = this.coordinator.list();
+      const live = new Set(this._activeWorkerHolders());
+      for (const holder of [...this._workerLeaseTokens.keys()]) {
+        if (!live.has(holder)) this._workerLeaseTokens.delete(holder);
+      }
+      for (const swarm of this.store.swarms()) {
+        for (const participant of Object.values(swarm.participants ?? {})) {
+          const holder = `participant:${swarm.swarmId}:${participant.participantId}`;
+          const token = this._workerLeaseTokens.get(holder);
+          if (!token || !live.has(holder)) continue;
+          const workerId = participant.bindings?.at(-1)?.workerId ?? null;
+          const worker = workerId ? workers.find((row) => row.id === workerId) : null;
+          const groupId = worker?.processRef?.processGroupId ?? worker?.processRef?.pid ?? null;
+          if (!Number.isSafeInteger(groupId)) continue;
+          const bytes = groups.get(groupId) ?? 0;
+          if (!Number.isSafeInteger(bytes) || bytes <= 0) continue;
+          try { await this.hostCapacity.observeWorkerBytes(holder, token.nonce, bytes); }
+          catch { /* a stale token is pruned on the next pass */ }
+        }
+      }
+    } catch { /* a missed sample is a lag, never a failure */ } finally {
+      this._workerMeasureRunning = false;
+    }
+  }
+
+  /** #561: the measurement loop's poll — started with the first admitted worker lease, unref'd
+   * so it never holds the process open, cleared at close. The cadence is the authority's own
+   * slow observation (shedPollMs): often enough that a growing fleet's weight is counted before
+   * the next admission asks. */
+  _ensureWorkerMeasureLoop() {
+    if (this._workerMeasureTimer !== null) return;
+    if (!this.hostCapacity || typeof this.hostCapacity.observeWorkerBytes !== 'function') return;
+    const intervalMs = Number.isSafeInteger(this.hostCapacity.shedPollMs)
+      ? this.hostCapacity.shedPollMs : 5_000;
+    this._workerMeasureTimer = setInterval(() => { this._measureWorkerBytes(); }, intervalMs);
+    if (typeof this._workerMeasureTimer.unref === 'function') this._workerMeasureTimer.unref();
   }
 
   /** Issue #364: the restart reconciliation. The coordinator captured the workers THIS incarnation
@@ -5139,7 +5244,12 @@ export class SwarmRuntime {
     // Issue #459: a runtime that owns its own supervised pool (a bare host with no coordinator)
     // kills what it started, exactly as the resident's fence kills the deployment's pooled
     // children. A landing's orphaned gate run is never this close's legacy.
-    this._gatePool?.killAll();
+    // Issue #576: the fence drops FIRST — no new gate starts once a stop is requested, and a
+    // gate run still queued for its verify lease aborts — then every live child is killed;
+    // the drain's cancelAndReap awaits their closes, so `closed` means the process exits.
+    const pool = this._existingSupervisedPool();
+    pool?.fence();
+    pool?.killAll();
   }
 
   async _watch(args, principal, context) {
@@ -6451,20 +6561,28 @@ export class SwarmRuntime {
     const predecessorLive = predecessorWorkerId !== null && !predecessorWorkerDead;
     const liveHolders = (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId);
     // The custody row the removal was backed by (#428); since #453 it names the snapshot's own
-    // paths too, and the LAST row for this workspace is the snapshot being carried.
+    // paths too, and the LAST row for this workspace is the snapshot being carried. #568: a
+    // crash-reclaimed workspace has no worktree.snapshotted row in this store — its snapshot and
+    // recorded base ride the durable worktree.removed row instead, so both kinds are read here,
+    // exactly as the view's custody projection reads them.
     let snapshotRow = null;
     for (const event of this.store.eventsView()) {
       const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
-      if (kind !== 'worktree.snapshotted') continue;
+      if (kind !== 'worktree.snapshotted' && kind !== 'worktree.removed') continue;
       const payload = event.payload ?? {};
       if (payload.workspaceId !== workspaceId) continue;
       // Only a row that names a commit is a snapshot a recruit could carry: the last such row for
       // this workspace is the snapshot the removal was backed by.
-      if (typeof payload.sha !== 'string' || payload.sha.length === 0) continue;
-      snapshotRow = payload;
+      const sha = kind === 'worktree.removed' ? payload.snapshot : payload.sha;
+      if (typeof sha !== 'string' || sha.length === 0) continue;
+      snapshotRow = {
+        ...payload, sha,
+        baseSha: typeof payload.baseSha === 'string' && payload.baseSha.length > 0
+          ? payload.baseSha : null,
+      };
     }
     const snapshotSha = typeof snapshotRow?.sha === 'string' ? snapshotRow.sha : null;
-    const baseSha = sessionContext?.baseSha ?? null;
+    const baseSha = sessionContext?.baseSha ?? snapshotRow?.baseSha ?? null;
     const snapshotPaths = exists || snapshotSha === null ? null
       : this._snapshotChangedPaths(repoRoot, baseSha, snapshotSha, snapshotRow?.paths ?? null);
     const missing = [];
@@ -6808,6 +6926,9 @@ export class SwarmRuntime {
         throw error;
       }
       workerLease = admitted.token;
+      // #561: the seat's lease rides the measurement loop — its measured weight lands on it.
+      this._workerLeaseTokens.set(`participant:${args.swarmId}:${participant.participantId}`, workerLease);
+      this._ensureWorkerMeasureLoop();
       if (queuedRow) {
         try {
           this.store.recordDriver('swarm.admission_admitted', {
@@ -7845,6 +7966,10 @@ export class SwarmRuntime {
         refuse(message, 'integrate_target_moved', detail); break;
       case 'integrate_change_invalid':
         refuse(message, 'integrate_change_invalid', detail); break;
+      // Issue #576: the resident stopped under this landing — its gate run was cancelled and
+      // reaped by the drain, and the attempt is recorded so the lead can retry it.
+      case 'integrate_landing_abandoned':
+        refuse(message, 'integrate_landing_abandoned', detail); break;
       default:
         throw error;
     }
@@ -7888,6 +8013,9 @@ export class SwarmRuntime {
   }
 
   async _integrate(args, principal, context, swarm) {
+    // #576: a stop that landed between the dispatch's own check and this body starts no new
+    // gate — the runtime is closed, and the attempt refuses before anything is recorded.
+    if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     const contribution = Object.hasOwn(swarm.contributions ?? {}, args.contributionId)
       ? swarm.contributions[args.contributionId] : null;
     if (!contribution) {
@@ -7967,6 +8095,9 @@ export class SwarmRuntime {
     /** The change as the squash carried it BEFORE the regenerators wrote — read by this runtime's
      * own regenerate callback, never guessed at afterwards (see `regenerated` below). */
     let changedBeforeRegeneration = null;
+    // #576: the stop's settle waits on this landing through its unwind, so the abandoned-attempt
+    // row it may record lands before the writer lease is released.
+    const landingDone = this._trackLanding();
     try {
       const regenerate = typeof authority.regenerate === 'function'
         ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool });
@@ -8071,11 +8202,25 @@ export class SwarmRuntime {
         selection: gateSelection, skipped: gateSkipped, stderrTail: gateTail, exit: gateExit,
         regenerated: gateRegenerated,
       });
+      if (started !== null && pool.fenced === true) {
+        // Issue #576: the stop fenced the pool and reaped this landing's gate run — the durable
+        // row says the attempt was ABANDONED by the stop (the lead retries it), never that the
+        // change failed its gate. The original error rides as the cause so no fact is lost.
+        const abandoned = Object.assign(
+          new Error('the resident stopped while this landing was in flight; its gate run was cancelled and reaped'),
+          { code: 'integrate_landing_abandoned', cause: error, detail: error?.detail },
+        );
+        this._recordIntegrationFailure(args, contribution, abandoned, principal, operationKey,
+          landingFacts, target);
+        this._refuseLanding(abandoned, swarm, landingFacts);
+      }
       if (started !== null) {
         this._recordIntegrationFailure(args, contribution, error, principal, operationKey,
           landingFacts, target);
       }
       this._refuseLanding(error, swarm, landingFacts);
+    } finally {
+      landingDone();
     }
     const receipt = {
       contributionId: args.contributionId, participantId: contribution.participantId,

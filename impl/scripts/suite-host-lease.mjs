@@ -69,6 +69,17 @@ export function suiteLeaseHolder(env = process.env) {
   return `run-suite:${process.pid}`;
 }
 
+/** #561: whether this runner's verify request is DURABLE — whether a standing-tight host must
+ * queue it with no deadline instead of answering degraded. A suite a worker seat started takes
+ * the same verify lease a landing gate takes, so a seat-run verdict waits for the host; a
+ * runner outside a swarm keeps the degraded answer. The holder the runtime projects into the
+ * worker environment names the seat, so the holder prefix is the fact. Takes the holder string
+ * or the environment the holder derives from. */
+export function suiteLeaseDurable(envOrHolder = process.env) {
+  const holder = typeof envOrHolder === 'string' ? envOrHolder : suiteLeaseHolder(envOrHolder);
+  return typeof holder === 'string' && holder.startsWith('participant:');
+}
+
 function positiveInt(value) {
   const parsed = typeof value === 'string' && value.trim().length > 0 ? Number(value) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
@@ -142,7 +153,7 @@ export function formatSuitePlan({
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
   env = process.env, holder = suiteLeaseHolder(env),
-  log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
+  log = (line) => process.stderr.write(`${line}\n`), onQueued = null, signal = null,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
     return Object.freeze({
@@ -154,6 +165,11 @@ export async function acquireSuiteVerifyLease({
   let reported = false;
   const outcome = await resolved.acquire('verify', {
     holder,
+    // #561: a suite a worker seat started waits for the lease a landing gate takes.
+    durable: suiteLeaseDurable(holder),
+    // #576: a stopping resident's fence aborts the wait — a cancelled gate never hangs its
+    // resident in the queue.
+    ...(signal !== null ? { signal } : {}),
     onQueued: (row) => {
       if (reported) return;
       reported = true;
