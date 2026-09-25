@@ -620,8 +620,14 @@ function* _loadRun(store, plan, progress) {
         if (breathe()) { reportProgress(); yield; }
       }
     }
+    // The tail's first ledger position is the row count the covered stretch holds:
+    // `checkpoint.coversSeq`, which the restore's claim proof pins to
+    // `base + prefixLines.length` in every restore state. `restoredCoversSeq` carries the
+    // report's adoption state (the abandon path holds `base`); the fold indexes ledger
+    // positions, so it reads the position from the checkpoint's claim.
+    const tailFrom = checkpoint.coversSeq;
     for (let offset = 0; offset < lines.length; offset += 1) {
-      const index = restoredCoversSeq + offset;
+      const index = tailFrom + offset;
       foldRow(readRow(parsed(lines[offset], `coordination line ${index + 1}`), index));
       if (breathe()) { reportProgress(); yield; }
     }
