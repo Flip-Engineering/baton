@@ -462,6 +462,10 @@ export function constructor(coordinator, opts) {
       },
     });
     coordinator._referee = opts.referee;
+    // #593: the comparison a contribution check is accepted by. Omitted, the coordinator runs the
+    // landing's own gate (`defaultIntegrationGates`) over the capture's tree; a deployment (or a
+    // test) that wires one here owns that verdict instead.
+    coordinator._comparisonGates = opts.comparisonGates ?? null;
     // #297: the host-wide capacity authority (application-deployment built it once; null when
     // unwired). The contribution operations admit their verdicts through it.
     coordinator._hostCapacity = opts.hostCapacity ?? null;

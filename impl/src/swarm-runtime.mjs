@@ -31,7 +31,7 @@ import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs
 // pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
 // run takes the host verify lease through the suite runner's seam.
 import {
-  SupervisedProcesses, gateRunnerFile, gateRunnerLayout, runSupervisedGateRun, supervisedGateTimeoutMs,
+  SupervisedProcesses, runSupervisedGateRun, supervisedGateTimeoutMs,
   // Issue #273: WHO a guide is from is read by the coordinator's ONE namespace derivation — this
   // module adds the seat's standing in the swarm, never a second reading of the actor spelling.
   guidanceSender,
@@ -54,10 +54,11 @@ import { landContribution } from './worktree.mjs';
 // Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
 // a tail nobody else's bound describes.
-import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
+// Issue #593: the gate and its target comparison live in ONE module, so a contribution check and a
+// landing run the same rule; this module hands that gate the supervised runner seam it holds.
+import { GATE_RUNNER_LAYOUT, INTEGRATION_GATE_RUNNER, boundedStderrTail, defaultIntegrationGates,
+  gateRunnerFile } from './integration-gates.mjs';
 import { deriveWakeFrame, parseWakeFilter, wakeAttribution, wakeClassFor } from './wake-stream.mjs';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 // The artifacts a landing regenerates before it commits (#296): the seam inventory, the surface
@@ -68,17 +69,6 @@ const INTEGRATION_REGENERATORS = Object.freeze([
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
-
-/** The suite runner a landing's gate run invokes, and the one script name every row of that step
- * spells. */
-const INTEGRATION_GATE_RUNNER = 'impl/scripts/run-suite.mjs';
-
-/** Issue #463: the layout that runner defines, read off its own path ONCE — the checkout-relative
- * suite root, the test directory inside it, and the shape every gate file arrives in
- * (`<tests>/<file>`, relative to that root). The runner's own directory is the one fact; the cwd a
- * child is spawned with and the names it is handed both derive from it, so the two can never
- * disagree again. */
-const GATE_RUNNER_LAYOUT = gateRunnerLayout(INTEGRATION_GATE_RUNNER);
 
 /** Issue #463: the verdict line an EMPTY gate derivation answers with — the #300/docs-42 §6
  * vocabulary for "this change touches no tested path", never a silent widening to the whole suite. */
@@ -98,35 +88,6 @@ function gateFailureFacts({ selection = null, skipped = null, stderrTail = null,
   };
 }
 
-/** The #326 tail for one captured stream: bound the raw bytes by the adapter's own ceiling, then
- * redact with the one sanitizer. The LAST bytes survive — a dying step's own words are the
- * evidence, never the head of its output. An empty stream keeps an empty tail (absence, never a
- * guess). */
-function boundedStderrTail(raw) {
-  const text = typeof raw === 'string' ? raw : '';
-  if (text === '') return '';
-  const session = { stderrTailRaw: '' };
-  appendStderrTail(session, text);
-  return crashedStderrTail(session);
-}
-
-/** The per-file rows a gate run STREAMED before it died (#546, option a): each "# file <path>
- * (N ms)" block the runner printed is a real result — pass/fail counts and all — so an
- * interrupted run names what it judged beside what its death left unreported, instead of
- * leaving the landing a blank timeout with verdictLine null. */
-function partialFilesJudged(stream) {
-  const marks = [...stream.matchAll(/# file (\S+) \((\d+) ms[^)]*\)/g)];
-  return marks.map((mark, index) => {
-    const from = mark.index + mark[0].length;
-    const to = index + 1 < marks.length ? marks[index + 1].index : stream.length;
-    const block = stream.slice(from, to);
-    return {
-      file: mark[1],
-      pass: Number((block.match(/# pass (\d+)/) ?? [])[1] ?? 0),
-      fail: Number((block.match(/# fail (\d+)/) ?? [])[1] ?? 0),
-    };
-  });
-}
 
 /** The default regenerators: the three the repository always runs, each told to WRITE.
  *
@@ -153,172 +114,6 @@ async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
   }
 }
 
-/** One supervised run of the suite runner over `files` in `dir`, with its verdict document read
- * back (null when the runner wrote none) and its last words and exit status. */
-async function runGateFiles(dir, files, { pool = null, holder = null, leaseAuthority = null } = {}) {
-  // Issue #551: whether this incarnation read a verdict document at all. An unjudged run keeps
-  // its scratch directory, because the verdict it may still write is the one a successor reads.
-  let judged = false;
-  const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
-  const verdictPath = join(scratch, 'verdict.json');
-  try {
-    const result = await runSupervisedGateRun({
-      file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority,
-      env: { BATON_SUITE_VERDICT_FILE: verdictPath },
-    });
-    let document = null;
-    try {
-      document = JSON.parse(readFileSync(verdictPath, 'utf8'));
-    } catch { document = null; }
-    judged = document !== null;
-    return {
-      result, document,
-      // Issue #551: where the verdict would be — the path a successor incarnation checks before
-      // concluding the run never finished.
-      verdictPath,
-      stderrTail: boundedStderrTail(`${result.stderr || result.stdout}`),
-      exit: result.status === 'timeout' ? null : result.code ?? null,
-    };
-  } finally {
-    // Issue #551: the scratch is removed only when the verdict was read; an unjudged run keeps its
-    // directory so the verdict it may still write is findable by the path the row carries.
-    if (judged) rmSync(scratch, { recursive: true, force: true });
-  }
-}
-
-/** The failures one verdict document names, each with its file and failure type, and the entry
- * as the document wrote it (`original`), which a refusal carries unchanged. A runner older than
- * #580 (a branch that has not taken it) writes only `unexpected`: a `file :: name` string is read
- * as a test-level failure, and any other entry keeps no file, so it cannot be re-run on the target
- * and always blocks. */
-function verdictFailures(document) {
-  if (Array.isArray(document?.failures)) {
-    return document.failures.map((entry) => ({ ...entry, original: entry.key }));
-  }
-  return (Array.isArray(document?.unexpected) ? document.unexpected : []).map((entry) => {
-    if (typeof entry !== 'string') {
-      return { key: JSON.stringify(entry), file: null, name: null, failureType: null, original: entry };
-    }
-    const at = entry.indexOf(' :: ');
-    return {
-      key: entry, file: at < 0 ? null : entry.slice(0, at), name: at < 0 ? null : entry.slice(at + 4),
-      failureType: null, original: entry,
-    };
-  });
-}
-
-/** File-level failures (a hung, crashed or fixture-leaking file) carry run-specific detail in
- * their names, so two runs compare them by file and failure type. */
-const FILE_LEVEL_FAILURE_TYPES = new Set(['fileHung', 'fileCrashed', 'fixtureLeak']);
-const failureIdentity = (failure) => (FILE_LEVEL_FAILURE_TYPES.has(failure.failureType)
-  ? `${failure.file} :: [${failure.failureType}]` : failure.key);
-
-/** Issue #580: switch the landing checkout between the squash and its target, so the change's
- * failing test files can be re-run on the target in the same directory with the same
- * dependencies. The squash commit holds every change, the regenerated artifacts included, so
- * switching back restores the checkout exactly. */
-function checkoutLandingTree(dir, sha) {
-  const ran = spawnSync('git', ['checkout', '--detach', '--force', '--quiet', sha], { cwd: dir, encoding: 'utf8' });
-  if (ran.status !== 0) {
-    throw Object.assign(new Error(`the landing checkout could not switch to ${sha}: ${`${ran.stderr ?? ''}`.trim().slice(0, 300)}`), {
-      code: 'integrate_change_invalid',
-    });
-  }
-}
-
-/** The default gate runner: the repository's own suite over the derived files, run in the
- * landing checkout. Issue #580: a gate answers whether the change breaks something that works on
- * its target. When the change's run has failures, the failing files are re-run on the target in
- * the same checkout, and only a failure the target does not share blocks the landing. A failure
- * present on both sides (a test written ahead of its feature, known breakage, a machine-local
- * prerequisite) is reported and never blocks. No list of expected failures is read or kept.
- *
- * Issue #459: each run is a supervised child that HOLDS THE HOST VERIFY LEASE, taken by this
- * resident through the suite runner's own seam, so it never queues behind the process that spawned
- * it and the resident answers throughout.
- *
- * Issue #463: the run's own last words and exit status are read back WITH the verdict, so a RED
- * gate is as actionable as a crashed one. */
-async function defaultIntegrationGates(dir, files, context, supervision = {}) {
-  const change = await runGateFiles(dir, files, supervision);
-  const { result, document, verdictPath, stderrTail, exit } = change;
-  if (document === null) {
-    // A runner that died before it could judge is not a green gate set. No resident-side wall
-    // clock arms on this child (#546): an unjudged run is either a clean exit without a verdict
-    // file (suite-did-not-judge) or a runner that lost its process mid-flight, which reports a
-    // named partial verdict with the files it reported before it died.
-    const interrupted = result.signal !== null && result.signal !== undefined;
-    const filesJudged = interrupted ? partialFilesJudged(`${result.stdout}\n${result.stderr}`) : [];
-    const reported = new Set(filesJudged.map((row) => row.file));
-    return {
-      files,
-      // Issue #551: the path a successor incarnation checks for a verdict written after this
-      // incarnation stopped waiting.
-      verdictPath,
-      verdictLine: interrupted
-        ? `partial — interrupted by ${result.signal}; ${filesJudged.length} of ${files.length} file(s) reported before the run died`
-        : null,
-      unexpected: [{
-        row: interrupted ? 'gate-run-interrupted' : 'suite-did-not-judge',
-        script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
-        ...(interrupted ? {
-          signal: result.signal,
-          filesJudged,
-          filesUnreported: files.filter((file) => !reported.has(file)),
-        } : {}),
-        stderrTail, verdictPath,
-      }],
-      stderrTail, exit,
-    };
-  }
-  const squashNote = context?.squashSha ? `, squash ${`${context.squashSha}`.slice(0, 12)}` : '';
-  const failures = verdictFailures(document);
-  if (failures.length === 0) {
-    return { files, verdictLine: `green — passed ${document.passed}${squashNote}`, unexpected: [], stderrTail, exit };
-  }
-  const target = typeof context?.targetHeadBefore === 'string' ? context.targetHeadBefore : null;
-  const squash = typeof context?.squashSha === 'string' ? context.squashSha : null;
-  let onTarget = null;
-  let targetNote = '';
-  if (target !== null && squash !== null) {
-    checkoutLandingTree(dir, target);
-    try {
-      // A failing file the target does not have is new with the change; it has nothing to compare
-      // against, so its failures block.
-      const failingFiles = [...new Set(failures.map((failure) => failure.file))]
-        .filter((file) => typeof file === 'string' && file.length > 0
-          && existsSync(join(dir, GATE_RUNNER_LAYOUT.suiteRoot, file)));
-      if (failingFiles.length > 0) {
-        const baseline = await runGateFiles(dir, failingFiles, supervision);
-        if (baseline.document === null) {
-          targetNote = '; the target run did not judge, so every failure blocks';
-        } else {
-          onTarget = new Set(verdictFailures(baseline.document).map(failureIdentity));
-        }
-      } else {
-        onTarget = new Set();
-      }
-    } finally {
-      checkoutLandingTree(dir, squash);
-    }
-  } else {
-    targetNote = '; no target to compare against, so every failure blocks';
-  }
-  // A failure with no file could not be re-run on the target, so it blocks.
-  const sharedWithTarget = (failure) => onTarget !== null && typeof failure.file === 'string'
-    && onTarget.has(failureIdentity(failure));
-  const blocking = failures.filter((failure) => !sharedWithTarget(failure));
-  const shared = failures.filter(sharedWithTarget);
-  return {
-    files,
-    verdictLine: `${blocking.length > 0 ? 'red' : 'green'} — passed ${document.passed}, `
-      + `${blocking.length} failing only with the change, ${shared.length} failing on the target too`
-      + `${squashNote}${targetNote}`,
-    unexpected: blocking.map((failure) => failure.original),
-    failingOnTarget: shared.map((failure) => failure.original),
-    stderrTail, exit,
-  };
-}
 
 const clone = (value) => structuredClone(value);
 /** JSON-plain content with absent members dropped. An undefined value means "not sent" to the
@@ -8167,7 +7962,7 @@ export class SwarmRuntime {
               ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId })
             : await defaultIntegrationGates(dir, files, {
               ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId },
-            { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null });
+            { pool, run: runSupervisedGateRun, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null });
           gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
             ? verdict.stderrTail : null;
           gateExit = Number.isSafeInteger(verdict?.exit) ? verdict.exit : null;

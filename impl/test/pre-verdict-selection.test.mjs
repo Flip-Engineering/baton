@@ -88,7 +88,19 @@ test('static import parsing covers the ESM forms and refuses what is not a file 
 const CHECK_SHA = 'a'.repeat(40);
 const CHECK_BASE = 'b'.repeat(40);
 
-async function checkFixture(t, { referee, changedPaths, withCapturedFileRead = true, verificationFor } = {}) {
+/** #593: a check's acceptance is the landing gate's comparison over the selected files. This
+ * fixture STUBS that gate the way it stubs the referee — the comparison's own rule is pinned by
+ * issue593-check-comparison.test.mjs. */
+const greenComparison = (requests) => async (request) => {
+  requests.push(request);
+  return {
+    files: request.files,
+    verdictLine: 'green — passed 3, 0 failing only with the change, 0 failing on the target too',
+    unexpected: [], failingOnTarget: [], stderrTail: '', exit: 0, cleanupError: null,
+  };
+};
+
+async function checkFixture(t, { referee, changedPaths, withCapturedFileRead = true, verificationFor, comparison } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-preverdict-check-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const root = fixtureTree(t);
@@ -136,6 +148,7 @@ async function checkFixture(t, { referee, changedPaths, withCapturedFileRead = t
     referee: async (...args) => (referee ? referee(...args) : {
       reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox',
     }),
+    ...(comparison ? { comparisonGates: comparison } : {}),
   });
   const handle = await coordinator.spawn('mock', {
     goal: 'Deliver an affected-module fix', constraints: [], pathScope: ['**'],
@@ -150,27 +163,29 @@ async function checkFixture(t, { referee, changedPaths, withCapturedFileRead = t
   return { coordinator, handle, log, worktrees, reads: () => capturedReads };
 }
 
-test('a check runs the affected subset first and records it as a typed receipt row', async (t) => {
+test('a check runs the affected subset as its acceptance and records it as a typed receipt row', async (t) => {
   const contracts = [];
   const referee = async (task) => {
     contracts.push(task.brief.verification);
     return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
   };
-  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'] });
+  const requests = [];
+  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'], comparison: greenComparison(requests) });
   await f.coordinator.captureContribution(f.handle.id, { contributionId: 'c1' });
   const receipt = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'c1', checkId: 'k1' });
-  assert.equal(receipt.passed, true, 'the full suite verdict still decides the check');
-  assert.deepEqual(contracts.map((contract) => contract.arguments), [
-    ['impl/scripts/run-suite.mjs', 'impl/test/a.test.mjs'],
-    ['impl/scripts/run-suite.mjs'],
-  ], 'the subset contract runs only the affected file, then the full contract runs unchanged');
+  assert.equal(receipt.passed, true, "the comparison's verdict decides the check");
+  assert.deepEqual(requests.map((request) => request.files), [['impl/test/a.test.mjs']],
+    "the comparison runs over the affected file, against the capture's base");
+  assert.deepEqual(requests.map((request) => request.baseSha), [CHECK_BASE]);
+  assert.deepEqual(contracts, [], 'the pinned whole-suite contract does not run when a comparison applies');
   assert.deepEqual(receipt.preverdict.selection.files, ['impl/test/a.test.mjs']);
   assert.deepEqual(receipt.preverdict.selection.changedPaths, ['impl/src/b.mjs']);
   assert.equal(receipt.preverdict.verdict.outcome, 'passed', 'the subset verdict is closed and typed');
   assert.equal(receipt.preverdict.verdict.schemaVersion, 1);
   const started = f.log.read(f.handle.id).find((event) => event.kind === 'contribution.check_started');
-  assert.deepEqual(started.payload.preverdict, { files: 1, command: 'node' },
-    'the started record names the subset before anything runs');
+  assert.deepEqual(started.payload.preverdict,
+    { files: 1, command: 'node', acceptance: 'comparison', baseSha: CHECK_BASE },
+    'the started record names the subset and the acceptance before anything runs');
 });
 
 test('a docs-only capture keeps the #269 skip and records it on the receipt', async (t) => {
@@ -214,24 +229,33 @@ test('an empty selection and an unusable selection are named, not silently skipp
   assert.equal(unavailable.passed, true, 'the full suite still checked the contribution');
 });
 
-test('a red subset verdict does not fail the check, and the selection is cached per capture', async (t) => {
-  let call = 0;
-  const referee = async () => {
-    call += 1;
-    return call === 1
-      ? { reverified: true, observedExit: 1, passed: false, matchesClaim: true, locus: 'fresh_sandbox' }
-      : { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
-  };
-  const f = await checkFixture(t, { referee, changedPaths: ['impl/src/b.mjs'] });
+test('a failure the base shares does not fail the check, and the selection is cached per capture', async (t) => {
+  const requests = [];
+  const f = await checkFixture(t, {
+    changedPaths: ['impl/src/b.mjs'],
+    comparison: async (request) => {
+      requests.push(request);
+      return requests.length === 1
+        // The affected file fails with the capture AND on the capture's base: a shared failure.
+        ? { files: request.files, verdictLine: 'green — passed 2, 0 failing only with the change, 1 failing on the target too',
+          unexpected: [], failingOnTarget: ['impl/test/a.test.mjs :: red on the base too'],
+          stderrTail: '', exit: 1, cleanupError: null }
+        : { files: request.files, verdictLine: 'red — passed 2, 1 failing only with the change, 0 failing on the target too',
+          unexpected: ['impl/test/a.test.mjs :: only with the change'], failingOnTarget: [],
+          stderrTail: '', exit: 1, cleanupError: null };
+    },
+  });
   await f.coordinator.captureContribution(f.handle.id, { contributionId: 'c2' });
   const readsBefore = f.reads();
   const first = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'c2', checkId: 'k-1' });
-  assert.equal(first.passed, true, 'a red SUBSET is information; the full suite decided the check');
-  assert.equal(first.preverdict.verdict.outcome, 'candidate_failed');
+  assert.equal(first.passed, true, 'a failure the base shares is information, never the capture\'s fault');
+  assert.equal(first.preverdict.verdict.outcome, 'passed');
   const readsAfterFirst = f.reads();
   assert.ok(readsAfterFirst > readsBefore, 'the first check built the graph from the captured revision');
   // a second check of the SAME capture reuses the cached selection: no re-reading the tree
   const second = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'c2', checkId: 'k-2' });
+  assert.equal(second.passed, false, 'a failure only the change has fails the check');
+  assert.equal(second.preverdict.verdict.outcome, 'candidate_failed');
   assert.equal(f.reads(), readsAfterFirst, 'the selection is cached per capture commit');
   assert.equal(second.preverdict.selection.reason, first.preverdict.selection.reason);
 });

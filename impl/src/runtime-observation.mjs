@@ -516,6 +516,10 @@ export function _contributionOperations(coordinator, recorder) {
       verificationFor: coordinator._verificationForCapture,
       hostCapacity: coordinator._hostCapacity,
       repoRoot: coordinator._repoRoot,
+      // #593: a check's acceptance over the capture's SELECTED files is the landing gate's own
+      // comparison (the coordinator owns the checkout it runs in); the pinned verification stays
+      // the acceptance only where no comparison applies.
+      comparisonGates: (request) => coordinator._comparisonGateSet(request),
       capture: (handle, task) => coordinator._captureTrustWorktree(handle, task, { snapshot: true }),
       events: (workerId) => coordinator._log.read(workerId),
       record: (kind, payload, handle, task) => {

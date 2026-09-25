@@ -6,7 +6,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, posix, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
@@ -64,6 +64,7 @@ import {
   acquireSuiteVerifyLease, createSuiteLeaseAuthority, suiteLeaseTokenDigest,
   SUITE_VERIFY_LEASE_ENV,
 } from '../scripts/suite-host-lease.mjs';
+import { defaultIntegrationGates, gateRunnerFile, gateRunnerLayout } from './integration-gates.mjs';
 import * as runtimeRecovery from './runtime-recovery.mjs';
 import * as runtimeEffects from './runtime-effects.mjs';
 import * as runtimeObservation from './runtime-observation.mjs';
@@ -404,41 +405,10 @@ export function supervisedGateTimeoutMs(env = process.env) {
  * landing's own sweep (worktree.mjs, issue #459) removes at the next open. */
 
 
-/**
- * The ONE suite-layout fact a supervised gate run derives from (issue #463): the runner path as
- * the checkout spells it. The runner's OWN directory decides the rest — nothing here guesses at a
- * layout:
- *
- *   • `suiteRoot` — the runner's parent, the root the runner resolves its own URLs against
- *     (`new URL('../', import.meta.url)` in run-suite.mjs) and therefore the root every name it
- *     takes is spelled against;
- *   • `tests` — the test directory of that same root (`new URL('../test/', import.meta.url)`),
- *     expressed relative to it: the shape the runner's own lanes, rows and file arguments carry;
- *   • `runner` — the runner as the suite root spells it: the argv it is spawned with when that
- *     root is the child's working directory.
- *
- * Paths are POSIX because every one of them is a NAME inside a checkout (the runner path a
- * deployment declares, the file arguments the suite runner takes), never a host path being walked.
- *
- * @param {string} runnerPath the runner as the checkout spells it, e.g. `impl/scripts/run-suite.mjs`
- * @returns {{runnerDir: string, suiteRoot: string, tests: string, runner: string}}
- */
-export function gateRunnerLayout(runnerPath) {
-  const named = `${runnerPath}`;
-  const runnerDir = posix.dirname(named);
-  const suiteRoot = posix.dirname(runnerDir);
-  // The runner's own test directory, read off its path the way run-suite.mjs reads it: the
-  // directory the runner's import.meta.url resolves `../test/` to.
-  const tests = posix.relative(suiteRoot, posix.join(runnerDir, '..', 'test'));
-  return Object.freeze({ runnerDir, suiteRoot, tests, runner: posix.relative(suiteRoot, named) });
-}
-
-/** One gate file as the runner takes it: `<tests>/<file>` relative to the suite root. Idempotent —
- * a name already spelled that way (read back from a receipt, say) is returned unchanged, so a
- * caller can hand the runner either the derived basename or a name it was given. */
-export function gateRunnerFile(layout, file) {
-  return posix.join(layout.tests, posix.basename(`${file}`));
-}
+// Issue #593: the runner layout and the gate's file spelling live with the gate itself
+// (integration-gates.mjs), so a contribution check and a landing derive them from ONE place. This
+// module keeps exporting them for the callers that read the layout off the coordinator.
+export { gateRunnerFile, gateRunnerLayout };
 
 /** Issue #459: THE integration gate run — one node script (the suite runner over the derived gate
  * set) run OUT OF PROCESS under this resident's supervision, holding the host verify lease the way
@@ -3261,6 +3231,45 @@ export class Coordinator {
       manifestCore: request.manifestCore,
       policy: request.policy,
     });
+  }
+
+  /** Issue #593: a contribution check's acceptance is the LANDING's own comparison — one
+   * implementation (`defaultIntegrationGates`), so a check and a landing can never disagree about
+   * what a change broke. The check hands it the capture's SELECTED files and the capture's base,
+   * so a check costs those files instead of the whole suite twice.
+   *
+   * This method owns only the checkout the two runs share: the capture's own tree, which the gate
+   * switches to the base for the comparison and back. The host admission is the gate run's own
+   * (the runner takes the verify lease through its seam), so the caller must NOT hold one across
+   * this call — a nested verify request would queue behind its own caller.
+   *
+   * A deployment or test that wires its own comparison owns the verdict instead. */
+  async _comparisonGateSet({ sha, baseSha, files, requiredPaths = [], label }) {
+    if (typeof this._comparisonGates === 'function') {
+      return this._comparisonGates({ sha, baseSha, files, requiredPaths, label });
+    }
+    if (!this._worktrees || typeof this._worktrees.createVerifyWorktree !== 'function') {
+      throw Object.assign(new Error('this deployment holds no checkout authority to compare in'),
+        { code: 'verification_unavailable' });
+    }
+    const sandbox = await this._worktrees.createVerifyWorktree(`${label}-gates`, sha, { requiredPaths });
+    let compared = null;
+    let failure = null;
+    try {
+      compared = await defaultIntegrationGates(sandbox.path, files,
+        { targetHeadBefore: baseSha, squashSha: sha },
+        { pool: this._supervised ?? null, run: runSupervisedGateRun, holder: `check:${label}` });
+    } catch (error) {
+      failure = error;
+    }
+    // G-9: a sandbox this deployment cannot remove is a named fact about the hub, never a verdict.
+    const cleanupError = await this._worktrees.removeVerifyWorktree(sandbox.path)
+      .then(() => null, (error) => error);
+    if (failure) {
+      failure.cleanupError = cleanupError;
+      throw failure;
+    }
+    return Object.freeze({ ...compared, cleanupError });
   }
 
   /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */

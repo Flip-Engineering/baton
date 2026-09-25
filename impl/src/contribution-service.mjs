@@ -19,6 +19,24 @@ const cleanupLeak = (cleanupError) => (cleanupError ? Object.freeze({
   paths: Object.freeze([...(Array.isArray(cleanupError.paths) ? cleanupError.paths : [])]),
   message: String(cleanupError.message ?? cleanupError),
 }) : null);
+/** #593: the landing gate's comparison, in the closed verdict vocabulary the durable receipt
+ * carries (`closedVerificationVerdict` reads `passed` as given). `observedExit` is the candidate
+ * run's own exit — evidence of what the runner returned, never an expectation match: the
+ * comparison, not the exit code, decides. */
+const comparisonVerdict = (row) => {
+  const blocking = Array.isArray(row?.unexpected) ? row.unexpected : [];
+  const passed = blocking.length === 0;
+  return {
+    reverified: true,
+    passed,
+    observedExit: Number.isSafeInteger(row?.exit) ? row.exit : null,
+    locus: 'fresh_sandbox',
+    execution: { state: 'completed' },
+    outcome: passed ? 'passed' : 'candidate_failed',
+    failureOwnership: passed ? null : 'candidate',
+    diagnosticCode: passed ? 'verification_passed' : 'verification_exit_mismatch',
+  };
+};
 
 /** #300: the pre-verdict selection reads the CAPTURED revision, never the hub's own checkout —
  * a capture may be older or newer than the deployment's tree. The ceiling is the widest
@@ -29,11 +47,14 @@ const PREVERDICT_READ_CEILING = 16 * 1024 * 1024;
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */
 export class ContributionService {
-  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null, hostCapacity = null, repoRoot = null }) {
+  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null, hostCapacity = null, repoRoot = null, comparisonGates = null }) {
     Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict, verificationFor, repoRoot });
     // #297: the host-wide capacity authority every resident shares — a check's full-suite verdict
     // is admitted through it before the deployment's own verification lane orders it.
     this.hostCapacity = hostCapacity;
+    // #593: the landing gate's own comparison over a capture's selected files (see _check). Null
+    // when the deployment wires none: the pinned verification stays the acceptance then.
+    this.comparisonGates = comparisonGates;
     this.pending = new Map();
     // #300: the selection is a function of the capture (sha + changed paths) and the captured
     // tree cannot change, so it is computed once per capture and reused by every later check.
@@ -127,8 +148,16 @@ export class ContributionService {
     const selection = selected?.selection ?? 'code';
     if (selected?.verification) source.brief.verification = selected.verification;
     // #300: the affected subset is derived before anything runs, so the started record already
-    // names what will run first; the full suite remains the acceptance verdict either way.
+    // names what will run first.
     const preverdict = this._preverdictPlan(captured, selection, source);
+    // #593: a code capture with a usable selection is accepted by the LANDING's own comparison —
+    // one implementation, shared with the landing gate — over the selected files against the
+    // capture's base. A check therefore costs those files instead of the whole suite twice, and a
+    // failure the base shares never fails the capture. Anything else (a docs selection, a capture
+    // whose imports cannot be read, a deployment with no comparison authority) keeps the pinned
+    // verification.
+    const baseSha = typeof source.sessionContext?.baseSha === 'string' ? source.sessionContext.baseSha : null;
+    const compared = this.comparisonGates !== null && preverdict.selection !== undefined && baseSha !== null;
     const workspaceId = `contribution-${createHash('sha256')
       .update(JSON.stringify([handle.id, contributionId, checkId])).digest('hex')}`;
     let checked;
@@ -136,7 +165,10 @@ export class ContributionService {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
       verification: { selection, command: source.brief.verification.command },
       preverdict: preverdict.contract
-        ? { files: preverdict.selection.files.length, command: preverdict.contract.command }
+        ? { files: preverdict.selection.files.length, command: preverdict.contract.command,
+          // #593: the acceptance these files are judged by — the landing gate's comparison
+          // against the capture's base, or the pinned verification when no comparison applies.
+          ...(compared ? { acceptance: 'comparison', baseSha } : {}) }
         : { skipped: preverdict.skipped },
     }, handle, task);
     // The deployment's verification lane is full: say so durably, so a waiting check reads as a
@@ -151,9 +183,13 @@ export class ContributionService {
     // suite would be starved waits as a visible host queue entry (its typed queued row is
     // recorded the moment it is enqueued) instead of starting work the machine cannot run. The
     // lease is held for the verdict (preverdict subset included) and released whichever way it ends.
+    //
+    // #593: the comparison path takes NO lease here. Its gate run is the runner's own supervised
+    // child, which takes the host admission through the runner's seam; a lease held across it
+    // would queue that run behind this very call.
     let admission = null;
     let hostLease = null;
-    if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
+    if (!compared && this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
       let queuedRow = null;
       const admitted = await this.hostCapacity.acquire('verify', {
         holder: `check:${contributionId}:${checkId}`,
@@ -174,16 +210,24 @@ export class ContributionService {
       };
     }
     let preverdictRow;
+    let comparisonRow = null;
     try {
-      preverdictRow = await this._runPreverdict({ captured, source, preverdict, workspaceId, signal });
-      checked = await verifyContribution({
-        worktrees: this.worktrees, referee: this.referee, task: source,
-        capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
-        workspaceId, signal,
-        beforeVerify: this.acceptOptions.requireCoverage && typeof this.worktrees.changedLines === 'function'
-          ? async () => { source.changedLines = await this.worktrees.changedLines(source.sessionContext.baseSha, captured.sha); }
-          : null,
-      });
+      if (compared) {
+        comparisonRow = await this.comparisonGates({
+          sha: captured.sha, baseSha, files: preverdict.selection.files,
+          requiredPaths: captured.changedPaths ?? [], label: workspaceId,
+        });
+      } else {
+        preverdictRow = await this._runPreverdict({ captured, source, preverdict, workspaceId, signal });
+        checked = await verifyContribution({
+          worktrees: this.worktrees, referee: this.referee, task: source,
+          capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
+          workspaceId, signal,
+          beforeVerify: this.acceptOptions.requireCoverage && typeof this.worktrees.changedLines === 'function'
+            ? async () => { source.changedLines = await this.worktrees.changedLines(source.sessionContext.baseSha, captured.sha); }
+            : null,
+        });
+      }
     } catch (error) {
       if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});
       const leak = cleanupLeak(error.cleanupError);
@@ -195,20 +239,50 @@ export class ContributionService {
       throw error;
     }
     if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});
-    const leak = cleanupLeak(checked.cleanupError);
+    const leak = cleanupLeak(compared ? comparisonRow?.cleanupError : checked.cleanupError);
     const receipt = {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
-      verification: { selection, command: source.brief.verification.command },
-      passed: this.accept(checked.observedVerdict, {
-        ...this.acceptOptions, expectExit: source.brief.verification.expectExit,
-      }) === true,
-      verdict: this.closeVerdict(checked.observedVerdict, source.brief.verification),
-      attempt: checked.attempt,
+      verification: {
+        selection, command: source.brief.verification.command,
+        // #593: the comparison's own coordinates, so a reader sees what was judged against what.
+        ...(compared ? { locus: 'comparison', baseSha, files: preverdict.selection.files.length } : {}),
+      },
+      // #593: the comparison's own rule decides — a capture passes when its run reported no
+      // failure the capture's base does not also report. The referee's signal gates
+      // (redGreen/coverage/mutation) belong to a pinned verification and are not applied here.
+      passed: compared
+        ? (Array.isArray(comparisonRow?.unexpected) ? comparisonRow.unexpected : []).length === 0
+        : this.accept(checked.observedVerdict, {
+          ...this.acceptOptions, expectExit: source.brief.verification.expectExit,
+        }) === true,
+      verdict: compared
+        ? this.closeVerdict(comparisonVerdict(comparisonRow), source.brief.verification)
+        : this.closeVerdict(checked.observedVerdict, source.brief.verification),
+      attempt: compared
+        ? Object.freeze({
+          phase: 'verifier_execution', verifierStarted: true,
+          cleanup: Object.freeze({
+            state: comparisonRow?.cleanupError ? 'incomplete' : 'closed',
+            code: comparisonRow?.cleanupError?.code ?? null,
+          }),
+        })
+        : checked.attempt,
       // #297: the typed admission row the check reports beside its verdict.
       ...(admission ? { admission } : {}),
-      // #300: what ran before the full suite, with its own typed verdict — or the closed
-      // reason nothing did. Durable so a reviewer sees the subset without re-deriving it.
-      preverdict: preverdictRow,
+      // #300: the affected subset's own typed verdict — or the closed reason nothing ran. #593:
+      // on the comparison path that subset IS the acceptance, so its verdict is the comparison's.
+      preverdict: compared
+        ? { selection: preverdict.selection, verdict: this.closeVerdict(comparisonVerdict(comparisonRow), source.brief.verification) }
+        : preverdictRow,
+      // #593: the comparison's verdict line and the two failure sets it decided between.
+      ...(compared ? {
+        comparison: {
+          baseSha,
+          verdictLine: comparisonRow?.verdictLine ?? null,
+          blocking: Array.isArray(comparisonRow?.unexpected) ? comparisonRow.unexpected : [],
+          sharedOnBase: Array.isArray(comparisonRow?.failingOnTarget) ? comparisonRow.failingOnTarget : [],
+        },
+      } : {}),
       ...(leak ? { cleanup: leak } : {}),
     };
     this.record('contribution.checked', receipt, handle, task);
