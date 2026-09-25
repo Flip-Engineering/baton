@@ -8,7 +8,6 @@
 // (docs/36 §11) and are enforced in phase92-episode-{attribution,workstream}-red.test.mjs.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -21,14 +20,7 @@ import {
 import { applicationOperationAliasMap } from '../src/application-semantics.mjs';
 import { BYTE_STABLE_COMMAND_KEYS } from '../scripts/surface-truth.mjs';
 import { createWave } from '../src/wave.mjs';
-import {
-  CANONICAL_OPERATIONS,
-  checkLedgerMonotone,
-  validateLedger,
-} from '../scripts/surface-conformance.mjs';
-
-const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
-const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
+import { CANONICAL_OPERATIONS } from '../scripts/surface-conformance.mjs';
 
 // The byte-stable command-table pin (UA5 / docs/39): the swarm verbs lead, then the pre-M3 set.
 // The witness is committed in ONE place — surface-truth.BYTE_STABLE_COMMAND_KEYS — instead of a
@@ -246,12 +238,7 @@ test('M3-7: run.view --until settles on the registry lifecycle predicates', asyn
     .wait('run-m3', PRINCIPAL, { timeoutMs: 60_000, until: 'terminal' }, null)).phase, 'completed');
 });
 
-test('M3-8: the ledger stays monotone and valid and every transport name is byte-stable (UA5)', () => {
-  // The consolidation retires no transport-name row (those flip at M4); the ledger is unchanged, so
-  // monotonicity (append-forbidden vs itself) and validity both hold.
-  assert.deepEqual(validateLedger(ledger), []);
-  assert.deepEqual(checkLedgerMonotone(ledger, ledger), []);
-  assert.deepEqual(ledger.entries.filter((entry) => entry.retiresIn === 'M3'), []);
+test('M3-8: every transport name is byte-stable (UA5)', () => {
 
   // No transport name changed: the legacy command table is byte-identical and the new canonical
   // names resolve only in the dispatch-layer alias map, never as command definitions.

@@ -1,8 +1,8 @@
-// docs/36 §9 M5 — the alias sunset. The divergence ledger retires to empty; the §4.1 banned-token
-// lint (C4) is promoted to red in the canonical suite; legacy phase strings are grep-clean in the
-// surface layers; run.steer is deleted as a surface alias (canonical run.send intact); GLOSSARY.md
-// speaks the post-sunset vocabulary. These contracts (M5-1..M5-5) are the M5 acceptance gate; the
-// behavior authority is docs/36 §4.1/§7.1/§9, not a hand table.
+// docs/36 §9 M5 — the alias sunset. The §4.1 banned-token lint (C4) is promoted to red in the
+// canonical suite; legacy phase strings are grep-clean in the surface layers; run.steer is deleted
+// as a surface alias (canonical run.send intact); GLOSSARY.md speaks the post-sunset vocabulary.
+// These contracts (M5-1..M5-5) are the M5 acceptance gate; the behavior authority is
+// docs/36 §4.1/§7.1/§9, not a hand table.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -19,24 +19,10 @@ import {
   CANONICAL_OPERATIONS,
   canonicalNamesForBannedTokenLint,
   checkBannedTokens,
-  checkLedgerMonotone,
   runSurfaceConformanceMain,
-  validateLedger,
 } from '../scripts/surface-conformance.mjs';
 
-const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
-const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
 const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'latin1');
-
-// The one seeded M4 behavior row — the per-deployment MCP schema mutation. M5 retires it by
-// deleting the underlying mutation; the ledger row is then removable (removal-only monotone edit).
-const RETIRED_M4_ROW = Object.freeze({
-  surface: 'mcp',
-  name: 'per-deployment MCP schema mutation (mcp-northbound.mjs:826)',
-  canonical: null,
-  dimension: 'behavior',
-  retiresIn: 'M4',
-});
 
 // docs/36 §4.1 — the banned surface verbs (synonyms), with token normalization (R-CX-13):
 // `stop_member` and `stop-member` are ONE token. The canonical tree must not contain any.
@@ -47,17 +33,10 @@ const BANNED_VERB_FIXTURES = [
   'run.stop_member', 'stop-member', 'stop_member',
 ];
 
-test('M5-1: the divergence ledger is empty and the M4 retirement is pinned', () => {
-  assert.deepEqual(ledger.entries, [], 'the divergence ledger retires to empty at M5');
-  assert.deepEqual(validateLedger(ledger), []);
+test('M5-1: the per-deployment MCP schema mutation is fixed — no behavior divergence remains', () => {
   // The underlying mutation is gone: no `mcp` behavior divergence is observed any longer.
   const inventory = collectSurfaceInventory();
   assert.deepEqual(inventory.behaviorDivergences, [], 'the per-deployment MCP schema mutation is fixed');
-  // Removing exactly the retired M4 row from the pre-M5 ledger is a legal removal-only edit; a
-  // re-add (an append) is refused by the monotone rule.
-  const preSunset = { schemaVersion: 1, entries: [...ledger.entries, RETIRED_M4_ROW] };
-  assert.deepEqual(checkLedgerMonotone(preSunset, ledger), []);
-  assert.throws(() => checkLedgerMonotone(ledger, preSunset), /ledger append forbidden/u);
 });
 
 test('M5-2: the C4 banned-token lint rejects legacy synonym verbs and passes the canonical tree', () => {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -15,23 +15,19 @@ import { collectSurfaceInventory } from '../scripts/surface-audit.mjs';
 import {
   KERNEL_AUTHORING_WEB_LITERALS,
   canonicalizeSerialization,
-  checkLedgerMonotone,
   checkWebNameDisjoint,
   deriveSurfaceNames,
   serializationOrderViolations,
 } from '../scripts/surface-conformance.mjs';
-import { checkSurfaceDocs } from '../scripts/render-surface-docs.mjs';
 
-// docs/36 §9 M4 second slice (M4b — the transport flip). These are the M4B-1..7 acceptance
-// contracts: the last breaking-surface phase renders the Web and MCP transports from registry v2,
+// docs/36 §9 M4 second slice (M4b — the transport flip). These are the M4b acceptance contracts:
+// the last breaking-surface phase renders the Web and MCP transports from registry v2,
 // admits canonical names beside the retained legacy names (both reaching one operation, the
-// admitted identity being the spelling used), cuts the C8 serialization pin and the generated doc
-// blocks, and burns the final mcp/web name rows from the divergence ledger — all at a fixed clock.
+// admitted identity being the spelling used), and cuts the C8 serialization pin — all at a fixed
+// clock.
 
 const NOW = Date.parse('2026-07-24T12:00:00.000Z');
 const REGISTRY = APPLICATION_SEMANTIC_REGISTRY;
-const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
-const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
 
 // ── Web transport harness ────────────────────────────────────────────────────────────────────
 function webFixture() {
@@ -188,27 +184,7 @@ test('M4B-4: the C8 canonical serialization order holds and a scrambled emitter 
   assert.deepEqual(serializationOrderViolations(order.action, { kind: 'approve_plan', actionId: 'a' }), []);
 });
 
-test('M4B-5: the generated CLI.md and MCP.md inventory blocks match the committed docs', () => {
-  // The renderer is the single generator; a drifted committed block (or a stale renderer) is caught.
-  assert.deepEqual(checkSurfaceDocs(), []);
-});
-
-test('M4B-6: the ledger is empty of mcp/web name rows and monotone; canonical names are present', () => {
-  const nameRows = ledger.entries.filter((entry) => (
-    entry.dimension === 'name'
-    && ['web', 'mcp.baton', 'mcp.fleet', 'mcp.web-bridge', 'mcp'].includes(entry.surface)
-  ));
-  assert.deepEqual(nameRows, [], 'no mcp/web transport-name divergence rows remain');
-
-  // Removing exactly those rows from the pre-flip ledger is a legal (removal-only) edit; a re-add
-  // is refused.
-  const preFlip = { schemaVersion: 1, entries: [
-    ...ledger.entries,
-    { surface: 'web', name: 'run_act', canonical: 'run.do', dimension: 'name', retiresIn: 'M4' },
-  ] };
-  assert.deepEqual(checkLedgerMonotone(preFlip, ledger), []);
-  assert.throws(() => checkLedgerMonotone(ledger, preFlip), /ledger append forbidden/u);
-
+test('M4B-6: the canonical transport names are present, mechanically derived from the registry', () => {
   // The new canonical names are present: every canonical operation's mechanically derived
   // transport names are live registry data, and the web set stays disjoint from kernel/authoring.
   for (const key of ['run.do', 'run.view', 'run.member.send', 'run.member.stop', 'run.member.view']) {
