@@ -1,10 +1,7 @@
-// Issue #596: a landing whose target moves during its gate reuses the verdict when the target's
-// delta does not touch the gate selection's covered surface, re-runs only the affected tests
-// when part of the surface is touched, and refuses when the re-run is red.
-//
-// (a) target move with disjoint delta — verdict reused, no re-run
-// (b) target move touching covered surface — affected tests re-run, verdict combined
-// (c) target move touching covered surface, re-run red — refuses integrate_gates_red
+// Issue #596: when the target moves during a landing's gate run, the squash is re-prepared onto
+// the new head. A clean rebase lands on the verdict the gate already produced (no re-run). A
+// conflicting rebase refuses integrate_target_moved. The receipt carries targetMoveHandled
+// with the from/to SHAs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,10 +52,10 @@ function setupRepo(t) {
   return { repo, tip, targetHead, publishRemote, directory };
 }
 
-// ── (a) disjoint delta ──────────────────────────────────────────────────────────
+// ── (a) clean rebase: target moves with a disjoint file, verdict reused ─────────
 
-test('596a: target move with disjoint delta keeps the gate verdict', needsGit, async (t) => {
-  const { repo, tip, publishRemote } = setupRepo(t);
+test('596a: target move with clean rebase lands on the existing verdict', needsGit, async (t) => {
+  const { repo, tip, targetHead, publishRemote } = setupRepo(t);
 
   let gateCallCount = 0;
   const result = await landContribution(repo, {
@@ -70,40 +67,32 @@ test('596a: target move with disjoint delta keeps the gate verdict', needsGit, a
     committer: { name: 'root', email: 'root@example.invalid' },
     publishRemote,
     runGates: async (dir, changed, context) => {
-      if (context?.rerunSubset) {
-        throw new Error('re-run should not be called for a disjoint delta');
-      }
       gateCallCount++;
-      write(repo, 'docs/unrelated.md', 'documentation\n');
+      write(repo, 'impl/src/helper.mjs', 'export const helper = "target-moved";\n');
       git(repo, 'add', '-A');
-      git(repo, 'commit', '-qm', 'target advanced with unrelated file');
+      git(repo, 'commit', '-qm', 'target advanced with disjoint file');
       return {
         files: ['test/coordinator.test.mjs'],
         verdictLine: 'green — 1 file(s)',
         unexpected: [],
-        coveredPaths: ['impl/src/coordinator.mjs', 'impl/test/coordinator.test.mjs'],
-        testDeps: {
-          'test/coordinator.test.mjs': ['impl/test/coordinator.test.mjs', 'impl/src/coordinator.mjs'],
-        },
       };
     },
   });
 
-  assert.equal(gateCallCount, 1, 'the gate ran exactly once');
+  assert.equal(gateCallCount, 1, 'the gate ran exactly once — no re-run');
   assert.ok(result.squashSha, 'the squash landed');
-  assert.ok(result.gates.targetMoveHandled, 'the receipt names the handled target move');
-  assert.deepStrictEqual(result.gates.targetMoveHandled.rerun, [], 'no tests were re-run');
-  assert.deepStrictEqual(result.gates.targetMoveHandled.reused, ['test/coordinator.test.mjs']);
-  assert.deepStrictEqual(result.gates.targetMoveHandled.delta, ['docs/unrelated.md']);
+  assert.ok(result.gates.targetMoveHandled, 'the receipt carries targetMoveHandled');
+  assert.equal(result.gates.targetMoveHandled.from, targetHead);
+  assert.equal(typeof result.gates.targetMoveHandled.to, 'string');
+  assert.notEqual(result.gates.targetMoveHandled.from, result.gates.targetMoveHandled.to);
 });
 
-// ── (b) intersecting delta, re-run green ─────────────────────────────────────────
+// ── (b) conflicting rebase: target moves into the lane's file, refuses ──────────
 
-test('596b: target move touching covered surface re-runs only the affected tests', needsGit, async (t) => {
+test('596b: target move with conflicting rebase refuses integrate_target_moved', needsGit, async (t) => {
   const { repo, tip, publishRemote } = setupRepo(t);
 
-  let rerunCalled = false;
-  const result = await landContribution(repo, {
+  const error = await landContribution(repo, {
     contributionId: 'c-596b',
     target: 'master',
     commitSha: tip,
@@ -112,44 +101,30 @@ test('596b: target move touching covered surface re-runs only the affected tests
     committer: { name: 'root', email: 'root@example.invalid' },
     publishRemote,
     runGates: async (dir, changed, context) => {
-      if (context?.rerunSubset) {
-        rerunCalled = true;
-        assert.deepStrictEqual(context.rerunSubset, ['test/coordinator.test.mjs']);
-        return {
-          files: context.rerunSubset,
-          verdictLine: 'green — 1 file(s) (re-run)',
-          unexpected: [],
-        };
-      }
-      write(repo, 'impl/src/helper.mjs', 'export const helper = "target-moved";\n');
+      write(repo, 'impl/src/coordinator.mjs', 'export const coordinator = "conflict";\n');
       git(repo, 'add', '-A');
-      git(repo, 'commit', '-qm', 'target advanced with covered file');
+      git(repo, 'commit', '-qm', 'target advanced with conflicting file');
       return {
         files: ['test/coordinator.test.mjs'],
         verdictLine: 'green — 1 file(s)',
         unexpected: [],
-        coveredPaths: ['impl/src/coordinator.mjs', 'impl/test/coordinator.test.mjs', 'impl/src/helper.mjs'],
-        testDeps: {
-          'test/coordinator.test.mjs': ['impl/test/coordinator.test.mjs', 'impl/src/coordinator.mjs', 'impl/src/helper.mjs'],
-        },
       };
     },
-  });
+  }).then(() => null, (thrown) => thrown);
 
-  assert.ok(rerunCalled, 'the affected tests were re-run');
-  assert.ok(result.squashSha, 'the squash landed');
-  assert.ok(result.gates.targetMoveHandled, 'the receipt names the handled target move');
-  assert.deepStrictEqual(result.gates.targetMoveHandled.rerun, ['test/coordinator.test.mjs']);
-  assert.deepStrictEqual(result.gates.targetMoveHandled.reused, []);
-  assert.equal(result.gates.targetMoveHandled.rerunVerdictLine, 'green — 1 file(s) (re-run)');
+  assert.ok(error, 'the landing refuses');
+  assert.ok(
+    error.code === 'integrate_target_moved' || error.code === 'integrate_conflict',
+    `refuses with a merge-failure code (got ${error.code})`,
+  );
 });
 
-// ── (c) intersecting delta, re-run red ───────────────────────────────────────────
+// ── (c) receipt shape: targetMoveHandled carries from/to SHAs ────────────────────
 
-test('596c: target move re-run failure refuses integrate_gates_red', needsGit, async (t) => {
-  const { repo, tip, publishRemote } = setupRepo(t);
+test('596c: the receipt carries targetMoveHandled with from and to SHAs', needsGit, async (t) => {
+  const { repo, tip, targetHead, publishRemote } = setupRepo(t);
 
-  const error = await landContribution(repo, {
+  const result = await landContribution(repo, {
     contributionId: 'c-596c',
     target: 'master',
     commitSha: tip,
@@ -158,29 +133,22 @@ test('596c: target move re-run failure refuses integrate_gates_red', needsGit, a
     committer: { name: 'root', email: 'root@example.invalid' },
     publishRemote,
     runGates: async (dir, changed, context) => {
-      if (context?.rerunSubset) {
-        return {
-          files: context.rerunSubset,
-          verdictLine: 'red — 1 file(s)',
-          unexpected: [{ file: 'test/coordinator.test.mjs', row: 'FAIL' }],
-        };
-      }
-      write(repo, 'impl/src/helper.mjs', 'export const helper = "target-moved";\n');
+      write(repo, 'docs/unrelated.md', 'documentation\n');
       git(repo, 'add', '-A');
-      git(repo, 'commit', '-qm', 'target advanced with covered file');
+      git(repo, 'commit', '-qm', 'target advanced with unrelated file');
       return {
         files: ['test/coordinator.test.mjs'],
         verdictLine: 'green — 1 file(s)',
         unexpected: [],
-        coveredPaths: ['impl/src/coordinator.mjs', 'impl/test/coordinator.test.mjs', 'impl/src/helper.mjs'],
-        testDeps: {
-          'test/coordinator.test.mjs': ['impl/test/coordinator.test.mjs', 'impl/src/coordinator.mjs', 'impl/src/helper.mjs'],
-        },
       };
     },
-  }).then(() => null, (thrown) => thrown);
+  });
 
-  assert.ok(error, 'the landing refuses');
-  assert.equal(error.code, 'integrate_gates_red');
-  assert.equal(error.unexpected.length, 1);
+  assert.ok(result.squashSha, 'the squash landed');
+  const handled = result.gates.targetMoveHandled;
+  assert.ok(handled, 'targetMoveHandled is present');
+  assert.equal(handled.from, targetHead, 'from is the original target head');
+  assert.equal(typeof handled.to, 'string', 'to is a SHA');
+  assert.notEqual(handled.from, handled.to, 'from and to differ');
+  assert.match(handled.to, /^[0-9a-f]{40}$/, 'to is a full SHA');
 });

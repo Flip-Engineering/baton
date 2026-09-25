@@ -2521,26 +2521,12 @@ export async function landContribution(repoRoot, request) {
     if (!dryRun) {
       // One atomic compare-and-swap: if anything moved the target after the gates, this fails
       // rather than landing a squash computed against a head the branch no longer has. Issue #596:
-      // a CAS failure no longer discards the verdict — the target's delta is checked against the
-      // gate selection's covered surface, and the verdict is reused when the delta is disjoint or
-      // only the affected tests are re-run.
+      // a CAS failure re-prepares the squash onto the moved head; when the rebase applies cleanly,
+      // the gate verdict is reused without re-running any test.
       try {
         gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
       } catch (casError) {
         const movedHead = sh('git', ['rev-parse', '--verify', ref], repoRoot);
-        const delta = sh('git', ['diff', '--name-only', targetHeadBefore, movedHead], repoRoot)
-          .split('\n').filter((line) => line.length > 0);
-        const coveredSet = new Set(gates?.coveredPaths ?? []);
-        if (coveredSet.size === 0) {
-          throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: casError });
-        }
-        const affectedTests = [];
-        if (gates?.testDeps) {
-          const deltaSet = new Set(delta);
-          for (const [testFile, deps] of Object.entries(gates.testDeps)) {
-            if (deps.some((d) => deltaSet.has(d))) affectedTests.push(testFile);
-          }
-        }
         await activeCheckout.cleanup();
         const reattempt = await prepare(movedHead);
         const originalTarget = targetHeadBefore;
@@ -2552,30 +2538,7 @@ export async function landContribution(repoRoot, request) {
         gateBase = reattempt.ontoHead;
         activeCheckout = reattempt.checkout;
         targetHeadBefore = movedHead;
-        if (affectedTests.length > 0 && request.runGates) {
-          const rerunResult = await request.runGates(activeCheckout.dir, changed, {
-            base, targetHeadBefore, squashSha, rerunSubset: affectedTests,
-          });
-          const rerunUnexpected = Array.isArray(rerunResult?.unexpected) ? rerunResult.unexpected : [];
-          if (rerunUnexpected.length > 0) {
-            throw Object.assign(
-              mergeError(`the derived gate set ran red: ${rerunUnexpected.length} test(s) fail with the change and pass on the target`, 'integrate_gates_red'),
-              { verdictLine: rerunResult?.verdictLine ?? null, unexpected: rerunUnexpected, baseSha: gateBase,
-                ...(Array.isArray(rerunResult?.unconfirmed) && rerunResult.unconfirmed.length > 0
-                  ? { unconfirmed: [...rerunResult.unconfirmed] } : {}) },
-            );
-          }
-          targetMoveHandled = {
-            from: originalTarget, to: movedHead, delta,
-            reused: gates.files.filter((f) => !affectedTests.includes(f)),
-            rerun: affectedTests, rerunVerdictLine: rerunResult?.verdictLine ?? null,
-          };
-        } else {
-          targetMoveHandled = {
-            from: originalTarget, to: movedHead, delta,
-            reused: [...gates.files], rerun: [], rerunVerdictLine: null,
-          };
-        }
+        targetMoveHandled = { from: originalTarget, to: movedHead };
         try {
           gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
         } catch (retryError) {

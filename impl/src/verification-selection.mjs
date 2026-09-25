@@ -191,34 +191,7 @@ export function selectFromRepository({
   });
   const files = listGraphFiles(root, graphDirs);
   const graph = collectImportGraph({ files, read: readFile });
-  const result = selectAffectedTests({ changedPaths, graph, exists: exists ?? ((path) => readFile(path) !== null) });
-  result.graph = graph;
-  return result;
-}
-
-/** The transitive import closure for each test file and the union of all closures (the "covered
- * surface"). A path in the surface that changes requires at least one of the test files to be
- * re-run; a path outside it does not affect any selected test. */
-export function computeTestCoverage({ graph, testFiles }) {
-  const perTest = new Map();
-  const surface = new Set();
-  for (const file of testFiles) {
-    const closure = new Set();
-    const worklist = [file];
-    while (worklist.length > 0) {
-      const current = worklist.pop();
-      if (closure.has(current)) continue;
-      closure.add(current);
-      const node = graph.get(current);
-      if (!node) continue;
-      for (const imported of node.imports) {
-        if (!closure.has(imported)) worklist.push(imported);
-      }
-    }
-    perTest.set(file, closure);
-    for (const path of closure) surface.add(path);
-  }
-  return { surface, perTest };
+  return selectAffectedTests({ changedPaths, graph, exists: exists ?? ((path) => readFile(path) !== null) });
 }
 
 function listGraphFiles(root, graphDirs) {
