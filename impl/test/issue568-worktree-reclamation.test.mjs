@@ -1,8 +1,22 @@
+// Issue #568: ended seats' checkouts are reclaimed with their evidence preserved.
+//
+// The linked-worktree ownership record, journal and nonce are gone (#598: no mechanism without
+// an observed failure). What remains is the observed incident's own repair: the ended seat's
+// CHECKOUT is reclaimed — its uncommitted work captured onto its lane branch, its registration
+// and metadata removed, its unique branch work retained as custody — and Git's own registration
+// plus the existing Baton ownership answer for everything else. A linked worktree a seat
+// registered OUTSIDE its checkout is unowned by Baton and is preserved.
+//
+//   A  restart captures a dead owner's checkout onto its lane branch and a successor carries it
+//   B  active and shared workspaces remain under their existing custody
+//   C  ignored evidence the snapshot policy cannot attribute retains the checkout
+//   D  a branch-only receipt releases while unique branch work stays retained custody
+//   F  an external registered worktree is preserved even after its owner's checkout is reclaimed
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +25,6 @@ import test from 'node:test';
 import {
   allocatePhysicalWorkspaceOwner, applySnapshotToWorktree, createFromBase,
   markStopped, physicalWorkspaceOwnerReceipt, reap, reconcile,
-  seatLinkedWorktreeOwnershipPath,
 } from '../src/worktree.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 
@@ -78,16 +91,14 @@ function projectedSeat(f, workspace, workerId = 'issue568-seat') {
   return { runtime, lease, git: join(lease.paths.bin, 'git') };
 }
 
+/** A linked worktree the seat's own projected git registers, outside the checkout — the
+ * documented scratch shape ('git worktree add <scratch-dir> <base>'). */
 function addLinkedWorktree(seat, workspace, path, args = ['--detach']) {
   execFileSync(seat.git, ['worktree', 'add', ...args, path, 'HEAD'], {
     cwd: workspace.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...seat.lease.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
-  const rows = readFileSync(
-    seatLinkedWorktreeOwnershipPath(dirname(dirname(dirname(workspace.dir))), workspace.receipt.physicalOwnerId),
-    'utf8',
-  ).trim().split('\n');
-  return JSON.parse(rows.at(-1));
+  return path;
 }
 
 function expectedOwner(receipt) {
@@ -262,410 +273,26 @@ test('568-D: restart releases a branch-only owner receipt and retains unique bra
   assert.equal(git(f.repo, ['show', `${workspace.branch}:durable.txt`]), 'durable branch evidence');
 });
 
-test('568-E: restart reclaims a recorded external worktree and preserves dirty detached evidence', async (t) => {
-  const f = fixture(t, 'external-detached');
+test('568-F: an external registered worktree is preserved even after its owner is reclaimed', async (t) => {
+  const f = fixture(t, 'external-preserved');
   const before = authority('external-deployment', 'controller-before');
   const after = authority('external-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'external-detached');
+  const workspace = await ownedWorkspace(f, before, 'external-preserved');
   const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'seat-created-external');
-  assert.match(readFileSync(seat.lease.paths.checkoutFile, 'utf8'),
-    new RegExp(`physicalOwnerId=${workspace.receipt.physicalOwnerId}`));
-  const ownership = addLinkedWorktree(seat, workspace, external);
-
-  assert.deepEqual({
-    physicalOwnerId: ownership.physicalOwnerId,
-    ownerCheckout: ownership.ownerCheckout,
-    commonGitDir: ownership.commonGitDir,
-    worktreePath: ownership.worktreePath,
-    worktreeGitDir: ownership.worktreeGitDir,
-  }, {
-    physicalOwnerId: workspace.receipt.physicalOwnerId,
-    ownerCheckout: workspace.dir,
-    commonGitDir: join(f.repo, '.git'),
-    worktreePath: external,
-    worktreeGitDir: ownership.worktreeGitDir,
-  });
-  assert.equal(external.startsWith(join(f.repo, '.baton', 'wt')), false,
-    'the linked worktree is outside the Baton worktree root');
-  writeFileSync(join(external, 'detached-evidence.txt'), 'preserved external evidence\n');
-
-  const events = [];
-  const report = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => true,
-    log: { append: (event) => events.push(event) },
-  });
-
-  assert.deepEqual(report.errors, []);
-  assert.equal(existsSync(external), false, 'the recorded external checkout is reclaimed');
-  assert.equal(existsSync(seatLinkedWorktreeOwnershipPath(
-    f.repo, workspace.receipt.physicalOwnerId,
-  )), false, 'the ownership record is released with the checkout');
-  const reclaimed = events.find((event) => event.kind === 'worktree.linked_reclaimed');
-  assert.match(reclaimed?.payload?.ref ?? '',
-    new RegExp(`^refs/baton/seat-worktrees/${workspace.receipt.physicalOwnerId}/`));
-  assert.equal(git(f.repo, ['show', `${reclaimed.payload.ref}:detached-evidence.txt`]),
-    'preserved external evidence');
-  assert.equal(git(f.repo, ['rev-parse', reclaimed.payload.ref]), reclaimed.payload.sha);
-});
-
-test('568-F: active owner retains its recorded external worktree', async (t) => {
-  const f = fixture(t, 'external-active');
-  const current = authority('external-active-deployment', 'controller-current');
-  const workspace = await ownedWorkspace(f, current, 'external-active');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'active-seat-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'active-scratch']);
-  const expectation = expectedOwner(workspace.receipt);
-
-  const report = reconcile(f.repo, [workspace.receipt.physicalOwnerId], {
-    ownerAuthority: current,
-    snapshotUncommitted: true,
-    expectedOwnerBindings: [expectation],
-  });
-
-  assert.deepEqual(report.errors, []);
-  assert.deepEqual(report.validatedExpectedOwners, [workspace.receipt.physicalOwnerId]);
-  assert.equal(existsSync(external), true);
-  assert.equal(git(external, ['branch', '--show-current']), 'active-scratch');
-  assert.equal(existsSync(seatLinkedWorktreeOwnershipPath(
-    f.repo, workspace.receipt.physicalOwnerId,
-  )), true);
-});
-
-test('568-G: a recycled external path is retained because its Git identity no longer matches', async (t) => {
-  const f = fixture(t, 'external-recycled');
-  const before = authority('external-recycled-deployment', 'controller-before');
-  const after = authority('external-recycled-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'external-recycled');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'recycled-seat-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'recycled-scratch']);
-  git(f.repo, ['worktree', 'remove', '--force', external]);
-  mkdirSync(external);
-  writeFileSync(join(external, 'unrelated.txt'), 'new owner content\n');
-
-  const report = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => assert.fail('retained linked content keeps owner capacity'),
-  });
-
-  assert.deepEqual(report.errors, []);
-  assert.ok(report.diagnostics.some((row) => (
-    row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_content_retained'
-  )));
-  assert.equal(readFileSync(join(external, 'unrelated.txt'), 'utf8'), 'new owner content\n');
-  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
-});
-
-test('568-H: normal seat stop reclaims its linked worktree and keeps its branch evidence', async (t) => {
-  const f = fixture(t, 'external-stop');
-  const current = authority('external-stop-deployment', 'controller-current');
-  const workspace = await ownedWorkspace(f, current, 'external-stop');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'stopped-seat-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'stopped-scratch']);
-  writeFileSync(join(external, 'stop-evidence.txt'), 'seat stop evidence\n');
-  await markStopped(f.repo, workspace.receipt.physicalOwnerId);
-
-  await reap(f.repo, workspace.receipt.physicalOwnerId, { deleteBranch: true });
-
-  assert.equal(existsSync(external), false);
-  assert.equal(existsSync(workspace.dir), false);
-  assert.equal(git(f.repo, ['show', 'stopped-scratch:stop-evidence.txt']), 'seat stop evidence');
-  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
-});
-
-test('568-I: recovery retains an external checkout while a live process has a cwd inside it', async (t) => {
-  const f = fixture(t, 'external-live-cwd');
-  const before = authority('external-cwd-deployment', 'controller-before');
-  const after = authority('external-cwd-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'external-live-cwd');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'live-cwd-seat-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'live-cwd-scratch']);
-  const processDir = join(external, 'running');
-  mkdirSync(processDir);
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-    cwd: processDir, stdio: 'ignore',
-  });
-  await new Promise((resolve, reject) => {
-    child.once('spawn', resolve);
-    child.once('error', reject);
-  });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
-
-  const retained = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => assert.fail('a live cwd keeps owner capacity'),
-  });
-
-  assert.deepEqual(retained.errors, []);
-  const diagnostic = retained.diagnostics.find((row) => (
-    row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_live_process_retained'
-  ));
-  assert.ok(diagnostic);
-  assert.deepEqual(diagnostic.holders, [`pid:${child.pid}`]);
-  assert.equal(existsSync(external), true);
-  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
-
-  const exited = new Promise((resolve) => child.once('exit', resolve));
-  child.kill('SIGTERM');
-  await exited;
-  const reclaimed = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => true,
-  });
-  assert.deepEqual(reclaimed.errors, []);
-  assert.equal(existsSync(external), false);
-  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
-});
-
-test('568-J: a recycled Git registration at the same path and admin name is retained', async (t) => {
-  const f = fixture(t, 'external-registration-recycled');
-  const before = authority('external-registration-deployment', 'controller-before');
-  const after = authority('external-registration-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'external-registration-recycled');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'recycled-registration-external');
-  const ownership = addLinkedWorktree(seat, workspace, external, ['-b', 'first-generation']);
-  assert.match(ownership.registrationNonce, /^[a-f0-9]{40,64}$/u);
-  git(f.repo, ['worktree', 'remove', '--force', external]);
-  git(f.repo, ['worktree', 'add', '-b', 'replacement-generation', external, 'HEAD']);
-  const replacementGitDir = git(external, [
-    'rev-parse', '--path-format=absolute', '--git-dir',
-  ]);
-  assert.equal(replacementGitDir, ownership.worktreeGitDir,
-    'Git reused the same external path and administration directory spelling');
-
-  const report = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => assert.fail('a recycled registration keeps owner capacity'),
-  });
-
-  assert.deepEqual(report.errors, []);
-  assert.ok(report.diagnostics.some((row) => (
-    row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_content_retained'
-  )));
-  assert.equal(existsSync(external), true);
-  assert.equal(git(external, ['branch', '--show-current']), 'replacement-generation');
-  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
-});
-
-test('568-K: a foreign-uid Linux process and a racing exit do not block cleanup', async (t) => {
-  const f = fixture(t, 'linux-foreign-uid');
-  const before = authority('linux-foreign-deployment', 'controller-before');
-  const after = authority('linux-foreign-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'linux-foreign-uid');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'linux-foreign-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'linux-foreign-scratch']);
-  const cwdReads = [];
+  const external = join(dirname(f.repo), 'unowned-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'unowned-scratch']);
+  writeFileSync(join(external, 'unowned.txt'), 'unowned external content\n');
 
   const report = reconcile(f.repo, [], {
     ownerAuthority: after,
     snapshotUncommitted: true,
     beforeOwnerCleanup: () => true,
-    linkedWorktreeObservation: {
-      platform: 'linux', uid: 501, procRoot: '/synthetic-proc',
-      readdirSync: () => ['101', '102'],
-      statSync: (path) => ({ uid: path.endsWith('/101') ? 0 : 501 }),
-      readlinkSync: (path) => {
-        cwdReads.push(path);
-        throw Object.assign(new Error('process exited'), { code: 'ENOENT' });
-      },
-    },
   });
 
   assert.deepEqual(report.errors, []);
-  assert.deepEqual(cwdReads, ['/synthetic-proc/102/cwd', '/synthetic-proc/102/cwd']);
-  assert.equal(existsSync(external), false);
-  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
-});
-
-test('568-L: an unreadable same-uid Linux cwd retains and names its process', async (t) => {
-  const f = fixture(t, 'linux-same-uid-unreadable');
-  const before = authority('linux-same-deployment', 'controller-before');
-  const after = authority('linux-same-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'linux-same-uid-unreadable');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'linux-same-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'linux-same-scratch']);
-
-  const report = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => assert.fail('an unreadable same-uid cwd keeps owner capacity'),
-    linkedWorktreeObservation: {
-      platform: 'linux', uid: 501, procRoot: '/synthetic-proc',
-      readdirSync: () => ['202'],
-      statSync: () => ({ uid: 501 }),
-      readlinkSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
-    },
-  });
-
-  const diagnostic = report.diagnostics.find((row) => (
-    row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_liveness_unobservable_retained'
-  ));
-  assert.deepEqual(diagnostic?.holders, ['pid:202']);
-  assert.equal(existsSync(external), true);
-  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
-});
-
-test('568-M: macOS lsof stderr makes a successful partial scan retain', async (t) => {
-  const f = fixture(t, 'macos-partial-lsof');
-  const before = authority('macos-partial-deployment', 'controller-before');
-  const after = authority('macos-partial-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'macos-partial-lsof');
-  const seat = projectedSeat(f, workspace);
-  const external = join(dirname(f.repo), 'macos-partial-external');
-  addLinkedWorktree(seat, workspace, external, ['-b', 'macos-partial-scratch']);
-
-  const report = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => assert.fail('an incomplete lsof scan keeps owner capacity'),
-    linkedWorktreeObservation: {
-      platform: 'darwin', uid: 501,
-      spawnSync: (command, args) => {
-        assert.equal(command, '/usr/sbin/lsof');
-        assert.deepEqual(args, ['-a', '-u', '501', '-d', 'cwd', '-Fpn']);
-        return { status: 0, signal: null, stdout: '', stderr: 'incomplete scan\n' };
-      },
-    },
-  });
-
-  const diagnostic = report.diagnostics.find((row) => (
-    row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_liveness_unobservable_retained'
-  ));
-  assert.match(diagnostic?.reason ?? '', /incomplete observation/u);
-  assert.equal(existsSync(external), true);
-  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
-});
-
-test('568-O: macOS lsof result guards retain failures and accept a clean no-match', async (t) => {
-  const cases = [
-    {
-      label: 'no-match', retained: false,
-      result: () => ({ status: 1, signal: null, stdout: '', stderr: '' }),
-    },
-    {
-      label: 'signal', retained: true, reason: /SIGTERM/u,
-      result: () => ({ status: null, signal: 'SIGTERM', stdout: '', stderr: '' }),
-    },
-    {
-      label: 'overflow', retained: true, reason: /ENOBUFS/u,
-      result: () => ({
-        status: 0, signal: null, stdout: 'truncated', stderr: '',
-        error: Object.assign(new Error('maxBuffer exceeded'), { code: 'ENOBUFS' }),
-      }),
-    },
-    {
-      label: 'missing', retained: true, reason: /ENOENT/u,
-      result: () => ({
-        status: null, signal: null, stdout: '', stderr: '',
-        error: Object.assign(new Error('missing lsof'), { code: 'ENOENT' }),
-      }),
-    },
-    {
-      label: 'bad-status', retained: true, reason: /status 2/u,
-      result: () => ({ status: 2, signal: null, stdout: '', stderr: '' }),
-    },
-  ];
-  for (const item of cases) {
-    const f = fixture(t, `macos-lsof-${item.label}`);
-    const before = authority(`macos-lsof-${item.label}-deployment`, 'controller-before');
-    const after = authority(`macos-lsof-${item.label}-deployment`, 'controller-after');
-    const workspace = await ownedWorkspace(f, before, `macos-lsof-${item.label}`);
-    const seat = projectedSeat(f, workspace);
-    const external = join(dirname(f.repo), `macos-lsof-${item.label}-external`);
-    addLinkedWorktree(seat, workspace, external, ['-b', `macos-lsof-${item.label}`]);
-
-    const report = reconcile(f.repo, [], {
-      ownerAuthority: after,
-      snapshotUncommitted: true,
-      beforeOwnerCleanup: () => {
-        assert.equal(item.retained, false, `${item.label} must keep owner capacity when retained`);
-        return true;
-      },
-      linkedWorktreeObservation: {
-        platform: 'darwin', uid: 501, spawnSync: () => item.result(),
-      },
-    });
-
-    const diagnostic = report.diagnostics.find((row) => (
-      row.physicalOwnerId === workspace.receipt.physicalOwnerId
-        && row.code === 'linked_worktree_liveness_unobservable_retained'
-    ));
-    if (item.retained) {
-      assert.match(diagnostic?.reason ?? '', item.reason);
-      assert.equal(existsSync(external), true);
-      assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
-    } else {
-      assert.equal(diagnostic, undefined);
-      assert.equal(existsSync(external), false);
-      assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
-    }
-  }
-});
-
-test('568-N: a Git observation failure retains its row and examines later rows', async (t) => {
-  const f = fixture(t, 'git-observation-failure');
-  const before = authority('git-observation-deployment', 'controller-before');
-  const after = authority('git-observation-deployment', 'controller-after');
-  const workspace = await ownedWorkspace(f, before, 'git-observation-failure');
-  const seat = projectedSeat(f, workspace);
-  const first = join(dirname(f.repo), 'git-observation-first');
-  const second = join(dirname(f.repo), 'git-observation-second');
-  const firstOwnership = addLinkedWorktree(seat, workspace, first, ['-b', 'git-observation-first']);
-  addLinkedWorktree(seat, workspace, second, ['-b', 'git-observation-second']);
-  const indexPath = join(firstOwnership.worktreeGitDir, 'index');
-  const originalIndex = readFileSync(indexPath);
-  writeFileSync(indexPath, 'not a Git index');
-  const observed = [];
-
-  const retained = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => assert.fail('an unobservable Git row keeps owner capacity'),
-    linkedWorktreeHolders: (path) => { observed.push(path); return []; },
-  });
-
-  const diagnostic = retained.diagnostics.find((row) => (
-    row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_git_observation_unobservable_retained'
-  ));
-  assert.deepEqual(diagnostic?.failedObservations?.map((row) => ({
-    worktreePath: row.worktreePath, observation: row.observation,
-  })), [{ worktreePath: first, observation: 'git_status' }]);
-  assert.deepEqual(new Set(observed), new Set([first, second]));
-  const recorded = readFileSync(
-    seatLinkedWorktreeOwnershipPath(f.repo, workspace.receipt.physicalOwnerId), 'utf8',
-  );
-  assert.match(recorded, new RegExp(first.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-  assert.equal(existsSync(first), true);
-  assert.equal(existsSync(second), true);
-
-  writeFileSync(indexPath, originalIndex);
-  const reclaimed = reconcile(f.repo, [], {
-    ownerAuthority: after,
-    snapshotUncommitted: true,
-    beforeOwnerCleanup: () => true,
-    linkedWorktreeHolders: () => [],
-  });
-  assert.deepEqual(reclaimed.errors, []);
-  assert.equal(existsSync(first), false);
-  assert.equal(existsSync(second), false);
-  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+  assert.equal(existsSync(workspace.dir), false, 'the checkout storage is reclaimed');
+  assert.equal(existsSync(external), true,
+    'a worktree outside the checkout is unowned by Baton and is preserved');
+  assert.equal(git(external, ['branch', '--show-current']), 'unowned-scratch');
+  assert.equal(readFileSync(join(external, 'unowned.txt'), 'utf8'), 'unowned external content\n');
 });
