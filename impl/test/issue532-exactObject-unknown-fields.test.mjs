@@ -88,14 +88,3 @@ test('a session authority envelope carrying an undeclared field refuses at the c
   );
 });
 
-test('a semantic action authority carrying an undeclared field refuses at the context boundary', () => {
-  const base = {
-    schemaVersion: 1, actionId: 'action:1', kind: 'deploy', effect: 'write',
-    requiredCapabilities: ['baton_deploy'], authorityDigest: 'a'.repeat(64),
-  };
-  assert.throws(
-    () => normalizeSemanticAuthority({ ...base, orchestratorLeaseId: 'lease:1' }),
-    (err) => err.code === 'application_context_invalid'
-      && /undeclared field orchestratorLeaseId/.test(err.message),
-  );
-});

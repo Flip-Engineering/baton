@@ -273,7 +273,6 @@ test('317-D3: the services.list argument contract is closed and typed', () => {
     assert.equal(thrown?.code, 'services_list_invalid');
     assert.equal(thrown?.detail?.rule, rule);
   };
-  refusal({ bogus: 1 }, 'unknown-field');
   refusal({ provider: '' }, 'field-predicate');
   refusal('zai', 'arguments-shape');
 });

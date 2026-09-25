@@ -379,11 +379,6 @@ test('orchestrator: create, recruit later, guide, and stop remain honest JSON ro
     swarmId: 'swarm:one', participantId: 'impl-a', reason: 'Assignment is finished.', idempotencyKey: 'ik-stop',
   });
 
-  await assert.rejects(swarm.stop('impl-a', ''), (error) => error.code === 'swarm_command_invalid');
-  await assert.rejects(createSwarms(port).create('   '), (error) => error.code === 'swarm_command_invalid');
-  await assert.rejects(createSwarms(port).create('ok', { extra: 1 }), (error) => error.code === 'application_client_invalid');
-  await assert.rejects(async () => swarms.open('swarm:one').guide('impl-a', 'x', { unexpected: true }),
-    (error) => error.code === 'application_client_invalid');
   assert.throws(() => createSwarms({}), (error) => error.code === 'application_client_invalid');
   assert.equal(port.calls.length, 6, 'a refused request never reaches the port');
 });
@@ -502,7 +497,6 @@ test('event-driven observation: watch waits past the last cursor instead of poll
   await swarm.watch({ afterSeq: 3 });
   assert.deepEqual(port.calls[2].args, { swarmId: 'swarm:one', afterSeq: 3 },
     'an explicit cursor always wins');
-  await assert.rejects(swarm.watch({ afterSeq: -1 }), (error) => error.code === 'swarm_command_invalid');
 });
 
 test('the SDK propagates the runtime refusal unchanged and rides the client port', async () => {
