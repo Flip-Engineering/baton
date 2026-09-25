@@ -112,7 +112,6 @@ export class DeliveryJournal {
   #seq = 0;
   #tail = ZERO;
   #entries = new Map();
-  #batches = new Map();
   #boundary;
   #identity;
 
@@ -190,6 +189,8 @@ export class DeliveryJournal {
       if (!entry || !Number.isSafeInteger(record.coordinationSeq) || record.coordinationSeq < 1
         || entry.importedAt !== null) throw fail('delivery_journal_corrupt', 'delivery import acknowledgment is invalid');
       entry.importedAt = record.coordinationSeq;
+      // The committed coordination copy owns the full input and receipt evidence from here.
+      entry.body = null;
     } else throw fail('delivery_journal_corrupt', 'delivery journal record kind is invalid');
     this.#seq = record.seq;
     this.#tail = digest(record);
@@ -206,13 +207,23 @@ export class DeliveryJournal {
       throw fail('delivery_journal_corrupt', 'delivery entry digest changed');
     }
     if (entry.kind === 'prepared') {
-      const batch = validateBatch(entry.body);
-      if (batch.dispatchId !== entry.dispatchId || entry.entryId !== `prepared:${batch.dispatchId}`
-        || this.#batches.has(batch.dispatchId)) throw fail('delivery_journal_corrupt', 'prepared batch identity changed');
-      this.#batches.set(batch.dispatchId, batch);
+      if (entry.body !== null) {
+        const batch = validateBatch(entry.body);
+        if (batch.dispatchId !== entry.dispatchId) throw fail('delivery_journal_corrupt', 'prepared batch identity changed');
+        const summary = { generation: batch.generation };
+        if (entry.summary && json(entry.summary) !== json(summary)) {
+          throw fail('delivery_journal_corrupt', 'prepared batch summary changed');
+        }
+        entry = { ...entry, summary };
+      }
+      if (entry.entryId !== `prepared:${entry.dispatchId}`
+        || !exact(entry.summary, ['generation']) || !text(entry.summary.generation)
+        || (entry.body === null && entry.importedAt === null)) {
+        throw fail('delivery_journal_corrupt', 'prepared batch identity is invalid');
+      }
     } else {
-      const batch = this.#batches.get(entry.dispatchId);
-      if (!batch || !entry.summary || entry.summary.generation !== batch.generation
+      const batch = this.#entries.get(`prepared:${entry.dispatchId}`);
+      if (!batch || !entry.summary || entry.summary.generation !== batch.summary.generation
         || entry.entryId !== `receipt:${digest([entry.dispatchId, entry.summary.receiptId])}`
         || (entry.body === null && entry.importedAt === null)) {
         throw fail('delivery_journal_corrupt', 'delivery receipt identity changed');
@@ -223,7 +234,7 @@ export class DeliveryJournal {
         if (json(summary) !== json(entry.summary)) throw fail('delivery_journal_corrupt', 'delivery receipt summary changed');
       }
     }
-    this.#entries.set(entry.entryId, copy(entry));
+    this.#entries.set(entry.entryId, copy(entry.importedAt === null ? entry : { ...entry, body: null }));
   }
 
   #append(fields) {
@@ -253,7 +264,7 @@ export class DeliveryJournal {
       return copy(prior);
     }
     const entry = { entryId, dispatchId: batch.dispatchId, kind: 'prepared', digest: batchDigest,
-      body: batch, importedAt: null };
+      summary: { generation: batch.generation }, body: batch, importedAt: null };
     this.#append({ kind: 'entry', entry });
     return copy(entry);
   }
@@ -261,9 +272,9 @@ export class DeliveryJournal {
   recordReceipt(dispatchId, input) {
     this.#assertOpen();
     const receipt = validateReceipt(input);
-    const batch = this.#batches.get(dispatchId);
+    const batch = this.#entries.get(`prepared:${dispatchId}`);
     if (!batch) throw fail('delivery_batch_unknown', 'receipt requires a prepared batch');
-    if (receipt.generation !== batch.generation) throw fail('delivery_generation_mismatch', 'receipt belongs to another controller generation');
+    if (receipt.generation !== batch.summary.generation) throw fail('delivery_generation_mismatch', 'receipt belongs to another controller generation');
     const entryId = `receipt:${digest([dispatchId, receipt.receiptId])}`;
     const receiptDigest = digest(receipt);
     const prior = this.#entries.get(entryId);
@@ -308,7 +319,7 @@ export class DeliveryJournal {
   checkpoint() {
     this.#assertOpen();
     if (this.#seq === 0) return;
-    const entries = this.entries().map((entry) => entry.kind === 'receipt' && entry.importedAt !== null
+    const entries = this.entries().map((entry) => entry.importedAt !== null
       ? { ...entry, body: null } : entry);
     const snapshot = frame({ version: 1, identity: this.#identity, kind: 'checkpoint', seq: this.#seq, tail: this.#tail, entries });
     const temporary = join(this.root, `.delivery-${randomUUID()}.tmp`);

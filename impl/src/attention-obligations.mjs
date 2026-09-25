@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
+import { contributionNeeds } from './contribution-needs.mjs';
 
-const ROOT_ADDRESSED_NEED = /^(?:the\s+)?root\s*:/i;
 const own = (record, key) => Object.hasOwn(record ?? {}, key) ? record[key] : undefined;
 const identity = (parts) => `attention:${createHash('sha256').update(JSON.stringify(parts)).digest('hex')}`;
 
@@ -18,10 +18,9 @@ export function rootContributionAttention(swarm, contribution) {
     rows.push({ ...base, owed: 'review_owed', ask: null,
       next: { command: 'swarm.check', ...base } });
   }
-  const needs = contribution.body?.needsFromOthers;
-  for (const ask of Array.isArray(needs) ? needs : []) {
-    if (typeof ask !== 'string' || !ROOT_ADDRESSED_NEED.test(ask)) continue;
-    rows.push({ ...base, owed: 'needs_root', ask,
+  for (const { to, ask, needId } of contributionNeeds(contribution)) {
+    if (to !== 'root' || own(contribution.answers, needId)) continue;
+    rows.push({ ...base, owed: 'needs_root', ask, needId,
       next: { command: 'swarm.view', swarmId: swarm.swarmId } });
   }
   return rows;

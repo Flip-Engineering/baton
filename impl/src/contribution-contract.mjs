@@ -25,6 +25,8 @@
 // contribution body and names a field the contract does not admit, so a brief whose own example
 // contradicts the shape refuses before any seat is admitted on it.
 
+import { CONTRIBUTION_NEED_SCHEMA, validateContributionNeed } from './contribution-needs.mjs';
+
 /** The item lifecycle states — the closed set an item status names. */
 export const CONTRIBUTION_ITEM_STATUSES = Object.freeze(['delivered', 'partial', 'not_delivered']);
 
@@ -106,8 +108,9 @@ export const CONTRIBUTION_CONTRACT_SCHEMA = Object.freeze({
       description: 'the items this contribution hands to the next lane, cited verbatim by successors',
       expectation: 'an array', example: Object.freeze([]) }),
     needsFromOthers: Object.freeze({ type: 'array', required: true,
-      description: 'what this lane still needs from other seats, cited verbatim by successors',
-      expectation: 'an array', example: Object.freeze([]) }),
+      description: 'addressed questions or requests for the root or a named participant',
+      items: CONTRIBUTION_NEED_SCHEMA,
+      expectation: 'an array of {to: root, ask} or {to: participant, participantId, ask}', example: Object.freeze([]) }),
     notes: Object.freeze({ type: 'string', required: false,
       description: 'free prose — anything that fits nowhere else',
       expectation: 'any text', example: 'the iface freeze holds through the next lane' }),
@@ -228,6 +231,10 @@ export function validateContributionContract(body) {
   for (const name of ['carriedForward', 'needsFromOthers']) {
     if (!Array.isArray(body[name])) {
       contractRefusal(`body.${name}`, 'type', fields[name].expectation);
+    }
+    if (name === 'needsFromOthers') {
+      body[name].forEach((need, index) => validateContributionNeed(need, `body.${name}[${index}]`, contractRefusal));
+      continue;
     }
     const badIndex = body[name].findIndex((entry) => !isNonEmptyString(entry));
     if (badIndex !== -1) {

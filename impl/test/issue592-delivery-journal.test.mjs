@@ -135,16 +135,18 @@ for (const boundary of ['checkpoint_write', 'checkpoint_sync', 'checkpoint_renam
   });
 }
 
-test('checkpoint retains unimported evidence and removes only imported receipt bodies', (t) => {
+test('import acknowledgment releases full input and evidence while retaining receipt validation and replay identity', (t) => {
   const journal = open(t, fixture(t));
   const prepared = journal.prepare(batch());
   const accepted = journal.recordReceipt('dispatch-1', receipt());
   journal.acknowledgeImport(prepared.entryId, 21);
   journal.acknowledgeImport(accepted.entryId, 22);
+  assert.equal(journal.entries()[0].body, null);
+  assert.deepEqual(journal.entries()[0].summary, { generation: 'generation-1' });
   journal.recordReceipt('dispatch-1', receipt('processed', 'result'));
   journal.checkpoint();
   const [input, imported, pending] = journal.entries();
-  assert.deepEqual(input.body, batch());
+  assert.equal(input.body, null);
   assert.equal(imported.body, null);
   assert.equal(imported.summary.state, 'accepted');
   assert.equal(pending.body.state, 'processed');
