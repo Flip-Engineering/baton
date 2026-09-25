@@ -254,16 +254,14 @@ function runRunner(args, parent) {
 test('run-suite --changed selects the affected tests from its own checkout and lands green', async (t) => {
   const parent = mkdtempSync(join(tmpdir(), 'baton-preverdict-runner-'));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
-  // The root-wake delivery module is imported by exactly one test file, so changing it selects
-  // that file through the import graph; this test file imports nothing of it, so the nested run
-  // never recurses into this file.
-  // The path is spelled in pieces so this file never names it contiguously and selects itself.
-  const changedModule = ['impl/src/wake-', 'delivery.mjs'].join('');
-  const run = await runRunner(['--changed', changedModule], parent);
+  // A changed test file selects itself, and no test imports suite-verdict.test.mjs, so the
+  // selection is that one file whatever the rest of the import graph looks like. The import-edge
+  // and fixture-path rules are covered by the selectAffectedTests tests above.
+  const run = await runRunner(['--changed', 'impl/test/suite-verdict.test.mjs'], parent);
   assert.equal(run.code, 0, 'the selected subset is green');
   assert.match(run.stderr, /selected 1 test file\(s\) from 1 changed path\(s\)/u);
-  assert.match(run.stderr, /impl\/test\/issue564-root-wake-delivery-red\.test\.mjs \(imports: impl\/src\/wake-delivery\.mjs\)/u,
-    'the run says the file was selected through its import');
+  assert.match(run.stderr, /impl\/test\/suite-verdict\.test\.mjs \(changed\)/u,
+    'the run says the file was selected because it changed');
 });
 
 test('run-suite --changed refuses to run with no paths', async (t) => {
