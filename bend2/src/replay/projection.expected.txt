@@ -1,0 +1,13 @@
+MODE|check|corpus=inline|cases=12
+RESULT|empty|rows=0|head=0|swarms=0|participants=0|refusal=none|at=0|proj=total rows=0 head=0 swarms=0 participants=0|ok=true
+RESULT|swarm-no-participants|rows=2|head=2|swarms=1|participants=0|refusal=none|at=0|proj=swarm swarm-solo joined=0 active=0 left=0 contrib=1 accept=0 review=0 integrated=1 work=0 assign=0 closed=0;total rows=2 head=2 swarms=1 participants=0|ok=true
+RESULT|participant-left|rows=3|head=3|swarms=1|participants=2|refusal=none|at=0|proj=swarm swarm-a joined=2 active=1 left=1 contrib=0 accept=0 review=0 integrated=0 work=0 assign=0 closed=0;participant swarm-a p1 status=left;participant swarm-a p2 status=active;total rows=3 head=3 swarms=1 participants=2|ok=true
+RESULT|reviews|rows=3|head=6|swarms=1|participants=2|refusal=none|at=0|proj=swarm swarm-a joined=0 active=0 left=0 contrib=0 accept=1 review=3 integrated=0 work=0 assign=0 closed=0;participant swarm-a p1 status=active;participant swarm-a p2 status=active;total rows=3 head=6 swarms=1 participants=2|ok=true
+RESULT|closed-swarm|rows=3|head=9|swarms=1|participants=1|refusal=none|at=0|proj=swarm swarm-b joined=0 active=0 left=0 contrib=0 accept=0 review=0 integrated=0 work=1 assign=1 closed=1;participant swarm-b p9 status=active;total rows=3 head=9 swarms=1 participants=1|ok=true
+RESULT|order-and-chunks|rows=3|head=12|swarms=2|participants=3|refusal=none|at=0|proj=swarm swarm-a joined=1 active=1 left=0 contrib=0 accept=0 review=0 integrated=0 work=0 assign=0 closed=0;participant swarm-a pa1 status=active;swarm swarm-z joined=2 active=2 left=0 contrib=0 accept=0 review=0 integrated=0 work=0 assign=0 closed=0;participant swarm-z pz1 status=active;participant swarm-z pz2 status=active;total rows=3 head=12 swarms=2 participants=3|ok=true
+RESULT|no-trailing-newline|rows=1|head=13|swarms=1|participants=1|refusal=none|at=0|proj=swarm swarm-c joined=1 active=1 left=0 contrib=0 accept=0 review=0 integrated=0 work=0 assign=0 closed=0;participant swarm-c pc status=active;total rows=1 head=13 swarms=1 participants=1|ok=true
+RESULT|absent-swarm-id|rows=1|head=14|swarms=1|participants=1|refusal=none|at=0|proj=swarm - joined=1 active=1 left=0 contrib=0 accept=0 review=0 integrated=0 work=0 assign=0 closed=0;participant - pd status=active;total rows=1 head=14 swarms=1 participants=1|ok=true
+RESULT|unknown-kind|rows=0|head=0|swarms=0|participants=0|refusal=unknown_event_kind|at=15|proj=none|ok=true
+RESULT|blank-line|rows=1|head=16|swarms=1|participants=1|refusal=malformed_row|at=0|proj=none|ok=true
+RESULT|extra-field|rows=0|head=0|swarms=0|participants=0|refusal=malformed_row|at=0|proj=none|ok=true
+RESULT|unreadable-seq|rows=0|head=0|swarms=0|participants=0|refusal=malformed_row|at=0|proj=none|ok=true
