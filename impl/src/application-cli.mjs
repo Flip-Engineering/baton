@@ -1,3 +1,4 @@
+import { openRootAttention } from './root-attention-stream.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { processState } from './resident-authority.mjs';
@@ -4796,6 +4797,11 @@ export function parseBatonCli(rawArgs) {
 
 export class BatonWebClient {
   #token;
+
+  openRootAttention(onAttention) {
+    return openRootAttention({ baseUrl: this.baseUrl, socketPath: this.socketPath,
+      token: this.#token, origin: this.origin, onAttention });
+  }
 
   constructor(options) {
     // socketPath is optional: a local resident's wake attachment rides the owner-only Unix socket

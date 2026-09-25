@@ -212,8 +212,10 @@ test('343-6: the resident serves a fitting swarm.view unnamed — no narrowing o
 test('343-7: narrowing applies to swarm.view only — other oversize answers cross untouched', async (t) => {
   const big = { runId: 'run-1', depth: 'outline', bulk: 'b'.repeat(10_000) };
   const application = stubApplication(async () => structuredClone(big));
+  const directory = root();
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const web = new WebNorthbound({
-    coordinator: {}, coordination: new CoordinationStore(root()),
+    coordinator: {}, coordination: new CoordinationStore(directory),
     repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
     now: () => Date.parse('2026-09-17T00:00:00.000Z'), application,
   });
@@ -228,7 +230,7 @@ test('343-7: narrowing applies to swarm.view only — other oversize answers cro
 });
 
 test('343-8: the MCP bridge frame is the declared wire.frame row the resident narrows against', () => {
-  const script = readFileSync(new URL('../scripts/mcp-web.mjs', import.meta.url), 'utf8');
+  const script = readFileSync(new URL('../src/resident-mcp-entry.mjs', import.meta.url), 'utf8');
   assert.match(script, /maxMessageBytes/, 'the bridge script sets its frame explicitly');
   assert.match(script, /FRAME_LIMITS\['wire\.frame'\]/, 'the bridge frame is the declared substrate row, never a fresh constant');
 });

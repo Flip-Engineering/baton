@@ -2303,6 +2303,10 @@ export class BatonApplication {
     if (this._detached) throw applicationError('application deployment is detached', 'application_detached');
   }
 
+  startAttentionDelivery(options) {
+    return this._swarmRuntime().startAttentionDelivery(options);
+  }
+
   _swarmRuntime() {
     this._swarmService ??= new SwarmRuntime({
       store: this.driver.coordination, coordinator: this.driver.coordinator,
@@ -9589,7 +9593,7 @@ export class BatonApplication {
       throw applicationError('application has admitted workers; use deployment shutdown for exact fleet drain', 'application_detach_active');
     }
     await this.resultExportLifecycle?.close();
-    this._swarmService?.close();
+    await this._swarmService?.close();
     await this._swarmNativeAccess?.close();
     await this.driver.closeAsync();
     this._detached = true;
@@ -9615,7 +9619,7 @@ export class BatonApplication {
   }
 
   async _shutdownAuthorized(principal) {
-    this._swarmService?.close();
+    await this._swarmService?.close();
     await this._swarmNativeAccess?.close();
     for (const controller of this._followControllers) controller.abort();
     for (const controllers of this._contextControllers?.values() ?? []) {

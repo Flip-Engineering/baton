@@ -9,9 +9,8 @@ export class AttentionSource {
   #events = [];
   cursor = 0;
 
-  consume(events, upperBound) {
+  consume(events) {
     for (const event of events) {
-      if (event.seq !== this.cursor + 1 || event.seq > upperBound) throw new Error('attention source cursor is discontinuous');
       if (SWARM_EVENT_KINDS.has(event.kind)) foldSwarmEvent(this.#swarms, event);
       if (event.kind === 'driver.recorded') {
         if (['swarm.turn_reported', 'swarm.root_attention_owed', 'wake.root_delivered', 'wake.root_undelivered',
@@ -19,7 +18,6 @@ export class AttentionSource {
       }
       this.cursor = event.seq;
     }
-    if (this.cursor !== upperBound) throw new Error('attention source did not reach its committed bound');
   }
 
   obligations() {

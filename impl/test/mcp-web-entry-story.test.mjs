@@ -162,7 +162,7 @@ test('ES-C (#314 lane 4): the migration section is rendered from the design that
 });
 
 test('ES-D (#314 lane 4): both entries run the same parity gate over the same operation table', () => {
-  for (const entry of [BRIDGE_ENTRY, STDIO_ENTRY]) {
+  for (const entry of [new URL('../src/resident-mcp-entry.mjs', import.meta.url), STDIO_ENTRY]) {
     const source = readFileSync(entry, 'utf8');
     assert.match(source, /assertCliMcpControlParity\(\)/u, `${entry.pathname} runs the CLI/MCP contract parity`);
     assert.match(source, /assertUnifiedCapabilityCoverage\(\)/u, `${entry.pathname} runs the capability coverage gate`);

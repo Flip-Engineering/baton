@@ -299,6 +299,32 @@ alone is not a correctness objection to this model. Independent-session recovery
 policy admission still need proof; a channel send alone supplies neither. No model acknowledgment
 action is required. Section 3 links the exact Channels controls and protocol.
 
+The Claude root entry is `node impl/scripts/mcp-claude-root.mjs`. It discovers the same
+resident connection as `mcp-web.mjs`, advertises `experimental['claude/channel']`, and opens
+`POST /v1/root-attention/claude-code` after MCP initialization. Opening this entry is explicit
+root enrollment. The resident requires its existing authenticated repository control and
+observation authority plus operator approval authority. It binds the stream to that principal.
+The ordinary `mcp-web.mjs` entry retains its observer role.
+
+The resident starts source dispatch with its application transport. An attached root receives
+outstanding obligations through the stream; the entry renders them as
+`notifications/claude/channel`. A resident stream write records `offered_unknown`, with
+`transport: resident_channel_stream`. This establishes neither native consumption nor business
+resolution. Closing the attachment leaves source debt outstanding. When a new root connection
+opens, it takes the logical root role and receives outstanding debt. The previous connection
+closes. A resident stream end closes the MCP entry with a diagnostic asking for native MCP
+reconnection; automatic native reconnection remains unverified.
+
+For local development, register this entry under an MCP server name such as `baton-root` using
+Claude Code's `--mcp-config` option, then launch the native UI with
+`--dangerously-load-development-channels server:baton-root`. The operator accepts Claude Code's
+own development-channel prompt. The [Channels reference](https://code.claude.com/docs/en/channels-reference)
+states that the development option bypasses the preview allowlist for the named entry;
+organization policy still applies. Baton does not claim production channel admission from this
+local-development path. Protocol tests cover authenticated dispatch and the MCP notification.
+Idle and busy delivery in the real Claude UI, root reconnect, and resident restart remain native
+acceptance requirements.
+
 **Codex.** `codex --help` and `codex resume --help` expose `--remote` with WebSocket and Unix
 endpoints; the [App Server reference](https://learn.chatgpt.com/docs/app-server) documents the
 native TUI connection. Baton can launch that TUI against its authenticated protocol gateway,
