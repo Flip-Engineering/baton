@@ -55,9 +55,10 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // Issue #443: the PERFORMED re-route — the successor an `auto` swarm bound on the first
   // candidate, recorded by the runtime from the recruit it really ran, never caller-submittable.
   'swarm.rerouted',
-  // Issue #525: the resume-continuation decision — a resume-from recruit under the default
+  // Issue #525: the resume-continuation decision — a resume-from recruit under the DECLARED
   // `resumeContinuation: 'manual'` policy records the question, and the orchestrator's guide
-  // records the answer. Both are runtime-recorded, never caller-submittable.
+  // records the answer; the default is `auto`, which continues without the question (#572).
+  // Both are runtime-recorded, never caller-submittable.
   'swarm.resume_decision_requested',
   'swarm.resume_decision_answered',
   'swarm.context_updated',
@@ -99,7 +100,7 @@ export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'commen
 // the exclusion reason is the one way a route leaves the decision without being a candidate.
 export const SWARM_REROUTE_MODES = Object.freeze(['manual', 'auto']);
 export const SWARM_REROUTE_CANDIDATE_REASONS = Object.freeze(['subscription_headroom', 'api_fallback']);
-export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed']);
+export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed', 'excluded_by_operator', 'model_not_allowed']);
 /** The billing bases a route's own profile publishes (#429): `api` pays per token, `subscription`
  * is a flat plan. A route whose deployment publishes no measured profile carries none — absence is
  * never a guessed basis. */
