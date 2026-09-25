@@ -1938,13 +1938,11 @@ export function _validateGoalPlanDispatchPair(store, dispatchEvent, taskEvent, i
   const approval = approvalEvent?.payload?.approval;
   // Issue #325: the binding anchors on the RECORDED approval digest, never the live
   // policy — a dispatch recorded under an earlier policy stays authoritative, while a
-  // forged binding digest still refuses against the recorded approval row. The approval
-  // TTL window is prospective-only (!integrity): replay re-derives the recorded order
-  // (dispatch after approval) but never re-judges the window by the live policy.
+  // forged binding digest still refuses against the recorded approval row. Replay re-derives
+  // the recorded order (dispatch after approval). An approval does not expire with time.
   if (!approval || approval.disposition !== 'approved' || approval.digest !== p.binding.approvalDigest
     || p.binding.policyDigest !== approval.policyDigest
-    || Date.parse(dispatchEvent.ts) < Date.parse(approval.decidedAt)
-    || (!integrity && Date.parse(dispatchEvent.ts) - Date.parse(approval.decidedAt) > store._goalPlanPolicy.approvalTtlMs)) fail('goal/plan dispatch lacks current approval authority');
+    || Date.parse(dispatchEvent.ts) < Date.parse(approval.decidedAt)) fail('goal/plan dispatch lacks current approval authority');
 
   const node = plan.nodes.find((row) => row.key === p.binding.nodeKey);
   const planRevision = Object.hasOwn(node ?? {}, 'revision');

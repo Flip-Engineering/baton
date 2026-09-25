@@ -610,10 +610,6 @@ const GOAL_PLAN_FOLD_LIVE_POLICY_PINS = Object.freeze({
   // corrupt ledger, not admissible history (the constructor already binds the live
   // repoId to the live policy).
   repoId: 'deployment identity — a recorded row naming another deployment refuses',
-  // The approval TTL window fires prospective-only (the !integrity branch): replay
-  // re-derives the recorded dispatch-after-approval order but never re-judges the
-  // window by the live policy.
-  approvalTtlMs: 'prospective-only approval window — never a replay judgment',
   // Structural ceilings the fold re-derives from the replayed projection (revision
   // lineage length, operational evidence prefix): a refusal at replay names a ledger
   // no same-vintage store wrote.
