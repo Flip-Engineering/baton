@@ -477,14 +477,13 @@ test('BD-1 (durable claim): completed park carries origin; pausedTurnStatus + at
 // BD-2 — sanitize pipeline at mint
 // ===========================================================================
 
-test('BD-2 (sanitize pipeline): redact-before-bound, unicode scalar safe, empty→null, untrusted wrapper, RunView ceiling', async (t) => {
+test('BD-2 (sanitize pipeline): redact whole, unicode scalar safe, empty→null, untrusted wrapper, RunView ceiling', async (t) => {
   const secret = 'sk-abcdefghijklmnopqrstuvwxyz012345';
   // Plant secret near a long prefix so a truncate-then-redact would leak a split token.
   const longPrefix = 'x'.repeat(200);
   const credentialSummary = `${longPrefix} api_key=${secret} tail-after-secret`;
-  // Multi-byte scalar near the 240 boundary (emoji is 4 UTF-8 bytes).
-  const unicodePad = 'u'.repeat(236);
-  const unicodeSummary = `${unicodePad}😀EXTRA`;
+  // A multi-byte scalar inside the summary (emoji is 4 UTF-8 bytes).
+  const unicodeSummary = `${'u'.repeat(236)}😀EXTRA`;
 
   const kit = appHarness(t, {
     default: [{
@@ -500,10 +499,10 @@ test('BD-2 (sanitize pipeline): redact-before-bound, unicode scalar safe, empty�
   assert.equal(checkpoint.claim.summary.untrusted, true);
   assert.equal(checkpoint.claim.summary.provenance, 'model-authored');
   assert.ok(!text.includes(secret), 'credential-shaped token must never appear in claim summary');
-  assert.ok(!text.includes('sk-abcdefghijklmnop'), 'partial credential leak across the 240 cut is forbidden');
+  assert.ok(!text.includes('sk-abcdefghijklmnop'), 'no partial credential survives the redaction');
   assert.ok(text.includes('[redacted]') || text.includes('redacted'),
     'redaction marker must appear when a credential-shaped token was present');
-  assert.ok(Buffer.byteLength(text) <= 240, 'summary text is bounded to 240 bytes');
+  assert.ok(text.includes('tail-after-secret'), 'the summary keeps the text after the redacted token');
 
   // Empty summary → origin.summary null (never '')
   const emptyKit = appHarness(t, {
@@ -531,13 +530,13 @@ test('BD-2 (sanitize pipeline): redact-before-bound, unicode scalar safe, empty�
   const uniView = await startPausedRun(uniKit, 'run-bd2-unicode', 'unicode park (marker:default)');
   const uniCp = uniView.attention.find((entry) => entry.kind === 'turn_checkpoint');
   const uniText = uniCp.claim.summary.text;
-  // If the emoji was included it must be intact; if truncated before it, no orphan UTF-8.
+  // The multi-byte scalar and the text after it survive whole.
   assert.doesNotThrow(() => {
     const reencoded = Buffer.from(uniText, 'utf8').toString('utf8');
     assert.equal(reencoded, uniText);
   });
-  assert.ok(!uniText.includes('\uFFFD'), 'no replacement char from mid-scalar slice');
-  assert.ok(Buffer.byteLength(uniText) <= 240);
+  assert.ok(!uniText.includes('\uFFFD'), 'no replacement char from a mid-scalar slice');
+  assert.ok(uniText.includes('EXTRA'), 'the text after the multi-byte scalar is present whole');
 
   // RunView byte ceiling still holds after claim addition
   assert.ok(Buffer.byteLength(JSON.stringify(view)) <= 512 * 1024);
