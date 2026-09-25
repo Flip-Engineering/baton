@@ -1371,7 +1371,9 @@ export function _attentionPage(coordinator, recorder, runId, targetKinds, afterC
 export async function _reportRunTurn(coordinator, recorder, handle, terminalEvent, report) {
     const store = recorder.coordination;
     const task = coordinator._tasks.get(handle.taskId);
-    const key = `run-turn-report:${handle.id}:${terminalEvent.turnEpoch}:${terminalEvent.seq}`;
+    const attention = terminalEvent.attention;
+    const prefix = attention ? `run-idle-pressure:${attention.seq}` : 'run-turn-report';
+    const key = `${prefix}:${handle.id}:${terminalEvent.turnEpoch}:${terminalEvent.seq}`;
     coordinator._runTurnReportDeliveries ??= new Map();
     const pending = coordinator._runTurnReportDeliveries.get(key);
     if (pending) return pending;
@@ -1388,9 +1390,9 @@ export async function _reportRunTurn(coordinator, recorder, handle, terminalEven
         && !TERMINAL_TASK_STATUSES.has(coordinator._tasks.get(candidate.taskId)?.status)) { parent = candidate; break; }
       lineage = store.runLineage?.(lineage.parentRunId);
     }
-    const event = prior ?? store.recordDriver('run.turn_reported', {
+    const event = prior ?? store.recordDriver(attention ? 'run.worker_idle_prompted' : 'run.turn_reported', {
       runId: task?.runId ?? null, worker: handle.id, taskId: handle.taskId,
-      turnSeq: terminalEvent.seq, turnEpoch: terminalEvent.turnEpoch, report,
+      turnSeq: terminalEvent.seq, turnEpoch: terminalEvent.turnEpoch, report, ...(attention ? { attention } : {}),
       parentWorkerId: parent?.id ?? null,
     }, { actor: 'baton-runtime', key }).event;
     report = event.payload.report;
@@ -1421,7 +1423,7 @@ export async function _reportRunTurn(coordinator, recorder, handle, terminalEven
     }
     store.recordDriver('run.root_attention_owed', {
       runId: task?.runId ?? null, worker: handle.id, taskId: handle.taskId,
-      owed: 'turn_report', turnReport,
+      owed: attention ? 'worker_idle' : 'turn_report', turnReport,
     }, { actor: 'baton-runtime', key: `${key}:root` });
     };
     const delivery = deliver();

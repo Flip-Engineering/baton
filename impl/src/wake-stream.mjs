@@ -546,7 +546,7 @@ function servedHeader(value) {
 
 function turnReportPreview(event) {
   const payload = event.payload ?? {};
-  if (payload.owed === 'turn_report' && payload.turnReport) return Object.freeze({ ...payload.turnReport });
+  if (['turn_report', 'worker_idle'].includes(payload.owed) && payload.turnReport) return Object.freeze({ ...payload.turnReport });
   const reported = payload.kind === 'swarm.turn_reported';
   const rootAsk = payload.kind === 'swarm.root_attention_owed' && payload.owed === 'turn_reported';
   if (!reported && !rootAsk) return null;

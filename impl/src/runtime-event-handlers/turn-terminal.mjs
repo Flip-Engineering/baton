@@ -3,6 +3,7 @@
 // lifecycle.exited), verbatim over the dispatcher's ctx record. Recording through the port;
 // receiver explicit; no sibling family imports.
 
+import { IdleWorkerAttention, deliverIdleReport } from '../idle-worker-attention.mjs';
 import { PROVIDER_FAULT_CODES } from '../provider-faults.mjs';
 import {
   KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze, typedTerminalCode,
@@ -12,12 +13,13 @@ import {
 function reportTurn(coordinator, ctx, event, report) {
   ctx.handle.reportedTurnEpoch = event.turnEpoch;
   const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
-  const deliver = typeof participantRuntime?.onTurnCompleted === 'function'
-    ? () => participantRuntime.onTurnCompleted({ workerId: ctx.workerId,
-      turnSeq: event.seq, turnEpoch: ctx.turnEpoch, report,
-      assignmentDone: participantRuntime.isDone?.() === true })
-    : () => coordinator._reportRunTurn(ctx.handle, event, report);
-  coordinator._trackAuthorityPromise(() => Promise.resolve().then(deliver), true)
+  const deliver = (observedReport = report, attention = null) =>
+    deliverIdleReport(coordinator, ctx.handle, event, observedReport, attention);
+  const retained = report?.status === 'completed' && participantRuntime?.isDone?.() !== true
+    && (typeof participantRuntime?.onTurnCompleted === 'function' || coordinator._turnCompletionOf(ctx.handle) === 'pausable');
+  if (retained) coordinator._idleWorkerAttention ??= new IdleWorkerAttention(coordinator);
+  coordinator._trackAuthorityPromise(() => retained
+    ? coordinator._idleWorkerAttention.report(ctx.handle, event, report, deliver) : deliver(), true)
     .catch((error) => coordinator._recordOperationFailure(
       'turn.report_delivery_failed', ctx.handle, 'turn_report_delivery_failed', error,
       { turnSeq: event.seq }));

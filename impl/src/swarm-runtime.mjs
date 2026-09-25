@@ -4062,7 +4062,7 @@ export class SwarmRuntime {
     const exposureFacts = this._briefExposureFacts(swarm, caller);
     const turnReportsByParticipant = new Map();
     for (const event of ledger) {
-      if (event.kind !== 'driver.recorded' || event.payload?.kind !== 'swarm.turn_reported'
+      if (event.kind !== 'driver.recorded' || !['swarm.turn_reported', 'swarm.worker_idle_prompted'].includes(event.payload?.kind)
         || event.payload.swarmId !== swarm.swarmId || event.payload.originalReportSeq !== undefined) continue;
       const rows = turnReportsByParticipant.get(event.payload.participantId) ?? [];
       rows.push({ seq: event.seq, ts: event.ts, ...event.payload });
@@ -6498,7 +6498,7 @@ export class SwarmRuntime {
   }
 
   /** Deliver a turn report to the nearest live orchestrator, or address the root wake stream. */
-  async reportTurnEnd({ swarmId, participantId, workerId, turnSeq, turnEpoch, report, assignmentDone = false }) {
+  async reportTurnEnd({ swarmId, participantId, workerId, turnSeq, turnEpoch, report, assignmentDone = false, attention = null }) {
     const swarm = this._swarm(swarmId);
     const participant = this._participant(swarm, participantId);
     if (!Number.isSafeInteger(turnSeq) || turnSeq < 0
@@ -6509,8 +6509,11 @@ export class SwarmRuntime {
       refuse('Turn report needs the participant worker and recorded turn identity',
         'swarm_payload_invalid', { rule: 'turn-report-identity', swarmId, participantId });
     }
-    const key = `swarm-turn-report:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
-    const rootKey = `swarm-turn-report-owed:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
+    const rowKind = attention ? 'swarm.worker_idle_prompted' : 'swarm.turn_reported';
+    const prefix = attention ? `swarm-idle-pressure:${attention.seq}` : 'swarm-turn-report';
+    const key = `${prefix}:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
+    const rootPrefix = attention ? `swarm-idle-pressure-owed:${attention.seq}` : 'swarm-turn-report-owed';
+    const rootKey = `${rootPrefix}:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
     this._turnReportDeliveries ??= new Map();
     if (this._turnReportDeliveries.has(key)) return this._turnReportDeliveries.get(key);
     const prior = this.store.priorCoordinationEvent(`${key}:root`)
@@ -6534,8 +6537,8 @@ export class SwarmRuntime {
         && worker.status !== 'stopping') break;
       parentId = parent.parentId ?? null;
     }
-    let event = prior ?? this.store.recordDriver('swarm.turn_reported', {
-      swarmId, participantId, parentId, workerId, turnSeq, turnEpoch, report, assignmentDone,
+    let event = prior ?? this.store.recordDriver(rowKind, {
+      swarmId, participantId, parentId, workerId, turnSeq, turnEpoch, report, assignmentDone, ...(attention ? { attention } : {}),
     }, { actor: 'baton-runtime', key }).event;
     // Retries carry the original report, including its completion declaration.
     ({ report, assignmentDone } = event.payload);
@@ -6546,13 +6549,18 @@ export class SwarmRuntime {
       text, omittedBytes: Buffer.byteLength(reportText) - Buffer.byteLength(text) };
     const addressRoot = (failure) => {
       if (event.payload.parentId !== null) {
-        event = this.store.recordDriver('swarm.turn_reported', {
+        event = this.store.recordDriver(rowKind, {
           swarmId, participantId, parentId: null, workerId, turnSeq, turnEpoch, report,
-          assignmentDone, originalReportSeq: event.seq,
+          assignmentDone, originalReportSeq: event.seq, ...(attention ? { attention } : {}),
           ...(failure ? { deliveryFailure: failure } : {}),
         }, { actor: 'baton-runtime', key: `${key}:root` }).event;
       }
-      if (typeof this._reconcileTurnReportedRows === 'function') {
+      if (attention) {
+        this.store.recordDriver('swarm.root_attention_owed', {
+          swarmId, participantId, owed: 'worker_idle', ask: report?.summary ?? null, turnReport,
+          next: { command: 'swarm.view', swarmId },
+        }, { actor: 'baton-runtime', key: rootKey });
+      } else if (typeof this._reconcileTurnReportedRows === 'function') {
         this._reconcileTurnReportedRows(swarm, 'baton-runtime');
       } else {
         const reported = event.payload.report;

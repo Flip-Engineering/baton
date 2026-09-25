@@ -505,7 +505,7 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
-**Runtime-owned driver kinds (never caller-submittable, 16).** The operation lifecycle and refusal rows the runtime
+**Runtime-owned driver kinds (never caller-submittable, 17).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
@@ -519,6 +519,7 @@ records for itself, disjoint from the caller-submittable set above:
 - `swarm.integration_swept`
 - `swarm.root_attention_owed`
 - `swarm.turn_reported`
+- `swarm.worker_idle_prompted`
 - `swarm.turn_report_delivered`
 - `swarm.guidance_sent`
 - `swarm.guidance_parked`
@@ -571,6 +572,27 @@ a bounded preview of the report string, summary, or delivery failure. The `turn_
 wake carries the full report's bounded preview, omitted byte count, and report sequence. `swarm.view` with the reporting `participantId` returns the full `turnReports`.
 The assignment remains available for guidance. A participant that declares
 `swarm.participant_left` with reason `completed` proceeds through verification and worker cleanup.
+
+A harness that retains a worker after its turn prompts the same orchestrator to choose continue
+or stop. The report includes the checkout HEAD, commits ahead of its base when available,
+uncommitted entries, process-group RSS, worktree allocation, and runtime-home allocation.
+Each observation names its time; an unavailable measurement remains unknown. Resource reads
+inspect metadata and allocation sizes. Process RSS requires the recorded PID, process group,
+generation, and process start identity to match.
+
+The runtime checks host memory and worktree capacity every 30 seconds while it holds retained
+workers. A pressure episode records `worker.idle_pressure_observed` and re-raises each idle
+worker through `swarm.worker_idle_prompted` or `run.worker_idle_prompted`. The prompt ranks
+idle workers by process-group RSS for memory pressure, or combined worktree and runtime
+allocation for disk pressure. Unknown values follow measured values. Each worker's own
+orchestrator receives the prompt; a root address records `root_attention_owed` with
+`owed: worker_idle`. The root wake carries a bounded report preview. A named participant's
+`turnReports` read includes the complete pressure report and ranking.
+
+Continued, completed, and stopped workers leave the idle set. A pressure episode prompts once
+per retained turn and pressure kind set; a changed idle set or renewed pressure after relief
+raises a new prompt. Failed delivery retries use the same episode identity. These observations
+leave the continue-or-stop decision to the orchestrator.
 
 ---
 

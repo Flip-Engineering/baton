@@ -13,6 +13,7 @@
 // _providerBrief is not here: it is already slice 3's briefing-port delegate, and a second hop
 // would be noise.
 
+import { IdleWorkerAttention } from './idle-worker-attention.mjs';
 import { armSteeringCycle } from './runtime-redrive.mjs';
 
 import { spawn } from 'node:child_process';
@@ -787,6 +788,7 @@ export function constructor(coordinator, opts) {
     // so a seat's fault row is composed from the coordinator's own death seam rather than a scan of
     // the worker ledger.
     coordinator._providerFaultDeaths = new Map();
+    coordinator._idleWorkerAttention = new IdleWorkerAttention(coordinator);
     if (coordinator._coordination?._deferredLoad === true) {
       coordinator._startupReconstructionPending = true;
     } else {

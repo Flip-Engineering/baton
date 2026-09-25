@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { IdleWorkerAttention } from '../src/idle-worker-attention.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
@@ -13,6 +14,7 @@ import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { deriveWakeFrame } from '../src/wake-stream.mjs';
 
 const dirs = [];
+const coordinators = [];
 function tmpDir() {
   const d = mkdtempSync(join(tmpdir(), 'baton-turn-report-'));
   dirs.push(d);
@@ -150,12 +152,14 @@ function setup({ adapter, capture }) {
     approvalTimeoutMs: 60000,
     stopDeadlineMs: 15000,
   });
+  coordinators.push(coordinator);
   return { dir, log, coordinator, store: coordination };
 }
 
 async function flush() {
   for (let i = 0; i < 100; i += 1) await Promise.resolve();
   await new Promise((resolve) => setImmediate(resolve));
+  await Promise.all(coordinators.map((coordinator) => coordinator._idleWorkerAttention?.flush()));
 }
 
 async function fixture(t, { completeBeforeBinding = false } = {}) {
@@ -231,7 +235,8 @@ test('the root wake carries the ask and the report wake preserves full turn iden
   assert.equal(owed.length, 1);
   const frame = deriveWakeFrame(owed[0]);
   assert.equal(frame.wakeClass, 'root_owed');
-  assert.equal(frame.turnReport.text, 'Root review needed');
+  assert.match(frame.turnReport.text, /Root review needed/);
+  assert.match(frame.turnReport.text, /Choose continue or stop/);
   const reportFrame = deriveWakeFrame(f.events('swarm.turn_reported')[0]);
   assert.equal(reportFrame.turnReport.workerId, child.id);
   assert.equal(reportFrame.turnReport.assignmentDone, false);
@@ -278,7 +283,7 @@ test('a failed parent delivery addresses the root once and preserves the report 
   await flush();
   const report = f.events('swarm.turn_reported')[0];
   assert.equal(f.events('swarm.root_attention_owed').length, 1);
-  assert.equal(f.events('swarm.root_attention_owed')[0].payload.ask, 'delivery_refused');
+  assert.match(f.events('swarm.root_attention_owed')[0].payload.ask, /Choose continue or stop/);
   const result = await f.runtime.reportTurnEnd({ ...report.payload, report: { output: 'Changed on retry' } });
   assert.equal(result.delivery.state, 'root_addressed');
   assert.equal(f.events('swarm.root_attention_owed').length, 1);
@@ -321,7 +326,7 @@ test('an oversized report has a bounded wake preview and a complete named-partic
   const frame = deriveWakeFrame(f.events('swarm.turn_reported')[0]);
   assert.ok(frame.turnReport.omittedBytes > 0);
   assert.equal(Buffer.byteLength(frame.turnReport.text) + frame.turnReport.omittedBytes,
-    Buffer.byteLength(JSON.stringify({ status: 'completed', output })));
+    Buffer.byteLength(JSON.stringify(f.events('swarm.turn_reported')[0].payload.report)));
   const view = await f.runtime.command(frame.turnReport.read.command, frame.turnReport.read.args,
     { actor: 'owner', principalId: 'owner', sessionId: 'owner' });
   assert.equal(view.participants.find((p) => p.participantId === 'builder').turnReports[0].report.output, output);
@@ -512,4 +517,96 @@ test('retry repairs a refused-parent root report without delivering to that pare
   assert.equal(f.events('swarm.turn_reported').at(-1).payload.parentId, null);
   assert.equal(f.events('swarm.root_attention_owed').length, 1);
   assert.equal(f.events('swarm.root_attention_owed')[0].payload.ask, 'Original report');
+});
+
+function installPressureObserver(coordinator) {
+  coordinator._idleWorkerAttention.close();
+  const service = new IdleWorkerAttention(coordinator, {
+    observe: async (_coordinator, handle) => ({ observedAt: '2026-09-24T00:00:00.000Z',
+      git: { head: 'review-head', uncommitted: { count: 1, entries: [{ status: ' M', path: 'src/change.mjs' }] } },
+      resources: { process: { held: true, residentBytes: 4096 },
+        worktree: { held: true, path: handle.worktree, allocatedBytes: 8192 },
+        runtimeHome: { held: true, path: '/runtime/builder', home: '/runtime/builder/home', allocatedBytes: 2048 } } }),
+    pressure: async () => [{ kind: 'memory', availableBytes: 1, requiredBytes: 8192 }],
+  });
+  coordinator._idleWorkerAttention = service;
+  return service;
+}
+
+test('retained swarm workers prompt their parent with resources and re-raise under pressure', async (t) => {
+  const f = await fixture(t);
+  const service = installPressureObserver(f.coordinator);
+  t.after(() => service.close());
+  const parent = await f.recruit('lead');
+  const child = await f.recruit('builder', parent);
+  f.adapter.completeTurn(child.id, { output: 'Review this turn' });
+  await flush();
+  assert.equal(f.adapter.calls.prompt.length, 1);
+  assert.equal(f.adapter.calls.prompt[0].worker, parent.id);
+  assert.match(f.adapter.calls.prompt[0].content, /Choose continue or stop/);
+  assert.match(f.adapter.calls.prompt[0].content, /review-head/);
+  assert.match(f.adapter.calls.prompt[0].content, /src\/change.mjs/);
+  assert.match(f.adapter.calls.prompt[0].content, /Process memory 4096 bytes/);
+  await service.check();
+  assert.equal(f.adapter.calls.prompt.length, 2);
+  assert.equal(f.adapter.calls.prompt[1].worker, parent.id);
+  assert.match(f.adapter.calls.prompt[1].content, /Host pressure: memory/);
+  assert.equal(f.events('swarm.turn_reported').length, 1);
+  assert.equal(f.events('swarm.worker_idle_prompted').length, 1);
+  assert.equal(f.events('swarm.root_attention_owed').length, 0);
+  await service.check();
+  assert.equal(f.adapter.calls.prompt.length, 2);
+  await f.call('guide', { participantId: 'builder', message: 'Continue the implementation' });
+  await service.check();
+  assert.equal(service.entries.has(child.id), false);
+  assert.equal(f.adapter.calls.kill.length, 0);
+});
+
+test('pressure raises a root wake with resource ranking and preserves the original turn owed identity', async (t) => {
+  const f = await fixture(t);
+  const service = installPressureObserver(f.coordinator);
+  t.after(() => service.close());
+  const child = await f.recruit('builder');
+  f.adapter.completeTurn(child.id, { output: 'Review at root' });
+  await flush();
+  const original = f.events('swarm.turn_reported')[0];
+  const originalKey = `swarm-turn-report-owed:turns:builder:${child.id}:${original.payload.turnEpoch}:${original.payload.turnSeq}`;
+  assert.match(f.store.priorCoordinationEvent(originalKey).payload.ask, /Review at root/);
+  await service.check();
+  const owed = f.events('swarm.root_attention_owed');
+  assert.deepEqual(owed.map((event) => event.payload.owed), ['turn_reported', 'worker_idle']);
+  const frame = deriveWakeFrame(owed[1]);
+  assert.equal(frame.wakeClass, 'root_owed');
+  assert.equal(frame.participantId, 'builder');
+  assert.match(frame.turnReport.text, /Choose continue or stop/);
+  assert.match(frame.turnReport.text, /process_group_rss_bytes/);
+  const view = await f.runtime.command(frame.turnReport.read.command, frame.turnReport.read.args,
+    { actor: 'owner', principalId: 'owner', sessionId: 'owner' });
+  const raised = view.participants.find((row) => row.participantId === 'builder').turnReports.at(-1);
+  assert.equal(raised.kind, 'swarm.worker_idle_prompted');
+  assert.equal(raised.report.operatorDecision.pressure.ranking[0].workerId, child.id);
+  await f.runtime.reportTurnEnd(raised);
+  assert.equal(f.events('swarm.root_attention_owed').length, 2, 'replaying the pressure report deduplicates');
+  assert.equal(f.events('swarm.turn_reported').length, 1);
+  assert.equal(f.adapter.calls.kill.length, 0);
+});
+
+test('pressure on an ordinary retained run produces an addressed root wake', async (t) => {
+  const adapter = new AtomicPausableAdapter();
+  const f = setup({ adapter, capture: withDiff });
+  const service = installPressureObserver(f.coordinator);
+  const handle = await f.coordinator.spawn('mock', makeBrief(), { runId: 'run-retained' });
+  t.after(async () => { service.close(); await f.coordinator.stopRunTargets([handle.id], 'orchestrator'); });
+  adapter.completeTurn(handle.id, { output: 'Ordinary retained report' });
+  await flush();
+  await service.check();
+  const owed = f.store.eventsView().filter((event) => event.payload?.kind === 'run.root_attention_owed');
+  assert.deepEqual(owed.map((event) => event.payload.owed), ['turn_report', 'worker_idle']);
+  const frame = deriveWakeFrame(owed[1]);
+  assert.equal(frame.wakeClass, 'root_owed');
+  assert.equal(frame.workerId, handle.id);
+  assert.equal(frame.runId, 'run-retained');
+  assert.match(frame.turnReport.text, /Choose continue or stop/);
+  assert.match(frame.turnReport.text, /Host pressure: memory/);
+  assert.equal(adapter.calls.kill.length, 0);
 });
