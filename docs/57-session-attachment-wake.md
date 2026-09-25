@@ -9,23 +9,23 @@ Research date: 2026-09-25 UTC. Repository inspected: `67b165685045c8f579fbbaba55
 Baton should own the supported programmatic session interface of every agent it must wake,
 including the operator's root. A deployment session host submits owed work through that interface,
 records the harness's response, and restores the logical recipient after a process restart. The
-operator interacts with the root through a Baton session client. Roots and seats use the same
-session controller and attention dispatcher for their selected harness.
+operator opens the deployment's logical root through `baton root`, regardless of whether its
+harness is Claude Code, Codex, OMP, Kimi, Grok, or Muse. Roots and seats use the same session
+controller and attention dispatcher for their selected harness.
 
-This is a product decision requiring the root's review: the proposed operator entry point is
-`baton root`, which opens the deployment's root conversation through Baton. For Claude Code, the
-conversation runs in the Claude Code runtime through the public Agent SDK. The terminal client
-must carry operator messages, streamed replies, permission requests, user questions, interrupts,
-and reconnectable conversation history. Building that client is part of this proposal.
+The operator client provides messages, streamed replies, permission requests, user questions,
+interrupts, and reconnectable history for every admitted harness. A harness's native UI can be
+another client when its documented interface supports attachment to the owned session and
+preserves one input controller. Section 4 specifies the uniform client, the native capabilities
+found for each harness, and the input ownership rules. Interface selection never changes the
+logical recipient or the obligation's lifetime.
 
-An independently launched native Claude terminal has a different integration contract. Its
-documented inbound event interface is Channels. Channels currently has a preview allowlist,
-per-launch enablement, and no machine acknowledgment of event receipt. Section 3 explains why
-this proposal does not select it for the required delivery guarantee. This design does **not**
-claim that adopting the session host automatically upgrades the already-running root terminal.
-The operator would move the root role to a hosted Claude Code conversation at cutover. If keeping
-the existing native terminal as the root is a requirement, this proposal needs revision before
-implementation; that constraint cannot be concealed inside a transport adapter.
+The review decision is whether the uniform operator client is an acceptable fallback wherever
+native UI attachment is unavailable or unproven. Native UI support is reported separately from
+wake support. A native terminal with a documented external input mechanism is also evaluated
+below; its receipt strength determines what Baton can report about an attempt. Only business
+resolution closes the obligation. An existing independent session requires an authenticated
+root-role handoff at cutover; connecting an MCP client alone cannot perform that transition.
 
 ## 1. Required behavior
 
@@ -105,29 +105,33 @@ excluded. A live SDK session restart has not been run in stage 1.
 Anthropic's Channels reference specifies `experimental['claude/channel']` and
 `notifications/claude/channel`. Enabled sessions queue incoming events for processing. The
 server gets no receipt; policy-blocked or unregistered channels can silently discard them.
-The documented confirmation alternative asks the model to call a reply tool. That cannot be
-Baton's automatic delivery acknowledgment. [Channels reference](https://code.claude.com/docs/en/channels-reference).
+Baton must record such an attempt as receipt-unknown and retain its source obligation. A model
+reply tool is unnecessary for obligation retention; this design does not request one as a
+transport acknowledgment. [Channels reference](https://code.claude.com/docs/en/channels-reference).
 
 Channels is a research preview. Its documented normal launch requires an approved plugin and
 `--channels`; organizations can approve internal plugins. Custom development channels use a
 separate testing flag. Help intentionally omits those flags. Consequently, absence from local
 help is not evidence of absence, and an ordinary connected MCP server is not proof of channel
-enablement. This feature remains a possible future native-terminal integration, contingent on
-an adequate runtime receipt contract. [Channels availability and controls](https://code.claude.com/docs/en/channels).
+enablement. Section 4 evaluates this documented native-terminal integration, including the lifecycle
+limits that remain when the session is independently owned. [Channels availability and controls](https://code.claude.com/docs/en/channels).
 
 ### Codex
 
 Select the documented App Server interface: `thread/start` or `thread/resume`, then `turn/start`.
 Observe the native turn identity and turn events; input acceptance and turn completion are
 separate facts. Persist the returned thread handle with session persistence enabled. This gives
-the hosted operator and seats the same input interface. The documentation makes no promise
-that a separate arbitrary Codex terminal becomes this App Server client's UI.
+the hosted operator and seats the same input interface. The installed CLI and documentation
+also expose a native TUI client for an App Server; section 4 covers its input ownership.
 [App Server](https://learn.chatgpt.com/docs/app-server).
 
 Local evidence: `codex-cli 0.156.1`; `codex app-server --help` advertises stdio and other supported
 transports. The current `CodexAppServerCli` implements the relevant methods but creates fresh
 threads with `ephemeral: true`; that setting must change for these durable conversations.
-No live turn or resume was requested in stage 1.
+No live turn or resume was requested in stage 1. The current vendor reference labels App Server
+and its WebSocket transport experimental and unsupported for production workloads. That is a
+vendor support limitation of this selected dependency. Baton must report its maturity, pin and
+exercise the supported protocol it uses, and avoid promising a vendor production guarantee.
 
 ### Oh My Pi
 
@@ -135,7 +139,7 @@ Select `omp --mode rpc` and its documented `prompt` command. The protocol expose
 command responses, and agent events. A prompt response can precede an asynchronous scheduling
 error, so an immediate success is not sufficient evidence of a processed turn. Use the installed
 version's supported session restoration interface and retain the handle it returns.
-[OMP RPC reference](https://github.com/can1357/oh-my-pi/blob/main/docs/rpc.md).
+[OMP 17.4.0 RPC reference](https://github.com/can1357/oh-my-pi/blob/v17.4.0/docs/rpc.md).
 
 Local evidence: `omp/17.4.0`; help advertises RPC mode and resume. `OmpRpcCli` already records
 session information and agent events. Current upstream documentation may describe newer
@@ -155,6 +159,9 @@ Local evidence: `KimiAcpCli` implements initialize, session creation/restoration
 `kimi` was absent from this task's PATH. There is no current installed-binary or live-wake proof
 for this route. The recorded quota exhaustion is also relevant to executing the acceptance test.
 Kimi models selected through OMP use the OMP contract; the harness determines the interface.
+The current Kimi Code documentation also specifies a web server with prompt and event APIs.
+Section 4 evaluates that interface for native browser interaction. Its installed compatibility
+is unproven here; an adapter must select one session-owning interface for a conversation.
 
 ### Grok Build
 
@@ -165,7 +172,9 @@ initialization. [Headless and scripting](https://docs.x.ai/build/cli/headless-sc
 Local evidence: `GrokAcpCli`, the repository's earlier protocol captures, and the installed
 vendor guide `~/.grok/docs/user-guide/15-agent-mode.md` agree on that interface. `grok` was
 absent from this task's PATH; the old dossier's `0.1.216` version is historical evidence, not a
-fresh executable measurement. Live restart acceptance is required on the deployed binary.
+fresh executable measurement. The installed `~/.grok/bin/grok` and `agent` links target
+`grok-0.2.118-macos-aarch64`, whose binary is absent. Installed guide text remains readable;
+executing that release is unavailable. Live restart acceptance requires a working deployed binary.
 
 ### Muse
 
@@ -195,6 +204,8 @@ No table entry in this document is a runtime authorization record. Runtime capab
 from the implemented adapter and negotiated harness interface. Test results are review evidence.
 
 ## 4. Process ownership and operator interaction
+
+### 4.1 Deployment ownership
 
 The deployment has a small session host supervising the resident application process and the
 harness session controllers. The host owns the authenticated local listener and process-lifetime
@@ -250,6 +261,188 @@ The host itself performs no agent decisions. Its functions are process supervisi
 transport, input serialization, and receipt storage. All root reasoning still runs in the selected
 Claude Code, Codex, OMP, Kimi, Grok, or Muse harness. Model, effort, permissions, working directory,
 tool configuration, and conversation continuation must remain explicit runtime facts.
+
+### 4.2 Native interface evidence by harness
+
+Attachment means a UI controls the same live session owned by the host. Resuming saved history
+in a second engine is a new owner and requires exclusive transfer. A help flag establishes an
+interface's existence; the real-process tests establish its behavior with Baton. The findings
+below distinguish those evidence levels. Every row has the Baton operator client as its proposed
+fallback, through the session controller in section 3.
+
+| Harness | Native UI for a hosted session | External input to an independently launched native session | Stage 1 evidence limit |
+|---|---|---|---|
+| Claude Code | Native background-session attach and browser/mobile Remote Control exist; live attachment to the selected SDK controller is unproven | Channels queues events when enabled; transport receipt is unknown | CLI 2.1.282 help and vendor documentation inspected; SDK/native UI integration not run |
+| Codex | Native TUI `--remote` connects to App Server; proposed Baton protocol gateway keeps the sole upstream writer | Installed `codex queue` addresses an existing session; target mode and turn-start receipts require testing | CLI 0.156.1 help, generated schema, and official App Server reference inspected |
+| OMP | Native `omp join` joins a collab session; exposing the hosted RPC session through collab is unproven | Public extension input APIs can start turns in a native session loaded with the extension | CLI 17.4.0 help and tagged RPC, extension, and collab documentation inspected |
+| Kimi | Native browser UI shares the documented web server API; no TUI attachment to the selected ACP host established | The web server accepts prompts; no external ingress into a standalone TUI established | Vendor server/CLI documentation inspected; executable unavailable here |
+| Grok | Resume and local dashboard attachment documented; native TUI attachment to Baton-owned ACP session unproven | ACP server accepts prompts; no supported ingress into an arbitrary running TUI established | Installed vendor guides and historical CLI capture inspected; installed executable target missing |
+| Muse | Native resume opens stored history; live native UI attachment to the exclusive MSP host unproven | Installed `session-message send` offers cross-session input; idle scheduling and receipt strength unproven | CLI 1.4.0-R4161.1 help and shipped stable MSP schema inspected |
+
+**Claude Code.** `claude attach --help` describes opening a running background session in the
+terminal. The [session guide](https://code.claude.com/docs/en/sessions) allows explicitly resuming
+SDK/headless history by ID. Neither proves concurrent terminal attachment to an SDK-owned live
+engine. [Remote Control](https://code.claude.com/docs/en/remote-control) documents browser/mobile
+clients and refers to SDK hosts. Inspection of the [TypeScript reference](https://code.claude.com/docs/en/agent-sdk/typescript)
+and published [0.3.282 declarations](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.282/sdk.d.ts)
+did not establish the complete host integration and input-arbitration contract. Report that mode as unproven, preserving the SDK's sole input ownership. Sequential
+native resume requires the controller's ownership transfer; it cannot preserve unattended wake
+unless the successor also offers an admitted controller interface.
+
+Channels is a documented external-input candidate for an independently launched native session.
+Its write completion establishes only a sent notification. Enablement failures and silent drops
+leave receipt unknown. The source obligation remains owed through the next connection or source
+change and closes on its actual review, answer, or other business disposition. Missing receipt
+alone is not a correctness objection to this model. Independent-session recovery and preview
+policy admission still need proof; a channel send alone supplies neither. No model acknowledgment
+action is required. Section 3 links the exact Channels controls and protocol.
+
+**Codex.** `codex --help` and `codex resume --help` expose `--remote` with WebSocket and Unix
+endpoints; the [App Server reference](https://learn.chatgpt.com/docs/app-server) documents the
+native TUI connection. Baton can launch that TUI against its authenticated protocol gateway,
+which forwards inputs to one owned App Server connection. Thread handles come from controller
+creation/resume. Operator input and wake batches share that controller. Resuming the same thread
+on a second independent App Server is excluded while the first owns it.
+
+`codex queue --help` explicitly accepts an existing session UUID or exact name, message text,
+and optional remote endpoint. This is a supported CLI surface for external input. Help alone
+does not establish which independently launched session modes consume queued input while idle,
+or whether success proves native acceptance. The generated schema supplies turn-start responses,
+turn events, and queue-change notifications. Queue mutation by itself proves no business
+resolution. Stage 2 must correlate a test-owned native queue submission with a real idle turn
+before advertising that external mode. The hosted mode uses `turn/start` for both roles.
+
+**OMP.** The tagged [17.4.0 guide](https://github.com/can1357/oh-my-pi/blob/v17.4.0/README.md)
+documents `/collab`, native `omp join LINK`, and a view-only link. Local `omp join --help`
+confirms the join command. The same release exposes `--mode rpc-ui`, whose client renders
+extension UI requests. The inspected RPC documentation does not establish a collab endpoint
+for that RPC-owned session. Consequently, native join is an existing harness feature with
+unproven hosted-session applicability. A view-only connection would preserve controller
+ownership; an interactive connection requires a demonstrated common input arbiter.
+
+The public [17.4.0 extension API](https://github.com/can1357/oh-my-pi/blob/v17.4.0/docs/extensions.md)
+provides `sendUserMessage`, `sendMessage` with `triggerTurn: true`, follow-up scheduling,
+lifecycle events, and `mcp_notification`. A loaded extension can receive Baton
+input and submit it to the native engine without model involvement. Submission and correlated
+agent events have separate receipt meanings. The notification startup buffer is bounded and
+cannot hold authoritative debt. A persistent obligation and replay on extension/session lifecycle
+events address loss; a concrete extension acknowledgment must describe whether it only received
+input or submitted it. An independently launched session without that extension has no established
+Baton ingress. The extension is a documented capability candidate, not the selected RPC controller.
+
+**Kimi.** Current [Kimi Code CLI documentation](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/reference/kimi-command.md)
+provides `kimi web`. Its [server API](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/reference/server-api.md)
+serves the native browser UI and authenticated REST/WebSocket APIs. Prompt submission returns
+on acceptance, with turn progress obtained from the event stream; snapshots and event cursors
+support reconnection. This is both a native browser interface candidate for a hosted server and
+an external-input mechanism for an independently running web server. It does not establish
+access to a separately running TUI. No corresponding TUI attach contract was found in the
+inspected CLI, ACP, and server references.
+
+A future admitted web-server controller would supervise that server and mediate its UI requests
+through the same authenticated gateway and serializer used for wakes. It would replace ACP
+ownership for that session; opening ACP and web owners on the same history is excluded. Generated
+server coordinates and session handles are runtime facts. Because no Kimi binary is executable
+here, current API support, native UI behavior, and restart receipts remain unverified. For an
+admitted ACP version the Baton client supplies the operator interface without a browser dependency.
+
+**Grok.** Installed vendor guides `15-agent-mode.md`, `17-sessions.md`, and `23-dashboard.md`
+describe ACP stdio, an authenticated WebSocket server that retains state across reconnects,
+native resume, and dashboard attachment within a pager process. The session guide describes
+concurrent use of the same history ID as best-effort. These contracts do not establish a native
+TUI client attaching to the particular ACP session Baton owns. The
+[public CLI reference](https://docs.x.ai/build/cli/reference) and historical `0.1.216` help capture
+provide no verified replacement for that missing integration contract.
+
+An authenticated `agent serve` client has documented `session/prompt` input and streaming updates.
+The ACP response and correlated updates provide native processing evidence; the underlying
+obligation closes on business resolution. This API does not by itself give access to an arbitrary
+independent TUI. Shared leader support is documented, but shared process placement does not prove
+same-session input ownership. With the executable missing, both native attachment and independent
+TUI ingress remain unproven. The Baton client uses the owned ACP controller when available.
+
+**Muse.** Installed `muse serve --help` specifies an exclusive stdio MSP connection. Native
+`muse resume` consumes a session reference, but the inspected CLI help and stable MSP schema
+provide no native UI attach operation for the live hosted engine. The Baton client preserves
+that exclusive connection and supplies the UI. A second resume process requires ownership
+transfer and cannot be assumed to remain connected to the first engine.
+
+`muse session-message send --help` documents cross-session input addressed by target UUID/name,
+with optional reply token and JSON output. `session-message list --help` documents discovery.
+These are public CLI operations, with no private socket dependency. Their help does not establish
+idle turn-start behavior or the durability/meaning of the JSON receipt. No messages were sent to
+existing sessions during research. External delivery therefore remains unproven pending a
+fresh-marker test in an isolated native session. MSP `turn/start` already specifies admission
+and turn identity separately; its events and resumable views can supply processing evidence.
+Future external mode must retain an unresolved obligation even after a successful send receipt.
+
+### 4.3 One operator-interaction architecture
+
+`baton root` discovers the deployment and its logical root, authenticates operator authority,
+and attaches an operator frontend. The harness comes from that root's route. The default frontend
+is the Baton operator client. It supplies the same input, approval, question, cancellation, and
+history functions across all six controllers. It displays a concrete unavailable route when
+initialization fails; changing the frontend never bypasses a harness failure or silently changes
+the model. This client is required implementation scope for every admitted root harness.
+
+An optional native frontend uses the same host when the adapter has an implemented, negotiated
+attachment contract. Codex's remote TUI is the first evidenced candidate. Other native candidates
+remain visible as unproven until their input and lifecycle contracts are established. The operator
+selects a frontend by capability; no configuration names a native session, process, or transport
+path. The host generates launch coordinates and binds the UI to the existing logical recipient.
+Switching between an admitted native frontend and the Baton client leaves the engine running.
+
+For a protocol-based native frontend, the host supplies a versioned gateway for the documented
+client protocol. The gateway owns one upstream controller connection. It maps request identities,
+forwards output to authorized observers, and sends all state-changing operations through the
+controller: prompts, wake batches, turn interruption, approvals, questions, and session changes.
+A frontend cannot bypass it using backend credentials. Native frontend initialization and resume
+requests bind to the already owned session; unsupported operations return a protocol error.
+Compatibility must include the real native client, its approval flows, and disconnect behavior.
+A proxy that only forwards prompt text is insufficient.
+
+The controller serializes admitted inputs using native busy/ready/turn events. A native engine
+may have its own documented input arbiter; using it requires proof that every input source reaches
+the same session and that Baton observes the accepted operations. Without that contract an
+interactive native path stays unavailable. A documented view-only mode may still be offered.
+The default Baton client always uses the controller, including when multiple operator observers
+connect. Approval answers are consumed once by request identity, and a stale connection cannot
+reply for a replaced session generation. Closing the UI never cancels the agent implicitly.
+
+An independently launched native session is a separate integration mode. Its documented ingress
+can be evaluated and supported without weakening the debt model. Enrollment must authenticate
+the logical role, discover native handles through documented runtime operations, and establish
+lifecycle/restart events. Strong receipts allow accepted/processing facts; write-only ingress
+records an offered attempt with receipt unknown. Both preserve debt until business resolution.
+A failed send records its actual cause. An unacknowledged send has a visible unknown state; elapsed
+time cannot label it a failure or trigger retry. A new connection generation or relevant committed
+state can cause replay of the still-owed work, subject to section 6's in-flight rules.
+
+That external mode is not required for the uniform hosted architecture and is not selected as
+its root-only substitute. Channels, OMP extensions, Codex queue, and Muse session messages are
+valid public surfaces to evaluate. Each needs its own lifetime and restart proof before it can
+meet the always-on requirement. The selected controller for a harness continues to serve both
+roots and seats. An unsupported external mode leaves the hosted Baton-client route available.
+
+### 4.4 Runtime capability and operator presentation
+
+Controller initialization publishes separate observed facts for:
+
+- Session control: input operation, native receipt semantics, persistent resume, and ownership.
+- Native frontend: attachment protocol, interactive/view-only mode, installed version, and the
+  concrete reason for availability, unavailability, or an unproven integration.
+- Independent native ingress: operation, enablement requirements, receipt level, and whether
+  lifetime discovery and restart replay are implemented for that session mode.
+- Operator fallback: Baton client readiness, pending approvals/questions, connection generation,
+  and the current harness initialization error when unavailable.
+- Dependency maturity: vendor preview/experimental status and negotiated protocol capabilities.
+
+These facts derive from executable discovery, public initialization, current permissions, and
+adapter functionality. They are not an editable capability ledger or a checklist that runtime
+work must satisfy. UI attachment and external ingress never grant wake capability to each other.
+The deployment view and operator startup show which frontend is active and why a requested
+native frontend is unavailable. The same display covers every harness; Claude has no special
+root-interface policy. The operator can use the fallback without restarting the conversation.
 
 ## 5. Obligation and delivery state
 
@@ -394,7 +587,7 @@ importing an arbitrary terminal's transcript is not a prerequisite or an implied
 | Configured session/PID and private socket from #564 | Explicitly banned; lifetime and protocol ownership are unproven |
 | In-session environment discovery and private socket writer | Explicitly banned; uses the same undocumented harness internals |
 | Ordinary MCP notifications, resource changes, or logging | They do not establish an idle harness turn-start contract |
-| Claude Channels as the production receipt path | Preview enablement and silent drop behavior leave receipt unknown; documented confirmation requires a model action |
+| An external native sender as the complete hosted-session architecture | Public ingress alone does not supply exclusive ownership or recovery; Channels and the other documented candidates are evaluated in section 4 |
 | Periodic inbox reads, cron, polling reconnects, or delayed retries | Delivery would depend on monitors or timers |
 | Terminal keystroke injection and transcript-file discovery | UI layout and private storage become protocol dependencies |
 | Starting another CLI with a guessed or configured resume ID | Creates competing conversation ownership and a stale address |
@@ -410,12 +603,13 @@ useful for malformed frames and crash placement, but cannot prove a harness star
 No live test silently skips because an executable, credential, or quota is missing: its result
 must name the unavailable prerequisite and leave that harness's acceptance unproven.
 
-For the Claude root acceptance, run the real hosted Claude Code session and give it a simple
+For each admitted root harness, run its real hosted session and give it a simple
 task whose result identifies a fresh unpredictable obligation marker. Let its initial turn end.
 Commit actual root-owed work, observe the native output containing that marker, and inspect the
 durable processing receipt. The test driver injects work through the normal coordination mutation,
-never through a direct adapter call. Execute the same test as a Claude seat and check that both
-traces use the same controller operation. Repeat for every supported harness.
+never through a direct adapter call. Execute the same test as a seat on that harness and check
+that both traces use the same controller operation. Include Claude Code, Codex, OMP, Kimi, Grok, and Muse;
+report a missing prerequisite explicitly for any route that cannot run.
 
 Required cases:
 
@@ -457,6 +651,24 @@ Required cases:
     paths for the removed private sender, and verify a legacy rootWake setting is rejected.
     The deployment's generated transport and resume facts remain usable after every restart.
 
+13. **Uniform operator client:** for each admitted harness, send operator input while a wake is
+    pending, answer a native permission request and user question, interrupt by explicit operator
+    action, and reconnect history. Assert one controller owner and no lost obligation. An
+    unavailable executable must produce its real cause without selecting another harness.
+14. **Native frontend:** launch each advertised native UI against the real hosted conversation.
+    Race native input with a wake, disconnect the UI during a live turn, and reconnect it. Verify
+    one native session, ordered admitted inputs, correlated outputs and approvals, and continued
+    wake delivery. Codex tests must exercise its actual `--remote` TUI through the gateway. An
+    unproven native capability must display its reason and leave the Baton client usable.
+15. **External ingress receipt:** for each external mode advertised by the implementation, use
+    an isolated native session and its documented ingress to inject a fresh marker while idle
+    and while busy. Capture the actual receipt and turn events. Exercise policy rejection and
+    receipt loss. Without business resolution, the obligation stays owed after write, acceptance, turn
+    completion, and session restart; only the real business disposition closes it. Claude Channels needs an explicit
+    unknown receipt result where enablement cannot be observed. No model acknowledgment task,
+    timer retry, or private transport is permitted. Unimplemented external modes are reported as
+    such and cannot count as passed delivery acceptance.
+
 Each live evidence artifact records executable version, exact route, native method and returned
 identities, relevant source/receipt sequences, process exits, and cleanup outcome, with secrets
 redacted. Record evidence at the tested commit. Do not add an expected-failure inventory or a
@@ -469,12 +681,28 @@ does not turn the plain suite green. A missing verdict cannot authorize landing.
 
 ## 11. Review boundary
 
-The root should review the proposed session ownership and operator client before code is written.
-The material decision is adopting a hosted root conversation, with a supported input API and
-durable lifecycle, as the operator interface. This includes the SDK controller, session host,
-operator client, durable dispatch/receipt flow, other harness controllers, MCP repair, migration,
-and real-process verification. None of those is an optional follow-up needed to make wake work.
+The session-host architecture, business-resolution obligation model, event-driven recovery,
+host/resident lifecycle split, removal scope, and real-process acceptance remain the accepted
+core from the root's stage 1 review. This revision requests review of the harness-general
+operator-interaction policy in section 4 before implementation begins.
 
-This stage delivers the architecture proposal and evidence limits. Native wake/restart acceptance,
-the root's MCP failure reproduction, implementation review, and deployment cutover remain stage 2
-work. The root alone lands the reviewed implementation.
+The remaining product decision is the same for every harness: accept the Baton operator client
+as the uniform fallback, with native frontend attachment offered where the documented interface
+preserves owned-session control. This proposal recommends that policy. Requiring every root to
+retain its independently launched native UI would add a distinct requirement; the public
+interfaces and local evidence do not currently prove it for all six harnesses. No Claude-only
+choice decides the architecture for the other routes.
+
+The implementation includes the session host, the six harness controllers, operator client,
+durable dispatch/receipt flow, capability presentation, MCP repair, migration, and real-process
+verification. Native interfaces selected for implementation must pass their applicable ownership
+and receipt tests. Unsupported optional native frontends cannot block the working uniform client.
+Vendor maturity and unavailable prerequisites remain visible; this document does not convert
+an experimental dependency or an absent executable into verified production support.
+
+Missing harness prerequisites leave that route unverified and must be reported to the root;
+they do not remove its implementation or acceptance requirement.
+
+This stage delivers the revised design and evidence limits. Live wake/restart acceptance, the
+root's MCP failure reproduction, implementation review, and deployment cutover remain stage 2
+work. The root reviews the revision before code and alone lands the reviewed implementation.
