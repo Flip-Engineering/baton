@@ -53,7 +53,7 @@ import {
   NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, confirmSuiteFailures, confirmationLine,
   unaccountedFiles, verdictFailures,
 } from './suite-comparison.mjs';
-import { selectFromRepository } from './verification-selection.mjs';
+import { selectFromRepository, computeTestCoverage } from './verification-selection.mjs';
 import { landContribution } from './worktree.mjs';
 // Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
@@ -62,7 +62,7 @@ import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
 import { deriveWakeFrame, parseWakeFilter, wakeAttribution, wakeClassFor } from './wake-stream.mjs';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, posix } from 'node:path';
 
 // The artifacts a landing regenerates before it commits (#296): the seam inventory, the surface
 // gate's outputs and the rendered docs. They run INSIDE the squash so the target never carries a
@@ -8195,6 +8195,24 @@ export class SwarmRuntime {
           return regenerate(dir, regenerateContext);
         },
         runGates: async (dir, changed, gateContext) => {
+          // Issue #596: a re-run of an affected subset after target movement. The selection,
+          // provenance and skip decision stay from the original run; only the named files execute.
+          if (Array.isArray(gateContext?.rerunSubset) && gateContext.rerunSubset.length > 0) {
+            const rerunFiles = gateContext.rerunSubset;
+            const verdict = typeof authority.runGates === 'function'
+              ? await authority.runGates(dir, rerunFiles, {
+                ...gateContext, gate: null, selection: gateSelection, contributionId: args.contributionId })
+              : await defaultIntegrationGates(dir, rerunFiles, {
+                ...gateContext, gate: null, selection: gateSelection, contributionId: args.contributionId },
+              { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null });
+            return {
+              files: rerunFiles,
+              verdictLine: verdict?.verdictLine ?? null,
+              unexpected: Array.isArray(verdict?.unexpected) ? verdict.unexpected : [],
+              ...(Array.isArray(verdict?.unconfirmed) && verdict.unconfirmed.length > 0
+                ? { unconfirmed: verdict.unconfirmed } : {}),
+            };
+          }
           // The gate set is DERIVED from what the squash actually changed, by the TWO derivations
           // the rest of the system already reads — never a second table (#466). Both read the
           // CHECKOUT the squash produced: the runner's own selector (`selectFromRepository`, the
@@ -8228,6 +8246,13 @@ export class SwarmRuntime {
             gateSkipped = 'no_affected_tests';
             return { files: [], verdictLine: GATE_SKIPPED_LINE, unexpected: [] };
           }
+          // Issue #596: the covered surface for delta-aware target-move handling. Each selected
+          // test file's transitive import closure is computed from the runner's graph; the union
+          // tells landContribution which target-side changes can safely reuse this verdict.
+          const repoRelativeFiles = files.map((f) => posix.join(GATE_RUNNER_LAYOUT.suiteRoot, f));
+          const coverage = runner.graph
+            ? computeTestCoverage({ graph: runner.graph, testFiles: repoRelativeFiles })
+            : null;
           // The deployment's own runner when it configured one (a fixture's, an operator's), else
           // the supervised out-of-process suite runner that holds the host verify lease (#459) —
           // admitted through the RESIDENT's own host-capacity authority when it has one (the same
@@ -8250,6 +8275,14 @@ export class SwarmRuntime {
             // verdict to the receipt, so a reader sees them instead of only the verdict line.
             ...(Array.isArray(verdict?.unconfirmed) && verdict.unconfirmed.length > 0
               ? { unconfirmed: verdict.unconfirmed } : {}),
+            // Issue #596: the covered surface and per-test dependency map for delta-aware reuse.
+            ...(coverage !== null ? {
+              coveredPaths: [...coverage.surface],
+              testDeps: Object.fromEntries(
+                [...coverage.perTest].map(([testFile, deps]) => [
+                  gateRunnerFile(GATE_RUNNER_LAYOUT, testFile), [...deps],
+                ])),
+            } : {}),
           };
         },
       });
