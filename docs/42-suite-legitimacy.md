@@ -1,30 +1,50 @@
-# 42 — Suite verdict: failures, the environment line, the landing comparison
+# 42 — Suite legitimacy: reasoned expected-red rows, the environment dimension, the `-red` convention
 
-Status: implemented (issue #284; rewritten by #580). The code of record is
-`impl/scripts/suite-verdict.mjs` (the verdict), `impl/scripts/run-suite.mjs` (the runner), and
-`defaultIntegrationGates` in `impl/src/swarm-runtime.mjs` (the landing comparison). #580 removed
-the expected-red manifest (`impl/scripts/expected-red-tests.json`), the `--write-expected-red`
-flags, the `converged` list, and the tests that guarded them.
+Status: implemented (issue #284; 2026-09-14 deep codebase audit items S-G2, S-G3, S-I6, S-N1,
+R-1). The code of record is `impl/scripts/suite-verdict.mjs` (the decision procedure),
+`impl/scripts/run-suite.mjs` (the runner that reads, writes and reports it), and
+`impl/scripts/expected-red-tests.json` (the manifest).
 
-## 1. The verdict
+The canonical gate is `node impl/scripts/run-suite.mjs`. Green means green — but green is only
+honest if the suite can say *why* a red is expected, and can tell a code red from a red this
+machine cannot judge. Three things make that true.
 
-A run is GREEN when no test failed and no file hung. Every failure is named by its key,
-`file :: name` (nested tests as `parent > child`), with its failure type and the first line of
-its message. Hangs (`fileHung`, `testTimeoutFailure`, `testAborted`) are counted apart from
-failures. A file that crashes, hangs or leaks fixture directories is one failure with a stable
-name (`(file leaked fixture directories)` for a leak), so two runs of the same file compare.
+## 1. Every expected-red row carries a reason (schemaVersion 2)
 
+```json
+{
+  "schemaVersion": 2,
+  "rows": [
+    { "key": "test/example-red.test.mjs :: A1 RED: the contract this row pins", "reason": "#263" }
+  ],
+  "converged": [
+    { "file": "test/example-converged-red.test.mjs", "reason": "#42" }
+  ]
+}
 ```
-baton suite verdict: RED — 4849 passed, 2 failed, 0 hung
-  failed: test/example.test.mjs :: adds two rows — expected 2, got 1
-```
 
-When `BATON_SUITE_VERDICT_FILE` names a path, the runner writes the verdict document
-(`schemaVersion: 2`): `green`, `passed`, `failed` and `hung` keys, `failures` (each with
-`key`, `file`, `name`, `failureType`), `skipped`, and `environment`. `unexpected` repeats
-every failure key, so a reader written before #580 blocks on every failure.
+A `key` is the reporter's row key: `file :: name` (nested tests as `parent > child`). A `reason`
+is one of:
 
-## 2. The environment line
+| Reason | Class | Means |
+|---|---|---|
+| `#263` | `issue` | the GitHub issue that tracks the gap |
+| `S-G5`, `A-G10`, `R-1`, `G-24` | `audit` | the audit item that tracks the gap |
+| `credential` | environment-red | the row needs a machine-local credential |
+| `environment` | environment-red | the row needs another machine-local prerequisite |
+| `design` | code | a design contract pinned before its implementation |
+| `unattributed` | code | nobody has attributed it yet — a TODO, never a resting place |
+
+A row without a classifiable reason refuses the manifest (`suite_manifest_invalid`, naming the
+field it needs). An environment-class row may also carry a `prerequisite`: the registry route key
+it depends on (e.g. `"prerequisite": "omp/deepseek/deepseek-flash"`), so the verdict judges it
+against that prerequisite's observed state instead of the global absent list; a bare
+environment-class row keeps the global behaviour until it is attributed, and an empty
+`prerequisite` refuses like a missing reason. The verdict reports the expected-red count **by
+reason class**, so a reader can see the shape of the debt: how much is unimplemented design, how
+much is a tracked issue, how much is this machine.
+
+## 2. The environment dimension
 
 The suite names the machine-local prerequisites it observed for this run, derived from the SAME
 declaration the deployment doctor and route readiness use — the served route registry and the one
@@ -35,43 +55,84 @@ route family whose machine-local prerequisite is not resolvable from that declar
 as declared, never invented.
 
 ```
-baton suite verdict: RED — 4849 passed, 22 failed, 0 hung
-  baton suite environment: omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (authentication_required); codex/gpt-6-sol declared — `~/.codex/auth.json` present; …
+baton suite verdict: GREEN except environment — 4849 passed, 472 expected red (450 code, 22 environment-red, …), 0 unexpected failure(s), …
+  baton suite environment: omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (authentication_required); codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; …
+  expected red by reason class: issue=393, audit=4, credential=22, design=53
 ```
 
-The environment line is reported for the reader and does not change the verdict. A test that
-needs a credential this host lacks fails here; on a landing it fails on the target as well, so the
-landing comparison (§3) does not block on it.
+**Environment rows are judged against the run's prerequisites, in both directions.** A row whose
+reason class is `credential`/`environment` declares that this machine decides its outcome. A row
+that names its `prerequisite` (issue #327) — the registry route key the suite environment line
+prints, e.g. `omp/deepseek/deepseek-flash` or `claude-code:claude/claude-opus-4-6` — is judged
+against THAT prerequisite's observed state only:
 
-## 3. The landing comparison (#580)
+- Its prerequisite is absent: the row is expected not to pass. A failure is environment-red —
+  reported separately from code rows, never counted as an unexpected failure — and a pass is not
+  evidence the spec went green, so staleness never applies to it.
+- Its prerequisite is present: the machine can run the row, so it **must** pass. A failure is an
+  unexpected failure like any other (the environment axis cannot excuse it), and a pass is simply
+  fine.
+- Its prerequisite is declared (the run reports the route's ready-when contract without
+  evaluating it) or unknown to the run: the row stays unjudged as environment-red either way —
+  the verdict never invents an observation it did not make.
 
-A landing gate answers one question: does the change break a test that works on its target?
+A row with a bare class keeps the global behaviour until it is attributed: any prerequisite the
+derivation reports ABSENT makes it unjudged for that run, and when every prerequisite was present
+it must pass. That is what makes a clone-hosted or credential-less run read `GREEN except
+environment` instead of a pile of unexpected failures, while a credentialed host is judged
+strictly. The rows that need a machine-local credential today pin the same contracts
+(`impl/test/phase78-…`, `phase79-workflow-composition-red`, `phase80-application-revision-red`,
+`phase83-context-runtime-red`, `feedback-forge-hardening-red`); each carries the `credential`
+reason (attributed to its route's prerequisite where the file names exactly one registry route),
+and each is green on a host that has the credential.
 
-1. `swarm integrate` runs the selected test files (§4) in the landing checkout at the squash
-   commit.
-2. When every file passes, the gate is green.
-3. When some fail, the gate checks out the target commit (`targetHeadBefore`) in the same
-   checkout, re-runs only the failing files that exist on the target, and checks out the squash
-   again.
-4. A failure blocks when the target run does not have it. A test failure compares by key; a
-   file-level failure (`fileHung`, `fileCrashed`, `fixtureLeak`) compares by file and failure
-   type, because its name carries run-specific detail.
-5. A failing file the target does not have is new with the change, and its failures block. When
-   the target run writes no verdict, or the landing has no target commit, every failure blocks.
+The machine-readable form is written when `BATON_SUITE_VERDICT_FILE` names a path: the same
+counts, the environment facts, and the environment-red rows by class.
 
-The gate's verdict line reads `red — passed N, X failing only with the change, Y failing on the
-target too, squash <sha>`, and the receipt lists the blocking keys in `unexpected` and the shared
-ones in `failingOnTarget`.
+## 3. Writing the manifest (`--write-expected-red`)
 
-## 4. The `-red` suffix
+`node impl/scripts/run-suite.mjs --write-expected-red` rewrites the whole manifest from THIS
+run's failures. It is a full-suite-only operation (an explicit-file run is refused by naming that
+contract, issue #290). Two rules make it safe:
 
-`-red.test.mjs` marks a test written before its implementation. The suffix records the file's
-origin and has no effect on the verdict. Such a test fails on the target and on the change until
-the implementation lands, so it never blocks a landing; the change that implements it turns it
-green. The issue the test cites tracks the work. [docs/44](44-red-suffix-convention.md) states the
-naming rule.
+- **A reason is preserved.** Every row that stays red keeps the reason it already carried.
+- **A new row needs a declared reason.** A failure the manifest has never listed cannot mint a
+  row by itself: pass `--expected-red-reason <reason>` (the flag fills the manifest's own `reason`
+  field) or the write is refused, naming the flag, the field, and every row that needed it. A
+  rewrite never records a silent placeholder.
+- **A new `credential` row needs a named prerequisite.** `--expected-red-reason credential` is
+  refused without `--expected-red-prerequisite <registry-route-key>` (the route key the suite
+  environment line prints for the prerequisite the row depends on), so a freshly minted
+  environment row is attributable from birth instead of joining the global absent list.
 
-## 5. The pre-verdict selection: affected files first (#300)
+Rows that went green are dropped, and `converged` is preserved.
+
+## 4. The `-red` convention
+
+**`-red.test.mjs` marks a red-first spec: a suite authored to pin a contract before its
+implementation.** The name records the file's origin. It is NOT a statement about today's run —
+the manifest is the single authority on what is still expected red:
+
+- A `-red` file with remaining expected-red rows is listed in the manifest's `rows`, one row per
+  test, with reasons.
+- A `-red` file whose rows have all gone green is **converged**: it keeps the suffix as the record
+  of the contract it pinned, and it is declared in the manifest's `converged` list with a reason
+  (the issue, audit item, or the design contract it pinned).
+- The suffix is **removed** only when the file or the contract it pins is retired — a rename, not
+  a status change. Status never lives in a filename.
+- A `-red` file that is neither listed in `rows` nor declared in `converged` is refused, and so is
+  a `converged` entry whose file is gone or whose rows came back
+  (`impl/test/suite-manifest-reasons.test.mjs` pins both directions).
+
+## 5. Adding a row
+
+1. Write the red-first test (name it `…-red.test.mjs`, state the stage the row fails at).
+2. Run the full suite with `--write-expected-red --expected-red-reason '#<issue>'` (or the audit
+   item, or the class that fits) and commit the regenerated manifest.
+3. If the row cannot be attributed, its reason is `unattributed` and the attribution work is
+   named where the row lives — never left implicit in a filename.
+
+## 6. The pre-verdict selection: affected files first (#300)
 
 The 2026-09-14 incident: every check and every landing ran the full suite (~25 minutes at
 parallelism 6) because the affected file set was chosen by hand from `changedPaths`. The
@@ -82,11 +143,13 @@ selection is now derived and shared by the check and the runner:
   changed module, every changed test file itself, and — for a changed file no test imports —
   the test files that name it in a fixture path (its basename or path suffix in the test's
   source), with the reason recorded per file so the weaker fixture-path signal is visible, never
-  silent.
+  silent. It also projects the reasoned manifest (#284) onto the selection: the expected-red rows
+  of the selected files are part of the selection, so a subset verdict can be read against what
+  was already known to be red.
 - A contribution check runs the affected subset FIRST, through the same verification lane, under
   the contract's own argv with the selected file arguments appended, and records its verdict as a
   typed row on the check receipt: `preverdict: {selection: {changedPaths, files, reason,
-  provenance}, verdict}`. The full suite runs after it, unchanged, and stays the acceptance
+  provenance, rows}, verdict}`. The full suite runs after it, unchanged, and stays the acceptance
   verdict — a red or unavailable subset is information on the receipt, never a failed check by
   itself. When nothing runs before the full suite, the receipt says why: `skipped: 'docs'` (the
   #269 docs gate is the whole check), `no_affected_tests`, `selection_unavailable` (no
@@ -97,11 +160,11 @@ selection is now derived and shared by the check and the runner:
 - `node impl/scripts/run-suite.mjs --changed <paths…>` runs the same selection from the CLI,
   against the checkout the runner is testing, and is the PRE-VERDICT STEP of the landing
   procedure: before a landing runs the full gate, run the affected subset (fast first verdict,
-  its selection printed with per-file reasons), then run the full suite.
+  its selection printed with per-file reasons and expected-red rows), then run the full suite.
   `--changed` is a partial run under the same contracts an explicit file list obeys (#290): it
-  refuses to combine with explicit file arguments or `node --test`
+  refuses `--write-expected-red`, refuses to combine with explicit file arguments or `node --test`
   passthrough options, and refuses to run with no paths — an unnamed selection would silently
-  mean the whole suite. An empty selection is not a failure: the verdict is green with zero tests
+  mean the whole suite. An empty selection is not a failure: the verdict is green with zero rows
   judged, and the run says so.
   A selected file is scheduled only when its own source imports the test framework the reporter
   reads (`node:test`); the #300 selection and a direct file name can both reach a driver script
@@ -121,7 +184,7 @@ and says `skipped: 'no_affected_tests'`. A landing's `issue` is the seat's conte
 (the `issue:<n>` branch), else `null`; the region labels and the swarm's purpose are never
 consulted.
 
-## 6. Served-host fixtures and the suite root (#446)
+## 7. Served-host fixtures and the suite root (#446)
 
 A parallel gate hands every test process its run's SUITE ROOT as `TMPDIR`
 (`baton-suite-XXXXXX` under the system temp dir, 65–69 bytes on this host). A fixture that
@@ -135,7 +198,7 @@ measured fall-back — the #446 fixture measured with a one-character stand-in f
 and missed a 68..72-byte band. Ledger and session roots stay under the ambient root; only the one
 path the kernel bounds leaves it. Row `316-sse-d` pins both ends of the band.
 
-## 7. A cancelled test is a failure (#460)
+## 8. A cancelled row is never an expected red (#460)
 
 Node reports a test whose awaited operation never settled as `cancelledByParent` — "Promise
 resolution is still pending but the event loop has already resolved" — and with it cancels EVERY
@@ -153,9 +216,11 @@ from — so a fixture never invents a second timeout vocabulary. A bound miss ca
 marker `fixture_wait_unsettled` and is rethrown by the fixture helpers: a row must never read "the
 wait never settled" as "the deployment refused".
 
-**A cancelled test is a failure.** `computeVerdict` keeps the count on the verdict line
+**A cancelled row is an unexpected failure.** `computeVerdict` keeps the count on the verdict line
 (`N of them cancelled by a dangling await earlier in their file`) so the shape of the debt stays
-visible while the harness is repaired.
+visible while the harness is repaired. Listing a cancelled row in the manifest is a transient
+bridge, never a resting state: the row has no assertion to attribute, so its reason would name a
+gap nobody measured. #460's rows were listed that way, and are retired with the repair.
 
 The two failure shapes stay distinct in the verdict: a HANG costs its file the progress deadline
 (`fileHung`, `testTimeoutFailure`, `testAborted` — `isHang`), while a dangling await drains the loop

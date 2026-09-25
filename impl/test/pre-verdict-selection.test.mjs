@@ -12,7 +12,7 @@ import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 import {
-  parseStaticImports, resolveImportSpecifier,
+  EXPECTED_RED_MANIFEST_PATH, parseStaticImports, resolveImportSpecifier,
   selectAffectedTests, selectFromRepository,
 } from '../src/verification-selection.mjs';
 
@@ -31,14 +31,25 @@ function fixtureTree(t) {
   // names the orphan in a fixture path, imports nothing from impl/src
   writeFileSync(join(root, 'impl/test/orphan-fixture.test.mjs'), "import { execFileSync } from 'node:child_process';\nconst script = join('impl', 'src', 'orphan.mjs');\n");
   writeFileSync(join(root, 'impl/test/unrelated.test.mjs'), "import test from 'node:test';\ntest('unrelated', () => {});\n");
+  writeFileSync(join(root, EXPECTED_RED_MANIFEST_PATH), `${JSON.stringify({
+    schemaVersion: 2,
+    rows: [
+      { key: 'impl/test/a.test.mjs :: known red', reason: '#284' },
+      { key: 'impl/test/unrelated.test.mjs :: not selected', reason: 'design' },
+    ],
+    converged: [{ file: 'impl/test/orphan-fixture.test.mjs', reason: '#42' }],
+  })}\n`);
   return root;
 }
 
-const graphOf = (root) => ({ selection: (changedPaths) => selectFromRepository({ root, changedPaths }) });
+const graphOf = (root, read) => {
+  const manifest = JSON.parse(read(`${EXPECTED_RED_MANIFEST_PATH}`));
+  return { manifest, selection: (changedPaths) => selectFromRepository({ root, changedPaths, manifest }) };
+};
 
 test('a test importing a changed module transitively is selected, and the changed test selects itself', async (t) => {
   const root = fixtureTree(t);
-  const { selection } = graphOf(root);
+  const { selection } = graphOf(root, (path) => readFileSync(join(root, path), 'utf8'));
   const selected = selection(['impl/src/b.mjs']);
   assert.deepEqual(selected.files, ['impl/test/a.test.mjs'], 'the test that imports a.mjs which imports b.mjs is affected');
   assert.equal(selected.provenance[0].reason, 'imports');
@@ -51,7 +62,7 @@ test('a test importing a changed module transitively is selected, and the change
 
 test('a file no test imports selects the tests that name it in a fixture path, and says so', async (t) => {
   const root = fixtureTree(t);
-  const { selection } = graphOf(root);
+  const { selection } = graphOf(root, (path) => readFileSync(join(root, path), 'utf8'));
   const selected = selection(['impl/src/orphan.mjs']);
   assert.deepEqual(selected.files, ['impl/test/orphan-fixture.test.mjs']);
   assert.equal(selected.provenance[0].reason, 'fixture-path');
@@ -61,16 +72,19 @@ test('a file no test imports selects the tests that name it in a fixture path, a
   assert.match(untouched.reason, /affect no test file/u);
 });
 
-test('the selection is deterministic', async (t) => {
+test('the selection is deterministic and carries the selected files expected-red rows', async (t) => {
   const root = fixtureTree(t);
-  const { selection } = graphOf(root);
+  const { selection, manifest } = graphOf(root, (path) => readFileSync(join(root, path), 'utf8'));
   const first = selection(['impl/src/b.mjs', 'impl/src/orphan.mjs']);
   const second = selection(['impl/src/orphan.mjs', 'impl/src/b.mjs'], undefined);
   assert.deepEqual(first, second, 'changed-path order does not change the selection');
-  assert.equal(Object.hasOwn(first, 'rows'), false, 'a selection names files, never a list of expected failures');
+  assert.deepEqual(first.rows, [
+    { key: 'impl/test/a.test.mjs :: known red', reason: '#284' },
+    { key: 'impl/test/orphan-fixture.test.mjs :: (converged)', reason: '#42' },
+  ], 'the reasoned manifest contributes the selected files rows (red and converged), never other files rows');
   assert.deepEqual(selectAffectedTests({
-    changedPaths: ['impl/src/b.mjs'], graph: new Map(), exists: () => false,
-  }).files, [], 'a changed file the revision does not carry selects nothing');
+    changedPaths: ['impl/src/b.mjs'], graph: new Map(), manifest, exists: () => false,
+  }).rows, [], 'no manifest rows without selected files');
 });
 
 test('static import parsing covers the ESM forms and refuses what is not a file edge', () => {
@@ -254,20 +268,25 @@ function runRunner(args, parent) {
 test('run-suite --changed selects the affected tests from its own checkout and lands green', async (t) => {
   const parent = mkdtempSync(join(tmpdir(), 'baton-preverdict-runner-'));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
-  // A changed test file selects itself, and no test imports suite-verdict.test.mjs, so the
-  // selection is that one file whatever the rest of the import graph looks like. The import-edge
-  // and fixture-path rules are covered by the selectAffectedTests tests above.
-  const run = await runRunner(['--changed', 'impl/test/suite-verdict.test.mjs'], parent);
-  assert.equal(run.code, 0, 'the selected subset is green');
+  // The docs page of the suite contract is named in a fixture path by exactly one test file.
+  // This test spells that path in pieces so its own source does not name it (no needle of it
+  // appears contiguously here): a test that names a changed file in a fixture path selects
+  // ITSELF for the subset, and a nested selection run must not recurse into this file.
+  const docsPath = ['docs/42-suite-', 'legitimacy.md'].join('');
+  const run = await runRunner(['--changed', docsPath], parent);
+  assert.equal(run.code, 0, `the selected subset is green (a partial run judges only its rows)`);
   assert.match(run.stderr, /selected 1 test file\(s\) from 1 changed path\(s\)/u);
-  assert.match(run.stderr, /impl\/test\/suite-verdict\.test\.mjs \(changed\)/u,
-    'the run says the file was selected because it changed');
+  assert.match(run.stderr, /impl\/test\/suite-manifest-reasons\.test\.mjs \(fixture-path: docs\/42-suite-legitimacy\.md\)/u,
+    'the run says the file was selected through fixture-path naming');
 });
 
-test('run-suite --changed refuses to run with no paths', async (t) => {
+test('run-suite --changed refuses to run with no paths or with a manifest rewrite', async (t) => {
   const parent = mkdtempSync(join(tmpdir(), 'baton-preverdict-runner-'));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   const unnamed = await runRunner(['--changed'], parent);
   assert.equal(unnamed.code, 1, 'an unnamed selection would silently mean the whole suite');
   assert.match(unnamed.stderr, /--changed names the changed paths/u);
+  const rewrite = await runRunner(['--changed', 'impl/src/b.mjs', '--write-expected-red'], parent);
+  assert.equal(rewrite.code, 1, 'a selected subset is a partial run; the manifest is rewritten from a full suite only');
+  assert.match(rewrite.stderr, /--write-expected-red rewrites the expected-red manifest from a full-suite run only/u);
 });

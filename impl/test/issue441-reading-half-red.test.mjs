@@ -21,7 +21,11 @@
 //     reader lives; the runtime's own half (a digest this deployment never admitted) refuses
 //     `swarm_command_invalid · unadmitted-package` before any seat joins.
 //
-// Every test here therefore asserts landed truth and passes.
+// Every row here therefore asserts landed truth and is expected GREEN: the manifest
+// (impl/scripts/expected-red-tests.json) carries this file in `converged` with reason #441 and no
+// row — a fully-green red-first file keeps its suffix as the record of the contract it pinned
+// (suite-verdict.mjs `converged`; docs/44 rule 3). A new red row added here re-enters `rows` in
+// the same change (docs/44 rule 5).
 //
 // Fixture: the light SwarmRuntime harness (the swarm-runtime.test.mjs pattern, as
 // issue423-claims-and-peers.test.mjs uses it) with the deployment's own context resolver wired

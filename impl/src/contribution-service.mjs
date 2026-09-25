@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { verifyContribution } from './contribution-verification.mjs';
-import { selectFromRepository } from './verification-selection.mjs';
+import { EXPECTED_RED_MANIFEST_PATH, selectFromRepository } from './verification-selection.mjs';
 
 const copy = (value) => structuredClone(value);
 const failure = (message, code) => Object.assign(new Error(message), { code });
@@ -243,7 +243,10 @@ export class ContributionService {
         try { return this.worktrees.readCommitFile(captured.sha, path, PREVERDICT_READ_CEILING).text; }
         catch { return null; }
       };
-      selected = selectFromRepository({ root: this.repoRoot, changedPaths, read: readAtCapture });
+      let manifest = null;
+      const manifestText = readAtCapture(EXPECTED_RED_MANIFEST_PATH);
+      if (manifestText != null) { try { manifest = JSON.parse(manifestText); } catch { manifest = null; } }
+      selected = selectFromRepository({ root: this.repoRoot, changedPaths, manifest, read: readAtCapture });
     } catch {
       return { skipped: 'selection_unavailable' };
     }
@@ -256,6 +259,7 @@ export class ContributionService {
         files: selected.files,
         reason: selected.reason,
         provenance: selected.provenance,
+        rows: selected.rows,
       },
       contract: { ...contract, arguments: [...contract.arguments, ...selected.files] },
     };
