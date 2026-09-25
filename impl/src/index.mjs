@@ -1127,7 +1127,7 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = []) {
+    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = [], { snapshotUncommitted = false } = {}) {
       if (!Array.isArray(knownPhysicalOwnerIds)
         || knownPhysicalOwnerIds.some((id) => !isPhysicalWorkspaceId(id))) {
         throw new TypeError('known physical workspace owners are invalid');
@@ -1147,7 +1147,11 @@ function worktreeManager(repoRoot, opts = {}) {
         sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         ownerAuthority: opts.ownerAuthority,
         expectedOwnerBindings: expectedEntries,
-        snapshotUncommitted: true,
+        // Issue #568: the capture is opt-in PER CALL. A sweep that cannot prove the owning seat
+        // ENDED must not reclaim a checkout a resume-from successor may still carry (#385/#517),
+        // so the startup recovery leaves it false and the drain's converged historical sweep
+        // opts in. The capability itself is unchanged.
+        snapshotUncommitted,
         ...custody(),
         ...(opts.log ? { log: opts.log } : {}),
         ...(opts.worktreeCapacity ? {

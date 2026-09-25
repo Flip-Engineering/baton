@@ -26,6 +26,7 @@ import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 // Issue #428: the one custody predicate — a second inline opinion about whether cleanup may
 // destroy a shared checkout is exactly the drift the surface gate refuses.
 import { isPhysicalWorkspaceId, PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE } from './shared-workspace-custody.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors (W7 — typed, never a bare Error wrapping raw stderr)
@@ -640,7 +641,9 @@ function removeExactWorktreeRegistration(repoRoot, worktreePath) {
   return true;
 }
 
-const LINKED_WORKTREE_RECORD_BYTES = 1024 * 1024;
+/** The ceiling on one seat's linked-worktree ownership record (#568). Declared ONCE in the frame
+ * registry and read here, so no module re-declares a cataloged byte literal (#89 Decision 8). */
+const LINKED_WORKTREE_RECORD_BYTES = FRAME_LIMITS['worktree.linked_ownership_record'].value;
 
 function absoluteGitPath(cwd, selector) {
   const raw = sh('git', ['rev-parse', '--path-format=absolute', selector], cwd);
@@ -841,7 +844,7 @@ function linkedWorktreeCwdHolders(worktreePath, opts = {}) {
       result = run('/usr/sbin/lsof', [
         '-a', '-u', String(uid), '-d', 'cwd', '-Fpn',
       ], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024,
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch {
       throw linkedLivenessUnobservable(

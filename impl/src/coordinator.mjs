@@ -1388,7 +1388,10 @@ export class Coordinator {
         if (!this._drainHistoricalReconciled) {
           if (!this._drainHistoricalReconcilePromise) {
             const reconciliations = [];
-            if (this._worktrees && typeof this._worktrees.reconcile === 'function') reconciliations.push(this._worktrees.reconcile([]));
+            // Issue #568: the fleet has converged here — every target is disposed and no worker
+            // holds local resources — so a historical dead owner's dirty checkout is provably not
+            // a resume candidate, and THIS sweep may snapshot it into its branch and reclaim it.
+            if (this._worktrees && typeof this._worktrees.reconcile === 'function') reconciliations.push(this._worktrees.reconcile([], [], { snapshotUncommitted: true }));
             if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') reconciliations.push(this._runtimeScopes.reconcile([]));
             const reconciliation = Promise.all(reconciliations);
             this._drainHistoricalReconcilePromise = reconciliation;

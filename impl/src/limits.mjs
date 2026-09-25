@@ -175,6 +175,9 @@ const SUBSTRATE = Object.freeze({
   'deployment.publish_remote': { lane: 'deployment.publish_remote', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
   // Issue #564: the wake-delivery Claude agents discovery exec buffer ceiling.
   'exec.max_buffer': { lane: 'exec.max_buffer', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
+  // Issue #568: the ceiling on one seat's linked-worktree ownership record — the private durable
+  // JSON-lines file the reclamation pass reads and validates before it removes a linked checkout.
+  'worktree.linked_ownership_record': { lane: 'worktree.linked_ownership_record', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
   // spill.body is the ONE substrate row that mints a refusal (blocker 3): a substrate ceiling
   // enforced AT ADMISSION — it is a resource ceiling on a durable write, not a scanner window.
   'spill.body': { lane: 'spill.body', class: 'substrate', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mintSpill / admission spill seam', refusalCode: 'spill_body_exceeded' },
