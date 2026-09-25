@@ -1,0 +1,121 @@
+[
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/read-record.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/read-record.bend"
+    ],
+    "exit": 0,
+    "stdout": "True{}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/empty-eliminate.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/empty-eliminate.bend"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/semantics.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/semantics.bend"
+    ],
+    "exit": 0,
+    "stdout": "[True{}, False{}, False{}, False{}]\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/no-verdict.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a declared constructor (../../examples/laws-no-ledger.Outcome declares ../../examples/laws-no-ledger.Passed, ../../examples/laws-no-ledger.Failed, ../../examples/laws-no-ledger.Absent)\n- observed : M.NoVerdict{}\nLocation: main\n4 | def main() -> M.Outcome:\n5>|   M.NoVerdict{}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/no-verdict.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a declared constructor (../../examples/laws-no-ledger.Outcome declares ../../examples/laws-no-ledger.Passed, ../../examples/laws-no-ledger.Failed, ../../examples/laws-no-ledger.Absent)\n- observed : M.NoVerdict{}\nLocation: main\n4 | def main() -> M.Outcome:\n5>|   M.NoVerdict{}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/failure-kind.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : ../../examples/laws-no-ledger.Failed with 0 fields\n- observed : ../../examples/laws-no-ledger.Failed{\"fixtureLeak\"}\nLocation: main\n4 | def main() -> M.Outcome:\n5>|   M.Failed{\"fixtureLeak\"}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/failure-kind.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : ../../examples/laws-no-ledger.Failed with 0 fields\n- observed : ../../examples/laws-no-ledger.Failed{\"fixtureLeak\"}\nLocation: main\n4 | def main() -> M.Outcome:\n5>|   M.Failed{\"fixtureLeak\"}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/scoped-runner.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/scoped-runner.bend"
+    ],
+    "exit": 0,
+    "stdout": "True{}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/scoped-forge.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : O\n- observed : Bool\nContext:\n- O : Data\nLocation: forge\n3 | def forge(-O: Data) -> O:\n4>|   True{}\n5 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/scoped-forge.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : O\n- observed : Bool\nContext:\n- O : Data\nLocation: forge\n3 | def forge(-O: Data) -> O:\n4>|   True{}\n5 | \n"
+  }
+]

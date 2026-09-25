@@ -1,0 +1,138 @@
+[
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/read-record.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : {either(gate(record, Passed{}, target), landing_blocks(record, t)) == any_breaks(t) : Bool}\n- observed : {landing_blocks(record, t) == any_breaks(t) : Bool}\nContext:\n- record : Nat\n- target : Outcome\n- t      : List<&1, Observed>\nLocation: landing_blocks_iff_breaks\n125 |           match change:\n126>|             case Passed{}: landing_blocks_iff_breaks(record, t)\n127 |             case Absent{}: landing_blocks_iff_breaks(record, t)\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/read-record.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : {either(gate(record, Passed{}, target), landing_blocks(record, t)) == any_breaks(t) : Bool}\n- observed : {landing_blocks(record, t) == any_breaks(t) : Bool}\nContext:\n- record : Nat\n- target : Outcome\n- t      : List<&1, Observed>\nLocation: landing_blocks_iff_breaks\n125 |           match change:\n126>|             case Passed{}: landing_blocks_iff_breaks(record, t)\n127 |             case Absent{}: landing_blocks_iff_breaks(record, t)\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/forge-outcomes.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/forge-outcomes.bend"
+    ],
+    "exit": 0,
+    "stdout": "[True{}, False{}]\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/select-tests.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/select-tests.bend"
+    ],
+    "exit": 0,
+    "stdout": "[True{}, False{}]\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-runner.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-runner.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-forge.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : opaque-runner.Outcome\n- observed : non-inferrable term 'opaque-runner.Outcome{}'\nLocation: main\n4 | def main() -> R.Outcome:\n5>|   R.Outcome{}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-forge.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : opaque-runner.Outcome\n- observed : non-inferrable term 'opaque-runner.Outcome{}'\nLocation: main\n4 | def main() -> R.Outcome:\n5>|   R.Outcome{}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-fill.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-fill.bend"
+    ],
+    "exit": 0,
+    "stdout": "True{}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/empty-runner.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check, but 1 def relies on unsafe or foreign code:\n- run\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/empty-runner.bend"
+    ],
+    "exit": 0,
+    "stdout": "All terms check, but 1 def relies on unsafe or foreign code:\n- run\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/empty-forge.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a declared constructor (empty-runner.Outcome declares )\n- observed : empty-runner.Outcome{}\nLocation: main\n4 | def main() -> R.Outcome:\n5>|   R.Outcome{}\n6 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/empty-forge.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a declared constructor (empty-runner.Outcome declares )\n- observed : empty-runner.Outcome{}\nLocation: main\n4 | def main() -> R.Outcome:\n5>|   R.Outcome{}\n6 | \n"
+  }
+]

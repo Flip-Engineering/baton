@@ -1,0 +1,167 @@
+[
+  {
+    "argv": [
+      "--version"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "bend: unknown option --version (see bend --help)\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/examples/laws-no-ledger.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/examples/laws-no-ledger.bend"
+    ],
+    "exit": 0,
+    "stdout": "no-ledger: the gate reads only observations; both laws checked.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/control-a.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- p : Nat\nLocation: gate_reads_only_observations\n104 |           match target:\n105>|             case Passed{}: {==}\n106 |             case Failed{}: {==}\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/control-b.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : True{}\n- observed : False{}\nLocation: gate_reads_only_observations\n 99 |             case Passed{}: {==}\n100>|             case Failed{}: {==}\n101 |             case Absent{}: {==}\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/control-b1.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : True{}\n- observed : False{}\nContext:\n- p : Nat\nLocation: gate_reads_only_observations\n93 |           match target:\n94>|             case Passed{}: {==}\n95 |             case Failed{}: {==}\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/control-c.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : True{}\n- observed : False{}\nLocation: gate_reads_only_observations\n91 |             case Passed{}: {==}\n92>|             case Failed{}: {==}\n93 |             case Absent{}: {==}\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/forge-import.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/forge-outcomes.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a term\n- observed : ':'\nLocation:\n13 | def gate_from_record(+record: Nat, change: M.Outcome, actual_target: M.Outcome) -> Bool:\n14>|   M.landing_blocks(record, [M.Observed{change: change, target: target_from_record(record, actual_target)}])\n15 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-forge.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : ':'\n- observed : 'd'\nLocation:\n4 | \n5>| def run() -> IO(Outcome):\n6 |   import \"./opaque-runner.c\"\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/opaque-runner.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : ':'\n- observed : 'd'\nLocation:\n4 | \n5>| def run() -> IO(Outcome):\n6 |   import \"./opaque-runner.c\"\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/private-runner.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : 'def', 'type' or 'law'\n- observed : 'p'\nLocation:\n2 | \n3>| private type Outcome is Data:\n4 |   Passed{}\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/read-record.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a term\n- observed : ':'\nLocation:\n134 | def main() -> Bool:\n135>|   landing_blocks(1n, [Observed{change: Failed{}, target: Passed{}}])\n136 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/runner.bend",
+      "--check-only"
+    ],
+    "exit": 0,
+    "stdout": "All terms check.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/select-tests.bend",
+      "--check-only"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a term\n- observed : ':'\nLocation:\n16 | def main() -> List<Bool>:\n17>|   [gate_from_record(0n, [M.Observed{change: M.Failed{}, target: M.Passed{}}]),\n18 |    gate_from_record(stored_record(), [M.Observed{change: M.Failed{}, target: M.Passed{}}])]\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/read-record.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a term\n- observed : ':'\nLocation:\n134 | def main() -> Bool:\n135>|   landing_blocks(1n, [Observed{change: Failed{}, target: Passed{}}])\n136 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/forge-outcomes.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a term\n- observed : ':'\nLocation:\n13 | def gate_from_record(+record: Nat, change: M.Outcome, actual_target: M.Outcome) -> Bool:\n14>|   M.landing_blocks(record, [M.Observed{change: change, target: target_from_record(record, actual_target)}])\n15 | \n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/select-tests.bend"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : a term\n- observed : ':'\nLocation:\n16 | def main() -> List<Bool>:\n17>|   [gate_from_record(0n, [M.Observed{change: M.Failed{}, target: M.Passed{}}]),\n18 |    gate_from_record(stored_record(), [M.Observed{change: M.Failed{}, target: M.Passed{}}])]\n"
+  },
+  {
+    "argv": [
+      "docs/bend2/reviews/astra-r11-probes/forge-import.bend"
+    ],
+    "exit": 0,
+    "stdout": "runner.Failed{}\n",
+    "stderr": ""
+  }
+]
