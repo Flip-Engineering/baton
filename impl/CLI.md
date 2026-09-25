@@ -100,7 +100,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton services list` | `services list` | List the deployment’s configured provider services: models, derived routes, and subscription-window usage with its reset instant. |
 | `baton deployment watch (or wakes-since/reincarnate)` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead; reincarnate the RUNNING resident onto a commit in place. |
 | `baton waves` | `waves list` | Run, compile, start, stop and inspect workflow waves. |
-| `baton runs list` | `runs list` | List the Runs this authenticated connection may observe. |
+| `baton runs list [--cursor CURSOR]` | `runs list` | List the Runs this authenticated connection may observe. |
 | `baton help [TOPIC]` | `help` | Render one help topic; `baton --help` is the application overview. |
 | `baton application help [TOPIC]` | `application help` | The application help verb, spelled under its own noun. |
 | `baton surface` | `surface` | List, describe and invoke the unified capability surface (`baton surface --help`). |

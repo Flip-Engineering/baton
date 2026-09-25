@@ -31,7 +31,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -63,6 +63,16 @@ function write(repo, path, content) {
   const full = join(repo, path);
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, content);
+}
+
+/** The landing KEEPS its gate-verdict directory when no document was read (#551), and the rows that
+ * stage an unjudged run reap it here: a fixture-shaped directory left below the file's private temp
+ * root fails the file (#571), and the directory a late verdict would land in is the row's
+ * `verdictPath` — so a row that judged nothing is the one shape that has to give it back. */
+function reapVerdictScratch(t, failures) {
+  const path = failures?.[0]?.detail?.unexpected?.[0]?.verdictPath;
+  if (typeof path !== 'string') return;
+  t.after(() => rmSync(dirname(path), { recursive: true, force: true }));
 }
 
 // The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
@@ -102,6 +112,27 @@ function runnerSource({ sleepMs, green, unexpected, markerPath, die = false }) {
     + `unexpected: ${JSON.stringify(unexpected)}, expectedRed: 0 }));\n`;
 }
 
+/** The runner for the unjudged row (#551): it writes its marker, then exits without writing the
+ * verdict document — the shape a landing sees when the supervisor is lost mid-verification. */
+function unjudgedRunnerSource(markerPath) {
+  return "import { writeFileSync } from 'node:fs';\n"
+    + `writeFileSync(${JSON.stringify(markerPath)}, 'finished\\n');\n`
+    + 'process.exit(0);\n';
+}
+
+/** The runner for #577: it leaks a DESCENDANT that inherits the captured pipes and outlives it, then
+ * exits without writing the verdict document. The runner is gone, but its pipes are still held —
+ * the shape in which `close` never fires, so a landing that waits on it records no terminal row. */
+function leakyUnjudgedRunnerSource(markerPath, leakPidPath) {
+  return "import { spawn } from 'node:child_process';\n"
+    + "import { writeFileSync } from 'node:fs';\n"
+    + "const leak = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: 'inherit' });\n"
+    + `writeFileSync(${JSON.stringify(leakPidPath)}, String(leak.pid));\n`
+    + 'leak.unref();\n'
+    + `writeFileSync(${JSON.stringify(markerPath)}, 'finished\\n');\n`
+    + 'process.exit(0);\n';
+}
+
 const contractBody = ({ subject, sha, observedHead, rebasedOnto }) => ({
   subject,
   base: { observedHead, rebasedOnto },
@@ -125,11 +156,12 @@ const contractBody = ({ subject, sha, observedHead, rebasedOnto }) => ({
  */
 async function world(t, { gate = {} } = {}) {
   const {
-    sleepMs = 0, green = true, unexpected = [], die = false,
+    sleepMs = 0, green = true, unexpected = [], die = false, leak = false,
   } = gate;
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue459-'));
   const repo = join(directory, 'repo');
   const markerPath = join(directory, 'gate-run-finished.marker');
+  const leakPidPath = join(directory, 'gate-leak.pid');
   // The host lease namespace this landing admits through: a directory of its own, so no row of
   // this file ever queues in the machine's shared verdict namespace (the authority's root is the
   // one thing a deployment names by environment).
@@ -143,6 +175,11 @@ async function world(t, { gate = {} } = {}) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });
+  // The descendant a #577 runner leaks holds the gate run's captured pipes; killed here so it never
+  // outlives the test that staged it.
+  t.after(() => {
+    try { process.kill(Number(readFileSync(leakPidPath, 'utf8')), 'SIGKILL'); } catch { /* never leaked */ }
+  });
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
   git(repo, 'config', 'user.name', 'Issue 459');
   git(repo, 'config', 'user.email', 'issue459@example.invalid');
@@ -151,7 +188,9 @@ async function world(t, { gate = {} } = {}) {
   for (const script of REGENERATORS) {
     write(repo, script, regeneratorSource(`${script.split('/').at(-1).replace(/\.mjs$/u, '')}.json`));
   }
-  write(repo, 'impl/scripts/run-suite.mjs', runnerSource({ sleepMs, green, unexpected, markerPath, die }));
+  write(repo, 'impl/scripts/run-suite.mjs', gate.noVerdict !== true
+    ? runnerSource({ sleepMs, green, unexpected, markerPath, die })
+    : (leak === true ? leakyUnjudgedRunnerSource(markerPath, leakPidPath) : unjudgedRunnerSource(markerPath)));
   // The install the repository actually carries, under a sub-directory (#451): the integration
   // checkout links it and writes the projection-exclude file beside the checkout, which is the
   // one file a sweep has to remove besides the checkout itself.
@@ -557,6 +596,7 @@ test('459i: a gate run whose runner dies mid-flight reports the named partial ve
   assert.ok(error, 'the landing settles on the interrupted run');
   assert.equal(error.code, 'integrate_gates_red');
   const failures = w.failureRows();
+  reapVerdictScratch(t, failures);
   assert.equal(failures.length, 1, 'the interrupted run leaves its outcome in the record');
   assert.equal(failures[0].code, 'integrate_gates_red');
   const row = failures[0].detail.unexpected[0];
@@ -573,5 +613,78 @@ test('459i: a gate run whose runner dies mid-flight reports the named partial ve
   assert.deepEqual(w.leftoverCheckouts(), [], 'the scratch checkout is gone');
   assert.equal(existsSync(join(w.wtRoot, 'integrate-contribution-1.projection.exclude')), false,
     'and so is the projection-exclude file');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+});
+
+test('459j: an unjudged gate run keeps the verdict path its row names (#551)', needsGit, async (t) => {
+  // The runner writes its marker and exits without writing the verdict document: the shape a landing
+  // sees when the supervisor is lost mid-verification. The path the row carries is where a verdict
+  // written after this incarnation stopped waiting would land, so the directory survives the
+  // refusal and the row names it — the one recoverable fact #551 found being deleted.
+  const w = await world(t, { gate: { sleepMs: 0, green: true, noVerdict: true } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integration().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing settles on the unjudged run');
+  assert.equal(error.code, 'integrate_gates_red');
+  const failures = w.failureRows();
+  assert.equal(failures.length, 1, 'the unjudged run leaves its outcome in the record');
+  const row = failures[0].detail.unexpected[0];
+  assert.equal(row.row, 'suite-did-not-judge', 'the run that judged nothing is named, never a timeout');
+  assert.match(String(row.verdictPath ?? ''), /verdict\.json$/u, 'the row names the verdict document path');
+  assert.equal(existsSync(dirname(row.verdictPath)), true,
+    'the directory a late verdict would land in survives the refusal');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+  rmSync(dirname(row.verdictPath), { recursive: true, force: true });
+});
+
+// ── (k) a run whose captured pipes a leaked descendant holds still ends, and its row is recorded ──
+
+test('577a: a supervised child that exits while a descendant holds its pipes still settles (#577)', async (t) => {
+  const pool = new SupervisedProcesses();
+  const directory = mkdtempSync(join(tmpdir(), 'baton-577a-'));
+  const leakPidPath = join(directory, 'leak.pid');
+  const script = join(directory, 'leaky-child.mjs');
+  writeFileSync(script, "import { spawn } from 'node:child_process';\n"
+    + "import { writeFileSync } from 'node:fs';\n"
+    + "const leak = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { detached: true, stdio: 'inherit' });\n"
+    + `writeFileSync(${JSON.stringify(leakPidPath)}, String(leak.pid));\n`
+    + 'leak.unref();\n'
+    + 'process.exit(0);\n');
+  t.after(() => {
+    try { process.kill(Number(readFileSync(leakPidPath, 'utf8')), 'SIGKILL'); } catch { /* never leaked */ }
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  const started = Date.now();
+  const run = await pool.run({ file: script, cwd: directory, label: '577a-pipe-holder' });
+  const elapsedMs = Date.now() - started;
+
+  assert.equal(run.status, 'ok', 'the child exited 0');
+  assert.equal(run.code, 0);
+  assert.ok(elapsedMs < 10_000,
+    `the run settles on the child's own exit, not on the pipe its leaked descendant holds (${elapsedMs} ms)`);
+});
+
+test('577b: a landing whose gate run exits with its pipes held still records its terminal row (#577)', needsGit, async (t) => {
+  // The runner leaks a descendant that inherits the captured pipes, then exits without a verdict.
+  // `close` never fires on the supervisor, so a landing that waited on it would record nothing:
+  // no `swarm.integration_failed`, no `swarm.operation_completed` — the caller's row never written.
+  // The child's EXIT is what settles the run, so the terminal row lands either way.
+  const w = await world(t, { gate: { sleepMs: 0, green: true, noVerdict: true, leak: true } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const started = Date.now();
+  const error = await w.integration().then(() => null, (thrown) => thrown);
+  const elapsedMs = Date.now() - started;
+
+  assert.ok(error, 'the landing settles on the unjudged run, not on the pipes its descendant holds');
+  assert.equal(error.code, 'integrate_gates_red');
+  assert.ok(elapsedMs < 30_000, `the gate run ends on the runner's own exit (${elapsedMs} ms)`);
+  const failures = w.failureRows();
+  assert.equal(failures.length, 1, 'the landing leaves its terminal row in the record');
+  reapVerdictScratch(t, failures);
+  assert.equal(failures[0].detail.unexpected[0].row, 'suite-did-not-judge');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
 });
