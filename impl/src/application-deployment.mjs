@@ -5407,7 +5407,6 @@ class BatonDeployment {
    * successor and this incarnation is committed to its own withdrawal. */
   async #reincarnationWindow(handoff) {
     const authority = this.#residentAuthority;
-    const bound = this.#reincarnationWait();
     this.#webHost?._say?.(`baton serve: host.stop_waiting on successor_publication at ${this.#clock()}`);
     // 1. The fleet drains while this incarnation still holds the writer authority, so the drain's
     //    rows land where a stop's rows land and no worker of this incarnation is left for the
@@ -5441,7 +5440,7 @@ class BatonDeployment {
     //    failure-prone stretch of its startup — published on its marker as `opened`. Until that is
     //    seen the resident and publication leases are NOT released: a successor that dies during
     //    its open leaves this incarnation's authority exactly as it was.
-    const opened = await this.#awaitSuccessorOutcome(handoff, { want: 'opened', bound });
+    const opened = await this.#awaitSuccessorOutcome(handoff, { want: 'opened' });
     if (opened.ok !== true) {
       return Object.freeze({ published: false, stage: 'writer_authority', cause: opened.cause, drained });
     }
@@ -5457,7 +5456,7 @@ class BatonDeployment {
     //    incarnation's withdrawal later removes nothing of the successor's.
     const settled = opened.published === true
       ? opened
-      : await this.#awaitSuccessorOutcome(handoff, { want: null, bound });
+      : await this.#awaitSuccessorOutcome(handoff, { want: null });
     if (settled.ok === true && settled.published === true) {
       handoff.published = true;
       handoff.publishedIncarnation = settled.incarnation;
@@ -5606,12 +5605,15 @@ class BatonDeployment {
   }
 
   /** #306r: wait for the successor to reach `want`, or to hand the decision to its own facts: the
-   * publication appearing (a success at either stage), the child's exit, or the bound. Returns
-   * `{ok: true, published, incarnation}` or `{ok: false, cause}` in the #326-shaped cause. */
-  async #awaitSuccessorOutcome(handoff, { want, bound }) {
+   * publication appearing, the child's exit, or the marker standing down. There is NO fixed time
+   * window (#599, observed 2026-09-25T23:12Z: under load a successor's open takes longer than the
+   * old bound, the handoff was killed mid-start, and the reincarnation loop left a full-gate
+   * runner with no verdict). A successor that is alive and starting is a successor still opening:
+   * the wait ends on its own events — ready, published, exited, or stood down — never on a clock.
+   * Returns `{ok: true, published, incarnation}` or `{ok: false, cause}` in the #326-shaped cause. */
+  async #awaitSuccessorOutcome(handoff, { want }) {
     const authority = this.#residentAuthority;
     const startedAt = Date.now();
-    const deadline = startedAt + bound;
     for (;;) {
       const published = this.#publishedIncarnation();
       if (published !== null && published !== authority.incarnation) {
@@ -5637,13 +5639,6 @@ class BatonDeployment {
         return Object.freeze({
           ok: false, cause: this.#handoffFailureCause(handoff, {
             exit: null, waitedMs: Date.now() - startedAt, reason: 'successor_stood_down',
-          }),
-        });
-      }
-      if (Date.now() >= deadline) {
-        return Object.freeze({
-          ok: false, cause: this.#handoffFailureCause(handoff, {
-            exit: null, waitedMs: Date.now() - startedAt, reason: 'publication_timeout',
           }),
         });
       }
