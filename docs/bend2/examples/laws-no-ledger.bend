@@ -1,134 +1,97 @@
-# CLAIM: a landing gate's decision is a function of two observed runs only - the change's and the
-# target's - and it blocks exactly when a test fails with the change and does not fail on the
-# target. A stored record (an expected-failure list, a converged declaration, a count or census
-# pin) is a parameter the law quantifies over, so a gate whose decision depends on that record
-# makes the law false.
-# Status: proposed addition (revision 11, 2026-09-25), from the operator's ban on bookkeeping
-# ledgers in place of function (AGENTS.md, #579, #580). Not part of the approved set.
+# CLAIM: a landing gate's decision for one selected invocation is the adopted comparison policy
+# over the two judged runs. A failure with the change blocks when it has no matching failure
+# identity on the target; a target that is absent or unjudged supplies no matching failure; an
+# unjudged change cannot authorize landing. A stored record (an expected-failure allowance, a
+# convergence declaration, a count or census pin, a status declaration) is a parameter the gate
+# must not read. This file is the model; ../laws.bend states the laws and laws-proof.bend
+# discharges them.
+# Status: proposed revision 11 (2026-09-25), re-encoded from the operator's adopted statements in
+# ../reviews/astra-law-review-r11-r12.md. The operator adopted the comparison policy on
+# 2026-09-25; the entry remains a proposed addition to the approved set.
 # Reference: ../reference/README.md, bend 2.0.25, a4952426.
 # Evidence: laws-no-ledger.evidence.md.
 import Base
 
-# The observed outcome of one test in one run. `Absent{}` means the test does not exist in that
-# run's tree: a test that is new with the change is absent on the target.
+# The identity of a failure: the file, the test, the failure kind and the specified stable
+# semantic code. Variable paths and timings stay in diagnostics and carry no identity.
+type Identity is Data:
+  Identity{file: Nat, test: Nat, kind: Nat, code: Nat}
+
+# One invocation's outcome in one run. `Absent{}` means the invocation does not exist in that
+# run's tree: an invocation new with the change is absent on the target. `Unjudged{}` means the
+# run produced no verdict for it.
 type Outcome is Data:
   Passed{}
-  Failed{}
+  Failed{failure: Identity}
   Absent{}
+  Unjudged{}
 
-# One test observed twice: with the change, and on the target.
+# One selected invocation, observed twice: with the change and on the target.
 type Observed is Data:
   Observed{change: Outcome, target: Outcome}
 
-# The specification: the change breaks this test when it fails with the change and does not fail
-# on the target.
-def breaks(change: Outcome, target: Outcome) -> Bool:
-  match change:
+def same_identity(a: Identity, b: Identity) -> Bool:
+  match a b:
+    case Identity{+af, +at, +ak, +ac} Identity{+bf, +bt, +bk, +bc}:
+      Bool.and(Nat.is_eq(af, bf),
+        Bool.and(Nat.is_eq(at, bt),
+          Bool.and(Nat.is_eq(ak, bk), Nat.is_eq(ac, bc))))
+
+# Whether the target outcome supplies a matching failure identity for `f`. A passed, absent or
+# unjudged target contributes no matching failure.
+def matches(f: Identity, target: Outcome) -> Bool:
+  match target:
+    case Failed{+g}: same_identity(f, g)
     case Passed{}: False{}
     case Absent{}: False{}
-    case Failed{}:
-      match target:
-        case Failed{}: False{}
-        case Passed{}: True{}
-        case Absent{}: True{}
+    case Unjudged{}: False{}
 
-def breaks_observed(o: Observed) -> Bool:
+# The adopted comparison policy for one selected invocation: whether the landing must block
+# because of it. A change that passed or is absent contributes no failure.
+def blocks(change: Outcome, target: Outcome) -> Bool:
+  match change:
+    case Failed{+f}: Bool.not(matches(f, target))
+    case Passed{}: False{}
+    case Absent{}: False{}
+    case Unjudged{}: True{}
+
+# The gate's decision for one selected invocation. `ledger` stands for any stored value a gate
+# could be handed: a manifest entry, a pinned count, a converged flag, a status declaration.
+def gate(ledger: Nat, change: Outcome, target: Outcome) -> Bool:
+  blocks(change, target)
+
+
+def change_of(o: Observed) -> Outcome:
   match o:
-    case Observed{+change, +target}: breaks(change, target)
+    case Observed{+change, _}: change
 
-# The gate's decision for one test. `record` stands for any stored value a gate could be handed:
-# a manifest entry, a pinned count, a converged flag. The gate reads only the observations.
-def gate(record: Nat, change: Outcome, target: Outcome) -> Bool:
-  breaks(change, target)
-
-def gate_observed(record: Nat, o: Observed) -> Bool:
+def target_of(o: Observed) -> Outcome:
   match o:
-    case Observed{+change, +target}: gate(record, change, target)
+    case Observed{_, +target}: target
 
-def either(a: Bool, b: Bool) -> Bool:
-  match a:
-    case True{}: True{}
-    case False{}: b
+def gate_observed(ledger: Nat, +o: Observed) -> Bool:
+  gate(ledger, change_of(o), target_of(o))
 
-# The landing decision over every selected test.
-def landing_blocks(+record: Nat, runs: List<Observed>) -> Bool:
+def blocks_observed(+o: Observed) -> Bool:
+  blocks(change_of(o), target_of(o))
+
+# The landing decision over every selected invocation.
+def landing_blocks(+ledger: Nat, runs: List<Observed>) -> Bool:
   match runs:
-    case []: False{}
-    case h <> t: either(gate_observed(record, h), landing_blocks(record, t))
+    case Nil{}: False{}
+    case h <> t: Bool.or(gate_observed(ledger, h), landing_blocks(ledger, t))
 
-def any_breaks(runs: List<Observed>) -> Bool:
+def any_blocks(runs: List<Observed>) -> Bool:
   match runs:
-    case []: False{}
-    case h <> t: either(breaks_observed(h), any_breaks(t))
+    case Nil{}: False{}
+    case h <> t: Bool.or(blocks_observed(h), any_blocks(t))
 
-# The law, per test: for every stored record and every pair of observations, the gate's decision
-# is the specification's.
-law gate_reads_only_observations:
-  for record: Nat
-  for change: Outcome
-  for target: Outcome
-  {gate(record, change, target) == breaks(change, target) : Bool}
-
-# The proof splits every case, so a gate that reads the record fails on a named case.
-def gate_reads_only_observations(record, change, target):
-  match record:
-    case 0n:
-      match change:
-        case Passed{}:
-          match target:
-            case Passed{}: {==}
-            case Failed{}: {==}
-            case Absent{}: {==}
-        case Failed{}:
-          match target:
-            case Passed{}: {==}
-            case Failed{}: {==}
-            case Absent{}: {==}
-        case Absent{}:
-          match target:
-            case Passed{}: {==}
-            case Failed{}: {==}
-            case Absent{}: {==}
-    case 1n+p:
-      match change:
-        case Passed{}:
-          match target:
-            case Passed{}: {==}
-            case Failed{}: {==}
-            case Absent{}: {==}
-        case Failed{}:
-          match target:
-            case Passed{}: {==}
-            case Failed{}: {==}
-            case Absent{}: {==}
-        case Absent{}:
-          match target:
-            case Passed{}: {==}
-            case Failed{}: {==}
-            case Absent{}: {==}
-
-# The law, per landing: for every stored record and every observed run, the landing blocks
-# exactly when some test breaks.
-law landing_blocks_iff_breaks:
-  for +record: Nat
-  for runs: List<Observed>
-  {landing_blocks(record, runs) == any_breaks(runs) : Bool}
-
-def landing_blocks_iff_breaks(record, runs):
+# One decision per selected invocation, so the landing accounts for every invocation it selected.
+def report(+ledger: Nat, runs: List<Observed>) -> List<Bool>:
   match runs:
-    case []: {==}
-    case h <> t:
-      match h:
-        case Observed{+change, +target}:
-          match change:
-            case Passed{}: landing_blocks_iff_breaks(record, t)
-            case Absent{}: landing_blocks_iff_breaks(record, t)
-            case Failed{}:
-              match target:
-                case Failed{}: landing_blocks_iff_breaks(record, t)
-                case Passed{}: {==}
-                case Absent{}: {==}
+    case Nil{}: Nil{}
+    case h <> t: gate_observed(ledger, h) <> report(ledger, t)
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    IO.print("no-ledger: the gate reads only observations; both laws checked.")
+    IO.print("no-ledger: the gate reads only observations; the laws are checked in laws-proof.bend.")
