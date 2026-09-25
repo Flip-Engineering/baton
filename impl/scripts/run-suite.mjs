@@ -560,6 +560,14 @@ async function runFile(file) {
       message: error?.message ?? String(error),
     });
   }
+  if (!groupReaped) {
+    // Issue #599: a file whose process group outlives the reap is judged as that file's leak row.
+    // The run still writes its verdict; the landing comparison decides whether the row blocks.
+    failed.push({
+      file, name: '(file left processes the runner could not reap)', failureType: 'fixtureLeak',
+      message: 'the file\'s process group was still alive after SIGTERM and SIGKILL',
+    });
+  }
   if (leakedFixtures.length > 0) {
     failed.push({
       // The name is the same for every run of the file, so a gate compares it by file; the
@@ -684,9 +692,8 @@ if (legacyPassthrough) {
     try {
       const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
       const spawnError = results.find((result) => result.error)?.error ?? null;
-      const groupReaped = results.every((result) => result.groupReaped);
-      if (requestedSignal || spawnError || !groupReaped) {
-        finish(1, requestedSignal, spawnError, groupReaped);
+      if (requestedSignal || spawnError) {
+        finish(1, requestedSignal, spawnError);
       } else {
         // Every lane summary carries the rows its files reported. A file that stops reporting is
         // named by its own progress deadline (runFile above) as a hung row, which the verdict
