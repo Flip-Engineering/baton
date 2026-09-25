@@ -126,7 +126,7 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — the self-hosted development loop, the suite verdict, and how to land a change.
 - **[docs/PROGRESS.md](docs/PROGRESS.md)** — the per-phase progress ledger, oldest first; a row is never rewritten to look greener than it was.
 - **[impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md)** — generated from the executable command registry.
-- **[impl/scripts/expected-red-tests.json](impl/scripts/expected-red-tests.json)** — the reasoned expected-red manifest for the test suite; **[impl/src/limits.mjs](impl/src/limits.mjs)** — the frame-limits registry, the one place a bound is declared.
+- **[impl/src/limits.mjs](impl/src/limits.mjs)** — the frame-limits registry, the one place a bound is declared.
 
 **Design documents (`docs/32`–`docs/48`)**
 
@@ -141,7 +141,7 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 | [38](docs/38-flip-experience.md) · [38b](docs/38-flip-visual-surfaces.md) | The operator experience and visual surfaces (`baton top`) |
 | [39](docs/39-swarm-runtime.md) | The swarm runtime: living swarms, tight and loose coupling, communication and shared context, the knowledge verbs on the bridge |
 | [40](docs/40-runtime-review-2026-09-12.md) · [41](docs/41-verification-recovery-review.md) | The runtime review with checked results; verification and contribution recovery |
-| [42](docs/42-suite-legitimacy.md) · [42b](docs/42-deployment-topology.md) | Suite legitimacy (expected-red reasons, the environment dimension); deployment topology beyond one host |
+| [42](docs/42-suite-legitimacy.md) · [42b](docs/42-deployment-topology.md) | The suite verdict, the environment line, and the landing comparison with the target branch; deployment topology beyond one host |
 | [43](docs/43-host-capacity-and-derived-floors.md) | Host capacity is the throttle; the replaying → reconstructing → answering contract; restart truth |
 | [44](docs/44-red-suffix-convention.md) | The `-red` test-suffix convention |
 | [45](docs/45-open-coordination.md) | Open coordination: joint couplings, claims, peers-now |

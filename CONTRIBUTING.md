@@ -11,7 +11,7 @@ you can redistribute or reuse the code, even if you are contributing to it.
 
 ```bash
 cd impl && npm ci
-node scripts/run-suite.mjs         # the canonical gate, judged against expected-red-tests.json
+node scripts/run-suite.mjs         # the whole suite; the verdict lists every failure
 node scripts/surface-gate.mjs      # grammar lint, generated artifacts, MCP dispatch (--write regenerates)
 ```
 
@@ -30,16 +30,14 @@ are [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md); regenerate them w
 ## The test suite and its verdict
 
 `run-suite.mjs` runs the parallel lane, then the process-heavy files listed in
-`impl/scripts/suite-lanes.json` serially, and judges the run against
-`impl/scripts/expected-red-tests.json`. Rows in that file are `file :: name`, each with a reason
-naming the issue it is waiting on; see [docs/42](docs/42-suite-legitimacy.md) for the full rule
-set.
+`impl/scripts/suite-lanes.json` serially. A run is GREEN when no test failed and nothing hung
+(`BATON_SUITE_IDLE_MS`, default 10 minutes); the verdict names every failure with its file and
+test name.
 
-A run is GREEN when every failure is listed in the manifest, no listed test unexpectedly passed or
-disappeared, and nothing hung (`BATON_SUITE_IDLE_MS`, default 10 minutes). Tests that describe not
-yet-implemented behavior are named with the `-red` suffix and land red on purpose; see
-[docs/44](docs/44-red-suffix-convention.md). They are removed from the manifest once the
-implementing change makes them pass.
+A landing (`baton swarm integrate`) runs the tests the change affects. When any of them fail, it
+re-runs the failing files on the target branch in the same checkout and blocks only on a test that
+passes on the target and fails with the change. A test that fails on both sides is reported and
+does not block. Known breakage is tracked in the issue tracker. No file lists expected failures.
 
 A partial run (a subset of test files) prints a `SUBSET verdict (n of m files)` line and is not a
 substitute for a full run. On a host that is also running development lanes, the suite takes a
