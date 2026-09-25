@@ -129,7 +129,7 @@ async function openDeployment(t, label, routes) {
   // verdict on the route and never the fixture's own missing credential file.
   for (const route of routes) {
     const keyFile = ompProviderKeyFile(route.model);
-    if (keyFile !== null) writeFileSync(join(repo, keyFile), '{}\n');
+    if (keyFile !== null) writeFileSync(join(repo, keyFile), '{"credential":"issue475-fixture"}\n');
   }
   const root = join(tmpDir(`${label}-owner`), 'deployment');
   let driverOptions = null;

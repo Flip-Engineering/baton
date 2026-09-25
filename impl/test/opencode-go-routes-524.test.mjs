@@ -144,6 +144,26 @@ test('OG-3: the opencode-go credential gate names its own key file, never anothe
     assert.ok(!blocked.summary.includes('glm_key.json'),
       `the opencode-go row must never name the direct zai file, got: ${blocked.summary}`);
 
+    // #591: presence alone is not a credential — the file must carry a usable entry.
+    writeFileSync(join(fixture.repo, OPENCODE_GO_KEY_FILE), '{}\n', { mode: 0o600 });
+    const empty = deploymentModule.ompRouteReadiness(fixture.repo, 'opencode-go/glm-5.3-flash', 'high');
+    assert.equal(empty.state, 'blocked');
+    assert.equal(empty.code, 'authentication_required');
+    assert.ok(empty.summary.includes(OPENCODE_GO_KEY_FILE),
+      `the empty-object row must name ${OPENCODE_GO_KEY_FILE}, got: ${empty.summary}`);
+    writeFileSync(join(fixture.repo, OPENCODE_GO_KEY_FILE), 'not json\n', { mode: 0o600 });
+    assert.equal(
+      deploymentModule.ompRouteReadiness(fixture.repo, 'opencode-go/glm-5.3-flash', 'high').state,
+      'blocked',
+      'an unparseable key file is not a credential',
+    );
+    writeFileSync(join(fixture.repo, OPENCODE_GO_KEY_FILE), '{"opencode_go_key":""}\n', { mode: 0o600 });
+    assert.equal(
+      deploymentModule.ompRouteReadiness(fixture.repo, 'opencode-go/glm-5.3-flash', 'high').state,
+      'blocked',
+      'a credential entry with an empty value is not a credential',
+    );
+
     writeFileSync(join(fixture.repo, OPENCODE_GO_KEY_FILE),
       '{"opencode_go_key":"opencode-go-524-fixture"}\n', { mode: 0o600 });
     assert.deepEqual(

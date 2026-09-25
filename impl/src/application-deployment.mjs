@@ -1396,12 +1396,37 @@ export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Dat
   return catalog;
 }
 
+// #500: the bound a provider key file may fill — the registry's own credential.file row, the
+// same ceiling the muse auth read enforces.
+const MAX_OMP_KEY_FILE_BYTES = FRAME_LIMITS['credential.file'].value;
+
+/** #591: whether a provider key file carries a usable credential — a bounded, symlink-refusing
+ * structural read. The file must parse to a JSON object holding at least one non-empty string
+ * value; anything else (unreadable, empty, an empty object, no string entry) is unusable. The
+ * contents are never returned or logged: the answer is one boolean. */
+function ompCredentialUsable(path) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_OMP_KEY_FILE_BYTES) return false;
+    const parsed = JSON.parse(readFileSync(descriptor, 'utf8'));
+    if (!record(parsed)) return false;
+    return Object.values(parsed).some((value) => typeof value === 'string' && value.length > 0);
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 /** The one omp route gate: the adapter's own agent database, the route provider's repo key
  * file, AND (#342) the harness catalog defining the model and its effort. #494: the key-file
  * table is the deployment's EFFECTIVE table — the shipped defaults extended by
  * advanced.ompCredentials.providerKeyFiles — and a provider it does not name is refused with
- * the declaration that extends it. Blocked rows name the missing file or the models/efforts
- * the catalog does define; contents of key files are never read or surfaced. */
+ * the declaration that extends it. Blocked rows name the missing file, the unusable credential,
+ * or the models/efforts the catalog does define. #591: a present key file must also carry a
+ * usable credential — the structural check reads the file and never surfaces its contents. */
 export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead = null, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES } = {}) {
   const facts = ompRouteReadinessFacts(model, providerKeyFiles);
   if (!ompAgentConfigured()) {
@@ -1421,6 +1446,16 @@ export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead 
     return Object.freeze({
       state: 'blocked', code: 'authentication_required',
       summary: `omp route ${model} is not configured; provision ${facts.keyFile} at the repository root.`,
+    });
+  }
+  // #591: presence is not a credential. A key file that carries no usable credential entry must
+  // read blocked here — otherwise a recruit is admitted onto a route whose spawn can never
+  // authenticate, and the seat stays unbound. The row names the file and the required shape,
+  // never the contents.
+  if (!ompCredentialUsable(join(repoRoot, facts.keyFile))) {
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_required',
+      summary: `omp route ${model} is not configured; provision ${facts.keyFile} at the repository root with a JSON object carrying a non-empty string credential value.`,
     });
   }
   // #342: the harness must define the model (and the effort, when it lists efforts) — the
@@ -1461,7 +1496,7 @@ function ompRouteReadyWhen(model, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FI
   const facts = ompRouteReadinessFacts(model, providerKeyFiles);
   return facts.keyFile === null
     ? `\`${facts.agentDatabase}\` present and a declared provider credential file`
-    : `\`${facts.agentDatabase}\` present, repo \`${facts.keyFile}\` present, and \`omp models --json\` defining the model and effort`;
+    : `\`${facts.agentDatabase}\` present, repo \`${facts.keyFile}\` present with a usable credential entry, and \`omp models --json\` defining the model and effort`;
 }
 
 /** The ready-when contract each registered route family documents — the same facts the gates

@@ -453,14 +453,14 @@ The zero-assembly deployment registers these route families (`baton doctor` for 
 | `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present with a ready authentication state |
 | `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + auth status probes |
 | `muse` | `muse-spark-1.3-contributor` | low/medium/high/xhigh/max | a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`) |
-| `omp` | `deepseek/deepseek-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `deepseek_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `deepseek/deepseek-v4-pro[1m]` | low/medium | `~/.omp/agent/agent.db` present, repo `deepseek_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `zai/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `glm_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `kimi-code/k3` | low/high/max | `~/.omp/agent/agent.db` present, repo `kimi_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `opencode-go/glm-5.3` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `opencode-go/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `opencode-go/deepseek-v4-pro` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present, and `omp models --json` defining the model and effort |
-| `omp` | `opencode-go/kimi-k3` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present, and `omp models --json` defining the model and effort |
+| `omp` | `deepseek/deepseek-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `deepseek_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `deepseek/deepseek-v4-pro[1m]` | low/medium | `~/.omp/agent/agent.db` present, repo `deepseek_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `zai/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `glm_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `kimi-code/k3` | low/high/max | `~/.omp/agent/agent.db` present, repo `kimi_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `opencode-go/glm-5.3` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `opencode-go/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `opencode-go/deepseek-v4-pro` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
+| `omp` | `opencode-go/kimi-k3` | low/high/max | `~/.omp/agent/agent.db` present, repo `opencode_go_key.json` present with a usable credential entry, and `omp models --json` defining the model and effort |
 | `claude-code` (provider kimi, conditional) | `kimi-k3[1m]` | max | the private kimi-through-claude credential present |
 
 <!-- END GENERATED: cli-fleet-routes -->
