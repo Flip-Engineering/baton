@@ -468,8 +468,12 @@ export function gateRunnerFile(layout, file) {
  */
 export async function runSupervisedGateRun({
   file, dir, files = [], env = {}, holder, label = 'integration-gate',
-  pool = null, leaseAuthority = null,
+  pool = null, leaseAuthority = null, signal = null,
 }) {
+  if (signal?.aborted) {
+    throw Object.assign(new Error('integration withdrawn before lease acquisition'),
+      { code: 'integrate_withdrawn' });
+  }
   const authority = leaseAuthority ?? createSuiteLeaseAuthority(process.env);
   // The request ahead of this one, when the admission queue shows one: the holder the wait was
   // behind is the fact an `integrate_gates_busy` refusal is actionable on. Read without the mutex
@@ -493,7 +497,7 @@ export async function runSupervisedGateRun({
   // release, never refused for having waited. A host that cannot fund a suite at all (a standing
   // memory shortfall) answers `degraded` at once and the gate run proceeds without a lease.
   lease = await acquireSuiteVerifyLease({
-    authority, holder, log: () => {},
+    authority, holder, log: () => {}, signal,
     onQueued: (row) => {
       queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
         shortfall: row?.shortfall ?? null });
@@ -514,7 +518,7 @@ export async function runSupervisedGateRun({
       // `resolve`, not `join`: a runner a deployment names absolutely keeps its own suite root
       // rather than being read as a path under the checkout.
       cwd: resolve(dir, layout.suiteRoot),
-      label,
+      label, signal,
       env: { ...env, ...(digest === null ? {} : { [SUITE_VERIFY_LEASE_ENV]: digest }) },
     });
   } finally {

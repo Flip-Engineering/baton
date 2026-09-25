@@ -365,7 +365,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // fast-forwards the target, and records the receipt. `organize` authority, like every other
   // root-side act.
   'swarm.integrate': Object.freeze({
-    args: Object.freeze(['swarmId', 'contributionId', 'target', 'dryRun', 'idempotencyKey', 'view']),
+    args: Object.freeze(['swarmId', 'contributionId', 'target', 'dryRun', 'withdraw', 'reason', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -700,6 +700,7 @@ const SWARM_FIELD_RULES = Object.freeze({
   // `--dry-run` prepares and verifies the squash and records the receipt, then leaves the target
   // exactly where it was: every effect of a landing except the fast-forward.
   dryRun: Object.freeze({ check: (value) => typeof value === 'boolean', expectation: 'true to prepare and verify the landing without moving the target' }),
+  withdraw: Object.freeze({ check: (value) => typeof value === 'boolean', expectation: 'true to withdraw a queued or running landing for the named contribution' }),
 });
 
 // Required/optional per command. `payload` stays optional: an event kind that carries no body
@@ -759,7 +760,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   // truth and an omitted flag can never refuse.
   'swarm.integrate': Object.freeze({
     required: Object.freeze(['swarmId', 'contributionId', 'idempotencyKey']),
-    optional: Object.freeze(['target', 'dryRun', 'view']),
+    optional: Object.freeze(['target', 'dryRun', 'withdraw', 'reason', 'view']),
   }),
   'swarm.stop': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']),
@@ -1125,9 +1126,12 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
     readOnlyHint: false, destructiveHint: true,
     properties: Object.freeze({
       swarmId: ID_SCHEMA, contributionId: ID_SCHEMA, target: ID_SCHEMA, dryRun: Object.freeze({ type: 'boolean',
-        description: 'true to prepare and verify the landing without moving the target' }), view: VIEW_SCHEMA,
+        description: 'true to prepare and verify the landing without moving the target' }),
+      withdraw: Object.freeze({ type: 'boolean',
+        description: 'true to withdraw a queued or running landing for the named contribution' }),
+      reason: TEXT_SCHEMA, view: VIEW_SCHEMA,
     }),
-    required: Object.freeze(['swarmId', 'contributionId', 'target']),
+    required: Object.freeze(['swarmId', 'contributionId']),
   }),
   Object.freeze({
     command: 'swarm.stop',

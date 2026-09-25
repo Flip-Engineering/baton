@@ -143,6 +143,7 @@ export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
   env = process.env, holder = suiteLeaseHolder(env),
   log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
+  signal = null,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
     return Object.freeze({
@@ -154,6 +155,7 @@ export async function acquireSuiteVerifyLease({
   let reported = false;
   const outcome = await resolved.acquire('verify', {
     holder,
+    signal,
     onQueued: (row) => {
       if (reported) return;
       reported = true;
