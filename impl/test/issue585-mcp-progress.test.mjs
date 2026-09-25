@@ -3,10 +3,10 @@
 // server slices the wait, offers ONE `notifications/progress` frame between slices, and returns
 // the leg's own result. A call with no token makes exactly the one call it made before.
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import { ProductionConvergenceRuntime } from '../src/production-convergence.mjs';
@@ -14,7 +14,15 @@ import { wrapProductionMcpServer } from '../src/production-mcp-convergence.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-09-24T00:00:00.000Z');
-const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-progress-'));
+// Issue #571: every fixture directory this file creates is reaped when the file ends, so the suite
+// runner's per-file fixture check reads a clean root.
+const directories = [];
+const root = () => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-mcp-progress-'));
+  directories.push(directory);
+  return directory;
+};
+after(() => { for (const directory of directories) rmSync(directory, { recursive: true, force: true }); });
 const principal = (overrides = {}) => ({
   userId: 'operator-a', sessionId: 'progress-a',
   capabilities: ['control', 'observe', 'approve', 'emergency_stop'],

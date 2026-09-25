@@ -243,15 +243,83 @@ therefore name one class with the same words.
 | D7 | No change, as designed. |
 | D9 | No change, as designed. |
 
-### Observations the audit recorded, still open
+### Observations the audit recorded (repaired after stage 3)
 
-The audit's S3 capture records two rendering defects that no design in this document claims, so
-they stay open rather than half-built:
+The audit's S3 capture recorded two rendering defects that no design in this document claimed. Both
+are repaired, with width rows:
 
-- The timeline's unattached-stream line is longer than a narrow terminal and truncates into an
-  unfinished sentence at 84 columns.
+- The timeline's unattached-stream line truncates into an unfinished sentence at 84 columns. The
+  line is now chosen from three complete statements, longest that fits, so a narrow terminal reads
+  the shortest one whole instead of half a sentence.
 - The overview's Resident row renders `—  —  —  ● ready` when the doctor projection carries no
-  identity fields, instead of omitting the absent cells.
+  identity fields. The row now renders only the cells the projection carries, and the same
+  one-vocabulary rule reaches the fleet roster's member state, so no cell of the operator's frame
+  invents a placeholder for an absent fact.
+
+### After stage 3: the wake stream's human form, and the desk's vocabulary
+
+Two further audit items carried no design, and both are addressed:
+
+- **S9's presentational gap.** The audit's most honest surface had no human form on the CLI: a
+  wake frame printed as JSON per line, with the readable rendering living only inside `baton top`.
+  `wake-render.mjs` renders one line per frame — sequence, class, subject, the next act the frame
+  itself spells — through the one mark rule and the one wake-row prefix, and `writeFollowPage` is
+  the one place a follow leg decides its channels: stdout keeps its machine frame per row, stderr
+  carries the human line on a TTY only. Verified by a live follow of a fixture resident: with a
+  pty, stderr carries `✦(◕‿◕)✦ #7 context_updated context verify` beside the JSON row; with pipes,
+  stderr is empty and stdout carries the frame alone.
+- **S12's split vocabulary.** The browser Run desk named a run's own state with the projection's
+  raw class literal while the terminal and MCP surfaces named the same class with the derived
+  status word. The derivation does not move: `flipStatusTable` serves brand.mjs' ONE table as
+  plain data, projected into the served page, applied at render time. A class the table does not
+  carry keeps the desk's own humanized spelling, so nothing the desk showed changed shape.
+
+Two items were assessed and deliberately not built:
+
+- **D4 (MCP elicitation).** #592 owns the operator-interaction architecture, and its design
+  (docs/57 §4.3/§4.4) keeps approvals, questions and interrupts in the harness's own native UI and
+  forbids a substitute approval UI. An elicitation would have Baton render that prompt itself, and
+  the transport request channel it needs sits in the session-host area #592 owns. D4 is retired
+  into #592 rather than built here.
+- **MCP logging notifications** (the audit's §3 row 2). A `notifications/message` record carrying
+  Baton's wake rows would duplicate the custom wake notification on a machine channel, which the
+  one-channel-per-purpose law and P1 refuse. The audit's row stands as a statement of what is
+  absent, not as a design this document adopts.
+
+### The desk's phase vocabulary: the review and the repair
+
+The desk's spine named `awaiting_plan_approval`, `approved`, `running` and `work_completed`, and
+this document called the canonical set `awaiting_approval`, `working` and `completed`. The review
+that item asked for reads every phase literal an outward projection can carry:
+
+- `application.mjs:5478-5493` serves `awaiting_plan_approval`, `denied`, `work_completed`,
+  `inconclusive`, `failed`, `cancelled`, `paused`, `running`, `approved`, `stopped`, `stopping`.
+- `application.mjs:5751-5756` serves `completed`, `reviewing`, `work_completed`.
+- `application-observation.mjs:2753` and `:2829-2838` serve `planning`, `planning_failed`,
+  `awaiting_plan_approval`, `denied`, `work_completed`, `failed`, `cancelled`, `paused`,
+  `running`, `approved`, `stopped`, `stopping`.
+- `application-semantics.mjs:21-28` and `:67-79` hold the canonical set and the generated
+  legacy-to-canonical map. `canonicalRunPhase` is what the phase predicates and the wave driver
+  resolve through; no outward serializer calls it.
+
+The projections therefore serve the legacy spellings (`awaiting_plan_approval`, `approved`,
+`running`, `work_completed`, `interruption_uncertain`, `planning_failed`) beside the canonical
+ones, and the desk's set was a subset of them: an interrupted, degraded or inconclusive run
+rendered the intent step and lost its evidence section. `web-operator.mjs` carries ONE table
+naming the desk's step for every canonical phase and every legacy spelling, projected into the
+served page as data and applied at render time. The table is checked against
+`CANONICAL_RUN_PHASES` and `LEGACY_RUN_PHASE_MAP` when the asset loads, so a phase the registry
+grows without a step refuses the asset instead of rendering a wrong spine. The step decides the
+terminal row: `interrupted`, `interruption_uncertain` and `paused` read the execute step,
+`work_completed` and `result_ready` the review step, and `degraded` and `inconclusive` the
+evidence step they are.
+
+`planning_failed` stays on the plan step: its view offers `retry_planning` and reads "safe to
+retry" (`application-observation.mjs:2772`), so the registry's `failed` mapping is the
+phase-predicate axis rather than the desk's progression.
+
+One desk item stays open: the desk offers `stop` for an interrupted run and has no control for the
+`send` action that run's `nextActions` offer.
 
 ### Deviation from the design text
 
