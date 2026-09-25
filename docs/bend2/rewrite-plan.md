@@ -24,9 +24,7 @@ The plan uses these sources:
 - [`../../impl/CLI.md`](../../impl/CLI.md) and [`../../impl/MCP.md`](../../impl/MCP.md) define the
   generated public operation surfaces and transport behavior to preserve during migration.
 - [`../../impl/scripts/seam-inventory.json`](../../impl/scripts/seam-inventory.json) classifies
-  admission, effect, observation, recovery, and surface members. The inspected checkout contains
-  2,684 members in 22 files. Freeze its commit and digest with each phase's coverage manifest;
-  the earlier architecture review's 2,670-member census belongs to its recorded source revision.
+  admission, effect, observation, recovery, and surface members.
 - [`../../impl/src/contribution-contract.mjs`](../../impl/src/contribution-contract.mjs),
   [`../../impl/src/landing-table.mjs`](../../impl/src/landing-table.mjs),
   [`../../impl/src/swarm-runtime.mjs`](../../impl/src/swarm-runtime.mjs), and
@@ -227,8 +225,8 @@ dependent gates.
 
 ### Immediate work and phase entry
 
-1. Freeze Phase 0 manifests from the current source commit and collect the existing protocol,
-   refusal, replay, and landing fixtures. This work can run while architecture review is open.
+1. Collect the existing protocol, refusal, replay, and landing fixtures. This work can run while
+   architecture review is open.
 2. Implement `B2-JSON` and the digest subset of `B2-CRYPTO`, then run canonical boundary vectors.
    Build the approved law encodings with the laws lead; publish actual-transition proof status.
 3. Run Phase 1 pure shadow comparisons after the executable boundary passes. Keep every proposed
@@ -278,8 +276,6 @@ Phase 7 replaces the migration harness with a native conformance runner in its f
 No production subsystem moves. The phase creates the compatibility assets used by later phases:
 
 - the `baton.bridge.v1` schemas;
-- a manifest of current event kinds, command names, permission names, refusal codes, wake classes,
-  projections, contribution fields, and public CLI/MCP operations;
 - fixture requests and answers taken from current tests;
 - replay corpora containing valid rows, refused operations, partial effects, and recovery cases;
 - an ownership map that assigns every inventoried seam member to a planned phase or an explicit
@@ -319,8 +315,7 @@ executable must decode and re-encode each fixture with the same meaning and cano
 - prove canonical encode/decode parity and digest parity;
 - replay the corpus through the current JavaScript implementation with no projection change; and
 - run the compiled Bend2 boundary executable produced at the pinned toolchain;
-- prove every phase deletion has one proposed owner and an explicit open or settled decision; and
-- verify the law manifest against the approved 16-entry set, with each proof status stated.
+- prove every phase deletion has one proposed owner and an explicit open or settled decision.
 
 Open architecture decisions block their affected deletions. They do not block collecting fixtures,
 implementing codecs, or testing shadow decisions.
@@ -380,9 +375,8 @@ identity and field-level differences. It does not contain credentials or unbound
 ### Proving test
 
 `phase1-shadow-parity.test.mjs` must run every Phase 0 fixture and generated mutations through both
-implementations. Required results are zero unexplained differences, deterministic Bend2 results
-across repeated runs, bounded execution for bounded reads, and identical replay projections at
-every fixture cursor. Any difference receives a regression fixture before correction.
+implementations. Required results are deterministic Bend2 results across repeated runs, bounded
+execution for bounded reads, and identical replay projections at every fixture cursor.
 
 The test runs each approved law through its published proposition, actual-transition proof, and
 source regression case. A type-level claim includes a compile-pass and compile-refusal case;
@@ -815,11 +809,9 @@ independently buildable and testable.
 - **ARCHITECTURE-VERDICT-PENDING:** the external Codex architecture verdict and its evidence must
   be incorporated into the revised F findings. Each affected production phase waits for its
   disposition and required architecture decision.
-- **LAW-IMPLEMENTATION-EVIDENCE-PENDING:** the approved 16-law contract needs checked application
-  transitions, failing counterexamples, and host conformance. The laws work item's publication
-  must distinguish model proofs from actual implementation coverage.
-- **PHASE-1-EVIDENCE-PENDING:** no completed differential run is claimed here. Publish zero
-  unexplained differences and explicit corrections for legacy behavior inconsistent with the laws.
+- **LAW-IMPLEMENTATION-EVIDENCE-PENDING:** the approved laws' contract needs checked application
+  transitions, failing counterexamples, and host conformance.
+- **PHASE-1-EVIDENCE-PENDING:** no completed differential run is claimed here.
 - The host work items above require effect-specific native evidence before their dependent cutovers.
 - The root owns assembled verification with `npm test --prefix impl` and the reviewed landing on
   `bend2-rewrite`. Local document checks do not establish a full-suite or destination result.

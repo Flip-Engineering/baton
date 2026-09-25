@@ -19,7 +19,7 @@ Language evidence uses [the reference pin](reference/README.md),
 The relevant pinned language sections are `guide/GUIDE.md`, Laws and Proofs,
 Quantities, and Modules. [laws-check.evidence.md](examples/laws-check.evidence.md)
 records the commands, outputs and failures. `python3 docs/bend2/laws-check.py <bend>`
-checks the models, the transition witness, sixteen negative controls and two existing
+checks the models, the transition witness, the negative controls and two existing
 JavaScript regression rows.
 It is a bounded evidence check. Root owns the separate deployment command
 `npm test --prefix impl`; this lane did not execute it. The check runs under

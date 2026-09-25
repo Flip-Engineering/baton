@@ -21,8 +21,6 @@ repair (ARCH-CLOSE-11, with M-5, M-14 and M-17 in `../target-architecture.md`).
 | `arch-replay-stop.expect` | the required logical behaviour per case, read by neither half |
 | `arch-replay-stop.bend` | the Bend2 half: a pure decision model over the case file |
 | `arch-replay-stop.mjs` | the reference half: it drives the branch's `CoordinationStore` over the trace |
-| `arch-replay-stop.reference.txt` | the reference half's RESULT lines |
-| `arch-replay-stop.prototype.txt` | the Bend2 half's RESULT lines |
 
 The trace is a real ledger: two `task.created` rows for one run and one `run.stop_admitted` row
 carrying the policy-bearing field set (`scope`, `throughSeq`, `targetRunIds`) that the run-lineage

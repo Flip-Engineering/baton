@@ -1,6 +1,6 @@
 # Baton application laws — approved revision 9.1
 
-The operator approved all 16 operative entries reviewed at
+The operator approved the operative entries reviewed at
 `1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35`. The final Codex r9.1 review records
 `APPROVED`; the operator authorization is relayed in the bend2-laws-lead4 brief.
 M-6 and M-9 are absorbed into M-8, M-15 is deferred, and M-16 remains the repository
@@ -31,14 +31,11 @@ What changed, per the r6 review:
   complies.
 - **M-17 clarified.** A continuation owner means actual retained responsibility or a recoverable
   handoff; an authorized suspension names its reason and resumption authority.
-- **Bookkeeping.** The operative set has 16 entries after splitting M-3 into a/b/c and absorbing M-9; the design-notes
-  reduction record is corrected (DEV-6 deferred, DEV-7 excluded, PM-10 routed, the old CX-6
-  rejection marked historical).
 
 Extraction base `bc2e4fcd`; design snapshot `23d3b857`; traces anchor-verified as recorded in
 revisions 1–4.
 
-## The admission test (as cited by the reduction record)
+## The admission test
 
 1. What is the specific forbidden behavior?
 2. Why must that prohibition bind every otherwise-valid implementation?
@@ -53,7 +50,7 @@ post-admission proof-mechanics step, tracked in laws-trace.md.)
 
 ---
 
-## The approved set (16 independent entries; M-9 is absorbed into M-8)
+## The approved set
 
 **M-1 · No acceptance claim without recoverable matching intent.** [partly enforced]
 Forbidden: acknowledging that managed work has been accepted or recorded unless a recoverable
@@ -373,16 +370,12 @@ and `landing_blocks_iff_breaks` (per landing, proved by induction over the selec
 
 ---
 
-## Disposition and reduction record (repairs)
+## Verdict repairs and reference closure
 
 The row-by-row verdict table of revision 5 stands, with these repairs: CAP-3's verdict now reads
-"reduced → M-10 and M-17 (narrow abandonment, incorporated in revision 6)"; CS-02's
-verdict reads "reduced → boundary-decoder obligations; the associated flagged entry was
-withdrawn" (removing the embedded "rejected" so the mechanical count and the tally agree);
-PM-10's and LEDG-17's routes now name M-7/M-8 and the interface clause respectively. Verdict
-precedence for mechanical counting: a row is `reduced` if its verdict contains "reduced", else
-`rejected` if it contains "rejected", else `kept`. Mechanical count of the carried record: kept
-47, reduced 29, rejected 57, retired 1, evidence block 1 — 135 rows, each accounted for; the
+"reduced → M-10 and M-17 (narrow abandonment, incorporated in revision 6)"; CS-02's verdict
+reads "reduced → boundary-decoder obligations; the associated flagged entry was withdrawn";
+PM-10's and LEDG-17's routes now name M-7/M-8 and the interface clause respectively. The
 demoted material lives in `docs/bend2/laws-design-notes.md`, the historical extraction at
 `23d3b857`. Reference closure for withdrawn or renumbered marks, in both documents: M-6 → the
 exact-instance clause of the authority boundary (M-8); M-9 → absorbed into M-8 (AB-04 is its

@@ -21,8 +21,6 @@ repair (ARCH-CLOSE-11, with M-5, M-14 and M-17 in `../target-architecture.md`).
 | `arch-replay-basis.expect` | the required logical behaviour per case, read by neither half |
 | `arch-replay-basis.bend` | the Bend2 half: a pure decision model over the case file |
 | `arch-replay-basis.mjs` | the reference half: it replays the trace and asks the diagnostic path too |
-| `arch-replay-basis.reference.txt` | the reference half's RESULT lines |
-| `arch-replay-basis.prototype.txt` | the Bend2 half's RESULT lines |
 
 The trace is three rows the real store wrote: `task.created`, `task.claimed`, and the
 `run.orchestrator_lease_issued` row the deployment issued under its run-lineage policy. The lease

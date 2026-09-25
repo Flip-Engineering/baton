@@ -22,8 +22,6 @@ cause rather than reported as corruption (ARCH-CLOSE-11, with M-5, M-13 and M-17
 | `arch-replay-cursor.expect` | the required logical behaviour per case, read by neither half |
 | `arch-replay-cursor.bend` | the Bend2 half: a pure decision model over the case file |
 | `arch-replay-cursor.mjs` | the reference half: it opens, checkpoints, reopens and reports |
-| `arch-replay-cursor.reference.txt` | the reference half's RESULT lines |
-| `arch-replay-cursor.prototype.txt` | the Bend2 half's RESULT lines |
 
 The frozen bytes are at sha256
 `e46ec3df8b8f41881f390f801169b05d9e35be93d496957777851f0eab2980f6`. The checkpoint itself is written

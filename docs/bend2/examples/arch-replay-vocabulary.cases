@@ -2,8 +2,11 @@
 #
 # CASE|<case-id>|<mutation>|<replays>
 #
-# The frozen trace this corpus replays is arch-replay-vocabulary.ledger.jsonl: sixteen rows that
-# exercise the durable event vocabulary end to end over one seeded swarm. `mutation` is what the
+# The frozen trace this corpus replays is arch-replay-vocabulary.ledger.jsonl: thirty rows that
+# exercise the durable event vocabulary end to end over one seeded swarm — every kind the fold
+# vocabulary holds, and every caller-submittable kind that reaches the fold — the contract's
+# holder_released operation is expanded by the runtime into assignment releases before anything
+# folds. `mutation` is what the
 # replay applies to the frozen trace before folding it: `none` replays it as frozen,
 # `forged_kind` replaces row 7 with a kind no vocabulary admits, `missing_field` strips the
 # participant field from row 11's payload so the shape vocabulary cannot decode it, and
