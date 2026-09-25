@@ -10,10 +10,10 @@
 // objects themselves.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { after, test } from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
@@ -24,6 +24,19 @@ import { _reattachPreservedSession } from '../src/runtime-recovery.mjs';
 // The fixture brief admits a 5 minute wall budget, so a derived timeout would be 300_000 ms.
 const WALL_MIN = 5;
 const WALL_MS = WALL_MIN * 60_000;
+
+// Issue #571: a fixture-shaped directory the file leaves below its private temp root fails it, so
+// every root the fixture mints is registered here and removed once, after the file's rows.
+const fixtureRoots = [];
+function fixtureRoot(prefix) {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  fixtureRoots.push(directory);
+  return directory;
+}
+
+after(() => {
+  for (const directory of fixtureRoots) rmSync(directory, { recursive: true, force: true });
+});
 
 function brief() {
   return {
@@ -108,10 +121,10 @@ async function withLiveLoop(fn) {
 async function recoverableSession(name) {
   const taskId = `issue386-${name}`;
   const nativeId = `native-${name}`;
-  const worktree = mkdtempSync(join(tmpdir(), `baton-issue386-${name}-wt-`));
-  const log = new Log(mkdtempSync(join(tmpdir(), `baton-issue386-${name}-log-`)));
+  const worktree = fixtureRoot(`baton-issue386-${name}-wt-`);
+  const log = new Log(fixtureRoot(`baton-issue386-${name}-log-`));
   const coordination = new CoordinationStore(
-    mkdtempSync(join(tmpdir(), `baton-issue386-${name}-coordination-`)),
+    fixtureRoot(`baton-issue386-${name}-coordination-`),
     { operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null },
   );
   const firstAdapter = recordingAdapter();

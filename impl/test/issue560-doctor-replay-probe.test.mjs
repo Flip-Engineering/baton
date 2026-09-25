@@ -9,10 +9,10 @@
 // policy-less ledger keeps replaying under its own (unscoped) shape.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { after, test } from 'node:test';
 
 import { CoordinationStore, coordinationReplayFailure } from '../src/coordination-store.mjs';
 
@@ -23,13 +23,24 @@ function canonical(value) {
 }
 const digest = (value) => createHash('sha256')
   .update(JSON.stringify(canonical(value))).digest('hex');
-const root = (label) => mkdtempSync(join(tmpdir(), `baton-560-probe-${label}-`));
+// Issue #571: a fixture-shaped directory the file leaves below its private temp root fails it, so
+// the ledger directories are registered here and removed once, after the file's rows.
+const probeDirectories = [];
+const root = (label) => {
+  const directory = mkdtempSync(join(tmpdir(), `baton-560-probe-${label}-`));
+  probeDirectories.push(directory);
+  return directory;
+};
 const repoId = 'repo-560-probe';
 const policy = Object.freeze({
   schemaVersion: 1, maxDepth: 4, maxChildrenPerRun: 4,
   maxDescendantsPerRoot: 16, leaseTtlMs: 60_000,
 });
 const clock = () => '2026-07-18T08:00:00.000Z';
+
+after(() => {
+  for (const directory of probeDirectories) rmSync(directory, { recursive: true, force: true });
+});
 
 function task(store, runId, label) {
   const id = `task-${label}`;
