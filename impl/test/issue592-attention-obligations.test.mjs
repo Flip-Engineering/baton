@@ -81,14 +81,14 @@ test('reviewer departure derives root debt without a new materialized wake', (t)
   assert.equal(f.read()[0].obligationId, owed.obligationId);
 });
 
-test('distinct full asks keep distinct identities when presentation has the same prefix', (t) => {
+test('full asks survive historical prefix matching without losing text or distinct identities', (t) => {
   const f = fixture(t);
   const prefix = 'Root: ' + 'x'.repeat(200);
   f.contribute('c1', [prefix + 'first', prefix + 'second', prefix + 'first', 'root cause: ignored']);
-  const options = { renderAsk: (text) => text.slice(0, 40) };
+  const options = { legacyAsk: (text) => text.slice(0, 40) };
   const asks = f.read(options).filter((row) => row.owed === 'needs_root');
   assert.equal(asks.length, 2);
-  assert.equal(asks[0].ask, asks[1].ask);
+  assert.deepEqual(new Set(asks.map((row) => row.ask)), new Set([prefix + 'first', prefix + 'second']));
   assert.notEqual(asks[0].obligationId, asks[1].obligationId);
   f.driver('swarm.root_attention_owed', {
     participantId: 'author', contributionId: 'c1', owed: 'needs_root', ask: prefix.slice(0, 40),
@@ -96,6 +96,14 @@ test('distinct full asks keep distinct identities when presentation has the same
   const later = f.read(options).filter((row) => row.owed === 'needs_root');
   assert.deepEqual(new Set(later.map((row) => row.obligationId)), new Set(asks.map((row) => row.obligationId)));
   assert.equal(later.length, 2);
+  assert.deepEqual(later.map((row) => row.ask), asks.map((row) => row.ask));
+  const exact = f.driver('swarm.root_attention_owed', {
+    participantId: 'author', contributionId: 'c1', owed: 'needs_root', ask: prefix + 'first',
+  });
+  f.driver('wake.root_delivered', { seq: exact.seq, wakeClass: 'root_owed' });
+  const withReceipt = f.read(options).filter((row) => row.owed === 'needs_root');
+  assert.equal(withReceipt.find((row) => row.ask === prefix + 'first').delivery.state, 'transport_reported');
+  assert.equal(withReceipt.find((row) => row.ask === prefix + 'second').delivery.state, 'none');
 });
 
 test('historical source rows and failures remain scoped to their swarm and wake class', (t) => {
@@ -133,6 +141,43 @@ test('the real swarm attention projection keeps source debt after delivery and r
   assert.equal((await attention()).find((row) => row.contributionId === 'c1').delivery.state, 'transport_reported');
   f.review('c1', 'reject');
   assert.deepEqual(await attention(), []);
+});
+
+test('the runtime preserves distinct complete asks through command replay and store recovery', async (t) => {
+  const f = fixture(t);
+  const runtime = new SwarmRuntime({
+    store: f.store, authorize: async () => {},
+    coordinator: { list: () => [], pausedTurns: () => [], routeCards: () => [] },
+  });
+  const principal = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
+  const prefix = 'Root: ' + 'Review the Unicode evidence 日本語. '.repeat(30);
+  const asks = [prefix + 'Choose the first deployment.', prefix + 'Choose the second deployment.'];
+  const command = {
+    swarmId, idempotencyKey: 'full-ask',
+    event: 'swarm.contribution_recorded', payload: { participantId: 'author', contributionId: 'full-ask', body: {
+      subject: 'Review deployment evidence',
+      base: { observedHead: 'a'.repeat(40), rebasedOnto: 'a'.repeat(40) }, commit: null,
+      items: [{ id: 'deployment', status: 'partial', change: 'Review deployment', files: [],
+        test: 'source review', evidence: 'deployment evidence' }],
+      verification: { targeted: false, gates: [], fullSuite: false, environmentRed: [] },
+      carriedForward: [], needsFromOthers: asks,
+    } },
+  };
+  await runtime.command('swarm.update', command, principal);
+  await runtime.command('swarm.update', command, principal);
+  const recorded = f.store.eventsView().filter((event) => event.payload?.kind === 'swarm.root_attention_owed'
+    && event.payload.owed === 'needs_root');
+  assert.deepEqual(recorded.map((event) => event.payload.ask), asks);
+  const result = await runtime.command('swarm.view', { swarmId, projection: 'attention' }, principal);
+  const rows = Array.isArray(result.attention) ? result.attention : result.attention?.rows ?? [];
+  const projected = rows.filter((row) => row.owed === 'needs_root');
+  assert.deepEqual(projected.map((row) => row.ask), asks);
+  assert.notEqual(projected[0].obligationId, projected[1].obligationId);
+  const reopened = new CoordinationStore(f.directory);
+  const recovered = rootAttentionObligations(reopened.swarm(swarmId), reopened.eventsView())
+    .filter((row) => row.owed === 'needs_root');
+  assert.deepEqual(recovered.map((row) => [row.obligationId, row.ask]),
+    projected.map((row) => [row.obligationId, row.ask]));
 });
 
 async function processFixture(t, directory) {

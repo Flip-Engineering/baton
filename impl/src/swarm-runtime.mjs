@@ -970,12 +970,6 @@ function turnReportAsk(payload) {
   return typeof reason === 'string' && reason.length > 0 ? reason : null;
 }
 
-function rootAttentionRowPayloads(swarm, contribution) {
-  return rootContributionAttention(swarm, contribution).map((row) => ({
-    ...row, ask: row.ask === null ? null : sliceUtf8(row.ask, FRAME_LIMITS['view.role.head'].value),
-  }));
-}
-
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
@@ -2528,7 +2522,7 @@ export class SwarmRuntime {
       && Array.isArray(seat?.permissions) && seat.permissions.includes('review')));
     if (owed.length === 0) return [];
     return this._recordRootAttentionRows(swarm,
-      owed.flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
+      owed.flatMap((contribution) => rootContributionAttention(swarm, contribution))
         .filter((row) => row.owed === 'review_owed'), actor);
   }
 
@@ -4669,7 +4663,8 @@ export class SwarmRuntime {
           participantId: contribution.participantId, contributionId: contribution.contributionId } });
     }
     for (const obligation of rootAttentionObligations(swarm, ledger, {
-      renderAsk: (text) => sliceUtf8(text, FRAME_LIMITS['view.role.head'].value),
+      // Historical #564 rows used the view heading limit when storing asks.
+      legacyAsk: (text) => sliceUtf8(text, FRAME_LIMITS['view.role.head'].value),
     })) {
       organization.push({ kind: 'root_attention_owed', ...obligation });
     }
@@ -8411,7 +8406,7 @@ export class SwarmRuntime {
         const recordedContribution = recordedSwarm.contributions?.[payload.contributionId] ?? null;
         if (recordedContribution !== null) {
           rootAttention = this._recordRootAttentionRows(recordedSwarm,
-            rootAttentionRowPayloads(recordedSwarm, recordedContribution), principal.actor);
+            rootContributionAttention(recordedSwarm, recordedContribution), principal.actor);
         }
       } else if (args.event === 'swarm.participant_left') {
         // The departure is also a review loss: every contribution still unreviewed that no

@@ -30,15 +30,17 @@ export function rootContributionAttention(swarm, contribution) {
 const sourceKey = (row) => identity([
   'contribution', row.swarmId, row.contributionId, row.owed, row.ask,
 ]);
-const legacyMatch = (row, renderAsk) => JSON.stringify([
-  row.contributionId, row.owed, row.ask === null ? null : renderAsk(row.ask),
+const legacyMatch = (row, legacyAsk = (text) => text) => JSON.stringify([
+  row.contributionId, row.owed, row.ask === null ? null : legacyAsk(row.ask),
 ]);
 
 /** Project outstanding root attention from source state and historical delivery evidence.
- * The presentation callback cannot change obligation identity. Old transport receipts describe
- * an attempt; the source's business disposition alone settles its obligation. */
-export function rootAttentionObligations(swarm, events, { renderAsk = (text) => text } = {}) {
+ * legacyAsk matches historical rows whose producer truncated the source ask. Every derived
+ * obligation retains the complete source text. Transport receipts describe an attempt;
+ * the source's business disposition alone settles its obligation. */
+export function rootAttentionObligations(swarm, events, { legacyAsk = (text) => text } = {}) {
   const obligations = new Map();
+  const exactMatches = new Map();
   const legacyMatches = new Map();
   const legacyReceipts = new Map();
   const legacyOwed = [];
@@ -51,7 +53,8 @@ export function rootAttentionObligations(swarm, events, { renderAsk = (text) => 
         seq: contribution.seq, legacySeqs: [],
       };
       obligations.set(obligationId, obligation);
-      const match = legacyMatch(row, renderAsk);
+      exactMatches.set(legacyMatch(row), obligation);
+      const match = legacyMatch(row, legacyAsk);
       const matches = legacyMatches.get(match) ?? [];
       matches.push(obligation);
       legacyMatches.set(match, matches);
@@ -72,7 +75,9 @@ export function rootAttentionObligations(swarm, events, { renderAsk = (text) => 
   }
   for (const event of legacyOwed) {
     const payload = event.payload;
-    const matches = legacyMatches.get(legacyMatch({ ...payload, ask: payload.ask ?? null }, renderAsk));
+    const match = legacyMatch({ ...payload, ask: payload.ask ?? null });
+    const exact = exactMatches.get(match);
+    const matches = exact ? [exact] : legacyMatches.get(match);
     if (matches) {
       for (const obligation of matches) {
         obligation.legacySeqs.push(event.seq);
@@ -100,7 +105,6 @@ export function rootAttentionObligations(swarm, events, { renderAsk = (text) => 
     const { legacySeqs, ...row } = obligation;
     return {
       ...row, recipient: { kind: 'root' },
-      ask: row.ask === null ? null : renderAsk(row.ask),
       delivery: last ? { state: last.state, code: last.code } : { state: 'none', code: null },
       ...(last ? { deliveryEvidence: { kind: 'legacy_transport_receipt', seq: last.receiptSeq } } : {}),
     };

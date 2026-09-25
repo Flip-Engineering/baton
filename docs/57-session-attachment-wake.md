@@ -531,6 +531,13 @@ work; the wake dispatcher never substitutes a continuation policy for that decis
 
 ## 6. Dispatch and recovery algorithm
 
+The storage boundary is `CoordinationStore.waitForCommit(cursor, { signal })`, called under the
+resident's writer lease. It resolves with `upperBound` after a successful group fsync. The consumer
+folds source rows only through that bound and waits from that cursor for the next commit. Replay
+verifies its tail with fsync before exposing the first cursor. Cancellation, writer release,
+projection failure, and sync failure reject the wait with a named cause. This boundary supplies
+the dispatcher with committed source events; implementing it alone does not deliver attention.
+
 1. Subscribe at the coordination commit boundary, capture a sequence barrier, and fold pending
    obligations through that barrier. Then consume committed rows after it. Register-before-read
    and a final sequence check cover the append/subscription race.
@@ -711,10 +718,11 @@ identities, relevant source/receipt sequences, process exits, and cleanup outcom
 redacted. Record evidence at the tested commit. Do not add an expected-failure inventory or a
 hand-maintained acceptance declaration that runtime decisions read.
 
-Run the assignment's exact verification command, `npm test --prefix impl`, and report its exit.
-For implementation landing review, also run the repository's target-comparison gate, accounting
-for every selected file and comparing failures by file, test, and failure type. A baseline failure
-does not turn the plain suite green. A missing verdict cannot authorize landing.
+Verify changes with `node impl/scripts/run-suite.mjs --changed <changed paths>` in the contribution's
+worktree. The root's landing uses `swarm integrate` and its target-comparison gate, accounting for
+every selected file and comparing failures by file, test, and failure type. Until #593 lands,
+`swarm check` and full-suite runs are suspended by the root's instruction because they run all
+red-first tests and overload the shared host. A missing verdict cannot authorize landing.
 
 ## 11. Review boundary
 

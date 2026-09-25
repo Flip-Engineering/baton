@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { waitForCommit } from './coordination-commit.mjs';
 import { assertGoalSuccessor, normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import { SwarmIntegrityError } from './swarm-state.mjs';
 import { usdToNanos } from './usd.mjs';
@@ -642,6 +643,8 @@ export class CoordinationStore {
   _scheduleLedgerSync() { return coordinationLedger._scheduleLedgerSync(this); }
 
   _flushLedgerSync() { return coordinationLedger._flushLedgerSync(this); }
+
+  waitForCommit(afterSeq, options = {}) { return waitForCommit(this, afterSeq, options); }
 
   /** Issue #290: the poison is startup truth — readable beside the projection it contradicts. */
   projectionPoison() { return coordinationLedger.projectionPoison(this._projectionPoison); }

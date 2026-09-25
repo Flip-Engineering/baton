@@ -1,10 +1,9 @@
-import { closeSync, fsyncSync, openSync } from 'node:fs';
 import { CoordinationStore } from '../../src/coordination-store.mjs';
 import { rootAttentionObligations } from '../../src/attention-obligations.mjs';
 
 const store = new CoordinationStore(process.argv[2]);
 store.claimWriterLease();
-process.on('message', ({ id, action, kind, payload, key }) => {
+process.on('message', async ({ id, action, kind, payload, key }) => {
   try {
     let result;
     if (action === 'swarm') result = { event: store.recordSwarm(kind, payload, { actor: 'owner', key }) };
@@ -12,9 +11,8 @@ process.on('message', ({ id, action, kind, payload, key }) => {
     else if (action === 'read') result = rootAttentionObligations(store.swarm('attention-test'), store.eventsView());
     else throw new Error(`Unknown test action ${action}`);
     if (action !== 'read') {
-      // The test's crash barrier follows the durable source append and precedes any owed row.
-      const fd = openSync(store.file, 'r');
-      try { fsyncSync(fd); } finally { closeSync(fd); }
+      // The IPC receipt follows the production commit boundary used by delivery consumers.
+      await store.waitForCommit(result.event.seq - 1);
     }
     process.send({ id, result });
   } catch (error) {

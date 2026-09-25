@@ -20,6 +20,7 @@ import {
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 import { serialize } from 'node:v8';
+import { closeCommitWaiters } from './coordination-commit.mjs';
 import {
   CANONICAL_ORDER_MIGRATION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderMigration,
   normalizeCanonicalOrderPolicy,
@@ -549,6 +550,7 @@ export function releaseWriterLease(store, options = undefined) {
     }
     const requireOwned = options?.requireOwned === true;
     const lease = store._writerLease; if (!lease) return false;
+    closeCommitWaiters(store);
     if (requireOwned) {
       let observed;
       try { observed = JSON.parse(readFileSync(lease.path, 'utf8')); }
