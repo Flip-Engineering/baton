@@ -143,8 +143,8 @@
 //       cli_invalid naming the expected mutation shape (H3.2). (RED)
 //   X3  CLI_WEB_COMMANDS admits plan.read AND plan.write (the admitted web-envelope names). (RED)
 //   X4  the web surface is NOT claimed for plan.* (D3.4 recommended posture) — every plan.* web
-//       envelope is refused, and each plan verb is a live registry operation (no advertise-but-dead
-//       / ghost surface). (RED — at HEAD the registry carries no plan rows)
+//       envelope is refused (GREEN — the refusal holds at HEAD); the registry rows the surface
+//       inventory derives from are X6.
 //   X5  MCP tools baton_plan_read/baton_plan_write exist with repoId LEADING required (H3.1) and
 //       dispatch (H3.2) — a tools/call for each tool reaches the application port (no
 //       advertise-but-dead tool). (RED — at HEAD the MCP ordinary tool list lacks both, and
@@ -1341,20 +1341,16 @@ test('X3: CLI_WEB_COMMANDS admits plan.read AND plan.write', () => {
     'stage: cli-plan-verbs-missing — at HEAD CLI_WEB_COMMANDS (application-cli.mjs:16-32) admits no plan verbs; the fold admits plan.read/plan.write for the web-envelope dispatch (D3.2)');
 });
 
-test('X4: the plan.* web surface is refused and each plan verb is a live registry operation (#159 D3 #3)', () => {
+test('X4: the plan.* web surface is refused — plan.* is not a web transport (#159 D3 #3, D3.4)', () => {
   const planId = `plan:${'c'.repeat(32)}`;
-  // Blue-team X4 gate — each plan verb must be REAL: the web surface genuinely refuses it today
-  // (an advertise-but-dead claim documents a verb the surface actually admits) and the verb has a
-  // registry row (the mechanical source every surface renderer consumes) — a plan surface with no
-  // registry row is a ghost.
-  const registered = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((op) => op.key));
+  // Both plan verbs are refused on the web transport: the plan.* surface is not claimed on the web
+  // (the D3.4 recommended posture, matching the facade verbs' today), so nothing is advertised that
+  // the surface does not serve.
   for (const verb of ['plan.read', 'plan.write']) {
     const wire = verb.replaceAll('.', '_'); // plan.read → plan_read (the web-transport name)
     const token = validateWebCommandEnvelope(webEnvelope(wire, { planId }));
     assert.ok(token !== null && token.length > 0,
       `the ${verb} is refused on the web surface — plan.* is not a web transport (D3.4 recommended posture, matching the facade verbs' today)`);
-    assert.ok(registered.has(verb),
-      `stage: registry-plan-rows-missing — the ${verb} has a registry row (the mechanical source the surface inventory derives from); a planned surface with no registry row is a ghost`);
   }
 });
 
