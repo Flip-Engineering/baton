@@ -23,7 +23,6 @@ const TAIL = [
   '  }',
   '  _derivePlanBudgetSettlement(taskId) {',
   '    const ceiling = this._goalPlanPolicy.limits.maxProviderTurns * 1_024;',
-  '    if (!integrity && Date.now() - t > this._goalPlanPolicy.approvalTtlMs) fail ttl;',
   '  }',
   '}',
 ].join('\n');
