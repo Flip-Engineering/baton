@@ -69,7 +69,7 @@ test('564-t1: a top-level turn end (parentId null) is owed to the root, and ride
   // The reporting half's join surfaces it as attention with no delivery record yet.
   const view = await f.call('view', { projection: 'attention' });
   const attention = (Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [])
-    .filter((row) => row.kind === 'root_wake_undelivered' && row.owed === 'turn_reported');
+    .filter((row) => row.kind === 'root_attention_owed' && row.owed === 'turn_reported');
   assert.equal(attention.length, 1, 'the reporting half renders the turn_reported owed row');
   assert.deepEqual(attention[0].delivery, { state: 'none', code: null }, 'no delivery attempt yet');
   assert.equal(attention[0].participantId, 'lead');
@@ -96,6 +96,19 @@ test('564-t3: a second observation repairs rather than duplicates', async (t) =>
   assert.equal(f.owedRows().length, 1, 'the deterministic key makes the replay a repair, not a duplicate');
   // The replayed call answers the row the replay already holds (the store replays the recorded one).
   assert.equal(second.length, 1, 'the pass still answers the row it holds');
+});
+
+test('a root guide can reply to a turn report without recording business resolution', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'root decides the next turn' });
+  await f.call('recruit', { participantId: 'lead', objective: 'work on the lane' });
+  const report = f.turn({ participantId: 'lead', workerId: 'w-1', turnEpoch: 1, turnSeq: 7,
+    parentId: null, report: 'Ready for review.' });
+  f.runtime._reconcileTurnReportedRows(f.store.swarm('baton'), 'test');
+  await f.call('guide', { participantId: 'lead', inReplyTo: report.event.seq, message: 'Continue with the dispatcher.' });
+  const view = await f.call('view', { projection: 'attention' });
+  const rows = Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [];
+  assert.equal(rows.filter((row) => row.owed === 'turn_reported').length, 1);
 });
 
 test('564-t4: the participant_left update path reconciles the turn rows too', async (t) => {

@@ -25,6 +25,7 @@
 // contribution body and names a field the contract does not admit, so a brief whose own example
 // contradicts the shape refuses before any seat is admitted on it.
 
+
 /** The item lifecycle states — the closed set an item status names. */
 export const CONTRIBUTION_ITEM_STATUSES = Object.freeze(['delivered', 'partial', 'not_delivered']);
 
@@ -105,9 +106,9 @@ export const CONTRIBUTION_CONTRACT_SCHEMA = Object.freeze({
     carriedForward: Object.freeze({ type: 'array', required: true,
       description: 'the items this contribution hands to the next lane, cited verbatim by successors',
       expectation: 'an array', example: Object.freeze([]) }),
-    needsFromOthers: Object.freeze({ type: 'array', required: true,
-      description: 'what this lane still needs from other seats, cited verbatim by successors',
-      expectation: 'an array', example: Object.freeze([]) }),
+    needsFromOthers: Object.freeze({ type: 'json', required: false,
+      description: 'addressed questions or requests for the root or a named participant',
+      expectation: 'needs may be text or addressed objects such as {to: root, ask}', example: Object.freeze([]) }),
     notes: Object.freeze({ type: 'string', required: false,
       description: 'free prose — anything that fits nowhere else',
       expectation: 'any text', example: 'the iface freeze holds through the next lane' }),
@@ -119,7 +120,7 @@ export const CONTRIBUTION_CONTRACT_FIELDS = Object.freeze(Object.keys(CONTRIBUTI
 /** The new shape's own keys. `carriedForward` is deliberately absent: the pre-#310
  * minimal hand-off ({contract, carriedForward}) carries it too, and legacy rows are
  * ordinary evidence, never contract claimants. */
-const CONTRACT_KEYS = Object.freeze(['subject', 'base', 'commit', 'items', 'verification', 'needsFromOthers']);
+const CONTRACT_KEYS = Object.freeze(['subject', 'base', 'commit', 'items', 'verification']);
 
 /** True when an object body claims the contribution contract — the set the strict
  * validator judges. Anything else (a string finding, the legacy hand-off, an absent
@@ -225,7 +226,7 @@ export function validateContributionContract(body) {
     contractRefusal('body.verification.environmentRed', 'type',
       fields.verification.fields.environmentRed.expectation);
   }
-  for (const name of ['carriedForward', 'needsFromOthers']) {
+  for (const name of ['carriedForward']) {
     if (!Array.isArray(body[name])) {
       contractRefusal(`body.${name}`, 'type', fields[name].expectation);
     }
@@ -473,6 +474,7 @@ export function contributionContractBriefSection({ readOnly = false } = {}) {
     `verification.gates: ${fields.verification.fields.gates.expectation}`,
     `base.rebasedOnto: ${fields.base.fields.rebasedOnto.expectation}`,
     `commit: {${Object.keys(fields.commit.fields).join(', ')}} or null`,
+    `needsFromOthers: ${fields.needsFromOthers.expectation}`,
   ];
   return ['## Contribution contract',
     'Publish your report with swarm.update event swarm.contribution_recorded as one JSON object shaped exactly like this worked example, which the validator admits as printed'

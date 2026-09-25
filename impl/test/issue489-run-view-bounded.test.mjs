@@ -112,7 +112,7 @@ function contractBody(label, itemBytes) {
     }],
     verification: { targeted: true, gates: [], fullSuite: false, environmentRed: [] },
     carriedForward: [`carried-forward ${label} ${filler}`],
-    needsFromOthers: [`needs-from-others ${label} ${filler}`],
+    needsFromOthers: [{ to: 'root', ask: `needs-from-others ${label} ${filler}` }],
   };
 }
 
