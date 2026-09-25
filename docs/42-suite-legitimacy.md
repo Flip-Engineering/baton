@@ -57,6 +57,15 @@ A gate answers one question: does the change break a test that works at its base
    base run writes no verdict, or there is no base commit, every failure blocks.
 6. A change run that writes no verdict is never a pass: the verdict is inconclusive and
    verifier-owned (`verification_unjudged`), and it carries the runner's own last words.
+7. A blocking row must be one the change's own run reproduces. The gate re-runs ONLY the
+   blocking rows' files at the change revision once more, and a row that second run does not
+   report blocks nothing; it is named as `unconfirmed` on the receipt and counted in the verdict
+   line (`N not reproduced`). A gate schedules its whole selection across every core but the
+   hub's, so a row that asserts something about the caller's own event loop or a millisecond
+   deadline can fail on the change side and pass in the base run, which schedules fewer files;
+   without this step a landing refuses on a failure the change does not carry. A blocking row
+   that names no file is never excused, and a confirmation run that judges nothing leaves every
+   row standing.
 
 `impl/src/suite-comparison.mjs` is the ONE comparison: the failure vocabulary, the failure
 identity, and the rule that a failure the base does not have blocks. Two gates run it, over the
@@ -64,13 +73,15 @@ same two halves in different places:
 
 - `swarm integrate` runs them in the landing checkout — the selected files at the squash commit,
   then the failing files at `targetHeadBefore` in that same checkout, switched back to the squash
-  afterwards. Its verdict line reads `red — passed N, X failing only with the change, Y failing on
-  the target too, squash <sha>`, and the receipt lists the blocking keys in `unexpected` and the
-  shared ones in `failingOnTarget`.
+  afterwards, where the confirmation pass runs. Its verdict line reads `red — passed N, X failing
+  only with the change, Y failing on the target too, Z not reproduced, squash <sha>`, and the
+  receipt lists the blocking keys in `unexpected`, the shared ones in `failingOnTarget` and the
+  unconfirmed ones in `unconfirmed`.
 - `swarm check` runs them in a contribution check's two verify sandboxes — the selected files in
-  the candidate sandbox, then the failing files the base sandbox has in the base sandbox. Its
-  receipt carries `comparison: {selection, procedure, files, change, base, blocking, shared,
-  note}`, so a reviewer reads the blocking rows without re-deriving them.
+  the candidate sandbox, then the failing files the base sandbox has in the base sandbox, then the
+  blocking files once more in the candidate sandbox. Its receipt carries
+  `comparison: {selection, procedure, files, change, base, blocking, shared, unconfirmed, note}`,
+  so a reviewer reads the blocking rows without re-deriving them.
 
 A deployment names the procedure beside the command that runs its tests
 (`advanced.verification.comparison`, the value `selected-vs-base`). This repository's default

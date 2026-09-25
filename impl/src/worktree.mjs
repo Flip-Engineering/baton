@@ -2496,11 +2496,11 @@ export async function landContribution(repoRoot, request) {
     if (unexpected.length > 0) {
       throw Object.assign(
         mergeError(`the derived gate set ran red: ${unexpected.length} test(s) fail with the change and pass on the target`, 'integrate_gates_red'),
-        { verdictLine: gates?.verdictLine ?? null, unexpected, baseSha: gateBase },
+        { verdictLine: gates?.verdictLine ?? null, unexpected, baseSha: gateBase,
+          ...(Array.isArray(gates?.unconfirmed) && gates.unconfirmed.length > 0
+            ? { unconfirmed: [...gates.unconfirmed] } : {}) },
       );
     }
-    // A landing that cannot publish never reports a local success. A dry run lands nothing, so
-    // it publishes nothing either.
     if (!dryRun && publishRemote === null) {
       throw mergeError(
         `the deployment declares no shared remote for landings (advanced.integration.publishRemote), so ${target} cannot be published`,
@@ -2572,6 +2572,10 @@ export async function landContribution(repoRoot, request) {
         files: [...(gates?.files ?? [])],
         verdictLine: gates?.verdictLine ?? null,
         unexpected: [],
+        // Issue #593: the blocking rows the change's own run did not reproduce, named on the
+        // receipt rather than dropped in silence.
+        ...(Array.isArray(gates?.unconfirmed) && gates.unconfirmed.length > 0
+          ? { unconfirmed: [...gates.unconfirmed] } : {}),
       },
       dryRun,
     };

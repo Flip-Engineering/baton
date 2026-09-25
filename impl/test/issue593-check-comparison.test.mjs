@@ -41,7 +41,9 @@ const task = () => ({
 async function compareCapture(t, { changePlan, basePlan, baseHas = [], selected = SELECTED }) {
   const root = mkdtempSync(join(tmpdir(), 'baton-issue593-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const changeDir = sandbox(root, 'change', { plan: changePlan });
+  // The candidate sandbox is a checkout of the capture: the selected files exist there, which a
+  // comparison needs to re-run a blocking file.
+  const changeDir = sandbox(root, 'change', { plan: changePlan, files: selected });
   const baseDir = sandbox(root, 'base', { plan: basePlan, files: baseHas });
   const verdict = await verify(task(), { verification: { claimedExit: null } }, { dir: changeDir }, {
     baseSandbox: { dir: baseDir },
@@ -90,6 +92,32 @@ test('593b: a capture that breaks a test passing at its base checks red naming i
   assert.deepEqual(ranBase, [['test/selected.test.mjs']]);
 });
 
+
+test('593g: a blocking row the change run does not reproduce does not fail the check, and is named', async (t) => {
+  const { verdict, ranChange } = await compareCapture(t, {
+    changePlan: { failures: [failure('test/selected.test.mjs', 'timed out under load')], once: true, passed: 4 },
+    basePlan: { failures: [], passed: 4 },
+    baseHas: ['impl/test/selected.test.mjs'],
+  });
+  assert.equal(verdict.passed, true, 'the confirmation run did not report the row, so the change does not carry it');
+  assert.deepEqual(verdict.comparison.blocking, []);
+  assert.deepEqual(verdict.comparison.unconfirmed, ['test/selected.test.mjs :: timed out under load']);
+  assert.deepEqual(ranChange, [
+    ['impl/test/selected.test.mjs'],
+    ['test/selected.test.mjs'],
+  ], 'the change side ran the selection, then the blocking file once more to confirm it');
+});
+
+test('593h: a blocking row the change run reproduces still fails the check', async (t) => {
+  const { verdict } = await compareCapture(t, {
+    changePlan: { failures: [failure('test/selected.test.mjs', 'real break')], passed: 4 },
+    basePlan: { failures: [], passed: 4 },
+    baseHas: ['impl/test/selected.test.mjs'],
+  });
+  assert.equal(verdict.passed, false);
+  assert.deepEqual(verdict.comparison.blocking, ['test/selected.test.mjs :: real break']);
+  assert.deepEqual(verdict.comparison.unconfirmed, []);
+});
 test('593c: a capture that adds a failing test checks red — the base has no such file to compare', async (t) => {
   const { verdict, ranBase } = await compareCapture(t, {
     changePlan: { failures: [failure('test/new.test.mjs', 'new red')], passed: 4 },
