@@ -292,173 +292,262 @@ law, and `examples/laws-no-park.evidence.md` records both controls at the pin.
 
 ## Revision 11: no bookkeeping ledgers in place of function
 
-Status: proposed 2026-09-25; the encoding is checked at the pin and its three controls fail as
-required. Law review pending (an external review by a gpt-6-astra seat is requested). Not part of
-the operative set.
+Status: proposed 2026-09-25. The encoding is checked at the pin and its controls fail as
+required. The external law review of 2026-09-25
+([reviews/astra-law-review-r11-r12.md](reviews/astra-law-review-r11-r12.md), verdict revise)
+re-verified the encoding at the pin and reproduced every recorded control. On 2026-09-25 the
+operator adopted the refined statement below; encoding is pending. Not part of the operative set.
 
-**Statement.** A gate decides from observed runs only. No gate, test or check reads a
-hand-maintained record of expected results in place of running the software: no expected-failure
-list, no converged declaration, no count or census pin. A landing blocks exactly when a test fails
-with the change and does not fail on the target. A test that is new with the change is absent on
-the target, so its failure blocks.
+**Adopted statement (operator, 2026-09-25; encoding pending).** A gate decides from observed
+runs only; no gate, test or check reads a hand-maintained record of expected results in place of
+running the software: no expected-failure allowance, no converged declaration, no count or
+census pin. A judged landing blocks when a failure with the change has no matching failure
+identity on the target. Target absence contributes no matching failure. An unjudged target is
+reported as unjudged and supplies no matching failure. An unjudged change cannot authorize
+landing. Every selected invocation must be accounted for. Failure identity is defined by file, test
+where available, failure kind and specified stable semantic code; variable paths and timings
+stay in diagnostics. A test that is new with the change has no matching target failure, so its
+failure blocks.
 
 **Evidence from current Baton.**
 
-- `impl/scripts/expected-red-tests.json` listed 417 `file :: test name` rows expected to
-  fail, each with a reason, and 161 `converged` files. The gate passed a failure when the manifest
-  listed it. Keeping it current required `--write-expected-red` rewrites after landings, and guard
-  tests checked the list itself.
-- The #565 landing re-listed 27 rows at closed issues, and the list then hid a regression (#566).
-- #571's fixture-leak rows had run-specific names, so the list could not list them, and every broad
-  gate went red until the key was fixed (78123579).
-- Census pins (SI6, `CORPUS_COUNTS`) and count literals in tests (the runtime-api count removed in
-  c66098c1) failed on every change that added a member, and each such change carried a re-pin
-  commit (for example 83c40b4e).
-- 5df1acf5 removed SI6 and added the AGENTS.md ban. #579 removes the remaining count pins. #580
-  deletes the manifest and changes `swarm integrate` to re-run the change's failing files on the
-  target and block only on failures the target does not share.
+- `impl/scripts/expected-red-tests.json` listed 417 `file :: test name` rows expected to fail
+  and 161 `converged` files, measured at master `c66098c1`; the unchanged `impl` at rewrite base
+  `770e89e3` carries 451 and 173. These are historical measurements at their commits. The gate
+  passed a failure when the manifest listed it. Keeping it current required
+  `--write-expected-red` rewrites after landings, and guard tests checked the list itself.
+- The #565/#566 chronology: `d1288fd9` introduced the MCP regression and added no manifest rows.
+  `c71329c` later added 27 allowances while preparing the #565 repair, and its message and #566
+  report those failures on target `65c913f0` too, so a differential comparison against that
+  target admits that repair as well. What the earlier green gates depended on remains unresolved
+  in the issue.
+- #571's fixture-leak rows had run-specific names, so the list could not list them, and every
+  broad gate went red until the identity key was fixed; `78123579` stabilized the identities and
+  added 125 observed leaking files at that commit.
+- Census pins (SI6, `CORPUS_COUNTS`) and count literals in tests failed on every change that
+  added a member, and each such change carried a re-pin commit (`83c40b4e` repaired two stale
+  SI6 counts after a functional landing). SI6 also asserted corpus coverage; its incidental
+  totals are removed and the coverage property is checked directly. `5df1acf5` removed SI6 and
+  `CORPUS_COUNTS` and added the AGENTS.md ban; `c66098c1` removed the count literals in five
+  further tests (#579). #580 deletes the manifest and re-runs the change's failing files on the
+  target; the manifest gate still runs at both reviewed bases, so that deletion is pending.
 
-**Operator decision (2026-09-24).** The pattern is banned in AGENTS.md ("No bookkeeping ledgers
-in place of function"), and "If the solution is removal please remove." On 2026-09-25 the operator
-asked for the ban as a Bend2 law.
+**Operator decision.** The pattern is banned in AGENTS.md ("No bookkeeping ledgers in place of
+function") with the direction "If the solution is removal please remove." On 2026-09-24 the
+operator asked for the ban as a Bend2 law; on 2026-09-25 the operator adopted the refined
+statement above in response to the review.
 
-**Shape in the rewrite.** The law quantifies over a stored record: the gate is handed a value that
-stands for any manifest entry, pin or flag, and the law requires the gate's decision to equal the
-specification `breaks(change, target)` for every value of that record. A gate whose decision
-depends on the record makes the law false at a named case. `examples/laws-no-ledger.bend` states
-the model and two laws: `gate_reads_only_observations` (per test, proved by splitting every case)
-and `landing_blocks_iff_breaks` (per landing, proved by induction over the selected tests).
+**Shape in the rewrite.** The checked model proves a limited result: for fixed supplied outcomes
+and a fixed supplied selection, the gate equals the specification `breaks(change, target)` for
+every explicit record argument, and landing is the OR of those comparisons. Outcome provenance,
+selection completeness, test policy and the application composition remain open; G1 and G2 in
+revision 12 carry the runtime-side composition. `examples/laws-no-ledger.bend` states the model
+and two laws: `gate_reads_only_observations` (per test, proved by splitting every case) and
+`landing_blocks_iff_breaks` (per landing, proved by induction over the selected tests).
 `examples/laws-no-ledger.evidence.md` records three controls at the pin:
 
 - A: an expected-failure list. A listed test that fails with the change and passes on the target
   does not block.
-- B: a count pin. At pin 0 it blocks a failure the target shares. At pin 1 it blocks a run with no
-  failure until the pin is updated.
+- B: a count pin. At pin 0 it blocks a failure the target shares. At pin 1 it blocks a run with
+  no failure until the pin is updated.
 - C: no comparison with the target. It blocks a failure the target shares.
 
-**Questions for law review.**
+The pending encoding of the adopted statement adds failure identity, unjudged-verdict
+reporting, invocation accounting, and controls for forged outcomes, empty selection, mismatched
+failure kinds, missing verdicts and test selection. Selection and test-contract changes do not
+authorize omission of their own failures; the repository test-policy clause is enforced
+separately.
 
-1. Is the entry a law under the definition (a quantified theorem over the implementation, or an
-   unrepresentable state), or is it tested behaviour that belongs in the trace as a test obligation?
-2. The model takes outcomes as values any caller can write. Can the rewrite make an `Outcome`
-   constructible only by the test runner at the pin, given that an exported constructor is
-   forgeable from an importing module? If it cannot, what does the law guarantee without that?
-3. Does the specification handle the cases the JavaScript gate handles: a failing file new with the
-   change (`Absent{}` on the target), a file-level failure (hung, crashed, leaked fixtures)
-   compared by file and failure type, and a target run that produced no verdict (every failure
-   blocks)?
-4. A test that fails on the target and with the change never blocks. Does that let a change make
-   an already-failing test fail differently without notice, and should the law distinguish failure
-   types or messages?
+**Review outcome (2026-09-25).** The review answered the four questions the proposal raised:
+the two equalities are laws of the model, and the repository-wide ban needs the composition
+above; `Outcome` forgery from an importing module is expressible at the pin (`private type` is
+rejected, an open datatype is fillable, an empty one is vacuous) while a scoped abstract
+consumer constrains its own side and the trusted provider, execution, freshness and invocation
+identity remain obligations; the model carries no failure identity and no unjudged verdict, so
+the JavaScript gate's cases (new file, file-level failure, absent verdict) are not represented;
+and Failed/Failed admits a change that makes a failing test fail differently. The operator
+adopted the comparison policy above in response.
 
 ---
 
 ## Revision 12: the operator's banned runtime patterns as laws
 
-Status: proposed 2026-09-25; each encoding is checked at the pin and each control fails as
-required. Law review pending (an external review by a gpt-6-astra seat is requested). Not part of
-the operative set.
+Status: proposed 2026-09-25. Each encoding is checked at the pin and each control fails as
+required. The external law review of 2026-09-25
+([reviews/astra-law-review-r11-r12.md](reviews/astra-law-review-r11-r12.md), verdict revise)
+checked every submitted model, reproduced every recorded negative control, and demonstrated
+adversarial implementations that satisfy each checked equality while violating the entry's
+broader wording. On 2026-09-25 the operator adopted the refined statements below; encoding is
+pending. The checked model equalities stand as explicitly limited results. Not part of the
+operative set.
 
 The operator asked for the banned patterns to be codified as laws. The table maps each operator
-ban to the law that carries it, or states why it is not an application law.
+ban to the law that carries it, or states why it is not an application law. The operator
+adopted the corrected table on 2026-09-25.
 
 | Operator ban | Law |
 |---|---|
-| No pausing, idling or truncating agents (AGENTS.md, #572) | Revision 10 |
-| No bookkeeping ledgers in place of function (AGENTS.md, #579, #580, #582) | Revision 11 (under review with its broader form) |
-| Wake is never an action the agent takes (#529) | M-13, approved |
-| Accept now, finish later; no held connection (#541) | M-12, approved |
-| No numeric ceiling or deadline that refuses work, derived or not (#258, #541, #583) | 12a, revising M-10 |
-| Catalogs derived from the harness, never hand-listed (#440, #549) | 12b |
-| Leads hold full authority over their own swarm, including landing (2026-09-21) | 12c |
-| Writing rules (plain technical English and the rest of AGENTS.md) | Not an application law; M-16 precedent |
-| Routing preferences (providers and models in use) | Operator configuration, changed by the operator; not a law |
-| Working rules for agents (file findings first, a workaround is a blocker, do not hand-slice work) | Process rules for the people and agents developing Baton; not application behaviour |
+| No pausing, idling or truncating agents (AGENTS.md, #572) | Revision 10 covers waits on parties Baton wakes; M-17 and 12a carry continuation and cutoff obligations. |
+| No bookkeeping ledgers in place of function (AGENTS.md, #579, #580, #582) | G1 and G2 for the runtime's decision and prerequisite composition; AGENTS.md for repository maintenance. Revision 11 carries one comparison rule. The subject includes agent-authored change declarations used to gate check selection (#582). |
+| Wake is never an action the agent takes (#529) | M-13 and M-12, with their host-effect obligations; acceptance alone does not ensure eventual execution. |
+| Accept now, finish later; no held connection (#541) | M-12, approved. |
+| No numeric ceiling or deadline that refuses work, derived or not (#258, #541, #583) | 12a, revising M-10; M-10's data-preservation scope is retained, and removing the physical-bound exception is a new policy decision. |
+| Catalogs derived from the harness, never hand-listed (#440, #549) | 12b covers observation and honoring operator policy; provider and model choices are configuration, and the obligation to honor them is application behavior. |
+| Leads hold full authority over their own swarm, including landing (2026-09-21) | 12c with M-8, at actual delegation and effect boundaries; whole-mandate assignment is a distinct unresolved subject (M-15, deferred). |
+| Writing rules (plain technical English and the rest of AGENTS.md) | AGENTS.md and document review (M-16 precedent); mechanical reduction-record counts are historical evidence only. |
+| Routing preferences (providers and models in use) | Operator configuration, changed by the operator; not a law. |
+| Working rules for agents (file findings first, a workaround is a blocker, do not hand-slice work) | Filing findings and documenting blockers are process rules. "Do not hand-slice work" can also concern the runtime's assignment and delegation model; M-15's deferred status is retained until the forbidden behavior is defined. |
+
+### G1. Record independence for all work decisions
+
+**Adopted statement (operator, 2026-09-25; encoding pending).** For the same validated semantic
+request, authenticated authority, observed resources and external events, changing
+administrative annotations about work cannot change the runtime's selected checks, derived
+decision inputs, admission, refusal, management permissions, required prerequisites, or
+continuation transitions. Administrative annotations include expected-failure allowances,
+convergence declarations, incidental code censuses and status declarations with no
+corresponding semantic effect. The runtime derives decision inputs from the specified sources.
+The complete composition, including source selection and dispatch, satisfies this independence.
+
+**Motivation and model evidence.** A record of an actual effect can legitimately affect a
+decision: source changes, work requests, cancellation, evidence of completed effects and
+authenticated grants or reviews are records with semantic force. The semantic contract states
+which records are administrative annotations, and their producers are covered by the proof or
+declared as host assumptions. The review's model probe proves, for six work-act constructors,
+that the decision is unchanged by every record (`decide(act, observed_allowed, notes) ==
+decide(act, observed_allowed, 0n)`), and records two limits that shape the pending encoding: an
+always-refusing runtime discharges record independence, so each domain keeps a positive
+behavior law; and a caller that computes the observed value from the record satisfies the same
+law, so decision-input provenance must be specified.
+
+### G2. No administrative prerequisite for admission or continuation
+
+**Adopted statement (operator, 2026-09-25; encoding pending).** For a valid authorized work
+request with its required semantic inputs, the runtime imposes no agent-maintained status,
+census, convergence or completion declaration as a prerequisite for admission or continued
+execution. A blocked continuation names the actual missing resource, authority, semantic input,
+or explicit operator/orchestrator decision that enables it. Each prerequisite has a specified
+enabling effect; administrative maintenance cannot satisfy that description merely by receiving
+a resource or authority label. The runtime preserves the continuation and wakes the responsible
+party as required by revision 10. When the prerequisite is satisfied, the runtime makes
+progress without a separate administrative acknowledgment.
+
+**Motivation and model evidence.** The refined form admits waits on semantic input and on a
+woken orchestrator decision, consistent with revision 10: a request may omit which repository
+to change, require a user decision, or await an awake orchestrator's choice of further work.
+The review's model probe proves that every returned prerequisite falls in a classification with
+`Bookkeeping` forbidden, and shows the boundary the refined wording closes: a classification
+that labels both acquiring a socket and rewriting a census as `Resource` satisfies the
+classification law, so a prerequisite needs its actual enabling effect, or an authenticated
+grant and scope. A temporal progress claim carries stated scheduler and host assumptions; an
+external party may never supply an input.
 
 ### 12a. No ceiling and no clock on requested work (revises M-10)
 
-**Statement.** The runtime decides on requested work from authority and from the resource state it
-observes now. The decision is the same for every size, count, spend and elapsed time. Work that has
-authority is admitted when its resource is available and waits while it is short. It is refused
-only for lack of authority. No constant, and no bound derived from a physical resource, turns
-waiting or admitted work into a refusal, and no timer turns a pending operation into a failure.
-Explicit cancellation by the caller and the work's own stopping condition remain separate
-semantics.
+**Adopted statement (operator, 2026-09-25; encoding pending).** For valid supported requests
+under valid authority, the runtime admits work when its measured resources are available and
+retains it pending while those resources are unavailable. Administrative magnitude or
+elapsed-time bounds cannot reject, truncate, discard, or terminalize that work. Measured
+resource requirements may determine availability and representation. Actual provider or host
+failures are reported with their observed cause and disposition; they cannot be fabricated from
+a runtime deadline. Explicit cancellation, revoked authority and the work's specified stopping
+condition have separate transitions. Pending work retains its owner, owed data and continuation.
 
 **Change to M-10.** M-10 forbids cutoffs "unless the bound derives from a physical resource, is
-stated with its derivation". The operator rejected that exception on 2026-09-20 ("DO NOT CHECK THE
-DERIVATION OF A MAX LIMIT ... THAT SHOULD NEVER HAVE A CONSTANT APPLIED TO IT OR A LIMIT AT ALL").
-12a removes it. A physical shortage observed now makes work wait; it is not a pre-declared bound.
+stated with its derivation". 12a removes that exception as a new policy decision adopted
+2026-09-25. A physical shortage observed now makes work wait; it is not a pre-declared bound.
+M-10's data-preservation scope is retained: remainders, queued work and owed data keep their
+protection, connected to M-4, M-5 and M-17.
 
 **Evidence from current Baton.**
 
-- A default 100M-token hard stop killed a productive worker on 2026-09-13 (#258).
-- `goal-plan.mjs` `policy.limits.maxTextBytes: 4096` refused a legitimate 4244-byte recruit brief on
-  2026-09-20; the same schema carries `maxNodes`, `maxDepsPerNode`, `maxItems`, `maxTokens`,
-  `maxUsd`, `maxWallMin` and more.
-- The host-capacity gate's 2 s queue wait and `load1m <= 10` refusal, and the CLI's 30 s
-  `commandTimeoutMs` (#541).
-- `drainPolicy: { maxWorkers: 64, timeoutMs: 90_000 }`: `swarm stop` answered
-  `coordinator_run_stop_incomplete` after 90 s on 2026-09-25 and the stop then completed (#583). A
-  #500 test pins the values.
+- A default 100M-token hard stop killed a productive worker on 2026-09-13 (#258). That issue's
+  remedy makes defaults notify-only; an explicit owner hard-stop policy and derived physical
+  constraints remain possible.
+- The `goal-plan.mjs` schema carries the listed policy limits (`maxTextBytes`, `maxNodes`,
+  `maxDepsPerNode`, `maxItems`, `maxTokens`, `maxUsd`, `maxWallMin`). Commit `3e06ad64`
+  documents an earlier fixed-limit recruit-brief failure. At the reviewed deployment
+  `maxTextBytes` derives from the run.objective frame limit.
+- #541 reports the historical 2 s queue wait, the `load1m <= 10` host-load refusal and the
+  CLI's 30 s `commandTimeoutMs`; `bc2e4fcd` removed the host load and queue refusals.
+- `drainPolicy: { maxWorkers: 64, timeoutMs: 90_000 }` in `application-deployment.mjs`, with
+  `runtime-effects.mjs` racing stop attempts against the deadline and throwing
+  `coordinator_run_stop_incomplete`; `issue500-deployment-capacity.test.mjs` pins the values.
+  #583 reports a stop answering that code after 90 s on 2026-09-25 and completing later; the
+  later completion is issue-reported.
 
 **Shape in the rewrite.** `examples/laws-no-ceiling.bend` models one decision
 `decide(size, elapsed, authorized, available)` and the law `decision_ignores_magnitude_and_clock`,
 which equates it with `expected(authorized, available)` for every size and elapsed time.
 `examples/laws-no-ceiling.evidence.md` records three controls that fail as required: a size
-ceiling, a deadline on waiting work, and a ceiling derived from a physical resource.
+ceiling, a deadline on waiting work, and a ceiling derived from a physical resource. The
+pending encoding constrains the transitions as well as the scalar decision: terminal
+transitions (completion, cancellation, external failure) bind to actual events, attempts are
+modelled separately from the durable work request so a transport timeout leaves the attempt
+unresolved, and a production law preserves work disposition while telemetry and retry
+scheduling change.
 
 ### 12b. Served catalogs follow observation
 
-**Statement.** The set of routes Baton serves is the set the harness and credential state
-observably provide, less the routes the operator excludes. A hand-kept table can neither add a
-route the harness does not provide nor hide one it does.
+**Adopted statement (operator, 2026-09-25; encoding pending).** For a successfully observed
+harness/credential catalog, the served route set equals the complete set supported by that
+harness and credential state after applying the authenticated operator's route policy.
+Programmer-maintained availability tables cannot add routes, restrict discovery, alter
+observations, or suppress serving. Missing or failed discovery is reported explicitly and is
+not asserted to be an empty catalog.
 
-**Evidence from current Baton.** On 2026-09-24 the codex model cache listed 8 models and the
-hand-kept `DEFAULT_ROUTES` table named 2 of them; a new model was added by hand as one more row.
-The operator ruled "why do you hardcode things like this when they need to be derived from the
-relevant harness?". #440 already derives omp routes from credential files; #549 tracks the direct
-harnesses.
+**Evidence from current Baton.** On the September 24 observation recorded in #549, the codex
+model cache listed 8 models and the hand-kept `DEFAULT_ROUTES` table named 2 of them; a new
+model had been added by hand as one more row (`0b6c6334`, September 22). The operator ruled
+"why do you hardcode things like this when they need to be derived from the relevant
+harness?". #549 tracks the direct harnesses and calls for an operator per-harness allow rule;
+an explicit operator allowlist is authenticated policy applied over discovery. #440 is a
+credential-fixture precedent: `a21bd055` changes only `impl/test/route-truth.test.mjs`, which
+derives fixture credentials from routes the test declares.
 
 **Shape in the rewrite.** `examples/laws-derived-catalog.bend` models `served(provided, listed,
 excluded)` and the law `served_follows_observation`, which equates it with `expected(provided,
 excluded)` for every value of `listed`. Two controls fail as required: a hand-kept table and a
-hand-kept allowlist over observation.
+hand-kept allowlist over observation. The pending encoding defines route identity, adapter
+support, discovery completeness, credential scope and policy provenance, and distinguishes
+advertised routes from temporary scheduling eligibility and exhausted quota; observing the
+harness is a host effect and a stated assumption.
 
-### 12c. An orchestrator holds every management act over the seats it leads
+### 12c. An orchestrator holds every management act over its delegated scope
 
-**Statement.** An orchestrator (a seat's parent seat, or the root for a top-level lead) holds
-recruit, guide, stop, review, integrate and resume over every seat it leads. A seat can stop
-itself. No act is granted over a seat the actor does not lead.
+**Adopted statement (operator, 2026-09-25; encoding pending).** A valid orchestrator delegation
+carries every management capability needed for its delegated work scope, including recruit,
+guide, stop, review, integrate and resume. The runtime derives that scope and actor
+relationship from authenticated current authority and enforces it at dispatch and effect.
+Resource identity, generation, revocation and time-of-effect checks satisfy M-8. Self actions
+and explicit scoped delegations remain valid sources of authority. No actor can exercise an
+action beyond its valid scope.
 
-**Evidence from current Baton.** On 2026-09-25 bend2-orchestrator14 reported that `swarm.stop` was
-not in its seat grant, so it could not stop its own parked seat and asked the root to do it. The
-operator ruling of 2026-09-21 gives leads their swarm's whole scope and full authority, including
-`swarm integrate`. Revision 10 states that a seat stops when it declares itself done or its
-orchestrator stops it, which requires the orchestrator to hold stop.
+**Evidence from current Baton.** On 2026-09-25 bend2-orchestrator14 reported that `swarm.stop`
+was not in its seat grant, so it could not stop its own parked seat and asked the root to do it
+(contribution-7073ae820a93e04c2ba3bb3205a7d28f). The operator ruling of 2026-09-21 gives leads
+their swarm's whole scope and full authority, including `swarm integrate`, and is preserved in
+`docs/bend2/MANDATE.md`. Revision 10 states that a seat stops when it declares itself done or
+its orchestrator stops it, which requires the orchestrator to hold stop.
 
 **Shape in the rewrite.** `examples/laws-orchestrator-authority.bend` models `granted(rel, act)`
-and the law `orchestrator_holds_management` over all eighteen relation and act cases. Two controls
-fail as required: the grant observed on 2026-09-25 (no stop) and landing reserved to the root.
+and the law `orchestrator_holds_management` over all eighteen relation and act cases. Two
+controls fail as required: the grant observed on 2026-09-25 (no stop) and landing reserved to
+the root. The pending encoding defines each action's target and the full management-action
+universe, covers prospective recruits, the lead's own work, authorized reviewers and the root,
+and derives prospective scope for recruitment. Full capability keeps each action's semantic
+preconditions, such as an independently verified landing; those preconditions satisfy G1 and
+G2.
 
-### Questions for law review
-
-1. For each of 12a, 12b and 12c: is it a law under the definition (a quantified theorem over the
-   implementation, or an unrepresentable state), or tested behaviour that belongs in the trace?
-2. 12a: does removing M-10's derivation exception leave any legitimate case unhandled? Consider a
-   provider's own context-window limit, a kernel bound such as the 103-byte socket path, and
-   memory exhaustion observed now. The proposed answer is that the first two are facts the work
-   meets (the work fails with the provider's or kernel's own refusal, stated as such) and the third
-   makes work wait.
-3. 12a models time as a parameter the decision ignores. Is that enough to exclude a timer that
-   fires independently of the decision, as in #583, or does the law need the pending state to be
-   modelled as a value only an event can change?
-4. 12b: is an operator exclusion distinguishable in the model from a hand-kept table? The model
-   separates them as inputs; is that separation meaningful at the pin?
-5. 12c: does granting every act to the orchestrator conflict with M-8 (no effect beyond valid
-   authority)? The proposed answer is that 12c defines which authority is valid for an
-   orchestrator over its own seats and M-8 keeps it from extending past them.
-6. Is any ban in the table missing, or placed in the wrong row?
+**Review outcome (2026-09-25).** The review answered the six questions the proposal raised:
+each submitted equality is a law of its model at the pin; the refined 12a handles measured
+resource requirements, actual provider and host failures, explicit cancellation, revoked
+authority and the work's own stopping condition; an ignored time parameter does not exclude an
+independent timer, so the pending encoding constrains transitions; an operator exclusion and a
+hand-kept table need source identity, which the refined 12b supplies; full orchestrator
+authority coexists with M-8 as a scoped, time-of-effect authority rule; and the table above
+carries the review's corrections, with the whole-mandate question retained as unresolved under
+M-15's deferral.
 
 ---
 
