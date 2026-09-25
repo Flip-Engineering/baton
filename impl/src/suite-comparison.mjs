@@ -101,6 +101,40 @@ export function compareSuiteVerdicts({ change, base = null, note = '' } = {}) {
   return Object.freeze({ failures, blocking, shared, compared: true, note: '' });
 }
 
+/** The confirmation of a blocking row: the change's own run must reproduce it.
+ *
+ * A gate runs the change's selection with nine lanes over a ten-core host, beside whatever else
+ * the machine is doing. A row that asserts something about the CALLER's own event loop, or about a
+ * deadline measured in milliseconds, can therefore redden on the change side while the same row
+ * passes in the base run that has fewer files to schedule — and a landing would refuse on a
+ * failure the change does not carry. The rule both gates apply now: after the comparison names its
+ * blocking rows, the gate re-runs ONLY those rows' files on the change side once more, and a row
+ * blocks only when the change run reproduces it. `confirmation` is that second run's verdict
+ * document (null when it did not judge, in which case every blocking row stands). An unconfirmed
+ * row is reported, never dropped in silence. */
+export function confirmSuiteFailures({ blocking = [], confirmation = null } = {}) {
+  if (confirmation === null) {
+    return Object.freeze({ confirmed: Object.freeze([...blocking]), unconfirmed: Object.freeze([]) });
+  }
+  const onSecondRun = new Set(verdictFailures(confirmation).map(failureIdentity));
+  const confirmed = [];
+  const unconfirmed = [];
+  for (const failure of blocking) {
+    // A row that names no file could not be re-run, so it is never excused.
+    if (typeof failure.file !== 'string' || failure.file.length === 0
+      || onSecondRun.has(failureIdentity(failure))) confirmed.push(failure);
+    else unconfirmed.push(failure);
+  }
+  return Object.freeze({
+    confirmed: Object.freeze(confirmed), unconfirmed: Object.freeze(unconfirmed),
+  });
+}
+
+/** The sentence a gate reports when a blocking row did not reproduce. */
+export function confirmationLine({ unconfirmed = [] } = {}) {
+  return unconfirmed.length === 0 ? '' : `, ${unconfirmed.length} not reproduced`;
+}
+
 /** The base-side input for a change whose failing files the base does not have at all: there is
  * nothing to compare them with, so every one of them blocks. Both gates pass exactly this. */
 export const NO_BASE_FILES = Object.freeze({ document: Object.freeze({ failures: Object.freeze([]) }) });

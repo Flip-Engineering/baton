@@ -24,11 +24,14 @@ if (plan.died !== undefined) {
   process.stderr.write(`${plan.died}\n`);
   process.exit(plan.exit ?? 2);
 }
-const failures = (plan.failures ?? []).map((row) => ({
-  key: row.key ?? `${row.file} :: ${row.name}`,
-  file: row.file, name: row.name,
-  failureType: row.failureType ?? null,
-}));
+// `once`: this sandbox's run reports the plan's failures only on its FIRST run there, so the
+// confirmation pass a gate makes over its blocking files sees a row that does not reproduce.
+const failures = plan.once === true && ran.length > 1 ? []
+  : (plan.failures ?? []).map((row) => ({
+    key: row.key ?? `${row.file} :: ${row.name}`,
+    file: row.file, name: row.name,
+    failureType: row.failureType ?? null,
+  }));
 const document = {
   schemaVersion: 2,
   green: failures.length === 0,
