@@ -19,19 +19,15 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 
-const COORDINATOR_SOURCE = readFileSync(
-  fileURLToPath(new URL('../src/coordinator.mjs', import.meta.url)), 'utf8',
-);
 const SHA = 'a'.repeat(40);
 
 async function flush(times = 60) {
@@ -83,34 +79,11 @@ function spawnBrief() {
 }
 
 // ===========================================================================
-// The split is countable at the source level — the audit's own complaint
+// E07 (#598): the two source-scanning rows are gone — the `.catch(noop)` census and the
+// wrapper-spelling regexes over coordinator.mjs. What stays is the behavior they were written
+// for: every driven row below observes a real rejection landing as a typed event or a recorded
+// observation.
 // ===========================================================================
-
-test('G-46 (RED): no silent `.catch(noop)` remains in coordinator.mjs', () => {
-  const matches = COORDINATOR_SOURCE.match(/\.catch\(noop\)/gu) ?? [];
-  const inComments = (COORDINATOR_SOURCE.match(/^\s*\*.*\.catch\(noop\)/gmu) ?? []).length;
-  assert.equal(matches.length, inComments,
-    'stage[operational-catch-silenced]: every occurrence is documentation — no live call site swallows an outcome');
-});
-
-test('G-46 (RED): the three operational families route through a receipting wrapper', () => {
-  for (const wrapper of ['_stopInBackground', '_cleanupTransportInBackground', '_recordTrustGateEscape']) {
-    assert.ok(COORDINATOR_SOURCE.includes(wrapper),
-      `stage[operational-receipt-missing]: ${wrapper} exists`);
-  }
-  // A bare fire-and-forget stop is exactly what the receipting wrapper replaced.
-  assert.equal(/this\._beginStop\([^)]*\)\.catch\(/u.test(COORDINATOR_SOURCE), false,
-    'stage[operational-catch-silenced]: no fire-and-forget `_beginStop(...).catch(...)` call site is left');
-  assert.equal(/this\._cleanupClosedTransport\([^)]*\)\.catch\(/u.test(COORDINATOR_SOURCE), false,
-    'stage[operational-catch-silenced]: no fire-and-forget transport cleanup is left');
-  // Issue #259 slice 14: the call site's member (`turnCompleted`, the turn_completed arm) lives
-  // in runtime-event-handlers/turn-terminal.mjs — the pin follows it, with the receiver and ctx
-  // spellings the split carries (coordinator./ctx.handle).
-  const TURN_TERMINAL_SOURCE = readFileSync(new URL('../src/runtime-event-handlers/turn-terminal.mjs', import.meta.url), 'utf8');
-  assert.ok(TURN_TERMINAL_SOURCE.includes("coordinator._runTrustGate(ctx.handle, wr))")
-    && TURN_TERMINAL_SOURCE.includes('coordinator._recordTrustGateEscape(ctx.handle, error)'),
-  'stage[operational-catch-silenced]: the trust gate call site names its escape handler');
-});
 
 // ===========================================================================
 // bestEffort — observational, recorded, and never an outcome

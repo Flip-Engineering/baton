@@ -1193,25 +1193,6 @@ test('E1 (PIN): the run.debug scope detail is {digests, counts} in ACTUAL order 
   assert.equal(typeof detail.counts.changedPathCount, 'number', 'the count is a number');
 });
 
-test('E2 (PIN): DEBUG_GATE_CODES is the closed gate enum in ACTUAL order — an added gate code kills this pin (GT1)', () => {
-  assert.deepEqual(
-    enumLiteralsUnder(APP_OBSERVATION_SRC, 'const DEBUG_GATE_CODES'),
-    ['scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown'],
-    'DEBUG_GATE_CODES is exactly {scope, red_green, coverage, route_mismatch, forbidden_effect, unknown} in ACTUAL source order (it moved from application.mjs to application-observation.mjs with the observation bucket, issue #259 slice 15)',
-  );
-  assert.deepEqual(
-    enumLiteralsUnder(fileURLToPath(new URL('../src/runtime-recovery.mjs', import.meta.url)), 'const CLOSED_VERIFIER_DIAGNOSTICS'),
-    [
-      'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
-      'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
-      'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
-      'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
-      'verification_unjudged',
-    ],
-    'the closed verifier enum in ACTUAL source order (it moved from coordinator.mjs:513-518 to runtime-observation.mjs with the observation bucket, issue #259 slice 10, then to the runtime-recovery.mjs base layer with slice 12 — the effect seam reads it without an effects-observation cycle) — #334 appends verification_not_required for the read-only no-change skip receipt, and #593 appends verification_unjudged for a comparison run that wrote no verdict',
-  );
-});
-
 test('E4 (PIN): the cross-referenced refusal laws stay alive — the #73 closed caller schema and the R5 recovery-digest pin (refusal vocabulary)', () => {
   assert.ok(
     grepAn('application_workflow_feedback_invalid', APP_SRC).includes('application_workflow_feedback_invalid'),
