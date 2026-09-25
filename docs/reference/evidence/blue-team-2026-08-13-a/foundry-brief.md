@@ -1,4 +1,6 @@
 # BLUE-TEAM FOUNDRY wave-a — shared frame (multi-member suite-attack workflow, 2026-08-13)
+> Archived historical record (2026-08-13 dispatch). This brief documents how that session was
+> run; it is not a template, and its process steps are not current policy.
 
 Every member reads this first. This wave BLUE-TEAMS the eight landed red-first suites — one
 per row. The suites pin the honesty cluster (#157–#160) and the fold-a contracts

@@ -622,9 +622,7 @@ admitted-command set (`COMMAND_CAPABILITY` keys), D8, and complete phase-literal
 
 ## 9. Migration
 
-Each phase: spec slice → adversarial red-team → red contracts → wave implementation → ledger
-shrinks. Suite green at every commit. **Any `authorityDigest`-changing phase lands at a fleet
-quiesce point** (R-OP-11).
+**Any `authorityDigest`-changing phase lands at a fleet quiesce point** (R-OP-11).
 
 - **M0 — Harness.** Conformance contracts + the bidirectional ledger seeded from the extended
   audit. No behavior change.

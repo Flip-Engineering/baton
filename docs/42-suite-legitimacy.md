@@ -47,7 +47,7 @@ the base run has the same failure.
 
 A gate answers one question: does the change break a test that works at its base?
 
-1. Run the test files the change selects (§5).
+1. Run the test files the change selects (§4).
 2. When every file passes, the gate is green.
 3. When some fail, re-run ONLY the failing files the base has, at the base revision.
 4. A failure blocks when the base run does not have it. A test failure compares by key; a
@@ -77,27 +77,16 @@ same two halves in different places:
   only with the change, Y failing on the target too, Z not reproduced, squash <sha>`, and the
   receipt lists the blocking keys in `unexpected`, the shared ones in `failingOnTarget` and the
   unconfirmed ones in `unconfirmed`.
-- `swarm check` runs them in a contribution check's two verify sandboxes — the selected files in
-  the candidate sandbox, then the failing files the base sandbox has in the base sandbox, then the
-  blocking files once more in the candidate sandbox. Its receipt carries
-  `comparison: {selection, procedure, files, change, base, blocking, shared, unconfirmed, note}`,
-  so a reviewer reads the blocking rows without re-deriving them.
+- `swarm check` runs the same comparison over a contribution check's two verify sandboxes; its
+  receipt carries the comparison rows a reviewer reads.
 
 A deployment names the procedure beside the command that runs its tests
 (`advanced.verification.comparison`, the value `selected-vs-base`). This repository's default
-declares it, because its suite is red by design (see §4) and an exit-code judgement fails every
+declares it, because its suite is red by design and an exit-code judgement fails every
 capture whatever it does. A deployment that names no procedure keeps the command's own exit code
 as the verdict, and the check's receipt says `comparison: {skipped: 'procedure_not_declared'}`.
 
-## 4. The `-red` suffix
-
-`-red.test.mjs` marks a test written before its implementation. The suffix records the file's
-origin and has no effect on the verdict. Such a test fails at the base and with the change until
-the implementation lands, so it never blocks a gate; the change that implements it turns it
-green. The issue the test cites tracks the work. [docs/44](44-red-suffix-convention.md) states the
-naming rule.
-
-## 5. The selection: the files a change is judged by (#300, #593)
+## 4. The selection: the files a change is judged by (#300, #593)
 
 The 2026-09-14 incident: every check and every landing ran the full suite (~25 minutes at
 parallelism 6) because the affected file set was chosen by hand from `changedPaths`. The
@@ -145,7 +134,7 @@ and says `skipped: 'no_affected_tests'`. A landing's `issue` is the seat's conte
 (the `issue:<n>` branch), else `null`; the region labels and the swarm's purpose are never
 consulted.
 
-## 6. Served-host fixtures and the suite root (#446)
+## 5. Served-host fixtures and the suite root (#446)
 
 A parallel gate hands every test process its run's SUITE ROOT as `TMPDIR`
 (`baton-suite-XXXXXX` under the system temp dir, 65–69 bytes on this host). A fixture that
@@ -159,7 +148,7 @@ measured fall-back — the #446 fixture measured with a one-character stand-in f
 and missed a 68..72-byte band. Ledger and session roots stay under the ambient root; only the one
 path the kernel bounds leaves it. Row `316-sse-d` pins both ends of the band.
 
-## 7. A cancelled test is a failure (#460)
+## 6. A cancelled test is a failure (#460)
 
 Node reports a test whose awaited operation never settled as `cancelledByParent` — "Promise
 resolution is still pending but the event loop has already resolved" — and with it cancels EVERY

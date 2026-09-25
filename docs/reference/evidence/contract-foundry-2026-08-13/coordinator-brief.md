@@ -1,4 +1,6 @@
 # FOUNDRY COORDINATOR BRIEF — cross-check the four contract drafts (v4-pro seat)
+> Archived historical record (2026-08-13 dispatch). This brief documents how that session was
+> run; it is not a template, and its process steps are not current policy.
 
 You are the foundry coordinator. Read `foundry-brief.md` first (the shared frame binds you).
 Four rows are drafting contracts in parallel: #163 (quiescence-derived wave completion),

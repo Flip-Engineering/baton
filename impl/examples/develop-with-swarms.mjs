@@ -1,5 +1,5 @@
-// A host-owned self-development policy using the ordinary swarm SDK. Verification records a
-// check; the caller still decides whether to review/accept/integrate the captured contribution.
+// A host-owned self-development policy using the ordinary swarm SDK. The caller decides whether
+// to review, accept and integrate the captured contribution.
 import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { openBaton } from '../src/index.mjs';
@@ -27,15 +27,13 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
     let view = await swarm.view();
     for (;;) {
       const current = view.participants.find((row) => row.participantId === participant.participantId);
-      if (current?.runtime.turn === 'paused') break;
       if (['dead', 'exited'].includes(current?.runtime.state)) {
         throw new Error(`Participant transport ended before a contribution boundary: ${current.runtime.state}`);
       }
+      if ((view.contributions ?? []).some((row) => row.participantId === participant.participantId)) break;
       view = await swarm.watch();
     }
     evidence.capture = await swarm.capture(participant.participantId, 'implementation');
-    evidence.check = await swarm.check(participant.participantId, 'implementation', 'initial');
-    evidence.afterCheck = await swarm.view();
     return evidence;
   } catch (error) {
     evidence.failure = { code: error.code ?? null, message: error.message };
@@ -68,6 +66,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const [repo, taskPath, evidencePath] = process.argv.slice(2);
   const task = JSON.parse(await readFile(taskPath, 'utf8'));
   const result = await developWithSwarms({ repo, task, evidencePath });
-  console.log(JSON.stringify({ sha: result.capture.sha, passed: result.check.passed, authorTurnAfterCheck:
-    result.afterCheck.participants.find((row) => row.participantId === task.participantId)?.runtime.turn }));
+  console.log(JSON.stringify({ sha: result.capture.sha }));
 }

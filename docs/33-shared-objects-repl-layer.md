@@ -150,6 +150,3 @@ follow-up). No git-synced artifact CAS (deployment-local today; replication is a
   citation grammar + named resolution path, bounds. (G-B)
 - **REPL-3**: `cell:` branch refs resolved at manifest admission with evented coordinates,
   settled-only rule, §93.5/attention read semantics. (G-C)
-
-Each ships red-first (`impl/test/replN-*-red.test.mjs`) with a decisions contract in the REFLEX
-style, an adversarial red-team pass, and a full-suite gate before any implementation wave.

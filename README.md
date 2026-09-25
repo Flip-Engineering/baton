@@ -143,7 +143,6 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 | [40](docs/40-runtime-review-2026-09-12.md) · [41](docs/41-verification-recovery-review.md) | The runtime review with checked results; verification and contribution recovery |
 | [42](docs/42-suite-legitimacy.md) · [42b](docs/42-deployment-topology.md) | The suite verdict, the environment line, and the landing comparison with the target branch; deployment topology beyond one host |
 | [43](docs/43-host-capacity-and-derived-floors.md) | Host capacity is the throttle; the replaying → reconstructing → answering contract; restart truth |
-| [44](docs/44-red-suffix-convention.md) | The `-red` test-suffix convention |
 | [45](docs/45-open-coordination.md) | Open coordination: joint couplings, claims, peers-now |
 | [46](docs/46-swarm-visibility.md) | Swarm visibility: one liveness derivation, the contributions ledger, the cost of a view |
 | [47](docs/47-the-reading-half.md) | The reading half: a recruited seat reads its issue, its docs, its peers, and the landed work |

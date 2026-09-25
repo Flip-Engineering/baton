@@ -272,23 +272,6 @@ The reflex layer's agent-facing home is MCP, with the CLI as the human/operator 
   `baton://packages`, receipts — the same sanitized projections as the RunView, never raw
   ledger internals.
 
-## 4. Orchestration practice (how this gets built)
-
-Development of REFLEX is itself orchestrated through baton-on-baton parallel waves (doc 31):
-
-- **Parallel workstreams**: implementation wave (doc-31 roster: implementer + adversarial
-  reviewer) runs concurrently with research waves (ATLAS/KG/REPL audits) and with the
-  documentation effort — one orchestrator monitoring and steering all of them through
-  `wave.progress()/send/stopMember`, with evidence records per wave.
-- **Dogfood order**: REFLEX-1 first (smallest, highest leverage: decision channel + attention
-  surface + brief grammar), exercised live by using a decision request *inside a wave* (a
-  worker gates on an orchestrator choice) as its own acceptance proof; then REFLEX-3, REFLEX-2,
-  REFLEX-4. Every slice: spec → adversarial red-team → re-draft → implement red-first →
-  acceptance wave → PR.
-- **Stress tests**: each new feature is stress-tested by composing it with the wave surface
-  (multi-member waves where members issue decision requests mid-flight and the driver answers
-  them through the new channel), proving interactive orchestration end-to-end before merge.
-
 ## 5. Boundaries (permanent)
 
 - No arbitrary REPL/runtime/kernel; no shared mutable checkout; no worker-to-worker messaging

@@ -156,6 +156,3 @@ No recall-assessment changes (preview traffic stays unassessed this epic).
   composite scoring policy.
 - **KG-4**: growth/quality — auto-link restricted to Supports/Refines/Cites with per-type
   thresholds, MAD confidence projection, staleness surfacing.
-
-Each ships red-first (`impl/test/kgN-*-red.test.mjs`) with a decisions contract in the REFLEX
-style, an adversarial red-team pass, and a full-suite gate before any implementation wave.
