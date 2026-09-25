@@ -8,16 +8,16 @@
 // `_verifiedRecoveryPrior`).
 //
 // The sibling seam already honours the principle: `_validateGoalPlanReplayTransactions` lets a
-// failed triple cross under the fold's own code, and `_validateGoalPlanDispatchPair` states the
-// rule for the approval window itself — "the TTL window is prospective-only (!integrity): replay
-// re-derives the recorded order ... but never re-judges the window by the live policy". The retry
-// lane IS prospective (it answers a live request), so it re-judges the window — and when it
-// refuses, the refusal is the window's, never the key's.
+// failed triple cross under the fold's own code, and the pair it validates is row-anchored — a
+// recorded dispatch is re-derived from the recorded rows, never re-judged by the live policy. The
+// retry lane IS prospective (it answers a live request), so it re-reads the live world, the
+// predecessor task, and when it refuses, the refusal is the fold's, never the key's.
 //
-// The rows here: a recovery triple recorded under a one-hour approval window and retried after the
-// deployment narrowed the window to one minute. The OPEN stays row-anchored and clean; the RETRY
-// must name the fold's diagnosis (`plan_dispatch_invalid`, the approval authority), and a changed
-// request under a used key must still read as the key conflict.
+// The rows here: a recovery triple recorded against a completed, hub-verified predecessor whose
+// acceptance is revoked afterwards (an approval no longer expires with time, laws revision 12a, so
+// the live fact the retry re-reads is the predecessor). The RETRY must name the fold's diagnosis
+// (`recovery_refinement_unverified`, the predecessor it can no longer read), and a changed request
+// under a used key must still read as the key conflict.
 //
 // Suite law: hermetic (mkdtemp fixture, fixed clock, no network, no processes).
 import assert from 'node:assert/strict';
@@ -54,16 +54,15 @@ const verification = Object.freeze({
   requiredPredecessorEvidence: [],
 });
 const T0 = Date.parse('2026-07-14T00:00:00.000Z');
-const APPROVAL_AT = new Date(T0).toISOString();
-const DISPATCH_AT = new Date(T0 + 5 * 60_000).toISOString();
 
-/** The deployment's goal/plan policy, parameterized by the approval window the retry re-judges. */
-function policyFor(approvalTtlMs) {
+/** The deployment's goal/plan policy. The approval window stays a schema field, and no lane here
+ * re-judges it: an approval does not expire with time. */
+function policyFor() {
   return Object.freeze({
     schemaVersion: 1,
     repoId,
     mandatory: true,
-    approvalTtlMs,
+    approvalTtlMs: 60 * 60 * 1_000,
     riskClasses: ['low', 'medium', 'high', 'critical'],
     effectClasses: ['provider_call', 'repository_edit'],
     capabilityClasses: ['code', 'native_session_recovery', 'test'],
@@ -107,15 +106,15 @@ function planNode({
   };
 }
 
-/** One deployment: the goal/plan authority, one completed hub-verified predecessor, and the
- * recovery dispatch the retry path answers. The clock advances five minutes between the approval
- * and the recovery dispatch, so an approval window narrower than that re-judges the dispatch. */
-function fixture(label, { approvalTtlMs = 60 * 60 * 1_000 } = {}) {
+/** One deployment: the goal/plan authority, one completed hub-verified predecessor with an accepted
+ * artifact, and the recovery dispatch the retry path answers. `revoke` records the later mapped
+ * provider evidence and revokes that predecessor's acceptance. */
+function fixture(label) {
   const directory = mkdtempSync(join(tmpdir(), `baton-issue400-${label}-`));
   const operational = new Map();
   const operationalRead = (worker, seq) => operational.get(`${worker}:${seq}`) ?? null;
   let now = T0;
-  const policy = policyFor(approvalTtlMs);
+  const policy = policyFor();
   const store = new CoordinationStore(directory, {
     goalPlanPolicy: policy, operationalRead, clock: () => new Date(now).toISOString(),
   });
@@ -171,6 +170,24 @@ function fixture(label, { approvalTtlMs = 60 * 60 * 1_000 } = {}) {
   store.transitionTask('prior-plan-task', 'completed', 2, {
     actor: 'policy', key: 'task.completed:prior-plan-task',
   }, evidence);
+  // The revocation target and its evidence: an accepted artifact of the predecessor, then a LATER
+  // mapped provider-governance row (the #57 request).
+  store.registerArtifact({
+    id: 'prior-plan-commit', taskId: 'prior-plan-task', kind: 'commit',
+    refs: { id: 'prior-plan-commit' }, accepted: true, provenance: [evidence],
+  }, { actor: 'policy', key: 'artifact:prior-plan-task' });
+  const adverse = {
+    worker: workerId, seq: 2, ts: new Date(T0 + 2_000).toISOString(),
+    kind: 'resource.provider_governance_exceeded', payload: { code: 'provider_call_after_terminal' },
+  };
+  operational.set(`${workerId}:2`, adverse);
+  const mappedAdverse = store.mapOperationalEvent(adverse, {
+    actor: 'policy', key: 'evidence:prior-plan-task:adverse',
+  });
+  const revoke = () => store.revokeTaskAcceptance({
+    schemaVersion: 1, taskId: 'prior-plan-task', expectedTaskVersion: 3,
+    evidence: { coordinationSeq: mappedAdverse.evidence.coordinationSeq },
+  }, { actor: 'orchestrator', key: 'revoke-acceptance:prior-plan-task' });
   now = T0 + 5 * 60_000;
 
   const recoveryGate = gate(goal, plan, 'recover');
@@ -194,7 +211,7 @@ function fixture(label, { approvalTtlMs = 60 * 60 * 1_000 } = {}) {
     overrides.attribution ?? attribution,
     overrides.auth ?? recoveryAuth,
   );
-  return { directory, store, operationalRead, policy, recoveryFields, call };
+  return { directory, store, operationalRead, policy, recoveryFields, call, revoke };
 }
 
 const roots = [];
@@ -208,31 +225,22 @@ function fixtureRoot(label, options) {
 test('an adjudication failure on a key-bound recovery retry crosses under the fold own code, not the key conflict', () => {
   const recorded = fixtureRoot('diagnosis');
   const admitted = recorded.call(recorded.store);
-  assert.equal(admitted.result, 'claimed', 'the triple is recorded under the one-hour window');
-  assert.ok(admitted.dispatchEvent.ts <= new Date(T0 + 60 * 60_000).toISOString());
-  recorded.store.releaseWriterLease();
-
-  // The deployment reopens the same ledger with a one-minute approval window. The OPEN is
-  // row-anchored (a recorded window is never re-judged by the live policy), so it stays clean.
-  const reopened = new CoordinationStore(recorded.directory, {
-    goalPlanPolicy: policyFor(60_000), operationalRead: recorded.operationalRead,
-    clock: () => DISPATCH_AT,
+  assert.equal(admitted.result, 'claimed',
+    'the triple is recorded against a completed, hub-verified predecessor');
+  // The predecessor's acceptance is revoked after the triple was recorded: the recorded rows are
+  // untouched, the live predecessor is no longer the completed, hub-verified task the fold
+  // requires, and the retry re-reads it. The refusal is the fold's own code, never a key conflict.
+  recorded.revoke();
+  const before = recorded.store.events().length;
+  assert.throws(() => recorded.call(recorded.store), (error) => {
+    assert.equal(error.code, 'recovery_refinement_unverified',
+      'the retry names the fold diagnosis, never plan_recovery_conflict');
+    assert.match(error.message, /hub-verified prior task/u,
+      'and the message names the predecessor the fold could not read');
+    return true;
   });
-  try {
-    assert.equal(reopened.startupStatus().state, 'ready',
-      'the recorded dispatch outside the current window still replays');
-    const before = reopened.events().length;
-    assert.throws(() => recorded.call(reopened), (error) => {
-      assert.equal(error.code, 'plan_dispatch_invalid',
-        'the retry names the fold diagnosis, never plan_recovery_conflict');
-      assert.match(error.message, /approval authority/u,
-        'and the message names the window that refused it');
-      return true;
-    });
-    assert.equal(reopened.events().length, before, 'the refusal appends nothing');
-  } finally {
-    reopened.releaseWriterLease();
-  }
+  assert.equal(recorded.store.events().length, before, 'the refusal appends nothing');
+  recorded.store.releaseWriterLease();
 });
 
 test('a changed request under a used key is still the key-reuse conflict', () => {
