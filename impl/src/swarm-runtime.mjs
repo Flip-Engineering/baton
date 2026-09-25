@@ -9273,6 +9273,10 @@ export class SwarmRuntime {
             throw error;
           }
           workerLease = admitted.token;
+          // Issue #561: a RECRUITED seat's lease rides the measurement loop too — the guide
+          // path's wiring below is not the only admission a fleet's weight arrives by.
+          this._workerLeaseTokens.set(`participant:${args.swarmId}:${args.participantId}`, workerLease);
+          this._ensureWorkerMeasureLoop();
           if (queuedRow) {
             try {
               this.store.recordDriver('swarm.admission_admitted', {
