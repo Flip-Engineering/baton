@@ -264,3 +264,13 @@ the seventeenth entry. Its record:
 | Checked scope | Both model laws are discharged at the pin. Three controls fail as required: an expected-failure list (`expected False{}, observed True{}` at listed, Failed, Passed), a count pin (at pin 0, Failed, Failed; at pin 1, Passed, Passed), and a gate with no target comparison (Failed, Failed). [examples/laws-no-ledger.evidence.md](examples/laws-no-ledger.evidence.md) records the commands and outputs. |
 | Application scope | Open. The laws constrain a model gate; Baton's gate is `defaultIntegrationGates` (#580). Outcome values in the model can be written by any caller (review question 2). |
 | Review outcome | Pending. |
+
+## Revision 12: the operator's banned runtime patterns (proposed; law review pending)
+
+| | 12a No ceiling and no clock (revises M-10) | 12b Catalogs follow observation | 12c Orchestrator authority |
+|---|---|---|---|
+| Enforcement anchor in Baton | `goal-plan.mjs` `policy.limits`; host-capacity gate and `commandTimeoutMs` (#541); `drainPolicy` 90 s / 64 (#583); budget hard stops (#258) | `DEFAULT_ROUTES` direct-harness rows (#549); omp derivation (#440) | seat grant without `swarm.stop` (2026-09-25) |
+| Encoding | [examples/laws-no-ceiling.bend](examples/laws-no-ceiling.bend) | [examples/laws-derived-catalog.bend](examples/laws-derived-catalog.bend) | [examples/laws-orchestrator-authority.bend](examples/laws-orchestrator-authority.bend) |
+| Checked scope | Law discharged at the pin; controls fail: size ceiling (size 1+, elapsed 0, authorized, available: `expected Refused{}, observed Admitted{}`), deadline (size 0, elapsed 1+, authorized, short: `expected Refused{}, observed Waiting{}`), derived ceiling (size 2+ over capacity 1: `expected Refused{}, observed Admitted{}`). [evidence](examples/laws-no-ceiling.evidence.md) | Law discharged; controls fail at provided, not listed, not excluded (`expected False{}, observed True{}`) for a hand table and for an allowlist. [evidence](examples/laws-derived-catalog.evidence.md) | Law discharged; controls fail at `Leads{}`/`Stop{}` and `Leads{}`/`Integrate{}`. [evidence](examples/laws-orchestrator-authority.evidence.md) |
+| Application scope | Open: the model decides one item; queue order and cancellation are not modelled. | Open: observing the harness is a host effect. | Open: the grant table only; orchestrator resolution is the wake-delivery lineage question. |
+| Review outcome | Pending. | Pending. | Pending. |

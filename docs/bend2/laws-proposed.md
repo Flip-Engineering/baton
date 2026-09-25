@@ -356,6 +356,115 @@ and `landing_blocks_iff_breaks` (per landing, proved by induction over the selec
 
 ---
 
+## Revision 12: the operator's banned runtime patterns as laws
+
+Status: proposed 2026-09-25; each encoding is checked at the pin and each control fails as
+required. Law review pending (an external review by a gpt-6-astra seat is requested). Not part of
+the operative set.
+
+The operator asked for the banned patterns to be codified as laws. The table maps each operator
+ban to the law that carries it, or states why it is not an application law.
+
+| Operator ban | Law |
+|---|---|
+| No pausing, idling or truncating agents (AGENTS.md, #572) | Revision 10 |
+| No bookkeeping ledgers in place of function (AGENTS.md, #579, #580, #582) | Revision 11 (under review with its broader form) |
+| Wake is never an action the agent takes (#529) | M-13, approved |
+| Accept now, finish later; no held connection (#541) | M-12, approved |
+| No numeric ceiling or deadline that refuses work, derived or not (#258, #541, #583) | 12a, revising M-10 |
+| Catalogs derived from the harness, never hand-listed (#440, #549) | 12b |
+| Leads hold full authority over their own swarm, including landing (2026-09-21) | 12c |
+| Writing rules (plain technical English and the rest of AGENTS.md) | Not an application law; M-16 precedent |
+| Routing preferences (providers and models in use) | Operator configuration, changed by the operator; not a law |
+| Working rules for agents (file findings first, a workaround is a blocker, do not hand-slice work) | Process rules for the people and agents developing Baton; not application behaviour |
+
+### 12a. No ceiling and no clock on requested work (revises M-10)
+
+**Statement.** The runtime decides on requested work from authority and from the resource state it
+observes now. The decision is the same for every size, count, spend and elapsed time. Work that has
+authority is admitted when its resource is available and waits while it is short. It is refused
+only for lack of authority. No constant, and no bound derived from a physical resource, turns
+waiting or admitted work into a refusal, and no timer turns a pending operation into a failure.
+Explicit cancellation by the caller and the work's own stopping condition remain separate
+semantics.
+
+**Change to M-10.** M-10 forbids cutoffs "unless the bound derives from a physical resource, is
+stated with its derivation". The operator rejected that exception on 2026-09-20 ("DO NOT CHECK THE
+DERIVATION OF A MAX LIMIT ... THAT SHOULD NEVER HAVE A CONSTANT APPLIED TO IT OR A LIMIT AT ALL").
+12a removes it. A physical shortage observed now makes work wait; it is not a pre-declared bound.
+
+**Evidence from current Baton.**
+
+- A default 100M-token hard stop killed a productive worker on 2026-09-13 (#258).
+- `goal-plan.mjs` `policy.limits.maxTextBytes: 4096` refused a legitimate 4244-byte recruit brief on
+  2026-09-20; the same schema carries `maxNodes`, `maxDepsPerNode`, `maxItems`, `maxTokens`,
+  `maxUsd`, `maxWallMin` and more.
+- The host-capacity gate's 2 s queue wait and `load1m <= 10` refusal, and the CLI's 30 s
+  `commandTimeoutMs` (#541).
+- `drainPolicy: { maxWorkers: 64, timeoutMs: 90_000 }`: `swarm stop` answered
+  `coordinator_run_stop_incomplete` after 90 s on 2026-09-25 and the stop then completed (#583). A
+  #500 test pins the values.
+
+**Shape in the rewrite.** `examples/laws-no-ceiling.bend` models one decision
+`decide(size, elapsed, authorized, available)` and the law `decision_ignores_magnitude_and_clock`,
+which equates it with `expected(authorized, available)` for every size and elapsed time.
+`examples/laws-no-ceiling.evidence.md` records three controls that fail as required: a size
+ceiling, a deadline on waiting work, and a ceiling derived from a physical resource.
+
+### 12b. Served catalogs follow observation
+
+**Statement.** The set of routes Baton serves is the set the harness and credential state
+observably provide, less the routes the operator excludes. A hand-kept table can neither add a
+route the harness does not provide nor hide one it does.
+
+**Evidence from current Baton.** On 2026-09-24 the codex model cache listed 8 models and the
+hand-kept `DEFAULT_ROUTES` table named 2 of them; a new model was added by hand as one more row.
+The operator ruled "why do you hardcode things like this when they need to be derived from the
+relevant harness?". #440 already derives omp routes from credential files; #549 tracks the direct
+harnesses.
+
+**Shape in the rewrite.** `examples/laws-derived-catalog.bend` models `served(provided, listed,
+excluded)` and the law `served_follows_observation`, which equates it with `expected(provided,
+excluded)` for every value of `listed`. Two controls fail as required: a hand-kept table and a
+hand-kept allowlist over observation.
+
+### 12c. An orchestrator holds every management act over the seats it leads
+
+**Statement.** An orchestrator (a seat's parent seat, or the root for a top-level lead) holds
+recruit, guide, stop, review, integrate and resume over every seat it leads. A seat can stop
+itself. No act is granted over a seat the actor does not lead.
+
+**Evidence from current Baton.** On 2026-09-25 bend2-orchestrator14 reported that `swarm.stop` was
+not in its seat grant, so it could not stop its own parked seat and asked the root to do it. The
+operator ruling of 2026-09-21 gives leads their swarm's whole scope and full authority, including
+`swarm integrate`. Revision 10 states that a seat stops when it declares itself done or its
+orchestrator stops it, which requires the orchestrator to hold stop.
+
+**Shape in the rewrite.** `examples/laws-orchestrator-authority.bend` models `granted(rel, act)`
+and the law `orchestrator_holds_management` over all eighteen relation and act cases. Two controls
+fail as required: the grant observed on 2026-09-25 (no stop) and landing reserved to the root.
+
+### Questions for law review
+
+1. For each of 12a, 12b and 12c: is it a law under the definition (a quantified theorem over the
+   implementation, or an unrepresentable state), or tested behaviour that belongs in the trace?
+2. 12a: does removing M-10's derivation exception leave any legitimate case unhandled? Consider a
+   provider's own context-window limit, a kernel bound such as the 103-byte socket path, and
+   memory exhaustion observed now. The proposed answer is that the first two are facts the work
+   meets (the work fails with the provider's or kernel's own refusal, stated as such) and the third
+   makes work wait.
+3. 12a models time as a parameter the decision ignores. Is that enough to exclude a timer that
+   fires independently of the decision, as in #583, or does the law need the pending state to be
+   modelled as a value only an event can change?
+4. 12b: is an operator exclusion distinguishable in the model from a hand-kept table? The model
+   separates them as inputs; is that separation meaningful at the pin?
+5. 12c: does granting every act to the orchestrator conflict with M-8 (no effect beyond valid
+   authority)? The proposed answer is that 12c defines which authority is valid for an
+   orchestrator over its own seats and M-8 keeps it from extending past them.
+6. Is any ban in the table missing, or placed in the wrong row?
+
+---
+
 ## Deferred and excluded
 
 - **M-15 (whole-mandate admission) — deferred to the design notes.** The forbidden behavior is
