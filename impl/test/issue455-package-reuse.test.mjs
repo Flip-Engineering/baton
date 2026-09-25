@@ -193,6 +193,9 @@ function fixture(t) {
 async function createSwarm(coordination, runtime) {
   await runtime.command('swarm.create', {
     swarmId: SWARM_ID, purpose: 'issue455', idempotencyKey: 'issue455:create',
+    // 455-b pins the manual continuation flow (question, answer, then the deferred start that
+    // attaches the package and composes the brief).
+    policy: { resumeContinuation: 'manual' },
   }, OWNER);
 }
 

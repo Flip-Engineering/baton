@@ -155,7 +155,8 @@ function fixture(t, { midTurn = 'supported' } = {}) {
  * interrupted mid-lane, and the interruption is what a successor resumes (docs/52 D4's tree). */
 async function interruptedLane(t, options = {}) {
   const f = fixture(t, options);
-  await f.call('create', { purpose: 'A recovered seat asks its lead whether to continue' });
+  await f.call('create', { purpose: 'A recovered seat asks its lead whether to continue',
+    policy: { resumeContinuation: 'manual' } });
   await f.recruit('lead', { permissions: [...SWARM_PERMISSIONS] });
   await f.recruit('alpha', {}, f.asSeat('lead'));
   const checkout = [...f.workerOf('alpha').worktree ? [{ worktree: f.workerOf('alpha').worktree }] : []][0];
@@ -222,7 +223,8 @@ test('543-b: a one-shot orchestrator\'s ask parks and composes into its next bri
 
 test('543-c: a root-run resume addresses no seat, and the question still waits', async (t) => {
   const f = fixture(t);
-  await f.call('create', { purpose: 'A root recovers a seat no seat recruited' });
+  await f.call('create', { purpose: 'A root recovers a seat no seat recruited',
+    policy: { resumeContinuation: 'manual' } });
   await f.recruit('alpha');
   await f.call('stop', { participantId: 'alpha', reason: 'Interrupted mid-lane' });
 
