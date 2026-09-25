@@ -1,0 +1,45 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":37.98974609375,"five":42.5849609375,"one":56.43359375},"measuredAt":"2026-09-25T07:37:32.733Z","probeMs":7.915165999999999,"schemaVersion":1}
+baton test runner: --changed selected 2 test file(s) from 2 changed path(s) — 2 changed path(s) select 2 test file(s): 2 changed test file(s), 0 importing changed module(s)
+  impl/test/issue592-attention-obligations.test.mjs (changed)
+  impl/test/issue592-commit-subscription.test.mjs (changed)
+baton test runner: plan — 2 file(s) expanded from 2 changed path(s): 2 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 2674376704 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/issue592-attention-obligations.test.mjs (10534 ms)
+ok 1 - source contributions remain owed when a crash prevented secondary wake materialization
+ok 2 - review closes only its source review debt; comments and transport receipts preserve it
+ok 3 - reviewer departure derives root debt without a new materialized wake
+ok 4 - full asks survive historical prefix matching without losing text or distinct identities
+ok 5 - historical source rows and failures remain scoped to their swarm and wake class
+ok 6 - the real swarm attention projection keeps source debt after delivery and removes it after review
+ok 7 - the runtime records and projects the complete root ask including its final instruction
+ok 8 - a source commit survives abrupt process loss before materialization, delivery, and business resolution
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7968.281
+# tests 8
+# pass 8
+# fail 0
+# file test/issue592-commit-subscription.test.mjs (2869 ms)
+ok 1 - commit subscriptions observe fsync after append and retain rows between subscriptions without timers
+ok 2 - a failed sync rejects pending and future commit waits with debt still in source state
+ok 3 - abort cancels only its wait and an independent subscriber receives the committed source
+ok 4 - writer release closes pending subscriptions and a new owner verifies replayed rows
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1223.907125
+# tests 4
+# pass 4
+# fail 0
+baton suite verdict (SUBSET 2 of 739 files): GREEN — 12 passed, 0 failed, 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+baton suite verdict note: SUBSET verdict (2 of 739 files) — not the canonical-suite acceptance.
