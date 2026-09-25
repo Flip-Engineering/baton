@@ -39,6 +39,9 @@ is the final law approval record. [ledger.md](ledger.md) is the operational reco
 [recovery-2026-09-22.md](recovery-2026-09-22.md) and
 [recovery-2026-09-23.md](recovery-2026-09-23.md) record the two cold-restart recoveries with the
 retained-branch census and the state of every unlanded work item.
+[application-plan-2026-09-25.md](application-plan-2026-09-25.md) records the lanes that apply the
+encoded revision 11 and 12 obligations to the runtime on `master`, the site each lane owns, and
+the test that closes it.
 
 ## Examples
 
