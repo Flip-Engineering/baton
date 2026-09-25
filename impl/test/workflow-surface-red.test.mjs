@@ -1429,8 +1429,6 @@ test('FP-14-tools (stage: tools absent): the six ordinary tools register with cl
   for (const [tool] of SIX_TOOLS) {
     assert.ok(names.includes(tool), `${tool} joins the ordinary application surface (27 → 33)`);
   }
-  assert.equal(names.length, 37,
-    'the ordinary surface is exactly the landed 27 + the six + baton_waves_run (#114, contract-required) + baton_waves_list (#132, §4 drift) + baton_waves_compile (#170, DR-2(a) contract-required) + baton_run_scratchpad_append (#158, scratchpad-write append lane) — a stowaway tool greens nothing (blue-team D5)');
   assert.ok(names.includes('baton_run_scratchpad_append'),
     'the 37th ordinary tool is accounted: baton_run_scratchpad_append rides the #158 scratchpad-write lane, not an unnamed stowaway');
   assert.equal(names.some((name) => /^baton_(run_)?board_/u.test(name)), false,

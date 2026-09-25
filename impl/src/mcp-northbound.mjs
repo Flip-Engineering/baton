@@ -918,7 +918,20 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' } }, ['repoId', 'messageId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's two ordinary tools.
+  // Issue #549/#582: the attention watch dispatches (APPLICATION_TOOL, the serve handler, the
+  // validation lane all name it) but was never ADVERTISED on the ordinary surface — invisible to
+  // every client's tools/list. Registered beside its run.* siblings.
+  {
+    name: 'baton_run_attention_watch',
+    description: "Read one run's attention reasons since a cursor — the parked, waiting and budget facts the run owes its orchestrator, addressed to whoever holds the scope (read-only; a control-capable connection pages the run instead of refusing).",
+    inputSchema: schema({
+      ...repo,
+      runId,
+      kind: { type: 'string', minLength: 1, maxLength: 256 },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   {
     name: 'baton_run_resultpin',
     description: "Read one run's preserved result projection: the accepted pin sha, the RECORDED capture base, and the bounded changed-path/file delta (recorded-base diff, never HEAD, never pin^). Read-only.",
