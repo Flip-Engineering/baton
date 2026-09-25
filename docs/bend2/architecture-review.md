@@ -49,8 +49,8 @@ Retained commit `c22cda5bf04c36616d9634464709648538d196d8`, contribution
   separate storage systems; delete the prototype `holistic-runtime.EventJournal`.
 - F4 permits one scheduler only with explicit knowledge promotion, separate information scopes,
   and preserved parent-child delegation.
-- F16/F17 require typed effect/path declarations and an independent background structural scan.
-  Gate selection consumes a validated result bound to both inputs and the exact source snapshot.
+- F16/F17 use an independent background structural scan of the change source snapshot. Gate
+  selection consumes its validated result bound to that snapshot and the scanner version.
 - F1, F3, F5 through F15, and F18 through F24 are approved design directions. Their implementation
   still requires the host and capability evidence identified below.
 
@@ -82,7 +82,7 @@ Each row is also a deletion or merge proposal.
 | ACP, OMP, app-server, CLI, and session process wrappers | Providers arrived through different Node child-process protocols and were integrated at different times. | Merge child ownership, JSON-RPC framing, close/reap, stderr bounds, and cancellation into one worker gateway. Keep a provider codec for protocol-specific frames. | Ready handshakes, permission requests, session resume, provider event names, and oversize-frame behavior could be lost. |
 | `holistic-runtime` and `production-*` convergence wrappers | A later convergence design was added beside the deployed runtime and exported as an opt-in package path ([`package.json`](../../impl/package.json#L15), [`index-converged.mjs`](../../impl/src/index-converged.mjs#L1)). | Delete the parallel runtime and wrapper succession; merge its command registry, notification, and recovery requirements into the single deployment factory. | The `baton/converged` API, raw-core escape hatch, hook-based migration path, and its recovery behavior would be removed. |
 | `workflow-lane.mjs`, `native-modules.mjs`, and duplicate `resolveResultPin` | ESM import-graph tests produced re-export shims. A synchronous result-pin implementation was copied to avoid another import ([`workflow-interpreter.mjs`](../../impl/src/workflow-interpreter.mjs#L406)). | Delete both shims and the copied pin resolver; merge their contracts into the actual workflow and capability modules. | Import inertness, optional capability loading, cancellation, and the exact result attribution grace period could regress. |
-| Seam inventory generator and committed JSON | Dynamic method ownership is reconstructed with AST text because JavaScript declarations do not encode the architectural seam. | Delete the committed JSON, landing-table copy, and source-shape tables after typed declarations and an independent structural scan establish equivalent coverage (ARCH-CLOSE-09). | Landing could select too few tests for a changed effect or authority path. This risk is material because the current hard-coded application member count is already stale. |
+| Seam inventory generator and committed JSON | Dynamic method ownership is reconstructed with AST text because JavaScript declarations do not encode the architectural seam. | Delete the committed JSON, landing-table copy, and source-shape tables after an independent structural scan establishes equivalent coverage (ARCH-CLOSE-09). | Landing could select too few tests for a changed effect or authority path. This risk is material because the current hard-coded application member count is already stale. |
 
 ## Findings
 
@@ -399,9 +399,9 @@ of process could also change latency, startup registration, and receipt reverifi
 
 **Deletion and merge.** Merge contribution capture, independent verification, gate selection,
 landing-table resolution, integration, and result adoption into one verification and landing
-subsystem. Replace the committed AST seam inventory with typed effect/path declarations checked
-against an independent background structural scan. Gate selection consumes the validated
-`CheckedChangeImpact` for the exact source snapshot (ARCH-CLOSE-09).
+subsystem. Replace the committed AST seam inventory with an independent background structural scan
+of the change source snapshot. Gate selection consumes the validated scan result for that exact
+snapshot (ARCH-CLOSE-09).
 
 **Publication obligation.** One owner performs the whole publication operation: it binds the
 admitted repository authority, the designated shared endpoint and target ref, the expected shared
@@ -424,25 +424,22 @@ commit. A merged subsystem with one mutable actor could erase that separation of
 Publication recorded from local evidence alone reports success while the shared branch is unchanged,
 and an uncertain dispatch recorded as settled hides either a duplicate or a missing delivery.
 
-### F17. Replace the committed seam inventory with checked change declarations
+### F17. Replace the committed seam inventory with the structural scan
 
 **Deletion and merge.** Delete `impl/scripts/seam-inventory.mjs`, its committed JSON, the
 landing-table inventory reader, the surface gate consumer, and fixed member tables after
 ARCH-CLOSE-09 establishes equivalent gate coverage. Keep a background structural scanner owned by
-Verification and Landing. It checks declared effects, paths, transitive calls, and ownership edges
-against the submitted source snapshot.
+Verification and Landing. It reads the submitted source snapshot and derives the effects, paths,
+transitive calls, and ownership edges the change reaches.
 
-**Operator condition.** Both declaration and structural scan are mandatory. Their validated result
-binds source snapshot, declaration digest, scanner version, and gate mapping. Missing, stale,
-unresolved, or mismatched evidence prevents gate selection and integration. LANG-F-28's second
-producer probe requires validating this provenance at the consumer; naming a return type
-`CheckedChangeImpact` establishes no unique producer.
+The scan result binds the source snapshot and scanner version, and it selects the gates; the
+selected tests under the target comparison decide the landing. A stale or incomplete result cannot
+authorize gate selection or integration, and unknown reachability widens the gate set with a typed
+unresolved result. LANG-F-28's second-producer probe requires validating this provenance at the
+consumer; naming a return type `ChangeScanResult` establishes no unique producer.
 
-The relation between a change and the contracts it affects is carried by evidence. A change
-carries its declared effects and paths, the structural scan derives the effects, imports, calls, and
-ownership edges the change reaches, and a disagreement is a typed refusal. Demonstrate that
-relation on a pure decision helper change, a schema change, a shared library change, and an altered C
-effect, because a change that preserves its type and effect spelling can still alter an
+Demonstrate the scan on a pure decision helper change, a schema change, a shared library change, and
+an altered C effect, because a change that preserves its type and effect spelling can still alter an
 authorization predicate, a canonical encoder, or an event fold. The committed inventory stays until
 that coverage selects the same gates or stronger ones (ARCH-CLOSE-09).
 
@@ -453,7 +450,7 @@ while `application-observation.test.mjs` fails its expected count of 174 with an
 175 at line 156. The generated copy and the test copy already disagree.
 
 **Loss if wrong.** The inventory is currently the only explicit input that maps several split
-modules to landing gates. Deleting it before declaration checking and independent structural coverage are proven would
+modules to landing gates. Deleting it before the independent structural scan is proven would
 narrow verification silently when a seam module changes.
 
 ### F18. Merge host and worktree capacity leases
@@ -633,7 +630,7 @@ a finding above and carries its own loss statement.
 | `wave.resolveResultPin` / workflow copy | Delete copy and use one abortable resolver (F14). | Attribution timing and cancellation. |
 | four Atlas package-version and language maps | Merge into Atlas substrate (F15). | Per-operation language accuracy and card evidence. |
 | production deployment wrappers / production MCP wrappers | Merge each name to one implementation (F3). | Recovery and attention authorization behavior. |
-| AST seam classification / hard-coded test maps | Replace committed maps with typed declarations and an independent structural scan (F17). | Change-to-gate coverage. |
+| AST seam classification / hard-coded test maps | Replace committed maps with an independent structural scan (F17). | Change-to-gate coverage. |
 | host capacity lease / worktree capacity lease | Merge one physical resource lease substrate (F18). | Coupled floor accounting, owner identity, and dead-holder reap. |
 | client key / bridge key / runtime `_once` / ledger `_byKey` | Collapse to one at-most-once operation transition (F19). | Duplicate effects and crash-unknown recovery. |
 | `_append` / `_appendBatch` | Merge one append transaction (F20). | Byte order, group commit, fold, and durability. |
@@ -698,6 +695,6 @@ This mismatch supports F17. It is not caused by either document in this contribu
 disposition is that the 174-member expectation is a committed source-shape count the reviewed source
 has outgrown: it is neither a target requirement nor behavior the rewrite preserves, and it
 disappears with the committed inventory under ARCH-CLOSE-09. Until then it stays a recorded baseline
-row, and neither a change declaration nor the structural scan may be written to reproduce it. The
+row, and the structural scan may not be written to reproduce it. The
 final deployment gate remains `npm test --prefix impl`; its result is recorded with the
 contribution.
