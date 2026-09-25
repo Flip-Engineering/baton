@@ -12770,7 +12770,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 56,
+          "size": 69,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13583,10 +13583,19 @@
         {
           "name": "_drainCommitObservations",
           "ordinal": 0,
-          "size": 55,
+          "size": 67,
           "seam": "observation",
           "evidence": [
             "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_preserveTurnBoundaries",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_name"
           ]
         },
         {
@@ -13666,7 +13675,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1140,
+          "size": 1165,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -14332,7 +14341,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1258,
+          "size": 1278,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

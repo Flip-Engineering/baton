@@ -26,6 +26,7 @@ import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from '.
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
 import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
+import { WorktreePreserver } from './worktree-preserve.mjs';
 import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
 // pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
@@ -2005,6 +2006,19 @@ export class SwarmRuntime {
     this._integrationSweep = undefined;
     this._gatePool = null;
     this._sweepId = null;
+    // Issue #594: the seat-work preservation authority — the deployment's declared shared
+    // remote and the repository the seat worktrees share. A deployment that declares no
+    // remote leaves it null, and every preserve step costs nothing.
+    this.preserver = integration !== null && typeof integration.repoRoot === 'string'
+      && typeof integration.publishRemote === 'string' && integration.publishRemote.length > 0
+      ? new WorktreePreserver({
+        repoRoot: integration.repoRoot, remote: integration.publishRemote,
+        record: (kind, payload, key) => this.store.recordDriver(kind, payload, { actor: 'baton-runtime', key }),
+      })
+      : null;
+    // Issue #594: the turn fence epochs this incarnation has reconciled, keyed by worker id —
+    // the boundary detector the uncommitted snapshots ride.
+    this.preserveTurnEpochs = new Map();
   }
 
   /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
@@ -3987,6 +4001,9 @@ export class SwarmRuntime {
     // leases) must not wait for the next coupling change: those lease's writer files are
     // re-derived once here. The count makes that at most once per lease change, never per read.
     if ((scopes.leases?.size ?? 0) !== this.projectedLeaseCount) this._projectCheckoutWriterState();
+    // Issue #594: the newest observed commit per seat rides the same drain — the batch is
+    // published after the loop, one push per seat carrying every earlier commit by ancestry.
+    const preserveBatch = this.preserver !== null && this.preserver.available ? new Map() : null;
     for (const observation of scopes.takeCommitObservations()) {
       const swarmId = typeof observation.swarmId === 'string' && observation.swarmId.length > 0 ? observation.swarmId : null;
       const participantId = typeof observation.participantId === 'string' && observation.participantId.length > 0 ? observation.participantId : null;
@@ -4024,6 +4041,9 @@ export class SwarmRuntime {
           { headSha: sha, ...(at === null ? {} : { observedAt: at }), source: 'wrapper' },
         );
       }
+      if (preserveBatch !== null && sha !== null) {
+        preserveBatch.set(participantId, { swarmId, participantId, workspaceId: seatWorkspaceId, sha });
+      }
       const couplingId = typeof observation.couplingId === 'string' && observation.couplingId.length > 0 ? observation.couplingId : null;
       const writer = typeof observation.writer === 'string' && observation.writer.length > 0 ? observation.writer : null;
       if (couplingId === null || writer === null || writer === participantId) continue;
@@ -4034,7 +4054,50 @@ export class SwarmRuntime {
         swarmId, couplingId, workspaceId, writer, by: participantId, sha, at,
       }, { actor: 'baton-runtime', key: `swarm-writer-bypass:${observationKey}` });
     }
+    if (preserveBatch !== null && preserveBatch.size > 0) {
+      for (const entry of preserveBatch.values()) {
+        this.preserver.preserveCommit({ ...entry, work: 'commit' });
+      }
+    }
+    this._preserveTurnBoundaries();
   }
+
+  /** Issue #594: the turn boundaries this runtime observes, reconciled against the workers
+   * this entry can see. A seat whose fence epoch advanced since the last entry has ended a
+   * turn, and its checkout's uncommitted changes are snapshotted and published — that
+   * boundary is the event the snapshot rides. A seat seen for the first time initializes its
+   * epoch and snapshots nothing: its next boundary is the event its own dirty state rides.
+   * The epoch map holds exactly the workers this reconciliation saw, so a finished seat's
+   * entry leaves with it. */
+  _preserveTurnBoundaries() {
+    if (this.preserver === null || !this.preserver.available) return;
+    const workers = typeof this.coordinator?.list === 'function' ? this.coordinator.list() : [];
+    const seen = new Set();
+    for (const swarm of this.store.swarms()) {
+      for (const participant of Object.values(swarm.participants)) {
+        if (participant.status !== 'active') continue;
+        const worker = this._workerFor(participant, workers);
+        if (worker === null || typeof worker.id !== 'string') continue;
+        const epoch = this._turnEpochOf(worker);
+        if (epoch === null) continue;
+        seen.add(worker.id);
+        const previous = this.preserveTurnEpochs.get(worker.id);
+        this.preserveTurnEpochs.set(worker.id, epoch);
+        if (previous === undefined || previous === epoch) continue;
+        const checkout = checkoutOf(worker);
+        if (checkout === null) continue;
+        this.preserver.preserveUncommitted({
+          swarmId: swarm.swarmId, participantId: participant.participantId,
+          workspaceId: typeof worker.sessionContext?.ownerTaskId === 'string'
+            ? worker.sessionContext.ownerTaskId : null,
+          worktree: checkout.worktree,
+        });
+      }
+    }
+    for (const workerId of this.preserveTurnEpochs.keys()) {
+      if (!seen.has(workerId)) this.preserveTurnEpochs.delete(workerId);
+    }
+   }
 
   /** Issue #425: the ONE mutation-path settle — the writer projection a coupling change or a
    * binding must leave fresh on the lease, then the spool drain those writes then answer to. */
@@ -4350,6 +4413,25 @@ export class SwarmRuntime {
       }));
       commitsByParticipant.set(payload.participantId, rows);
     }
+    // Issue #594: the seat's preservation pushes, folded from the durable rows the preserver
+    // wrote, in ledger order — the newest branch push and the newest push of any kind the
+    // workspace row shows, and the outcome the seat's newest commit reached (a push that
+    // failed before a later push of the same sha succeeded is history, not a pending loss).
+    const preserveByParticipant = new Map();
+    for (const event of ledger) {
+      const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
+      if (kind !== 'worktree.preserve_pushed' && kind !== 'worktree.preserve_failed') continue;
+      const payload = event.payload ?? {};
+      if (payload.swarmId !== swarm.swarmId || typeof payload.participantId !== 'string') continue;
+      const rows = preserveByParticipant.get(payload.participantId) ?? [];
+      rows.push(Object.freeze({
+        outcome: kind === 'worktree.preserve_pushed' ? 'pushed' : 'failed',
+        work: typeof payload.work === 'string' ? payload.work : null,
+        sha: typeof payload.sha === 'string' ? payload.sha : null,
+        at: typeof payload.at === 'string' ? payload.at : event.ts ?? null,
+      }));
+      preserveByParticipant.set(payload.participantId, rows);
+    }
     // docs/46 §1.2 (#268): the ONE activity/usage derivation — folded ONCE per view from the
     // ledger this projection already holds, for every seat at once. It is TOTAL over the swarm's
     // participants (every one reads the recorded shape or the empty one), which is why the row
@@ -4426,6 +4508,10 @@ export class SwarmRuntime {
       // Issue #464: the seat's whole attributed history, read ONCE — the roster row carries its
       // bounded tail, and a read that NAMES this seat carries it whole (the #343/#349 ladder).
       const seatCommits = commitsByParticipant.get(participant.participantId) ?? [];
+      // Issue #594: the seat's last preserved commit — the newest push of any kind the
+      // preservation lane recorded for this seat.
+      const preserveRows = preserveByParticipant.get(participant.participantId) ?? [];
+      const lastPushed = [...preserveRows].reverse().find((row) => row.outcome === 'pushed') ?? null;
       const workspace = workspaceId === null ? null : Object.freeze({
         ...(physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
@@ -4443,6 +4529,8 @@ export class SwarmRuntime {
         headSha: observation?.headSha ?? custody?.headSha ?? worker?.sessionContext?.baseSha ?? null,
         snapshotSha: custody?.snapshotSha ?? null,
         dirty: observation?.dirty ?? false,
+        preserved: lastPushed === null ? null
+          : Object.freeze({ sha: lastPushed.sha, at: lastPushed.at, work: lastPushed.work }),
         removed: custody?.removed ?? null,
         // Issue #438: where this row's live facts came from — the durable rows when nothing was
         // observed, else the seat's wrapper commit, its own turn seam, or an explicit live read.
@@ -8689,6 +8777,16 @@ export class SwarmRuntime {
           rootAttention = this._recordRootAttentionRows(recordedSwarm,
             rootAttentionRowPayloads(recordedSwarm, recordedContribution), principal.actor);
         }
+        // Issue #594: a contract's own commit is published when the update that records it
+        // lands — the commit the contribution names, pushed like any seat commit.
+        const contractCommit = recordedContribution?.body?.commit ?? null;
+        if (this.preserver !== null && this.preserver.available && contractCommit !== null
+          && typeof contractCommit.sha === 'string') {
+          this.preserver.preserveCommit({
+            work: 'contribution', swarmId: args.swarmId,
+            participantId: recordedContribution.participantId, sha: contractCommit.sha,
+          });
+        }
       } else if (args.event === 'swarm.participant_left') {
         // The departure is also a review loss: every contribution still unreviewed that no
         // remaining active seat can review is re-addressed to the root from the fold — the
@@ -9465,6 +9563,16 @@ export class SwarmRuntime {
         ...(capture.observedHead ? { observedHead: capture.observedHead } : {}),
         ...(base?.mergeBase ? { mergeBase: base.mergeBase } : {}),
       }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`));
+      // Issue #594: the captured revision is published the moment it is recorded — the commit
+      // exists, the contribution names it, and the preserve push rides that record.
+      if (this.preserver !== null && this.preserver.available && typeof capture.sha === 'string') {
+        this.preserver.preserveCommit({
+          work: 'contribution', swarmId: args.swarmId, participantId: participant.participantId,
+          workspaceId: typeof capture.workspace?.physicalOwnerId === 'string'
+            ? capture.workspace.physicalOwnerId : null,
+          sha: capture.sha,
+        });
+      }
       this._recordOperationCompleted(command, args, principal, context);
       return this._mutationResult(command, args, writes, principal, context, {
         ...clone(capture), participantId: participant.participantId,
