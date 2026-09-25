@@ -5412,6 +5412,12 @@ export class SwarmRuntime {
     const pool = this._existingSupervisedPool();
     pool?.fence();
     pool?.killAll();
+    // Issue #561: the measurement loop's poll dies with the runtime — a closed runtime
+    // measures nothing, and no timer outlives the pool it measured for.
+    if (this._workerMeasureTimer !== null) {
+      clearInterval(this._workerMeasureTimer);
+      this._workerMeasureTimer = null;
+    }
   }
 
   async _watch(args, principal, context) {
@@ -9273,6 +9279,10 @@ export class SwarmRuntime {
             throw error;
           }
           workerLease = admitted.token;
+          // Issue #561: a RECRUITED seat's lease rides the measurement loop too — the guide
+          // path's wiring below is not the only admission a fleet's weight arrives by.
+          this._workerLeaseTokens.set(`participant:${args.swarmId}:${args.participantId}`, workerLease);
+          this._ensureWorkerMeasureLoop();
           if (queuedRow) {
             try {
               this.store.recordDriver('swarm.admission_admitted', {
