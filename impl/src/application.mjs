@@ -161,6 +161,9 @@ import {
   workflowNodeBudget,
   workflowRevisionBudget,
 } from './application-observation.mjs';
+// Issue #286 G-36: the physical-workspace-id shape has ONE definition; the workspace admission
+// below asks the custody predicate instead of re-spelling it.
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 export {
   APPLICATION_RUN_TERMINAL_PHASES,
   MAX_SCRATCHPAD_VIEW_BYTES,
@@ -2450,7 +2453,7 @@ export class BatonApplication {
       ['workspace', workspace && typeof workspace === 'object' && !Array.isArray(workspace)
         && Object.keys(workspace).sort().join(',') === fields.sort().join(','),
       'must carry exactly holderCount, sessionContext and workspaceId'],
-      ['workspaceId', /^ws-[a-f0-9]{32}$/u.test(workspace?.workspaceId ?? ''),
+      ['workspaceId', isPhysicalWorkspaceId(workspace?.workspaceId),
         'must be a physical workspace id (ws- followed by 32 hex digits)'],
       ['sessionContext', Boolean(sessionContext) && typeof sessionContext === 'object'
         && !Array.isArray(sessionContext) && sessionContext.ownerTaskId === workspace?.workspaceId,

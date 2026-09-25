@@ -508,3 +508,27 @@ brief's shared laws (resolve-not-relitigate; every touched citation re-verified 
 clocks; version bump + fold record appended). No authority-class ambiguity required a
 DECISION_REQUEST — the fix-1-vs-fix-3 and third-pin choices are judgment calls and are recorded
 above.
+
+## Fold record — #566 composition restoration (2026-09-23)
+
+**Driver:** issue #566 — the d1288fd9 rewrite of the ordinary MCP application table regressed 27
+test rows whose contracts belong to closed issues. Per-commit measurement (root, 2026-09-23) showed
+the rows green at 06971d79 and red from d1288fd9 onward, so they are a regression, not census
+state. The restoration keeps d1288fd9's additions (the #99/#179 harvest pair, the two #156 fleet
+tools, the follow-cursor option, the registry rows) and reverts the composition to the state the
+closed-set derivations pin.
+
+| Mechanism from the d1288fd9 lane | Disposition under #566 |
+|---|---|
+| `LIFECYCLE_ORDINARY_SIBLINGS` spread feeding `ORDINARY_APPLICATION_TOOL_DEFINITIONS`, `ORDINARY_APPLICATION_ENTRIES` and `APPLICATION_TOOL` | **Removed.** The 14 minted `baton_run_*` rows are not registry-mandated: the #233 CLOSED SET derivation admits exactly the registry's `mcp: true` commands under their canonical + fleet spellings, and docs/39 reserves `baton_*` for the swarm family. The lifecycle commands stay reachable through the dispatch map's fleet and canonical spellings; D3 coverage is read from `mcpApplicationDispatch()`, not the ordinary table. |
+| `uncoveredCommands()` / pre-spread snapshot | **Kept** as a registry-lane export and pinned at 14 — the snapshot remains the honest measure of what the ordinary table alone does not serve. |
+| CANONICAL_ORDINARY_SIBLINGS dot-twin spread + `CANONICAL_DOT_TOOL_DEFINITIONS` in `TOOL_DEFINITIONS` | **Restored** — the #233 twin closure is the composition's advertisement law. |
+| The 5 `mcp.baton` surfaceAlias rows for the non-canonical ops | **Removed** — they existed only to resolve the mint. The fleet transport rows are the registration. |
+| The 9 cut ordinary definitions (attention watch, scratchpad read/elevate/append, knowledge seed, the four settlement ops) | **Restored** with their dispatch, guard and capability machinery, which d1288fd9 never removed. |
+
+Consequences pinned by the re-derived rows: the application profile reads 57 tools (the #317-pin
+55 plus the harvest pair), the combined profile 150 (the restored ordinary table plus the fleet,
+advanced, reflex and canonical-twin families), and `baton_waves_list` keeps position 15. The
+settlement family's `host_local` classifications in `native-surface-capabilities.json` are retired
+with the restoration (MP7/MP9 demand the four ops advertised). The suit count literals follow the
+served table (the derivation form the #156 lane landed).

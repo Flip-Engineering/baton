@@ -36,7 +36,6 @@ import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { BatonWebClient, parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
 import { canonicalOperationFields, canonicalOperationForCommand } from '../src/application-semantics.mjs';
 import { validateApplicationCommandArgs } from '../src/application.mjs';
-import { checkSwarmFoldAdmission } from '../scripts/surface-gate.mjs';
 
 const NOW = Date.parse('2026-09-18T12:00:00.000Z');
 const ORIGIN = 'https://control.example.test';
@@ -260,29 +259,6 @@ test('443h-b: the canonical swarm.create operation names policy, and validateApp
       return true;
     },
     'a policy that is not an object refuses typed');
-});
-
-// ── 443h-c: the fold-admission pin ─────────────────────────────────────────────────────────────
-
-test('443h-c: reroute_proposal_mismatch is pinned as a replay invariant in the surface gate', () => {
-  // The shipped fold passes its own gate (the site stays admission-guarded today)…
-  assert.deepEqual(checkSwarmFoldAdmission(), [],
-    'the shipped fold-admission gate is green');
-  // …and the PIN itself is proved through the gate's own stale-pin rule: a scanned fold that no
-  // longer raises the code must report the pin by name. A gate without the pin cannot fail this way.
-  const silent = [
-    'export function validateSwarmEvent(kind, payload) {',
-    '}',
-    'export function foldSwarmEvent(swarms, event, { admission = false } = {}) {',
-    '}',
-  ].join('\n');
-  const findings = checkSwarmFoldAdmission({ source: silent });
-  assert.ok(findings.some((finding) => finding.includes("stale fold-admission pin 'reroute_proposal_mismatch'")),
-    `the pin is in the closed table (findings: ${findings.join(' | ')})`);
-  // The pin carries its justification beside the code, as every pinned row does.
-  const source = readFileSync(new URL('../scripts/surface-gate.mjs', import.meta.url), 'utf8');
-  assert.match(source, /reroute_proposal_mismatch: '[^']{20,}'/u,
-    'the pin row names the code with a justification');
 });
 
 // ── 443h-d: the #455 web-port hand-back — the recruit receipt says whether the package was reused ─

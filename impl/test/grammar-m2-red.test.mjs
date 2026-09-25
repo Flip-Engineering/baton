@@ -1,9 +1,9 @@
 // docs/36 §9 M2 — the vocabulary flip. The registry owns one vocabulary per axis (§7); its
 // generated legacy mapping and the two lifecycle predicates are the single source of truth, every
-// terminal-union consumer resolves through them, `closed` is a dead string, and the eleven
-// retiresIn:M2 ledger rows are resolved. These contracts (M2-1..M2-7 + H5) are the M2 acceptance
-// gate; behavior beyond the vocabulary is unchanged (§2), so the core state machine still records
-// legacy literals and the mapping is what surfaces resolve outward.
+// terminal-union consumer resolves through them, and `closed` is a dead string. These contracts
+// (M2-1..M2-6 + H5) are the M2 acceptance gate; behavior beyond the vocabulary is unchanged (§2),
+// so the core state machine still records legacy literals and the mapping is what surfaces resolve
+// outward.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -28,31 +28,19 @@ import {
 import { parseBatonCli } from '../src/index.mjs';
 import { StoryCompiler, canonicalMemberStatus } from '../src/story.mjs';
 import { collectSurfaceInventory } from '../scripts/surface-audit.mjs';
-import { checkEnumStrings, checkLedgerMonotone, validateLedger } from '../scripts/surface-conformance.mjs';
-
-const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
-const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
+import { checkEnumStrings } from '../scripts/surface-conformance.mjs';
 
 const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'latin1');
 
-// The eleven §7.1 legacy run-phase rows M2 resolves (removal-only). `closed` maps to null (dead).
-const M2_ENUM_ROWS = [
-  ['approved', 'queued'], ['awaiting_plan_approval', 'awaiting_approval'],
-  ['candidate_selected', 'result_selected'], ['closed', null], ['input_required', 'working'],
-  ['interruption_uncertain', 'uncertain'], ['planning_failed', 'failed'], ['running', 'working'],
-  ['selection_required', 'awaiting_selection'], ['start_failed', 'failed'],
-  ['work_completed', 'result_ready'],
-].map(([name, canonical]) => ({
-  surface: 'enum.runPhase', name, canonical, dimension: 'enum', retiresIn: 'M2',
-}));
-
 test('M2-1: no surface serializes a legacy phase string — C3 is total over the extraction', () => {
   const inventory = collectSurfaceInventory();
-  const result = checkEnumStrings(inventory.phaseLiterals, ledger);
+  // Issue #582: the committed divergence ledger is banned. The empty fixture ledger is the
+  // strictest judge — every extracted literal must resolve through the registry map (or be dropped
+  // as the dead `closed`), so none needs a ledger row.
+  const result = checkEnumStrings(inventory.phaseLiterals, { schemaVersion: 1, entries: [] });
   // Every extracted literal resolves to a canonical phase (or is dropped as the dead `closed`);
-  // none remains novel, and none survives as a ledgered legacy string — the map is total now.
+  // the map is total now — nothing is left as a novel divergence.
   assert.deepEqual(result.novel, []);
-  assert.deepEqual(result.ledgered, []);
   assert.ok(result.conformant.length > 0);
   for (const observation of result.conformant) {
     assert.ok(CANONICAL_RUN_PHASES.includes(observation.canonical),
@@ -149,17 +137,6 @@ test('M2-6: candidate_selection serializes as select_candidate wherever the kind
   // slice 15: the emitter moved to application-observation.mjs — scan both texts.
   assert.match(src('application.mjs') + src('application-observation.mjs'), /kind: 'candidate_selection'/u);
   assert.match(src('application.mjs') + src('application-observation.mjs'), /return \{ kind: 'select_candidate' \}/u);
-});
-
-test('M2-7: the eleven M2 ledger rows are resolved and monotonicity holds', () => {
-  // No enum.runPhase divergence survives — all eleven are resolved (removed).
-  assert.deepEqual(ledger.entries.filter((entry) => entry.surface === 'enum.runPhase'), []);
-  assert.deepEqual(validateLedger(ledger), []);
-  // Removing exactly those eleven rows from the pre-M2 ledger is a legal (removal-only) edit.
-  const previous = { schemaVersion: 1, entries: [...ledger.entries, ...M2_ENUM_ROWS] };
-  assert.deepEqual(checkLedgerMonotone(previous, ledger), []);
-  // Re-adding any of them (an append) is refused.
-  assert.throws(() => checkLedgerMonotone(ledger, previous), /ledger append forbidden/u);
 });
 
 test('H5: the do-path requires reason while the named-verb/CLI path keeps it optional (§4.2)', () => {

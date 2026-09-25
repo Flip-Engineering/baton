@@ -20,16 +20,10 @@ import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
 import { McpFleetServer, mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
 import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 
-const artifact = JSON.parse(
-  readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'),
-);
-
-test('commandKeys: the live table equals the committed byte-stable witness and the artifact count', () => {
-  assert.equal(Object.isFrozen(BYTE_STABLE_COMMAND_KEYS), true, 'the committed witness is frozen');
+test('commandKeys: the live table is the one byte-stable derivation (issue #582: no committed census)', () => {
+  assert.equal(Object.isFrozen(BYTE_STABLE_COMMAND_KEYS), true, 'the derivation is frozen');
   assert.deepEqual(commandKeys(), [...BYTE_STABLE_COMMAND_KEYS],
-    'the table key list is byte-stable against the committed witness (docs/36 §9 M3)');
-  assert.equal(commandKeys().length, artifact.counts.applicationCommandDefinitions,
-    'the key count matches the committed inventory artifact');
+    'the table key list is the one derivation (docs/36 §9 M3)');
   // The swarm block leads the table exactly as the contract spreads it.
   assert.deepEqual(commandKeys().slice(0, swarmVerbs().length), swarmVerbs(),
     'the swarm verbs lead the command table');
@@ -43,10 +37,7 @@ test('swarmVerbs: the thirteen docs/39 verbs (#296 added swarm.integrate, #311 t
   assert.equal(swarmVerbs().length, 13);
 });
 
-test('webCardCommands: the sorted web-admitted card plus the wave direct ports, byte-stable against the artifact', () => {
-  assert.deepEqual(webCardCommands(), artifact.profiles['web.bus'],
-    'the derived web card equals the committed web.bus profile');
-  assert.equal(webCardCommands().length, artifact.counts.webBusCommands);
+test('webCardCommands: the sorted web-admitted card plus the wave direct ports, deterministic', () => {
   // Independent re-derivation: web-admitted table names ∪ the six wave direct ports, sorted.
   const ports = ['waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop'];
   const derived = [
@@ -60,12 +51,9 @@ test('webCardCommands: the sorted web-admitted card plus the wave direct ports, 
   }
 });
 
-test('ordinaryMcpToolNames: the shipped ordinary surface is the core table, byte-stable against the artifact', () => {
+test('ordinaryMcpToolNames: the shipped ordinary surface is the core table, deterministic', () => {
   const names = ordinaryMcpToolNames();
   assert.deepEqual(names, ordinaryMcpToolNames(), 'the served order is deterministic');
-  assert.deepEqual(names, artifact.profiles['mcp.application'],
-    'the served set, in served order, is byte-stable against the committed mcp.application profile');
-  assert.equal(names.length, artifact.counts.mcpApplicationTools);
   assert.deepEqual([...names].sort(), [...CORE_TOOL_NAMES].sort(),
     'the shipped ordinary surface IS the core table the production wrapper advertises (docs/49 §2)');
   assert.ok(names.includes('baton_swarm'), 'the swarm family rides the ordinary surface as its verb tool');
@@ -82,11 +70,8 @@ test('northboundApplicationToolNames: the raw northbound table is the flat list 
   assert.ok(!names.some((name) => /shutdown|fleet_/u.test(name)), 'no host-lifecycle or fleet_ tool');
 });
 
-test('combinedMcpToolNames: byte-stable against the artifact and a superset of the raw ordinary table', () => {
+test('combinedMcpToolNames: deterministic and a superset of the raw ordinary table', () => {
   const names = combinedMcpToolNames();
-  assert.deepEqual(names, artifact.profiles['mcp.combined'],
-    'the combined set is byte-stable against the committed mcp.combined profile');
-  assert.equal(names.length, artifact.counts.mcpCombinedTools);
   assert.equal(new Set(names).size, names.length, 'no duplicate tool names');
   // The combined profile is the RAW table's superset (its flat tools plus the kernel families).
   // The shipped ordinary surface is the core verb-tools, a projection the production wrapper

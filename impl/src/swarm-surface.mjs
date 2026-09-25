@@ -112,7 +112,12 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     }));
   const usage = [
     `baton swarm ${verb}`,
-    ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
+    ...positional.map((field) => {
+      // Issue #567: a closed-set positional (swarm.update's event) renders its admitted values
+      // from the same table the validator judges against, beside the flags below.
+      const admitted = swarmClosedSetAdmitted(field);
+      return `<${admitted === null ? kebabCase(field).toUpperCase() : admitted.join('|')}>`;
+    }),
     ...flags.map((entry) => {
       if (entry.switch) return `[${entry.flag}]`;
       // Issue #567: a flag whose field has a closed set renders the admitted values from the
