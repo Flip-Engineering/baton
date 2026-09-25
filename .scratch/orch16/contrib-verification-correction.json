@@ -1,0 +1,49 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Verification correction under the root's ruling: the seat's changed paths select no test file, so the endorsed run is GREEN and no full suite is needed",
+      "base": {
+        "observedHead": "c238cece5008b00e8f9f0a2c582fd7670fc6ab84",
+        "rebasedOnto": "c238cece5008b00e8f9f0a2c582fd7670fc6ab84"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "work-verification-correction",
+          "status": "delivered",
+          "change": "The root's ruling of 2026-09-25T06:58Z supersedes the verification posture in contribution-70220f87e5e853dfff84e562dc2a766c: no seat is to run the canonical suite, and a change is verified with node impl/scripts/run-suite.mjs --changed <changed paths>, reading its failures, then landed with swarm integrate, which re-runs the failing files on the target and blocks only on failures the target does not share. This seat holds no full-suite run in progress and started none after the ruling.",
+          "files": [],
+          "test": "node impl/scripts/run-suite.mjs --changed docs/bend2/laws-proposed.md docs/bend2/laws-trace.md docs/bend2/examples/laws-no-ledger.evidence.md",
+          "evidence": "baton test runner: --changed selected 0 test file(s) from 3 changed path(s) — 3 changed path(s) affect no test file; baton suite verdict (SUBSET 0 of 737 files): GREEN — 0 passed, 0 failed, 0 hung; exit 0, 13 s. This agrees with both landing receipts, whose gates read 'skipped — no_affected_tests'."
+        },
+        {
+          "id": "work-closeout-verification-restated",
+          "status": "delivered",
+          "change": "The close-out's deployment-verification item is restated under the ruling: the full-suite run it reports was the deployment's command, not this swarm's acceptance, and it is red on the target by design. Nothing in it is a claim against either landing. The verifications that stand for this seat's work are the changed-path run above, node bend2/scripts/run-checks.mjs green at the landed tip, and laws-check.py 24 rows 0 failed at 26238c65, f3c54b20 and c238cece.",
+          "files": [],
+          "test": "node bend2/scripts/run-checks.mjs",
+          "evidence": "bend2 checks: green - 7 modules, 14 runs, 0 failures at c238cece; laws-check.py exit 0 with 24 rows, 0 failed at each of the three revisions"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "node impl/scripts/run-suite.mjs --changed <the three docs paths> — SUBSET 0 of 737, GREEN, exit 0",
+          "node bend2/scripts/run-checks.mjs — green, 7 modules, 14 runs, 0 failures",
+          "docs/bend2/laws-check.py — 24 rows, 0 failed at 26238c65, f3c54b20 and c238cece"
+        ],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "No full-suite run is in progress from this seat and none will be started; the second run this seat had launched before the ruling was killed, and the first had already finished.",
+        "The two landings on bend2-rewrite stand unchanged: 8cdc7c4e (contribution-f09c0fc8) and c238cece (contribution-5d23c1cd), both docs-only with no_affected_tests.",
+        "A docs-only change selects no test file through the import graph, so the endorsed run for docs work is instant; a seat landing docs need not wait on the suite at all."
+      ],
+      "needsFromOthers": [
+        "Root: recorded for the fix the root is preparing — the deployment's verification command should compare against the target the way swarm integrate does, so a seat is never asked to make the canonical suite exit 0."
+      ]
+    }
+  }
+}

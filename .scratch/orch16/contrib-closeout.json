@@ -1,0 +1,81 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Succession close-out: the r11/r12 status update and the #580 freshness correction landed on bend2-rewrite, and the production tree is green at the tip",
+      "base": {
+        "observedHead": "06574a22051df5785027b491339fd1c2e061073f",
+        "rebasedOnto": "c238cece5008b00e8f9f0a2c582fd7670fc6ab84"
+      },
+      "commit": {
+        "sha": "f3c54b20f32406b9a9e8a77a6d3521f4c42960a2",
+        "branch": "baton/bend2-orchestrator16-580-freshness"
+      },
+      "items": [
+        {
+          "id": "work-laws-r11-r12-status-integration",
+          "status": "delivered",
+          "change": "bend2-lawstext18's contribution-f09c0fc8ce13a8c0b9b33b87dcb8000c (26238c65, branch baton/bend2-lawstext18-r11-r12-status), left unreviewed when its seat died at the resident restart, was reviewed and landed on bend2-rewrite as 8cdc7c4e. It moves the revision 11 and 12 status words in docs/bend2/laws-proposed.md and docs/bend2/laws-trace.md from encoding-pending to encoded at the pin, naming the six example modules laws.bend imports, and keeps every application obligation open.",
+          "files": [
+            "docs/bend2/laws-proposed.md",
+            "docs/bend2/laws-trace.md"
+          ],
+          "test": "BEND_NO_TELEMETRY=1 python3 docs/bend2/laws-check.py <pinned bend 2.0.25> reports 24 rows, 0 failed",
+          "evidence": "review accept at seq 46281; swarm.integrate targetHeadBefore 06574a22 targetHeadAfter 8cdc7c4e, changed paths exactly the two docs, no conflicts, gates skipped no_affected_tests; the landed blob is identical to the authored commit for both files"
+        },
+        {
+          "id": "work-laws-580-freshness",
+          "status": "delivered",
+          "change": "Four sentences in the three law documents still said #580's deletion of the expected-red manifest was pending. #580 landed on master as a7ae93e9 (follow-ups f849019d and 67b16568), so each sentence now names that landing: the manifest is deleted and defaultIntegrationGates in impl/src/swarm-runtime.mjs runs the target comparison at master a7ae93e9, while the two reviewed bases and this branch's impl still carry the manifest.",
+          "files": [
+            "docs/bend2/laws-proposed.md",
+            "docs/bend2/laws-trace.md",
+            "docs/bend2/examples/laws-no-ledger.evidence.md"
+          ],
+          "test": "BEND_NO_TELEMETRY=1 python3 docs/bend2/laws-check.py <pinned bend 2.0.25> reports 24 rows, 0 failed",
+          "evidence": "contribution-5d23c1cd52888ee21ecb58f5072a8f32, commit f3c54b20 on branch baton/bend2-orchestrator16-580-freshness; landed on bend2-rewrite as c238cece with targetHeadBefore 8cdc7c4e, no conflicts, gates skipped no_affected_tests; checker exit 0 at the landed tip"
+        },
+        {
+          "id": "work-bend2-tree-acceptance",
+          "status": "delivered",
+          "change": "The production tree's own acceptance command was run for this close-out: node bend2/scripts/run-checks.mjs discovers every bend2/src/**/*.bend and runs each check-only, interpreted, and natively built, comparing both stdouts to the committed expected file.",
+          "files": [],
+          "test": "node bend2/scripts/run-checks.mjs",
+          "evidence": "bend2 checks: green - 7 modules, 14 runs, 0 failures, exit 0, run at 8cdc7c4e with bend 2.0.25; the docs-only correction that followed leaves every module byte-identical"
+        },
+        {
+          "id": "work-deployment-verification",
+          "status": "delivered",
+          "change": "The seat's deployment verification command, npm test --prefix impl, was run to completion in the seat's worktree at 67b16568. It evaluated all 737 test files and reported 372 failing rows, then exited 1 with 'baton test runner could not reap its test process group' and wrote no verdict. The failures are the repository's declared red-first rows, which the expected-red manifest used to excuse before #580 deleted it: impl/scripts/suite-verdict.mjs computes green as failed.length === 0 && hung.length === 0, so the full-suite command is red on master by design, and the gate that judges a landing is defaultIntegrationGates in impl/src/swarm-runtime.mjs comparing against the target. The seat made no commit and no tracked change in that worktree, and its impl tree is byte-identical to origin/master, so no failure identity in that run is attributable to this seat.",
+          "files": [],
+          "test": "npm test --prefix impl",
+          "evidence": "git rev-parse HEAD is 67b16568 and equals origin/master; git status shows no tracked change and only this seat's untracked .scratch/orch16 scratch directory. The run evaluated 737 files: 6296 ok rows and 372 not ok rows across 82 files, then exit 1 on the process-group reap with no baton suite verdict line."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "node bend2/scripts/run-checks.mjs — green, 7 modules, 14 runs, 0 failures",
+          "docs/bend2/laws-check.py at 26238c65, f3c54b20 and the landed tip c238cece — 24 rows, 0 failed each"
+        ],
+        "fullSuite": true,
+        "environmentRed": [
+          "npm test --prefix impl on master 67b16568: 372 failing rows in 82 of 737 files, then exit 1 with 'baton test runner could not reap its test process group' and no verdict. The command is red on the target by design after #580 deleted the expected-red manifest, and this seat's impl tree is byte-identical to the target."
+        ]
+      },
+      "carriedForward": [
+        "The swarm target is bend2-rewrite, never master; both landings are docs-only and no impl file changed on either line.",
+        "Every seat in this swarm except this one has a dead runtime after the resident restart, and none had work in flight. The three seats whose holder was the dead predecessor were released (bend2-orchestrator15, bend2-lawstext18, bend2-lawsencode18), and each lane's work was confirmed landed by content before release: bend2-decl15's accepted patch 2804cad4 is on the branch as 9149d4d7, and bend2-lawsencode17 recorded no contribution.",
+        "All 36 recorded contributions are reviewed: 35 accepted, 1 rejected (contribution-cd372e13, superseded by contribution-72acaab7). No contribution is left unreviewed.",
+        "The orchestrator decision bend2-lawsencode18 asked for is recorded in shared context at key decision:laws-r11-r12-adopted-obligations-in-laws-claim: the adopted obligations stay in laws.bend's claim while the entries are marked proposed, because the imports discharge them at the gate without stating a law twice.",
+        "The next runnable item is posted on board bend2-next: applying the encoded revision 11 and 12 laws to the runtime gate is impl-side work on master and needs a plan and a lane contract before a seat is recruited.",
+        "The host was heavily loaded during this turn (load average 40-96) because other residents' landing gates were running full suites in their integration checkouts; the suite runner resolved one lane and one run died on the process-group reap. A seat that has to run the full suite on this host should expect it to be slow and load-sensitive.",
+        "No hand-kept ledger, census pin or expected-failure list was added."
+      ],
+      "needsFromOthers": [
+        "Root: the swarm's next phase, applying the six encoded obligations to the runtime gate, is impl-side and belongs on master, so it needs a plan and a lane contract; the board item on bend2-next names it.",
+        "Root: the seat's deployment verification command names npm test --prefix impl, which cannot exit 0 on this repository by design; either the deployment's command should name the swarm's own acceptance, or the root should read the red rows as the target's own."
+      ]
+    }
+  }
+}

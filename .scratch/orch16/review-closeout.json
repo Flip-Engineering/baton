@@ -1,0 +1,8 @@
+{
+  "event": "swarm.contribution_reviewed",
+  "payload": {
+    "contributionId": "contribution-70220f87e5e853dfff84e562dc2a766c",
+    "decision": "accept",
+    "reason": "Close-out record of this seat's succession, checked against the swarm before accepting. The two landings it reports are in the ledger: f09c0fc8 accepted at seq 46281 and landed as 8cdc7c4e, and 5d23c1cd accepted at seq 46687 and landed as c238cece, which is the bend2-rewrite tip read back after the fact. Its commit f3c54b20 is already on the target, so integrating the same content again would be a no-op and is not attempted. The tree acceptance was re-run for this check at the landed tip c238cece: node bend2/scripts/run-checks.mjs prints 'bend2 checks: green - 7 modules, 14 runs, 0 failures' and exits 0. The deployment verification figures are the seat's own measured run on its master-based worktree, where it made no commit and no tracked change, so they are reported as the target's result."
+  }
+}
