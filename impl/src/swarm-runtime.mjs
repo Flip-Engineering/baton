@@ -1,4 +1,4 @@
-import { rootAttentionObligations, rootContributionAttention, turnReportAsk } from './attention-obligations.mjs';
+import { rootAttentionObligations, rootContributionAttention, turnReportAsk, effectiveAttentionRecipient } from './attention-obligations.mjs';
 import { contributionNeeds } from './contribution-needs.mjs';
 import { AttentionDispatcher } from './attention-dispatcher.mjs';
 import { spawnSync } from 'node:child_process';
@@ -8574,8 +8574,9 @@ export class SwarmRuntime {
         const contribution = swarm.contributions?.[payload.contributionId];
         const need = contribution && contributionNeeds(contribution).find((row) => row.needId === payload.needId);
         if (!need) refuse('The contribution has no such addressed need', 'swarm_payload_invalid');
-        if ((need.to === 'root' && caller !== null)
-          || (need.to === 'participant' && caller?.participantId !== need.participantId)) {
+        const recipient = need.to === 'root' ? { kind: 'root' } : effectiveAttentionRecipient(swarm, need.participantId);
+        if ((recipient.kind === 'root' && caller !== null)
+          || (recipient.kind === 'seat' && caller?.participantId !== recipient.participantId)) {
           refuse('Only the addressed recipient can answer this need', 'swarm_permission_required');
         }
         const actor = this._actorOf(caller, principal);

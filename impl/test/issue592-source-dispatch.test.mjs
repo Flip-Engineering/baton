@@ -8,6 +8,7 @@ import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { AttentionDispatcher } from '../src/attention-dispatcher.mjs';
 import { rootAttentionObligations, turnAttentionObligations } from '../src/attention-obligations.mjs';
 import { validateContributionContract } from '../src/contribution-contract.mjs';
+import { contributionNeeds } from '../src/contribution-needs.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'native-root' };
 const report = (needsFromOthers) => ({
@@ -92,6 +93,18 @@ test('new string needs refuse at runtime while historical strings remain readabl
   f.row('swarm.contribution_recorded', { contributionId: 'historical', participantId: 'author',
     body: { needsFromOthers: ['Root: retained old question', 'A peer needs this'] } });
   assert.equal(f.read().find((row) => row.owed === 'needs_root').ask, 'Root: retained old question');
+});
+
+test('answer authority follows the same recorded recipient succession as delivery', async (t) => {
+  const f = fixture(t);
+  f.row('swarm.participant_joined', { participantId: 'reviewer' });
+  await f.contribute('c', [{ to: 'participant', participantId: 'reviewer', ask: 'Choose the route.' }]);
+  const need = contributionNeeds(f.store.swarm('s').contributions.c)[0];
+  const answer = { contributionId: 'c', needId: need.needId, answer: 'Use the existing route.' };
+  await assert.rejects(f.update('swarm.need_answered', answer), { code: 'swarm_permission_required' });
+  f.row('swarm.participant_left', { participantId: 'reviewer', reason: 'stopped' });
+  await f.update('swarm.need_answered', answer);
+  assert.equal(f.store.swarm('s').contributions.c.answers[need.needId].answeredBy, 'owner');
 });
 
 test('a turn report resolves on an authorized follow-up or completed/stopped disposition', (t) => {

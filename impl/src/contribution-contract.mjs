@@ -480,6 +480,7 @@ export function contributionContractBriefSection({ readOnly = false } = {}) {
     `verification.gates: ${fields.verification.fields.gates.expectation}`,
     `base.rebasedOnto: ${fields.base.fields.rebasedOnto.expectation}`,
     `commit: {${Object.keys(fields.commit.fields).join(', ')}} or null`,
+    `needsFromOthers: ${fields.needsFromOthers.expectation}`,
   ];
   return ['## Contribution contract',
     'Publish your report with swarm.update event swarm.contribution_recorded as one JSON object shaped exactly like this worked example, which the validator admits as printed'
