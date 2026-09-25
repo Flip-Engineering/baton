@@ -9339,10 +9339,12 @@ export class SwarmRuntime {
       refuse('Capturing another participant requires review authority', 'swarm_permission_required');
     }
     // Issue #525 D3: a guide to a decision-pending seat is the answer — it bypasses
-    // the worker lookup and performs the deferred start inside the guide handler.
-    const decisionPending = participant.resumeDecision?.requested != null
-      && participant.resumeDecision?.answered == null
-      && participant.status === 'active';
+    // the worker lookup and performs the deferred start inside the guide handler. The pending
+    // state is the ONE derivation `swarm-state.mjs` owns and its own contract names: the
+    // attention row, this answer branch and the deferred start must resolve the same seats, so
+    // this reads `resumeDecisionPending` rather than spelling the predicate a second time (G2:
+    // the continuation reads the specified source, and a second definition could drift).
+    const decisionPending = resumeDecisionPending(participant);
     // Issue #353: a stop of a seat with no live runtime still settles — the seat may be
     // unbound (joined, never bound) — so the worker lookup below must not refuse the stop;
     // the stop path resolves its worker null-tolerantly instead (_workerFor).
