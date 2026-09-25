@@ -124,6 +124,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // or a mix), so the recruit refuses before the host-capacity queue rather than waiting 120s to
   // fail on a route that serves no recruits.
   route_exhausted: row(409, ['runtime'], 'every route the selection names is ineligible (quota exhausted or blocked), so the recruit cannot be admitted'),
+  // Issues #572/#574: the selection names a harness the operator's routing rule excludes
+  // (advanced.routing.excludeHarnesses, or BATON_ROUTING_EXCLUDE_HARNESSES on a config-less
+  // serve) — the recruit refuses by name instead of being admitted onto a barred route.
+  route_excluded: row(409, ['runtime'], 'the named route\'s harness is excluded by the operator\'s routing rule, so the recruit cannot be admitted onto it'),
+  // Issue #549: the selection names a model the harness's allow rule does not admit — the model
+  // rule governs recruits and reroutes alike, so the refusal is its own row, never a quota story.
+  route_model_not_allowed: row(409, ['runtime'], 'the named route\'s model is not admitted by the harness\'s allowed-model rule, so the recruit cannot be admitted onto it'),
   // Issue #490: the recruit's own Run conflict. The deployment mints a Run's Goal under the fixed
   // key `application:<runId>:goal:v1` (application.mjs `start`), so a recruit naming a Run whose
   // Goal is already bound to another request — the withdrawn attempt's Run the seat id still

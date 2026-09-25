@@ -203,10 +203,53 @@ export function deepseekCredentialProjection(repoRoot) {
 }
 
 const CODEX_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']);
+// Issue #549: the catalog derives from the harness — the static rows this deployment knows, plus
+// every model the harness's own cache (~/.codex/models_cache.json) lists. New-model entries carry
+// no borrowed measurement: aaSlug and openRouterId stay null until a catalog row exists for them,
+// exactly the muse rule.
 const CODEX_MODELS = Object.freeze([
   { model: 'gpt-5.6-sol', aaSlug: 'gpt-5-6-sol', openRouterId: 'openai/gpt-5.6-sol' },
   { model: 'gpt-6-astra', aaSlug: 'gpt-6-astra', openRouterId: 'openai/gpt-6-astra' },
+  { model: 'gpt-6-sol', aaSlug: null, openRouterId: null },
+  { model: 'gpt-6-luna', aaSlug: null, openRouterId: null },
 ]);
+
+/** Issue #549: the model ids the codex harness itself reports, from the text of its
+ * models_cache.json. The cache has shipped more than one shape, so the reader is defensive across
+ * them — a top-level array, `{models: [...]}`, or an object keyed by model id — and returns the
+ * ids it can see, `[]` when it cannot parse one. Never throws. */
+export function codexModelsFromCache(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return []; }
+  const raw = Array.isArray(parsed) ? parsed
+    : Array.isArray(parsed?.models) ? parsed.models
+    : parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
+  const ids = raw.map((entry) => {
+    if (typeof entry === 'string') return entry;
+    if (entry && typeof entry === 'object') {
+      return entry.model ?? entry.slug ?? entry.id ?? null;
+    }
+    return null;
+  }).filter((id) => typeof id === 'string' && id.length > 0);
+  return Object.freeze([...new Set(ids)]);
+}
+
+/** Issue #549: the routes a cache-derived codex model contributes — every effort the harness
+ * serves, with no borrowed measurement. Models the static catalog already names are skipped. */
+const codexCacheRoutes = (models) => models
+  .filter((model) => !CODEX_MODELS.some((known) => known.model === model))
+  .flatMap((model) => CODEX_EFFORTS.map((effort) => Object.freeze({
+    harness: 'codex', model, effort, aaSlug: null, billing: 'subscription', openRouterId: null,
+  })));
+
+/** Issue #549: the cache text the derivation reads — the injected fixture text, else the
+ * harness's own cache file, else null (a host that has not run the harness merges nothing). */
+const readCodexModelsCacheText = (injected) => {
+  if (typeof injected === 'string') return injected;
+  try { return readFileSync(join(homedir(), '.codex', 'models_cache.json'), 'utf8'); }
+  catch { return null; }
+};
+
 const codexRoutes = () => CODEX_MODELS.flatMap(({ model, aaSlug, openRouterId }) => (
   CODEX_EFFORTS.map((effort) => Object.freeze({
     harness: 'codex', model, effort, aaSlug, billing: 'subscription', openRouterId,
@@ -6345,10 +6388,42 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     || residentOptions.pollMs > residentOptions.commandTimeoutMs) {
     throw deploymentError('advanced resident configuration is invalid');
   }
+  // Issues #572/#574: the operator's declared routing rules — harnesses no seat may be routed
+  // onto, and per-harness model allow patterns a route's model must match. Declarations, never
+  // inferences: the closed sets keep the field lists known, the entries are validated here, and
+  // an absent declaration constrains nothing.
+  const rawRouting = advanced.routing ?? {};
+  closed(rawRouting, ['allowedModels', 'excludeHarnesses'], 'advanced routing');
+  const routingExcludedHarnesses = Object.freeze((rawRouting.excludeHarnesses ?? []).map((harness) => {
+    if (typeof harness !== 'string' || harness.trim().length === 0) {
+      throw deploymentError('advanced routing.excludeHarnesses entries must be non-empty harness names');
+    }
+    return harness.toLowerCase();
+  }));
+  const rawAllowedModels = rawRouting.allowedModels ?? {};
+  if (!record(rawAllowedModels)) throw deploymentError('advanced routing.allowedModels must be one object keyed by harness');
+  const routingAllowedModels = Object.freeze(Object.fromEntries(Object.entries(rawAllowedModels).map(([harness, patterns]) => {
+    if (typeof harness !== 'string' || harness.trim().length === 0 || !Array.isArray(patterns)
+      || patterns.some((pattern) => typeof pattern !== 'string' || pattern.trim().length === 0)) {
+      throw deploymentError('advanced routing.allowedModels must map each harness to an array of non-empty model patterns');
+    }
+    return [harness.toLowerCase(), Object.freeze(patterns.map((pattern) => pattern.trim()))];
+  })));
+  // Issue #549: the codex catalog derives from the harness as well — the model ids its own
+  // cache reports merge into the route table (a fixture or an operator may inject the cache text;
+  // the default read is the harness's own ~/.codex/models_cache.json, absent on hosts that have
+  // not run the harness yet, which merges nothing).
+  const rawCodexCache = advanced.codexModelsCache ?? {};
+  closed(rawCodexCache, ['text'], 'advanced codexModelsCache');
+  if (rawCodexCache.text !== undefined && typeof rawCodexCache.text !== 'string') {
+    throw deploymentError('advanced codexModelsCache.text must be the cache file text');
+  }
   const capacity = normalizeCapacity(advanced.capacity);
   const configuredRoutes = advanced.routes === undefined ? locallyConfiguredRoutes(repository.root) : null;
-  const routes = normalizeRoutes(advanced.routes
-    ?? (configuredRoutes.length > 0 ? configuredRoutes : DEFAULT_ROUTES));
+  const routes = normalizeRoutes([
+    ...(advanced.routes ?? (configuredRoutes.length > 0 ? configuredRoutes : DEFAULT_ROUTES)),
+    ...codexCacheRoutes(codexModelsFromCache(readCodexModelsCacheText(rawCodexCache.text))),
+  ]);
   const publicRoutes = routes.map(publicRoute);
   if (new Set(publicRoutes.map((route) => JSON.stringify(route))).size !== publicRoutes.length) {
     throw deploymentError('advanced routes collapse to a duplicate public exact tuple');
@@ -6725,6 +6800,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
     hostCapacity: hostCapacityAuthority,
+    routingExcludedHarnesses,
+    routingAllowedModels,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,
