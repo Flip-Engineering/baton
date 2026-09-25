@@ -1853,21 +1853,21 @@ function validateArguments(name, args, maxWaitMs = null) {
       || !nonempty(args.supersedes.decisionId) || !Number.isSafeInteger(args.supersedes.expectedValidityVersion) || args.supersedes.expectedValidityVersion <= 0)))) return 'invalid_reuse_decision';
   if (name === 'fleet_reuse_recheck' && (!nonempty(args.decisionId) || !Number.isSafeInteger(args.expectedValidityVersion) || args.expectedValidityVersion <= 0
     || !['advisory_refresh', 'ttl_expired'].includes(args.trigger) || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0)) return 'invalid_reuse_recheck';
-  // Part D (board tools): a bounded, hand-rolled shape check ahead of hub dispatch — the hub's own
-  // exact()-style checks (SAFE_BOARD_ID, MAX_STORE_BOARD_TITLE_BYTES, ...) are the durable
-  // authority; this only rejects obviously-malformed calls before an orchestrator-lease lookup.
+  // Part D (board tools): a hand-rolled shape check ahead of hub dispatch — the hub's own
+  // exact()-style checks (SAFE_BOARD_ID, ...) are the durable authority; this only rejects
+  // obviously-malformed calls before an orchestrator-lease lookup.
   if (name === 'baton_board_post') {
     if (!nonempty(args.board) || !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.board)) return 'invalid_board';
-    if (!nonempty(args.title) || Buffer.byteLength(args.title) > FRAME_LIMITS['board.title'].value) return 'invalid_board_title';
-    if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > FRAME_LIMITS['board.detail'].value)) return 'invalid_board_detail';
+    if (!nonempty(args.title)) return 'invalid_board_title';
+    if (Object.hasOwn(args, 'detail') && args.detail !== null && !nonempty(args.detail)) return 'invalid_board_detail';
     if (Object.hasOwn(args, 'owner') && args.owner !== null && !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.owner ?? '')) return 'invalid_board_owner';
     if (Object.hasOwn(args, 'evidence') && (!Array.isArray(args.evidence) || args.evidence.length > 8)) return 'invalid_board_evidence';
     if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
   }
   if (name === 'baton_board_retitle') {
     if (!nonempty(args.itemId)) return 'invalid_board_item_id';
-    if (!nonempty(args.title) || Buffer.byteLength(args.title) > FRAME_LIMITS['board.title'].value) return 'invalid_board_title';
-    if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > FRAME_LIMITS['board.detail'].value)) return 'invalid_board_detail';
+    if (!nonempty(args.title)) return 'invalid_board_title';
+    if (Object.hasOwn(args, 'detail') && args.detail !== null && !nonempty(args.detail)) return 'invalid_board_detail';
     if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
   }
   if (name === 'baton_board_reorder') {

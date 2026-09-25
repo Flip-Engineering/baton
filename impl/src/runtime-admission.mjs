@@ -527,20 +527,6 @@ export function constructor(coordinator, opts) {
       if (policy.authorizeRecheck !== undefined && typeof policy.authorizeRecheck !== 'function') throw new TypeError('reuse decision authorizeRecheck must be a function');
       const reconcile = policy.policyReconcile;
       if (!reconcile || Object.keys(reconcile).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',') || Object.values(reconcile).some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new TypeError('reuse decision policy requires reconciliation ceilings');
-      // Decision 1(d) / OQ4 (blocker 6): the registry's decision.need / decision.rationale values
-      // are the ceiling-of-ceilings — an override ABOVE them refuses at injection, never a silent
-      // min() (the provider-read hard-ceiling precedent). The message names the ceiling AND the
-      // attempted value.
-      if (policy.maxNeedBytes > FRAME_LIMITS['decision.need'].value) {
-        throw Object.assign(new Error(
-          `reuse decision policy maxNeedBytes ${policy.maxNeedBytes} exceeds the registry ceiling ${FRAME_LIMITS['decision.need'].value} (decision.need)`,
-        ), { code: 'reuse_decision_policy_ceiling_exceeded' });
-      }
-      if (policy.maxRationaleBytes > FRAME_LIMITS['decision.rationale'].value) {
-        throw Object.assign(new Error(
-          `reuse decision policy maxRationaleBytes ${policy.maxRationaleBytes} exceeds the registry ceiling ${FRAME_LIMITS['decision.rationale'].value} (decision.rationale)`,
-        ), { code: 'reuse_decision_policy_ceiling_exceeded' });
-      }
       coordinator._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes, policyReconcile: Object.freeze({ ...reconcile }) });
     }
     coordinator._now = opts.now || Date.now;
@@ -968,12 +954,13 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
     const turnEpoch = terminalEvent?.turnEpoch ?? coordinator._safeTurnEpoch(handle);
     const changedPathsDigest = coordinator._pauseChangedPathsDigest(handle, task);
     // Bidirectional v2 rule 1/2: durable pause-origin claim, sanitized AT MINT via the shared
-    // messages.mjs pipeline (redact-before-truncate, 240-byte text bound, wrapProse untrusted).
+    // messages.mjs pipeline (redact only — the summary is durable text a reader must be able to
+    // read whole — with wrapProse provenance).
     // Replay reconstructs origin byte-for-byte; projection never depends on in-memory workerResult.
     const rawSummary = wr?.summary;
     const originSummary = (rawSummary == null || rawSummary === '')
       ? null
-      : wrapProse(workerId, boundedAttentionText(rawSummary, 240));
+      : wrapProse(workerId, boundedAttentionText(rawSummary, Infinity));
     const origin = Object.freeze({
       kind: 'turn_completed',
       resultStatus: 'completed',

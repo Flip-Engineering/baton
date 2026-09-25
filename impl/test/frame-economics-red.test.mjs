@@ -87,16 +87,11 @@
 //     unit: 'bytes', gracefulPath} where gracefulPath === the composer's path phrase (the
 //     message endsWith it). Typed codes are the registry rows' refusalCode values:
 //       graceful lanes beyond the spill ceiling  -> 'spill_body_exceeded' (cap = 1048576)
-//       decision.question                        -> 'decision_question_exceeded'
-//       decision.need / decision.rationale       -> 'decision_need_exceeded' / 'decision_rationale_exceeded'
-//       orientation.note / steering.focus        -> 'orientation_note_exceeded' / 'steering_focus_exceeded'
-//       board.title / board.detail               -> 'board_title_exceeded' / 'board_detail_exceeded'
 //       board.report.body                        -> 'board_report_exceeded' (v1.2: the LIVE 4,096
 //                                                   store bound, coordination-store.mjs:416/:14442)
 //       run.legacy_send.body                     -> 'run_legacy_send_exceeded' (v1.2: the legacy
 //                                                   run.send / run.act send / run.workstream.notify /
 //                                                   waves.send message door at its LIVE 16,384)
-//       decision.option.label / .summary         -> 'decision_option_label_exceeded' / 'decision_option_summary_exceeded'
 //       decision.text                            -> 'decision_text_exceeded'
 //       scratchpad.entry.body                    -> 'scratchpad_entry_exceeded'
 //   CoordinationStore gains (Decision 4, mirroring the context-pack trio):
@@ -116,9 +111,8 @@
 //   Reply envelope co-amendment (blocker 11): {messageId, inReplyTo, from, body, spilled?,
 //     bytes?, digest?, spill?} — citation keys present only when spilled, ONLY those four added
 //   doctorReadiness() gains frozen `limits`: {version: FRAME_LIMITS_VERSION, digest:
-//     FRAME_LIMITS_DIGEST, lanes: [{lane, class, value, unit, graceful, effective?}]} —
-//     `effective` present ONLY where a deployment override exists (decision.need /
-//     decision.rationale); card().agentExperience.limitsRegistryDigest publishes the digest;
+//     FRAME_LIMITS_DIGEST, lanes: [{lane, class, value, unit, graceful, effective?}]};
+//     card().agentExperience.limitsRegistryDigest publishes the digest;
 //     connectBaton verifies it exactly like the semantic registry digest
 //     (cli_connection_incompatible on mismatch)
 //   Wave driver (OQ5): policy.onAdvisory?: ({role, bytes, limit, spill: true, lane:
@@ -131,7 +125,6 @@
 // wording must force a deliberate edit HERE, never a helper self-certification):
 //   graceful class (B1): 'message.send.body is 1048577 bytes (cap 1048576); over-cap bodies
 //     spill to a durable artifact — resend with a digest-citable head'
-//   hard class (B4):     'decision.question is 2049 bytes (cap 2048); resend within the 2048-byte cap'
 //
 // PINS (what legitimately exists today and must not regress — 7 green rows):
 //   D2-D5  the other five grammars' shape-only posture (SCRATCHPAD_WRITE / CONTEXT_READ /
@@ -153,7 +146,7 @@
 //     layers as registry consumers and Decision 8's law is explicitly layer-unconditional —
 //     the unconditional reading is ratified; nothing moves to the exemption table.
 //   * F1 scans byte values >= 1024 only; sub-KiB cataloged values (160/512/256/64/8) collide
-//     with innocent literals tree-wide and are pinned BEHAVIORALLY instead (B9-B12).
+//     with innocent literals tree-wide.
 //   * The `baton doctor --check` outline/evidence PRINT cascade has no exported seam (the CLI
 //     returns doctor payloads verbatim); E pins the projection itself. The print layer is a
 //     suite-oracle gap, same class as browser-use's assembly-site note.
@@ -170,7 +163,7 @@
 //     the row EXISTS, B15 pins its coaching refusal over submitBoardReport, D5's message names
 //     the store bound (the pin's behavior was always layer-correct), and F1's :416/:14442/:1426
 //     hits retire on import like every other cataloged literal.
-//   * E1/E2/E3/E5/E6 import limits.mjs FIRST, so today they report registry-missing; their
+//   * E1/E2/E5/E6 import limits.mjs FIRST, so today they report registry-missing; their
 //     named stages (doctor-projection-missing, handshake-digest-missing) are the stages they
 //     fail at once the registry exists. The E5 fixture's positive arm is smoke-verified to
 //     connect today (the mismatch arm is the red one).
@@ -472,17 +465,10 @@ const ADMISSION_LANES = Object.freeze([
   // by the substrate spill ceiling alone, so a brief reaches the seat whole.
   ['run.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
   ['wave.member.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  ['decision.question', 2048, 'bytes', null, 'decision_question_exceeded'],
-  ['decision.need', 2048, 'bytes', null, 'decision_need_exceeded'],
-  ['decision.rationale', 8192, 'bytes', null, 'decision_rationale_exceeded'],
   ['orientation.note', 2048, 'bytes', null, 'orientation_note_exceeded'],
   ['steering.focus', 2048, 'bytes', null, 'steering_focus_exceeded'],
-  ['board.title', 160, 'bytes', null, 'board_title_exceeded'],
-  ['board.detail', 4096, 'bytes', null, 'board_detail_exceeded'],
   ['board.report.body', 4096, 'bytes', null, 'board_report_exceeded'],
   ['run.legacy_send.body', 16384, 'bytes', null, 'run_legacy_send_exceeded'],
-  ['decision.option.label', 160, 'bytes', null, 'decision_option_label_exceeded'],
-  ['decision.option.summary', 512, 'bytes', null, 'decision_option_summary_exceeded'],
   ['decision.text', 4096, 'bytes', null, 'decision_text_exceeded'],
   ['scratchpad.entry.body', 8192, 'bytes', null, 'scratchpad_entry_exceeded'],
 ]);
@@ -637,8 +623,6 @@ async function captureError(promise) {
 // The two HARDCODED goldens (blocker 10): a value change or a helper-wording change fails
 // these rows until someone deliberately edits THIS string.
 const GOLDEN_GRACEFUL = 'message.send.body is 1048577 bytes (cap 1048576); over-cap bodies spill to a durable artifact — resend with a digest-citable head';
-// #398: the refusal names the OBSERVED byte count (the B4 question is 16 + 2048 = 2064 bytes), never cap+1.
-const GOLDEN_HARD = 'decision.question is 2064 bytes (cap 2048); resend within the 2048-byte cap';
 
 test('B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal', async () => {
   const adapter = new ScriptableAdapter();
@@ -708,66 +692,6 @@ test('B3: a run objective beyond the spill ceiling draws the typed spill_body_ex
   await shutdownQuietly(application);
 });
 
-test('B4 (GOLDEN, hard class): an oversize decision question gains the coaching ValidationError', () => {
-  const question = `QUESTION-SECRET-${'q'.repeat(2048)}`;
-  let error = null;
-  try {
-    createDecisionRequest({ question, options: [{ id: 'a', label: 'A' }], deadlineMs: 60000 });
-  } catch (caught) { error = caught; }
-  assert.ok(error instanceof ValidationError, 'the factory still refuses with ValidationError');
-  const actual = Buffer.byteLength(question);
-  assertCoachingPayload(error, { cap: 2048, actual }, 'B4');
-  assert.ok((error.errors ?? []).includes(GOLDEN_HARD),
-    'GOLDEN (blocker 10): the hard-class refusal text is pinned verbatim — the <=2048-bytes prose '
-    + '(messages.mjs:230) becomes helper output, and this string changes only by deliberate edit');
-  assertNoBodyContent((error.errors ?? []).join('\n'), question, 'B4');
-});
-
-test('B5: the store\'s reuse-need ceiling carries the coaching shape (registry ceiling-of-ceilings)', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const need = `NEED-SECRET-${'n'.repeat(2048)}`;
-  let error = null;
-  try {
-    store.recordReuseDecision({
-      schemaVersion: 1, id: 'reuse:fe-b5',
-      envRef: { repoId: 'repo-fe', treeSha: 'd'.repeat(40), indexEpoch: 'a'.repeat(64), lockfileDigest: 'b'.repeat(64), overlayDigest: 'c'.repeat(64) },
-      choice: 'borrow', need, rationale: 'already verified elsewhere',
-      coordinate: { ecosystem: 'npm', package: 'left-pad', version: '1.0.0' },
-      requestDigest: 'e'.repeat(64), decisionDigest: 'f'.repeat(64), affectedReadEvents: [],
-    }, { actor: 'orchestrator', key: 'fe-b5-reuse' });
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the store still enforces decision.need (it is a first-class registry consumer, blocker 6)');
-  assert.equal(error?.code ?? null, 'decision_need_exceeded',
-    'stage: refusal-coaching-missing — today the store throws numberless invalid_reuse_decision '
-    + '(coordination-store.mjs:3485, the hidden floor)');
-  assertCoachingPayload(error, { cap: 2048, actual: Buffer.byteLength(need) }, 'B5');
-  assertNamesBothNumbers(error?.message, { cap: 2048, actual: Buffer.byteLength(need) }, 'B5');
-  assertNoBodyContent(error?.message, need, 'B5');
-  await assertComposedRefusalText(error?.message, 'decision.need', Buffer.byteLength(need), 2048, 'B5');
-});
-
-test('B6: the store\'s reuse-rationale ceiling carries the coaching shape at 8,192', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const rationale = `RATIONALE-SECRET-${'r'.repeat(8192)}`;
-  let error = null;
-  try {
-    store.recordReuseDecision({
-      schemaVersion: 1, id: 'reuse:fe-b6',
-      envRef: { repoId: 'repo-fe', treeSha: 'd'.repeat(40), indexEpoch: 'a'.repeat(64), lockfileDigest: 'b'.repeat(64), overlayDigest: 'c'.repeat(64) },
-      choice: 'build', need: 'a genuine need', rationale,
-      coordinate: { ecosystem: 'npm', package: 'left-pad', version: '1.0.0' },
-      requestDigest: 'e'.repeat(64), decisionDigest: 'f'.repeat(64), affectedReadEvents: [],
-    }, { actor: 'orchestrator', key: 'fe-b6-reuse' });
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the store still enforces decision.rationale');
-  assert.equal(error?.code ?? null, 'decision_rationale_exceeded',
-    'stage: refusal-coaching-missing — the 8,192 hidden floor moves to the registry WITH the coaching shape');
-  assertCoachingPayload(error, { cap: 8192, actual: Buffer.byteLength(rationale) }, 'B6');
-  assertNamesBothNumbers(error?.message, { cap: 8192, actual: Buffer.byteLength(rationale) }, 'B6');
-  assertNoBodyContent(error?.message, rationale, 'B6');
-  await assertComposedRefusalText(error?.message, 'decision.rationale', Buffer.byteLength(rationale), 8192, 'B6');
-});
-
 test('B7: the orientation push note ceiling carries the coaching shape', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
@@ -808,68 +732,6 @@ test('B8: the steering-policy focus ceiling carries the coaching shape at inject
   assertNamesBothNumbers(error?.message, { cap: 2048, actual: Buffer.byteLength(focus) }, 'B8');
   assertNoBodyContent(error?.message, focus, 'B8');
   await assertComposedRefusalText(error?.message, 'steering.focus', Buffer.byteLength(focus), 2048, 'B8');
-});
-
-test('B9: the live board-title store bound carries the coaching shape at 160', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const title = `TITLE-SECRET-${'t'.repeat(160)}`;
-  let error = null;
-  try {
-    store.postBoardItem({ board: 'wave-settlement:wave:fe-b9', title, detail: 'd' },
-      { actor: 'orchestrator', key: 'fe-b9-board' });
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the LIVE store bound still enforces (coordination-store.mjs:414, not the dead factory)');
-  assert.equal(error?.code ?? null, 'board_title_exceeded',
-    'stage: refusal-coaching-missing — today numberless invalid_board_title');
-  assertCoachingPayload(error, { cap: 160, actual: Buffer.byteLength(title) }, 'B9');
-  assertNamesBothNumbers(error?.message, { cap: 160, actual: Buffer.byteLength(title) }, 'B9');
-  assertNoBodyContent(error?.message, title, 'B9');
-  await assertComposedRefusalText(error?.message, 'board.title', Buffer.byteLength(title), 160, 'B9');
-});
-
-test('B10: the live board-detail store bound carries the coaching shape at 4,096', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const detail = `DETAIL-SECRET-${'d'.repeat(4096)}`;
-  let error = null;
-  try {
-    store.postBoardItem({ board: 'wave-settlement:wave:fe-b10', title: 't', detail },
-      { actor: 'orchestrator', key: 'fe-b10-board' });
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the LIVE store bound still enforces (coordination-store.mjs:415)');
-  assert.equal(error?.code ?? null, 'board_detail_exceeded',
-    'stage: refusal-coaching-missing — today numberless invalid_board_detail');
-  assertCoachingPayload(error, { cap: 4096, actual: Buffer.byteLength(detail) }, 'B10');
-  assertNamesBothNumbers(error?.message, { cap: 4096, actual: Buffer.byteLength(detail) }, 'B10');
-  assertNoBodyContent(error?.message, detail, 'B10');
-  await assertComposedRefusalText(error?.message, 'board.detail', Buffer.byteLength(detail), 4096, 'B10');
-});
-
-test('B11: the decision option-label ceiling carries the coaching shape at 160', async () => {
-  const label = `LABEL-SECRET-${'l'.repeat(160)}`;
-  let error = null;
-  try {
-    createDecisionRequest({ question: 'q', options: [{ id: 'a', label }], deadlineMs: 60000 });
-  } catch (caught) { error = caught; }
-  assert.ok(error instanceof ValidationError, 'the factory still refuses with ValidationError');
-  const actual = Buffer.byteLength(label);
-  assertCoachingPayload(error, { cap: 160, actual }, 'B11');
-  assertNamesBothNumbers((error.errors ?? []).join('\n'), { cap: 160, actual }, 'B11');
-  assertNoBodyContent((error.errors ?? []).join('\n'), label, 'B11');
-  await assertComposedRefusalText((error.errors ?? []).find((entry) => entry.includes('label')), 'decision.option.label', actual, 160, 'B11');
-});
-
-test('B12: the decision option-summary ceiling carries the coaching shape at 512', async () => {
-  const summary = `SUMMARY-SECRET-${'s'.repeat(512)}`;
-  let error = null;
-  try {
-    createDecisionRequest({ question: 'q', options: [{ id: 'a', label: 'A', summary }], deadlineMs: 60000 });
-  } catch (caught) { error = caught; }
-  assert.ok(error instanceof ValidationError, 'the factory still refuses with ValidationError');
-  const actual = Buffer.byteLength(summary);
-  assertCoachingPayload(error, { cap: 512, actual }, 'B12');
-  assertNamesBothNumbers((error.errors ?? []).join('\n'), { cap: 512, actual }, 'B12');
-  assertNoBodyContent((error.errors ?? []).join('\n'), summary, 'B12');
-  await assertComposedRefusalText((error.errors ?? []).find((entry) => entry.includes('summary')), 'decision.option.summary', actual, 512, 'B12');
 });
 
 test('B13: the decision answer-text ceiling carries the coaching shape at 4,096', async () => {
@@ -1308,31 +1170,6 @@ test('D6 (pin): the scan windows stay substrate resource guards — over-window 
 });
 
 
-test('D8 (the split, seam half): the oversize question reaches admission and draws the COACHING refusal', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  const question = 'q'.repeat(2049);
-  adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'decision.requested', actor: 'worker',
-    payload: { requestId: 'fe-d8', request: { question, options: [{ id: 'a', label: 'A' }], deadlineMs: 60000 } },
-  });
-  await flush(40);
-  const rejection = coordinator._log.read(handle.id).find((event) => /rejected$/u.test(event.kind)
-    && event.payload?.requestId === 'fe-d8');
-  assert.ok(rejection, 'the seam still refuses the oversize request (loudly, never scanner-null)');
-  assertCoachingPayload(rejection.payload, { cap: 2048, actual: 2049 }, 'D8');
-  const text = JSON.stringify(rejection.payload ?? {});
-  assert.ok(text.includes('2048') && text.includes('2049'),
-    'stage: refusal-coaching-missing — the seam refusal must carry the coaching payload {cap, actual, '
-    + 'unit, gracefulPath}, not merely malformed_request strings (AS-5)');
-  const authority = coordinator._coordination.events().find((event) => event.kind === 'authority.rejected'
-    && event.payload?.requestId === 'fe-d8');
-  assert.equal(authority?.payload?.reason ?? null, 'decision_question_exceeded',
-    'the seam refusal names the registry row\'s typed code — today\'s bare malformed_request carries no numbers');
-  assert.equal(coordinator._pending.has('fe-d8'), false, 'a refused request mints no pending record');
-});
-
 // ===========================================================================
 // E — doctor surfacing (stage: doctor-projection-missing / override-validation-missing /
 //     handshake-digest-missing)
@@ -1362,63 +1199,6 @@ test('E2: card() publishes agentExperience.limitsRegistryDigest beside registryD
   assert.equal(card.agentExperience.registryDigest, APPLICATION_SEMANTIC_REGISTRY.digest,
     'the existing semantic registry digest is untouched (consolidation, not re-shaping)');
   await shutdownQuietly(application);
-});
-
-test('E3 (blocker 5): a reuseDecisionPolicy override leaves the published digest byte-identical — the override rides effective', async () => {
-  const limits = assertLimitsModule(await limitsOrError());
-  const { application } = appFixture('e3', {
-    driverOpts: {
-      reuseDecisionPolicy: {
-        authorize: async () => true,
-        maxNeedBytes: 1024, maxRationaleBytes: 4096,
-        policyReconcile: REUSE_POLICY_RECONCILE,
-      },
-    },
-  });
-  const readiness = application.doctorReadiness();
-  assert.ok(readiness?.limits, 'stage: doctor-projection-missing');
-  assert.equal(readiness.limits.digest, limits.FRAME_LIMITS_DIGEST,
-    'the digest covers DECLARED rows ONLY — a deployment override never changes the server-side '
-    + 'digest and never breaks the CLI handshake between identical code (Decision 7)');
-  const lanes = new Map((readiness.limits.lanes ?? []).map((row) => [row?.lane, row]));
-  assert.equal(lanes.get('decision.need')?.effective ?? null, 1024,
-    'the override rides the per-lane effective field (the separate channel)');
-  assert.equal(lanes.get('decision.rationale')?.effective ?? null, 4096);
-  assert.equal(lanes.get('decision.question')?.effective ?? null, null,
-    'no override, no effective field (effective is present ONLY where an override exists)');
-  assert.equal(application.card()?.agentExperience?.limitsRegistryDigest ?? null, limits.FRAME_LIMITS_DIGEST,
-    'card() publishes the declared digest under the override — the handshake stays green');
-  await shutdownQuietly(application);
-});
-
-test('E4 (OQ4): a deployment override ABOVE the registry ceiling refuses at injection — never a silent min()', () => {
-  const adapter = new ScriptableAdapter();
-  const inject = (policy) => {
-    try {
-      setup({ adapter, capture: noDiff, coordinatorOpts: { reuseDecisionPolicy: policy } });
-      return null;
-    } catch (caught) { return caught; }
-  };
-  const aboveNeed = inject({
-    authorize: async () => true, maxNeedBytes: 4096, maxRationaleBytes: 8192,
-    policyReconcile: REUSE_POLICY_RECONCILE,
-  });
-  assert.ok(aboveNeed,
-    'stage: override-validation-missing — today maxNeedBytes: 4096 is ACCEPTED at injection and the '
-    + 'store silently floors it at 2,048 (the hidden ceiling-of-ceilings, blocker 6; the "deployment '
-    + 'override" is fiction above the store\'s hardcoded ceiling)');
-  assert.ok(String(aboveNeed?.code ?? '').length > 0,
-    'the injection refusal is typed (the provider-read hard-ceiling precedent, coordinator.mjs:885)');
-  const needText = String(aboveNeed?.message ?? '');
-  assert.ok(needText.includes('2048') && needText.includes('4096'),
-    'the refusal names the registry ceiling (2048) AND the attempted value (4096) — never a silent min()');
-  const aboveRationale = inject({
-    authorize: async () => true, maxNeedBytes: 1024, maxRationaleBytes: 9000,
-    policyReconcile: REUSE_POLICY_RECONCILE,
-  });
-  assert.ok(aboveRationale, 'the rationale ceiling refuses 9,000 at injection too');
-  assert.ok(String(aboveRationale?.message ?? '').includes('8192'),
-    'the rationale refusal names its registry ceiling (8,192)');
 });
 
 /** The phase89 connection fixture, trimmed: one git repo + profile/token/selector files. */

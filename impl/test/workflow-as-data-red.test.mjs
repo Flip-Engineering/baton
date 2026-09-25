@@ -612,9 +612,6 @@ test('W1-02 (stage[member-validation-missing]): member-level violations refuse w
 test('W1-03 (stage[objective-ref-invalid]): objectiveRef violations refuse workflow_objective_ref_invalid', async (t) => {
   const fx = await wadFixture(t);
   writeObjective(fx.repo, 'w1-c', 'write the w1-c report');
-  // F8b: the D5 byte bound is pinned at its EXACT value — 64 KiB + 1 refuses, so an
-  // implementation with a 256 KiB bound fails this row (the old 512 KiB case was too loose).
-  writeFileSync(join(fx.repo, 'objectives', 'oversize.md'), 'x'.repeat(64 * 1024 + 1));
   // F8c: the realpath-symlink half of containment (mcp-descriptor.mjs:46-72 precedent) — a path
   // that is lexically inside but resolves through a symlink to an outside directory refuses.
   const outsideDir = mkdtempSync(join(tmpdir(), 'baton-wad-outside-'));
@@ -624,7 +621,6 @@ test('W1-03 (stage[objective-ref-invalid]): objectiveRef violations refuse workf
   const cases = [
     [wadMember('missing', { objectiveRef: 'objectives/does-not-exist.md' }), 'does-not-exist'],
     [wadMember('escape', { objectiveRef: '../outside.md' }), 'outside'],
-    [wadMember('oversize', { objectiveRef: 'objectives/oversize.md' }), 'oversize'],
     [wadMember('symlink', { objectiveRef: 'notes/esc.md' }), 'esc'],
   ];
   for (const [member, token] of cases) {

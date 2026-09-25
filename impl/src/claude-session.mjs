@@ -92,9 +92,7 @@ export function scanForDecisionRequest(text) {
     return null;
   }
   try {
-    // Decision 5 (the split): the scanner validates SHAPE only — an oversize question PARSES and
-    // travels to the admission seam, where the registry bound issues the typed coaching refusal.
-    return createDecisionRequest(parsed, { shapeOnly: true });
+    return createDecisionRequest(parsed);
   } catch (err) {
     if (err instanceof ValidationError) return null;
     throw err;
