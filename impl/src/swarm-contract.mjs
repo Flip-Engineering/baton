@@ -20,7 +20,6 @@ export const SWARM_EVENT_KINDS = Object.freeze([
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_reviewed',
-  'swarm.need_answered',
   // Issue #443: the swarm-level policy an orchestrator declares — `rerouteOnProviderFault` and the
   // billing preference a provider-fault re-route ranks its candidates on. A declaration of the
   // swarm's own conduct, so it rides the swarm level (one place), never a seat or a group.
@@ -451,7 +450,6 @@ export function swarmChangedRow(kind, payload = {}) {
       return row('context', payload.key ?? null);
     case 'swarm.contribution_recorded':
     case 'swarm.contribution_revision_attached':
-    case 'swarm.need_answered':
       return row('contributions', payload.contributionId ?? null);
     case 'swarm.contribution_reviewed':
       return row('reviews', payload.contributionId ?? null);

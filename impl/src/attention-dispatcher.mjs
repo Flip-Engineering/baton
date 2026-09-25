@@ -1,9 +1,7 @@
-import { AttentionSource } from './attention-source.mjs';
+import { AttentionSource, attentionRecipientKey as recipientKey } from './attention-source.mjs';
 import { randomUUID } from 'node:crypto';
 import { SWARM_EVENT_KINDS } from './swarm-state.mjs';
 
-const recipientKey = (recipient) => recipient.kind === 'root' ? 'root'
-  : JSON.stringify([recipient.swarmId, recipient.participantId]);
 const sourceChange = (event) => SWARM_EVENT_KINDS.has(event.kind)
   || ['swarm.turn_reported', 'swarm.guidance_sent', 'swarm.guidance_parked', 'swarm.root_attention_owed']
     .includes(event.payload?.kind);
@@ -54,7 +52,7 @@ export class AttentionDispatcher {
   #consume(upperBound) {
     if (upperBound <= this.#source.cursor) return;
     const events = this.#store.eventsView(this.#source.cursor + 1, upperBound - this.#source.cursor);
-    this.#source.consume(events, upperBound);
+    this.#source.consume(events);
     if (events.some(sourceChange)) {
       for (const state of this.#recipients.values()) {
         for (const id of state.failed) state.offered.delete(id);
@@ -92,9 +90,10 @@ export class AttentionDispatcher {
     if (this.#store.eventCursor() > this.#source.cursor) return;
     const groups = new Map();
     for (const obligation of this.#source.obligations()) {
-      const key = recipientKey(obligation.recipient);
+      const recipient = this.#source.recipientFor(obligation.recipient);
+      const key = recipientKey(recipient);
       const rows = groups.get(key) ?? [];
-      rows.push(obligation); groups.set(key, rows);
+      rows.push({ ...obligation, logicalRecipient: obligation.recipient, recipient }); groups.set(key, rows);
     }
     for (const [key, state] of this.#recipients) {
       if (!groups.has(key) && !state.busy) this.#recipients.delete(key);
@@ -118,8 +117,8 @@ export class AttentionDispatcher {
       const owed = new Set(rows.map((row) => row.obligationId));
       for (const id of state.offered) if (!owed.has(id)) state.offered.delete(id);
       if (state.busy || attachment.busy) continue;
-      const pending = rows.filter((row) => !state.offered.has(row.obligationId));
-      if (pending.length === 0) continue;
+      if (rows.every((row) => state.offered.has(row.obligationId))) continue;
+      const pending = rows;
       for (const row of pending) state.offered.add(row.obligationId);
       state.busy = true;
       // The source projection was read synchronously at this input boundary. Native input is
@@ -143,6 +142,12 @@ export class AttentionDispatcher {
         principalId: state.attachment.principalId, harness: state.attachment.harness,
         ...(error ? { code: error.code ?? 'native_input_failed' } : { result: result ?? { state: 'offered_unknown' } }),
       });
+      if (!error && ['accepted', 'delivered', 'processed'].includes(result?.state)) {
+        const cursors = new Map();
+        for (const row of rows) cursors.set(recipientKey(row.logicalRecipient), { recipient: row.logicalRecipient, cursor: row.seq });
+        for (const cursor of cursors.values()) this.#record('attention.delivered', { ...cursor,
+          principalId: state.attachment.principalId, harness: state.attachment.harness, result });
+      }
       await this.#readCurrent();
       this.#dispatch();
     }).catch(() => {}); // #enqueue reports the storage or projection failure to the owner.

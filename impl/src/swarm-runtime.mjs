@@ -1,4 +1,4 @@
-import { rootAttentionObligations, rootContributionAttention, turnReportAsk, effectiveAttentionRecipient } from './attention-obligations.mjs';
+import { rootAttentionObligations, rootContributionAttention, turnReportAsk } from './attention-obligations.mjs';
 import { contributionNeeds } from './contribution-needs.mjs';
 import { AttentionDispatcher } from './attention-dispatcher.mjs';
 import { spawnSync } from 'node:child_process';
@@ -1245,7 +1245,6 @@ const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.policy_updated': 'organize',
   'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
-  'swarm.need_answered': 'communicate',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
 });
 // The update table is a third parallel table over the closed event vocabulary; the contract
@@ -1706,7 +1705,6 @@ export function swarmPipelineRows(contributions = [], participants = []) {
       const need = contributionNeeds({ body: { needsFromOthers: [value] } })[0]
         ?? { ask: value, needId: null, to: null };
       if (landed && need.to === null) continue;
-      if (Object.hasOwn(row.answers ?? {}, need.needId)) continue;
       add(openNeeds, 'openNeeds', {
         contributionId: row.contributionId, participantId: row.participantId ?? null,
         workId: row.workId ?? null, need: bounded(need.ask), needId: need.needId, to: need.to,
@@ -8569,19 +8567,6 @@ export class SwarmRuntime {
         const actor = this._actorOf(caller, principal);
         if (payload.reviewerId && payload.reviewerId !== actor) refuse('Review author does not match caller', 'swarm_author_mismatch');
         payload.reviewerId = actor;
-      }
-      if (args.event === 'swarm.need_answered') {
-        const contribution = swarm.contributions?.[payload.contributionId];
-        const need = contribution && contributionNeeds(contribution).find((row) => row.needId === payload.needId);
-        if (!need) refuse('The contribution has no such addressed need', 'swarm_payload_invalid');
-        const recipient = need.to === 'root' ? { kind: 'root' } : effectiveAttentionRecipient(swarm, need.participantId);
-        if ((recipient.kind === 'root' && caller !== null)
-          || (recipient.kind === 'seat' && caller?.participantId !== recipient.participantId)) {
-          refuse('Only the addressed recipient can answer this need', 'swarm_permission_required');
-        }
-        const actor = this._actorOf(caller, principal);
-        if (payload.answeredBy && payload.answeredBy !== actor) refuse('Answer author does not match caller', 'swarm_author_mismatch');
-        payload.answeredBy = actor;
       }
       if (args.event === 'swarm.coupling_updated' && payload.action === 'release') {
         const actor = this._actorOf(caller, principal);

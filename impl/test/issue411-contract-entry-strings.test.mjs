@@ -5,7 +5,7 @@ import {
   validateContributionContract,
 } from '../src/contribution-contract.mjs';
 
-const FIELDS = ['carriedForward', 'needsFromOthers'];
+const FIELDS = ['carriedForward'];
 const BAD_ENTRIES = [[42], [''], [null]];
 
 const bodyWith = (field, value) => ({
@@ -50,9 +50,10 @@ test('#411 (b2) empty arrays still pass (the #371 example stays byte-identical)'
   assert.doesNotThrow(() => validateContributionContract(CONTRIBUTION_CONTRACT_EXAMPLE));
 });
 
-test('#411 (c) a need names its recipient and carriedForward remains text', () => {
-  assert.throws(() => validateContributionContract(bodyWith('needsFromOthers', ['Root: untyped ask'])),
-    { code: 'contribution_contract_invalid' });
+test('#411 (c) needs tolerate strings and other content while carriedForward remains text', () => {
+  for (const value of [['Root: plain ask'], [42, null, { extra: true }], { note: 'free content' }]) {
+    assert.doesNotThrow(() => validateContributionContract(bodyWith('needsFromOthers', value)));
+  }
   assert.throws(() => validateContributionContract(bodyWith('carriedForward', [{ to: 'root', ask: 'text' }])),
     { code: 'contribution_contract_invalid' });
 });

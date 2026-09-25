@@ -193,7 +193,7 @@ test('(f) the successor brief cites a sibling carriedForward verbatim', async (t
   assert.ok(brief.includes('needs from others: {"to":"root","ask":"NEED-310-3 reviewer verdict on the iface freeze"}'),
     'the successor brief cites the sibling needsFromOthers verbatim');
   assert.ok(brief.includes('## Contribution contract'), 'the brief renders the expected shape');
-  assert.ok(brief.includes('needsFromOthers: an array of {to: root, ask}'), 'the brief teaches the typed address');
+  assert.ok(brief.includes('needsFromOthers: needs may be text or addressed objects'), 'the brief teaches the typed address');
   assert.ok(brief.includes('delivered|partial|not_delivered'),
     'the rendered shape names the closed item states');
 });

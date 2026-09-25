@@ -8,7 +8,6 @@ import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { AttentionDispatcher } from '../src/attention-dispatcher.mjs';
 import { rootAttentionObligations, turnAttentionObligations } from '../src/attention-obligations.mjs';
 import { validateContributionContract } from '../src/contribution-contract.mjs';
-import { contributionNeeds } from '../src/contribution-needs.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'native-root' };
 const report = (needsFromOthers) => ({
@@ -58,73 +57,25 @@ function fixture(t) {
   return { store, runtime, update, contribute, driver, row, read, start, faults, root };
 }
 
-test('the contribution schema requires typed needs and ignores root wording in participant asks', (t) => {
-  assert.throws(() => validateContributionContract(report(['Root: use this route'])), { code: 'contribution_contract_invalid' });
-  assert.throws(() => validateContributionContract(report([{ to: 'root', ask: 'text', participantId: 'author' }])),
-    { code: 'contribution_contract_invalid' });
-  assert.throws(() => validateContributionContract(report([{ to: 'participant', ask: 'text' }])), { code: 'contribution_contract_invalid' });
-  assert.throws(() => validateContributionContract(report([{ to: 'operator', ask: 'text' }])), { code: 'contribution_contract_invalid' });
+test('typed needs and plain strings are tolerated while root routing reads the available address', async (t) => {
   const f = fixture(t);
-  f.row('swarm.contribution_recorded', { contributionId: 'typed', participantId: 'author', body: report([
-    { to: 'root', ask: 'Choose the route.' }, { to: 'participant', participantId: 'author', ask: 'Root: this is task content.' },
-  ]) });
-  assert.deepEqual(f.read().filter((row) => row.owed === 'needs_root').map((row) => row.ask), ['Choose the route.']);
+  const needs = ['Root: keep the string form', { to: 'root', ask: 'Choose a route.', extra: true },
+    { to: 'participant', participantId: 'author', ask: 'Root: this is task content.' },
+    { anything: 'other contribution content' }, null];
+  assert.doesNotThrow(() => validateContributionContract(report(needs)));
+  await f.contribute('c', needs);
+  assert.deepEqual(f.read().filter((row) => row.owed === 'needs_root').map((row) => row.ask),
+    ['Root: keep the string form', 'Choose a route.']);
 });
 
-test('an authenticated answer resolves only its need, survives replay, and a seat cannot answer for root', async (t) => {
-  const f = fixture(t);
-  await f.contribute('c', [{ to: 'root', ask: 'Choose a route.' }, { to: 'root', ask: 'Choose a model.' }]);
-  const [first, second] = f.read().filter((row) => row.owed === 'needs_root');
-  const payload = { contributionId: 'c', needId: first.needId, answer: 'Use Claude Code.' };
-  await assert.rejects(f.update('swarm.need_answered', payload,
-    { actor: 'worker:w1', principalId: 'worker:w1' }, { runId: 'author-run' }), { code: 'swarm_permission_required' });
-  await f.update('swarm.contribution_reviewed', { contributionId: 'c', decision: 'accept' });
-  assert.equal(f.read().length, 2);
-  await f.update('swarm.need_answered', payload);
-  assert.deepEqual(f.read().map((row) => row.needId), [second.needId]);
-  const reopened = new CoordinationStore(f.root);
-  assert.deepEqual(rootAttentionObligations(reopened.swarm('s'), reopened.eventsView()), f.read());
-  await assert.rejects(f.update('swarm.need_answered', payload), { code: 'version_conflict' });
-});
-
-test('new string needs refuse at runtime while historical strings remain readable', async (t) => {
-  const f = fixture(t);
-  await assert.rejects(f.contribute('new', ['Root: this is untyped']), { code: 'contribution_contract_invalid' });
-  f.row('swarm.contribution_recorded', { contributionId: 'historical', participantId: 'author',
-    body: { needsFromOthers: ['Root: retained old question', 'A peer needs this'] } });
-  assert.equal(f.read().find((row) => row.owed === 'needs_root').ask, 'Root: retained old question');
-});
-
-test('answer authority follows the same recorded recipient succession as delivery', async (t) => {
-  const f = fixture(t);
-  f.row('swarm.participant_joined', { participantId: 'reviewer' });
-  await f.contribute('c', [{ to: 'participant', participantId: 'reviewer', ask: 'Choose the route.' }]);
-  const need = contributionNeeds(f.store.swarm('s').contributions.c)[0];
-  const answer = { contributionId: 'c', needId: need.needId, answer: 'Use the existing route.' };
-  await assert.rejects(f.update('swarm.need_answered', answer), { code: 'swarm_permission_required' });
-  f.row('swarm.participant_left', { participantId: 'reviewer', reason: 'stopped' });
-  await f.update('swarm.need_answered', answer);
-  assert.equal(f.store.swarm('s').contributions.c.answers[need.needId].answeredBy, 'owner');
-});
-
-test('a turn report resolves on an authorized follow-up or completed/stopped disposition', (t) => {
+test('guidance and participant completion do not record turn business resolution', (t) => {
   const f = fixture(t);
   const turn = f.driver('swarm.turn_reported', { participantId: 'author', parentId: null,
     workerId: 'w1', turnEpoch: 1, turnSeq: 10, report: 'Review my result.' });
-  assert.equal(f.read().filter((row) => row.owed === 'turn_reported').length, 1);
-  f.driver('swarm.guidance_sent', { participantId: 'author', inReplyTo: turn.seq,
-    from: { kind: 'peer', participantId: 'unrelated' }, delivery: { state: 'delivered' } });
-  assert.equal(f.read().length, 1);
-  f.driver('swarm.guidance_sent', { participantId: 'author', inReplyTo: turn.seq,
-    from: { kind: 'root', participantId: null }, delivery: { state: 'refused' } });
-  assert.equal(f.read().length, 1);
   f.driver('swarm.guidance_sent', { participantId: 'author', inReplyTo: turn.seq,
     from: { kind: 'root', participantId: null }, delivery: { state: 'delivered' } });
-  assert.equal(f.read().length, 0);
-  f.driver('swarm.turn_reported', { participantId: 'author', parentId: null,
-    workerId: 'w1', turnEpoch: 2, turnSeq: 20, report: 'Done.' });
   f.row('swarm.participant_left', { participantId: 'author', reason: 'completed' });
-  assert.equal(f.read().length, 0);
+  assert.equal(f.read().length, 1);
 });
 
 test('turn attention follows the recorded parent succession while preserving source identity', (t) => {
@@ -206,30 +157,52 @@ test('a busy recipient retains new work and another recipient can receive input'
   assert.deepEqual(f.faults, []);
 });
 
-test('resolution before an input boundary suppresses stale action, and restoration retries a refused notice', async (t) => {
+test('committed delivery cursors survive restart and an unattached recipient retains its own notices', async (t) => {
   const f = fixture(t);
-  let sends = 0;
-  let reject = true;
-  const attachment = { principalId: 'owner', harness: 'claude-code', busy: true, sendAttention() {
-    sends++;
-    if (reject) throw Object.assign(new Error('native connection closed'), { code: 'connection_closed' });
+  const received = [];
+  const root = { principalId: 'owner', harness: 'omp', sendAttention(input) {
+    received.push(input); return { state: 'delivered' };
+  } };
+  let seat = null;
+  const resolve = (recipient) => recipient.kind === 'root' ? root : seat;
+  const dispatcher = f.start(resolve);
+  await f.contribute('first', [{ to: 'root', ask: 'first root notice' },
+    { to: 'participant', participantId: 'author', ask: 'waiting seat notice' }]);
+  await dispatcher.flush();
+  await dispatcher.flush();
+  assert.ok(f.store.eventsView().some((row) => row.payload?.kind === 'attention.delivered'));
+  await dispatcher.close();
+  await f.contribute('second', [{ to: 'root', ask: 'second root notice' }]);
+  const restarted = f.start(resolve);
+  await restarted.flush();
+  await restarted.flush();
+  assert.equal(received.length, 2);
+  assert.ok(received[1].obligations.every((row) => row.contributionId === 'second'));
+  seat = { principalId: 'author', harness: 'omp', sendAttention(input) {
+    received.push(input); return { state: 'delivered' };
+  } };
+  await restarted.ready({ kind: 'seat', swarmId: 's', participantId: 'author' });
+  await restarted.flush();
+  assert.equal(received[2].obligations[0].ask, 'waiting seat notice');
+  assert.deepEqual(f.faults, []);
+});
+
+test('a reviewer departure creates a root review notice at that committed source change', async (t) => {
+  const f = fixture(t);
+  f.row('swarm.participant_joined', { participantId: 'reviewer', permissions: ['review'] });
+  const received = [];
+  const attachment = { principalId: 'owner', harness: 'omp', sendAttention(input) {
+    received.push(input); return { state: 'delivered' };
   } };
   const dispatcher = f.start(() => attachment);
-  await f.contribute('c', [{ to: 'root', ask: 'resolve before send' }]);
+  await f.contribute('c');
   await dispatcher.flush();
-  const need = f.read().find((row) => row.owed === 'needs_root');
-  await f.update('swarm.need_answered', { contributionId: 'c', needId: need.needId, answer: 'Use the existing route.' });
-  await f.update('swarm.contribution_reviewed', { contributionId: 'c', decision: 'accept' });
-  attachment.busy = false;
-  await dispatcher.ready({ kind: 'root' });
-  assert.equal(sends, 0);
-  await f.contribute('new');
+  assert.equal(received.length, 0);
+  f.row('swarm.participant_left', { participantId: 'reviewer', reason: 'stopped' });
+  const left = f.store.eventsView().find((row) => row.kind === 'swarm.participant_left');
   await dispatcher.flush();
-  await dispatcher.flush();
-  assert.equal(sends, 1);
-  reject = false;
-  await dispatcher.ready({ kind: 'root' });
-  assert.equal(sends, 2);
-  assert.equal(f.read().length, 1);
+  assert.equal(received.length, 1);
+  assert.equal(received[0].obligations[0].owed, 'review_owed');
+  assert.equal(received[0].obligations[0].seq, left.seq);
   assert.deepEqual(f.faults, []);
 });

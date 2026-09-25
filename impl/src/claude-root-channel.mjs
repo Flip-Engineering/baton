@@ -10,7 +10,7 @@ export function attachClaudeRootChannel(server, { open, onClose }) {
     const response = await handle(message);
     if (message.method === 'initialize' && response?.result) {
       response.result.capabilities.experimental = { 'claude/channel': {} };
-      response.result.instructions += ' This channel is the deployment root attachment. Read Baton attention notices and resolve the source review, answer, or turn disposition with the ordinary Baton tools.';
+      response.result.instructions += ' This channel is the deployment root attachment. Read Baton attention notices and reply or guide participants with the ordinary Baton tools.';
     }
     if (message.method === 'notifications/initialized' && !attachment) {
       attachment = open(async ({ obligations }) => {

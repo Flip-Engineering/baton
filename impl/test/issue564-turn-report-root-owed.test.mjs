@@ -98,7 +98,7 @@ test('564-t3: a second observation repairs rather than duplicates', async (t) =>
   assert.equal(second.length, 1, 'the pass still answers the row it holds');
 });
 
-test('a root guide can answer the source turn report and closes its owed attention', async (t) => {
+test('a root guide can reply to a turn report without recording business resolution', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'root decides the next turn' });
   await f.call('recruit', { participantId: 'lead', objective: 'work on the lane' });
@@ -108,7 +108,7 @@ test('a root guide can answer the source turn report and closes its owed attenti
   await f.call('guide', { participantId: 'lead', inReplyTo: report.event.seq, message: 'Continue with the dispatcher.' });
   const view = await f.call('view', { projection: 'attention' });
   const rows = Array.isArray(view.attention) ? view.attention : view.attention?.rows ?? [];
-  assert.deepEqual(rows.filter((row) => row.owed === 'turn_reported'), []);
+  assert.equal(rows.filter((row) => row.owed === 'turn_reported').length, 1);
 });
 
 test('564-t4: the participant_left update path reconciles the turn rows too', async (t) => {

@@ -1,8 +1,8 @@
 # 57 — Durable attention and harness session ownership
 
 Issue: [#592](https://github.com/Flip-Engineering/baton/issues/592).
-Status: approved architecture with the 2026-09-25 root correction to delivery storage.
-Stage 2 implementation remains subject to root review before landing.
+Status: approved architecture with the 2026-09-25 root corrections to delivery storage and cursors.
+The corrected source-dispatch stage may land after review; native integration acceptance proceeds separately.
 Research date: 2026-09-25 UTC. Repository inspected: `67b165685045c8f579fbbaba55d1f95c0f6f30f3`.
 
 ## Approved architecture and native root constraint
@@ -22,7 +22,7 @@ The session host submits owed work, records the harness's evidence, and restores
 process loss. An independent native root retains ownership of its engine; its admitted integration
 must provide documented lifecycle events and reconnect behavior. The host and resident have
 separate lifetimes so resident replacement preserves the host's connections and live turns.
-Only business resolution closes an obligation. Generated session handles remain runtime facts.
+Delivery advances the recipient cursor. Generated session handles remain runtime facts.
 Section 4 defines native interaction and capability reporting for all six harnesses.
 
 ## 1. Required behavior
@@ -33,10 +33,11 @@ participant succession. Starting or resuming either recipient automatically conn
 controller to its owed attention. No model subscription, wake tool, heartbeat, or acknowledgment
 task is part of delivery.
 
-The obligation survives a disconnected UI, an MCP client restart, a harness process restart,
-and a complete deployment process restart. Business resolution closes an obligation: for
-example, the contribution has a review or the question has an answer. A transport write alone
-cannot close it. A refused input preserves the obligation and records the refusal cause.
+The source notice survives a disconnected UI, an MCP client restart, a harness process restart,
+and a complete deployment process restart. Delivering it to the attached recipient is the
+wake dispatcher's job. A committed coordination row records that recipient's delivery cursor.
+The recipient replies or guides through the existing tools. No answer event or turn-report
+business-resolution state is recorded. A refused input leaves the cursor unchanged.
 
 The architecture uses process exit, committed state changes, harness protocol events, and
 connection lifecycle events to dispatch and recover. It has no delivery deadline, retry limit,
@@ -294,7 +295,7 @@ unless the successor also offers an admitted controller interface.
 Channels is a documented external-input candidate for an independently launched native session.
 Its write completion establishes only a sent notification. Enablement failures and silent drops
 leave receipt unknown. The source obligation remains owed through the next connection or source
-change and closes on its actual review, answer, or other business disposition. Missing receipt
+change until delivery is established. Missing receipt
 alone is not a correctness objection to this model. Independent-session recovery and preview
 policy admission still need proof; a channel send alone supplies neither. No model acknowledgment
 action is required. Section 3 links the exact Channels controls and protocol.
@@ -309,8 +310,7 @@ The ordinary `mcp-web.mjs` entry retains its observer role.
 The resident starts source dispatch with its application transport. An attached root receives
 outstanding obligations through the stream; the entry renders them as
 `notifications/claude/channel`. A resident stream write records `offered_unknown`, with
-`transport: resident_channel_stream`. This establishes neither native consumption nor business
-resolution. Closing the attachment leaves source debt outstanding. When a new root connection
+`transport: resident_channel_stream`. This establishes neither native consumption. Closing the attachment leaves source debt outstanding. When a new root connection
 opens, it takes the logical root role and receives outstanding debt. The previous connection
 closes. A resident stream end closes the MCP entry with a diagnostic asking for native MCP
 reconnection; automatic native reconnection remains unverified.
@@ -336,8 +336,7 @@ on a second independent App Server is excluded while the first owns it.
 and optional remote endpoint. This is a supported CLI surface for external input. Help alone
 does not establish which independently launched session modes consume queued input while idle,
 or whether success proves native acceptance. The generated schema supplies turn-start responses,
-turn events, and queue-change notifications. Queue mutation by itself proves no business
-resolution. Stage 2 must correlate a test-owned native queue submission with a real idle turn
+turn events, and queue-change notifications. Queue mutation reports only what its native receipt establishes. Stage 2 must correlate a test-owned native queue submission with a real idle turn
 before advertising that external mode. The hosted mode uses `turn/start` for both roles.
 
 **OMP.** The tagged [17.4.0 guide](https://github.com/can1357/oh-my-pi/blob/v17.4.0/README.md)
@@ -385,7 +384,7 @@ provide no verified replacement for that missing integration contract.
 
 An authenticated `agent serve` client has documented `session/prompt` input and streaming updates.
 The ACP response and correlated updates provide native processing evidence; the underlying
-obligation closes on business resolution. This API does not by itself give access to an arbitrary
+delivery cursor advances when native delivery is established. This API does not by itself give access to an arbitrary
 independent TUI. Shared leader support is documented, but shared process placement does not prove
 same-session input ownership. With the executable missing, both native attachment and independent
 TUI ingress remain unproven. The root route is unavailable with those causes; an operational
@@ -405,7 +404,7 @@ idle turn-start behavior or the durability/meaning of the JSON receipt. No messa
 existing sessions during research. External delivery therefore remains unproven pending a
 fresh-marker test in an isolated native session. MSP `turn/start` already specifies admission
 and turn identity separately; its events and resumable views can supply processing evidence.
-Future external mode must retain an unresolved obligation even after a successful send receipt.
+Future external mode must record what a successful send receipt actually establishes.
 
 ### 4.3 Native operator interaction
 
@@ -457,7 +456,7 @@ and replays its debt. When a harness's public interface cannot supply this lifec
 its root route remains not wake-capable. Mere availability of a send command is insufficient.
 
 Strong native receipts allow accepted/processing facts. Write-only ingress records an offered
-attempt with receipt unknown. Both retain debt until business resolution. A failed send records
+attempt with receipt unknown. An unknown receipt retains the notice after the delivery cursor. A failed send records
 its cause. An unacknowledged send stays visibly unknown; elapsed time cannot label it failed or
 trigger retry. A new connection generation or relevant committed state can replay still-owed
 work, subject to section 6's in-flight rules. No model acknowledgment task is required.
@@ -478,19 +477,17 @@ supplies that interface when its documented connection becomes ready. The attach
 state; contribution authors cannot supply a native session address. An ordinary observer MCP
 connection does not bind the root role.
 
-When no root is attached, the coordination source obligation stays owed. The dispatcher records
-`attention.undelivered` with the obligation identity and `root_unattached` as an ordinary
-coordination row. It does not require a native identity to preserve debt. A root attachment's ready
-event immediately rederives the unresolved work. Service restart does the same. A receipt or
-missing attachment never resolves the source request.
+When no root is attached, the source notice stays in the coordination ledger and its delivery
+cursor stays unchanged. `attention.undelivered` records `root_unattached` as an ordinary
+coordination row. Attachment readiness reads the backlog after the recipient's committed cursor.
+Service restart uses the same source rows and cursors. Duplicate notices after a crash are harmless.
 
-New contribution needs carry `{to: 'root', ask}` or
-`{to: 'participant', participantId, ask}`. The contribution schema validates the address and every
-harness receives the same projection. Historical string needs retain their original root-prefix
-interpretation during replay. `swarm.need_answered` records an answer from the addressed
-recipient. A contribution review leaves its unanswered needs open. A turn report is resolved by
-an authorized guide replying to that report or by the reporting seat's completed/stopped
-business disposition. A transport observation alone does not resolve either source.
+Contribution needs may carry `{to: 'root', ask}` or
+`{to: 'participant', participantId, ask}`. Plain strings retain the existing root-prefix
+interpretation. Reading is tolerant: extra fields and other contribution content are admitted.
+The attention reader uses the address and text it recognizes. The recipient acts through the
+ordinary reply and guidance tools.
+
 
 ### 4.4 Runtime capability and operator presentation
 
@@ -510,7 +507,7 @@ input and lifetime contract. A programmatic prompt API alone cannot earn root ca
 Unimplemented native integration, missing executable, denied permission, unsupported protocol,
 and disconnected lifecycle each retain their actual cause. Receipt-unknown is a delivery fact;
 it does not by itself invalidate an otherwise proven ingress mechanism. Transport success alone
-cannot advertise processing or resolve an obligation.
+cannot advertise processing.
 
 The deployment view and existing coordination diagnostics report root and seat capabilities
 separately. They contain no substitute chat, approval, or history UI. Facts derive from executable
@@ -524,46 +521,27 @@ failure remains visible in the deployment and native integration diagnostics. Re
 admitted lifecycle connection drives replay. This is an operational fault, not completed work
 or authorization to introduce a Baton conversation UI.
 
-## 5. Obligation and delivery state
+## 5. Source notices and delivery cursors
 
-An obligation has a stable key derived from its source and recipient lineage. For example, a
-contribution review obligation derives from the contribution ID and eligible recipient role;
-a turn-report obligation also includes the reporting worker's turn identity. Repeated reads of
-the same state yield the same obligation. Parent succession changes the effective recipient
-without losing the source identity.
+The coordination ledger holds source notices and per-recipient delivery cursors. A source notice
+identifies a contribution or turn report and its logical recipient. Participant succession changes
+the effective attachment while retaining that logical recipient's backlog.
 
-The source coordination row is the durable outbox. Resolve pending work by folding source rows,
-their business dispositions, and native processing evidence. If a derived obligation row is
-materialized, reconstruct it on startup from the source. A crash between the source commit and
-the materialization must be harmless. There is no second manually synchronized queue inventory.
+`attention.delivered` records the logical recipient, the last delivered source sequence,
+principal, harness, and observed delivery result. The dispatcher reads this committed cursor and
+delivers later notices in source order. A recipient with no attachment retains its own cursor,
+so delivery to another recipient cannot consume its notices. A restart replays source rows and
+these ordinary coordination rows. A crash can cause a duplicate notice.
 
-The delivery state for one obligation records these independent facts:
+`attention.delivery_observed` may record an offered input with unknown receipt. An unknown
+receipt leaves the committed delivery cursor unchanged. The current connection remembers that
+it offered the notice; attachment readiness or restart can offer it again. Claude Channels has
+no native acknowledgment, so a resident stream write alone stays `offered_unknown`. A refused
+input likewise retains its source notice and records the actual cause in `attention.undelivered`.
 
-| Fact | Recorded evidence |
-|---|---|
-| Owed | Source row and recipient relationship; no resolving business disposition |
-| Accepted | A documented native acknowledgment, with the actual native identity and semantics |
-| Processing observed | A correlated native turn/output event; never a controller's pre-send event |
-| Processed | A correlated native result, including failure when the harness reports one |
-| Uncertain | Connection/process loss left input acceptance or processing unproven |
-| Refused | Native or local typed error, safe cause, and retained obligation |
-| Resolved | The underlying action or authorized disposition closed the source obligation |
-
-The coordination ledger is the durable source for owed work. The dispatcher derives unresolved
-obligations after each committed source change and supplies them to the attached native session.
-Delivery observations may be recorded as ordinary coordination rows. They do not consume debt.
-A process restart rederives the outstanding work and can send a notice again. Duplicate wake
-notices are acceptable. The dispatcher has no separate receipt journal or prepared-input store.
-
-The root's 2026-09-25 correction supersedes the earlier journal requirement. Add a delivery
-mechanism only when an observed failure requires it. Business mutations retain their existing
-idempotency and expected-state guards.
-
-Once a batch has a processed result, its items remain visible as unresolved work when appropriate.
-They are not immediately resubmitted merely because a model chose to finish its turn. New work,
-a business-state change requiring another decision, a native failure, or a new session generation
-can make another attention turn necessary. Existing end-of-turn orchestration decides further
-work; the wake dispatcher never substitutes a continuation policy for that decision.
+The dispatcher records delivery, and recipients reply or guide through the existing tools.
+The root's 2026-09-25 correction supersedes the journal and business-resolution requirements.
+Add a mechanism only when an observed failure requires it.
 
 ## 6. Dispatch and recovery algorithm
 
@@ -575,7 +553,7 @@ projection failure, and sync failure reject the wait with a named cause. This bo
 the dispatcher with committed source events; implementing it alone does not deliver attention.
 
 1. Subscribe at the coordination commit boundary, capture a sequence barrier, and fold pending
-   obligations through that barrier. Then consume committed rows after it. Register-before-read
+   notices and delivery cursors through that barrier. Then consume committed rows after it. Register-before-read
    and a final sequence check cover the append/subscription race.
 2. Resolve each effective logical recipient from authenticated root, parent, and succession state.
    Create or restore its controller automatically. An unavailable seat routes a failure report to
@@ -584,11 +562,11 @@ the dispatcher with committed source events; implementing it alone does not deli
    its real terminal result triggers the next batch. Waiting for an active turn is a protocol
    constraint, and does not terminate or park the agent. Native approval requests remain visible
    to their authorized answerer throughout the turn.
-4. At an available input boundary, select pending items in source order, recheck their business
-   state, and compose an input batch from the unresolved source items. Bound each frame by the negotiated transport limit.
+4. At an available input boundary, select notices after the recipient delivery cursor in source
+   order and compose an input batch. Bound each frame by the negotiated transport limit.
    Overflow remains eligible for the next batch. Bounded encoding cannot drop older obligations.
-5. Submit through the harness operation in section 3. Record actual delivery results as ordinary
-   coordination rows when needed for diagnosis. Distinguish correlated native output from the
+5. Submit through the harness operation in section 3. Record observed delivery results and advance the delivery cursor as ordinary
+   coordination rows when delivery is established. Distinguish correlated native output from the
    current adapters' locally emitted `lifecycle.turn_started` events before a request is sent.
 6. On native exit, restore the exact route and native conversation where supported, using the
    machine-recorded handle. Reconcile uncertain batches before draining pending work. If native
@@ -625,9 +603,9 @@ addresses, and private provider data remain outside attention messages and publi
 
 ## 8. Removal and migration
 
-The integration stage, after native root ingress is connected, removes the configured-target
-architecture in the same reviewed implementation. Core dispatcher checkpoints stay unlanded
-until that integration and removal are complete:
+The root authorized the corrected source-dispatch stage to land after review, before native
+integration acceptance. The configured-target sender, socket discovery, and static capability
+table are being removed in the parallel wake lane. The removal includes:
 
 - Delete `normalizeRootWakeTarget`, `claudeSessionSocketPath`, `parseClaudeAgents`, the private
   frame encoder and sender, `ROOT_WAKE_DELIVERY_ATTEMPT_CAP`, and root-only delivery wiring.
@@ -645,9 +623,8 @@ until that integration and removal are complete:
   reference this design for turn-start delivery. Update supported operator entry points.
 
 Retain historical source and receipt rows. Old `wake.root_delivered` rows prove only the old
-transport's reported outcome and cannot suppress unresolved source obligations. Startup rederives
-those obligations from contribution, review, question, report, and succession state. Resolved
-work stays resolved. Historical native process handles remain historical evidence.
+transport's reported outcome. Startup reads source notices and delivery cursors. Delivered
+notices remain behind their recipient cursor. Historical native process handles remain evidence.
 
 The operator has already deleted the external serve config module. This lane must not recreate
 or edit it. The root performs deployment cutover after implementation review, opens the hosted
@@ -692,7 +669,7 @@ Required cases:
 
 1. **Default delivery:** open a root and recruit a seat without wake configuration or a model
    subscription. Record review owed, a root question, a child turn report, and seat guidance.
-   Observe the correctly addressed real turns and business dispositions.
+   Observe the correctly addressed native output and delivery evidence.
 2. **Harness restart:** terminate the test-owned native process, produce more work while its
    replacement is withheld by a test barrier, then release startup. Observe the restored session
    or truthful successor, outstanding markers, and processing receipts. Change no configuration.
@@ -702,12 +679,12 @@ Required cases:
    native lifetime it exercised and observe processing after recovery.
 4. **Resident replacement:** kill the actual resident application child while the host and
    native sessions stay up. Produce work through durable test setup, restart the child, and
-   verify replay of unresolved work. The host ready event drives recovery.
+   verify replay after the committed delivery cursor. The host ready event drives recovery.
 5. **Complete service restart:** kill the complete test deployment process tree, restart
    `baton serve` on its existing durable state, and verify root/seat recovery and all owed work.
    This case prevents passing the previous case by quietly exempting a newly added host process.
 6. **Notice replay:** stop a test deployment after committing source work, restart it, and
-   observe the still-unresolved notice. A duplicate notice remains harmless to business state.
+   observe the notice with unknown receipt. A duplicate notice remains harmless.
 7. **Refusal and recovery:** exercise a real protocol refusal and a broken native connection.
    Assert safe cause, outstanding debt, and delivery after a relevant restoration event.
    More failures than the deleted cap must not suppress later successful delivery.
@@ -715,8 +692,8 @@ Required cases:
    cross-seat input, and an observer claiming root. All refuse without consuming obligations.
    Verify session cleanup and exact ownership transfer across process loss.
 9. **Concurrent/busy delivery:** append while snapshot subscription is opening and while the
-   recipient is generating. All distinct items appear after real turn boundaries. Resolving an
-   item before dispatch suppresses stale action. Large queues retain every overflow item.
+   recipient is generating. All distinct notices appear after real turn boundaries. Notices after
+   the delivery cursor remain eligible until delivered.
 10. **No timer dependency:** use event barriers to control readiness and completion; instrument
     delivery timers so any registration fails the test. Moving the wall clock cannot consume
     debt, dispatch retries, mark a live process dead, or authorize a takeover. A test-runner
@@ -742,7 +719,7 @@ Required cases:
     Inject fresh obligation markers while idle and busy, record the actual receipt and turn
     events, and exercise policy rejection and receipt loss. Restart the native session and the
     integration client independently. Verify automatic role rebind and replay without manually
-    supplied session/process/path configuration. Business resolution alone closes the debt.
+    supplied session/process/path configuration. Delivery advances the recipient cursor.
     Channels records unknown receipt where the API offers no acknowledgment. No model wake or
     acknowledgment action, timer retry, or private transport is permitted.
 16. **Unavailable root route:** remove or deny each candidate's actual prerequisite. Capability
@@ -776,9 +753,8 @@ the native-root revision is reviewed. Native integration must preserve the secti
 and lifecycle contracts. The implementation contribution must identify incomplete root modes;
 working seat control or successful transport writes cannot close their acceptance requirement.
 
-The approved core remains the source-derived obligation model with closure on business
-resolution, event-driven recovery, separate host/resident lifetimes, removal of the old private
-sender, runtime capability reporting, and real-process acceptance. Native wake/restart proof,
+The approved core uses source notices and committed delivery cursors, event-driven recovery,
+separate host/resident lifetimes, removal of the old private sender, runtime capability reporting, and real-process acceptance. Native wake/restart proof,
 the root's MCP connection failure reproduction, and implementation review remain required.
-Vendor maturity and unavailable prerequisites must be reported truthfully. The root alone lands
-the reviewed implementation and performs deployment cutover.
+Vendor maturity and unavailable prerequisites must be reported truthfully. The wake lead lands the corrected stage after review under root authorization. The root
+performs deployment cutover after native acceptance.

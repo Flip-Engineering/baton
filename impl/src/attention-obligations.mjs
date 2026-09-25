@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { contributionNeeds } from './contribution-needs.mjs';
 
+export const attentionRecipientKey = (recipient) => recipient.kind === 'root' ? 'root'
+  : JSON.stringify([recipient.swarmId, recipient.participantId]);
+
 const own = (record, key) => Object.hasOwn(record ?? {}, key) ? record[key] : undefined;
 const identity = (parts) => `attention:${createHash('sha256').update(JSON.stringify(parts)).digest('hex')}`;
 
@@ -25,20 +28,6 @@ export function effectiveAttentionRecipient(swarm, participantId) {
   return { kind: 'root' };
 }
 
-function turnResolved(swarm, event, events, recipient) {
-  const seat = own(swarm.participants, event.payload.participantId);
-  if (seat?.seq > event.seq && ['completed', 'stopped'].includes(seat.leftReason)) return true;
-  return events.some((row) => {
-    const p = row.kind === 'driver.recorded' ? row.payload : null;
-    return row.seq > event.seq && p?.swarmId === swarm.swarmId
-      && ['swarm.guidance_sent', 'swarm.guidance_parked'].includes(p.kind)
-      && p.inReplyTo === event.seq && p.participantId === event.payload.participantId
-      && ['delivered', 'parked'].includes(p.delivery?.state)
-      && (recipient.kind === 'root' ? p.from?.kind === 'root'
-        : p.from?.kind === 'root' || p.from?.participantId === recipient.participantId);
-  });
-}
-
 export function turnAttentionObligations(swarm, events) {
   const rows = new Map();
   for (const event of events) {
@@ -47,7 +36,6 @@ export function turnAttentionObligations(swarm, events) {
     const recipient = effectiveAttentionRecipient(swarm, p.parentId);
     const obligationId = identity(['turn', swarm.swarmId, p.participantId, p.workerId ?? null,
       p.turnEpoch ?? null, p.turnSeq ?? event.seq]);
-    if (turnResolved(swarm, event, events, recipient)) { rows.delete(obligationId); continue; }
     rows.set(obligationId, {
       obligationId, swarmId: swarm.swarmId, participantId: p.participantId, contributionId: null,
       owed: 'turn_reported', ask: turnReportAsk(p), recipient,
@@ -74,7 +62,7 @@ export function rootContributionAttention(swarm, contribution) {
       next: { command: 'swarm.check', ...base } });
   }
   for (const { to, ask, needId } of contributionNeeds(contribution)) {
-    if (to !== 'root' || own(contribution.answers, needId)) continue;
+    if (to !== 'root') continue;
     rows.push({ ...base, owed: 'needs_root', ask, needId,
       next: { command: 'swarm.view', swarmId: swarm.swarmId } });
   }
@@ -90,8 +78,7 @@ const legacyMatch = (row, legacyAsk = (text) => text) => JSON.stringify([
 
 /** Project outstanding root attention from source state and historical delivery evidence.
  * legacyAsk matches historical rows whose producer truncated the source ask. Every derived
- * obligation retains the complete source text. Transport receipts describe an attempt;
- * the source's business disposition alone settles its obligation. */
+ * notice retains the complete source text. Delivery observations retain the transport result. */
 export function rootAttentionObligations(swarm, events, { legacyAsk = (text) => text } = {}) {
   const obligations = new Map();
   const exactMatches = new Map();
@@ -134,7 +121,7 @@ export function rootAttentionObligations(swarm, events, { legacyAsk = (text) => 
         && row.payload?.kind === 'swarm.turn_reported' && row.payload.swarmId === swarm.swarmId
         && (payload.reportSeq !== undefined ? row.seq === payload.reportSeq
           : row.payload.participantId === payload.participantId && turnReportAsk(row.payload) === (payload.ask ?? null)));
-      if (sourceExists || turnResolved(swarm, event, events, { kind: 'root' })) continue;
+      if (sourceExists) continue;
     }
     const match = legacyMatch({ ...payload, ask: payload.ask ?? null });
     const exact = exactMatches.get(match);
@@ -170,6 +157,20 @@ export function rootAttentionObligations(swarm, events, { legacyAsk = (text) => 
       ...(last ? { deliveryEvidence: { kind: 'legacy_transport_receipt', seq: last.receiptSeq } } : {}),
     };
   });
+  const delivered = new Map();
+  for (const event of events) {
+    const p = event.kind === 'driver.recorded' ? event.payload : null;
+    if (p?.kind === 'attention.delivered') {
+      const key = attentionRecipientKey(p.recipient);
+      delivered.set(key, Math.max(delivered.get(key) ?? 0, p.cursor));
+    }
+  }
   return [...contributionRows, ...turnAttentionObligations(swarm, events).filter((row) => row.recipient.kind === 'root')]
+    .filter((row) => {
+      const source = events.find((event) => event.seq === row.source.seq);
+      const parentId = source?.payload?.kind === 'swarm.turn_reported' ? source.payload.parentId : null;
+      const recipient = parentId ? { kind: 'seat', swarmId: swarm.swarmId, participantId: parentId } : { kind: 'root' };
+      return row.source.seq > (delivered.get(attentionRecipientKey(recipient)) ?? 0);
+    })
     .sort((a, b) => a.seq - b.seq);
 }

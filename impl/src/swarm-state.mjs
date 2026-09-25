@@ -17,7 +17,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 // Issue #286 G-36: the physical-workspace-id shape has ONE definition (shared-workspace-custody.mjs);
 // every workspace id this fold admits or compares asks that predicate.
 import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
-import { contributionNeeds } from './contribution-needs.mjs';
 
 export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.created',
@@ -68,7 +67,6 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
   'swarm.contribution_reviewed',
-  'swarm.need_answered',
   // Issue #296: the landing receipt — the runtime's own record of one contribution squashed onto a
   // target. Composed by `swarm.integrate` from the git it actually ran (the base it resolved, the
   // commit it made, the gates it ran, the conflicts it resolved), never caller-submittable: a
@@ -936,12 +934,6 @@ export function validateSwarmEvent(kind, payload) {
     }
     if (p.mergeBase !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.mergeBase)) {
       refuse('A contribution revision mergeBase must be an exact commit', 'invalid_payload');
-    }
-    return;
-  }
-  if (kind === 'swarm.need_answered') {
-    for (const field of ['contributionId', 'needId', 'answer', 'answeredBy']) {
-      if (!isNonEmptyString(p[field])) refuse(`swarm.need_answered requires ${field}`, 'invalid_payload');
     }
     return;
   }
@@ -2249,21 +2241,6 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     return;
   }
 
-  if (kind === 'swarm.need_answered') {
-    const contribution = ownGet(swarm.contributions, p.contributionId);
-    if (!contribution) integrity('Contribution is unavailable', 'contribution_not_found');
-    if (!contributionNeeds(contribution).some((need) => need.needId === p.needId)) {
-      integrity('The contribution has no such addressed need', 'invalid_payload');
-    }
-    if (ownGet(contribution.answers ?? {}, p.needId)) integrity('The need already has an answer', 'version_conflict');
-    assertAttribution(swarm, p.answeredBy, meta, 'answeredBy');
-    const answers = new Map(Object.entries(contribution.answers ?? {}));
-    answers.set(p.needId, Object.freeze({ answer: p.answer, answeredBy: p.answeredBy, ...meta }));
-    const contributions = new Map(Object.entries(swarm.contributions));
-    contributions.set(p.contributionId, Object.freeze({ ...contribution, answers: Object.freeze(Object.fromEntries(answers)) }));
-    swarms.set(p.swarmId, replaceField(swarm, 'contributions', contributions));
-    return;
-  }
   if (kind === 'swarm.contribution_revision_attached') {
     const contribution = ownGet(swarm.contributions, p.contributionId);
     if (!contribution) integrity('Contribution is unavailable', 'contribution_not_found');
