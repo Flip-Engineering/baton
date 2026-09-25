@@ -230,8 +230,13 @@ is the ONE predicate; the wake stream lane imports it to derive a `capacity_pres
 wake. This document does not build the wake.
 
 `swarm.view` also carries the swarm's own `policy` (#443) — the RESOLVED re-route policy,
-`{rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}`, with `manual` and no
-billing preference filled in for a swarm that never declared one, so a view of a fresh
+`{rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}`, with `auto` and no
+billing preference filled in for a swarm that never declared one (#574: recoverability is the
+default posture; a declared `manual` stops at the proposal and pages an orchestrator). The
+operator may also declare `advanced.routing.excludeHarnesses` — harnesses no seat may be routed
+onto; the recruit selection, the `recruitable` flag and the re-route candidate derivation honour
+it through the one eligibility predicate, and a re-route names an excluded route in its excluded
+rows with the reason `excluded_by_operator` (#574), so a view of a fresh
 swarm already says what a provider-fault death would do. It is declared when the swarm is
 OPENED — `baton swarm create <purpose> --policy '{"rerouteOnProviderFault":"auto"}'` — or
 later by one caller-submittable `swarm.policy_updated` row through `swarm.update`: both
