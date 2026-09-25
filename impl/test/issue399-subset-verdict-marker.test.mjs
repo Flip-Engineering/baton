@@ -10,7 +10,7 @@
 // Row inventory (3 rows — red at HEAD, green after):
 //   (a) a named-file run prints the SUBSET headline, writes coverage.kind subset
 //       with the counts, and renders the subset sentence (live nested runner drive
-//       on one tiny test file, the way suite-manifest-reasons R-1 drives it)
+//       on one tiny test file)
 //   (b) the canonical-selection (full) coverage prints the byte-identical headline,
 //       carries coverage.kind full, and stays the acceptance (pure seam — a live
 //       full run is the whole suite, so this row drives the same helpers the

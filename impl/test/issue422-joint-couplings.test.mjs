@@ -5,12 +5,7 @@
 // Every row asserts the behaviour docs/45 specifies against the CURRENT runtime and is expected
 // RED: the lease/propose/quorum vocabulary does not exist yet (today the first unlanded call
 // refuses — swarm_permission_required, a closed-set action refusal, or an absent projection —
-// and each row's message names what the implementer must land). When a row goes green the
-// expected-red manifest entry for it is stale and is retired with the landing (docs/44).
-//
-// Manifest plan (docs/44 rule 5): these rows list with reason #422. The manifest
-// (impl/scripts/expected-red-tests.json) is outside this design lane's path scope; listing the
-// rows is the implementing lane's first act, named in docs/45 §13.
+// and each row's message names what the implementer must land).
 //
 // Fixture: the light SwarmRuntime harness (swarm-runtime.test.mjs) plus a workspaceAttachment
 // mock, so participants carry a recorded checkout (the lease coverage rule, docs/45 §4.1).
