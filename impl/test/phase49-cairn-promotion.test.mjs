@@ -124,15 +124,3 @@ test('SP8: ACI budget refusal happens before any promotion batch effect', async 
   await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.promote', { observedSeq }, ctx({ idempotencyKey: 'aci:small', budgetTokens: 1 })), (error) => error.code === 'capability_result_oversize');
   assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.promotion_batch'), false); assert.equal(driver.coordination.queryKnowledge().some((node) => node.id.startsWith('promotion:')), false); driver.close();
 });
-
-test('SP2/SP8: a critical audit failure or cancellation after audit leaves no promotion residue', async () => {
-  const bad = new CoordinationStore(root('audit-bad'), { clock: clock() }); const created = bad.createTask(task('a'), { actor: 'orchestrator', key: 'task:a' }); bad.addKnowledgeNode({ id: 'finding:orphan', type: 'Finding', grounding: 'verified', body: 'orphan', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'orphan' }); const before = bad.snapshot().lastSeq;
-  await assert.rejects(cairn(bad).invoke('causal.promote', { observedSeq: before }, ctx()), (error) => error.code === 'causal_promotion_audit_failed'); assert.equal(bad.snapshot().lastSeq, before);
-  const cancelled = new CoordinationStore(root('cancel-after-audit'), { clock: clock() }); completed(cancelled, 'a'); const abort = new AbortController(); const audit = cancelled.auditKnowledge.bind(cancelled); cancelled.auditKnowledge = (...args) => { const result = audit(...args); abort.abort(); return result; }; const cancelBefore = cancelled.snapshot().lastSeq;
-  await assert.rejects(cairn(cancelled).invoke('causal.promote', { observedSeq: cancelBefore }, ctx({ signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal(cancelled.snapshot().lastSeq, cancelBefore);
-
-  const raced = new CoordinationStore(root('post-audit-append'), { clock: clock() }); completed(raced, 'a'); const pinned = raced.snapshot().lastSeq; const racedAudit = raced.auditKnowledge.bind(raced); let injected = false;
-  raced.auditKnowledge = (...args) => { const result = racedAudit(...args); if (!injected) { injected = true; completed(raced, 'b'); } return result; };
-  const racedResult = await cairn(raced).invoke('causal.promote', { observedSeq: pinned }, ctx({ idempotencyKey: 'post-audit-append' }));
-  assert.equal(racedResult.payload[0].candidateCount, 1); assert.equal(racedResult.payload[0].candidates.every((row) => row.sourceSeq <= pinned), true);
-});

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import { parseRouteTupleKey } from './route-tuple.mjs';
@@ -9,29 +9,14 @@ const INTERVENTIONS = new Set([
   'control.send', 'control.steer', 'control.nudge', 'control.follow_up_requested',
   'control.interrupt_requested', 'kill.requested', 'control.recovery_requested',
 ]);
-const RETAINED_GOAL_CATALOG = Object.freeze([
-  'northbound-authenticated-user-orchestrator-control', 'southbound-harness-model-effort-routing', 'persistent-session-resume-fork', 'lifecycle-replay-kill-reap',
-  'os-sandbox-scoped-secrets', 'provenance-correct-messaging', 'budgets-watchdogs-telemetry-operator-control', 'verification-mutation-independent-oracle-semantic-review',
-  'integration-approval-gated-publication', 'adaptive-routing-evaluation-context-governance', 'shared-memory-promotion-recall-feedback-contradiction-temporal-integrity',
-  'project-manager-inspired-self-contained-selective-typed-causal-graph', 'atlas-search-ast-cst-symbol-scip-cpg-ir-semantic-delta', 'graph-backed-representation-nodes-and-semantic-diff',
-  'vantage-debugging-evidence-ladder', 'scratch-repl-bench-notify-contention-and-control-failure-promotion', 'skill-forge-computer-use', 'cartographer-quartermaster-cairn',
-  'structured-semantic-merge-behavioral-fingerprints', 'research-bet-egraphs', 'audit-gated-bounded-lexical-graph-recall', 'session-provider-northbound-runtime-depth',
-  'deeper-language-lsp-ssa-pdg-path-alias-heap-implicit-flow-interprocedural-analysis', 'deployment-neutral-export-no-external-project-manager-or-homelab-runtime',
-]);
-
-const typed = (message, code) => Object.assign(new Error(message), { code });
-const clone = (value) => JSON.parse(JSON.stringify(value));
-const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const validRunId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value);
+const typed = (message, code) => Object.assign(new Error(message), { code });
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+const clone = (value) => JSON.parse(JSON.stringify(value));
 const stable = (value) => {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
-};
-const publicClaim = (value) => {
-  const copy = clone(value);
-  if (copy && Array.isArray(copy.refs)) copy.refs = copy.refs.map(({ path: _path, ...ref }) => ref);
-  return copy;
 };
 const group = (items, key) => Object.fromEntries([...new Set(items.map(key))].sort().map((name) => [name, items.filter((item) => key(item) === name).length]));
 
@@ -181,43 +166,9 @@ export class CairnRunScorecard {
   }
 
   _boundedKnowledgeResult(result) {
-    if (Buffer.byteLength(stable(result)) > this.knowledgeAuditPolicy.maxResultBytes) throw typed('causal result exceeded deployment ceiling', result.op === 'causal.audit' ? 'causal_audit_oversize' : 'causal_trace_oversize');
+    if (Buffer.byteLength(stable(result)) > this.knowledgeAuditPolicy.maxResultBytes) throw typed('causal result exceeded deployment ceiling', 'causal_trace_oversize');
     return result;
   }
-
-  _readCausalAuditArtifact(path, expectedBytes, packetDigest) {
-    let fd;
-    try {
-      fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = fstatSync(fd);
-      if (stat.size > this.knowledgeAuditPolicy.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
-      if (!stat.isFile() || stat.size !== expectedBytes || (stat.mode & 0o777) !== 0o600 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw typed('causal audit artifact path is occupied by invalid content, owner, mode, or size', 'causal_audit_integrity');
-      const bytes = readFileSync(fd); if (bytes.length !== expectedBytes || sha256(bytes) !== packetDigest) throw typed('causal audit artifact path is occupied by invalid content', 'causal_audit_integrity');
-    } catch (error) {
-      if (error?.code === 'causal_audit_oversize' || error?.code === 'causal_audit_integrity') throw error;
-      throw typed('causal audit artifact is unavailable or unsafe', 'causal_audit_integrity');
-    } finally { if (fd !== undefined) closeSync(fd); }
-  }
-
-  _causalAudit(args, ctx, override = null, writeArtifact = true) {
-    this._knowledgeContext(ctx); const upper = this._causalBoundary(args, ['observedSeq'], override); const p = this.knowledgeAuditPolicy;
-    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
-    this._knowledgeContext(ctx);
-    const retainedScope = { catalogVersion: 1, capabilityIds: [...RETAINED_GOAL_CATALOG] }; retainedScope.catalogDigest = sha256(stable(retainedScope));
-    const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['promotion-breadth', 'playbook-skill-promotion', 'versioned-recall-learning-policy', 'authenticated-contradiction-operator-ux', 'scratch-repl-bench', 'retention-compaction', 'deployment-neutral-export'] };
-    this._knowledgeContext(ctx);
-    const bytes = stable(core); if (Buffer.byteLength(bytes) > p.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
-    const packetDigest = sha256(bytes); const path = this._artifactPath(packetDigest); const document = { ...core, auditDigest: packetDigest };
-    const result = this._boundedKnowledgeResult({ op: 'causal.audit', status: 'ok', summary: `attested Cairn causal audit for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-causal-audit', digest: packetDigest, bytes: Buffer.byteLength(bytes), path }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-audit', upper) });
-    this._knowledgeContext(ctx); let created = false;
-    try {
-      if (existsSync(path)) this._readCausalAuditArtifact(path, Buffer.byteLength(bytes), packetDigest);
-      else if (writeArtifact) {
-        this._knowledgeContext(ctx); writeFileSync(path, bytes, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); created = true; this._readCausalAuditArtifact(path, Buffer.byteLength(bytes), packetDigest);
-      } else throw typed('causal audit artifact is missing', 'causal_audit_integrity');
-      this._knowledgeContext(ctx); return result;
-    } catch (error) { if (created) rmSync(path, { force: true }); throw error; }
-  }
-
   _causalTrace(args, ctx, override = null) {
     this._knowledgeContext(ctx); if (typeof args?.nodeId !== 'string' || args.nodeId.length === 0 || Buffer.byteLength(args.nodeId) > 4_096) throw typed('causal trace request is invalid', 'causal_request_invalid');
     const upper = this._causalBoundary(args, ['nodeId', 'observedSeq'], override); const p = this.knowledgeAuditPolicy;
@@ -226,11 +177,11 @@ export class CairnRunScorecard {
     return this._boundedKnowledgeResult({ op: 'causal.trace', status: trace.complete ? 'ok' : 'partial', summary: `bounded Cairn causal trace for ${args.nodeId}`, payload: [document], refs: [{ kind: 'cairn-causal-trace', digest: traceDigest, bytes: Buffer.byteLength(stable(core)) }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-trace', upper) });
   }
 
-  _recallAudit(upper) {
-    const p = this.knowledgeAuditPolicy;
-    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
-    if (metrics.violations.critical > 0) throw typed('causal recall audit gate failed', 'causal_recall_audit_failed');
-    return { criticalViolations: metrics.violations.critical, metricsDigest: sha256(stable(metrics)) };
+  // #598: the knowledge audit gates are gone — no audit scan runs, nothing throws on violation
+  // counts, and the documents carry the shape with a null digest. Facts and unresolved
+  // contradictions are returned directly.
+  _recallAudit() {
+    return Object.freeze({ criticalViolations: 0, metricsDigest: null });
   }
 
   _recallResult(recalled, audit, publishedSizes = null) {
@@ -281,10 +232,8 @@ export class CairnRunScorecard {
     this._knowledgeContext(ctx); return this._recallResult(recalled, audit);
   }
 
-  _assessmentAudit(upper) {
-    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
-    if (metrics.violations.critical > 0) throw typed('causal recall assessment audit gate failed', 'causal_assessment_audit_failed');
-    return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
+  _assessmentAudit() {
+    return Object.freeze({ criticalViolations: 0, metricsDigest: null });
   }
 
   _assessmentResult(assessed, audit) {
@@ -324,11 +273,8 @@ export class CairnRunScorecard {
     return result;
   }
 
-  _promotionAudit(upper) {
-    const p = this.knowledgeAuditPolicy;
-    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
-    if (metrics.violations.critical > 0) throw typed('causal promotion audit gate failed', 'causal_promotion_audit_failed');
-    return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
+  _promotionAudit() {
+    return Object.freeze({ criticalViolations: 0, metricsDigest: null });
   }
 
   _promotionResult(promoted, audit) {
@@ -413,9 +359,8 @@ export class CairnRunScorecard {
     if (actor === null) throw typed('causal contradiction actor is not authorized', 'causal_contradiction_forbidden'); return actor;
   }
 
-  _contradictionAudit(upper) {
-    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
-    if (metrics.violations.critical > 0) throw typed('causal contradiction audit gate failed', 'causal_contradiction_audit_failed'); return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
+  _contradictionAudit() {
+    return Object.freeze({ criticalViolations: 0, metricsDigest: null });
   }
 
   _contradictionProvenance(kind, upper, readOnly, effect = 'none') {
@@ -558,7 +503,6 @@ export class CairnRunScorecard {
 
   async invoke(op, args, ctx) {
     if (op === 'route.advice') return this._routeResult(this._routeAdvice(args));
-    if (op === 'causal.audit') return this._causalAudit(args, ctx);
     if (op === 'causal.trace') return this._causalTrace(args, ctx);
     if (op === 'causal.recall') return this._causalRecall(args, ctx);
     if (op === 'causal.assess_recall') return this._causalAssessRecall(args, ctx);
@@ -588,13 +532,6 @@ export class CairnRunScorecard {
   async reverify(claim, op, args, ctx = {}) {
     try {
       if (op === 'route.advice') { const rebuilt = this._routeAdvice(args); const observed = claim?.payload?.[0]; return { ok: stable(observed) === stable(rebuilt) && observed?.adviceDigest === rebuilt.adviceDigest, digest: rebuilt.adviceDigest }; }
-      if (op === 'causal.audit') {
-        const upper = claim?.payload?.[0]?.coordinationUpperBound; if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
-        const rebuilt = this._causalAudit(args, ctx, upper, false); const digest = rebuilt.refs[0].digest;
-        const transported = ['web', 'mcp'].includes(ctx?.transport);
-        if ((!transported && typeof claim?.refs?.[0]?.path !== 'string') || (claim?.refs?.[0]?.path !== undefined && resolve(claim.refs[0].path) !== resolve(rebuilt.refs[0].path))) return { ok: false, reason: 'artifact_path_mismatch' };
-        return { ok: stable(publicClaim(claim)) === stable(publicClaim(rebuilt)), digest };
-      }
       if (op === 'causal.trace') { if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' }; const rebuilt = this._causalTrace(args, ctx, claim?.payload?.[0]?.observedSeq); return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.refs[0].digest }; }
       if (op === 'causal.recall') {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };

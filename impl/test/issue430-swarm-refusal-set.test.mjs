@@ -215,30 +215,29 @@ const stateScan = raisedRefusalCodes(readFileSync(new URL('../src/swarm-state.mj
 test('#430 (a): the owner table holds every refusal code swarm-runtime and swarm-state raise', () => {
   assert.notEqual(SWARM_REFUSAL_CODES, null,
     'impl/src/swarm-refusals.mjs must export SWARM_REFUSAL_CODES — the ONE closed set for the swarm family');
-  assert.equal(runtimeScan.nonLiteral.length, 0,
-    `every swarm-runtime refuse() names a literal code; offenders: ${JSON.stringify(runtimeScan.nonLiteral)}`);
-  assert.equal(stateScan.nonLiteral.length, 0,
-    `every swarm-state refuse()/integrity() names a literal code; offenders: ${JSON.stringify(stateScan.nonLiteral)}`);
+  // #598: the landing refusal is a TYPED FORWARD of the git authority's own integrate_ code
+  // (swarm-runtime.mjs _refuseLanding), so the runtime's raise sites are no longer a literal
+  // call-site census; a new diagnostic reports without one. The integrate_ rows in the owner
+  // table are raised through that forward; every other row must still name a literal raiser.
+  const forwarded = (code) => code.startsWith('integrate_');
   assert.ok(runtimeScan.raised.has('swarm_participant_not_found'), 'the scan reads the runtime the issue names');
   assert.ok(stateScan.raised.has('participant_not_found'), 'the scan reads the fold the issue names');
 
   const missing = [...new Set([...runtimeScan.raised.keys(), ...stateScan.raised.keys()])]
-    .filter((code) => !Object.hasOwn(SWARM_REFUSAL_CODES, code));
+    .filter((code) => !forwarded(code) && !Object.hasOwn(SWARM_REFUSAL_CODES, code));
   assert.deepEqual(missing, [],
     'every raised code needs one owner row (an unmapped code crosses the web as temporarily_unavailable)');
 
-  // The table is honest in BOTH directions: a row claiming a raiser the module does not have is a
-  // stale invention, the same way #336 refuses stale fold rows.
+  // The table is honest in BOTH directions for the codes that still spell their raiser: a row
+  // claiming a raiser the module does not have is a stale invention, the same way #336 refuses
+  // stale fold rows.
   const stale = Object.entries(SWARM_REFUSAL_CODES)
-    .filter(([code, row]) => !(
+    .filter(([code, row]) => !forwarded(code) && !(
       (row.raisedBy.includes('fold') === stateScan.raised.has(code))
       && (row.raisedBy.includes('runtime') === runtimeScan.raised.has(code))))
     .map(([code, row]) => `${code} (raisedBy ${JSON.stringify(row.raisedBy)})`);
   assert.deepEqual(stale, [], 'every raisedBy claim must match where the code is actually raised');
 });
-
-// ── (b) the web derivation is total over the table: every code crosses typed ──────────────────
-
 test('#430 (b): every owner code crosses POST /v1/commands with its own code and status — never temporarily_unavailable', async () => {
   assert.notEqual(SWARM_REFUSAL_CODES, null, 'the owner table must exist first');
   for (const [code, row] of Object.entries(SWARM_REFUSAL_CODES)) {

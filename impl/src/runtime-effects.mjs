@@ -1087,9 +1087,6 @@ export async function _integrate(coordinator, recorder, workerId, opts = {}) {
         });
         const accepted = coordinator._accept(observedVerdict, {
           expectExit: task.brief.verification.expectExit,
-          requireRedGreen: false,
-          requireCoverage: false,
-          requireMutation: false,
         });
         const verdict = closedVerificationVerdict(observedVerdict, task.brief.verification);
         recorder.log.append({

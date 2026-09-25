@@ -1697,9 +1697,6 @@ export function createDriver(opts) {
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
     acceptOpts: {
-      requireRedGreen: opts.requireRedGreen ?? false,
-      requireCoverage: opts.requireCoverage ?? false,
-      requireMutation: opts.requireMutation ?? false,
     },
     requireIndependentOracle: opts.requireIndependentOracle ?? false,
     publisher,

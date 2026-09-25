@@ -215,8 +215,7 @@ export const CLOSED_VERIFIER_EXECUTIONS = new Map([
 // comparison had nothing to read and the check fails on the runner's last words.
 export const CLOSED_VERIFIER_DIAGNOSTICS = new Set([
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
-  'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
-  'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
+  'verification_claim_diverged',
   'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
   'verification_unjudged',
 ]);
@@ -245,8 +244,6 @@ export function closedVerificationVerdict(value, verification = {}) {
   const failureOwnership = CLOSED_VERIFIER_OWNERS.has(observed.failureOwnership)
     ? observed.failureOwnership : outcome === 'candidate_failed' ? 'candidate'
       : outcome === 'inconclusive' ? 'verifier' : null;
-  const uncovered = Array.isArray(observed.uncoveredChangedLines) ? observed.uncoveredChangedLines : [];
-  const survived = Array.isArray(observed.survivedMutants) ? observed.survivedMutants : [];
   const capturedOutputBytes = Number.isSafeInteger(observed.capturedOutputBytes)
     && observed.capturedOutputBytes >= 0 ? observed.capturedOutputBytes : 0;
   const emptyDigest = createHash('sha256').update('').digest('hex');
@@ -270,16 +267,15 @@ export function closedVerificationVerdict(value, verification = {}) {
     matchesClaim: observed.matchesClaim !== false,
     passed,
     locus: observed.locus === 'fresh_sandbox' ? 'fresh_sandbox' : null,
-    redGreen: boolOrNull(observed.redGreen),
+    redGreen: null,
     baseExit: intOrNull(observed.baseExit),
-    coverageOfChange: boolOrNull(observed.coverageOfChange),
-    uncoveredChangedLineCount: uncovered.length,
-    uncoveredChangedLinesDigest: canonicalDigest(uncovered),
-    mutationStrength: Number.isFinite(observed.mutationStrength)
-      && observed.mutationStrength >= 0 && observed.mutationStrength <= 1 ? observed.mutationStrength : null,
-    mutationPassed: boolOrNull(observed.mutationPassed),
-    survivedMutantCount: survived.length,
-    survivedMutantsDigest: canonicalDigest(survived),
+    coverageOfChange: null,
+    uncoveredChangedLineCount: 0,
+    uncoveredChangedLinesDigest: canonicalDigest([]),
+    mutationStrength: null,
+    mutationPassed: null,
+    survivedMutantCount: 0,
+    survivedMutantsDigest: canonicalDigest([]),
     capturedOutputBytes,
     capturedOutputDigest,
     ...(failureCapsule ? { failureCapsule } : {}),

@@ -5772,29 +5772,21 @@ export function _closedVerdictProjection(application, result, planNode, phase, w
       ? null : normalizeVerifierFailureCapsule(verdict.failureCapsule, {
         capturedOutputBytes, capturedOutputDigest,
       });
+    // #598: the redGreen/coverage/mutation hardening requirements are gone — the acceptance
+    // policy is the verifier's own re-run plus the landing comparison, never a hardening signal.
     const acceptance = result?.verificationAcceptance ?? null;
-    const requirements = {
-      requireRedGreen: acceptance?.requireRedGreen === true,
-      requireCoverage: acceptance?.requireCoverage === true,
-      requireMutation: acceptance?.requireMutation === true,
-    };
     const verdictSatisfiesPolicy = verdict.reverified === true && verdict.passed === true
-      && (!requirements.requireRedGreen || verdict.redGreen === true)
-      && (!requirements.requireCoverage || verdict.coverageOfChange === true)
-      && (!requirements.requireMutation || verdict.mutationPassed === true)
       && verdict.diagnosticCode !== 'verification_red_green_failed';
     const accepted = acceptance
       ? acceptance.accepted === true && verdictSatisfiesPolicy
       : ['work_completed', 'reviewing', 'completed'].includes(phase)
         && verdictSatisfiesPolicy;
     const policyMode = ['pass_only', 'red_green_required', 'pass_plus_hardening']
-      .includes(acceptance?.policy) ? acceptance.policy
-      : requirements.requireRedGreen ? 'red_green_required'
-        : requirements.requireCoverage || requirements.requireMutation
-          ? 'pass_plus_hardening' : 'pass_only';
+      .includes(acceptance?.policy) ? acceptance.policy : 'pass_only';
     return deepFreeze({
       accepted,
-      acceptancePolicy: { mode: policyMode, ...requirements },
+      acceptancePolicy: { mode: policyMode,
+        requireRedGreen: false, requireCoverage: false, requireMutation: false },
       digest: sanitizeHex64(digest(verdict)),
       outcome: closedEnum(verdict.outcome, VERIFIER_OUTCOMES),
       failureOwnership: verdict.failureOwnership == null

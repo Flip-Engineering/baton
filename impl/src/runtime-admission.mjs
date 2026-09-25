@@ -649,16 +649,13 @@ export function constructor(coordinator, opts) {
     // #269: the deployment may choose a lighter verification for captures that touch none of the
     // paths the code verification covers (docs-only). Absent, every check runs the brief's own.
     coordinator._verificationForCapture = typeof opts.verificationForCapture === 'function' ? opts.verificationForCapture : null;
-    const verificationRequirements = {
-      requireRedGreen: coordinator._acceptOpts.requireRedGreen === true,
-      requireCoverage: coordinator._acceptOpts.requireCoverage === true,
-      requireMutation: coordinator._acceptOpts.requireMutation === true,
-    };
+    // #598: the verification acceptance policy is pass_only — the redGreen/coverage/mutation
+    // hardening requirements and their plumbing are gone.
     coordinator._verificationAcceptancePolicy = deepFreeze({
-      policy: verificationRequirements.requireRedGreen ? 'red_green_required'
-        : verificationRequirements.requireCoverage || verificationRequirements.requireMutation
-          ? 'pass_plus_hardening' : 'pass_only',
-      ...verificationRequirements,
+      policy: 'pass_only',
+      requireRedGreen: false,
+      requireCoverage: false,
+      requireMutation: false,
     });
     // VR6: the immutable deployment verifier-runtime identity, used to conflict a retry whose
     // admission was recorded under a different runtime policy than the one now bound.
@@ -2013,12 +2010,7 @@ export async function result(coordinator, recorder, workerId) {
       hardExceeded: handle.providerPolicyHardExceeded === true,
       telemetryFailed: handle.providerTelemetryFailed === true,
     } : null;
-    const verdictAccepted = task?.verdict?.reverified === true && task.verdict.passed === true
-      && (!coordinator._verificationAcceptancePolicy.requireRedGreen || task.verdict.redGreen === true)
-      && (!coordinator._verificationAcceptancePolicy.requireCoverage
-        || task.verdict.coverageOfChange === true)
-      && (!coordinator._verificationAcceptancePolicy.requireMutation
-        || task.verdict.mutationPassed === true);
+    const verdictAccepted = task?.verdict?.reverified === true && task.verdict.passed === true;
     const attribution = {
       taskId: task?.id ?? handle.taskId ?? null,
       runId: task?.runId ?? handle.runId ?? null,

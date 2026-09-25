@@ -609,18 +609,6 @@ export async function verify(task, result, sandbox, opts = {}) {
       consumedBy: () => consumedBy,
     });
   }
-  // One auxiliary phase (coverage, mutation): draws what is LEFT of the shared budget, runs under
-  // the same abort signal (G-11) and the same declared output bound (G-10) as the candidate, and
-  // returns null when the budget is already spent — the phase is then not started at all.
-  const auxiliaryRun = async (phase, command) => {
-    const budget = budgetFor(phase);
-    if (budget <= 0) return null;
-    const environment = runtimeEnvironmentFor(task.verification, runtime);
-    const run = await runCommand(command, sandbox.dir, budget, environment, maxOutputBytes, opts.signal ?? null);
-    if (opts.signal?.aborted || run.aborted) throw abortError();
-    spent(phase);
-    return run;
-  };
 
   const resultRun = await runPinnedVerification(
     task.verification, sandbox.dir, budgetFor('candidate'), runtime, maxOutputBytes, opts.signal ?? null,
@@ -641,16 +629,14 @@ export async function verify(task, result, sandbox, opts = {}) {
   const execution = executionOf(resultRun);
   const passed = execution.state === 'completed' && observedExit === task.verification.expectExit;
 
-  let redGreen = null;
+  // The base run's one remaining consumer is failure-ownership classification: a candidate that
+  // failed where its base fails too is the baseline's or the environment's, not the candidate's
+  // (#598 removed the redGreen, coverage and mutation hardening signals and their auxiliary runs;
+  // the comparison a landing runs is the acceptance verdict, so the trust gate derives no
+  // hardening signal of its own).
   let baseExit = null;
   let baseExecution = null;
-  // The hardening signal is derived ONLY from a base run that completed and reported an exit code
-  // (2026-09-14 audit, swarm-a/lead.md finding 2). Before this, a base that TIMED OUT reported no
-  // exit code, `null !== expectExit` was trivially true, and a candidate that passed was granted
-  // `redGreen: true` by a check that never discriminated anything. A hardening signal whose
-  // observation did not happen stays null and carries the reason it is null.
-  let redGreenReason = 'base_not_run';
-  if (opts.baseSandbox && (passed || opts.classifyFailureOwnership)) {
+  if (!passed && opts.classifyFailureOwnership && opts.baseSandbox) {
     const baseBudget = budgetFor('base');
     if (baseBudget > 0) {
       const baseRun = await runPinnedVerification(
@@ -660,60 +646,6 @@ export async function verify(task, result, sandbox, opts = {}) {
       spent('base');
       baseExecution = executionOf(baseRun);
       baseExit = baseRun.timedOut ? null : baseRun.exitCode;
-      if (baseExecution.state === 'completed') {
-        redGreen = passed && baseExit !== task.verification.expectExit;
-        redGreenReason = null;
-      } else {
-        redGreenReason = baseExecution.state === 'timed_out' ? 'base_timed_out' : 'base_unavailable';
-      }
-    }
-  }
-
-  let coverageOfChange = null;
-  let uncoveredChangedLines = [];
-  let coverageNote = '';
-  const hasChangedLines = task.changedLines && Object.keys(task.changedLines).length > 0;
-  if (task.verification.coverageCommand && passed && hasChangedLines) {
-    const covRun = await auxiliaryRun('coverage', task.verification.coverageCommand);
-    if (covRun) {
-      try {
-        const parsed = JSON.parse(covRun.output);
-        const files = parsed.files ?? {};
-        const uncovered = [];
-        for (const [filePath, lineNumbers] of Object.entries(task.changedLines)) {
-          const executed = new Set(files[filePath]?.executedLines ?? []);
-          for (const ln of lineNumbers) {
-            if (!executed.has(ln)) uncovered.push(`${filePath}:${ln}`);
-          }
-        }
-        uncoveredChangedLines = uncovered;
-        coverageOfChange = uncovered.length === 0;
-      } catch {
-        coverageOfChange = null;
-        coverageNote = ' Coverage report parse failure (non-JSON or malformed stdout) — coverage signal dropped, primary verdict unaffected.';
-      }
-    }
-  }
-
-  let mutationStrength = null;
-  let mutationPassed = null;
-  let survivedMutants = [];
-  let mutationNote = '';
-  if (task.verification.mutationCommand && passed) {
-    const mutationRun = await auxiliaryRun('mutation', task.verification.mutationCommand);
-    if (mutationRun) {
-      try {
-        const parsed = JSON.parse(mutationRun.output);
-        const killed = Number(parsed.killed);
-        const total = Number(parsed.total);
-        survivedMutants = Array.isArray(parsed.survived) ? parsed.survived : [];
-        if (Number.isFinite(killed) && Number.isFinite(total) && total > 0 && killed >= 0 && killed <= total) {
-          mutationStrength = killed / total;
-          mutationPassed = survivedMutants.length === 0 && killed === total;
-        }
-      } catch {
-        mutationNote = ' Mutation report parse failure — mutation signal unknown.';
-      }
     }
   }
 
@@ -724,16 +656,6 @@ export async function verify(task, result, sandbox, opts = {}) {
     diagnosticCode = execution.code;
   } else if (!matchesClaim) {
     diagnosticCode = 'verification_claim_diverged';
-  } else if (passed && redGreen === false) {
-    diagnosticCode = 'verification_red_green_failed';
-  } else if (passed && coverageOfChange === false) {
-    diagnosticCode = 'verification_coverage_failed';
-  } else if (passed && mutationPassed === false) {
-    diagnosticCode = 'verification_mutation_failed';
-  } else if (passed && coverageNote) {
-    diagnosticCode = 'verification_coverage_unavailable';
-  } else if (passed && mutationNote) {
-    diagnosticCode = 'verification_mutation_unavailable';
   } else if (passed) {
     diagnosticCode = 'verification_passed';
   } else {
@@ -748,25 +670,14 @@ export async function verify(task, result, sandbox, opts = {}) {
     matchesClaim,
     passed,
     locus: 'fresh_sandbox',
-    redGreen,
-    // Why redGreen is null (`base_timed_out` | `base_unavailable` | `base_not_run`); null when the
-    // hardening signal WAS observed. A null signal is never a pass: accept({requireRedGreen})
-    // refuses it, and the reason names the observation that did not happen.
-    redGreenReason,
     baseExit,
-    coverageOfChange,
-    uncoveredChangedLines,
-    mutationStrength,
-    mutationPassed,
-    survivedMutants,
     capturedOutputBytes: resultRun.capturedOutputBytes,
     capturedOutputDigest: resultRun.capturedOutputDigest,
     diagnosticCode,
     durationMs,
     // G-12: the receipt says which phase spent the contract's one timeout. `consumedBy` is null
     // when the whole verification finished inside it; a phase named here is the one during which
-    // the budget ran out, and any phase after it never started (so its hardening signal is null
-    // rather than false).
+    // the budget ran out.
     verificationBudget: {
       limitMs: timeoutMs,
       remainingMs: Math.max(0, deadline - Date.now()),
@@ -821,14 +732,6 @@ export function readOnlyNoChangeVerdict(init = {}) {
     hadClaim: false,
     matchesClaim: true,
     passed: true,
-    locus: null,
-    redGreen: null,
-    baseExit: null,
-    coverageOfChange: null,
-    uncoveredChangedLines: [],
-    mutationStrength: null,
-    mutationPassed: null,
-    survivedMutants: [],
     capturedOutputBytes: 0,
     capturedOutputDigest: createHash('sha256').update('').digest('hex'),
     diagnosticCode: 'verification_not_required',
@@ -843,32 +746,27 @@ export function readOnlyNoChangeVerdict(init = {}) {
 
 /**
  * A verdict is trustworthy — and a result is safe to mark "done"/merge — iff the hub
- * itself observed a pass, AND (if required) the hardening checks that were requested
- * came back true, not merely non-false, AND the exit the hub observed is the one this
- * caller's contract row expects.
+ * itself observed a pass, AND the exit the hub observed is the one this caller's contract
+ * row expects (#598: the hardening requirements are gone; the landing comparison is the
+ * acceptance verdict).
  *
  * `expectExit` is threaded here by both done-gate callers (the coordinator's task gate and
- * contribution-service's check receipt). Before the 2026-09-14 audit (G-15) it was dead weight:
- * `verdict.passed` already encodes `observedExit === expectExit` for the row the verifier ran, so
- * honoring it can only ADD a refusal — a verdict observed at some other exit code is never
- * accepted for a row that expects this one, however the verdict was labelled.
+ * contribution-service's check receipt). `verdict.passed` already encodes
+ * `observedExit === expectExit` for the row the verifier ran, so honoring it can only ADD a
+ * refusal — a verdict observed at some other exit code is never accepted for a row that
+ * expects this one, however the verdict was labelled.
  * @param {object} verdict
- * @param {{requireRedGreen?: boolean, requireCoverage?: boolean, requireMutation?: boolean,
- *   expectExit?: number}} [opts]
+ * @param {{expectExit?: number}} [opts]
  * @returns {boolean}
  */
 export function accept(verdict, opts = {}) {
-  const { requireRedGreen = false, requireCoverage = false, requireMutation = false, expectExit } = opts;
+  const { expectExit } = opts;
   // Issue #334: the hub's own skip receipt is already closed — a read-only run with no
-  // change passed vacuously, and there is no change to harden, so hardening requirements
-  // never apply to it. A malformed receipt (not passed) is still refused below.
+  // change passed vacuously. A malformed receipt (not passed) is still refused below.
   if (verdict?.diagnosticCode === 'verification_not_required') {
     return verdict?.passed === true && verdict?.outcome === 'passed';
   }
   if (!verdict.reverified || !verdict.passed) return false;
   if (expectExit !== undefined && verdict.observedExit !== expectExit) return false;
-  if (requireRedGreen && verdict.redGreen !== true) return false;
-  if (requireCoverage && verdict.coverageOfChange !== true) return false;
-  if (requireMutation && verdict.mutationPassed !== true) return false;
   return true;
 }

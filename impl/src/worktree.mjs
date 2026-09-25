@@ -3,7 +3,7 @@
 //
 // D7 (spec/RECONCILIATION.md, authoritative) pins the coordinator's ONE dependency
 // interface as exactly this module's exports: pinBaseSha, createFromBase, captureCommit,
-// freshVerifySandbox, changedLines, reap, reconcile, listWorktrees (+ markStopped, which
+// freshVerifySandbox, reap, reconcile, listWorktrees (+ markStopped, which
 // remains a real export per IMPLEMENTATION.md §3 W5 even though D7's literal list omits it).
 //
 // Everything this module creates lives under <repoRoot>/.baton/ — `.baton/wt/<taskId>`
@@ -3305,42 +3305,6 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     }
   } catch (err) { report.errors.push(`registration-postcheck: ${err.message || err}`); }
   return report;
-}
-
-// ---------------------------------------------------------------------------
-// changedLines
-// ---------------------------------------------------------------------------
-
-/**
- * @param {string} repoRoot
- * @param {string} fromSha
- * @param {string} toSha
- * @returns {Promise<Record<string, number[]>>}
- */
-export async function changedLines(repoRoot, fromSha, toSha) {
-  const diff = gitFile(['diff', '--unified=0', '--no-color', fromSha, toSha], repoRoot, { encoding: 'utf8' });
-  const result = {};
-  let currentFile = null;
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('+++ ')) {
-      const p = line.slice(4).trim();
-      currentFile = p === '/dev/null' ? null : p.replace(/^b\//, '');
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      const m = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
-      if (m && currentFile) {
-        const startLine = parseInt(m[1], 10);
-        const count = m[2] !== undefined ? parseInt(m[2], 10) : 1;
-        if (count > 0) {
-          const arr = result[currentFile] ?? (result[currentFile] = []);
-          for (let ln = startLine; ln < startLine + count; ln += 1) arr.push(ln);
-        }
-      }
-    }
-  }
-  for (const k of Object.keys(result)) result[k].sort((a, b) => a - b);
-  return result;
 }
 
 // ---------------------------------------------------------------------------
