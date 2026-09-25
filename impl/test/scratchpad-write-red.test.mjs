@@ -62,8 +62,8 @@
 //              A7-3, A8-1, A9-1, A9-2, A10-1   (each fails at its named stage)
 //   GREEN  5 — P-A1, P-A4, P-A5, P-A6, P-A7
 //
-// NUL discipline: application.mjs / coordination-store.mjs carry NUL bytes, so their static source
-// pins use execFileSync grep -an only (srcAnchor / grepLines below) — never whole-file reads. The
+// NUL discipline: application.mjs / coordination-store.mjs carried NUL bytes until #215; their
+// static source pins keep the execFileSync grep -an form (srcAnchor / grepLines below). The
 // NUL-free files (application-cli.mjs, mcp-northbound.mjs, web-northbound.mjs,
 // application-deployment.mjs, application-semantics.mjs, limits.mjs) are read whole where a region
 // pin needs it. This suite file contains 0 NUL bytes.
@@ -321,8 +321,8 @@ function stageAssert(condition, stage, note) {
 }
 
 // ---------------------------------------------------------------------------
-// NUL-safe static source pins (execFileSync grep -an handles the NUL bytes in
-// application.mjs / coordination-store.mjs).
+// NUL-safe static source pins (execFileSync grep -an over application.mjs /
+// coordination-store.mjs).
 // ---------------------------------------------------------------------------
 
 function srcAnchor(file, pattern) {

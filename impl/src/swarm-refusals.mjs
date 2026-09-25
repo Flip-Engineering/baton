@@ -146,6 +146,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   integrate_conflict: row(409, ['runtime'], 'the squashed change overlaps a contribution already landed on the target'),
   integrate_gates_red: row(409, ['runtime'], 'the derived gate set ran red, naming the unexpected rows'),
   integrate_target_moved: row(409, ['runtime'], 'the target advanced between the squash and the fast-forward, and the re-base did not settle it'),
+  // Issue #43 AX on a detached deployment checkout: an omitted target derives the local branch at
+  // the checkout's own commit, and when no single branch names it the derivation cannot pick —
+  // the caller names the target. Raised before anything moves: no scratch checkout, no gate row.
+  integrate_target_undetermined: row(400, ['runtime'], 'the deployment\'s checkout is detached and no single local branch names its commit, so the landing target must be named'),
   // The request names something that is not landable at all: a target that is not a local branch,
   // a range that carries no change, or a changed module that does not parse. Distinct from
   // `integrate_gates_red` (a real change whose derived tests ran red) and from `integrate_conflict`
@@ -155,6 +159,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // landing never blocked on it (the resident answers throughout) and never half-ran a gate set:
   // it refuses typed, naming the holder the request waited behind, and the scratch checkout goes.
   integrate_gates_busy: row(409, ['runtime'], 'the host verify lease could not be taken within its bound, so the gate run never started'),
+  // Issue #558: the landing publishes the landed ref to the deployment's DECLARED shared remote
+  // after the fast-forward. A landing that cannot publish refuses instead of reporting a local
+  // success: no declaration (`advanced.integration.publishRemote` absent), or the declared
+  // remote unreachable or refusing the push (the local move is rolled back, so the target holds
+  // no unpublished squash).
+  integrate_publish_undeclared: row(409, ['runtime'], 'the deployment declares no shared remote for landings, so the landed ref has nowhere to publish'),
+  integrate_publish_failed: row(409, ['runtime'], 'the declared shared remote could not be reached or refused the push, so the landing did not complete'),
   // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
   // `stopRun` port, so a run whose stop does not converge inside its bound reached the operator as
   // 503 `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. Both
@@ -200,6 +211,9 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   package_not_attached_to_run: row(403, ['runtime'], 'the context package digest is not attached to the caller\'s run or its swarm'),
   swarm_context_package_not_found: row(404, ['runtime'], 'the request names a context package this deployment does not hold'),
   swarm_context_package_branch_not_found: row(404, ['runtime'], 'the request names a branch the context package does not carry'),
+  // #358: `run.spill.read` names a spill id nothing minted (or that a later reaping removed) —
+  // the same runtime/fold split the context-package rows above carry.
+  swarm_spill_not_found: row(404, ['runtime'], 'the request names a spill this deployment does not hold'),
 });
 
 // The spelling pairs that are the SAME rule under two names (fold spelling first) — both stay as

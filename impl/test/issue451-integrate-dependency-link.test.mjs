@@ -109,8 +109,9 @@ const contractBody = ({ subject, sha, observedHead, rebasedOnto }) => ({
 /**
  * A real repository whose install lives at `<installAt>/node_modules` — never the root — with a
  * target branch, a lane branch carrying one commit, a recorded accepted contribution, and a live
- * `SwarmRuntime` whose landing authority is the deployment's own shape (`{repoRoot}`, so the
- * runtime exercises its DEFAULT regenerators; the gate runner is the fixture's).
+ * `SwarmRuntime` whose landing authority is the deployment's own shape (`{repoRoot,
+ * publishRemote}`, so the runtime exercises its DEFAULT regenerators; the gate runner is the
+ * fixture's).
  */
 async function world(t, { installAt = 'impl', regenerator = 'ok', accepted = true } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue451-'));
@@ -141,6 +142,11 @@ async function world(t, { installAt = 'impl', regenerator = 'ok', accepted = tru
   git(repo, 'checkout', '-q', 'master');
   const targetHead = git(repo, 'rev-parse', 'master');
 
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
+
   const store = new CoordinationStore(join(directory, 'ledger'));
   const runtime = new SwarmRuntime({
     store,
@@ -154,6 +160,7 @@ async function world(t, { installAt = 'impl', regenerator = 'ok', accepted = tru
     // inside the checkout — the exact step that died ERR_MODULE_NOT_FOUND in the issue.
     integration: {
       repoRoot: repo,
+      publishRemote,
       runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
     },
   });

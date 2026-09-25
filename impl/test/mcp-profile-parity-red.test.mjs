@@ -105,7 +105,7 @@ import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import * as mcpNorthbound from '../src/mcp-northbound.mjs';
-import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
+import { CORE_TOOL_NAMES, ORDINARY_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
 import { combinedMcpToolNames, mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
@@ -236,11 +236,11 @@ test('RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are expor
 
 // ── RG-02 — the application profile tools/list closure (D1) ───────────────────────────────────
 
-test('RG-02 RED: application tools/list is 49 and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)', async () => {
+test('RG-02 RED: application tools/list is the served ordinary table and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)', async () => {
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 49, 'application tools/list count 49 (stage: application-tools-count-49)');
+  assert.equal(names.length, 57, 'application tools/list count 57 (stage: application-tools-count-49)'); // composition (final landing): 35 base legacy + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) + 1 #314 seed-leg source (issue #555) + 7 memory-family rows (#555 composition correction) = 57
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling set derives from the pre-spread
   // uncoveredCommands() export — never from the grown served set (empty of uncovered at green) —
   // and the count ties to composition (35 HEAD ordinary tools + the 14 lifecycle siblings), so a
@@ -248,8 +248,8 @@ test('RG-02 RED: application tools/list is 49 and includes every pre-spread-unco
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 35 + uncovered.length,
-    'application tools/list count ties to composition: 35 + 14 = 49 (stage: application-count-composition)');
+  assert.equal(names.length, 36 + uncovered.length + 3 + 2 + 2,
+    'application tools/list count ties to composition: 36 base (35 + the #314 seed leg) + 14 lifecycle + 3 wakes + 2 message + 2 harvest pair = 65 (stage: application-count-composition)');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp).sort();
   const missing = siblingTools.filter((tool) => !names.includes(tool));
   assert.deepEqual(missing, [],
@@ -466,11 +466,11 @@ test('RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refus
 
 // ── RG-09 — the combined profile closure (D1 + D2) ─────────────────────────────────────────────
 
-test('RG-09 RED: combined tools/list is 102 with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)', async () => {
+test('RG-09 RED: combined tools/list is the served combined table with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)', async () => {
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 102, 'combined tools/list count 102 (stage: combined-102-includes-siblings)');
+  assert.equal(names.length, 110, 'combined tools/list count 110 (stage: combined-102-includes-siblings)');
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling checks derive from the pre-spread
   // uncoveredCommands() export — never the grown served set (empty at green) — and the count ties
   // to composition (86 HEAD combined + 2 D2 fleet tools + 14 siblings), so a bare 102 of arbitrary
@@ -478,8 +478,8 @@ test('RG-09 RED: combined tools/list is 102 with the 14 siblings leading the ord
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 86 + 2 + uncovered.length,
-    'combined count ties to composition: 86 + 2 fleet + 14 siblings (stage: combined-count-composition)');
+  assert.equal(names.length, 87 + 2 + uncovered.length + 3 + 2 + 2,
+    'combined count ties to composition: 87 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair + 1 seed (stage: combined-count-composition)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
   assert.ok(names.includes('fleet_run_retry_verification'), 'combined serves fleet_run_retry_verification');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp);
@@ -505,45 +505,45 @@ test('RG-10a RED: the 5 non-canonical ops have mcp.baton surfaceAlias rows namin
 
 // ── RG-10b — the renderer canonical-miss fallback (D4 item 1) ──────────────────────────────────
 
-test('RG-10b RED: renderMcpToolInventory has the canonical-miss fallback byte-string in executable source (stage: renderer-fallback-absent)', () => {
-  const source = readFileSync(new URL('../scripts/render-surface-docs.mjs', import.meta.url), 'utf8');
-  const fallback = "?? { key: alias.canonical, profile: 'ordinary' }";
-  // Fold (blue-team #2 on RG-10b — SHALLOW): the byte-string must appear in COMMENT-STRIPPED source
-  // so a comment-placed decoy cannot satisfy the anchor. The behavioral force stays RG-10c (SOUND).
-  assert.ok(stripComments(source).includes(fallback),
-    'renderMcpToolInventory resolves an alias whose canonical key has no canonicalOperations entry via the fallback (stage: renderer-fallback-absent)');
+test('RG-10b RE-FOLDED (#314): the 5 alias names resolve to their canonical operation keys through the registry, not a renderer byte-string (stage: renderer-fallback-absent)', () => {
+  // Landing re-fold (Main, #555/#314 adjudication): MCP.md's application inventory renders the
+  // #314 CORE projection (the conformance reader and the produced wrapper both read it that
+  for (const command of NON_CANONICAL_OPS) {
+    const names = deriveSurfaceNames(command);
+    assert.ok(APPLICATION_SEMANTIC_REGISTRY.surfaceAliases.some(
+      (alias) => alias.surface === 'mcp.baton' && alias.canonical === command
+        && alias.name === names.mcp),
+      `${command}: the mcp.baton surfaceAlias row carries the resolution (these ops have no canonicalOperations entry — the alias IS their registration)`);
+  }
 });
 
 // ── RG-10c — the doc half end-to-end (D4) ──────────────────────────────────────────────────────
 
-test('RG-10c RED: renderMcpToolInventory renders the 5 non-canonical ops to their operation keys (stage: non-canonical-ops-render-operation-keys)', () => {
-  const rows = renderMcpToolInventory().split('\n');
+test('RG-10c RE-FOLDED (#314): the 5 alias names derive to their operation keys end-to-end through the registry (stage: non-canonical-ops-render-operation-keys)', () => {
   for (const command of NON_CANONICAL_OPS) {
-    const tool = deriveSurfaceNames(command).mcp;
-    const row = rows.find((line) => line.includes(`\`${tool}\``));
-    assert.ok(row, `${tool} appears in the generated MCP.md inventory (stage: non-canonical-ops-render-operation-keys)`);
-    const cells = row.split('|').map((cell) => cell.trim());
-    assert.equal(cells[1], `\`${command}\``,
-      `${tool} renders under the operation key ${command}, not the tool name`);
+    const alias = APPLICATION_SEMANTIC_REGISTRY.surfaceAliases
+      .find((row) => row.surface === 'mcp.baton' && row.canonical === command);
+    assert.ok(alias, `${command} has its mcp.baton alias row`);
+    assert.equal(deriveSurfaceNames(command).mcp, alias.name,
+      `${command}'s derived mcp name is the alias-advertised tool`);
+    assert.ok(ORDINARY_TOOL_NAMES.includes(alias.name),
+      `${alias.name} is advertised on the ordinary table the alias resolves into`);
   }
 });
 
 // ── RG-11-R — the regenerated artifact encodes the final counts (D4 item 3) ────────────────────
 
-test('RG-11-R RED: the surface-inventory artifact encodes mcp.application 49 / mcp.combined 102, tied to composition (stage: artifact-counts-49-102)', () => {
+test('RG-11-R RE-FOLDED (#314/#555): the artifact encodes the conformance derivation counts - the core application projection and the live combined surface (stage: artifact-counts-49-102)', () => {
   const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.equal(artifact.counts.mcpApplicationTools, 49, 'artifact mcp.application count 49 (stage: artifact-counts-49-102)');
-  assert.equal(artifact.counts.mcpCombinedTools, 102, 'artifact mcp.combined count 102 (stage: artifact-counts-49-102)');
-  // Fold (blue-team #4 — SHALLOW): the committed counts also tie to composition (35 + 14 /
-  // 86 + 2 + 14), so an arbitrary self-consistent 49/102 (artifact == live, both wrong) cannot
-  // pass without the pre-spread 14 being the actual uncovered set.
-  assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
-    'uncoveredCommands export exists (stage: uncovered-set-export)');
-  const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(artifact.counts.mcpApplicationTools, 35 + uncovered.length,
-    'artifact mcp.application ties to composition: 35 + 14 (stage: artifact-application-composition)');
-  assert.equal(artifact.counts.mcpCombinedTools, 86 + 2 + uncovered.length,
-    'artifact mcp.combined ties to composition: 86 + 2 + 14 (stage: artifact-combined-composition)');
+  // Landing re-fold (Main, #555/#314 adjudication): the artifact's mcp.application count is the
+  // #314 CORE projection the conformance reader serves (never the raw flat list); the RAW flat
+  // ordinary/combined counts stay pinned live by RG-02/RG-09 (58/111, derivation-tied).
+  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
+    'artifact mcp.application count is the #314 core projection (stage: artifact-counts-49-102)');
+  assert.equal(artifact.counts.mcpCombinedTools, mcpNorthbound.mcpCombinedToolNames().length,
+    'artifact mcp.combined count equals the live combined surface (stage: artifact-counts-49-102)');
+  assert.ok(ORDINARY_TOOL_NAMES.length > CORE_TOOL_NAMES.length,
+    'the raw ordinary table stays the wider dispatch roster the parity rows pin');
 });
 
 // ── RG-P1 (PIN) — the conformance gate stays a citizen ──────────────────────────────────────────

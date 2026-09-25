@@ -40,6 +40,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -65,7 +66,7 @@ const HEARTBEAT_MS = 200;
 const HEARTBEAT_BOUND_MS = 4 * HEARTBEAT_MS;
 
 function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt351c-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt351c-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -191,9 +192,14 @@ function serveFixture(t, label, { rows, openDelayMs = 0 } = {}) {
   const modulePath = join(root, 'deployment.mjs');
   writeFileSync(modulePath, `
 import { MockAdapter, openBaton } from ${JSON.stringify(INDEX_URL)};
+import { writeFileSync } from 'node:fs';
 const ROUTE = Object.freeze(${ROUTE});
 ${adapterModuleBody()}
 export const createBatonDeployment = async () => {
+  // The factory body runs after the serve startup has installed the open-signal admission
+  // (the serve CLI imports this config module, then admits open signals, then calls the
+  // factory), so this marker is the deterministic "past boot and inside the open" signal.
+  writeFileSync(${JSON.stringify(join(root, 'factory-entered'))}, '');
   // A deterministic open window: the factory holds before the open so a signal sent at a
   // fixed wall offset provably arrives DURING the open, whatever the machine's speed.
   await new Promise((resolve) => setTimeout(resolve, ${JSON.stringify(openDelayMs)}));
@@ -220,8 +226,8 @@ export const createBatonDeployment = async () => {
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   child.on('exit', (code, signal) => { state.exited = { code, signal, at: Date.now() }; });
   return {
-    root, repo, child, state, selectorPath, ledgerPath: join(ledgerDir, 'events.jsonl'),
-    leasePath: join(ledgerDir, 'writer.lease'), env,
+    root, repo, child, state, selectorPath, factoryEntered: join(root, 'factory-entered'),
+    ledgerPath: join(ledgerDir, 'events.jsonl'), leasePath: join(ledgerDir, 'writer.lease'), env,
   };
 }
 
@@ -423,8 +429,12 @@ test('OL-d: a worker story is served on first read after the lazy ingest, and th
 
 test('OL-e: SIGTERM during the open is admitted — the stop row lands, the stop converges, no lease is left', async (t) => {
   const fixture = serveFixture(t, 'sigterm-open', { rows: LIMIT.value * 20, openDelayMs: 2_500 });
-  // The child is inside its open window (the factory holds before the open).
-  await sleep(750);
+  // The factory's entry marker is the deterministic "past boot, inside the open" signal: a
+  // wall-clock sleep raced the child's boot under suite load and killed it by default
+  // disposition before the open-signal admission was installed.
+  const markerDeadline = Date.now() + 30_000;
+  while (!existsSync(fixture.factoryEntered) && Date.now() < markerDeadline) await sleep(25);
+  assert.equal(existsSync(fixture.factoryEntered), true, 'the serve child never entered its deployment factory');
   assert.equal(fixture.state.exited, null, `the child exited before the signal: ${JSON.stringify(fixture.state.exited)}`);
   fixture.child.kill('SIGTERM');
   const deadline = Date.now() + 30_000;

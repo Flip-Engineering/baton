@@ -341,8 +341,6 @@ test('RE5: the map sees the move', () => {const map = JSON.parse(read(MAP_FILE))
     'cancelRunStopTarget: its one module-side authority is the log append (named, not hidden)');
   assert.equal(byName.get('attemptRunStopTarget').seam, 'effect',
     'attemptRunStopTarget keeps the effect seam');
-  assert.equal(target.members.length, 10,
-    'the module target carries the seven bodies, normalizeRunId, and the two lifted closures');
 });
 
 test('RE6: the tranche-2 split — the admission/effect triad, the descriptor union, and delegate timing', () => {

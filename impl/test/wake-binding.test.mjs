@@ -16,6 +16,7 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { BatonWebHost } from '../src/application-host.mjs';
 import { ResidentAuthority } from '../src/resident-authority.mjs';
 import { WakeStream } from '../src/wake-stream.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 /** A real coordination ledger with real swarm rows: no fixture stands in for the store. */
 function ledger(t, { swarmId = 'swarm-binding' } = {}) {
@@ -67,9 +68,8 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   // The host refuses a Unix-socket path past the kernel's 103-byte sun_path bound, so a fixture
   // under a deep ambient TMPDIR (a deployment runtime dir, or the suite root a parallel gate hands
   // every file) would fail configuration, not the binding contract under test. The socket root is
-  // minted directly under the short system root — the rule the resident fixtures follow (#446: a
-  // measured fall-back with a one-character stand-in for mkdtemp's six missed a 68..72-byte band).
-  const socketDir = mkdtempSync('/tmp/bt-waking-sock-');
+  // minted through the measure-then-fall-back derivation (#571 containment, #446 bound).
+  const socketDir = fixtureSocketRoot('bt-waking-sock-');
   t.after(() => rmSync(socketDir, { recursive: true, force: true }));
 
   const port = await freePort();

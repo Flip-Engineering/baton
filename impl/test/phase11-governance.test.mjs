@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,8 +34,14 @@ function adapter() {
   };
 }
 
+const mintedLogDirectories = [];
+
 function system(ad, opts = {}) {
-  const log = opts.log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-gv-log-')));
+  // The suite's fixture containment fails the file for any fixture-shaped directory the file
+  // leaves behind, so the log directories minted here are removed once, after the file's tests.
+  const logDirectory = mkdtempSync(join(tmpdir(), 'baton-gv-log-'));
+  mintedLogDirectories.push(logDirectory);
+  const log = opts.log ?? new Log(logDirectory);
   const coordination = coordinationForLog(log);
   const c = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { stub: ad },
@@ -56,6 +62,10 @@ function system(ad, opts = {}) {
   });
   return { c, log, coordination };
 }
+
+after(() => {
+  for (const directory of mintedLogDirectories) rmSync(directory, { recursive: true, force: true });
+});
 
 test('GV1/GV2: cumulative snapshots become monotonic deltas and thresholds fire once', async () => {
   const ad = adapter();
@@ -160,7 +170,7 @@ test('GV4/GV5: an absolute edited path outside scope kills once', async () => {
 test('GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kill', async (t) => {
   // The literal /tmp prefix is the point of this fixture (macOS aliases it to /private/tmp), so
   // it escapes the suite tmp root and must reap itself (issue #40).
-  const worktree = mkdtempSync('/tmp/baton-gv-path-alias-');
+  const worktree = mkdtempSync(join(tmpdir(), 'baton-gv-path-alias-'));
   t.after(() => rmSync(worktree, { recursive: true, force: true }));
   mkdirSync(join(worktree, 'src')); writeFileSync(join(worktree, 'src', 'ok.mjs'), 'export const ok = true;\n');
   const ad = adapter();

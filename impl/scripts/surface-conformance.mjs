@@ -76,11 +76,12 @@ export const CANONICAL_ENUMS = Object.freeze({
   // The registry owns this vocabulary (application-semantics.mjs CANONICAL_RUN_PHASES, docs/36
   // §7/L4) — this list mirrors it so the pre-test conformance gate resolves the same strings.
   // Issue #334 appends 'inconclusive' beside 'failed', matching the registry order.
+  // #102 Decision 6 appends the 'degraded' quorum terminal, matching the registry order.
   runPhases: Object.freeze([
     'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
     'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
     'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
-    'denied', 'stopping',
+    'denied', 'stopping', 'degraded',
   ]),
   memberStates: Object.freeze([
     'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',

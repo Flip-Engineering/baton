@@ -254,6 +254,40 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   // opened) and how it stopped (the code it failed under) are recorded by the runtime as it runs,
   // not by the caller that asked. They are driver rows, never caller-submittable and never folded
   // into the swarm state; `swarm.view` annotates the contribution row it belongs to with both.
+  'wake.root_delivered': Object.freeze({
+    summary: Object.freeze('one root-addressed wake written to an operator session through its declared turn-starting channel'),
+    fields: Object.freeze({
+      seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
+      wakeClass: STRING('the wake class carried by the frame'),
+      swarmId: STRING('the swarm the wake belongs to'),
+      harness: STRING('the operator session harness'),
+      mechanism: STRING('the turn-starting delivery mechanism'),
+      sessionId: STRING('the operator session that received the wake'),
+      at: STRING('the delivery instant, ISO 8601'),
+    }),
+    example: Object.freeze({
+      seq: 42, wakeClass: 'attention', swarmId: 'swarm-40e643e96fd1edcd',
+      harness: 'claude-code', mechanism: 'session-socket', sessionId: 'session-ada',
+      at: '2026-09-23T04:00:00.000Z',
+    }),
+  }),
+  'wake.root_undelivered': Object.freeze({
+    summary: Object.freeze('one root-addressed wake that a declared operator-session channel could not deliver'),
+    fields: Object.freeze({
+      seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
+      wakeClass: STRING('the wake class carried by the frame'),
+      swarmId: STRING('the swarm the wake belongs to'),
+      harness: STRING('the operator session harness'),
+      mechanism: STRING('the declared delivery mechanism, or none when the harness has no turn-starting channel'),
+      code: STRING('the typed refusal code'),
+      at: STRING('the refusal instant, ISO 8601'),
+    }),
+    example: Object.freeze({
+      seq: 43, wakeClass: 'attention', swarmId: 'swarm-40e643e96fd1edcd',
+      harness: 'codex', mechanism: 'none', code: 'wake_delivery_unavailable',
+      at: '2026-09-23T04:00:01.000Z',
+    }),
+  }),
   'swarm.integration_started': Object.freeze({
     summary: Object.freeze('a landing opened its scratch checkout — recorded by the runtime before the squash or any gate runs'),
     fields: Object.freeze({
@@ -293,6 +327,30 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     }),
     example: Object.freeze({
       repoRoot: '/repo', swept: ['integrate-contribution-ada-1'],
+    }),
+  }),
+  // ── issue #564: the root-addressed wake rows the contribution write path derives ─────────────
+  // A contribution that only the ROOT can act on — a check no other active seat can perform
+  // (nobody else holds the review permission), or a needsFromOthers item ADDRESSED to the root —
+  // is recorded by the runtime as one durable row per trigger, so the wake stream's `root_owed`
+  // class addresses the root instead of leaving the swarm silent. The row is derived AFTER the
+  // contribution row is recorded, from what is present (the recorded contribution, the fold's
+  // participant rows), never caller-submittable; the derivation keeps no state, so a replay
+  // re-derives the same rows under the same idempotency keys and records each trigger once.
+  'swarm.root_attention_owed': Object.freeze({
+    summary: Object.freeze('work that waits on the root — a contribution no other active seat can review, or a needsFromOthers item addressed to the root'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the contribution belongs to'),
+      participantId: STRING('the seat whose contribution waits — the contribution\'s own author'),
+      contributionId: STRING('the contribution the attention comes from'),
+      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission) or needs_root (a needsFromOthers item whose text is addressed to the root). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root', example: 'needs_root' },
+      ask: { type: 'string|null', description: 'the addressed needsFromOthers item text, bounded — null on a review_owed row', expectation: 'the item text as addressed, or null', example: 'the root: restart the resident with the publish remote declared' },
+      next: { type: 'json', description: 'the act that answers the row, in the attention projection\'s shape', expectation: 'an object naming a command and its identity arguments', example: Object.freeze({ command: 'swarm.check', swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1' }) },
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1',
+      owed: 'needs_root', ask: 'the root: restart the resident with the publish remote declared',
+      next: Object.freeze({ command: 'swarm.view', swarmId: 'swarm-40e643e96fd1edcd' }),
     }),
   }),
   // ── issue #273: guidance's own durable rows ───────────────────────────────────────────────────

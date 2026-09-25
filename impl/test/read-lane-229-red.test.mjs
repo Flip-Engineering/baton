@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalAuthenticatedWebServer, WebNorthbound } from '../src/web-northbound.mjs';
 import { WebSessionStore } from '../src/web-auth.mjs';
@@ -9,6 +10,7 @@ import { BatonWebClient } from '../src/application-cli.mjs';
 import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, APPLICATION_SEMANTIC_REGISTRY } from '../src/application.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 // #229 red pin — the resident read-lane starvation wedge, measured 3x in production:
 // with N live member drives churning evidence, the resident's transport accepts
@@ -27,7 +29,7 @@ const ORIGIN = 'https://baton.local';
 const REPO = 'issue-229-repo';
 
 function root(t) {
-  const directory = mkdtempSync('/tmp/bt229-read-lane-');
+  const directory = fixtureSocketRoot('bt229-read-lane-');
   t.after(() => { try { rmSync(directory, { recursive: true, force: true }); } catch {} });
   return directory;
 }

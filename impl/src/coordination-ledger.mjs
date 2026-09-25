@@ -15,7 +15,7 @@ import { serialize } from 'node:v8';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
-import { frameWebContent, referencesWebFetchHandle } from './messages.mjs';
+import { boundedAttentionText, frameWebContent, referencesWebFetchHandle, wrapHubDerived, wrapProse } from './messages.mjs';
 import { GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical, goalPlanDigest, goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planBriefMatches, planRouteAuthorityState, planRouteMatches } from './goal-plan.mjs';
 import { normalizeContextAuthority } from './context-authority.mjs';
 import { PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest, planObjectSnapshot, waveRoleRunKey } from './orchestrator-plan.mjs';
@@ -1095,6 +1095,9 @@ export function _resetProjection(store) {
   store._scratchpadEntries = new Map(); store._scratchpadEntriesByScope = new Map();
   store._scratchpadFences = new Map(); store._scratchpadElevations = new Map();
   store._scratchpadReaps = [];
+  // Issue #66: the folded doubt review records — doubtId → the state its latest doubt_* event
+  // folded; replay rebuilds the identical map, so the review state is never a stored flag.
+  store._doubtRecords = new Map();
 }
 
 export function _ledgerMatchesLoadedProjection(store) {
@@ -3087,6 +3090,32 @@ export function _apply(store, event) {
     // rebuilt from the same ledger. The size bound belongs to the VIEW, which reports it
     // (`scratchpadReapsTruncated`) instead of silently dropping durable facts.
     store._scratchpadReaps.push(receipt);
+  } else if (event.kind === 'knowledge.doubt_raised') {
+    store._doubtRecords.set(p.doubtId, freeze({
+      schemaVersion: 1, doubtId: p.doubtId, runId: p.runId, waveId: p.waveId, taskId: p.taskId,
+      workerId: p.workerId, question: p.question, context: p.context,
+      sharedEntryId: p.sharedEntryId, sourceEntryId: p.sourceEntryId, sourceEntryDigest: p.sourceEntryDigest,
+      raisedSeq: event.seq, state: 'reviewed',
+      resolution: null, dismissalReason: null, resolvedSeq: null, carriedSeq: null, answeredBy: null,
+    }));
+  } else if (event.kind === 'knowledge.doubt_resolved') {
+    const record = store._doubtRecords.get(p?.doubtId);
+    if (!record || typeof p?.disposition !== 'string') {
+      throw new CoordinationIntegrityError('doubt resolution folds no raised record', 'doubt_review_integrity');
+    }
+    store._doubtRecords.set(p.doubtId, freeze({
+      ...record,
+      state: p.disposition === 'answered' ? 'answered' : 'dismissed',
+      resolution: p.disposition === 'answered' ? (p.resolution ?? null) : record.resolution,
+      dismissalReason: p.disposition === 'dismissed' ? (p.dismissalReason ?? null) : record.dismissalReason,
+      resolvedSeq: event.seq, answeredBy: p.answeredBy ?? null,
+    }));
+  } else if (event.kind === 'knowledge.doubt_carried') {
+    const record = store._doubtRecords.get(p?.doubtId);
+    if (!record) {
+      throw new CoordinationIntegrityError('doubt carry folds no raised record', 'doubt_review_integrity');
+    }
+    store._doubtRecords.set(p.doubtId, freeze({ ...record, state: 'carried', carriedSeq: event.seq }));
   } else if (event.kind === 'scratch.fact_posted') {
     store._scratchFacts.set(p.id, freeze({ ...clone(p), createdEvent: event.seq, active: true }));
   } else if (event.kind === 'scratch.fact_expired') {
@@ -3146,6 +3175,9 @@ export function _apply(store, event) {
     const rec = freeze({
       scope: p.scope, name: p.name, bindingVersion: p.bindingVersion, state: p.state,
       cellId: p.cellId, bindingDigest: p.bindingDigest, runId,
+      // D5: a promotion rebind carries the worker coordinates it promotes. Absent on an ordinary
+      // bind, so the record shape is unchanged for every binding the promotion path never touched.
+      ...(p.promotedFrom ? { promotedFrom: clone(p.promotedFrom) } : {}),
       admittedEvent: event.seq, admittedAt: event.ts,
     });
     store._replBindings.set(key, rec);
@@ -3287,6 +3319,12 @@ export function _apply(store, event) {
     }));
     for (const targetRunId of p.targetRunIds ?? [p.runId]) store._runStopByTarget.set(targetRunId, p.runId);
     const stoppedRunIds = new Set(p.targetRunIds ?? [p.runId]);
+    // Issue #69 (D4): a run stop closes the task-ephemeral REPL tier — the run's ACTIVE binding map
+    // and its per-scope fences go, while the append-only history stays for replay-exact resolution.
+    // The FOLD performs this rather than the admission, so a replayed ledger reconstructs exactly
+    // the closed tier the live process served, and the reap is idempotent for the run-stop path's
+    // own call.
+    for (const targetRunId of stoppedRunIds) reapRunReplBindings(store, targetRunId);
     for (const [exportId, state] of store._runResultExports) {
       if (!stoppedRunIds.has(state.runId) || state.status !== 'pending') continue;
       const cancellationCore = {
@@ -4516,7 +4554,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(store._campaignPlans) } : {}), ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(store._campaignPlans) } : {}), ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -5071,9 +5109,156 @@ export function sweepSettlementLeases(store, repoId, options = {}) {
           } catch { /* retirement is best-effort; a raced close is already terminal */ }
         }
       }
+      // Issue #66 (D5): the review boundary receipts every doubt the dying window leaves
+      // open. An elevated-but-unraised doubt is raised first (the receipted contradiction —
+      // the sweep mints the absent raise, then the carry closes the SAME doubt), and every
+      // doubt still in state reviewed carries; an already-resolved doubt observes the carry
+      // conflict and no-ops — a resolved doubt is never carried.
+      const memberRunIds = new Set(store._events
+        .filter((event) => event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
+          && event.payload?.waveId === waveId)
+        .map((event) => event.payload?.runId));
+      for (const memberRunId of memberRunIds) {
+        const sharedIds = store._scratchpadEntriesByScope.get(scratchpadScopeKey(memberRunId, 'shared')) ?? [];
+        for (const id of sharedIds) {
+          const row = store._scratchpadEntries.get(id);
+          if (row?.kind !== 'doubt') continue;
+          try {
+            raiseSettlementDoubt(store, { runId: memberRunId, waveId, sharedEntryId: row.entryId },
+              { actor: 'orchestrator', key: `knowledge.doubt_raised:${waveId}:${row.entryId}` });
+          } catch { /* a raced re-drive already raised it — the ledger stays exactly-once */ }
+        }
+      }
+      for (const record of store._doubtRecords.values()) {
+        if (record.waveId !== waveId || record.state !== 'reviewed') continue;
+        const carriedSeq = store._events.length + 1;
+        store._append('knowledge.doubt_carried',
+          {
+            schemaVersion: 1, doubtId: record.doubtId, waveId: record.waveId, runId: record.runId,
+            carriedBy: 'review_window_expired', carriedSeq,
+          },
+          { actor: 'orchestrator', key: `knowledge.doubt_carried:${record.doubtId}` });
+      }
     }
   }
   return freeze({ ok: true, revoked, cancelled, retired, remaining: candidates.length === maxLeases });
+}
+
+// -------------------------------------------------------------------------
+// Issue #66 — the durable doubt review ledger. The settle ritual raises one
+// knowledge.doubt_raised per doubt-kind entry a member's shared partition holds;
+// coordinator.resolveDoubt receipts answered/dismissed transitions
+// (knowledge.doubt_resolved); the review-window sweep carries every doubt still
+// in state reviewed when its lease revokes (knowledge.doubt_carried). One
+// doubt's state is the fold of its own three event kinds — the latest event for
+// the doubtId — never a stored flag.
+// -------------------------------------------------------------------------
+
+export const DOUBT_DISMISSAL_REASONS = Object.freeze(['deferred', 'duplicate', 'out_of_scope', 'unfounded']);
+
+/** The doubtId identity frame — the pinned digest input every raise site shares. */
+function doubtIdentity(runId, sharedEntryId, sourceEntryId, sourceEntryDigest) {
+  return `doubt:${canonicalDigest({ schemaVersion: 1, runId, sharedEntryId, sourceEntryId, sourceEntryDigest })}`;
+}
+
+/** The folded doubt records as the review surface reads them: the doubting worker's prose is
+ * wrapProse-framed (model-authored, untrusted), a resolution is wrapHubDerived-framed
+ * (hub-derived, untrusted). One closed 13-field record shape. */
+export function doubtsProjection(store) {
+  return [...store._doubtRecords.values()].map((record) => freeze({
+    carriedSeq: record.carriedSeq,
+    context: record.context == null ? null : wrapProse(record.workerId, record.context),
+    dismissalReason: record.dismissalReason,
+    doubtId: record.doubtId,
+    question: wrapProse(record.workerId, record.question),
+    raisedSeq: record.raisedSeq,
+    resolution: record.resolution == null ? null : wrapHubDerived(record.answeredBy ?? 'orchestrator', record.resolution),
+    resolvedSeq: record.resolvedSeq,
+    runId: record.runId,
+    state: record.state,
+    taskId: record.taskId,
+    waveId: record.waveId,
+    workerId: record.workerId,
+  }));
+}
+
+/** The settle ritual's raise act, shared with the sweep's receipting backfill: one
+ * knowledge.doubt_raised per shared doubt entry, exactly-once per wave re-drive (the
+ * idempotency key names the wave and the shared entry) and exactly-once ever per doubtId
+ * (a doubt already on the review ledger is never re-raised under a later wave). */
+export function raiseSettlementDoubt(store, fields, auth) {
+  if (typeof auth?.key !== 'string' || auth.key.length === 0
+    || !validRunId(fields?.runId) || !validRunId(fields?.waveId)
+    || typeof fields?.sharedEntryId !== 'string') {
+    throw new CoordinationRefusal('doubt raise request is invalid', 'settlement_doubt_invalid');
+  }
+  const prior = store._byKey.get(auth.key);
+  if (prior) {
+    return freeze({ ok: true, result: 'idempotent', event: clone(prior), doubtId: prior.payload?.doubtId ?? null });
+  }
+  const row = store._scratchpadEntries.get(fields.sharedEntryId);
+  if (!row || row.scope !== 'shared' || row.runId !== fields.runId || row.kind !== 'doubt') {
+    throw new CoordinationRefusal('doubt raise target is not a shared doubt entry', 'settlement_doubt_invalid');
+  }
+  const doubtId = doubtIdentity(fields.runId, row.entryId, row.source?.entryId ?? null, row.source?.entryDigest ?? null);
+  if (store._doubtRecords.has(doubtId)) {
+    return freeze({ ok: true, result: 'known', event: null, doubtId });
+  }
+  const payload = {
+    schemaVersion: 1, runId: fields.runId, waveId: fields.waveId, taskId: row.taskId,
+    workerId: row.workerId, sharedEntryId: row.entryId,
+    sourceEntryId: row.source?.entryId ?? null, sourceEntryDigest: row.source?.entryDigest ?? null,
+    question: row.content?.question ?? null, context: row.content?.context ?? null, doubtId,
+  };
+  const event = store._append('knowledge.doubt_raised', payload, auth);
+  return freeze({ ok: true, result: 'raised', event: clone(event), doubtId });
+}
+
+/** The D4 resolve authority: the ACTIVE run-orchestrator lease of the settlement run,
+ * re-derived server-side from the caller's session — never a caller field. No active lease
+ * refuses the authority umbrella (doubt_promote_not_authorized); a foreign session refuses
+ * the lease code verbatim (run_orchestrator_session_mismatch). */
+export function settlementReviewAuthority(store, runId, session) {
+  const active = [...store._runOrchestratorLeases.values()]
+    .filter((lease) => lease.status === 'active' && lease.parent?.runId === runId)
+    .sort((a, b) => b.issuedEvent - a.issuedEvent);
+  if (active.length === 0) {
+    throw new CoordinationRefusal('no active settlement review window for this run', 'doubt_promote_not_authorized');
+  }
+  const mine = active.find((lease) => lease.session?.principalId === session?.principalId
+    && lease.session?.sessionId === session?.sessionId
+    && lease.session?.authorityDigest === session?.authorityDigest);
+  if (!mine) {
+    throw new CoordinationRefusal('run orchestrator session does not match the lease', 'run_orchestrator_session_mismatch');
+  }
+  if (Date.parse(store._clock()) >= Date.parse(mine.session.expiresAt)) {
+    throw new CoordinationRefusal('the settlement review window has expired', 'doubt_promote_not_authorized');
+  }
+  return mine;
+}
+
+/** The D4 resolve act: receipt one answered/dismissed transition on the review ledger. The
+ * state guard is the last guard — an unknown doubtId refuses doubt_promote_unknown, a doubt
+ * no longer in state reviewed refuses doubt_promote_stale, and a refusal transitions nothing. */
+export function resolveSettlementDoubt(store, fields, auth) {
+  const record = store._doubtRecords.get(fields?.doubtId);
+  if (!record) throw new CoordinationRefusal(`unknown doubt ${fields?.doubtId}`, 'doubt_promote_unknown');
+  if (record.state !== 'reviewed') {
+    throw new CoordinationRefusal(`doubt ${fields.doubtId} is no longer in state reviewed`, 'doubt_promote_stale');
+  }
+  const answered = fields.disposition === 'answered';
+  const payload = {
+    schemaVersion: 1, doubtId: fields.doubtId, disposition: fields.disposition,
+    resolution: answered ? fields.resolution : null,
+    dismissalReason: answered ? null : fields.dismissalReason,
+    pushRequested: answered, answeredBy: 'orchestrator', workerId: record.workerId,
+  };
+  const event = store._append('knowledge.doubt_resolved', payload, auth);
+  return freeze({
+    ok: true, result: 'resolved', event: clone(event), doubtId: fields.doubtId,
+    disposition: fields.disposition,
+    pushId: answered ? `doubt_answer:${fields.doubtId}` : null,
+  });
 }
 
 export function sealRunScorecard(store, fields, auth) {
@@ -5597,6 +5782,13 @@ export function backfillBriefingPack(store, { family }, auth) {
   return { ok: true, result: minted.result, event: minted.event, pack: minted.pack };
 }
 
+/** The content address of one spilled body (#358): a spill's id is its body's SHA-256 digest,
+ * so every reader that asks "did THIS body spill?" derives the same id the mint stored — the
+ * recruit receipt reads the durable truth through this ONE spelling, never a second one. */
+export function spillIdForBody(body) {
+  return `spill:sha256:${createHash('sha256').update(body, 'utf8').digest('hex')}`;
+}
+
 export function mintSpill(store, fields, auth) {
   const body = fields?.body;
   const lane = fields?.lane ?? null;
@@ -5609,7 +5801,7 @@ export function mintSpill(store, fields, auth) {
     throw coachingRefusal(FRAME_LIMITS['spill.body'], bytes, spillCeiling);
   }
   const digest = createHash('sha256').update(body, 'utf8').digest('hex');
-  const spillId = `spill:sha256:${digest}`;
+  const spillId = spillIdForBody(body);
   const payload = { spillId, digest, bytes, lane, body };
   const prior = store._byKey.get(auth?.key);
   if (prior) {
@@ -6130,7 +6322,20 @@ export function elevateTaskScratchpad(store, fields, auth) {
   }
   const selected = steering ? [...fields.entryIds].sort(compareCanonicalStrings) : [];
   const sharedIds = store._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, 'shared')) ?? [];
-  if (sharedIds.length + selected.length > store._scratchpadPartitionPolicy.sharedEntries) {
+  // Issue #66 (D1/HOLE-5): the shared partition's 3:1 reservation prevalidates the WHOLE
+  // batch before any successor/fact/reap. Within the shared ceiling the doubt kind holds at
+  // most three quarters (the doubt budget), and once the accumulated composition passes the
+  // doubt budget the note/plan floor must still hold — a note/plan-light wave below the
+  // budget is byte-identical to v1.0.
+  const sharedEntries = store._scratchpadPartitionPolicy.sharedEntries;
+  const notePlanFloor = Math.floor(sharedEntries / 4);
+  const doubtBudget = sharedEntries - notePlanFloor;
+  const batchRows = [...sharedIds, ...selected].map((id) => store._scratchpadEntries.get(id));
+  const totalAfter = sharedIds.length + selected.length;
+  const doubtsAfter = batchRows.filter((row) => row?.kind === 'doubt').length;
+  const notePlanAfter = batchRows.filter((row) => row?.kind === 'note' || row?.kind === 'plan').length;
+  if (totalAfter > sharedEntries || doubtsAfter > doubtBudget
+    || (totalAfter > doubtBudget && notePlanAfter < notePlanFloor)) {
     throw new CoordinationRefusal('scratchpad shared partition is full', 'scratchpad_partition_exhausted');
   }
   const entries = [];
@@ -6911,6 +7116,112 @@ export function replBindingSnapshot(store, runId, scope) {
     .filter((rec) => rec.state === 'bound')
     .map(clone);
   return freeze({ runId, scope, bindingFence: store.bindingFence(runId, scope), bindings: rows });
+}
+
+/** The run's admitted REPL manifests, in admission order — the D6 review projection's input. */
+export function replManifestAdmissions(state, runId) {
+  return [...state.values()]
+    .filter((row) => row.runId === runId)
+    .sort((left, right) => left.admittedEvent - right.admittedEvent)
+    .map(clone);
+}
+
+/** Does this principal hold an ACTIVE run-orchestrator lease — this run's, or (when no run is
+ * named) any run of this repository? This is the orchestrator identity a promotion is authorized
+ * by (D5): the lease is the admission authority, so the promotion asks the same authority the
+ * `shared` manifest admission asks, without demanding the caller re-present the whole lease. */
+export function holdsRunOrchestratorLease(store, fields) {
+  const principalId = fields?.principalId;
+  const runId = fields?.runId ?? null;
+  if (typeof principalId !== 'string' || principalId.length === 0
+    || (runId !== null && !validRunId(runId))) {
+    throw new CoordinationRefusal('run orchestrator lease lookup is invalid', 'invalid_repl_binding');
+  }
+  const now = store._clock();
+  return [...store._runOrchestratorLeases.values()].some((lease) => (
+    lease.status === 'active'
+    && lease.repoId === store._repoId
+    && lease.session.principalId === principalId
+    && Date.parse(now) < Date.parse(lease.expiresAt)
+    && (runId === null || lease.parent?.runId === runId)
+  ));
+}
+
+/** Issue #69 (D4): the run-close reap of the task-ephemeral tier. A run's `worker:<id>` and
+ * `shared` objects are run-scoped and unreachable once the run closes, so the ACTIVE binding map
+ * and the per-scope fences for that run are dropped here. The append-only history is RETAINED:
+ * `resolveReplCitation` resolves the EXACT version row from it (Part A rule 2), so a post-close
+ * replay still resolves the object a receipt cites, and the drop is idempotent.
+ * `active` is the count of active bindings the run has LEFT (0 after a complete reap) — the
+ * question a caller asks of a closed run. */
+export function reapRunReplBindings(store, runId) {
+  if (!validRunId(runId)) {
+    throw new CoordinationRefusal('REPL binding reap requires a run id', 'invalid_repl_binding');
+  }
+  let reaped = 0;
+  for (const key of [...store._replBindings.keys()]) {
+    const [rowRunId, scope] = JSON.parse(key);
+    if (rowRunId !== runId) continue;
+    store._replBindings.delete(key);
+    store._replBindingFences.delete(replFenceKey(runId, scope));
+    reaped += 1;
+  }
+  const active = [...store._replBindings.keys()]
+    .filter((key) => JSON.parse(key)[0] === runId).length;
+  const retained = [...store._replBindingHistory.keys()]
+    .filter((key) => JSON.parse(key)[0] === runId).length;
+  return freeze({ runId, reaped, active, retained });
+}
+
+// REPL-2 binding-view ceilings (repl23-decisions.md Part D rule 13), the exact same
+// byte/count-ceiling shape MAX_BOARD_VIEW_BYTES/MAX_BOARD_ITEMS use for boards.
+const MAX_REPL_VIEW_BYTES = FRAME_LIMITS['view.repl.bytes'].value;
+const MAX_REPL_BINDING_ITEMS = 512;
+
+// REPL-2 (repl23-decisions.md Part D rules 11-13): a bounded, sanitized, per-worker binding
+// projection. Reads are NON-EVENTED (pure — appends nothing) and CACHED by
+// (runId, scope, workerId, bindingFence): while the (runId, scope) fence is unchanged the
+// exact cached view is served; a fence advance is the only thing that recomputes it. `scope`/
+// `name` are attacker-influenced identifiers and route through the same
+// boundedAttentionText/wrapProse untrusted-prose discipline board title/detail/report bodies
+// use (rule 16, P2-6); a resolved cellId is a closed hub-derived token and is never wrapped.
+// It lives here, beside `replBindingSnapshot`, because it is a pure projection of that snapshot:
+// the coordinator's run-view REPL review (issue #69 D6) reads it without reaching the
+// application layer, which owns the run view but not this shape.
+export function projectReplBindingView(snapshot, viewer = {}, cache = null) {
+  const runId = snapshot?.runId ?? null;
+  const scope = snapshot?.scope ?? null;
+  const bindingFence = Number.isSafeInteger(snapshot?.bindingFence) ? snapshot.bindingFence : 0;
+  const workerId = viewer.workerId ?? null;
+  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
+  const cacheKey = `${runId} ${scope} ${role}:${workerId ?? ''} ${bindingFence}`;
+  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
+
+  // Part D rule 12: a worker sees its own worker:<id> scope plus the shared scope
+  // (read-only), both within its own run; the orchestrator sees every scope in the run.
+  const visibleScope = role === 'orchestrator' || scope === 'shared' || scope === `worker:${workerId}`;
+  const visible = visibleScope ? (snapshot?.bindings ?? []) : [];
+  let replBindingViewTruncated = visible.length > MAX_REPL_BINDING_ITEMS;
+  const project = (binding) => ({
+    scope: wrapProse(binding.scope, boundedAttentionText(binding.scope)),
+    name: wrapProse(binding.scope, boundedAttentionText(binding.name)),
+    bindingVersion: binding.bindingVersion, state: binding.state,
+    cellId: binding.cellId, bindingDigest: binding.bindingDigest,
+  });
+  let items = visible.slice(0, MAX_REPL_BINDING_ITEMS).map(project);
+  const build = () => Object.freeze({
+    runId, scope, bindingFence, viewer: Object.freeze({ workerId, role }),
+    bindings: Object.freeze(items), replBindingViewTruncated,
+  });
+  let view = build();
+  // Byte ceiling: shed the trailing item and re-flag until under MAX_REPL_VIEW_BYTES (never silent).
+  while (Buffer.byteLength(JSON.stringify(view)) > MAX_REPL_VIEW_BYTES && items.length > 0) {
+    items = items.slice(0, items.length - 1);
+    replBindingViewTruncated = true;
+    view = build();
+  }
+  if (cache) cache.set(cacheKey, view);
+  return view;
 }
 
 export function _knowledgeLiveAt(row, at) {

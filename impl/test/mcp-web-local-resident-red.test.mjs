@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -18,7 +19,7 @@ import {
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 
 function repository(t) {
-  const root = mkdtempSync('/tmp/bt-mcpweb-repo-');
+  const root = mkdtempSync(join(tmpdir(), 'bt-mcpweb-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'mcpweb@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'MCP Web'], { cwd: root });
@@ -60,9 +61,9 @@ function adapter() {
 
 async function publishedResident(t) {
   const repo = repository(t);
-  const deploymentRoot = mkdtempSync('/tmp/bt-mcpweb-deployment-');
-  const configRoot = mkdtempSync('/tmp/bt-mcpweb-config-');
-  const home = mkdtempSync('/tmp/bt-mcpweb-home-');
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'bt-mcpweb-deployment-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt-mcpweb-config-'));
+  const home = mkdtempSync(join(tmpdir(), 'bt-mcpweb-home-'));
   t.after(() => rmSync(deploymentRoot, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -102,7 +103,7 @@ test('MCPWEB-L1: the bridge reaches the ordinary owner-local socket resident thr
 
 test('MCPWEB-L2: createBatonWebMcpServer serves the local resident without a fetch override', async (t) => {
   const { repo, env, home } = await publishedResident(t);
-  const callRoot = mkdtempSync('/tmp/bt-mcpweb-calls-');
+  const callRoot = mkdtempSync(join(tmpdir(), 'bt-mcpweb-calls-'));
   t.after(() => rmSync(callRoot, { recursive: true, force: true }));
 
   const server = await createBatonWebMcpServer({
