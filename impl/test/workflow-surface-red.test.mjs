@@ -39,6 +39,7 @@ import { MockAdapter } from '../src/adapter.mjs';
 import {
   APPLICATION_COMMAND_DEFINITIONS,
   BatonApplication,
+  applicationCardCommands,
   projectBoardView,
 } from '../src/application.mjs';
 import { parseBatonCli, CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
@@ -1366,11 +1367,13 @@ function mockAppServer({ principal, command } = {}) {
   const commandCalls = [];
   const application = {
     repoId: REPO,
-    // The served-card contract (mcp-northbound.mjs:1067): the card advertises every
-    // registry-derived ordinary command — the mcp-packaging-red card list verbatim.
+    // The served-card contract (mcp-northbound.mjs facade gate): the card advertises exactly
+    // what production advertises — applicationCardCommands(), the ONE derivation — so this
+    // fixture cannot drift from the entries table when a landing adds a command (#566: the
+    // hand-typed list here went stale and the facade gate threw before FP-14 could run).
     card: () => ({
       schemaVersion: 1, repoId: REPO,
-      commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
+      commands: applicationCardCommands(),
     }),
     async authorizeReplay() { return true; },
     async command(name, args, appPrincipal, context) {
