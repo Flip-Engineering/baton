@@ -400,6 +400,7 @@ const EXERCISED_OPTIONS = Object.freeze({
 // Options the factory reads that no case here exercises yet. Each row is a debt a reader can act
 // on, never a claim that the option is inert: the row names the path that would exercise it.
 const UNEXERCISED_OPTIONS = Object.freeze({
+  worktreeCapacityHostObservation: 'the #561 host measurement behind the derived floor swap reserve; production wires measuredHostObservation, and the issue500-deployment-capacity fixture stages its own for a hermetic verdict',
   recorderPort: 'the observation-layer port the effect and recovery seams share; passed through by createDriver and composed over the wrapped authorities by the Coordinator constructor when absent',
   advisoryFeedSources: 'consulted by advisory feed projections, which need a feed card',
   approvalTimeoutMs: 'an interaction deadline, reached only by a pending approval',
