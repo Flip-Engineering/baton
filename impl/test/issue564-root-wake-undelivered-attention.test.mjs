@@ -50,7 +50,7 @@ test('564-u1: an owed root wake with no delivery record is reported as attention
   await f.call('recruit', { participantId: 'lead', objective: 'hold the lane' });
   const owed = f.record('swarm.root_attention_owed', {
     swarmId: 'baton', participantId: 'lead', contributionId: 'c1', owed: 'review_owed',
-    next: { command: 'swarm.check', swarmId: 'baton', participantId: 'lead', contributionId: 'c1' },
+    next: { command: 'swarm.view', swarmId: 'baton' },
   });
   const owedSeq = owed.event.seq;
 
@@ -63,7 +63,7 @@ test('564-u1: an owed root wake with no delivery record is reported as attention
   assert.deepEqual(row.delivery, { state: 'none', code: null },
     'no delivery attempt yet is a named state, never silence');
   assert.deepEqual(row.next,
-    { command: 'swarm.check', swarmId: 'baton', participantId: 'lead', contributionId: 'c1' },
+    { command: 'swarm.view', swarmId: 'baton' },
     'the row carries the owed row own next act, so a reader can settle the item from the attention row');
 });
 

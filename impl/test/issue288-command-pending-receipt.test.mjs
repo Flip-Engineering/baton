@@ -12,7 +12,7 @@ import test from 'node:test';
 
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import {
-  BatonWebClient, followSwarmCheck, followSwarmRecruit, parseBatonCli,
+  BatonWebClient, followSwarmRecruit, parseBatonCli,
 } from '../src/application-cli.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
@@ -51,26 +51,18 @@ function client({ answers = true, onRequest = null } = {}) {
 test('R-5: a command that outlives the request bound returns the pending receipt, never a network fault', async () => {
   const requested = [];
   const web = client({ onRequest: (url) => requested.push(String(url)) });
-  const error = await web.command('swarm.check', {
-    swarmId: 'swarm-288', participantId: 'reviewer', contributionId: 'contribution-288', checkId: 'check-288',
+  const error = await web.command('swarm.recruit', {
+    swarmId: 'swarm-288', participantId: 'reviewer', objective: 'Review the change',
+    idempotencyKey: 'operation-key-288',
   }, 'operation-key-288').then(() => null, (refusal) => refusal);
   assert.equal(error?.code, 'cli_command_pending', 'the peer is alive: this is a receipt, not a transport fault');
   assert.equal(error.detail.idempotencyKey, 'operation-key-288', 'the operation key crosses');
   assert.equal(typeof error.detail.commandId, 'string');
-  assert.equal(error.detail.command, 'swarm.check');
-  // Which watch/view row carries the verdict, and how to read it.
-  assert.match(error.detail.observe.command, /baton swarm check swarm-288 reviewer contribution-288 check-288 --follow/u);
-  assert.match(error.detail.observe.row, /reviews\["contribution-288"\]/u);
-  assert.match(error.detail.observe.row, /Check check-288/u);
-  // #522 migration: a check's receipt is now minted only when the check's own progress cannot be
-  // observed either, so the leg reads the verify lease (the swarm view) before it surrenders. That
-  // read is the third request and it is NOT a liveness probe: the deployment is probed once, and
-  // only after the bound elapsed. Here it cannot be read either — this fixture answers no command
-  // but the aborted one — so the receipt is the answer.
+  assert.equal(error.detail.command, 'swarm.recruit');
+  assert.match(error.detail.observe.command, /baton swarm view swarm-288 --participant-id reviewer/u);
   assert.deepEqual(requested, [
     'https://resident.baton.test/v1/commands',
     'https://resident.baton.test/healthz',
-    'https://resident.baton.test/v1/commands',
   ], 'liveness is probed once, and only after the bound elapsed');
 });
 
@@ -100,88 +92,6 @@ test('R-5: a command that never touched the bound keeps the transport refusal (n
     .then(() => null, (refusal) => refusal);
   assert.equal(error?.code, 'cli_transport_failed');
   assert.deepEqual(seen, ['https://resident.baton.test/v1/commands'], 'a refused connection is never re-probed as liveness');
-});
-
-// -------------------------------------------------------------------------------------------
-// R-5 × the CLI: `baton swarm check … --follow` observes the durable verdict row.
-// -------------------------------------------------------------------------------------------
-
-const checkArgs = ['swarm', 'check', 'swarm-288', 'reviewer', 'contribution-288', 'check-288'];
-const verdictRow = {
-  reviewerId: 'reviewer', decision: 'comment',
-  reason: 'Check check-288: passed for 0123456789abcdef; cleanup released.',
-  actor: 'web:reviewer:session', seq: 42, ts: '2026-09-14T12:00:01.000Z',
-};
-function swarmView(extra = {}) {
-  return {
-    swarmId: 'swarm-288', status: 'open', cursor: 41,
-    participants: [{ participantId: 'reviewer', status: 'active', runtime: { state: 'working', turn: 'running' } }],
-    contributions: { 'contribution-288': { contributionId: 'contribution-288' } },
-    reviews: {}, ...extra,
-  };
-}
-
-test('R-5: the CLI parses --follow on check into the observation stream', () => {
-  const parsed = parseBatonCli([...checkArgs, '--follow']);
-  assert.equal(parsed.kind, 'swarm_check_follow');
-  assert.equal(parsed.swarmId, 'swarm-288');
-  assert.equal(parsed.contributionId, 'contribution-288');
-  assert.equal(parsed.checkId, 'check-288');
-  assert.equal(typeof parsed.idempotencyKey, 'string');
-  // Without --follow the verb is the ordinary check command (unchanged).
-  assert.deepEqual(parseBatonCli([...checkArgs]).kind, 'command');
-});
-
-test('R-5: check --follow admits the check, watches the feed, and returns the verdict row', async () => {
-  const calls = [];
-  const pages = [];
-  const views = [
-    swarmView(),
-    swarmView({ cursor: 42, watch: { reason: 'event' }, reviews: { 'contribution-288': [verdictRow] } }),
-  ];
-  const client = {
-    async command(name, args, key) {
-      calls.push({ name, args, key });
-      if (name === 'swarm.check') return { passed: true, sha: '0123456789abcdef', attempt: { cleanup: { state: 'released' } } };
-      if (name === 'swarm.view') return views.shift();
-      return views.shift();
-    },
-  };
-  const result = await followSwarmCheck(parseBatonCli([...checkArgs, '--follow']), client, {
-    onFollowPage: async (page) => pages.push(page),
-  });
-  assert.deepEqual(calls.map((call) => call.name), ['swarm.check', 'swarm.view', 'swarm.watch']);
-  assert.equal(calls[2].args.afterSeq, 41, 'the watch resumes from the view cursor, never from scratch');
-  assert.equal(result.verdict.seq, 42);
-  assert.equal(result.verdict.reason, verdictRow.reason, 'the durable row is printed verbatim');
-  assert.equal(result.check.passed, true, 'the check receipt rides beside it');
-  assert.equal(pages.length, 1, 'the matched wake event is emitted as a page');
-});
-
-test('R-5: a verdict already durable is read back without waiting', async () => {
-  const calls = [];
-  const client = {
-    async command(name) {
-      calls.push(name);
-      if (name === 'swarm.check') return { passed: false, sha: 'f'.repeat(40) };
-      return swarmView({ reviews: { 'contribution-288': [verdictRow] } });
-    },
-  };
-  const result = await followSwarmCheck(parseBatonCli([...checkArgs, '--follow']), client, {});
-  assert.deepEqual(calls, ['swarm.check', 'swarm.view']);
-  assert.equal(result.verdict.seq, 42);
-});
-
-test('R-5: a closed swarm ends the watch with an honest null verdict', async () => {
-  const client = {
-    async command(name) {
-      if (name === 'swarm.check') return { passed: false, sha: 'f'.repeat(40) };
-      return swarmView({ status: 'closed', participants: [], reviews: {} });
-    },
-  };
-  const result = await followSwarmCheck(parseBatonCli([...checkArgs, '--follow']), client, {});
-  assert.equal(result.verdict, null, 'no further event can write it: the receipt says so instead of hanging');
-  assert.equal(result.check.sha, 'f'.repeat(40));
 });
 
 // -------------------------------------------------------------------------------------------
