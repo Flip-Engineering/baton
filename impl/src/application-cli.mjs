@@ -1061,6 +1061,29 @@ export async function setupBatonConnection({
   const profiles = setupProfileNames(configRoot);
   if (profile !== null) id(profile, 'connection profile');
   if (profile === null && profiles.length !== 1) {
+    // Issue #137: the resident's OWN artifacts come first. A resident mid-startup holds
+    // `baton/publication.lease` and has published nothing yet; one that published wrote
+    // `baton/connection.json` naming its profile. Answering `create_profile` in either window
+    // sends the operator to race (or duplicate) the resident's own publication — the witnessed
+    // misdirection, where the resolution was to WAIT and the running serve published seconds
+    // later.
+    const resident = residentPublicationState(commonDir);
+    if (resident.state !== 'absent') {
+      const published = resident.state === 'published';
+      return Object.freeze({
+        schemaVersion: 1, state: 'needs_user_input',
+        outline: Object.freeze({
+          repository: 'ready',
+          profiles: published ? 'resident_published' : 'resident_starting',
+          connection: published ? 'published_by_resident' : 'not_written',
+        }),
+        resident,
+        next: Object.freeze([
+          { action: 'check', command: 'baton doctor --check' },
+          ...(published ? [] : [{ action: 'wait', command: 'baton setup' }]),
+        ]),
+      });
+    }
     return Object.freeze({
       schemaVersion: 1, state: 'needs_user_input',
       outline: Object.freeze({ repository: 'ready', profiles: profiles.length === 0 ? 'missing' : 'select_profile', connection: 'not_written' }),
@@ -1087,6 +1110,33 @@ export async function setupBatonConnection({
     connection: Object.freeze({ profile: selected, repoId }),
     next: Object.freeze([{ action: 'check', command: 'baton doctor --check' }]),
   });
+}
+
+/** Issue #137: the resident that serves this repository, read from what the resident itself
+ * publishes — `baton serve` writes `baton/connection.json` (its selector, schemaVersion 2) and
+ * holds the `baton/publication.lease` directory while it runs. `published` names the profile the
+ * resident published; `starting` is a resident that holds the lease and has published nothing
+ * yet; `absent` is the ordinary repository no resident serves, where setup's own answer stands.
+ * Both artifacts live under the git common directory, so every worktree of the repository reads
+ * the same resident. An unreadable selector is not a publication: it reads as absent. */
+function residentPublicationState(commonDir) {
+  let published = null;
+  try {
+    const parsed = JSON.parse(readFileSync(join(commonDir, 'baton', 'connection.json'), 'utf8'));
+    if (record(parsed) && parsed.schemaVersion === 2) published = parsed;
+  } catch { published = null; }
+  if (published !== null) {
+    return Object.freeze({
+      state: 'published',
+      profile: typeof published.profile === 'string' ? published.profile : null,
+      incarnation: typeof published.incarnation === 'string' ? published.incarnation : null,
+      startedAt: typeof published.startedAt === 'string' ? published.startedAt : null,
+    });
+  }
+  if (existsSync(join(commonDir, 'baton', 'publication.lease'))) {
+    return Object.freeze({ state: 'starting', profile: null, incarnation: null, startedAt: null });
+  }
+  return Object.freeze({ state: 'absent', profile: null, incarnation: null, startedAt: null });
 }
 
 /** Read-only local diagnosis. It deliberately never opens the bearer-token file or contacts the
