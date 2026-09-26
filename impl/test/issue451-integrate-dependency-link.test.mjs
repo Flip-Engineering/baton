@@ -306,11 +306,11 @@ test('451c: the lane worktree and the integration checkout derive the same depen
 test('451d: the CLI prints the refusal tail under the refusal line', () => {
   const wires = [
     // The wire shape the CLI receives from the resident: the runtime's detail rides nested.
-    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/seam-inventory.mjs --write failed in the landing checkout',
-      detail: { script: 'impl/scripts/seam-inventory.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` }, retryable: false },
+    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/surface-gate.mjs --write failed in the landing checkout',
+      detail: { script: 'impl/scripts/surface-gate.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` }, retryable: false },
     // The embedded shape: the refusal's own detail, unwrapped.
-    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/seam-inventory.mjs --write failed in the landing checkout',
-      script: 'impl/scripts/seam-inventory.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` },
+    { code: 'integrate_change_invalid', message: 'Landing did not complete: impl/scripts/surface-gate.mjs --write failed in the landing checkout',
+      script: 'impl/scripts/surface-gate.mjs', exit: 3, stderrTail: `boom\n${FINAL_MARKER}` },
   ];
   const parsed = parseBatonCli([
     'swarm', 'integrate', 's1', 'contribution:1', '--onto', 'master', '--idempotency-key', 'i451:cli',
@@ -325,7 +325,7 @@ test('451d: the CLI prints the refusal tail under the refusal line', () => {
     const error = await runBatonCli(parsed, client).then(() => null, (thrown) => thrown);
     assert.ok(error, 'the refusal still propagates');
     assert.ok(error.message.includes('--write failed in the landing checkout'), 'the refusal line survives');
-    assert.match(error.message, /impl\/scripts\/seam-inventory\.mjs exited 3/u, 'the cause is named under it');
+    assert.match(error.message, /impl\/scripts\/surface-gate\.mjs exited 3/u, 'the cause is named under it');
     assert.ok(error.message.includes(FINAL_MARKER), 'and the tail is printed');
     assert.ok(error.message.indexOf(FINAL_MARKER) > error.message.indexOf('--write failed in the landing checkout'),
       'the tail renders UNDER the refusal line');

@@ -30,7 +30,7 @@ const needsGit = { skip: HAVE_GIT ? false : 'git binary unavailable' };
  * non-empty gate set, which is what the rows below judge. */
 const CHANGE = 'impl/src/coordinator.mjs';
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs', 'impl/scripts/surface-gate.mjs', 'impl/scripts/render-surface-docs.mjs',
+  'impl/scripts/surface-gate.mjs', 'impl/scripts/render-surface-docs.mjs',
 ]);
 
 const git = (repo, ...args) => execFileSync('git', args, {
