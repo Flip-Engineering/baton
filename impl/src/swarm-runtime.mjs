@@ -4968,6 +4968,11 @@ export class SwarmRuntime {
     const availableActions = Object.entries(COMMAND_PERMISSIONS)
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('review') && !availableActions.includes('swarm.capture')) availableActions.push('swarm.capture');
+    // Issue #584: `_permit` admits `stop` where the management relation grants it — over the seats
+    // the caller leads and over the caller itself — although the flat grant (the root's grant TO
+    // this seat) names no `stop`. The act is derived from that relation, never a second list, so
+    // a lead reads the stop it holds here instead of asking its root to stop its own seats.
+    if (caller && !availableActions.includes('swarm.stop')) availableActions.push('swarm.stop');
     // The update kinds and knowledge verbs this caller may send NOW, each with the permission
     // that admits it — derived by the SAME functions the dispatch checks use (`_updatePermission`
     // and the knowledge table's own permission), never a second list: a view can no more

@@ -182,6 +182,8 @@ test('the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one 
     'the derivation carries the bridge refusal prefix');
   assert.ok(SWARM_BRIDGE_TOOL.includes('$BATON_SWARM_CLIENT') && SWARM_BRIDGE_TOOL.includes('swarm.view')
     && SWARM_BRIDGE_TOOL.includes('swarm.update'), 'the bridge tool entry names the client and its verbs');
+  assert.ok(SWARM_BRIDGE_TOOL.includes('swarm.stop'),
+    'the bridge tool entry teaches the stop a seat holds over the seats it leads (#584)');
   // Every swarm verb the section names is a registered command or event kind, and the guidance
   // keeps the retry truth it is already pinned to (issue292 pins, now over the whole section).
   const known = new Set([...SWARM_COMMAND_NAMES, ...SWARM_EVENT_KINDS, ...SWARM_FOLD_EVENT_KINDS]);

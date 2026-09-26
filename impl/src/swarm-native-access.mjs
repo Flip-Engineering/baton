@@ -119,4 +119,4 @@ export const SWARM_BRIEF_SECTION = `${SWARM_NATIVE_GUIDANCE}\n\n${SWARM_BRIDGE_G
 
 /** The bridge as a brief.tools entry (issue #309): the one Baton tool a swarm recruit may
  * call, named with its verbs, so the brief's Tools section is never empty for a recruit. */
-export const SWARM_BRIDGE_TOOL = 'BATON swarm bridge (node "$BATON_SWARM_CLIENT"): swarm.view, swarm.watch, swarm.update, swarm.guide, and swarm.recruit when granted';
+export const SWARM_BRIDGE_TOOL = 'BATON swarm bridge (node "$BATON_SWARM_CLIENT"): swarm.view, swarm.watch, swarm.update, swarm.guide, swarm.recruit when granted, and swarm.stop over the seats you lead or yourself';
