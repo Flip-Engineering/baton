@@ -38,10 +38,16 @@ export function isPhysicalWorkspaceId(value) {
  * not finalized (killed, awaiting its release, or retained by a preservation refusal) still needs
  * the checkout to finish that release, so a peer that closed it out from under the release would
  * strand exactly the handle the drain is waiting for. A handle that detached (`holders_remain`) or
- * finalized its cleanup has released its hold and no longer counts. */
+ * finalized its cleanup has released its hold and no longer counts.
+ *
+ * Issue #608: a handle whose process generation is proven closed cannot write the checkout, so it
+ * is no live holder. Startup closes the reference exactly when it proves an unconfirmed generation
+ * absent (`control.recovery_process_absent`), and a hold whose process may still run keeps
+ * counting; a processless handle's recorded path is residue the reconciliation reclaims. */
 export function holdsWorkspace(handle) {
   if (!handle) return false;
   if (WORKSPACE_HOLDER_STATUSES.includes(handle.status)) return true;
+  if (handle.processRef?.state === 'closed') return false;
   return handle.workspaceCleanupDeferred == null
     && handle.physicalWorkspaceCleanupCompleted !== true
     && (handle.worktree !== null && handle.worktree !== undefined || handle.ownedWorktreeAuthority === true);
