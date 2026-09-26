@@ -197,16 +197,33 @@ export class WorktreePreserver {
       const indexFile = join(index, 'index');
       const read = this.git(['read-tree', 'HEAD'], { cwd: worktree, indexFile });
       const add = read.ok ? this.git(['add', '--all'], { cwd: worktree, indexFile }) : { ok: false };
+      // Issue #254 (the operator ruling on the debris the 2026-09-26 branches carried): the
+      // repository's ignore rules decide what an untracked path may carry into a snapshot. The
+      // checkout's own .gitignore can be stale — the node_modules symlink rode exactly that gap —
+      // so the staged additions are judged against the deployment repository's OWN ignore rules
+      // (evaluated at the repo root), and every match leaves the private index before the tree is
+      // written. The dropped paths are named on the snapshot commit, never a silent filter.
+      const debris = [];
+      if (add.ok) {
+        const added = this.git(['diff', '--cached', '--name-only', '--diff-filter=A'], { cwd: worktree, indexFile });
+        for (const path of added.ok ? added.out.split('\n').filter((line) => line.length > 0) : []) {
+          if (!this.git(['check-ignore', '-q', '--no-index', '--', path]).ok) continue;
+          const removed = this.git(['rm', '--cached', '--quiet', '--', path], { cwd: worktree, indexFile });
+          if (removed.ok) debris.push(path);
+        }
+      }
       const wrote = add.ok ? this.git(['write-tree'], { cwd: worktree, indexFile }) : { ok: false };
       if (!wrote.ok || !GIT_SHA.test(wrote.out)) return;
       const tree = wrote.out;
       if (headTree.ok && headTree.out === tree) return; // clean checkout: nothing uncommitted
+      const debrisNote = debris.length === 0 ? ''
+        : `; ignored additions dropped: ${debris.slice(0, 16).join(', ')}${debris.length > 16 ? `, and ${debris.length - 16} more` : ''}`;
       const pushedSha = this.pushed.get(ref) ?? null;
       if (pushedSha !== null) {
         const deref = this.git(['rev-parse', `${pushedSha}^{tree}`]);
         if (deref.ok && deref.out === tree) return; // this exact state is already the ref's tip
       }
-      const message = `preserve: uncommitted state of ${participantId} (private-index snapshot, worktree untouched)`;
+      const message = `preserve: uncommitted state of ${participantId} (private-index snapshot, worktree untouched)${debrisNote}`;
       const commit = this.git(['commit-tree', tree, '-p', head.out, '-m', message], { cwd: worktree });
       if (!commit.ok || !GIT_SHA.test(commit.out)) return;
       this.pushRef({ work: 'uncommitted', swarmId, participantId, workspaceId, sha: commit.out, ref });
