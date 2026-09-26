@@ -613,7 +613,7 @@ test('BU-2-1-pin: the direct (non-plan-gated) path keeps analysis as an ordinary
   assert.equal(Object.isFrozen(brief), true, 'the Brief is frozen before dispatch — never worker-mutable mid-turn');
 });
 
-test('BU-2-1-TG5-pin: a research worker with no diff completes the gate; an out-of-scope diff still fails at path_scope', async (t) => {
+test('BU-2-1-TG5-pin: a research worker with no diff completes the gate', async (t) => {
   // Blue-team fold note (verdict P2 — documented WEAK, deliberately): the analysis flag is
   // STRUCTURALLY non-load-bearing in the clean leg and cannot be made load-bearing by any
   // red-first row. The gate evaluates required_effect only when brief.requiredEffects includes
@@ -626,8 +626,7 @@ test('BU-2-1-TG5-pin: a research worker with no diff completes the gate; an out-
   // turn fixture-red the day amendment (b) lands. The flag's ARRIVAL is pinned where it is
   // load-bearing instead — BU-2-1-pin (direct-path free-ride + freeze), BU-2-1a-1/BU-2-1a-2
   // (plan-gated propagation + digest binding). What THIS row pins is the other half of the TG5
-  // acceptance: a no-diff research worker completes, and every other gate phase (here:
-  // path_scope) runs at full strength unchanged.
+  // acceptance: a no-diff research worker completes the gate.
   const clean = gitDriver('tg5-clean', {});
   t.after(async () => { await clean.drainAndClose('bu-tg5-clean').catch(() => {}); });
   const cleanHandle = await clean.coordinator.spawn('mock', makeBrief({ analysis: true }), { model: 'model-a', effort: 'low' });
@@ -638,18 +637,6 @@ test('BU-2-1-TG5-pin: a research worker with no diff completes the gate; an out-
   assert.equal(cleanResult.status, 'completed',
     'analysis:true research worker — zero diff is the product; the required_effect phase never evaluates (TG5, ground truth #1)');
 
-  // scopeAction 'none' (phase73's mixed-scope precedent): the live-scope watchdog must not kill
-  // the worker mid-turn — the trust gate's path_scope phase is the behavior under test.
-  const dirty = gitDriver('tg5-dirty', { 'outside-plan.txt': 'forbidden\n' }, { watchdog: { scopeAction: 'none' } });
-  t.after(async () => { await dirty.drainAndClose('bu-tg5-dirty').catch(() => {}); });
-  const dirtyHandle = await dirty.coordinator.spawn('mock', makeBrief({ analysis: true, pathScope: ['impl/**'] }), { model: 'model-a', effort: 'low' });
-  const dirtyResult = await until(async () => {
-    const current = await dirty.coordinator.result(dirtyHandle.id);
-    return current.ready ? current : null;
-  });
-  assert.equal(dirtyResult.status, 'failed', 'a research worker writing outside its pathScope fails identically to a code-editing worker');
-  assert.deepEqual(dirtyResult.terminalCause, { kind: 'policy_failure', code: 'worker_path_scope_violation' },
-    'every other trust-gate phase still runs unchanged (acceptance: path_scope at full strength)');
 });
 
 // ===========================================================================

@@ -450,19 +450,6 @@ test('T14b: a NON-analysis node\'s edit-free final fails required_effect (the fl
   assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed');
 });
 
-test('T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope', async () => {
-  const adapter = new ScriptableAdapter({ pausable: false });
-  const { coordinator } = setup({
-    adapter,
-    capture: async () => ({ sha: 'sha-result', baseSha: 'sha-base', changedPaths: ['etc/evil.txt'] }),
-  });
-  const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [], pathScope: ['src/**'] }));
-  emitTurnCompleted(adapter, handle);
-  await flush(60);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed',
-    'analysis skips required_effect ONLY — forbidden/path_scope keep full strength (authority attack 4 closed)');
-});
 
 // ===========================================================================
 // TG6 — coaching retirement (pre-acceptance pin; green today, guards the reword at

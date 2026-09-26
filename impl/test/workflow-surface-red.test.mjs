@@ -1636,7 +1636,13 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
   ]) {
     const response = await wireCall(server, id, tool, args);
     id += 1;
-    assert.equal(!(response.result?.isError === true && /forbidden/u.test(resultText(response))), true,
+    // The guard's subject is the settlement CLASS: the settlement tools refuse with the capability
+    // code `forbidden` when the principal lacks it (the lease assertion below pins exactly that),
+    // and none of these six may demand it. A state-level refusal is fine — after #108 the attention
+    // lane answers its OWN `attention_scope_forbidden` for a principal that is neither the wave
+    // owner nor a live run-orchestrator lease, where the northbound used to fabricate an empty page.
+    const error = response.result?.structuredContent?.error ?? null;
+    assert.equal(response.result?.isError === true && error?.code === 'forbidden', false,
       `${tool} never demands the settlement class (state-level outcomes/refusals are fine)`);
   }
   // The settlement tools' envelope requirements are untouched (byte-identical
