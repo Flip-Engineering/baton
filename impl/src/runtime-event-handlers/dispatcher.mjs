@@ -36,7 +36,6 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
         actor: 'policy',
         payload: boundedProcessObservation(event, 'cross_adapter_worker', { sourceVendor, ownerVendor: handle.vendor }),
       });
-      if (!['dead', 'stopping', 'exited'].includes(handle.status)) coordinator._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
       return;
     }
     if (actor === 'worker'

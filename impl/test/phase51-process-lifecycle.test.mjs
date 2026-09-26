@@ -1131,7 +1131,7 @@ test('PL3/PL10: an unlogged emergency close still requires exact source and proc
   assert.deepEqual(await emergency, { ok: true, result: 'confirmed_unlogged', auditUnavailable: true });
 });
 
-test('PL3: adapter callback source identity cannot close another adapter worker', async () => {
+test('PL3: adapter callback source identity cannot close another adapter worker, and the refusal kills nothing', async () => {
   const owner = stubAdapter(); const attacker = stubAdapter(); const log = new Log(mkdtempSync(join(tmpdir(), 'phase51-cross-adapter-log-'))); const coordination = coordinationForLog(log);
   const coordinator = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { owner, attacker },
@@ -1143,8 +1143,10 @@ test('PL3: adapter callback source identity cannot close another adapter worker'
   attacker.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
   await until(() => log.read(handle.id).some((event) => event.payload?.code === 'cross_adapter_worker'), 'cross-adapter refusal');
   assert.equal(coordinator.list()[0].processRef.state, 'initializing');
+  assert.equal(['dead', 'stopping'].includes(coordinator.list()[0].status), false,
+    'issue #611: the cross-adapter refusal kills nothing, so the owner keeps its transport');
   owner.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
-  owner.emit('kill.confirmed', handle.id); await until(() => coordinator.list()[0].status === 'dead', 'owner exact cleanup');
+  await until(() => coordinator.list()[0].processRef.state === 'closed', 'owner exact close');
 });
 
 test('PL3/PL8: rejected recovery identity persists only sanitized readiness and cannot pivot replay sessionRef', async () => {
@@ -1234,16 +1236,16 @@ test('PL3/PL4/PL8: coordinator exposes a closed processRef and replay never trea
   const replayed = replayer.list().find((row) => row.id === replayHandle.id).processRef; assert.equal(replayed.state, 'unconfirmed_after_restart'); assert.equal(replayed.ready, false);
 });
 
-test('PL3/PL10: malformed or mismatched process close cannot replace current authority and triggers safe stop', async () => {
-  let adapter;
-  adapter = stubAdapter({ async kill(worker) { queueMicrotask(() => adapter.emit('kill.confirmed', worker)); return { ok: true }; } });
+test('PL3/PL10: a malformed or mismatched process close cannot replace current authority, and the refusal kills nothing', async () => {
+  const adapter = stubAdapter();
   const { coordinator, log } = coordinatorFixture(adapter); const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-invalid-close', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'invalid-close source processRef'); const before = coordinator.list()[0].processRef;
   adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 2, pid: 9999, processGroupId: 9999, code: 0, signal: null, ready: false });
-  await until(() => coordinator.list()[0]?.status === 'dead', 'invalid-close safe stop');
+  await until(() => log.read(handle.id).some((event) => event.kind === 'lifecycle.process_attribution_refused' && event.payload?.code === 'invalid_process_close'), 'invalid-close refusal');
   const after = coordinator.list()[0].processRef;
-  assert.deepEqual({ ...after, state: before.state }, before, 'the invalid close cannot replace exact process identity');
-  assert.equal(after.state, 'unconfirmed_after_restart', 'the later forced-stop deadline records uncertain disposition explicitly');
+  assert.deepEqual(after, before, 'the invalid close cannot replace exact process identity');
+  assert.equal(['dead', 'stopping'].includes(coordinator.list()[0].status), false,
+    'issue #611: the refusal kills nothing, so the seat stays available for its orchestrator');
   assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_attribution_refused' && event.payload?.code === 'invalid_process_close'), true);
 });
 

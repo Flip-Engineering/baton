@@ -182,7 +182,6 @@ const terminalEvent = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.
         coordinator._clearWatchdog(ctx.handle);
         if (ctx.handle.processRef && ctx.handle.processRef.state !== 'closed') {
           ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: coordinator._safeTurnEpoch(ctx.handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(ctx.event, 'terminal_without_process_close') });
-          if (!['dead', 'stopping'].includes(ctx.handle.status)) coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.processObservationRefused);
         } else if (!coordinator._stopWaiters.has(ctx.handle.id)) {
           if (ctx.handle.status !== 'dead') ctx.handle.status = 'exited';
           coordinator._cleanupTransportInBackground(ctx.handle, task, terminalEvent);

@@ -421,9 +421,11 @@ instead of claiming a turn that never started. A quota fault is NEVER re-driven 
 `stall_reap`, `watchdog_action`, `provider_budget_hard_limit`,
 `provider_governance_violation`, `provider_fault`, `provider_crash`, `preservation_unproven`,
 `stop_deadline`, `interrupt_escalated_to_kill`, `preserved_reattachment_failed`, `worker_policy_mismatch`,
-`worktree_authority_lost`, `spawn_refused`, `protocol_violation`, `process_observation_refused`,
-`terminal_observation` — and an empty payload is gone: the observed `kill.requested` with an empty
-object could not be told from a routine operator stop.
+`worktree_authority_lost`, `spawn_refused`, `protocol_violation`, `terminal_observation` — and an
+empty payload is gone: the observed `kill.requested` with an empty object could not be told from a
+routine operator stop. An unattributable process observation is recorded as
+`lifecycle.process_attribution_refused` and kills nothing (issue #611): the worker keeps its exact
+process identity and stays available for its orchestrator's next guide.
 
 **The death lands as a run-level row.** One `provider_fault_death` attention reason per death
 (`run.attention.watch`) names the exact route, the fault class, `resetAt` when the provider named

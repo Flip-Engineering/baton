@@ -9,7 +9,7 @@ import {
   validProcessReapUnconfirmedPayload, validProcessStartedPayload,
 } from '../process-lifecycle.mjs';
 import {
-  KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze,
+  TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze,
 } from '../runtime-recovery.mjs';
 
 export function processStarted(coordinator, recorder, ctx) {
@@ -24,15 +24,18 @@ const valid = ctx.actor === 'worker' && validProcessStartedPayload(ctx.payload)
             && ctx.handle.currentIncarnation === true && ctx.payload.generation === ctx.handle.processGeneration
             && (!ctx.handle.processRef || ctx.handle.processRef.state === 'closed' || ctx.handle.processRef.state === 'unconfirmed_after_restart');
           if (lateCurrentStart) {
-            // A spawn Ack promises that no later process start can occur. If an adapter violates
-            // that boundary while this controller can still observe it, reacquire exact transport
-            // ownership and require another two-phase kill plus correlated process close.
+            // Issue #611: an unattributable start is recorded, never a kill. A harness that
+            // re-spawns across an authentication failure (observed live on w-150, w-126 and
+            // w-107) reported a start this controller could not attribute while the process it
+            // owned kept working; the policy kill cancelled the seat's task and left its
+            // orchestrator no report. The refused start still re-acquires exact transport
+            // ownership, so a correlated close is attributed later, and the seat stays
+            // available for its orchestrator's next guide.
             ctx.handle.processRef = { generation: ctx.payload.generation, pid: ctx.payload.pid, processGroupId: ctx.payload.processGroupId, state: 'initializing', ready: false, startedSeq: null, closedSeq: null };
             ctx.handle.processAuthority = null;
             ctx.handle.recoveredProcessAuthority = false;
             ctx.handle.localAuthority = true;
-            coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.processObservationRefused);
-          } else if (!['dead', 'stopping', 'exited'].includes(ctx.handle.status)) coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.processObservationRefused);
+          }
           return
         }
         const started = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
@@ -78,7 +81,6 @@ const current = ctx.handle.processRef;
           && ctx.payload.ready === current.ready;
         if (!valid) {
           ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: coordinator._safeTurnEpoch(ctx.handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(ctx.event, 'invalid_process_close') });
-          if (!['dead', 'stopping', 'exited'].includes(ctx.handle.status)) coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.processObservationRefused);
           return
         }
         const closed = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
