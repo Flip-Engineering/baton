@@ -34,7 +34,7 @@ import { ProviderProcessingSupervisor } from './provider-processing-supervisor.m
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
-import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
+import { loadOrCreateWorktreeCapacityIntegrityKey, measuredHostObservation, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
@@ -1342,7 +1342,8 @@ export function createDriver(opts) {
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
   if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
   if (opts.worktreeCapacityRuntimeFootprint !== undefined && typeof opts.worktreeCapacityRuntimeFootprint !== 'function') throw new TypeError('worktreeCapacityRuntimeFootprint must be a function');
-  if (!worktreeCapacityPolicy && (opts.worktreeCapacityObserve !== undefined || opts.worktreeCapacityEstimate !== undefined || opts.worktreeCapacityRuntimeFootprint !== undefined || opts.hostCapacity !== undefined)) throw new TypeError('worktree capacity dependencies require worktreeCapacity policy');
+  if (opts.worktreeCapacityHostObservation !== undefined && typeof opts.worktreeCapacityHostObservation !== 'function') throw new TypeError('worktreeCapacityHostObservation must be a function');
+  if (!worktreeCapacityPolicy && (opts.worktreeCapacityObserve !== undefined || opts.worktreeCapacityEstimate !== undefined || opts.worktreeCapacityRuntimeFootprint !== undefined || opts.worktreeCapacityHostObservation !== undefined || opts.hostCapacity !== undefined)) throw new TypeError('worktree capacity dependencies require worktreeCapacity policy');
   if (worktreeCapacityPolicy && ((opts.workerDependencyDirs?.length ?? 0) > 0 || (opts.verifyDependencyDirs?.length ?? 0) > 0)) throw new TypeError('worktreeCapacity requires attested toolchainProjection instead of legacy dependency copies');
   const workerSparsePaths = worktreeMod.normalizeSparsePaths(opts.workerSparsePaths ?? []);
   const verifySparsePaths = worktreeMod.normalizeSparsePaths(opts.verifySparsePaths ?? []);
@@ -1357,6 +1358,10 @@ export function createDriver(opts) {
     ...(opts.worktreeCapacityObserve ? { observe: opts.worktreeCapacityObserve } : {}),
     ...(opts.worktreeCapacityEstimate ? { estimate: opts.worktreeCapacityEstimate } : {}),
     ...(opts.worktreeCapacityRuntimeFootprint ? { runtimeFootprint: opts.worktreeCapacityRuntimeFootprint } : {}),
+    // #561: the derived floor reserves the disk the OS needs to keep paging under memory
+    // pressure — measured from the host the deployment runs on. A fixture stages its own
+    // observation so its verdict stays hermetic; production measures the machine.
+    hostObservation: opts.worktreeCapacityHostObservation ?? measuredHostObservation,
     now: opts.now ?? Date.now,
   }) : null;
   const now = opts.now ?? Date.now;

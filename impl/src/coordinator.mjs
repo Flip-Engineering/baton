@@ -497,7 +497,15 @@ export async function runSupervisedGateRun({
   // release, never refused for having waited. A host that cannot fund a suite at all (a standing
   // memory shortfall) answers `degraded` at once and the gate run proceeds without a lease.
   lease = await acquireSuiteVerifyLease({
-    authority, holder, log: () => {}, signal,
+    authority, holder, log: () => {},
+    // #561/#598: the landing gate names its own start durable — under a standing-tight host the
+    // start HOLDS in the admission queue with no deadline until measured memory funds one more
+    // suite, and the gates already running finish (observed 21:51Z: nine gates started degraded
+    // at once, the third near-crash).
+    durable: true,
+    // #576: the fence signal — a stopping resident ends this wait instead of hanging behind a
+    // queue it can no longer answer for.
+    signal,
     onQueued: (row) => {
       queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
         shortfall: row?.shortfall ?? null });
@@ -1248,6 +1256,14 @@ export class Coordinator {
   async _performDrain(targetWorkerIds, repoId, deadline, physicalDrainId, physicalActor) {
     await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline, () => ({ reason: 'startup_cleanup_pending', timeoutMs: this._drainPolicy.timeoutMs }));
     if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
+    // Issue #576: the integrate gate runners are the drain's OWN children, cancelled and reaped
+    // as part of it — never after it. The fence drops first (no new gate starts once a stop is
+    // requested, and a run still QUEUED for its verify lease aborts), every live child is
+    // killed with its process group, and the wait is for each child's close: when the drain
+    // moves on, no gate runner still burns the host, and `closed` can mean the process exits.
+    // A landing the cancellation abandons records its own abandoned-attempt row.
+    await this._beforeDrainDeadline(this._supervised.cancelAndReap(), deadline,
+      () => ({ reason: 'gate_runners_pending', timeoutMs: this._drainPolicy.timeoutMs }));
     // Operations admitted before the irreversible fence may finish, but no stop effect races
     // them. In particular, publisher/integration/provider work cannot be relabelled as drained
     // while it still owns an external or repository effect boundary.

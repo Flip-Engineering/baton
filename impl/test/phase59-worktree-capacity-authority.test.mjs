@@ -430,6 +430,10 @@ test('WC4: concurrent admission atomically reserves one worker and refuses the c
   assert.equal(spawnCalls(), 1);
   assert.equal(injected.estimates.length, 2);
   assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 1);
+  // Exactly ONE physical workspace checkout exists — the race winner's. The count names the
+  // workspace directories themselves, never a suffix filter: per-owner durable metadata (the
+  // meta json, the projection exclude, the #568 linked-worktree ownership record) is not a
+  // checkout and must not be able to pass for one.
   assert.equal(
     !existsSync(join(f.repo, '.baton', 'wt'))
       ? 0

@@ -134,6 +134,12 @@ test('500-caps-A: the open publishes the declared capacity and stop-envelope def
   assert.deepEqual(driverOptions.drainPolicy, { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     'the drain: 64 workers, a 90 s window, a 10 ms poll');
   assert.deepEqual(driverOptions.budgetPolicy, { terminalGraceMs: 2_000 }, 'the budget terminal grace');
+  // #561: the constructed host capacity authority must reach the driver — a production open
+  // that drops it leaves every admission unwired (`authority: 'unwired'` on a wired host).
+  const hostAdmissionDisabled = process.env.BATON_TEST_SUITE_ROOT !== undefined
+    || process.env.BATON_HOST_CAPACITY_DISABLED === '1';
+  assert.equal(driverOptions.hostCapacity === null || driverOptions.hostCapacity === undefined, hostAdmissionDisabled,
+    'the open hands the driver its host capacity authority unless host admission is disabled');
   assert.deepEqual(driverOptions.toolchainProjection.limits, {
     maxMappings: 128, maxFiles: 1_000_000, maxDirectories: 250_000,
     maxBytes: 2 * 1024 * 1024 * 1024, maxFileBytes: 512 * 1024 * 1024,
@@ -146,7 +152,13 @@ test('500-caps-B: a capacity observation is quantized down before any verdict or
   const INODE_QUANTUM = 10_000;
   const deployment = await openDeployment(t, 'quantum', {
     advanced: {
+      // #561: the derived floor carries a swap-growth reserve measured from the host; this
+      // fixture stages a debt-free host so the row judges quantization alone, never the real
+      // machine's memory pressure.
       capacity: {
+        hostObservation: () => ({
+          totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, swapFreeBytes: 0, cores: 4,
+        }),
         observe: () => ({
           freeBytes: 3 * BYTE_QUANTUM + 12_345, freeInodes: 2 * INODE_QUANTUM + 999,
         }),

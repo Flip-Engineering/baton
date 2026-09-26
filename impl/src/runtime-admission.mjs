@@ -205,9 +205,28 @@ export const SUPERVISED_STREAM_TAIL_BYTES = MAX_STDERR_TAIL_BYTES;
 
 export class SupervisedProcesses {
   constructor() {
-    /** @type {Map<string, {id: string, pid: number|null, label: string, child: object}>} */
+    /** @type {Map<string, {id: string, pid: number|null, label: string, child: object, settled: Promise}>} */
     this._live = new Map();
     this._seq = 0;
+    // Issue #576: the stop fence. Once dropped, no new run starts (a stopping resident starts no
+    // new gate) and the signal aborts a run still QUEUED for its admission (the gate run's host
+    // verify lease wait), so a stop never hangs on a request that has not spawned yet.
+    this._fenced = false;
+    this._controller = new AbortController();
+  }
+
+  /** Whether the stop fence has dropped: no new run starts, and cancelAndReap is reaping. */
+  get fenced() { return this._fenced; }
+
+  /** The fence's abort signal — an admission wait (the gate run's verify lease) ends on it. */
+  get signal() { return this._controller.signal; }
+
+  /** Drop the stop fence: idempotent. Runs admitted earlier are untouched (killAll/cancelAndReap
+   * end them); runs asked for after it resolve `fenced` without spawning a child. */
+  fence() {
+    if (this._fenced) return;
+    this._fenced = true;
+    this._controller.abort();
   }
 
   /**
@@ -225,24 +244,25 @@ export class SupervisedProcesses {
    * record no terminal row, and the caller would have nothing to read.
    * `detached` puts the child in its own group so a kill reaches the grandchildren a runner
    * spawns (test files, nested runners), never only the child itself.
+   *
+   * #576: a run asked for after the fence dropped resolves `{status: 'fenced', fenced: true}`
+   * WITHOUT spawning — no new gate starts after a stop is requested.
    */
   async run({ file, args = [], cwd, env = {}, timeoutMs = null, label = 'worker', signal = null }) {
     if (typeof file !== 'string' || file.length === 0) throw new TypeError('a supervised worker needs the script it runs');
     if (typeof cwd !== 'string' || cwd.length === 0) throw new TypeError('a supervised worker needs the directory it runs in');
     if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) throw new TypeError('a supervised worker deadline is a positive integer in milliseconds, or null to wait on the child');
     const id = `supervised-worker-${++this._seq}`;
+    if (this._fenced) {
+      return Object.freeze({
+        id, label, pid: null, timedOut: false, stdout: '', stderr: '',
+        status: 'fenced', code: null, signal: null, fenced: true,
+      });
+    }
     const child = spawn(process.execPath, [file, ...args], {
       cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
     });
-    const entry = { id, pid: child.pid ?? null, label, child };
-    this._live.set(id, entry);
-    let stdout = ''; let stderr = ''; let timedOut = false; let withdrawn = false;
-    const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
-      ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
-    child.stderr?.on('data', (chunk) => { stderr = tail(stderr, chunk); });
+    let withdrawn = false;
     const killGroup = (sig) => {
       try { process.kill(-child.pid, sig); }
       catch { try { child.kill(sig); } catch { /* already gone */ } }
@@ -252,14 +272,13 @@ export class SupervisedProcesses {
       if (signal.aborted) { onAbort(); }
       else { signal.addEventListener('abort', onAbort, { once: true }); }
     }
-    const deadline = timeoutMs === null ? null : setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
-    if (deadline !== null && typeof deadline.unref === 'function') deadline.unref();
-    // Issue #577: settle on the child's EXIT, with a drain grace for the tails. `close` alone is not
-    // enough — it waits for every writer of the captured pipes, and one leaked descendant that
-    // inherited them keeps the event from ever firing. `close` still wins when the pipes do close
-    // first, so a normal run reads back exactly what it always did.
+    // Issue #577: settle on the child's EXIT, with a drain grace for the tails. `close` alone is
+    // not enough — it waits for every writer of the captured pipes, and one leaked descendant
+    // that inherited them keeps the event from ever firing. `close` still wins when the pipes do
+    // close first, so a normal run reads back exactly what it always did. #576 shares this same
+    // promise as the entry's settled facts, so the drain's reap waits on settled children.
     const drainMs = 250;
-    const settled = await new Promise((resolve) => {
+    const settledPromise = new Promise((resolve) => {
       let finished = false;
       let exited = null;
       let drain = null;
@@ -279,6 +298,21 @@ export class SupervisedProcesses {
       child.once('close', (code, signal) => settle(factsFrom(
         code ?? exited?.code ?? null, signal ?? exited?.signal ?? null)));
     });
+    const entry = { id, pid: child.pid ?? null, label, child, settled: settledPromise };
+    this._live.set(id, entry);
+    // The fence can drop between the entry check above and this registration: a run that slipped
+    // through is killed at once, so cancelAndReap's loop never misses it.
+    if (this._fenced) killGroup('SIGKILL');
+    let stdout = ''; let stderr = ''; let timedOut = false;
+    const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
+      ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
+    child.stderr?.on('data', (chunk) => { stderr = tail(stderr, chunk); });
+    const deadline = timeoutMs === null ? null : setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
+    if (deadline !== null && typeof deadline.unref === 'function') deadline.unref();
+    const settled = await settledPromise;
     clearTimeout(deadline);
     if (signal) signal.removeEventListener('abort', onAbort);
     this._live.delete(id);
@@ -307,6 +341,22 @@ export class SupervisedProcesses {
       if (typeof escalation.unref === 'function') escalation.unref();
     }
     return Object.freeze(killed);
+  }
+
+  /** Issue #576: cancel and REAP every run this pool supervises — the drain's own half of the
+   * stop. The fence drops first (no new run starts, admission waits abort), every live child is
+   * killed with its process group, and the return waits for each child's close: when this
+   * resolves, no child this pool spawned still holds the resident's loop, so `closed` can mean
+   * the process exits. A run that registers between sweeps is killed by its own post-registration
+   * fence check and met by the next iteration. */
+  async cancelAndReap(signal = 'SIGTERM') {
+    this.fence();
+    for (;;) {
+      const live = [...this._live.values()];
+      if (live.length === 0) return;
+      this.killAll(signal);
+      await Promise.all(live.map((entry) => entry.settled));
+    }
   }
 }
 
@@ -863,7 +913,9 @@ export function closeAuthority(coordinator, recorder) {
     // leaves one burning the host would be a stop that did not stop; killing it here (before the
     // not-drained checks, which judge worker handles) keeps the fence exactly as abrupt as its
     // name. The landing that owned the run records its own failure row, and a run that never got
-    // to leaves the scratch checkout to the next open's sweep.
+    // to leaves the scratch checkout to the next open's sweep. #576: the pool's fence drops with
+    // it, so a gate asked for after this close never spawns.
+    coordinator._supervised.fence();
     coordinator._supervised.killAll();
     // Durable replay handles describe prior ownership; they are not native transports owned by
     // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
