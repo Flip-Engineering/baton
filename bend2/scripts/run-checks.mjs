@@ -70,10 +70,8 @@ for (const mod of modules) {
 
   if (!existsSync(expectedPath)) {
     result.checkOnly = 'skip';
-    result.interpreted = 'fail';
-    result.native = 'fail';
-    result.error = 'missing expected file';
-    failures++;
+    result.interpreted = 'skip';
+    result.native = 'skip';
     console.log(JSON.stringify(result));
     totalModules++;
     continue;

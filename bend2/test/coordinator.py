@@ -169,6 +169,29 @@ class Coordinator(unittest.TestCase):
         self.assertIsNone(idle['latestReport'])
         self.assertIsNone(idle['latestReportId'])
 
+    def test_turns_lists_turn_history_for_a_worker(self):
+        self.assertEqual(self.call('turns', 'worker'), [])
+        result1 = json.dumps({'type': 'result', 'result': 'first answer'})
+        self.call('observe', 'turn-1', 'worker', result1)
+        result2 = json.dumps({'type': 'result', 'result': 'second answer'})
+        self.call('observe', 'turn-2', 'worker', result2)
+
+        turns = self.call('turns', 'worker')
+
+        self.assertEqual(len(turns), 2)
+        self.assertEqual(turns[0]['id'], 'turn-1')
+        self.assertEqual(turns[0]['worker'], 'worker')
+        self.assertEqual(turns[0]['eventType'], 'result')
+        self.assertEqual(turns[0]['reportBody'], 'first answer')
+        self.assertIsNone(turns[0]['receipt'])
+        self.assertEqual(turns[1]['id'], 'turn-2')
+        self.assertEqual(turns[1]['reportBody'], 'second answer')
+
+        self.call('ack', 'turn-1', 'root', 'accepted')
+        turns_after = self.call('turns', 'worker')
+        self.assertEqual(turns_after[0]['receipt'], 'accepted')
+        self.assertIsNone(turns_after[1]['receipt'])
+
     def test_parallel_reports_have_one_durable_record_per_id(self):
         def report(i):
             return self.call('report', f'turn-{i % 4}', 'worker', f'body-{i % 4}')
