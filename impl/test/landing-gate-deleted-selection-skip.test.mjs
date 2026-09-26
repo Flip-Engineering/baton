@@ -3,6 +3,8 @@
 // merits). A checkout-relative requested file that does not exist is a file the change deleted:
 // the runner skips it as a named deletion instead of letting the spawn die unreported — an
 // unreported exit is a failure the base comparison would read as one the target does not share.
+// The gate marker (BATON_SUITE_GATE, issue #606) is what says these names came from a gate: a run
+// outside one refuses a name it cannot resolve instead of skipping it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -19,7 +21,10 @@ test('a requested file absent from the checkout skips as a named deletion, and t
   const directory = mkdtempSync(join(tmpdir(), 'baton-deleted-selection-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const verdictPath = join(directory, 'verdict.json');
-  const env = { ...process.env, BATON_SUITE_VERDICT_FILE: verdictPath, BATON_TEST_TMP_PARENT: directory };
+  const env = {
+    ...process.env, BATON_SUITE_VERDICT_FILE: verdictPath, BATON_SUITE_GATE: '1',
+    BATON_TEST_TMP_PARENT: directory,
+  };
   delete env.NODE_TEST_CONTEXT;
   const run = await new Promise((done) => {
     const child = spawn(process.execPath, [RUNNER, PROBE, DELETED], { cwd: IMPL, env, stdio: ['ignore', 'pipe', 'pipe'] });

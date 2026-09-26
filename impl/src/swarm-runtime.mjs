@@ -184,7 +184,9 @@ async function runGateFiles(dir, files, { pool = null, holder = null, leaseAutho
   try {
     const result = await runSupervisedGateRun({
       file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority, signal,
-      env: { BATON_SUITE_VERDICT_FILE: verdictPath },
+      // Issue #606: the gate marker tells the runner its names were derived from the resident's
+      // own tree, so a name it cannot open is a deletion the change carries and stays a skip.
+      env: { BATON_SUITE_VERDICT_FILE: verdictPath, BATON_SUITE_GATE: '1' },
     });
     let document = null;
     try {
