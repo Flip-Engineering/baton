@@ -89,6 +89,15 @@ target already contains the worker commit, or `blocked` with a reason (the
 worker branch diverged or the target moved during the update). Worker branches
 and worktrees are retained after landing.
 
+`land-checked WORKER_ID REPO TARGET_BRANCH CHECK FILES` runs the gated landing.
+CHECK runs as `/bin/sh CHECK FILE` inside each checked tree, once per selected
+file per tree. `bend2/scripts/check-unittest.sh` judges one selected Python
+test file: a selection under `bend2/test/` builds the coordinator binary in
+the checked tree first, the selected file runs, and each failing case prints
+one identity line of four hex-encoded fields: file, test id, failure type, and
+semantic code. The `blocked` answer names every candidate failure line the
+target run does not show, and an unjudged check run blocks the landing.
+
 ## Native turns
 
 After registering the worker, run:
