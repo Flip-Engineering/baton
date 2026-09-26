@@ -33,8 +33,8 @@ function fixture(label) {
   const world = mkdtempSync(join(tmpdir(), `baton-issue45-${label}-`));
   const repo = join(world, 'repo'); mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Issue 45 Fixture']);
-  git(repo, ['config', 'user.email', 'issue45@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 45 Fixture', GIT_COMMITTER_NAME: 'Issue 45 Fixture' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue45@example.invalid', GIT_COMMITTER_EMAIL: 'issue45@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(repo, ['add', 'base.txt']); git(repo, ['commit', '-qm', 'base']);
   const baseSha = git(repo, ['rev-parse', 'HEAD']);

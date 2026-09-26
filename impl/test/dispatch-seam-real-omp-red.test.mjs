@@ -28,8 +28,8 @@ async function buildFixture() {
   const repo = root('dispatch-real-repo');
   const logDir = root('dispatch-real-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'real@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Real Pin'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'real@example.invalid', GIT_COMMITTER_EMAIL: 'real@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Real Pin', GIT_COMMITTER_NAME: 'Real Pin' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

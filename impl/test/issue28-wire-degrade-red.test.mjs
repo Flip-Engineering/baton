@@ -226,8 +226,8 @@ test('R28-3: adapterOptions/maxWireFrameBytes ceiling is honored and card report
   // Closed advanced.adapterOptions key is accepted by the deployment factory.
   const repo = mkdtempSync(join(tmpdir(), 'baton-r28-3-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'r28@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'R28'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'r28@example.invalid', GIT_COMMITTER_EMAIL: 'r28@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'R28', GIT_COMMITTER_NAME: 'R28' });
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(repo, 'test'));
   writeFileSync(join(repo, 'test', 'smoke.test.mjs'), "import test from 'node:test';\ntest('s', () => {});\n");

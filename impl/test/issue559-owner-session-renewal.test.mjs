@@ -25,8 +25,8 @@ const RENEWAL_DEADLINE_MS = TTL_MS * 10;
 function repository(t) {
   const root = mkdtempSync('/tmp/bt559-owner-session-repo-');
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue559@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 559'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue559@example.invalid', GIT_COMMITTER_EMAIL: 'issue559@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 559', GIT_COMMITTER_NAME: 'Issue 559' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'));
   writeFileSync(join(root, 'test', 'smoke.test.mjs'), [

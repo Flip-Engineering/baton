@@ -82,8 +82,8 @@ async function world(t, {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue296-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 296');
-  git(repo, 'config', 'user.email', 'issue296@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 296', GIT_COMMITTER_NAME: 'Issue 296' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue296@example.invalid', GIT_COMMITTER_EMAIL: 'issue296@example.invalid' });
   write(repo, 'README.md', 'base\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');

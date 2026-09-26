@@ -148,8 +148,8 @@ function workerFixture() {
 async function waveFixture() {
   const repo = tmpDir('baton-bw-repo-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const adapter = new ScriptableAdapter();
   // The application profile-route reconciliation reads the adapter card's modelSelection

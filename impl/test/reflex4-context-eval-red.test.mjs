@@ -35,8 +35,8 @@ function principal(id) {
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-reflex4-context-eval-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'reflex4@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Reflex4'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'reflex4@example.invalid', GIT_COMMITTER_EMAIL: 'reflex4@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Reflex4', GIT_COMMITTER_NAME: 'Reflex4' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   writeFileSync(join(root, 'alpha.mjs'), 'export const alpha = 1;\n');
   execFileSync('git', ['add', '.'], { cwd: root });

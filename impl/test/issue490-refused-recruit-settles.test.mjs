@@ -199,8 +199,8 @@ async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue490-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 490 test'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue490@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 490 test', GIT_COMMITTER_NAME: 'Issue 490 test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue490@example.invalid', GIT_COMMITTER_EMAIL: 'issue490@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -212,8 +212,8 @@ const git = (root, args) => execFileSync('git', args, { cwd: root, encoding: 'ut
 const repo = (name, files) => {
   const root = tmpDir(name);
   git(root, ['init', '-q']);
-  git(root, ['config', 'user.email', 'orientation@example.invalid']);
-  git(root, ['config', 'user.name', 'Orientation Contract']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'orientation@example.invalid', GIT_COMMITTER_EMAIL: 'orientation@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Orientation Contract', GIT_COMMITTER_NAME: 'Orientation Contract' });
   for (const [path, value] of Object.entries(files)) write(root, path, value);
   git(root, ['add', '.']);
   git(root, ['commit', '-qm', 'base']);

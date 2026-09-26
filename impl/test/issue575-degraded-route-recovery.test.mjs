@@ -69,8 +69,8 @@ function gitRepo(label) {
   const root = tmpDir(label);
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['checkout', '-q', '-b', 'master'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue575@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 575'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue575@example.invalid', GIT_COMMITTER_EMAIL: 'issue575@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 575', GIT_COMMITTER_NAME: 'Issue 575' });
   writeFileSync(join(root, 'README.md'), '# issue 575\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

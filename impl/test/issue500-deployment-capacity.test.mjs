@@ -53,8 +53,8 @@ function repository(name) {
     env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
   git(['init', '-q']);
-  git(['config', 'user.email', 'issue500@example.invalid']);
-  git(['config', 'user.name', 'Issue 500']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue500@example.invalid', GIT_COMMITTER_EMAIL: 'issue500@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 500', GIT_COMMITTER_NAME: 'Issue 500' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   // A small installed dependency tree, so the open attests one and publishes the projection
   // limits on the driver options (a repo with no dependency directory projects null).

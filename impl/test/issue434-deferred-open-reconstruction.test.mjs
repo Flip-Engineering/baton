@@ -34,8 +34,8 @@ test.after(() => { for (const root of roots) rmSync(root, { recursive: true, for
 function repository() {
   const root = temp('repo');
   execFileSync('git', ['init', '-q', root]);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'issue434@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'issue434']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue434@example.com', GIT_COMMITTER_EMAIL: 'issue434@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue434', GIT_COMMITTER_NAME: 'issue434' });
   execFileSync('git', ['-C', root, 'commit', '-q', '--allow-empty', '-m', 'seed']);
   return root;
 }

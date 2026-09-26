@@ -114,8 +114,8 @@ function persistedText(rootDir) {
 function gitRepo(name) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase69-retry@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 69 Retry'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase69-retry@example.invalid', GIT_COMMITTER_EMAIL: 'phase69-retry@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 69 Retry', GIT_COMMITTER_NAME: 'Phase 69 Retry' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

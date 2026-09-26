@@ -23,8 +23,8 @@ function git(args, cwd) {
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase78-capacity-repo-'));
   git(['init', '-q'], root);
-  git(['config', 'user.email', 'phase78@example.invalid'], root);
-  git(['config', 'user.name', 'Phase 78'], root);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   git(['add', '.'], root);
   git(['commit', '-qm', 'base'], root);

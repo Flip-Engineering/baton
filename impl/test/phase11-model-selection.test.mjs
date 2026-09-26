@@ -301,8 +301,8 @@ test('MS5: snapshot commits carry Baton-Model independently of Baton-Vendor', as
   const repo = mkdtempSync(join(tmpdir(), 'baton-ms5-repo-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   const wt = await createFromBase(repo, 'model-trailer', base);

@@ -87,8 +87,8 @@ function driver(name, files, options = {}) {
   const repo = root(`${name}-repo`);
   const logDir = root(`${name}-log`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase73@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 73'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase73@example.invalid', GIT_COMMITTER_EMAIL: 'phase73@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 73', GIT_COMMITTER_NAME: 'Phase 73' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

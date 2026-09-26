@@ -28,8 +28,8 @@ function fixture(label) {
   try {
     mkdirSync(repo);
     git(['init', '-q'], repo);
-    git(['config', 'user.name', 'Baton Issue 412'], repo);
-    git(['config', 'user.email', 'issue412@example.invalid'], repo);
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Issue 412', GIT_COMMITTER_NAME: 'Baton Issue 412' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue412@example.invalid', GIT_COMMITTER_EMAIL: 'issue412@example.invalid' });
     writeFileSync(join(repo, 'README.md'), '# issue 412 fixture\n');
     git(['add', '-A'], repo);
     git(['commit', '-qm', 'issue 412 base'], repo);

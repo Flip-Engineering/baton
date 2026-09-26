@@ -21,8 +21,8 @@ function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-500-cap-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue500@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 500'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue500@example.invalid', GIT_COMMITTER_EMAIL: 'issue500@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 500', GIT_COMMITTER_NAME: 'Issue 500' });
   execFileSync('git', ['commit', '-qm', 'issue 500 capacity fixture', '--allow-empty'], { cwd: root });
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   return { root, sha };

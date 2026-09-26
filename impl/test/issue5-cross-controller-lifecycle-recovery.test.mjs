@@ -181,8 +181,8 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   const logDir = join(world, 'log');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue5@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 5 Fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue5@example.invalid', GIT_COMMITTER_EMAIL: 'issue5@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 5 Fixture', GIT_COMMITTER_NAME: 'Issue 5 Fixture' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -781,8 +781,8 @@ test('P92.2-PO3: absent process cannot erase retained malformed workspace cleanu
   const repo = join(world, 'repo'); const logDir = join(world, 'log');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase92-absent@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 92 Absent Fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase92-absent@example.invalid', GIT_COMMITTER_EMAIL: 'phase92-absent@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 92 Absent Fixture', GIT_COMMITTER_NAME: 'Phase 92 Absent Fixture' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -862,8 +862,8 @@ test('P92.2-PO3: immutable gen1 workspace owner binds a separately proven live g
   const logDir = join(world, 'log');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase92-gen2@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 92 Gen2 Fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase92-gen2@example.invalid', GIT_COMMITTER_EMAIL: 'phase92-gen2@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 92 Gen2 Fixture', GIT_COMMITTER_NAME: 'Phase 92 Gen2 Fixture' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -972,8 +972,8 @@ test('P92.2-PO3: controller2 exact gen2 recovery restores authority for same-con
   const logDir = join(world, 'log');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase92-gen2-stop@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 92 Gen2 Stop Fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase92-gen2-stop@example.invalid', GIT_COMMITTER_EMAIL: 'phase92-gen2-stop@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 92 Gen2 Stop Fixture', GIT_COMMITTER_NAME: 'Phase 92 Gen2 Stop Fixture' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -1074,8 +1074,8 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
   const deploymentRoot = join(world, 'deployment');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue5@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 5 Fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue5@example.invalid', GIT_COMMITTER_EMAIL: 'issue5@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 5 Fixture', GIT_COMMITTER_NAME: 'Issue 5 Fixture' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -65,8 +65,8 @@ function makeRepo(label = 'repo', { ignore = [] } = {}) {
   const world = mkdtempSync(join(tmpdir(), `baton-preservation-${label}-`));
   const root = join(world, 'repo'); mkdirSync(root);
   git(root, ['init', '-q']);
-  git(root, ['config', 'user.name', 'Preservation Fixture']);
-  git(root, ['config', 'user.email', 'preservation@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Preservation Fixture', GIT_COMMITTER_NAME: 'Preservation Fixture' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'preservation@example.invalid', GIT_COMMITTER_EMAIL: 'preservation@example.invalid' });
   writeFileSync(join(root, 'README.md'), '# base\n');
   mkdirSync(join(root, 'src'));
   writeFileSync(join(root, 'src', 'main.js'), 'export const value = 1;\n');
@@ -442,8 +442,8 @@ test('a directory that is not this repository\'s checkout is retained', async (t
     const dir = join(f.root, '.baton', 'wt', 'foreign-checkout');
     mkdirSync(dir, { recursive: true });
     git(dir, ['init', '-q']);
-    git(dir, ['config', 'user.name', 'Foreign Fixture']);
-    git(dir, ['config', 'user.email', 'foreign@example.invalid']);
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Foreign Fixture', GIT_COMMITTER_NAME: 'Foreign Fixture' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'foreign@example.invalid', GIT_COMMITTER_EMAIL: 'foreign@example.invalid' });
     writeFileSync(join(dir, 'foreign.txt'), 'another repository worktree\n');
     git(dir, ['add', '-A']); git(dir, ['commit', '-qm', 'foreign base']);
     const before = statusRaw(dir);

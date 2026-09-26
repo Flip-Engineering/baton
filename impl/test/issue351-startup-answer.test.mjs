@@ -56,8 +56,8 @@ function repository(t, root) {
   mkdirSync(repo, { recursive: true });
   const git = (args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
   git(['init', '-q']);
-  git(['config', 'user.email', 'bt351@example.invalid']);
-  git(['config', 'user.name', 'BT351']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'bt351@example.invalid', GIT_COMMITTER_EMAIL: 'bt351@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'BT351', GIT_COMMITTER_NAME: 'BT351' });
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   git(['add', '.']);
   git(['commit', '-qm', 'base']);

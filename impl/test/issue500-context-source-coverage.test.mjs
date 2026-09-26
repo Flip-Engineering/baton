@@ -27,8 +27,8 @@ function repository(t, name, files) {
   const root = mkdtempSync(join(tmpdir(), `baton-500-${name}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue500@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 500'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue500@example.invalid', GIT_COMMITTER_EMAIL: 'issue500@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 500', GIT_COMMITTER_NAME: 'Issue 500' });
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(join(root, path.split('/').slice(0, -1).join('/')), { recursive: true });
     writeFileSync(join(root, path), text);

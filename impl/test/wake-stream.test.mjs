@@ -26,8 +26,8 @@ const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'h
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'bt-wakes-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'wakes@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Wakes'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'wakes@example.invalid', GIT_COMMITTER_EMAIL: 'wakes@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Wakes', GIT_COMMITTER_NAME: 'Wakes' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'));
   writeFileSync(join(root, 'test', 'smoke.test.mjs'), "import test from 'node:test';\ntest('smoke', () => {});\n");

@@ -72,8 +72,8 @@ function fixture(name) {
   const repo = join(world, 'repo');
   mkdirSync(repo, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue391@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 391'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue391@example.invalid', GIT_COMMITTER_EMAIL: 'issue391@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 391', GIT_COMMITTER_NAME: 'Issue 391' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

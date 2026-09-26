@@ -139,8 +139,8 @@ test('exact close/reopen keeps durable Run evidence but projects only current-in
   mkdirSync(repo, { mode: 0o700 });
   mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase78@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 78'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -188,8 +188,8 @@ test('deployment-like export-bound drift replays the exact durable historical pr
   mkdirSync(repo, { mode: 0o700 });
   mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase78@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 78'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -241,8 +241,8 @@ test('a dispatched legacy Run without a profile body cannot block startup or inh
   mkdirSync(repo, { mode: 0o700 });
   mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase78@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 78'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -329,8 +329,8 @@ test('a profile with every optional policy omitted has one canonical self-verify
   mkdirSync(repo, { mode: 0o700 });
   mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase78@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 78'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

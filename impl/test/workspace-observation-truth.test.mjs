@@ -16,8 +16,8 @@ async function fixture(t) {
   const world = fs.mkdtempSync(join(tmpdir(), 'baton-workspace-observation-'));
   const repo = join(world, 'repo'); fs.mkdirSync(repo);
   git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Workspace observation test');
-  git(repo, 'config', 'user.email', 'workspace@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Workspace observation test', GIT_COMMITTER_NAME: 'Workspace observation test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'workspace@example.invalid', GIT_COMMITTER_EMAIL: 'workspace@example.invalid' });
   fs.writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(repo, 'add', 'base.txt'); git(repo, 'commit', '-qm', 'base');
   const adapter = new MockAdapter({ scenario: {

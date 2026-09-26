@@ -28,8 +28,8 @@ function root(label) { return mkdtempSync(join(tmpdir(), `baton-phase55-${label}
 function makeRepo() {
   const repo = root('repo');
   sh('git', ['init', '-q'], repo);
-  sh('git', ['config', 'user.name', 'Baton Test'], repo);
-  sh('git', ['config', 'user.email', 'baton@example.test'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton@example.test', GIT_COMMITTER_EMAIL: 'baton@example.test' });
   writeFileSync(join(repo, 'README.md'), '# target\n');
   sh('git', ['add', '-A'], repo);
   sh('git', ['commit', '-q', '-m', 'base'], repo);

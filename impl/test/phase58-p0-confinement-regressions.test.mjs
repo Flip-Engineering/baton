@@ -37,8 +37,8 @@ function fixture(label) {
   const repo = join(world, 'repo');
   mkdirSync(repo);
   git(['init', '-q'], repo);
-  git(['config', 'user.name', 'Baton Phase 58 P0'], repo);
-  git(['config', 'user.email', 'phase58-p0@example.invalid'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 58 P0', GIT_COMMITTER_NAME: 'Baton Phase 58 P0' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase58-p0@example.invalid', GIT_COMMITTER_EMAIL: 'phase58-p0@example.invalid' });
   write(repo, 'src/main.js', 'export const value = 1;\n');
   write(repo, 'private/retained.txt', 'must remain outside the sparse worker\n');
   git(['add', '-A'], repo);

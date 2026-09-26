@@ -177,8 +177,8 @@ const UNMAPPED_ROUTE = Object.freeze({
 function repository(t, name) {
   const root = tmp(`repo-${name}`);
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue-429@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 429'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue-429@example.invalid', GIT_COMMITTER_EMAIL: 'issue-429@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 429', GIT_COMMITTER_NAME: 'Issue 429' });
   writeFileSync(join(root, 'README.md'), '# issue 429 fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

@@ -672,8 +672,8 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   const repo = root('brief-repo');
   const logDir = root('brief-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase62@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 62'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase62@example.invalid', GIT_COMMITTER_EMAIL: 'phase62@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 62', GIT_COMMITTER_NAME: 'Phase 62' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -783,8 +783,8 @@ test('GP5/GP8: unauthorized Plan follow-up and recovery precede physical-owner c
   const repo = root('continuation-precedence-repo');
   const logDir = root('continuation-precedence-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase62@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 62'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase62@example.invalid', GIT_COMMITTER_EMAIL: 'phase62@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 62', GIT_COMMITTER_NAME: 'Phase 62' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

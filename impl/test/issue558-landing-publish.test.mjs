@@ -69,8 +69,8 @@ async function world(t, { publishRemote = undefined, bareRemote = false, onGates
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue558-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 558');
-  git(repo, 'config', 'user.email', 'issue558@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 558', GIT_COMMITTER_NAME: 'Issue 558' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue558@example.invalid', GIT_COMMITTER_EMAIL: 'issue558@example.invalid' });
   write(repo, 'README.md', 'base\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
@@ -205,8 +205,8 @@ test('558f: a remote that accepts the pre-flight but cannot take the squash refu
       gatesRan += 1;
       const side = join(w.directory, 'side');
       execFileSync('git', ['init', '-q', '-b', 'master', side], { env: { ...process.env, ...QUIET_GIT_ENV } });
-      git(side, 'config', 'user.name', 'Side Race');
-      git(side, 'config', 'user.email', 'side-race@example.invalid');
+      Object.assign(process.env, { GIT_AUTHOR_NAME: 'Side Race', GIT_COMMITTER_NAME: 'Side Race' });
+      Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'side-race@example.invalid', GIT_COMMITTER_EMAIL: 'side-race@example.invalid' });
       write(side, 'UNRELATED.md', 'moved while the gates ran\n');
       git(side, 'add', '-A');
       git(side, 'commit', '-qm', 'unrelated race commit on the shared remote');
@@ -320,8 +320,8 @@ async function deployedWorld(t, { declareRemote = true } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue558-deployed-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 558');
-  git(repo, 'config', 'user.email', 'issue558@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 558', GIT_COMMITTER_NAME: 'Issue 558' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue558@example.invalid', GIT_COMMITTER_EMAIL: 'issue558@example.invalid' });
   write(repo, 'README.md', 'base\n');
   for (const script of REGENERATOR_STUBS) write(repo, script, 'process.exit(0);\n');
   git(repo, 'add', '-A');

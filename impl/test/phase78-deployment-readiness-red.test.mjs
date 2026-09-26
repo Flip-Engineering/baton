@@ -15,8 +15,8 @@ function repository(t, name, files = {}) {
   const root = mkdtempSync(join(tmpdir(), `baton-phase78-readiness-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase78-readiness@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 78 readiness'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78-readiness@example.invalid', GIT_COMMITTER_EMAIL: 'phase78-readiness@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78 readiness', GIT_COMMITTER_NAME: 'Phase 78 readiness' });
   for (const [path, content] of Object.entries(files)) {
     const parent = join(root, path, '..');
     mkdirSync(parent, { recursive: true });

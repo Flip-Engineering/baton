@@ -91,8 +91,8 @@ function workingAdapter() {
 
 function initRepo(dir) {
   execFileSync('git', ['init', '-q', dir]);
-  execFileSync('git', ['config', 'user.name', 'Issue 385 carry'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'issue385@example.invalid'], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 385 carry', GIT_COMMITTER_NAME: 'Issue 385 carry' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue385@example.invalid', GIT_COMMITTER_EMAIL: 'issue385@example.invalid' });
   writeFileSync(join(dir, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: dir });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: dir });

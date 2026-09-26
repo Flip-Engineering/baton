@@ -202,8 +202,8 @@ test('TRANSPORT-LIVENESS/COORDINATOR: never-trafficked active turn projects prov
   const repo = mkdtempSync(join(tmpdir(), 'baton-liveness-235-repo-'));
   const logDir = mkdtempSync(join(tmpdir(), 'baton-liveness-235-log-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'l@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'L'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'l@example.invalid', GIT_COMMITTER_EMAIL: 'l@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'L', GIT_COMMITTER_NAME: 'L' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

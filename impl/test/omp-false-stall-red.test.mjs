@@ -81,8 +81,8 @@ test('OMP-FALSE-STALL: a live omp turn (steer-nudged, mid-tool-call) is never de
   const repo = mkdtempSync(join(tmpdir(), 'baton-omp-false-stall-repo-'));
   const logDir = mkdtempSync(join(tmpdir(), 'baton-omp-false-stall-log-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'l@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'L'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'l@example.invalid', GIT_COMMITTER_EMAIL: 'l@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'L', GIT_COMMITTER_NAME: 'L' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

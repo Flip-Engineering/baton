@@ -36,8 +36,8 @@ function fixture(label) {
   try {
     mkdirSync(repo);
     git(['init', '-q'], repo);
-    git(['config', 'user.name', 'Baton Issue 52'], repo);
-    git(['config', 'user.email', 'issue52@example.invalid'], repo);
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Issue 52', GIT_COMMITTER_NAME: 'Baton Issue 52' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue52@example.invalid', GIT_COMMITTER_EMAIL: 'issue52@example.invalid' });
     write(repo, 'README.md', '# issue 52 fixture\n');
     write(repo, 'src/main.js', 'export const value = 1;\n');
     write(repo, 'docs/guide.md', '# private guide\n');

@@ -54,8 +54,8 @@ function sh(cmd, args, cwd) {
 function makeRepo() {
   const dir = mkTmp('baton-phase8-repo-');
   sh('git', ['init', '-q'], dir);
-  sh('git', ['config', 'user.email', 'test@example.com'], dir);
-  sh('git', ['config', 'user.name', 'Baton Phase8'], dir);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase8', GIT_COMMITTER_NAME: 'Baton Phase8' });
   sh('git', ['commit', '--allow-empty', '-q', '-m', 'base'], dir);
   writeFileSync(join(dir, '.git', 'info', 'exclude'), '.baton/\n');
   return dir;
@@ -66,8 +66,8 @@ function makeRepo() {
 function makeRawRepo() {
   const dir = mkTmp('baton-phase8-raw-repo-');
   sh('git', ['init', '-q'], dir);
-  sh('git', ['config', 'user.email', 'test@example.com'], dir);
-  sh('git', ['config', 'user.name', 'Baton Phase8'], dir);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase8', GIT_COMMITTER_NAME: 'Baton Phase8' });
   sh('git', ['commit', '--allow-empty', '-q', '-m', 'base'], dir);
   return dir;
 }

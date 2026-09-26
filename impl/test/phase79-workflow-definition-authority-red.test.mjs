@@ -60,8 +60,8 @@ function fixture(name) {
   const repo = join(world, 'repo'); const logDir = join(world, 'log');
   execFileSync('mkdir', ['-p', repo]);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase79@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 79'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase79@example.invalid', GIT_COMMITTER_EMAIL: 'phase79@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 79', GIT_COMMITTER_NAME: 'Phase 79' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

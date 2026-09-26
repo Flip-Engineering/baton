@@ -90,8 +90,8 @@ function applicationFixture(t, options = {}) {
   const repo = temporary('repo');
   const logDir = temporary('log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'result-intent@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Result Intent'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'result-intent@example.invalid', GIT_COMMITTER_EMAIL: 'result-intent@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Result Intent', GIT_COMMITTER_NAME: 'Result Intent' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

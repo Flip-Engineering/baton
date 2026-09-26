@@ -15,8 +15,8 @@ const factoryAvailable = typeof batonModule.openBaton === 'function';
 function repository(name) {
   const root = mkdtempSync(join(tmpdir(), `baton-phase78-${name}-`));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase78@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 78'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({
     private: true,
     scripts: { test: 'node --test' },

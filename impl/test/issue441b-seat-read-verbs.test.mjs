@@ -97,8 +97,8 @@ async function fixture(t, label) {
   const repo = join(directory, 'checkout');
   mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Issue 441b']);
-  git(repo, ['config', 'user.email', 'issue441b@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 441b', GIT_COMMITTER_NAME: 'Issue 441b' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue441b@example.invalid', GIT_COMMITTER_EMAIL: 'issue441b@example.invalid' });
   writeFileSync(join(repo, 'seed.txt'), 'seed\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'seed']);

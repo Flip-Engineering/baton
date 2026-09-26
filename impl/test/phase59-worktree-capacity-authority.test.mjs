@@ -53,8 +53,8 @@ function fixture(label, { projection = false } = {}) {
   const logDir = join(world, 'log');
   mkdirSync(repo);
   git(['init', '-q'], repo);
-  git(['config', 'user.name', 'Baton Phase 59'], repo);
-  git(['config', 'user.email', 'phase59@example.invalid'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 59', GIT_COMMITTER_NAME: 'Baton Phase 59' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase59@example.invalid', GIT_COMMITTER_EMAIL: 'phase59@example.invalid' });
   write(repo, 'src/selected.txt', 'selected-tree-bytes\n');
   write(repo, 'src/other.txt', 'other-tree-bytes\n');
   write(repo, 'docs/hidden.txt', 'hidden-tree-bytes\n');

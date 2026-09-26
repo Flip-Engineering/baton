@@ -118,8 +118,8 @@ function ompCard({ workerPolicy = WORKER_POLICY, credentialState = null } = {}) 
 function repository() {
   const root = tmpDir('repo');
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'rh234@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'RH234 fixture'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'rh234@example.invalid', GIT_COMMITTER_EMAIL: 'rh234@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'RH234 fixture', GIT_COMMITTER_NAME: 'RH234 fixture' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

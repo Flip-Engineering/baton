@@ -55,8 +55,8 @@ function fixture(label) {
   const repository = mkdtempSync(join(tmpdir(), `bt158-${label}-repo-`));
   const logDir = mkdtempSync(join(tmpdir(), `bt158-${label}-log-`));
   execFileSync('git', ['init', '-q'], { cwd: repository });
-  execFileSync('git', ['config', 'user.email', 'i158@example.invalid'], { cwd: repository });
-  execFileSync('git', ['config', 'user.name', 'I158'], { cwd: repository });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'i158@example.invalid', GIT_COMMITTER_EMAIL: 'i158@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'I158', GIT_COMMITTER_NAME: 'I158' });
   writeFileSync(join(repository, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '-A'], { cwd: repository });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repository });

@@ -106,8 +106,8 @@ function configuredAdapter() {
 
 function initRepo(repo) {
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Shared custody test'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'custody@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Shared custody test', GIT_COMMITTER_NAME: 'Shared custody test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'custody@example.invalid', GIT_COMMITTER_EMAIL: 'custody@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

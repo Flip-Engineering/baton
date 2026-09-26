@@ -46,8 +46,8 @@ async function buildFixture() {
   const repo = root('reap-repo');
   const logDir = root('reap-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'reap@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Reap Pin'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'reap@example.invalid', GIT_COMMITTER_EMAIL: 'reap@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Reap Pin', GIT_COMMITTER_NAME: 'Reap Pin' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

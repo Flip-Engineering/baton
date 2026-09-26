@@ -31,8 +31,8 @@ function repo(label) {
   const root = join(tmp(label), 'repo');
   mkdirSync(root);
   git(['init', '-q', '-b', 'main'], root);
-  git(['config', 'user.email', 'served@example.invalid'], root);
-  git(['config', 'user.name', 'Served fixture'], root);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'served@example.invalid', GIT_COMMITTER_EMAIL: 'served@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Served fixture', GIT_COMMITTER_NAME: 'Served fixture' });
   writeFileSync(join(root, 'README.md'), '# served fixture\n');
   git(['add', '.'], root);
   git(['commit', '-qm', 'base'], root);

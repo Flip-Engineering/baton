@@ -340,8 +340,8 @@ function probeInvocations(adapter) {
 function repository() {
   const root = tmpDir('repo');
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'rc@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'RC fixture'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'rc@example.invalid', GIT_COMMITTER_EMAIL: 'rc@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'RC fixture', GIT_COMMITTER_NAME: 'RC fixture' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

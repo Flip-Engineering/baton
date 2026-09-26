@@ -50,8 +50,8 @@ function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-refusal-341-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'provider-refusals@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Provider refusals'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'provider-refusals@example.invalid', GIT_COMMITTER_EMAIL: 'provider-refusals@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Provider refusals', GIT_COMMITTER_NAME: 'Provider refusals' });
   writeFileSync(join(root, 'README.md'), '# provider refusals fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

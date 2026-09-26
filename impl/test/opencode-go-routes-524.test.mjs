@@ -49,8 +49,8 @@ function repository(name) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'opencode-go-524@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'opencode-go routes'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'opencode-go-524@example.invalid', GIT_COMMITTER_EMAIL: 'opencode-go-524@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'opencode-go routes', GIT_COMMITTER_NAME: 'opencode-go routes' });
   writeFileSync(join(repo, 'README.md'), '# opencode-go route fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

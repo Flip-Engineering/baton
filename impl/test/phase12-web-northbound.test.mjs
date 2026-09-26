@@ -810,8 +810,8 @@ test('RT1 admission ordering: exhausted edge ticket quota causes zero applicatio
 test('WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation', async () => {
   const repo = root();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });

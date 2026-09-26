@@ -47,8 +47,8 @@ function fixture(label) {
   try {
     mkdirSync(repo);
     git(['init', '-q'], repo);
-    git(['config', 'user.name', 'Baton Issue 563'], repo);
-    git(['config', 'user.email', 'issue563@example.invalid'], repo);
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Issue 563', GIT_COMMITTER_NAME: 'Baton Issue 563' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue563@example.invalid', GIT_COMMITTER_EMAIL: 'issue563@example.invalid' });
     write(repo, 'src/main.js', 'export const value = 1;\n');
     git(['add', '-A'], repo);
     git(['commit', '-qm', 'issue563 lane base'], repo);

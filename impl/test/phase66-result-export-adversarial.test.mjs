@@ -36,8 +36,8 @@ function git(repo, args, { input } = {}) {
 function repository(t, label) {
   const repo = temporary(t, `${label}-repo`);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.email', 'phase66@example.invalid']);
-  git(repo, ['config', 'user.name', 'Phase 66']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase66@example.invalid', GIT_COMMITTER_EMAIL: 'phase66@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 66', GIT_COMMITTER_NAME: 'Phase 66' });
   return repo;
 }
 

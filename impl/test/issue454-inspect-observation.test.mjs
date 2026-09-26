@@ -34,8 +34,8 @@ function world(label) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['-C', repo, 'config', 'user.email', 'issue454@example.invalid']);
-  execFileSync('git', ['-C', repo, 'config', 'user.name', 'issue454']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue454@example.invalid', GIT_COMMITTER_EMAIL: 'issue454@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue454', GIT_COMMITTER_NAME: 'issue454' });
   execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'seed']);
   const logDir = join(root, 'deployment');
   mkdirSync(logDir, { recursive: true });
