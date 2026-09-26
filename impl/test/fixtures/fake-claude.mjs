@@ -36,6 +36,12 @@
 //                                     vendor process failure, distinct from a mere tool denial).
 //   "REPORT_CWD"                   -> completes with result text `cwd:<process.cwd()>` — phase10 SC1's
 //                                     effect-level proof of which directory the child actually runs in.
+//   "WRITE_RELATIVE:<path>"        -> writes the file at that REPO-RELATIVE path (resolved from
+//                                     process.cwd()) and completes with result text
+//                                     `wrote:<path> cwd:<process.cwd()>` — issue #185's effect-level
+//                                     proof that a member's declared deliverable lands inside the
+//                                     worktree the child actually runs in, never the operator's main
+//                                     checkout.
 //   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
 //                                     SC6's effect-level proof of env threading (tests use fake values only).
 //   "REPORT_ARGV"                  -> completes with the JSON encoded child argv.
@@ -69,7 +75,7 @@
 // for the lifetime of the session."
 
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import readline from 'node:readline';
 
@@ -342,6 +348,16 @@ function startNonApprovalTurn(text) {
   if (text.includes('REPORT_CWD')) {
     emitAssistantText(`cwd is ${process.cwd()}`);
     emitResult({ text: `cwd:${process.cwd()}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  const writeRelative = text.match(/WRITE_RELATIVE:([A-Za-z0-9._/-]+)/);
+  if (writeRelative) {
+    writeFileSync(writeRelative[1], `member deliverable written from ${process.cwd()}\n`);
+    emitAssistantText(`wrote ${writeRelative[1]}`);
+    emitResult({ text: `wrote:${writeRelative[1]} cwd:${process.cwd()}` });
     currentTurn = null;
     drainQueue();
     return;
