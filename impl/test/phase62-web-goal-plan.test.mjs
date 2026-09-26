@@ -314,11 +314,19 @@ test('GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures re
     async defineGoal() { throw Object.assign(new Error(marker), { code: 'goal_weakened' }); },
   });
   const malformed = [
-    envelope('goal_define', { ...goalArgs(), actor: 'forged' }, 'goal-actor'),
-    envelope('plan_propose', { ...planArgs(), nodes: [{ ...planArgs().nodes[0], eventKind: 'task.created' }] }, 'plan-event'),
-    envelope('plan_approve', { ...approvalArgs(), plan: { ...plan, credential: 'forged' } }, 'approval-credential'),
-    envelope('goal_plan_status', { ...statusArgs(), throughSeq: -1 }, 'status-bound'),
-    envelope('plan_propose', {
+    // `actor` is not a declared goal_define argument, so the boundary refuses the unknown field by
+    // name (`unknown_argument_field`, the typed refusal the #532/#598 removals moved to) instead of
+    // admitting a caller-forged identity. The other four shapes are declared-but-invalid, so the
+    // closed nested and goal/plan schemas refuse them as `invalid_command`.
+    [envelope('goal_define', { ...goalArgs(), actor: 'forged' }, 'goal-actor'),
+      'unknown_argument_field'],
+    [envelope('plan_propose', { ...planArgs(), nodes: [{ ...planArgs().nodes[0], eventKind: 'task.created' }] }, 'plan-event'),
+      'invalid_command'],
+    [envelope('plan_approve', { ...approvalArgs(), plan: { ...plan, credential: 'forged' } }, 'approval-credential'),
+      'invalid_command'],
+    [envelope('goal_plan_status', { ...statusArgs(), throughSeq: -1 }, 'status-bound'),
+      'invalid_command'],
+    [envelope('plan_propose', {
       ...planArgs(),
       nodes: [{
         ...planArgs().nodes[0],
@@ -330,13 +338,13 @@ test('GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures re
           ],
         },
       }],
-    }, 'plan-duplicate-route'),
+    }, 'plan-duplicate-route'), 'invalid_command'],
   ];
-  for (const request of malformed) {
+  for (const [request, code] of malformed) {
     const power = { goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe' }[request.command];
     const response = await web.execute(context([power]), request);
     assert.equal(response.status, 400);
-    assert.equal(response.body.error.code, 'invalid_command');
+    assert.equal(response.body.error.code, code, `${request.commandId} refuses typed`);
   }
   assert.equal(calls.length, 0);
   assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
