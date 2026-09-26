@@ -6270,7 +6270,7 @@ export class Coordinator {
       worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'provider.transient_retry', actor: 'policy', ...this._routeAttribution(handle, task),
       payload: {
-        code, route, attempt, of: this._transientTurnRetryLimit, terminalSeq: terminalEvent?.seq ?? null,
+        code, route, attempt, terminalSeq: terminalEvent?.seq ?? null,
         action: 'new_turn_on_same_session',
       },
     });

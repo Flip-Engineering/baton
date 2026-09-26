@@ -207,6 +207,44 @@ test('500-caps-D: the resident command deadline default is 30 s — pollMs sits 
   );
 });
 
+test('500-caps-I: the routing exclusion is validated at the open and reaches the driver', async (t) => {
+  let driverOptions = null;
+  await openDeployment(t, 'routing', {
+    advanced: { routing: { excludeHarnesses: ['codex', 'GROK '] } },
+    onDriver: (options) => { driverOptions = options; },
+  });
+  assert.deepEqual(driverOptions.routingExcludedHarnesses, ['codex', 'grok'],
+    'the declaration is normalized to lower-case harness names and rides the driver options');
+
+  await assert.rejects(
+    openFailure('routing-entry', { routing: { excludeHarnesses: ['codex', ' '] }, routes: duplicateRoutes }),
+    (error) => {
+      assert.equal(error.code, 'deployment_config_invalid');
+      assert.match(error.message, /excludeHarnesses entries must be non-empty harness names/);
+      return true;
+    },
+    'an empty harness name refuses before any effect',
+  );
+  await assert.rejects(
+    openFailure('routing-shape', { routing: { excludeHarnesses: 'codex' }, routes: duplicateRoutes }),
+    (error) => {
+      assert.equal(error.code, 'deployment_config_invalid');
+      assert.match(error.message, /excludeHarnesses must be an array of harness names/);
+      return true;
+    },
+    'a bare string is not an array of harnesses',
+  );
+  await assert.rejects(
+    openFailure('routing-field', { routing: { exclude: ['codex'] }, routes: duplicateRoutes }),
+    (error) => {
+      assert.equal(error.code, 'deployment_config_invalid');
+      assert.match(error.message, /advanced routing contains unsupported field exclude/);
+      return true;
+    },
+    'an unknown field under advanced.routing refuses, naming it',
+  );
+});
+
 test('500-caps-E: the muse auth.json read enforces the registry credential.file boundary', (t) => {
   const path = join(tmp('muse-auth'), 'auth.json');
   const base = JSON.stringify({

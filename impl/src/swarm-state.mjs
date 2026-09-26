@@ -100,10 +100,11 @@ export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'commen
 // Issue #443: the closed sets the re-route lane declares. The policy's modes are the ONE
 // decision axis a swarm owns (a proposal for a human orchestrator, or the runtime performing the
 // resume itself); the reason vocabulary is what each candidate row says about WHY it ranked, and
-// the exclusion reason is the one way a route leaves the decision without being a candidate.
+// the exclusion reasons are the ways a route leaves the decision without being a candidate: a
+// closed window, or the operator's declared routing rule (#574).
 export const SWARM_REROUTE_MODES = Object.freeze(['manual', 'auto']);
 export const SWARM_REROUTE_CANDIDATE_REASONS = Object.freeze(['subscription_headroom', 'api_fallback']);
-export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed']);
+export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed', 'excluded_by_operator']);
 /** The billing bases a route's own profile publishes (#429): `api` pays per token, `subscription`
  * is a flat plan. A route whose deployment publishes no measured profile carries none — absence is
  * never a guessed basis. */

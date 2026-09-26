@@ -1870,6 +1870,20 @@ function watchAbortMessage(departure) {
   return 'the watch was torn down: the incarnation holding it is leaving; re-arm the watch against the resident that serves this deployment next';
 }
 
+/** Issue #574: the config-less serve's declaration of the operator routing rule —
+ * `BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok` (comma-separated harness names). `undefined` when
+ * the variable is unset or blank (no rule declared); a declaration that names nothing after the
+ * split refuses, so a typo like `,,` cannot silently exclude nothing. The serve leg feeds the
+ * answer to the open as `advanced.routing.excludeHarnesses`. */
+export function parseRoutingExcludeHarnesses(value) {
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  const harnesses = value.split(',').map((harness) => harness.trim());
+  if (harnesses.some((harness) => harness.length === 0)) {
+    throw new Error('BATON_ROUTING_EXCLUDE_HARNESSES names no harness between commas — declare comma-separated harness names, or unset it');
+  }
+  return harnesses;
+}
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -1885,11 +1899,16 @@ export class SwarmRuntime {
     // `swarm_command_unavailable` rather than pretending.
     // Issue #558: `publishRemote` rides the same authority — the deployment's DECLARED shared
     // remote, null when it declares none (a real landing then refuses instead of staying local).
-    integration = null }) {
+    integration = null, routingExcludedHarnesses = [] }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
       integration,
     });
+    // Issue #574: the operator's declared routing rule — harnesses no seat may be routed onto.
+    // The ONE eligibility predicate (`_routeEligible`) reads it, so the recruit selection, the
+    // `recruitable` flag and the re-route candidate derivation honour one declaration at once.
+    this._excludedHarnesses = new Set((Array.isArray(routingExcludedHarnesses) ? routingExcludedHarnesses : [])
+      .map((harness) => String(harness).trim().toLowerCase()));
     // #297: the host-wide capacity authority recruits admit through (null = admission is not
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
@@ -3171,15 +3190,25 @@ export class SwarmRuntime {
       + ' — this episode admits ONE probe at a time';
   }
 
+  /** Issue #574: whether a usage row names a harness the operator's declared routing rule excludes.
+   * This is the ONE predicate the recruit selection, the `recruitable` flag and the re-route
+   * candidate derivation all read, so a declared exclusion is honoured everywhere at once instead
+   * of only where a caller remembered it. */
+  _harnessExcluded(row) {
+    const harness = row?.route?.harness;
+    return typeof harness === 'string' && this._excludedHarnesses.has(harness.toLowerCase());
+  }
+
   /** Whether a usage row names a route a recruit could be admitted on right now: ready, not
-   * exhausted on the quota axis, not degraded by its provider, and not statically blocked by the
+   * exhausted on the quota axis, not degraded by its provider, not statically blocked by the
    * doctor (a credential, the harness, the route policy — the verdict #591 carries on the row as
-   * `staticBlock`). A blocked row is never chosen — its `code` says who refused it — and a
-   * degraded one is the route #316 keeps recruits off until a probe succeeds. */
+   * `staticBlock`), and not on a harness the operator excluded. A blocked row is never chosen —
+   * its `code` says who refused it — and a degraded one is the route #316 keeps recruits off
+   * until a probe succeeds. */
   _routeEligible(row) {
     return row?.state !== 'blocked' && row?.state !== 'degraded'
       && row?.degraded == null && row?.quota?.state !== 'exhausted'
-      && row?.staticBlock == null;
+      && row?.staticBlock == null && !this._harnessExcluded(row);
   }
 
   /** #316 (a): the degrade episode a recruit's own selection lands on, or null when none of the
@@ -3230,7 +3259,8 @@ export class SwarmRuntime {
     if (considered.length === 0) return null;
     if (considered.some((row) => this._routeEligible(row))) return null;
     const representative = considered[0];
-    const reason = representative?.quota?.state === 'exhausted' ? 'quota_exhausted'
+    const reason = this._harnessExcluded(representative) ? 'excluded_by_operator'
+      : representative?.quota?.state === 'exhausted' ? 'quota_exhausted'
       : representative?.state === 'blocked' || representative?.staticBlock != null
         ? 'blocked' : 'ineligible';
     return Object.freeze({
@@ -3472,7 +3502,11 @@ export class SwarmRuntime {
         state: row.state ?? null, resetAt: row.resetAt ?? null,
         profile: row.profile ?? null,
       });
-      if (this._routeEligible(row)) {
+      // Issue #574: the operator's routing rule is NAMED in the excluded rows rather than dropped
+      // in silence, so the decision's audit trail shows the rule that kept the route out.
+      if (this._harnessExcluded(row) && !routeEquals(row.route, from)) {
+        excluded.push(shape('excluded_by_operator'));
+      } else if (this._routeEligible(row)) {
         eligible.push({ row, shape: shape(billing === 'subscription' ? 'subscription_headroom' : 'api_fallback') });
       } else if (this._routeWindowClosed(row) && !routeEquals(row.route, from)) {
         excluded.push(shape('excluded_window_closed'));
@@ -3493,15 +3527,17 @@ export class SwarmRuntime {
     };
   }
 
-  /** Issue #443: the swarm-level policy a provider-fault re-route follows, with its DEFAULTS
-   * resolved — `manual` (a proposal for a human orchestrator) and no billing preference. The fold
-   * stores only what an orchestrator DECLARED, so the defaults live here, in the ONE derivation
-   * the view and the observation both read. */
+  /** Issue #574: the swarm-level policy a provider-fault re-route follows, with its DEFAULTS
+   * resolved — `auto` performs the recovery itself (the re-route recruits the successor onto the
+   * first candidate) and no billing preference. `manual` stays available as a DECLARED operator
+   * posture that stops at the proposal and pages an orchestrator. The fold stores only what an
+   * orchestrator DECLARED, so the defaults live here, in the ONE derivation the view and the
+   * observation both read. */
   _policyOf(swarm) {
     const policy = swarm?.policy ?? null;
     const mode = policy?.rerouteOnProviderFault ?? null;
     return Object.freeze({
-      rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'manual',
+      rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'auto',
       reroutePreferApi: policy?.reroutePreferApi === true,
     });
   }
@@ -8521,18 +8557,31 @@ export class SwarmRuntime {
         const exhaustion = this._routeExhaustedFor(args);
         if (exhaustion) {
           const ready = this._readyRouteLabels();
+          const detail = {
+            route: exhaustion.route, reason: exhaustion.reason,
+            code: exhaustion.code, resetAt: exhaustion.resetAt,
+            considered: exhaustion.considered,
+            ready: Object.freeze(ready),
+          };
+          const readyNote = ready.length > 0
+            ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready';
+          // Issue #574: a route the operator's routing rule excludes refuses by name, so a caller
+          // learns the rule that governs the selection rather than a quota story.
+          if (exhaustion.reason === 'excluded_by_operator') {
+            refuse(
+              `route ${this._routeLabel(exhaustion.route)} is excluded by the operator's routing rule`
+              + readyNote,
+              'route_excluded',
+              detail,
+            );
+          }
           refuse(
             `route ${this._routeLabel(exhaustion.route)} is ${exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
             + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
             + ': every route the selection names is ineligible, so the recruit cannot be admitted'
-            + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
+            + readyNote,
             'route_exhausted',
-            {
-              route: exhaustion.route, reason: exhaustion.reason,
-              code: exhaustion.code, resetAt: exhaustion.resetAt,
-              considered: exhaustion.considered,
-              ready: Object.freeze(ready),
-            },
+            detail,
           );
         }
       }
