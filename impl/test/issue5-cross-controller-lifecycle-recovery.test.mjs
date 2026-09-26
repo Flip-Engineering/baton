@@ -1113,7 +1113,11 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
     `  { runId: 'run-issue5-dead-b', objective: 'HOLD_UNTIL_INTERRUPT dead generation B', exact: route },`,
     `]);`,
     `await Promise.all(group.runs.map((run) => run.approve()));`,
-    `await Promise.race([providersReady, new Promise((_, reject) => setTimeout(() => reject(new Error('seed providers did not become ready')), 5000))]);`,
+    // Issue #319: the seed's own readiness bound races real startup work (node boot, the
+    // module import, the deployment open, two provider spawns, two approvals). Observed
+    // 2026-09-26 on a host with sibling suites mid-flight: the seed needed beyond 5 s and the
+    // row read as `timeout waiting for two-provider seed`. 25 s bounds the hang, not the load.
+    `await Promise.race([providersReady, new Promise((_, reject) => setTimeout(() => reject(new Error('seed providers did not become ready')), 25000))]);`,
     `process.stdout.write(JSON.stringify({ runs: group.runs.map((run) => run.id), sessions: [...adapter._sessions.values()].map((session) => ({ workerId: session.worker, pid: session.pid, generation: session.processGeneration })) }) + '\\n');`,
     `process.stdin.setEncoding('utf8');`,
     `for await (const command of process.stdin) { if (command.trim() === 'crash') process.exit(0); }`,
@@ -1121,7 +1125,10 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
   seedController = spawn(process.execPath, ['--input-type=module', '--eval', seed], {
     stdio: ['pipe', 'pipe', 'inherit'],
   });
-  const seeded = await readJsonLine(seedController, 'two-provider seed');
+  // Issue #319: the parent's seed-line wait shares the seed's envelope — the child must boot,
+  // open the deployment, spawn two providers and answer two approvals before it prints. The
+  // same 2026-09-26 contended-host run fired this 5 s bound first. 30 s bounds the hang.
+  const seeded = await readJsonLine(seedController, 'two-provider seed', 30_000);
   assert.equal(seeded.sessions.length, 2,
     diagnostic('seeded detached provider session count', seeded));
   assert.deepEqual(seeded.runs, ['run-issue5-dead-a', 'run-issue5-dead-b']);
