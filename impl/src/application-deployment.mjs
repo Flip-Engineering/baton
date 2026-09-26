@@ -3575,8 +3575,10 @@ class BatonDeployment {
   }
 
   /** Issue #35: workspace capacity is observed FRESH at each doctor/card read — disk state
-   * moves, and an open-time snapshot would go stale exactly when the answer matters. */
-  doctorReadiness() {
+   * moves, and an open-time snapshot would go stale exactly when the answer matters.
+   * `served: false` leaves out the served-revision section, whose git reads the route rows do not
+   * need (#612). */
+  doctorReadiness({ served: withServed = true } = {}) {
     const refusals = this.#routeRefusals ? this.#routeRefusals() : EMPTY_REFUSAL_RECORD;
     const degrades = this.#routeDegrades ? this.#routeDegrades() : null;
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
@@ -3687,7 +3689,7 @@ class BatonDeployment {
     // #306 (2): the served revision (frozen at open) beside its target and how far behind it
     // is, read fresh from the checkout's refs — so a root sees "this resident serves d9b8164c,
     // 4 behind master" on the doctor instead of discovering it on a stale-based lane.
-    const served = this.#served ? servedRow(this.#repository.root, this.#served) : null;
+    const served = withServed && this.#served ? servedRow(this.#repository.root, this.#served) : null;
     // #429: the usage rows — the same ONE derivation the recruit's route comparison reads — are
     // composed with THIS read's own profile map, so a route's usage row and doctor row agree.
     const routeUsage = this.#routeUsageRows(routes, profiles);
@@ -3731,7 +3733,7 @@ class BatonDeployment {
   /** #341 part 3: the served routes' usage rows, re-derived on every read through the ONE doctor
    * derivation — so the rows a recruit compares and a seat's brief renders ARE the rows the doctor
    * publishes, and the usage row and the readiness row can never disagree. */
-  routeUsageRows() { return this.doctorReadiness().routeUsage; }
+  routeUsageRows() { return this.doctorReadiness({ served: false }).routeUsage; }
 
   /** #317 (docs/50 D2): the declared service one REGISTRY route resolves to, or null. The
    * registry record carries the explicit `provider` field the public route shape drops; the
@@ -7018,13 +7020,17 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // recruit is refused. The workspace probe is the doctor's own; the host probe reads the
       // shared lease directory without mutating it.
       deploymentSummary: () => {
-        const summary = {
-          workspace: workspaceProbe(),
-          hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
-          // #306 (2): the served revision and its drift from the target ride the swarm view's
-          // deployment rows, so a root recruiting lanes sees the stale base before it recruits.
-          served: servedRow(repository.root, served),
-        };
+        // The workspace and host probes and the served revision's git reads run when a reader
+        // reads the field: the route readers take only `routeUsage` (#612). Enumerable getters keep
+        // the serialized summary's shape and key order.
+        const summary = {};
+        Object.defineProperty(summary, 'workspace', { enumerable: true, get: () => workspaceProbe() });
+        Object.defineProperty(summary, 'hostCapacity', {
+          enumerable: true, get: () => (hostCapacityProbe ? hostCapacityProbe() : null),
+        });
+        // #306 (2): the served revision and its drift from the target ride the swarm view's
+        // deployment rows, so a root recruiting lanes sees the stale base before it recruits.
+        Object.defineProperty(summary, 'served', { enumerable: true, get: () => servedRow(repository.root, served) });
         // #341 part 3: the served routes' usage rows — the deployment's ONE derivation
         // (`routeUsageRows`), reachable to the readers that compare routes (the swarm runtime's
         // recruit answer and the seat's brief). Attached NON-enumerably, the DP5 pattern the
