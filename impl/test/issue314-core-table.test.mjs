@@ -213,7 +213,6 @@ const PARITY = Object.freeze([
   { tool: 'baton_swarm', verb: 'recruit', flat: 'baton_swarm_recruit', args: { swarmId: 'swarm:parity', participantId: 'seat', objective: 'parity seat', permissions: ['read'], idempotencyKey: 'parity:swarm-recruit' } },
   { tool: 'baton_swarm', verb: 'guide', flat: 'baton_swarm_guide', args: { swarmId: 'swarm:parity', participantId: 'seat', message: 'parity guide', idempotencyKey: 'parity:swarm-guide' } },
   { tool: 'baton_swarm', verb: 'capture', flat: 'baton_swarm_capture', args: { swarmId: 'swarm:parity', participantId: 'seat', contributionId: 'contribution:parity' } },
-  { tool: 'baton_swarm', verb: 'check', flat: 'baton_swarm_check', args: { swarmId: 'swarm:parity', participantId: 'seat', contributionId: 'contribution:parity' } },
   { tool: 'baton_waves', verb: 'start', flat: 'baton_waves_start', args: { members: [{ role: 'r', objective: 'o', exact: { harness: 'h', model: 'm', effort: 'e' } }], idempotencyKey: 'parity:wave-start' } },
   { tool: 'baton_waves', verb: 'list', flat: 'baton_waves_list', args: {} },
   { tool: 'baton_waves', verb: 'progress', flat: 'baton_waves_progress', args: { waveId: `wave:${'a'.repeat(32)}` } },
@@ -351,7 +350,7 @@ test('314-l1-k: the long verbs carry their wake handoff from the landed vocabula
       }
     }
   }
-  assert.deepEqual(long, ['baton_run:start', 'baton_swarm:recruit', 'baton_swarm:check', 'baton_waves:start'],
+  assert.deepEqual(long, ['baton_run:start', 'baton_swarm:recruit', 'baton_waves:start'],
     'the long verbs are exactly the ones docs/49 §2 gives a wake handoff');
   assert.equal(coreVerbFacts('baton_run', 'view').mutation, false, 'the landed annotation says a read');
   assert.equal(coreVerbFacts('baton_swarm', 'capture').mutation, true, 'and an identity-keyed capture is a write');

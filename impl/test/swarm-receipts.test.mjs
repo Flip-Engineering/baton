@@ -161,14 +161,7 @@ test('#302 every swarm mutation answers with a receipt, and only view:true carri
   assert.equal(captured.receipt.event.kind, 'swarm.contribution_recorded');
   assert.deepEqual(captured.receipt.changed.map((row) => row.collection).sort(), ['contributions']);
   assert.deepEqual(captured.next,
-    { command: 'swarm.check', args: { swarmId: 'baton', participantId: 'builder', contributionId: 'c1' } });
-
-  // check
-  const checked = await f.call('check', { participantId: 'builder', contributionId: 'c1', checkId: 'k1' });
-  isReceipt(checked.receipt, 'swarm.check');
-  assert.equal(checked.receipt.event.kind, 'swarm.contribution_reviewed');
-  assert.deepEqual(checked.receipt.changed, [{ collection: 'reviews', id: 'c1', seq: checked.receipt.event.seq, ts: checked.receipt.event.ts }]);
-  assert.equal(checked.passed, true, 'the check observation still rides the answer');
+    { command: 'swarm.view', args: { swarmId: 'baton' } });
 
   // close (swarm.update event swarm.closed)
   const closed = await f.call('update', { event: 'swarm.closed', payload: { reason: 'done' } });
@@ -250,7 +243,7 @@ test('#302 one collection shape rides every read path: view, watch, bridge, and 
         // Transport envelope fields (repoId) never reach the swarm contract; reads take no key.
         const { repoId, idempotencyKey, ...swarmArgs } = args;
         return f.runtime.command(name,
-          { ...swarmArgs, ...(['swarm.view', 'swarm.watch', 'swarm.list', 'swarm.capture', 'swarm.check'].includes(name) ? {} : { idempotencyKey: idempotencyKey ?? 'mcp-key' }) },
+          { ...swarmArgs, ...(['swarm.view', 'swarm.watch', 'swarm.list', 'swarm.capture'].includes(name) ? {} : { idempotencyKey: idempotencyKey ?? 'mcp-key' }) },
           principal, context);
       },
       async contextEval() { throw new Error('unused'); },

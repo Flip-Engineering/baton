@@ -118,7 +118,7 @@ const CORE = Object.freeze([
   },
   {
     name: 'baton_swarm',
-    description: 'One swarm: create, list, view (the sliced read), update (the closed event set), recruit, guide, capture, check. capture/check are identity-keyed; the rest carry idempotencyKey.',
+    description: 'One swarm: create, list, view (the sliced read), update (the closed event set), recruit, guide, capture. capture is identity-keyed; the rest carry idempotencyKey.',
     verbs: {
       create: { requires: ['purpose', 'idempotencyKey'], mutation: true, long: false,
         fields: {
@@ -155,11 +155,6 @@ const CORE = Object.freeze([
         fields: {
           swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA,
           view: { type: 'boolean' },
-        } },
-      check: { requires: ['swarmId', 'participantId', 'contributionId'], mutation: true, long: true,
-        fields: {
-          swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA,
-          checkId: ID_SCHEMA, view: { type: 'boolean' },
         } },
     },
   },
@@ -306,7 +301,7 @@ const MIGRATION = Object.freeze({
   baton_scratchpad_settle: { surface: 'scratchpad.settle (descriptor kernel profile)' },
   baton_services_list: { tool: 'baton_services', verb: 'list' },
   baton_swarm_capture: { tool: 'baton_swarm', verb: 'capture' },
-  baton_swarm_check: { tool: 'baton_swarm', verb: 'check' },
+  baton_swarm_check: { retired: 'the #598 removal deleted the swarm.check verb; a landing runs the selector comparison inside swarm integrate' },
   baton_swarm_create: { tool: 'baton_swarm', verb: 'create' },
   baton_swarm_guide: { tool: 'baton_swarm', verb: 'guide' },
   baton_swarm_integrate: { surface: 'swarm.integrate (the root landing verb)' },

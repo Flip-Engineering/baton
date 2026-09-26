@@ -317,7 +317,7 @@ that owns the runs, never over a borrowed bridge session.
 |---|---|---|---|
 | `baton_deployment {verb: doctor}` | `ordinary` | `baton_deployment` | idempotent |
 | `baton_run {verb: start|view|list|send|stop|answer|do}` | `ordinary` | `baton_run` | destructive |
-| `baton_swarm {verb: create|list|view|update|recruit|guide|capture|check}` | `ordinary` | `baton_swarm` | effectful |
+| `baton_swarm {verb: create|list|view|update|recruit|guide|capture}` | `ordinary` | `baton_swarm` | effectful |
 | `baton_waves {verb: start|list|progress|send|stop}` | `ordinary` | `baton_waves` | destructive |
 | `baton_knowledge {verb: search|seed}` | `ordinary` | `baton_knowledge` | effectful |
 | `baton_wakes {verb: subscribe|since|unsubscribe}` | `ordinary` | `baton_wakes` | effectful |

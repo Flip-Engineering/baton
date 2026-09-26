@@ -4,7 +4,7 @@
 // a constant — is shared by every resident on the machine through a host-scoped lease directory
 // (the host-wide sibling of the per-repo `.baton/capacity` files). It admits verification runs and
 // full-suite verdicts by capacity, queues the rest IN ORDER with a visible {position, ahead}, and
-// `swarm.recruit` / `swarm.check` report their admission as a typed row instead of starting work
+// `swarm.recruit` reports its admission as a typed row instead of starting work
 // that would be starved. The suite runner's default parallelism derives from the same derivation,
 // with `BATON_SUITE_PARALLELISM` as the documented operator override.
 //

@@ -298,38 +298,3 @@ test('G-33: materialize derives the verify label from the reservation\'s recorde
   assert.equal(refused?.code, 'worktree_capacity_unavailable');
 });
 
-// ============================================================
-// G-4 — the unconfirmed-check refusal carries its remedy
-// ============================================================
-
-test('G-4: a spent check identity refuses with the new-checkId gracefulPath', async () => {
-  const serviceFor = (events) => new ContributionService({
-    worktrees: { async resolveCheckpoint() { return null; } },
-    referee: null, accept: () => true, acceptOptions: {}, capture: async () => ({}),
-    record: () => {}, events: () => events, closeVerdict: () => null,
-  });
-  const handle = { id: 'w-1' };
-  const task = { id: 't-1', brief: { verification: { command: 'true', expectExit: 0 } } };
-
-  // A started check with no verdict and no recorded unavailability.
-  const bare = await rejection(() => serviceFor([
-    { kind: 'contribution.check_started', payload: { contributionId: 'c-1', checkId: 'spent' } },
-  ]).check({ handle, task, contributionId: 'c-1', checkId: 'spent' }));
-  assert.equal(bare.code, 'contribution_check_unconfirmed');
-  assert.match(bare.gracefulPath ?? '', /mint a new checkId/u, 'the remedy travels on the error');
-  assert.match(bare.gracefulPath, /c-1/u);
-  assert.match(bare.gracefulPath, /spent/u);
-  assert.ok(bare.message.includes(bare.gracefulPath), 'the message carries the same path phrase');
-
-  // A recorded unavailability keeps its own code and its attempt, and still names the remedy.
-  const recorded = await rejection(() => serviceFor([
-    { kind: 'contribution.check_started', payload: { contributionId: 'c-1', checkId: 'spent-2' } },
-    {
-      kind: 'contribution.check_unavailable',
-      payload: { contributionId: 'c-1', checkId: 'spent-2', code: 'worktree_capacity_exceeded', attempt: { verifierStarted: false } },
-    },
-  ]).check({ handle, task, contributionId: 'c-1', checkId: 'spent-2' }));
-  assert.equal(recorded.code, 'worktree_capacity_exceeded');
-  assert.deepEqual(recorded.verificationAttempt, { verifierStarted: false });
-  assert.match(recorded.gracefulPath ?? '', /mint a new checkId/u);
-});

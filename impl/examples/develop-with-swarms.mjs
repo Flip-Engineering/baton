@@ -34,8 +34,7 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
       view = await swarm.watch();
     }
     evidence.capture = await swarm.capture(participant.participantId, 'implementation');
-    evidence.check = await swarm.check(participant.participantId, 'implementation', 'initial');
-    evidence.afterCheck = await swarm.view();
+    evidence.afterCapture = await swarm.view();
     return evidence;
   } catch (error) {
     evidence.failure = { code: error.code ?? null, message: error.message };

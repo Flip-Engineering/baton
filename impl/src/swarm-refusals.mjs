@@ -141,7 +141,6 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // Issue #296: the landing verb's own refusals. Every one is raised BEFORE the target moves — the
   // scratch checkout is removed and nothing is recorded — except `integrate_target_moved`, which is
   // the one race the verb re-bases over once and then refuses.
-  integrate_contribution_not_accepted: row(409, ['runtime'], 'the contribution carries no unrevoked accept review, so it is not landable'),
   integrate_commit_unreachable: row(409, ['runtime'], 'the contribution names a commit this repository does not hold'),
   integrate_conflict: row(409, ['runtime'], 'the squashed change overlaps a contribution already landed on the target'),
   integrate_gates_red: row(409, ['runtime'], 'the derived gate set ran red, naming the unexpected rows'),
@@ -215,8 +214,6 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // #423 raises this from the fold too: a claim row that names a seat other than the claim's
   // holder is refused by the state lane (the runtime's §4.6 derivation decides WHO may name it).
   swarm_permission_required: row(403, ['fold', 'runtime'], 'the swarm has not granted the caller the authority this operation needs'),
-  self_check_refused: row(403, ['runtime'], 'a contribution cannot be checked by its own author'),
-
   // ── 503 transient: only where a restart genuinely repairs it ──
   swarm_runtime_closed: row(503, ['runtime'], 'the swarm runtime is shut down for this deployment; restart the resident to serve the swarm family again'),
   // #441 lane B: the seat read verbs (run.package.read) raise these three; the store spells its own

@@ -1,0 +1,123 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Issue #598 items 1-4 re-cut onto master fd8279f7: the swarm.check verb, integrate's accept prerequisite, the landing table's region gates and the runner's surface preflight are removed",
+      "base": {
+        "observedHead": "c82d9681d0c060c593c67c7e1ed8b3328b5ed662",
+        "rebasedOnto": "fd8279f7"
+      },
+      "commit": {
+        "sha": "c82d9681d0c060c593c67c7e1ed8b3328b5ed662",
+        "branch": "bl17r-598rc"
+      },
+      "items": [
+        {
+          "id": "598-items-1-4",
+          "status": "delivered",
+          "change": "The four removals backlog-slim17's mandate names, carried on this revision. ITEM 1: the swarm.check verb and everything that existed only for it leave contribution-service.mjs (the check and check-plan block, capture retained), swarm-runtime.mjs (the check branch, its replay, queue and admission records, the self-check exclusion), swarm-contract.mjs, swarm-surface.mjs, mcp-core-tools.mjs, swarm-native-bridge.mjs, swarm-event-schemas.mjs, application-semantics.mjs, swarm-client.mjs, swarm-native-access.mjs and application-cli.mjs, with its three test files (swarm-check-admission, swarm-check-follow-help, issue522-swarm-check-progress-wait) deleted. ITEM 2: integrate no longer requires an unrevoked accept review; the acceptance block and the integrate_contribution_not_accepted refusal leave, review rows stay readable information, and the verb keeps its organize authority. ITEM 3: REGION_TABLE, the issue-number range rule, the seam-inventory metadata reads and their gate-union and provenance plumbing leave landing-table.mjs, swarm-runtime.mjs (_gateSelection and the union) and verification-selection.mjs; the runner's own selector is the landing's one comparison selection and issue-number parsing stays for attribution only. ITEM 4: run-suite.mjs's universal surface preflight leaves, and the commit hook .githooks/pre-commit is deleted; the child-exit and target-comparison repairs stay.",
+          "files": [
+            ".githooks/pre-commit",
+            "docs/36-unified-control-grammar.md",
+            "docs/39-swarm-runtime.md",
+            "docs/42-suite-legitimacy.md",
+            "docs/43-host-capacity-and-derived-floors.md",
+            "docs/46-swarm-visibility.md",
+            "docs/49-mcp-primary-surface.md",
+            "impl/CLI.md",
+            "impl/MCP.md",
+            "impl/examples/develop-with-swarms.mjs",
+            "impl/scripts/run-suite.mjs",
+            "impl/src/application-cli.mjs",
+            "impl/src/application-semantics.mjs",
+            "impl/src/attention-message.mjs",
+            "impl/src/attention-obligations.mjs",
+            "impl/src/contribution-service.mjs",
+            "impl/src/landing-table.mjs",
+            "impl/src/mcp-core-tools.mjs",
+            "impl/src/referee.mjs",
+            "impl/src/swarm-client.mjs",
+            "impl/src/swarm-contract.mjs",
+            "impl/src/swarm-event-schemas.mjs",
+            "impl/src/swarm-native-access.mjs",
+            "impl/src/swarm-native-bridge.mjs",
+            "impl/src/swarm-refusals.mjs",
+            "impl/src/swarm-runtime.mjs",
+            "impl/src/swarm-surface.mjs",
+            "impl/test/bend2-revision11-landing-gate.test.mjs",
+            "impl/test/issue285-custody-capacity-hardening.test.mjs",
+            "impl/test/issue288-command-pending-receipt.test.mjs",
+            "impl/test/issue296-swarm-integrate.test.mjs",
+            "impl/test/issue297-issue307-host-capacity.test.mjs",
+            "impl/test/issue314-core-table.test.mjs",
+            "impl/test/issue314-lane2-receipts-wakes.test.mjs",
+            "impl/test/issue314-mcp-core-surface-red.test.mjs",
+            "impl/test/issue433-contributions-projection.test.mjs",
+            "impl/test/issue459-integrate-off-loop.test.mjs",
+            "impl/test/issue463-integrate-gate-paths.test.mjs",
+            "impl/test/issue466-landing-selection.test.mjs",
+            "impl/test/issue522-swarm-check-progress-wait.test.mjs",
+            "impl/test/issue564-root-wake-addressing.test.mjs",
+            "impl/test/issue564-root-wake-undelivered-attention.test.mjs",
+            "impl/test/issue585-wake-message.test.mjs",
+            "impl/test/issue592-attention-obligations.test.mjs",
+            "impl/test/mcp-profile-parity-red.test.mjs",
+            "impl/test/mcp-surface-widening-red.test.mjs",
+            "impl/test/participant-contributions.test.mjs",
+            "impl/test/phase89-resident-application-red.test.mjs",
+            "impl/test/phase89-resident-host-red.test.mjs",
+            "impl/test/pre-verdict-selection.test.mjs",
+            "impl/test/swarm-application.test.mjs",
+            "impl/test/swarm-check-admission.test.mjs",
+            "impl/test/swarm-check-follow-help.test.mjs",
+            "impl/test/swarm-native-bridge.test.mjs",
+            "impl/test/swarm-receipts.test.mjs",
+            "impl/test/swarm-runtime.test.mjs",
+            "impl/test/swarm-surface.test.mjs",
+            "impl/test/workflow-surface-red.test.mjs"
+          ],
+          "test": "node --test test/issue296-swarm-integrate.test.mjs test/issue463-integrate-gate-paths.test.mjs test/issue466-landing-selection.test.mjs test/issue459-integrate-off-loop.test.mjs test/mcp-profile-parity-red.test.mjs",
+          "evidence": "The mandate's acceptance set, 31 files run from impl/ at this tip: 330 of 332 pass in 104 s. The two failures are swarm-gap-red S-G5 and S-G11, which reproduce at the target fd8279f7 with the identical file, test and failure (4625 bytes observed against a 4096 limit, and the contribution digest assertion), so they are pre-existing and non-blocking by identity. issue459 is 15/15; issue296, issue463, issue466, all 24 swarm-* files, mcp-surface-widening-red, unified-cli-surface and verification-selection are green."
+        },
+        {
+          "id": "598-repair",
+          "status": "delivered",
+          "change": "The repairs the removal's own consequences needed. impl/test/issue459-integrate-off-loop.test.mjs: the fixture repository carried no test file, so after ITEM 3 the surviving selector derived an empty gate set and a red-gate row landed green by the empty-derivation decision; the fixture now carries impl/test/gate-fixture.test.mjs, which statically imports the module the lane moves. impl/test/mcp-profile-parity-red.test.mjs: the served-surface count pins move from 57 to 56 and 150 to 148, the two tools that left (baton_swarm_check from the ordinary table, the canonical swarm.check from the combined one). docs/42-suite-legitimacy.md section 5, docs/39, docs/43 (the check admission paragraph), docs/46 (the unreviewed contribution row's next, which the runtime now mints as swarm.view) and docs/49 (the long verbs are three) follow the surviving contracts, and the check verb's last references leave the issue297 comment, the issue314 core-surface fixture row (retired, as that file's own convention records a retired tool) and examples/develop-with-swarms.mjs.",
+          "files": [
+            "docs/42-suite-legitimacy.md",
+            "docs/39-swarm-runtime.md",
+            "docs/43-host-capacity-and-derived-floors.md",
+            "docs/46-swarm-visibility.md",
+            "docs/49-mcp-primary-surface.md",
+            "impl/test/issue459-integrate-off-loop.test.mjs",
+            "impl/test/mcp-profile-parity-red.test.mjs",
+            "impl/test/issue297-issue307-host-capacity.test.mjs",
+            "impl/test/issue314-lane2-receipts-wakes.test.mjs",
+            "impl/test/issue314-mcp-core-surface-red.test.mjs",
+            "impl/examples/develop-with-swarms.mjs"
+          ],
+          "test": "node --test test/issue459-integrate-off-loop.test.mjs test/mcp-profile-parity-red.test.mjs",
+          "evidence": "15/15 on issue459 and 18/18 on mcp-profile-parity-red at this tip, and 133/135 across the ten files of the predecessor's stale-pin list, whose two remaining failures were these count pins before the repair."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "swarm-gap-red S-G5 (stage: scoped-view-context-unscoped) and S-G11 (stage: contribution-unbound) are red at the target fd8279f7 with the same file, test and failure"
+        ]
+      },
+      "carriedForward": [
+        "Who did what: the removal content is backlog-slim17's (the mandate above), re-cut onto 9a7725c6 by backlog-pin17r with the stale-pin repair pass, then carried here. backlog-pin17r's turn paused at 07:21:50Z with both commits unpublished and unlanded, so this seat re-cut them onto the current master, made the repairs above and publishes them; the two commits' authors and messages are unchanged.",
+        "What ITEM 3 changes about real landings: the gate set is now the runner's own selector over the squash's checkout, with no region gates added. A change whose import graph selects nothing runs no gate and lands on the empty-derivation decision, and the receipt says so. docs/42-suite-legitimacy.md section 5 is updated to that contract, and the issue459 fixture is the test that measures it. This is the mandate's own reading (KEEP the changed-file/import/fixture selector as the landing's one comparison selection).",
+        "The dated audit records under docs/audits/** still name swarm.check as historical observation and are left alone: they are records of the 2026-09-13/14 runs, not descriptions of the current runtime.",
+        "The mandate's ITEM 3 also asked for landing-table.test.mjs; no such file exists on this tree, so nothing was updated for it.",
+        "#600 is landed separately as df84a0e4, and it composes with this revision: the withdraw path threads its abort signal through the same gate run whose selection this change shortens."
+      ],
+      "needsFromOthers": [
+        "the landing on master (swarm.integrate)"
+      ]
+    }
+  }
+}

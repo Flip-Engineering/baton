@@ -324,18 +324,18 @@ headless mode for a host without a resident.
 > - **The blocking answer is gone.** `_inspectOutline` (the run.start/run.stop follow-up read that
 >   answered the whole outline) is retired, along with its `run_inspect` round trip; a mutation
 >   returns as soon as its receipt exists.
-> - **The four long verbs** — `run.start`, `swarm.recruit`, `swarm.check`, `waves.start` — answer
+> - **The three long verbs** — `run.start`, `swarm.recruit`, `waves.start` — answer
 >   `{receipt, wake}` where `wake` is the landed subscription receipt verbatim (its own filter echo
 >   and cursor) plus `settleOn`. The subscription opens on the session's ONE plane, filtered by the
 >   classes AND the scope axes §2's third column declares (`recruit` by swarm and participant,
->   `check` by swarm, the run/waves families by classes alone — the #294 filter has no run axis,
+>   the run/waves families by classes alone — the #294 filter has no run axis,
 >   §12 Q2); frames are delivered through the session sink the MCP server installs at construction
 >   (the same sink an explicit `baton_wakes subscribe` delivers through).
 > - **#479.** `baton_deployment {verb: doctor}` projects the client's own `doctor()` result
 >   including its `stopping` section (#467/#476) — `null`, never absent, for a resident that is not
 >   stopping.
 >
-> Pins: `impl/test/issue314-lane2-receipts-wakes.test.mjs` (the four long verbs over the production
+> Pins: `impl/test/issue314-lane2-receipts-wakes.test.mjs` (the long verbs over the production
 > bridge, the receipt identity against a real `SwarmRuntime` receipt, the doctor projection), and
 > red row 314-d2 (green; its manifest row retired). The U-E2 row of `impl/test/unified-mcp-surface.test.mjs`
 > now routes the meta block and the three meta calls through `baton_surface {verb}` (its own law —

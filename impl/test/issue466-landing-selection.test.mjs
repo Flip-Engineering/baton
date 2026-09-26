@@ -13,22 +13,22 @@
 //
 //   (a) a contribution that adds a module and a test runs the TEST ITSELF as a gate (`test/<file>`,
 //       provenance reason `changed` — the runner's own spelling for "this changed test file selects
-//       itself"), beside the region gates the landing table declares;
+//       itself");
 //   (b) a seat recruited WITHOUT a context package lands with `issue: null`, and the landing comment
 //       names no issue and carries no `gh issue close` guidance; a seat whose admitted package
 //       carries `issue:<n>` lands with that number, on the receipt AND on the durable
 //       `swarm.contribution_integrated` row AND in the comment's close guidance — never the swarm's
 //       purpose, which the fixtures deliberately point at OTHER issue numbers;
 //   (c) for the same changed paths, the landing's selection EQUALS
-//       `selectFromRepository` (the function `node impl/scripts/run-suite.mjs --changed` calls)
-//       UNIONED with `gateSetForPaths` — through those two shared functions, so a second
-//       derivation anywhere in the landing fails this row.
+//       `selectFromRepository` (the function `node impl/scripts/run-suite.mjs --changed` calls),
+//       through that shared function, so a second derivation anywhere in the landing fails this
+//       row.
 //
 // Red-before (observed on this file against the HEAD of the lane's base, before any implementation:
 // (a) red — the probe test is absent from `gates.files` and the gate runner is handed the region
 // gates alone; (b) red — the no-package seat's receipt reads `issue: 443` (the purpose), and the
-// package seat's receipt reads the purpose's number instead of its package's; (c) red — the union
-// carries `test/issue466-probe.test.mjs` and the landing's set does not).
+// package seat's receipt reads the purpose's number instead of its package's; (c) red — the
+// landing's set does not equal `selectFromRepository`).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +41,6 @@ import { basename, dirname, join } from 'node:path';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
-import { gateSetForPaths } from '../src/landing-table.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
 
 const principal = { actor: 'direct:issue466-root', principalId: 'issue466-root', sessionId: 'issue466-root' };
@@ -237,18 +236,13 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
   return {
     directory, repo, store, runtime, tip, targetHead, gateCalls, integrate, runnerSelection,
     receiptRow: () => store.swarm('s1').contributions['contribution:1'].integration,
-    /** The gates the landing table derives for the lane's change, in the runner's shape, read from
-     * the same checkout the landing judges — the expectation is the landing's own derivation. */
-    regionGates: () => gateSetForPaths([...LANE_CHANGED], { issues: [], root: judgedTree() })
-      .files.map(runnerName),
   };
 }
 
 // ── (a) the contribution's own test runs as a gate ───────────────────────────────────────────────
 
-test('466a: a lane that adds a module and a test runs the test itself beside the region gate', needsGit, async (t) => {
+test('466a: a lane that adds a module and a test runs the test itself as a gate', needsGit, async (t) => {
   const w = await world(t);
-  const region = w.regionGates();
 
   const answer = await w.integrate({ dryRun: true });
 
@@ -258,9 +252,6 @@ test('466a: a lane that adds a module and a test runs the test itself beside the
   assert.ok(w.gateCalls.length > 0, 'the gate runner was handed the derived set');
   assert.deepEqual(w.gateCalls.at(-1).files, files,
     'the set the runner took is the set the receipt names — no second derivation between them');
-  for (const name of region) {
-    assert.ok(files.includes(name), `the region gate ${name} ran beside it`);
-  }
   const provenance = answer.integration.gates.selection.provenance;
   assert.deepEqual(provenance.map((row) => row.path), files, 'every gate file carries its cause');
   const probeRow = provenance.find((row) => row.path === runnerName(PROBE_TEST));
@@ -303,12 +294,11 @@ test('466b: a seat whose package names issue:466 lands that number, not the purp
   assert.doesNotMatch(answer.landingComment, /#443/u, 'never the purpose\'s number');
 });
 
-// ── (c) ONE derivation: the landing equals the runner's selection plus the region gates ──────────
+// ── (c) ONE derivation: the landing equals the runner's selection ────────────────────────────────
 
-test('466c: the landing\'s selection is the runner\'s selection unioned with the region gates', needsGit, async (t) => {
+test('466c: the landing\'s selection IS selectFromRepository', needsGit, async (t) => {
   const w = await world(t);
   const runner = w.runnerSelection();
-  const region = w.regionGates();
 
   const answer = await w.integrate({ dryRun: true });
 
@@ -318,28 +308,24 @@ test('466c: the landing\'s selection is the runner\'s selection unioned with the
     'the runner selects the changed test file itself');
   assert.ok(!runner.files.includes('impl/test/beta-fixture.test.mjs'),
     'and nothing the change does not touch — the fixture-path test stays out');
-  const expected = [...new Set([...runner.files.map(runnerName), ...region])].sort();
+  const expected = runner.files.map(runnerName).sort();
   assert.deepEqual(answer.integration.gates.files, expected,
-    'the landing\'s gate set IS the runner\'s selection plus the region gates');
+    'the landing\'s gate set IS the runner\'s selection');
   assert.deepEqual(answer.integration.gates.selection.files, expected,
     'the receipt\'s selection names the same set');
   const reasons = new Map(answer.integration.gates.selection.provenance
     .map((row) => [row.path, row.reason]));
   assert.equal(reasons.get(runnerName(PROBE_TEST)), 'changed', 'the runner\'s cause rides along');
-  for (const name of region) {
-    assert.equal(reasons.get(name), 'region', `${name} is attributed to the region table`);
-  }
   assert.ok(!expected.includes(runnerName('impl/test/beta-fixture.test.mjs')),
-    'an untouched base test is in neither half of the derivation');
+    'an untouched base test is not in the derivation');
 });
 
 // ── the target on a detached deployment checkout: selection changes only WHERE the lane lands ────
 
-test('466: an omitted target on a detached checkout derives the branch at the checkout commit, and the gate set is the same union', needsGit, async (t) => {
+test('466: an omitted target on a detached checkout derives the branch at the checkout commit, and the gate set is the runner selection', needsGit, async (t) => {
   const w = await world(t);
   const runner = w.runnerSelection();
-  const region = w.regionGates();
-  const expected = [...new Set([...runner.files.map(runnerName), ...region])].sort();
+  const expected = runner.files.map(runnerName).sort();
   git(w.repo, 'checkout', '-q', '--detach', 'master');
   assert.equal(git(w.repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD',
     'the deployment checkout is detached, as the served checkout is');
@@ -351,41 +337,6 @@ test('466: an omitted target on a detached checkout derives the branch at the ch
   assert.equal(answer.integration.squashSha, git(w.repo, 'rev-parse', 'master'),
     'the lane landed on the derived branch');
   assert.deepEqual(answer.integration.gates.files, expected,
-    'the detached checkout moves the TARGET derivation only — the gate set is still the runner\'s selection unioned with the region gates');
+    'the detached checkout moves the TARGET derivation only — the gate set is the runner\'s selection');
 });
 
-// ── the removal half: a name the checkout under judgement cannot open is not a gate ──────────────
-//
-// Found when a lane's pure rename could not land: the table derives its set from the repository's own
-// test directory, so a changed path naming a test file the change REMOVED still selected that file,
-// and the gate then ran a file the squash had deleted (`<file> exited 1 without reporting`) and
-// refused the landing. A caller that names the checkout under judgement (`root`, the scratch
-// checkout the squash produced) now has the selected names pruned to the ones that checkout carries.
-
-/** A checkout with this repository's layout, carrying exactly the named test files. */
-function judgedTree(t, tests) {
-  const root = mkdtempSync(join(tmpdir(), 'baton-466-judged-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(join(root, 'impl/test'), { recursive: true });
-  for (const name of tests) writeFileSync(join(root, 'impl/test', name), '// judged checkout\n');
-  return root;
-}
-
-test('466d: a removed test file is not a gate, and a declared name survives only where it exists', (t) => {
-  const present = judgedTree(t, ['issue466-landing-selection.test.mjs', 'issue466-beta.test.mjs']);
-  const carried = gateSetForPaths([
-    'impl/test/issue466-landing-selection.test.mjs',
-    'impl/test/issue466-gone.test.mjs',
-  ], { issues: [466], root: present });
-  assert.deepEqual(carried.files, ['issue466-landing-selection.test.mjs'],
-    'the declared name this checkout carries is a gate; the file the change removed never is');
-  const absent = judgedTree(t, ['issue466-beta.test.mjs']);
-  assert.deepEqual(gateSetForPaths(['impl/test/issue466-landing-selection.test.mjs'], { issues: [466], root: absent }).files, [],
-    'the same declared name is dropped when the checkout under judgement does not carry it');
-});
-
-test('466d: a caller that names no root keeps reading this module own checkout', () => {
-  const gate = gateSetForPaths(['impl/test/issue466-landing-selection.test.mjs'], { issues: [466] });
-  assert.ok(gate.files.includes('issue466-landing-selection.test.mjs'),
-    'without a root the listing is this module own test directory, which carries this file');
-});

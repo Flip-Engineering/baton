@@ -18,7 +18,7 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { SupervisedProcesses } from '../src/coordinator.mjs';
 import { HostCapacityAuthority } from '../src/host-capacity.mjs';
-import { gateSetForPaths } from '../src/landing-table.mjs';
+import { selectFromRepository } from '../src/verification-selection.mjs';
 
 const principal = { actor: 'direct:revision11-root', principalId: 'revision11-root', sessionId: 'revision11-root' };
 const QUIET_GIT_ENV = { GIT_PAGER: 'cat', PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' };
@@ -147,16 +147,22 @@ async function world(t, { script }) {
   }
   write(repo, 'impl/scripts/run-suite.mjs', runnerSource(recordPath));
   write(repo, 'impl/package.json', '{"name":"fixture-revision11","private":true}\n');
-  // The gate files THIS repository's landing table derives for the change, materialized at the
-  // layout the runner takes them from — `impl/test/<file>`, relative to this checkout.
-  const expected = gateSetForPaths([CHANGE], { issues: [] }).files;
-  for (const name of expected) {
-    write(repo, `impl/test/${name}`, '// the fixture materializes the suite the derived gate set names\n');
-  }
+  // Test files that import the changed module, so selectFromRepository selects them through the
+  // import graph. Two files are created so tests that need `selected.length > 1` have a meaningful
+  // fixture (r11e, r11f).
+  const moduleName = CHANGE.split('/').pop();
+  write(repo, `impl/test/fixture-${moduleName.replace('.mjs', '-a.test.mjs')}`,
+    `import '../src/${moduleName}';\n`);
+  write(repo, `impl/test/fixture-${moduleName.replace('.mjs', '-b.test.mjs')}`,
+    `import '../src/${moduleName}';\n`);
   write(repo, CHANGE, 'export const lane = 1;\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');
+  // The gate set is derived from selectFromRepository: the import-graph selector that reads the
+  // tree under test and selects every test file that imports or names the changed path.
+  const expected = selectFromRepository({ root: repo, changedPaths: [CHANGE] })
+    .files.map((f) => f.replace(/^impl\/test\//, ''));
   git(repo, 'checkout', '-q', '-b', 'baton/lane-1');
   write(repo, CHANGE, 'export const lane = 2;\n');
   git(repo, 'add', '-A');

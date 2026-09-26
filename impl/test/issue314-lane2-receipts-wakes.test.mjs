@@ -7,7 +7,7 @@
 //             #302 object, byte for byte, never a bridge-only second shape — and the projection it
 //             replaced does not ride the answer. A core verb and its flat counterpart answer
 //             byte-identically (the wrapper's own projection, docs/36 §1.3).
-//   314-D2-b  every long verb (run.start, swarm.recruit, swarm.check, waves.start — the core
+//   314-D2-b  every long verb (run.start, swarm.recruit, waves.start — the core
 //             table's own `long` rows) answers inside its bound with a wake subscription whose
 //             classes are the table's, filtered to the operation's subject, and the settle frame
 //             then arrives as `notifications/baton/wake` carrying the row. The answer never waits
@@ -369,15 +369,6 @@ const LONG_VERBS = Object.freeze([
     settle: wakeFrame({ seq: 13, wakeClass: 'dead', swarmId: 'swarm-314', participantId: 'seat-314' }),
     // Another swarm's death is not this operation's: the handoff is scoped to its own subject.
     foreign: wakeFrame({ seq: 14, wakeClass: 'dead', swarmId: 'swarm-other', participantId: 'seat-314' }),
-  }),
-  Object.freeze({
-    label: 'baton_swarm {verb: check} (swarm.check)',
-    tool: 'baton_swarm', verb: 'check',
-    args: { swarmId: 'swarm-314', participantId: 'seat-314', contributionId: 'contribution-314', checkId: 'check-314' },
-    answers: { swarm_check: swarmReceipt('swarm.check', 'swarm.contribution_reviewed', 'contribution-314') },
-    kinds: ['reviewed'], settleOn: ['reviewed'],
-    swarms: ['swarm-314'], participants: null,
-    settle: wakeFrame({ seq: 15, wakeClass: 'reviewed', swarmId: 'swarm-314', participantId: 'seat-314' }),
   }),
   Object.freeze({
     label: 'baton_waves {verb: start} (waves.start)',

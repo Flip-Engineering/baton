@@ -138,12 +138,10 @@ a failure the change caused go unjudged, because no full suite runs after the se
 
 The native landing (`swarm integrate`, #296/#463/#466) runs the SAME selection: its gate set is
 the runner's own selector (`impl/src/verification-selection.mjs`, the function `--changed` calls)
-over the checkout the squash produced, UNIONED with the landing table's region gates — one
-derivation, never a second table — and the receipt's `selection.provenance` names the runner's
-reasons (`changed`, `imports`, `fixture-path`) beside `region`. An empty derivation runs no gate
-and says `skipped: 'no_affected_tests'`. A landing's `issue` is the seat's context-package issue
-(the `issue:<n>` branch), else `null`; the region labels and the swarm's purpose are never
-consulted.
+over the checkout the squash produced, and the receipt's `selection.provenance` names the runner's
+reasons (`changed`, `imports`, `fixture-path`). An empty derivation runs no gate and says
+`skipped: 'no_affected_tests'`. A landing's `issue` is the seat's context-package issue
+(the `issue:<n>` branch), else `null`; the swarm's purpose is never consulted.
 
 ## 6. Served-host fixtures and the suite root (#446)
 

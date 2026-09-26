@@ -199,6 +199,13 @@ async function world(t, { gate = {} } = {}) {
     '{"name":"fixture-dep","version":"1.0.0","type":"module","exports":"./index.js"}\n');
   write(repo, 'impl/node_modules/fixture-dep/index.js', 'export const fixtureMarker = "installed";\n');
   write(repo, 'impl/src/coordinator.mjs', 'export const lane = 1;\n');
+  // The gate set is the RUNNER's own selector over the squash's checkout (#598 item 3 removed the
+  // landing table's region gates), so this fixture carries one test file that statically imports the
+  // module the lane moves: the selector derives it from the import graph, which is the whole of the
+  // surviving derivation, and the staged runner below answers with the verdict the row asked for.
+  write(repo, 'impl/test/gate-fixture.test.mjs',
+    "import { lane } from '../src/coordinator.mjs';\n"
+    + 'export const fixtureLane = lane;\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');
