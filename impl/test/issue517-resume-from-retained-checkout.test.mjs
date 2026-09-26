@@ -191,8 +191,8 @@ test('517-a: a resume-from successor of a dead predecessor binds its retained ch
   });
   assert.equal(typeof bravo.runId, 'string', 'the successor is admitted');
 
-  // The recruit stops at the resume question (docs/52 D1/D5: `manual` is the default), so the
-  // carry lands when the question is answered — the existing guide IS the answer (docs/52 D3).
+  // Issue #572: the recruit performs the carry itself, so the guide below is the ordinary nudge a
+  // working successor receives — the checkout is already bound when it is set.
   await second.command('swarm.guide', {
     swarmId: 'resumed', participantId: 'bravo', message: 'Continue alpha\'s lane',
     idempotencyKey: 'guide:resumed:bravo',
