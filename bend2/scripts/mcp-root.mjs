@@ -215,6 +215,11 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'baton2_recoverable',
+    description: 'List workers with workspaces that can be recovered after a host restart. Shows harness, model, native session, last turn status, and pending messages.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
 ];
 
 // State.
@@ -352,6 +357,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);
+        break;
+      case 'baton2_recoverable':
+        result = coord('recoverable');
         break;
       default:
         sendError(msg.id, -32602, `Unknown tool: ${name}`);

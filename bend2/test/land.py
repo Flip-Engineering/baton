@@ -194,5 +194,36 @@ class Land(unittest.TestCase):
         result = self.call('push', self.repo, 'main', 'test-remote')
         self.assertEqual(result['status'], 'rejected')
 
+    def test_recoverable_lists_workers_with_workspaces(self):
+        self.recruit_and_commit('w1', 'w1-branch', 'wt1')
+        self.recruit_and_commit('w2', 'w2-branch', 'wt2')
+        result = self.call('recoverable')
+        self.assertEqual(len(result), 2)
+        ids = [w['id'] for w in result]
+        self.assertIn('w1', ids)
+        self.assertIn('w2', ids)
+        w1 = next(w for w in result if w['id'] == 'w1')
+        self.assertEqual(w1['harness'], 'omp')
+        self.assertEqual(w1['model'], 'model')
+        self.assertEqual(w1['effort'], 'high')
+        self.assertEqual(w1['branch'], 'w1-branch')
+        self.assertIn('workspace', w1)
+        self.assertIn('native', w1)
+
+    def test_recoverable_excludes_workers_without_workspace(self):
+        self.call('worker', 'bare', 'root', 'omp', 'model', 'high', '', '', '')
+        self.recruit_and_commit('w1', 'w1-branch', 'wt1')
+        result = self.call('recoverable')
+        ids = [w['id'] for w in result]
+        self.assertIn('w1', ids)
+        self.assertNotIn('bare', ids)
+
+    def test_recoverable_shows_pending_reports(self):
+        self.recruit_and_commit('w1', 'w1-branch', 'wt1')
+        self.call('report', 'rpt1', 'w1', 'worker finished task A')
+        result = self.call('recoverable')
+        w1 = next(w for w in result if w['id'] == 'w1')
+        self.assertEqual(w1['pendingReports'], 1)
+
 if __name__ == '__main__':
     unittest.main()

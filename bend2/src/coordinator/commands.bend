@@ -24,6 +24,7 @@ type Command is Data:
   Land{worker: String, repo: String, target: String}
   LandChecked{worker: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
+  Recoverable{}
   Status{}
   Workers{}
   Turns{id: String}
@@ -95,6 +96,8 @@ def sql(command: Command) -> String:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base,'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL)) AS item FROM sessions ORDER BY id);"
     case Workers{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',s.id,'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL)) AS item FROM sessions s WHERE s.parent IS NOT NULL ORDER BY s.id);"
+    case Recoverable{}:
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',s.id,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'native',s.native,'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT json_extract(t.event,'$.type') FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'pendingReports',(SELECT count(*) FROM messages m WHERE m.sender=s.id AND m.kind='report' AND m.receipt IS NULL),'pendingGuidance',(SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL)) AS item FROM sessions s WHERE s.parent IS NOT NULL AND s.workspace<>'' ORDER BY s.id);"
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'worker',t.worker,'eventType',json_extract(t.event,'$.type'),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case ObserveFile{id,worker,path}: ""
@@ -114,7 +117,8 @@ def parse(args: List<String>) -> Command:
     case +verb <> Nil{}:
       Bool.pick(Command, String.eq(verb,"status"),Status{},
       Bool.pick(Command, String.eq(verb,"workers"),Workers{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
+      Bool.pick(Command, String.eq(verb,"recoverable"),Recoverable{},Invalid{}))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},

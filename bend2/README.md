@@ -37,6 +37,7 @@ ref update; a target that moved meanwhile rebases the candidate once.
 .scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
 .scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
+.scratch/bend2/baton2 state.db recoverable
 .scratch/bend2/baton2 state.db status
 ```
 
