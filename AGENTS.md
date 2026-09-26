@@ -1,7 +1,7 @@
 # Rules for this project
 
-These rules apply to every agent and harness working on baton, not only Claude. The first section
-applies to code and design. The rest apply to prose.
+These rules apply to every agent and harness working on baton. The first section applies to code,
+design and review. The rest apply to prose.
 
 # Banned runtime patterns
 
@@ -37,6 +37,25 @@ prerequisites, continuation) must not change when such records change, and no st
 completion declaration may be a prerequisite for continuing work. The Bend2 laws state this as G1
 and G2 (docs/bend2/laws-proposed.md on bend2-rewrite, revisions 11 and 12). The expected-red
 manifest is removed by #580, and the remaining instances are listed in #582.
+
+## No mechanism without an observed failure
+
+Add a check, gate, guard, durability layer, recovery path, validation rule or review step only when
+a real run failed without it. Name that run (the landing, session, seat or resident run) in the
+issue or commit that adds the mechanism. These do not justify a mechanism: a constructed probe, a
+hypothetical crash window or race, an input that no real run produces, and a finding that a written
+property "does not hold over the whole" of something. Do not file, prioritize, route or run lanes
+for them, and do not use them to reject or hold a contribution.
+
+State that can be derived again from a durable source is derived again after a crash. A duplicate
+wake notice or a re-run is an acceptable result of a crash. A second store with its own crash
+safety, built to prevent that result, is not added.
+
+When an agent finds or proposes such a mechanism, remove it. A reviewer judges whether a change does
+what it claims on real work. A removal is judged by whether real work still runs, and needs no proof
+that the mechanism was never useful. Instances found on 2026-09-25 (#598): the landing-gate "holes"
+in #597, built from synthetic verdict documents, and the #592 stage-2 delivery journal, a
+checksummed and fsynced store that duplicated the coordination ledger.
 
 # Writing rules
 

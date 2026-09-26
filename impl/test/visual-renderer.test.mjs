@@ -42,6 +42,29 @@ test('renderer provides distinct topology, timeline and telemetry views with pro
   assert.match(telemetry, /Route readiness/u);
 });
 
+test('timeline wake rows carry the derived status word, and the bare class when the class derives none', () => {
+  const value = projectBatonVisualModel({
+    snapshot,
+    watch,
+    width: 100,
+    wakes: {
+      attached: true,
+      lastSeq: 5,
+      items: [
+        { seq: 4, wakeClass: 'resume_decision_required', subject: 'worker:render' },
+        { seq: 5, wakeClass: 'contribution_recorded', subject: 'worker:render', next: 'contribution.settle worker:render' },
+      ],
+    },
+  });
+  const timeline = renderBatonVisual(value, { width: 100, view: 'timeline', motion: false });
+  const lines = timeline.trimEnd().split('\n');
+  assert.ok(lines.includes('  #4  ▲ needs you  worker:render'), timeline);
+  assert.ok(lines.includes('  #5  contribution_recorded  worker:render'), timeline);
+  assert.ok(lines.includes('      → contribution.settle worker:render'), timeline);
+  // A derivable class renders the closed status word, never the raw class name.
+  assert.equal(timeline.includes('resume_decision_required'), false);
+});
+
 test('MCP presentation carries static text, optional animation frames and refresh arguments', () => {
   const value = model(96);
   const presentation = createBatonMcpPresentation(value, { width: 96 });
@@ -52,4 +75,50 @@ test('MCP presentation carries static text, optional animation frames and refres
   assert.equal(presentation.refresh.arguments.follow, true);
   assert.equal(presentation.text.includes('\u001b'), false);
   assert.match(presentation.accessibleSummary, /Flip is quietly/u);
+});
+
+test('the rendered header names its own seat: baton for the MCP presentation, baton top for the operator frame', () => {
+  const value = model(96);
+  const presentation = createBatonMcpPresentation(value, { width: 96 });
+  assert.match(presentation.text, /baton · overview/u);
+  assert.equal(presentation.text.includes('baton top'), false);
+  const operatorFrame = renderBatonVisual(value, { width: 96, view: 'overview', motion: false });
+  assert.match(operatorFrame, /baton top · overview/u);
+});
+
+// ── issue #585 audit S3: the two rendering defects the audit measured ──────────────────────────
+
+test('S3a: the unattached wake stream renders a complete statement at every width', () => {
+  for (const width of [40, 58, 84, 118, 160]) {
+    const value = projectBatonVisualModel({ snapshot, watch, width });
+    const timeline = renderBatonVisual(value, { width, view: 'timeline', motion: false });
+    const line = timeline.split('\n').find((row) => row.includes('wake stream')) ?? '';
+    assert.ok(line.endsWith(')'), `${width}: the absence line is a complete statement: ${line}`);
+    assert.equal(line.includes('…'), false, `${width}: the absence line is never truncated: ${line}`);
+    assert.ok(batonVisualWidth(line) <= width, `${width}: ${batonVisualWidth(line)} ${line}`);
+  }
+  // The narrowest pinned width reads the shortest statement, never half a sentence.
+  const narrow = renderBatonVisual(projectBatonVisualModel({ snapshot, watch, width: 40 }), { width: 40, view: 'timeline' });
+  assert.ok(narrow.includes('  (no wake stream attached)'), narrow);
+  // A wide terminal reads the reason in full.
+  const wide = renderBatonVisual(projectBatonVisualModel({ snapshot, watch, width: 160 }), { width: 160, view: 'timeline' });
+  assert.ok(wide.includes('the seat attaches one stream per resident when the wake module is present'), wide);
+});
+
+test('S3b: the Resident row renders only the cells the doctor projection carries', () => {
+  // No identity fields: the row is the state word alone — never a row of placeholder dashes.
+  const without = renderBatonVisual(model(84), { width: 84, view: 'overview', motion: false });
+  const row = without.split('\n')[without.split('\n').indexOf('Resident') + 1];
+  assert.equal(row, '  ● ready');
+  assert.equal(without.includes('—  —'), false);
+  // A full identity renders every cell it carries, in the same order.
+  const full = projectBatonVisualModel({
+    snapshot: {
+      doctor: { ok: true, value: { ready: true, application: { resident: { deploymentId: 'dep:1', incarnation: 'inc:2', transport: 'local' } } } },
+      run: { ok: true, value: { runId: 'run:render' } },
+    },
+  });
+  const withIdentity = renderBatonVisual(full, { width: 84, view: 'overview', motion: false });
+  const fullRow = withIdentity.split('\n')[withIdentity.split('\n').indexOf('Resident') + 1];
+  assert.equal(fullRow, '  dep:1  inc:2  local  ● ready');
 });

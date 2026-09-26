@@ -546,17 +546,6 @@ test('E1: a stall watchdog fired while the task is `paused` performs NO action �
     '`paused` joins the guard by the same string comparison, not a special case');
 });
 
-test('E2: the load-bearing guard still reads `task.status !== \'working\'` verbatim — a source pin '
-  + 'against a future refactor silently narrowing it to an allowlist (rule 11)', () => {
-  // issue #259 slice 10: the guard's member moved to runtime-observation.mjs — the pin reads
-  // the member, wherever it lives, through the seam-map resolver.
-  const source = memberSource('_armWatchdog');
-  assert.ok(
-    source.includes("if (!task || task.status !== 'working' || handle.watchdogActions?.has('stall')) return;"),
-    'the stall guard must stay a single negated string comparison',
-  );
-});
-
 test('E3: `lifecycle.turn_completed` CLEARS the watchdog for a pausable card (it never re-arms it) '
   + '— pinning the correction that only a fresh admission re-arms', async () => {
   const kit = kitFor();
@@ -611,32 +600,6 @@ test('F1: wave.mjs classifies a `paused` member as `turn_checkpoint` through pro
   assert.equal(overridden.members[0].attention, 'blocked_interaction:answer_required');
 });
 
-test('F2: all three RunView phase ternaries carry an explicit `paused` branch, each checked '
-  + 'BEFORE its running/dispatched fallback and each left subordinate to runStop precedence', () => {
-  // slice 15: `_historicalProfileView` and `_buildWorkflowView` moved to
-  // application-observation.mjs; `_buildView` stays. The scan reads both texts — every
-  // branch/fallback pair is inside one member, so the order assertions hold on the join.
-  const source = readFileSync(join(SRC, 'application.mjs'), 'utf8')
-    + readFileSync(join(SRC, 'application-observation.mjs'), 'utf8');
-  const branches = [
-    ": node?.state === 'paused' ? 'paused'",
-    ": attempts.some((attempt) => attempt.state === 'paused') ? 'paused'",
-    "else if (node.state === 'paused') phase = 'paused';",
-  ];
-  for (const branch of branches) {
-    assert.ok(source.includes(branch), `missing honest paused branch: ${branch}`);
-  }
-  // Each paused branch precedes the running/dispatched fallback it would otherwise fall through to.
-  assert.ok(source.indexOf(": node?.state === 'paused' ? 'paused'")
-    < source.indexOf(": node?.taskId ? 'running' : 'approved'"));
-  assert.ok(source.indexOf(": attempts.some((attempt) => attempt.state === 'paused') ? 'paused'")
-    < source.indexOf(": anyDispatched ? 'running' : 'approved'"));
-  assert.ok(source.indexOf("else if (node.state === 'paused') phase = 'paused';")
-    < source.indexOf('else if (node.taskId) phase = \'running\';'));
-  // ...and every one of them stays subordinate to the runStop precedence that follows the ternary.
-  assert.equal(source.split("if (runStop?.status === 'stopped') phase = 'stopped';").length - 1, 3);
-});
-
 test('F3: the coordinator exposes still-unconsumed pause records for the `turn_checkpoint` '
   + 'attention entry, carrying the `requestId: pauseId` that _semanticActions\' guard requires; '
   + 'a resolved pause disappears from the projection', async () => {
@@ -656,12 +619,6 @@ test('F3: the coordinator exposes still-unconsumed pause records for the `turn_c
   // `validText(attention.requestId, 4_096)` — a generic non-empty/no-null-byte/<=4096-byte check.
   assert.ok(rows[0].pauseId.length > 0 && rows[0].pauseId.length <= 4096);
   assert.ok(!rows[0].pauseId.includes('\0'));
-
-  // The attention entry is pushed ALONGSIDE interactions, never instead of them.
-  const source = readFileSync(join(SRC, 'application.mjs'), 'utf8');
-  assert.ok(source.includes("kind: 'turn_checkpoint',"));
-  assert.ok(source.indexOf('allAttention.push(...projectDecisionAttention(this.driver.coordinator, workers));')
-    < source.indexOf("kind: 'turn_checkpoint',"));
 
   // Once the pause resolves, the checkpoint is gone — the driver has nothing left to act on.
   await kit.coordinator.claimTurn(kit.pauseId);

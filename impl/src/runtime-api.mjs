@@ -23,7 +23,7 @@ import { canonicalDigest } from './coordination-internals.mjs';
 import { boundedAttentionText } from './messages.mjs';
 import { normalizeProviderRoute, readProviderFaultDetail } from './provider-faults.mjs';
 import {
-  attachedToExistingCheckout, isPhysicalWorkspaceId, workspaceAttachmentOf,
+  attachedToExistingCheckout, isPhysicalWorkspaceId, WORKSPACE_HOLDER_STATUSES, workspaceAttachmentOf,
   workspaceCustodyRecord, workspaceHolders,
 } from './shared-workspace-custody.mjs';
 import { pathInScope } from './runtime-observation.mjs';
@@ -600,7 +600,13 @@ export function predecessorWorkspaceContext(coordinator, workspaceId) {
     }
     if (!context) return null;
     const holders = workspaceHolders(allHandles, workspaceId);
-    return { sessionContext: context, holders };
+    // Issue #595: a terminal holder whose process is proven closed cannot write the checkout.
+    const byId = new Map(allHandles.map((handle) => [handle.id, handle]));
+    const deadHolders = holders.filter((id) => {
+      const handle = byId.get(id);
+      return !WORKSPACE_HOLDER_STATUSES.includes(handle?.status) && handle?.processRef?.state === 'closed';
+    });
+    return { sessionContext: context, holders, deadHolders };
   }
 
 export function unregisterParticipantRuntime(coordinator, runId) {

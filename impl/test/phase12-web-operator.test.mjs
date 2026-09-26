@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { createContext, runInContext } from 'node:vm';
 
 import { CoordinationStore, WebNorthbound, WebSessionStore } from '../src/index.mjs';
@@ -12,7 +12,15 @@ import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-11T18:00:00.000Z');
 const ORIGIN = 'https://control.test';
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
+// Issue #571: every fixture directory this file creates is reaped when the file ends, so the suite
+// runner's per-file fixture check reads a clean root.
+const directories = [];
+const root = (name) => {
+  const directory = mkdtempSync(join(tmpdir(), `baton-${name}-`));
+  directories.push(directory);
+  return directory;
+};
+after(() => { for (const directory of directories) rmSync(directory, { recursive: true, force: true }); });
 
 class Response {
   writeHead(status, headers) { this.status = status; this.headers = headers; }
@@ -191,4 +199,112 @@ test('BU4 executed browser behavior rejects malformed Run frames and restores ou
   context.frame = frame; context.hostile = hostile;
   runInContext("state.activityRunId='run-a';globalThis.validation=Promise.all([strictRunFrame('events','events',{lastEventId:'cursor_a'},frame),strictRunFrame('events','events',{lastEventId:'cursor_a'},hostile)]);", context);
   assert.deepEqual(await context.validation, [true, false]);
+});
+
+// docs/55 S12 / issue #585: the desk names the Run's own state with the derived status word, the
+// same vocabulary the terminal and MCP surfaces render. The derivation stays in brand.mjs and is
+// projected into the served page as data; a class the table does not carry keeps the desk's own
+// humanized spelling, so nothing the desk showed before this change changed shape.
+test('the served desk renders the ONE status vocabulary, and humanizes what the table does not carry', async () => {
+  const s = system();
+  const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
+  const elements = new Map();
+  const element = (id = '') => ({
+    id, disabled: false, value: '', textContent: '', dataset: {}, children: [],
+    classList: { add() {}, remove() {}, toggle() {} },
+    addEventListener() {}, replaceChildren() { this.children = []; }, append() {},
+  });
+  const document = {
+    cookie: '', body: element('body'), createElement: (tag) => element(tag),
+    getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
+  };
+  const context = createContext({
+    document, fetch: () => new Promise(() => {}), crypto: { subtle: webcrypto.subtle, randomUUID },
+    TextEncoder, setTimeout, clearTimeout, Promise, URL, Blob,
+    location: { origin: ORIGIN, replace() {} }, window: { confirm: () => false },
+    EventSource: class {}, console,
+  });
+  runInContext(script.body, context);
+  runInContext("globalThis.words=['working','awaiting_approval','awaiting_plan_approval','awaiting_selection','failed','stopping','planning','verifying'].map(statusText)", context);
+  assert.deepEqual([...context.words], [
+    '◐ working', '▲ needs you', '▲ needs you', '▲ needs you', '✗ refused', '⇣ draining',
+    'planning', 'verifying',
+  ], 'derivable classes read the closed status word; the rest keep the humanized class');
+});
+
+// docs/56 (issue #585, the S12 phase review): the desk's spine and its terminal row read the phase
+// vocabulary the outward projections really serve — the legacy spellings the core state machine
+// records beside the canonical ones — through ONE projected table. An interrupted run therefore
+// reads the execute step, a terminal run reads the evidence step it is, and a phase outside the
+// table falls back to the intent step instead of a wrong one.
+test('the served desk reads the phase vocabulary the projections serve, through one projected table', async () => {
+  const s = system();
+  const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
+  const elements = new Map();
+  const element = (id = '') => ({
+    id, disabled: false, value: '', textContent: '', dataset: {}, children: [],
+    classList: { set: new Set(), add(value) { this.set.add(value); }, remove(value) { this.set.delete(value); }, toggle(value, on) { if (on) this.set.add(value); else this.set.delete(value); } },
+    addEventListener() {}, replaceChildren() { this.children = []; },
+    append(...values) { for (const value of values) this.children.push(value); },
+  });
+  const document = {
+    cookie: '', body: element('body'), createElement: (tag) => element(tag),
+    getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
+  };
+  const context = createContext({
+    document, fetch: () => new Promise(() => {}), crypto: { subtle: webcrypto.subtle, randomUUID },
+    TextEncoder, setTimeout, clearTimeout, Promise, URL, Blob,
+    location: { origin: ORIGIN, replace() {} }, window: { confirm: () => false },
+    EventSource: class {}, console,
+  });
+  runInContext(script.body, context);
+
+  // Every phase literal an outward projection can carry: the legacy spellings of
+  // application.mjs:5478-5493 and :5751-5756 and application-observation.mjs:2753 and :2829-2838,
+  // the canonical CANONICAL_RUN_PHASES beside them, and one literal the table does not carry.
+  context.phases = [
+    'planning', 'planning_failed', 'awaiting_plan_approval', 'awaiting_approval',
+    'approved', 'queued', 'running', 'working', 'interrupted', 'interruption_uncertain',
+    'uncertain', 'paused', 'stopping', 'work_completed', 'result_ready', 'awaiting_selection',
+    'result_selected', 'reviewing', 'integrating', 'verifying', 'completed', 'failed',
+    'inconclusive', 'cancelled', 'stopped', 'denied', 'degraded', 'closed', 'unmapped_literal', null,
+  ];
+  runInContext('globalThis.steps=phases.map(phaseStep)', context);
+  assert.deepEqual([...context.steps], [
+    'plan', 'plan', 'plan', 'plan',
+    'execute', 'execute', 'execute', 'execute', 'execute', 'execute',
+    'execute', 'execute', 'execute', 'review', 'review', 'review',
+    'review', 'review', 'review', 'review', 'evidence', 'evidence',
+    'evidence', 'evidence', 'evidence', 'evidence', 'evidence', 'evidence', 'intent', 'intent',
+  ]);
+
+  // The spine renders those steps over its own five rows.
+  const spine = document.getElementById('run-spine');
+  const spineStates = (phase) => {
+    spine.children = ['intent', 'plan', 'execute', 'review', 'evidence']
+      .map((step) => ({ dataset: { step, state: '' } }));
+    runInContext(`renderSpine(${phase})`, context);
+    return spine.children.map((item) => item.dataset.state);
+  };
+  assert.deepEqual(spineStates("'interrupted'"), ['done', 'done', 'active', '', '']);
+  assert.deepEqual(spineStates("'work_completed'"), ['done', 'done', 'done', 'active', '']);
+  assert.deepEqual(spineStates("'degraded'"), ['done', 'done', 'done', 'done', 'active']);
+  // A failed Plan proposal stays at the step the run is blocked on: its view offers retry_planning.
+  assert.deepEqual(spineStates("'planning_failed'"), ['done', 'active', '', '', '']);
+  assert.deepEqual(spineStates("'unmapped_literal'"), ['active', '', '', '', '']);
+
+  // The same table decides the terminal row: a terminal phase offers its evidence and hides the
+  // stop form, a live one offers neither, and an interrupted run can still be stopped.
+  const actions = document.getElementById('run-actions');
+  const stopForm = document.getElementById('stop-form');
+  const controls = (phase) => {
+    actions.replaceChildren();
+    runInContext(`renderActions({phase:${phase},nextActions:[]})`, context);
+    runInContext(`renderStop({phase:${phase}})`, context);
+    return { buttons: actions.children.map((item) => item.textContent), stopHidden: stopForm.classList.set.has('hidden') };
+  };
+  assert.deepEqual(controls("'running'"), { buttons: ['Refresh RunView'], stopHidden: false });
+  assert.deepEqual(controls("'interrupted'"), { buttons: ['Refresh RunView'], stopHidden: false });
+  assert.deepEqual(controls("'degraded'"), { buttons: ['Refresh RunView', 'Load evidence'], stopHidden: true });
+  assert.deepEqual(controls("'completed'"), { buttons: ['Refresh RunView', 'Load evidence'], stopHidden: true });
 });

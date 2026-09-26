@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import * as brand from '../src/brand.mjs';
-import { flipAnnounce, flipFace, flipLine, flipStatus } from '../src/brand.mjs';
+import { flipAnnounce, flipFace, flipHumanLine, flipLine, flipStatus, flipStatusPrefix, flipStatusTable } from '../src/brand.mjs';
 
 const SMILE = '✦(◕‿◕)✦';
 const THINKING = '✦(◕﹏◕)◦';
@@ -48,6 +48,26 @@ test('ONE function derives the closed status set from the projection classes', (
   assert.equal(flipStatus('unbound').status, 'idle');
   assert.equal(flipStatus('signal').status, 'draining');
   assert.equal(flipStatus('closed').status, 'done');
+  // docs/56 D1: the wake classes that name a lifecycle state of their subject derive too, so a
+  // seat reading a wake row and an operator reading the stderr channel see one vocabulary. The
+  // canonical run phases that hold work for a person join them (issue #585 follow-up: the desk and
+  // the terminal frame both read a run's phase through this table).
+  const wakeDerivation = {
+    capacity_pressure: 'needs you', resume_decision_required: 'needs you',
+    reroute_proposed: 'needs you', root_owed: 'needs you',
+    contribution_integrated: 'done', resident_lifecycle: 'ready',
+    incarnation_changed: 'ready', queued: 'idle', open: 'ready',
+    awaiting_approval: 'needs you', awaiting_selection: 'needs you',
+    awaiting_plan_approval: 'needs you',
+  };
+  for (const [klass, word] of Object.entries(wakeDerivation)) {
+    assert.equal(flipStatus(klass)?.status, word, `wake class ${klass} derives ${word}`);
+  }
+  // An event is not a state: the classes that only report activity gain no status word.
+  for (const klass of ['contribution_recorded', 'reviewed', 'recruited', 'assigned', 'work_updated',
+    'coupling_updated', 'context_updated', 'guidance_delivered', 'knowledge', 'note', 'checkpoint']) {
+    assert.equal(flipStatus(klass), null, `event class ${klass} must not derive a status`);
+  }
   // The honesty law: a class with no derivable status does not exist — never invented.
   assert.equal(flipStatus('definitely-not-a-projection-class'), null);
   assert.equal(flipStatus(undefined), null);
@@ -94,4 +114,35 @@ test('the piped stderr of `baton help` is silent; stdout keeps the help text', (
   // The brand line is pure chrome: silent when piped.
   assert.equal(run.stderr.includes(SMILE), false);
   assert.equal(run.stderr, '');
+});
+
+test('ONE rule for the mark: flipHumanLine composes a human line, flipStatusPrefix a wake prefix', () => {
+  // The mark rides human-facing text, with the derived status word when the class carries one.
+  assert.equal(flipHumanLine('baton · overview · run:x'), `${SMILE} baton · overview · run:x`);
+  assert.equal(flipHumanLine('root owed: review_owed in swarm-x', { statusClass: 'root_owed' }),
+    `${SMILE} ▲ needs you — root owed: review_owed in swarm-x`);
+  // An underivable class renders the text with no invented status word.
+  assert.equal(flipHumanLine('x', { statusClass: 'contribution_recorded' }), `${SMILE} x`);
+  // The wake-row prefix is the same derivation, spelled once.
+  assert.equal(flipStatusPrefix('resume_decision_required'), '▲ needs you — ');
+  assert.equal(flipStatusPrefix('contribution_recorded'), '');
+  assert.equal(flipStatusPrefix(null), '');
+  // flipAnnounce keeps its TTY gate and reads the same composer.
+  assert.equal(flipAnnounce('root_owed', 'text', { tty: false }), 'text');
+  assert.equal(flipAnnounce('root_owed', 'text', { tty: true }), `${SMILE} ▲ needs you — text`);
+});
+
+test('the one derivation is served as data for a renderer that runs elsewhere', () => {
+  const table = flipStatusTable();
+  // The projection is plain data: no color, no escape bytes, the same closed set and the same rows.
+  assert.equal(JSON.stringify(table).includes('\u001b'), false);
+  for (const word of CLOSED) {
+    assert.equal(table.rows[word].word, word);
+    assert.equal(typeof table.rows[word].glyph, 'string');
+    assert.equal(table.rows[word].text, undefined);
+  }
+  for (const [klass, status] of Object.entries(table.derivation)) {
+    assert.equal(table.rows[status] === undefined, false, `${klass} maps onto a served row`);
+    assert.equal(status, flipStatus(klass).status, `${klass} derives identically through the projection`);
+  }
 });

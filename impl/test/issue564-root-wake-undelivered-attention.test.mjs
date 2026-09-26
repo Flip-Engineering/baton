@@ -1,4 +1,4 @@
-// issue564-root-wake-undelivered-attention-red.test.mjs — issue #564's reporting half: a
+// issue564-root-wake-undelivered-attention.test.mjs — issue #564's reporting half: a
 // root-addressed wake that reached no session is attention the swarm view reports.
 //
 // The addressing half records a durable owed row when work waits on the root

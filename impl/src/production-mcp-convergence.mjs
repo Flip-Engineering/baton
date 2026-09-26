@@ -476,7 +476,7 @@ async function surfaceVisualize(target, runtime, args, message) {
     snapshot, ...(watch === null ? {} : { watch }), width: validated.width,
   });
   const text = rendererModule.renderBatonVisual(model, {
-    width: validated.width, color: false, motion: false, view: validated.view,
+    width: validated.width, color: false, motion: false, view: validated.view, seat: 'baton',
   });
   const accessibleSummary = typeof model?.accessibleSummary === 'string'
     ? model.accessibleSummary : text;

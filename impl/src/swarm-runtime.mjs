@@ -41,6 +41,9 @@ import {
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
 // can never spell the same rows differently.
 import { renderRouteUsageLines } from './adapter.mjs';
+// Issue #585 (docs/56 D6.2): the seat's wake lines carry the same derived status prefix every
+// other wake-row rendering reads, so one class spells the same word wherever a seat meets it.
+import { flipStatusPrefix } from './brand.mjs';
 // Issue #296: the landing verb's two collaborators. `gateSetForPaths` turns the squash's changed
 // paths into the tests that cover them, and `landContribution` is the #301 git authority's own
 // landing mechanism — this module never spawns git for a landing, exactly as it never spawns git
@@ -4529,6 +4532,7 @@ export class SwarmRuntime {
         dirty: observation?.dirty ?? false,
         preserved: lastPushed === null ? null
           : Object.freeze({ sha: lastPushed.sha, at: lastPushed.at, work: lastPushed.work }),
+
         removed: custody?.removed ?? null,
         // Issue #438: where this row's live facts came from — the durable rows when nothing was
         // observed, else the seat's wrapper commit, its own turn seam, or an explicit live read.
@@ -6704,7 +6708,10 @@ export class SwarmRuntime {
     // is carriable unless some OTHER live worker holds it. `liveHolders` therefore names the
     // FOREIGN live holders only, and `predecessorLive` says whether the predecessor itself is.
     const predecessorLive = predecessorWorkerId !== null && !predecessorWorkerDead;
-    const liveHolders = (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId);
+    // Issue #595: a foreign holder whose process is proven closed does not block the carry.
+    const deadHolders = (ctxResult?.deadHolders ?? []).filter((id) => id !== predecessorWorkerId);
+    const liveHolders = (ctxResult?.holders ?? [])
+      .filter((id) => id !== predecessorWorkerId && !deadHolders.includes(id));
     // The custody row the removal was backed by (#428); since #453 it names the snapshot's own
     // paths too, and the LAST row for this workspace is the snapshot being carried.
     let snapshotRow = null;
@@ -6732,7 +6739,7 @@ export class SwarmRuntime {
     // checkout the successor never gets, and the recruit writes no row.
     const carry = predecessorLive ? null
       : this._workspaceCarryPlan({ exists, changedPaths, snapshotSha, snapshotPaths, missing });
-    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, predecessorLive,
+    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, deadHolders, predecessorLive,
       snapshotSha, baseSha, carry };
   }
 
@@ -7153,6 +7160,10 @@ export class SwarmRuntime {
           paths: [...carry.paths], snapshotSha: predecessorWs.snapshotSha, how: carry.how,
           ...(carry.reason === null ? {} : { reason: carry.reason }),
         }, principal, `workspace-carried:${hash([swarm.swarmId, participant.participantId, carriedWorkspaceId])}`));
+        // Issue #595: a dead worker's hold must not keep the successor's checkout pinned.
+        if (predecessorWs.deadHolders.length > 0 && carriedWorkspaceId === predecessorWs.workspaceId) {
+          await this.coordinator.releaseDeadWorkspaceHolds(predecessorWs.deadHolders, worker.id);
+        }
       }
       // Issue #337: the parked guidance this brief composed is delivered now, after the run
       // admitted the seat — a refused start never marks guidance its seat never received.
@@ -7718,7 +7729,9 @@ export class SwarmRuntime {
       }
       const participantLabel = frame.participantId ?? '';
       const contributionLabel = frame.subject?.kind === 'contribution' ? ` ${frame.subject.id}` : '';
-      wakeLines.push(`- [seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
+      // Issue #585 (docs/56 D6.2): the line body opens with the class's derived status word (the
+      // ONE prefix spelling, brand.mjs) and reads unchanged for an event-shaped class.
+      wakeLines.push(`- ${flipStatusPrefix(frame.wakeClass)}[seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
         + ` ${participantLabel}${participantLabel === '' ? '' : ' — '}${classRow.summary}`
         + `${frame.next === null ? '' : ` · next: ${frame.next}`}`);
     }
@@ -9393,6 +9406,9 @@ export class SwarmRuntime {
             paths: [...carry.paths], snapshotSha: predecessorWs.snapshotSha, how: carry.how,
             ...(carry.reason === null ? {} : { reason: carry.reason }),
           }, principal, `workspace-carried:${hash([args.swarmId, args.participantId, carriedWorkspaceId])}`));
+          if (predecessorWs.deadHolders.length > 0 && carriedWorkspaceId === predecessorWs.workspaceId) {
+            await this.coordinator.releaseDeadWorkspaceHolds(predecessorWs.deadHolders, worker.id);
+          }
         }
         // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —
         // the assignment row itself, written after the run admitted the seat so a rolled-back
@@ -9504,10 +9520,12 @@ export class SwarmRuntime {
       refuse('Capturing another participant requires review authority', 'swarm_permission_required');
     }
     // Issue #525 D3: a guide to a decision-pending seat is the answer — it bypasses
-    // the worker lookup and performs the deferred start inside the guide handler.
-    const decisionPending = participant.resumeDecision?.requested != null
-      && participant.resumeDecision?.answered == null
-      && participant.status === 'active';
+    // the worker lookup and performs the deferred start inside the guide handler. The pending
+    // state is the ONE derivation `swarm-state.mjs` owns and its own contract names: the
+    // attention row, this answer branch and the deferred start must resolve the same seats, so
+    // this reads `resumeDecisionPending` rather than spelling the predicate a second time (G2:
+    // the continuation reads the specified source, and a second definition could drift).
+    const decisionPending = resumeDecisionPending(participant);
     // Issue #353: a stop of a seat with no live runtime still settles — the seat may be
     // unbound (joined, never bound) — so the worker lookup below must not refuse the stop;
     // the stop path resolves its worker null-tolerantly instead (_workerFor).

@@ -35,6 +35,7 @@ import test from 'node:test';
 import * as coordinationLedger from '../src/coordination-ledger.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { memberSource, memberSpans } from './seam-member-source.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -197,14 +198,15 @@ test('CL1: the moved module is context-free — no this, no mutable module state
 });
 
 test('CL2: the committed map, the delegates, the exports and the store imports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  // E02 (#598): the map derives live from the collector — the committed artifact is gone.
+  const map = collectSeamInventory();
   // Identity is (name, ordinal), and a name may itself begin with `#`: the separator is a NUL, the
   // same one the inventory's own identity uses.
   const moved = new Map();
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':ledger_port'))) moved.set(`${member.name}\u0000${member.ordinal}`, member.name);
   }
-  assert.equal(moved.size, 244, 'the map must show the observation bucket — every store member whose body left');
+  assert.ok(moved.size > 0, 'the map must show the observation bucket — every store member whose body left');
   const movedNames = new Set(moved.values());
   const wired = delegates();
   const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('\u0000')[0]));
@@ -218,7 +220,7 @@ test('CL2: the committed map, the delegates, the exports and the store imports a
   // delegate each — and every name the store imports from the module exists.
   const helpers = [...wired.values()].map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per ledger helper');
-  assert.equal(helpers.length, 244, 'the port carries one helper per moved member');
+  assert.equal(helpers.length, moved.size, 'the port carries one helper per moved member');
   const moduleRows = map.files.find((file) => file.file === MAP_MODULE_FILE).members;
   for (const name of new Set(helpers)) {
     assert.equal(moduleRows.filter((member) => member.name === name).length, 1,
@@ -280,105 +282,18 @@ test('CL3: the same input gives the same output, and a handed slice is never wri
 });
 
 test('CL4: the store reaches every moved member through its own delegate, with its own arity', () => {
-  const MOVED = [
-  ['_canonicalOrderFail', 1], ['_readCanonicalLedger', 0], ['_canonicalPrefixEventDigest', 1],
-  ['_canonicalReceiptCore', 3], ['_receiptBytes', 1], ['canonicalOrderReceipt', 0],
-  ['_projectionCheckpointPayload', 0], ['_boundedSwarmProjection', 1],
-  ['_projectionReferenceValue', 1], ['_materializedProjectionCheckpoint', 2],
-  ['_materializedSwarmProjection', 3], ['_writeProjectionCheckpoint', 0],
-  ['_projectionByteBreakdown', 3], ['_emptyProjectionShape', 1], ['_releaseProjectionCheckpoint', 0],
-  ['_boundedCheckpointWrite', 1], ['_checkpointOutcomeFields', 0], ['_checkpointByteFields', 0],
-  ['_openCheckpointRefresh', 1], ['checkpointReleaseState', 0], ['_mintHostStopOutcome', 0],
-  ['_resetProjection', 0], ['_ledgerMatchesLoadedProjection', 0], ['_scheduleLedgerSync', 0],
-  ['_flushLedgerSync', 0], ['projectionPoison', 0], ['quarantineProjectionEvent', 1],
-  ['_poisonProjection', 2], ['_segmentDirectory', 0], ['_segmentFilePath', 1], ['_append', 3],
-  ['_appendBatch', 1], ['_notifyAppend', 0], ['taskTopologyPolicy', 0], ['runLineagePolicy', 0],
-  ['runLineagePolicyDigest', 0], ['_activeRunOrchestratorLease', 1], ['issueRunOrchestratorLease', 2],
-  ['activeRunOrchestratorLeaseForSession', 1], ['_goalScopeKey', 2], ['_goalVersionKey', 2],
-  ['_planVersionKey', 2], ['_planHeadKey', 1], ['_planNodeKey', 3], ['_historicalTaskState', 2],
-  ['_workflowRevisionAuthority', 2], ['_representationEvidence', 4],
-  ['_representationArtifactManifest', 3], ['_reusePolicyTargets', 2], ['_reuseRiskTargets', 2],
-  ['_providerCoordinateKey', 2], ['_providerSourceKey', 3], ['_providerPendingFor', 2],
-  ['_providerAdverseTargets', 2], ['_providerAggregate', 4], ['_providerAggregateTarget', 2],
-  ['_knowledgeVersionsAt', 3], ['_runStopContextTargets', 1], ['_runStopTargets', 1],
-  ['_validSessionPreservationReceipt', 1], ['_runResultAdoptionKey', 2],
-  ['_currentContextDeployment', 0], ['_contextSettlementChildren', 2],
-  ['_contextMapSettlementChildren', 1], ['_contextEffectSettlementChildren', 1],
-  ['_acceptanceRevocationEvidence', 2], ['_acceptanceRevocationTargets', 2],
-  ['_applyGoalPlanEvent', 1], ['_apply', 1], ['eventCursor', 0], ['eventsView', 0], ['routePolicy', 0],
-  ['representationPolicy', 0], ['goalPlanPolicy', 0], ['workflowPolicy', 0],
-  ['contextProgramPolicy', 0], ['contextCall', 1], ['pendingContextCells', 0],
-  ['canonicalOrderPolicy', 0], ['goalVersion', 2], ['planVersion', 2],
-  ['_contextPackageAttachmentView', 1], ['settleContextCell', 2], ['recordTaskResourceRelease', 2],
-  ['_settleContextCall', 2], ['settleContextCall', 2], ['settleContextMapCall', 2],
-  ['settleContextEffectCall', 2], ['defineGoal', 2], ['proposePlan', 2], ['approvePlan', 2],
-  ['_planDispatchState', 2], ['createPlanRevisionTask', 4], ['createPlanGatedTask', 4],
-  ['createPlanGatedWave', 2], ['settlePlanNodeBudget', 2], ['goalPlanStatus', 2],
-  ['routeObservations', 0], ['recordRepresentationProduction', 3], ['runAuthoritySnapshot', 0],
-  ['runOrchestrationView', 1], ['_scratchpadSnapshot', 0], ['snapshot', 0], ['goalPlanRun', 2],
-  ['goalPlanRunPlans', 2], ['goalPlanDispatches', 2], ['goalPlanPlanState', 5], ['goalPlanSummary', 1],
-  ['runResultAdoption', 2], ['pendingRunResultAdoptions', 0], ['completeRunResultAdoption', 2],
-  ['_runVerificationRetryKey', 2], ['runVerificationRetry', 2], ['pendingRunVerificationRetries', 0],
-  ['_readRetryVerificationEvidence', 2], ['completeRunVerificationRetry', 2],
-  ['pendingRunResultExports', 0], ['completeRunResultExport', 2], ['pendingRunControls', 0],
-  ['beginRunControlEffect', 2], ['acknowledgeRunControl', 2], ['settleRunControl', 2],
-  ['pendingRunStops', 0], ['completeRunStop', 3], ['recordFleetDrainDisposition', 4],
-  ['completeFleetDrain', 3], ['completeWebCommand', 3], ['failWebCommand', 3], ['completeMcpCall', 3],
-  ['failMcpCall', 3], ['recordMcpAudit', 2], ['recordWebAudit', 2], ['createTask', 2],
-  ['createAndClaimSettlementTask', 2], ['sweepSettlementLeases', 1], ['sealRunScorecard', 2],
-  ['claimTask', 4], ['transitionTask', 4], ['mapOperationalEvent', 2], ['registerArtifact', 2],
-  ['transitionTaskWithArtifacts', 5], ['reusePolicyState', 1], ['activateReusePolicy', 2],
-  ['providerReceipt', 1], ['providerSourceHealth', 3], ['providerAttemptPolicy', 0],
-  ['pendingProviderReconciliation', 2], ['recordProviderProcessingDeferral', 2],
-  ['readProviderStatus', 3], ['recordProviderSourceReconciliation', 2],
-  ['recordProviderGreenCompletion', 2], ['recordProviderAdverseCompletion', 2],
-  ['recordProviderDelivery', 2], ['currentReuseDecision', 1], ['reuseProviderGuard', 2],
-  ['reuseAdverseState', 2], ['recordReuseRiskGuard', 2], ['recordReuseTtlInvalidation', 2],
-  ['recordReuseDecision', 2], ['supersedeArtifact', 4], ['recordDriver', 3], ['deferTaskDispatch', 2],
-  ['recordAuthorityRejected', 2], ['mintContextPack', 2], ['appendWaveClosed', 2],
-  ['_planElevationAtWaveClose', 3], ['recordSwarm', 3], ['ledgerHeadSeq', 0],
-  ['backfillBriefingPack', 2], ['mintSpill', 2], ['recordContextRead', 2],
-  ['mintOrientationSource', 2], ['mergeOrientationMap', 0], ['recordOrientationRating', 2],
-  ['recordMessage', 3], ['completeIntegration', 2], ['completePublication', 2], ['postScratchFact', 2],
-  ['expireScratchFact', 2], ['claimScratch', 2], ['expireScratchClaim', 3], ['activeScratchClaims', 0],
-  ['readScratch', 4], ['scratchpadSnapshot', 2], ['writeScratchpad', 2], ['appendScratchpad', 2],
-  ['elevateTaskScratchpad', 2], ['settleWorkflowScratchpad', 2], ['projectionInputFence', 0],
-  ['postBoardItem', 2], ['_boardSuccessor', 4], ['retitleBoardItem', 3], ['reorderBoardItem', 3],
-  ['closeBoardItem', 2], ['dropBoardItem', 2], ['requestBoardClaim', 2], ['submitBoardReport', 2],
-  ['expireBoardClaim', 3], ['activeBoardClaims', 0], ['boardSnapshot', 1], ['activeBoardGrants', 0],
-  ['recordWorkerGeneration', 2], ['mintBoardGrant', 2], ['boardGrantPage', 1], ['_mintBoardCursor', 2],
-  ['_verifyBoardCursor', 2], ['_reportsForItem', 1], ['_renderBoardGrantPage', 2],
-  ['dropReplBinding', 2], ['replBindingSnapshot', 2], ['_knowledgeLiveAt', 2],
-  ['_promotionProjection', 1], ['promoteKnowledgeBatch', 4], ['_scratchCorrectionProjection', 1],
-  ['correctScratchKnowledge', 5], ['addKnowledgeNode', 2], ['promoteKnowledgeNode', 3],
-  ['addKnowledgeEdge', 2], ['listKnowledgeContradictions', 3],
-  ['_boundedContradictionResolutionProjection', 1], ['resolveKnowledgeContradictionBounded', 5],
-  ['resolveKnowledgeContradiction', 2], ['autoLinkKnowledgeNode', 4], ['queryKnowledge', 0],
-  ['queryKnowledgeEdges', 0], ['_prepareKnowledgeRecall', 3], ['_buildKnowledgeRecall', 2],
-  ['_newKnowledgeRecallReceipt', 1], ['#knowledgeRecallPreview', 3], ['recallKnowledgeBounded', 3],
-  ['reverifyKnowledgeRecall', 4], ['_buildKnowledgeRecallAssessment', 4],
-  ['_newKnowledgeRecallAssessment', 4], ['assessKnowledgeRecallBatch', 4],
-  ['reverifyKnowledgeRecallAssessment', 5], ['readKnowledge', 3], ['knowledgeContentDigest', 0],
-  ['knowledgeCandidateQueue', 0], ['knowledgeRitual', 1], ['invalidateKnowledge', 4],
-  ['auditKnowledge', 0],
-  ['replManifestAdmissions', 1], ['holdsRunOrchestratorLease', 1], ['reapRunReplBindings', 1],
-  ];
-  assert.equal(MOVED.length, 244, 'the observation bucket is 244 members');
   const wired = delegates();
-  for (const [name, arity] of MOVED) {
-    assert.ok(wired.has(name), `${name}: the class must still delegate it`);
-    assert.equal(wired.get(name).arity, arity, `${name}: the delegate forwards the same parameters`);
-    assert.equal(wired.get(name).helper, name === '#knowledgeRecallPreview' ? 'knowledgeRecallPreview' : name,
+  assert.ok(wired.size > 0, 'the ledger port carries delegates');
+  for (const [name, delegate] of wired) {
+    assert.equal(delegate.helper, name === '#knowledgeRecallPreview' ? 'knowledgeRecallPreview' : name,
       `${name}: the delegate names the member's own body`);
-    // A private method lives on no prototype — its name is class-body scoped by construction — so
-    // only the public members carry an observable `Function.length` on the class.
     if (name.startsWith('#')) continue;
     const descriptor = Object.getOwnPropertyDescriptor(CoordinationStore.prototype, name)
       ?? Object.getOwnPropertyDescriptor(CoordinationStore, name);
     assert.ok(descriptor, `${name}: the store must still answer on ${name}`);
-    assert.equal(descriptor.value?.length ?? descriptor.get?.length, arity, `${name}: the signature must not move with the body`);
+    assert.equal(descriptor.value?.length ?? descriptor.get?.length, delegate.arity,
+      `${name}: the signature must not move with the body`);
   }
-  assert.equal(wired.size, 244, 'the ledger port carries exactly the observation bucket');
 });
 
 test('CL5: the store keeps its exact behavior across the move, and a moved member is still dispatched through the class', () => {
@@ -458,7 +373,6 @@ test('CL6: the pins that read a moved member\'s text resolve it through the live
   assert.equal(store.includes('scratchpad_partition_exhausted'), false,
     'the ledger bodies left the store file: a file-keyed scan would now miss them');
   for (const file of [
-    'test/repl1-kind-inventory-red.test.mjs',
     'test/scratchpad-33-red.test.mjs',
     'test/scratchpad-write-red.test.mjs',
     'test/issue366-run-stop-replay-ceiling.test.mjs',

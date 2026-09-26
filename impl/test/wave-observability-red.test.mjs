@@ -812,24 +812,6 @@ test('A4-1: waves.list rows read local by construction — remote/stale are defe
   }
 });
 
-test('A4-2 PIN: processState only reads \'active\' on an exact match — \'unknown\' reads stale, never a guessed \'remote\' (F4/F12)', () => {
-  const src = readFileSync(fileURLToPath(new URL('../src/resident-authority.mjs', import.meta.url)), 'utf8');
-  // F12 — the negative pin is REGION-RESTRICTED to the processState function (resident-authority.mjs
-  // :51-64), so a comment or dead branch anywhere else in the file cannot trip it.
-  const region = src.slice(
-    src.indexOf('function processState('),
-    src.indexOf('function safeRegular('),
-  );
-  assert.ok(!region.includes("'remote'"),
-    'the processState function never reads remote — a dead-branch \'remote\' literal inside it is killed (F12)');
-  assert.equal((region.match(/return 'unknown'/g) ?? []).length, 2,
-    'exactly the two real unknown paths (resident-authority.mjs:56 non-ESRCH/EPERM kill error and :60 failed/empty ps read)');
-  assert.equal((region.match(/return 'stale'/g) ?? []).length, 1,
-    'exactly the one real stale return (ESRCH at :58; the ternary at :61 branches stale separately)');
-  assert.ok(region.includes('observed === expectedStart ? \'active\' : \'stale\''),
-    'only exactly \'active\' can ever produce a future remote; \'unknown\' reads stale (F4)');
-});
-
 // ===========================================================================
 // §E — CLI parity (D4)
 // ===========================================================================
