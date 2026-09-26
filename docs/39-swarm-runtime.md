@@ -667,7 +667,7 @@ text: one surface, one derivation, no drift.
 ## Every mutation answers with a receipt (issues #302, #301, #308, 2026-09-14)
 
 **A mutation is an operation you can account for.** `swarm.create`, `swarm.update` (every kind,
-close included), `swarm.recruit`, `swarm.guide`, `swarm.stop`, `swarm.capture` and `swarm.check`
+close included), `swarm.recruit`, `swarm.guide`, `swarm.stop` and `swarm.capture`
 answer with a RECEIPT — `receipt {command, event: {kind, seq, ts, actor}, changed:
 [{collection, id, seq, ts}]}` — the recorded event that proves the mutation happened and the rows
 it changed, plus `next: {command, args}`, the projection or action that follows (the same `next`
@@ -971,12 +971,12 @@ away. A recruit without `--issue` composes byte-identically to before. Seat-side
 `swarm_context_package_branch_not_found`).
 
 **Landing is a verb (#296).** `swarm integrate <swarm> <contributionId> --onto <branch> [--dry-run]`
-squashes the range merge-base..commit.sha of an ACCEPTED contribution onto the target in a scratch
+squashes the range merge-base..commit.sha of a contribution onto the target in a scratch
 checkout the deployment owns, runs the regenerators and the derived gate set there
-(`landing-table.mjs`: the seam inventory plus the declared region table), and records
+(the runner's own selector, `impl/src/verification-selection.mjs`, over the squash's checkout), and records
 `swarm.contribution_integrated` — the receipt of the git it actually ran, never
 caller-submittable. Refusals are typed and pre-effect where possible:
-`integrate_contribution_not_accepted`, `integrate_commit_unreachable`, `integrate_conflict`,
+`integrate_commit_unreachable`, `integrate_conflict`,
 `integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`. The gate run and
 the regenerators are asynchronous children of the resident's supervised pool, never on its loop
 (#459: `swarm.integration_started` / `swarm.integration_failed` rows, the host verify lease taken

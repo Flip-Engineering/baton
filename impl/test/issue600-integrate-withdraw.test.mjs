@@ -114,6 +114,12 @@ async function world(t, { gate = {} } = {}) {
     '{"name":"fixture-dep","version":"1.0.0","type":"module","exports":"./index.js"}\n');
   write(repo, 'impl/node_modules/fixture-dep/index.js', 'export const fixtureMarker = "installed";\n');
   write(repo, 'impl/src/coordinator.mjs', 'export const lane = 1;\n');
+  // The gate set is the runner's own selector over the squash's checkout (#598 item 3 removed the
+  // landing table's region gates), so this fixture carries one test file that statically imports
+  // the module the lane moves. The gate runner below sleeps, and a landing with nothing to run
+  // would settle before a withdraw could reach it.
+  write(repo, 'impl/test/gate-fixture.test.mjs',
+    "import '../src/coordinator.mjs';\n");
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');

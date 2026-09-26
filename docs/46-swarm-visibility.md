@@ -152,7 +152,7 @@ A view-derived row (never ledger-written), minted beside the other organization 
 ```js
 { kind: 'unreviewed_contribution', participantId, contributionId, seq, waitingSince,
   cadence: { crossedBy: 'swarm.participant_joined', seq },
-  next: { command: 'swarm.check', swarmId, participantId, contributionId } }
+  next: { command: 'swarm.view', swarmId, participantId, contributionId } }
 ```
 
 1. **Cadence without a clock (#163).** A contribution recorded at seq *s* sits "past one

@@ -69,6 +69,12 @@ async function world(t, { advanceRemote = false, advanceLocal = false, gatesRed 
   git(repo, 'config', 'user.name', 'Issue 570');
   git(repo, 'config', 'user.email', 'issue570@example.invalid');
   write(repo, 'README.md', 'base\n');
+  // The gate set is the runner's own selector over the squash's checkout (#598 item 3 removed the
+  // landing table's region gates), so this fixture carries one test file that statically imports
+  // the module the lane moves: without a file to select, the derived gate set is empty and the
+  // landing never reaches the red verdict the rows stage.
+  write(repo, 'impl/test/gate-fixture.test.mjs',
+    "import '../src/worktree.mjs';\n");
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');
