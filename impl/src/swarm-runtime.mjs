@@ -1,7 +1,7 @@
 import { rootAttentionObligations, rootContributionAttention, turnReportAsk } from './attention-obligations.mjs';
 import { contributionNeeds } from './contribution-needs.mjs';
 import { AttentionDispatcher } from './attention-dispatcher.mjs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
   SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
@@ -211,14 +211,29 @@ async function runGateFiles(dir, files, { pool = null, holder = null, leaseAutho
 /** Issue #580: switch the landing checkout between the squash and its target, so the change's
  * failing test files can be re-run on the target in the same directory with the same
  * dependencies. The squash commit holds every change, the regenerated artifacts included, so
- * switching back restores the checkout exactly. */
+ * switching back restores the checkout exactly.
+ *
+ * Issue #379: the checkout rides an AWAITED child, never a `spawnSync` on the resident's loop —
+ * a full-tree checkout of a landing checkout costs whole seconds of git work, and the loop it
+ * would freeze is the one answering the landing's own gate admission and every seat read beside
+ * it. The comparison path (the one caller) is asynchronous and awaits both switches. */
 function checkoutLandingTree(dir, sha) {
-  const ran = spawnSync('git', ['checkout', '--detach', '--force', '--quiet', sha], { cwd: dir, encoding: 'utf8' });
-  if (ran.status !== 0) {
-    throw Object.assign(new Error(`the landing checkout could not switch to ${sha}: ${`${ran.stderr ?? ''}`.trim().slice(0, 300)}`), {
-      code: 'integrate_change_invalid',
+  return new Promise((resolveSwitch, rejectSwitch) => {
+    const ran = spawn('git', ['checkout', '--detach', '--force', '--quiet', sha], { cwd: dir, encoding: 'utf8' });
+    let stderr = '';
+    ran.stderr.on('data', (chunk) => { stderr += chunk; });
+    ran.on('close', (status) => {
+      if (status === 0) { resolveSwitch(); return; }
+      rejectSwitch(Object.assign(new Error(`the landing checkout could not switch to ${sha}: ${stderr.trim().slice(0, 300)}`), {
+        code: 'integrate_change_invalid',
+      }));
     });
-  }
+    ran.on('error', (error) => {
+      rejectSwitch(Object.assign(new Error(`the landing checkout could not switch to ${sha}: ${error.message}`), {
+        code: 'integrate_change_invalid',
+      }));
+    });
+  });
 }
 
 /** The default gate runner: the repository's own suite over the derived files, run in the
@@ -293,7 +308,7 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   // side, and a comparison that ran carries none — so it rides beside `comparison.note`.
   let unjudgedNote = '';
   if (target !== null && squash !== null) {
-    checkoutLandingTree(dir, target);
+    await checkoutLandingTree(dir, target);
     try {
       // A failing file the target does not have is new with the change; it has nothing to compare
       // against, so its failures block.
@@ -319,7 +334,7 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
         base = NO_BASE_FILES;
       }
     } finally {
-      checkoutLandingTree(dir, squash);
+      await checkoutLandingTree(dir, squash);
     }
   } else {
     targetNote = '; no target to compare against, so every failure blocks';
