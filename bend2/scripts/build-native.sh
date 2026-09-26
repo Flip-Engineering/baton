@@ -15,7 +15,9 @@ if [ "$("$compiler" version)" != 'bend 2.0.25' ]; then
   echo 'This native binding requires Bend 2.0.25.' >&2
   exit 1
 fi
-mkdir -p .scratch/bend2
-"$compiler" bend2/src/coordinator/main.bend -o .scratch/bend2/coordinator.c
-"${CC:-clang}" -O1 -pthread .scratch/bend2/coordinator.c -lsqlite3 -lm -o .scratch/bend2/baton2
-printf '%s\n' "$root/.scratch/bend2/baton2"
+entry=${1:-bend2/src/coordinator/main.bend}
+output=${2:-.scratch/bend2/baton2}
+mkdir -p "$(dirname -- "$output")"
+"$compiler" "$entry" -o "$output.c"
+"${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm -o "$output"
+printf '%s\n' "$output"

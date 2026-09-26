@@ -1,294 +1,222 @@
-// C effect: spawn a child process with pipes for stdin/stdout/stderr.
-// Returns a handle packing the child PID. The caller writes to the child's
-// stdin with ProcessChild.write and reads stdout with ProcessChild.read.
-
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <spawn.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
-#ifndef BATON_PROCESS_CHILDREN_DEFINED
-#define BATON_PROCESS_CHILDREN_DEFINED
+extern char **environ;
 
 typedef struct {
   pid_t pid;
-  int stdin_fd;
-  int stdout_fd;
-  int stderr_fd;
-} SpawnedChild;
+  int input;
+  FILE *output;
+  int reaped;
+} BatonChild;
 
-#define CHILDREN_INITIAL_CAP 16
-static SpawnedChild* children = NULL;
-static int child_count = 0;
-static int children_cap = 0;
+typedef struct {
+  BatonChild *child;
+  char *args, *cwd, *log, *text;
+  size_t length;
+  u32 handle, signal;
+  int kind, error, eof;
+} BatonProcessCall;
 
-#endif
+static BatonChild **baton_children;
+static size_t baton_child_count, baton_child_capacity;
 
-static int alloc_child(pid_t pid, int in_fd, int out_fd, int err_fd) {
-  if (children == NULL) {
-    children_cap = CHILDREN_INITIAL_CAP;
-    children = malloc(sizeof(SpawnedChild) * (size_t)children_cap);
+enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID };
+
+static int baton_pipe(int fds[2]) {
+  if (pipe(fds)) return errno;
+  if (fcntl(fds[0],F_SETFD,FD_CLOEXEC) < 0 || fcntl(fds[1],F_SETFD,FD_CLOEXEC) < 0) {
+    int error=errno; close(fds[0]); close(fds[1]); return error;
   }
-  if (child_count >= children_cap) {
-    children_cap *= 2;
-    children = realloc(children, sizeof(SpawnedChild) * (size_t)children_cap);
-  }
-  int idx = child_count++;
-  children[idx].pid = pid;
-  children[idx].stdin_fd = in_fd;
-  children[idx].stdout_fd = out_fd;
-  children[idx].stderr_fd = err_fd;
-  return idx;
+  return 0;
 }
 
-#ifdef CID_PROCESSCHILD_SPAWN
-
-// ProcessChild.spawn(cmd: String, args: String, cwd: String) -> IO(U32)
-//
-// args is a single string with arguments separated by newlines.
-// Returns a child index (handle) as U32.
-Term processchild_spawn_run(Env e, Term* f, IoWork* w) {
-  u64 cmd_len = 0, args_len = 0, cwd_len = 0;
-  char* cmd = io_cstr(e, f[0], &cmd_len);
-  char* args_str = io_cstr(e, f[1], &args_len);
-  char* cwd = io_cstr(e, f[2], &cwd_len);
-
-  // Count arguments (split by newline).
-  int argc = 1; // cmd itself
-  for (u64 i = 0; i < args_len; i++) {
-    if (args_str[i] == '\n') argc++;
+static void baton_child_spawn(BatonProcessCall *call) {
+  if (!call->length || call->args[call->length-1] != 0 || !call->args[0]) {
+    call->error=EINVAL; return;
   }
-  if (args_len == 0) argc = 0;
-
-  // Build argv: [cmd, arg1, arg2, ..., NULL]
-  char** argv = malloc(sizeof(char*) * (1 + argc + 1));
-  argv[0] = cmd;
-  if (argc > 0 && args_len > 0) {
-    int ai = 0;
-    char* p = args_str;
-    for (u64 i = 0; i <= args_len; i++) {
-      if (i == args_len || args_str[i] == '\n') {
-        args_str[i] = '\0';
-        argv[1 + ai++] = p;
-        p = args_str + i + 1;
-      }
-    }
+  size_t count=0;
+  for(size_t i=0;i<call->length;i++) if(!call->args[i]) count++;
+  char **argv=calloc(count+1,sizeof(char *));
+  if(!argv) { call->error=ENOMEM; return; }
+  size_t index=0, start=0;
+  for(size_t i=0;i<call->length;i++) if(!call->args[i]) {
+    argv[index++]=call->args+start; start=i+1;
   }
-  argv[1 + argc] = NULL;
-
-  // Create pipes.
-  int pipe_in[2], pipe_out[2], pipe_err[2];
-  if (pipe(pipe_in) < 0 || pipe(pipe_out) < 0 || pipe(pipe_err) < 0) {
-    free(argv);
-    free(cmd);
-    free(args_str);
-    free(cwd);
-    return io_fail(e, errno, NULL);
+  int in[2], out[2];
+  call->error=baton_pipe(in);
+  if(call->error) { free(argv); return; }
+  call->error=baton_pipe(out);
+  if(call->error) { close(in[0]);close(in[1]);free(argv);return; }
+  int log=open(call->log,O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
+  if(log<0) { call->error=errno; goto pipes; }
+  FILE *reader=fdopen(out[0],"r");
+  if(!reader) { call->error=errno; close(log); goto pipes; }
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attr;
+  int rc=posix_spawn_file_actions_init(&actions);
+  if(rc) { call->error=rc; fclose(reader);out[0]=-1;close(log);goto pipes; }
+  rc=posix_spawnattr_init(&attr);
+  if(rc) { call->error=rc;posix_spawn_file_actions_destroy(&actions);fclose(reader);out[0]=-1;close(log);goto pipes; }
+#define BP_ACTION(expr) do { rc=(expr); if(rc) goto actions_done; } while(0)
+  BP_ACTION(posix_spawn_file_actions_addchdir_np(&actions,call->cwd));
+  BP_ACTION(posix_spawn_file_actions_adddup2(&actions,in[0],STDIN_FILENO));
+  BP_ACTION(posix_spawn_file_actions_adddup2(&actions,out[1],STDOUT_FILENO));
+  BP_ACTION(posix_spawn_file_actions_adddup2(&actions,log,STDERR_FILENO));
+  BP_ACTION(posix_spawn_file_actions_addclose(&actions,in[0]));
+  BP_ACTION(posix_spawn_file_actions_addclose(&actions,in[1]));
+  BP_ACTION(posix_spawn_file_actions_addclose(&actions,out[0]));
+  BP_ACTION(posix_spawn_file_actions_addclose(&actions,out[1]));
+  BP_ACTION(posix_spawn_file_actions_addclose(&actions,log));
+  sigset_t defaults;
+  sigemptyset(&defaults); sigaddset(&defaults,SIGPIPE);
+  BP_ACTION(posix_spawnattr_setsigdefault(&attr,&defaults));
+  BP_ACTION(posix_spawnattr_setpgroup(&attr,0));
+  BP_ACTION(posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF));
+  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,environ);
+actions_done:
+#undef BP_ACTION
+  posix_spawnattr_destroy(&attr); posix_spawn_file_actions_destroy(&actions); close(log);
+  if(rc) { call->error=rc;fclose(reader);out[0]=-1; }
+  else {
+    call->child->input=in[1];in[1]=-1;
+    call->child->output=reader;out[0]=-1;
   }
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    int err = errno;
-    close(pipe_in[0]); close(pipe_in[1]);
-    close(pipe_out[0]); close(pipe_out[1]);
-    close(pipe_err[0]); close(pipe_err[1]);
-    free(argv);
-    free(cmd);
-    free(args_str);
-    free(cwd);
-    return io_fail(e, err, NULL);
-  }
-
-  if (pid == 0) {
-    setsid();
-    close(pipe_in[1]);
-    close(pipe_out[0]);
-    close(pipe_err[0]);
-    dup2(pipe_in[0], STDIN_FILENO);
-    dup2(pipe_out[1], STDOUT_FILENO);
-    int devnull = open("/dev/null", O_WRONLY);
-    if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
-    close(pipe_in[0]);
-    close(pipe_out[1]);
-    if (cwd_len > 0 && chdir(cwd) < 0) _exit(126);
-    execvp(cmd, argv);
-    _exit(127);
-  }
-
-  close(pipe_in[0]);
-  close(pipe_out[1]);
-  close(pipe_err[0]);
-  close(pipe_err[1]);
-
-  int idx = alloc_child(pid, pipe_in[1], pipe_out[0], -1);
+pipes:
+  if(in[0]>=0)close(in[0]); if(in[1]>=0)close(in[1]);
+  if(out[0]>=0)close(out[0]); if(out[1]>=0)close(out[1]);
   free(argv);
-  free(cmd);
-  free(args_str);
-  free(cwd);
-
-  if (idx < 0) {
-    kill(pid, SIGKILL);
-    waitpid(pid, NULL, 0);
-    close(pipe_in[1]);
-    close(pipe_out[0]);
-    close(pipe_err[0]);
-    return io_fail(e, ENOMEM, "child allocation failed");
-  }
-
-  return (Term)(u32)idx;
 }
 
-static void __attribute__((constructor)) processchild_spawn_use(void) {
-  io_eff(CID_PROCESSCHILD_SPAWN, processchild_spawn_run, 0);
-}
-
-#endif
-
-#ifdef CID_PROCESSCHILD_WRITE
-
-// ProcessChild.write(handle: U32, data: String) -> IO(Unit)
-Term processchild_write_run(Env e, Term* f, IoWork* w) {
-  int idx = (int)(u32)f[0];
-  if (idx < 0 || idx >= child_count) return io_fail(e, EINVAL, "invalid child handle");
-
-  u64 len = 0;
-  char* data = io_cstr(e, f[1], &len);
-  ssize_t written = 0;
-  while ((u64)written < len) {
-    ssize_t n = write(children[idx].stdin_fd, data + written, len - (u64)written);
-    if (n < 0) {
-      int err = errno;
-      free(data);
-      return io_fail(e, err, NULL);
+static void baton_process_call(IoWork *w) {
+  BatonProcessCall *call=(BatonProcessCall *)w->data;
+  BatonChild *child=call->child;
+  if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
+  if(call->kind==BP_WRITE) {
+    size_t offset=0;
+    while(offset<call->length) {
+      ssize_t n=write(child->input,call->text+offset,call->length-offset);
+      if(n<0 && errno==EINTR) continue;
+      if(n<=0) { call->error=n<0?errno:EIO;break; }
+      offset+=(size_t)n;
     }
-    written += n;
+  } else if(call->kind==BP_CLOSE) {
+    if(child->input>=0) {
+      if(close(child->input)) call->error=errno;
+      child->input=-1;
+    }
+  } else if(call->kind==BP_READ) {
+    if(!child->output) { call->error=EBADF;return; }
+    size_t capacity=0;
+    ssize_t n;
+    do { errno=0;n=getline(&call->text,&capacity,child->output); }
+    while(n<0 && errno==EINTR && (clearerr(child->output),1));
+    if(n<0) {
+      if(feof(child->output)) call->eof=1;
+      else call->error=errno?errno:EIO;
+    } else {
+      call->length=(size_t)n;
+      if(call->length && call->text[call->length-1]=='\n') call->length--;
+    }
+  } else if(call->kind==BP_WAIT) {
+    int status;
+    pid_t pid;
+    do { pid=waitpid(child->pid,&status,0); } while(pid<0 && errno==EINTR);
+    if(pid<0) { call->error=errno;return; }
+    child->reaped=1;
+    if(child->input>=0) {close(child->input);child->input=-1;}
+    if(child->output) {fclose(child->output);child->output=NULL;}
+    char status_text[64];
+    if(WIFEXITED(status)) snprintf(status_text,sizeof(status_text),"exit %d",WEXITSTATUS(status));
+    else if(WIFSIGNALED(status)) snprintf(status_text,sizeof(status_text),"signal %d",WTERMSIG(status));
+    else { call->error=ECHILD;return; }
+    call->text=strdup(status_text);
+    if(!call->text) call->error=ENOMEM;
+    else call->length=strlen(call->text);
+  } else if(call->kind==BP_SIGNAL) {
+    if(kill(-child->pid,(int)call->signal)) call->error=errno;
   }
-  free(data);
-  return term_pak(CID_UNIT, 0);
 }
 
-static void __attribute__((constructor)) processchild_write_use(void) {
-  io_eff(CID_PROCESSCHILD_WRITE, processchild_write_run, 0);
-}
-
+static Term baton_process_pack(Env e, IoWork *w) {
+  BatonProcessCall *call=(BatonProcessCall *)w->data;
+  Term value=term_pak(CID_UNIT,0);
+  if(!call->error) {
+    if(call->kind==BP_SPAWN) value=(Term)call->handle;
+    else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
+#ifdef CID_SOME
+    else if(call->kind==BP_READ) value=call->eof ? term_pak(CID_NONE,0)
+      : io_box(e,CID_SOME,io_str(e,call->text,call->length));
 #endif
+  }
+  Term result=call->error ? io_fail(e,call->error,NULL) : io_done(e,value);
+  if(call->kind==BP_SPAWN && call->error) { baton_children[call->handle]=NULL;free(call->child); }
+  free(call->args);free(call->cwd);free(call->log);free(call->text);free(call);
+  w->data=NULL;
+  return result;
+}
 
+static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
+  BatonProcessCall *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  call->kind=kind;
+  if(kind==BP_SPAWN) {
+    if(baton_child_count==UINT32_MAX) {free(call);return io_fail(e,ENOMEM,NULL);}
+    if(baton_child_count==baton_child_capacity) {
+      size_t capacity=baton_child_capacity?baton_child_capacity*2:16;
+      BatonChild **next=realloc(baton_children,capacity*sizeof(*next));
+      if(!next) {free(call);return io_fail(e,ENOMEM,NULL);}
+      baton_children=next;baton_child_capacity=capacity;
+    }
+    call->child=calloc(1,sizeof(*call->child));
+    if(!call->child) {free(call);return io_fail(e,ENOMEM,NULL);}
+    call->child->input=-1;
+    call->handle=(u32)baton_child_count++;
+    baton_children[call->handle]=call->child;
+    u64 length=0,cwd_length=0,log_length=0;
+    call->args=io_cstr(e,f[0],&length);call->length=length;
+    call->cwd=io_cstr(e,f[1],&cwd_length);
+    call->log=io_cstr(e,f[2],&log_length);
+    if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
+  } else {
+    call->handle=(u32)f[0];
+    if(call->handle>=baton_child_count || !baton_children[call->handle]) {free(call);return io_fail(e,EBADF,NULL);}
+    call->child=baton_children[call->handle];
+    if(call->child->reaped && kind!=BP_WRITE) {free(call);return io_fail(e,ECHILD,NULL);}
+    if(kind==BP_PID) {Term pid=io_done(e,(Term)call->child->pid);free(call);return pid;}
+    if(kind==BP_WRITE) {u64 length=0;call->text=io_cstr(e,f[1],&length);call->length=length;}
+    if(kind==BP_SIGNAL) call->signal=(u32)f[1];
+  }
+  w->data=(char *)call;
+  if(call->error) return baton_process_pack(e,w);
+  return io_work(w,baton_process_call,baton_process_pack);
+}
+
+#define BP_EFFECT(name,ID,kind) \
+  static Term name##_run(Env e,Term *f,IoWork *w){return baton_process_begin(e,f,w,kind);} \
+  static void __attribute__((constructor)) name##_use(void){io_eff(ID,name##_run,0);}
+#ifdef CID_PROCESSCHILD_SPAWN
+BP_EFFECT(baton_spawn,CID_PROCESSCHILD_SPAWN,BP_SPAWN)
+#endif
+#ifdef CID_PROCESSCHILD_WRITE
+BP_EFFECT(baton_write,CID_PROCESSCHILD_WRITE,BP_WRITE)
+#endif
 #ifdef CID_PROCESSCHILD_CLOSE_STDIN
-
-// ProcessChild.close_stdin(handle: U32) -> IO(Unit)
-Term processchild_close_stdin_run(Env e, Term* f, IoWork* w) {
-  int idx = (int)(u32)f[0];
-  if (idx < 0 || idx >= child_count) return io_fail(e, EINVAL, "invalid child handle");
-  if (children[idx].stdin_fd >= 0) {
-    close(children[idx].stdin_fd);
-    children[idx].stdin_fd = -1;
-  }
-  return term_pak(CID_UNIT, 0);
-}
-
-static void __attribute__((constructor)) processchild_close_stdin_use(void) {
-  io_eff(CID_PROCESSCHILD_CLOSE_STDIN, processchild_close_stdin_run, 0);
-}
-
+BP_EFFECT(baton_close,CID_PROCESSCHILD_CLOSE_STDIN,BP_CLOSE)
 #endif
-
 #ifdef CID_PROCESSCHILD_READ_LINE
-
-// ProcessChild.read_line(handle: U32) -> IO(String)
-// Read one line from stdout (up to newline or EOF). Returns the line without
-// the newline. Returns empty string at EOF.
-Term processchild_read_line_run(Env e, Term* f, IoWork* w) {
-  int idx = (int)(u32)f[0];
-  if (idx < 0 || idx >= child_count) return io_fail(e, EINVAL, "invalid child handle");
-
-  u32 cap = 4096;
-  u32 n = 0;
-  char* buf = malloc(cap);
-  for (;;) {
-    char c;
-    ssize_t got = read(children[idx].stdout_fd, &c, 1);
-    if (got <= 0) break;
-    if (c == '\n') break;
-    if (n == cap) { cap *= 2; buf = realloc(buf, cap); }
-    buf[n++] = c;
-  }
-  Term r = io_str(e, buf, n);
-  free(buf);
-  return r;
-}
-
-static void __attribute__((constructor)) processchild_read_line_use(void) {
-  io_eff(CID_PROCESSCHILD_READ_LINE, processchild_read_line_run, 0);
-}
-
+BP_EFFECT(baton_read,CID_PROCESSCHILD_READ_LINE,BP_READ)
 #endif
-
 #ifdef CID_PROCESSCHILD_WAIT
-
-// ProcessChild.wait(handle: U32) -> IO(U32)
-// Wait for the child to exit, return the exit status (or 128+signal).
-Term processchild_wait_run(Env e, Term* f, IoWork* w) {
-  int idx = (int)(u32)f[0];
-  if (idx < 0 || idx >= child_count) return io_fail(e, EINVAL, "invalid child handle");
-
-  int status = 0;
-  pid_t r = waitpid(children[idx].pid, &status, 0);
-  if (r < 0) return io_fail(e, errno, NULL);
-
-  u32 code;
-  if (WIFEXITED(status)) code = (u32)WEXITSTATUS(status);
-  else if (WIFSIGNALED(status)) code = 128 + (u32)WTERMSIG(status);
-  else code = 255;
-
-  // Close remaining fds.
-  if (children[idx].stdin_fd >= 0) close(children[idx].stdin_fd);
-  if (children[idx].stdout_fd >= 0) close(children[idx].stdout_fd);
-  if (children[idx].stderr_fd >= 0) close(children[idx].stderr_fd);
-  children[idx].stdin_fd = -1;
-  children[idx].stdout_fd = -1;
-  children[idx].stderr_fd = -1;
-
-  return (Term)code;
-}
-
-static void __attribute__((constructor)) processchild_wait_use(void) {
-  io_eff(CID_PROCESSCHILD_WAIT, processchild_wait_run, 0);
-}
-
+BP_EFFECT(baton_wait,CID_PROCESSCHILD_WAIT,BP_WAIT)
 #endif
-
 #ifdef CID_PROCESSCHILD_SIGNAL
-
-// ProcessChild.signal(handle: U32, sig: U32) -> IO(Unit)
-Term processchild_signal_run(Env e, Term* f, IoWork* w) {
-  int idx = (int)(u32)f[0];
-  if (idx < 0 || idx >= child_count) return io_fail(e, EINVAL, "invalid child handle");
-  int sig = (int)(u32)f[1];
-  if (kill(children[idx].pid, sig) < 0) return io_fail(e, errno, NULL);
-  return term_pak(CID_UNIT, 0);
-}
-
-static void __attribute__((constructor)) processchild_signal_use(void) {
-  io_eff(CID_PROCESSCHILD_SIGNAL, processchild_signal_run, 0);
-}
-
+BP_EFFECT(baton_signal,CID_PROCESSCHILD_SIGNAL,BP_SIGNAL)
 #endif
-
 #ifdef CID_PROCESSCHILD_PID
-
-// ProcessChild.pid(handle: U32) -> IO(U32)
-Term processchild_pid_run(Env e, Term* f, IoWork* w) {
-  int idx = (int)(u32)f[0];
-  if (idx < 0 || idx >= child_count) return io_fail(e, EINVAL, "invalid child handle");
-  return (Term)(u32)children[idx].pid;
-}
-
-static void __attribute__((constructor)) processchild_pid_use(void) {
-  io_eff(CID_PROCESSCHILD_PID, processchild_pid_run, 0);
-}
-
+BP_EFFECT(baton_pid,CID_PROCESSCHILD_PID,BP_PID)
 #endif
+#undef BP_EFFECT
+static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
