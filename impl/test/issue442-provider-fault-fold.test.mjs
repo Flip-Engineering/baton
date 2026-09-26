@@ -235,7 +235,7 @@ test('442-a1: a provider-fault kill folds ONE fault row, settles the seat, and p
     'the row names both commands that settle the seat');
 });
 
-test('442-a2: the fault-settled seat is still resumable — the attention row\'s own next act works', async (t) => {
+test('442-a2: the fault-settled seat is still resumable — the one recruit continues it', async (t) => {
   const f = world('a2');
   const seat = await faultedSeat(f, { label: 'a2' });
   t.after(() => close(seat));
@@ -247,11 +247,10 @@ test('442-a2: the fault-settled seat is still resumable — the attention row\'s
   const recruited = await seat.call('recruit', {
     swarmId: 'sw', participantId: 'beta', objective: "continue alpha's lane", resumeFrom: 'alpha',
   });
-  assert.equal(recruited.resumeDecision?.state, 'pending',
-    'a resume of the faulted predecessor lands the continuation question (docs/52 D1)');
-  // The question's answer starts the successor (#525 D3): the faulted lane's own next act, one
-  // guide later.
-  await seat.call('guide', { swarmId: 'sw', participantId: 'beta', message: "Continue alpha's lane." });
+  // Issue #572: the resume performs the continuation itself. No question is recorded for an
+  // orchestrator to answer, so the recovered seat starts without an external act.
+  assert.equal(recruited.resumeDecision ?? null, null,
+    'the resume leaves no decision pending');
   const brief = seat.driver.coordination.swarm('sw').participants.beta.brief;
   const situation = brief.split('## Swarm situation')[1] ?? '';
   assert.equal(situation.includes('- alpha'), false,

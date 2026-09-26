@@ -58,9 +58,10 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // Issue #443: the PERFORMED re-route — the successor an `auto` swarm bound on the first
   // candidate, recorded by the runtime from the recruit it really ran, never caller-submittable.
   'swarm.rerouted',
-  // Issue #525: the resume-continuation decision — a resume-from recruit under the default
-  // `resumeContinuation: 'manual'` policy records the question, and the orchestrator's guide
-  // records the answer. Both are runtime-recorded, never caller-submittable.
+  // Issue #525's resume-continuation decision is GONE (#572): a resume-from recruit performs the
+  // full recovery and continuation in the one command, so nothing asks an orchestrator whether to
+  // continue a recovered seat and nothing parks one. The two kinds stay in the fold because the
+  // ledgers of deployments that ran the mechanism still hold their rows; no writer emits them.
   'swarm.resume_decision_requested',
   'swarm.resume_decision_answered',
   'swarm.context_updated',
@@ -109,18 +110,7 @@ export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_cl
 export const SWARM_ROUTE_BILLING_BASES = Object.freeze(['api', 'subscription']);
 /** The fields a `swarm.policy_updated` row may carry — the closed vocabulary a misspelled policy
  * field refuses against, so a policy nobody reads never lands in the durable record. */
-export const SWARM_POLICY_FIELDS = Object.freeze(['rerouteOnProviderFault', 'reroutePreferApi', 'resumeContinuation']);
-export const SWARM_RESUME_CONTINUATION_MODES = Object.freeze(['manual', 'auto']);
-
-/** Issue #525 D7: a seat is decision-pending exactly when its `resumeDecision.requested` has no
- * answer and the seat has not left — read from the folded row, never a stored flag. The
- * attention row, the guide's answer branch and the deferred start all read this ONE derivation,
- * so they can never disagree about which seats wait on an orchestrator. */
-export function resumeDecisionPending(participant) {
-  const decision = participant?.resumeDecision ?? null;
-  return decision !== null && decision.requested != null && decision.answered == null
-    && participant.status === 'active';
-}
+export const SWARM_POLICY_FIELDS = Object.freeze(['rerouteOnProviderFault', 'reroutePreferApi']);
 
 // The remedy note a departed-seat group refusal carries (#395). A named constant, not an inline
 // literal: the fold-admission audit classifies an integrity(...) call by its LAST literal
@@ -779,10 +769,7 @@ export function validateSwarmEvent(kind, payload) {
     if (p.reroutePreferApi !== undefined && typeof p.reroutePreferApi !== 'boolean') {
       refuse('reroutePreferApi must be a boolean', 'invalid_payload');
     }
-    if (p.resumeContinuation !== undefined && !SWARM_RESUME_CONTINUATION_MODES.includes(p.resumeContinuation)) {
-      refuse(`resumeContinuation must be one of: ${SWARM_RESUME_CONTINUATION_MODES.join(', ')}`, 'invalid_payload');
-    }
-    if (p.rerouteOnProviderFault === undefined && p.reroutePreferApi === undefined && p.resumeContinuation === undefined) {
+    if (p.rerouteOnProviderFault === undefined && p.reroutePreferApi === undefined) {
       refuse('swarm.policy_updated names no policy field to change', 'invalid_payload');
     }
     return;

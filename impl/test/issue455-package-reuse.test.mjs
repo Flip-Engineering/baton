@@ -202,12 +202,6 @@ const recruit = (f, seat, extra = []) => runBatonCli(
   f.client, { issueReader: issueReader(f.issueState), contextRepoRoot: f.repoRoot },
 );
 
-/** The root's answer to a recovered seat's continuation question (#525): the same CLI spelling the
- * guide verb documents, so the answer really travels the surface under test. */
-const answerResume = (f, seat) => runBatonCli(
-  parseBatonCli(['swarm', 'guide', SWARM_ID, seat, 'Continue the lane.']), f.client, {},
-);
-
 const seatRow = (coordination, seat) => coordination.swarm(SWARM_ID).participants[seat] ?? null;
 const admittedEvents = (coordination) => coordination.eventsView()
   .filter((event) => event.kind === 'package.admitted');
@@ -306,10 +300,9 @@ test('455-b: --resume-from a provider-fault-settled seat reuses the package and 
 
   // RED BEFORE #455: the identical package was refused as a duplicate, so the fault-settled lane
   // could not be resumed with the issue it was recruited for (#442's own remedy, blocked).
+  // Issue #572: the resume is the whole recovery — the package attach and the composed brief land
+  // in the recruit that performs it, with no continuation question to answer.
   await recruit(f, 'glm-455b', ['--issue', String(ISSUE), '--resume-from', 'glm-455']);
-  // #525: the resume lands the continuation question; the root's answer starts the successor, and
-  // that deferred start is where the package attach and the composed brief land.
-  await answerResume(f, 'glm-455b');
   const settled = seatRow(f.coordination, 'glm-455');
   assert.equal(settled.status, 'left', 'the runtime folded the provider fault onto the predecessor');
   assert.equal(settled.leftReason, 'provider_fault');

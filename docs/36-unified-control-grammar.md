@@ -481,6 +481,7 @@ the MCP tool table, and the web bus gate on.
 | `swarm.notify` | `swarmId`, `participantId`, `message`, `toSwarmId`, `priority`, `inReplyTo`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.notifications` | `swarmId`, `receipt`, `participantId`, `afterSeq` | `observe` | web + mcp | identity-keyed |
 | `swarm.capture` | `swarmId`, `participantId`, `contributionId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
+| `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
 | `swarm.integrate` | `swarmId`, `contributionId`, `target`, `dryRun`, `withdraw`, `reason`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey`, `view` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 
@@ -527,7 +528,7 @@ records for itself, disjoint from the caller-submittable set above:
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).
 
-**Attention kinds (closed set, 24).** Each view row is a condition that needs an act, derived by the
+**Attention kinds (closed set, 25).** Each view row is a condition that needs an act, derived by the
 runtime from durable state — never asserted by a caller:
 
 - `worker_lost_on_restart`
@@ -535,7 +536,6 @@ runtime from durable state — never asserted by a caller:
 - `provider_fault`
 - `reroute_proposed`
 - `reroute_no_candidate`
-- `resume_decision_required`
 - `member_left_session_live`
 - `delegation_orphaned`
 - `assignment_holder_gone`
@@ -544,6 +544,8 @@ runtime from durable state — never asserted by a caller:
 - `coupling_writer_gone`
 - `coupling_writer_bypassed`
 - `closed_with_live_participants`
+- `check_queued`
+- `check_queue_timeout`
 - `recruit_queued`
 - `recruit_queue_timeout`
 - `unreviewed_contribution`

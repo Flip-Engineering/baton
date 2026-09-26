@@ -247,8 +247,7 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
   // `manual` is the default: the policy says nothing, so NO successor is spawned by the runtime.
   const view = await w.call('view', { swarmId: SWARM });
   assert.equal(w.starts.length, startedBefore, 'a manual swarm never spawns on its own');
-  assert.deepEqual(view.policy,
-    { rerouteOnProviderFault: 'manual', reroutePreferApi: false, resumeContinuation: 'manual' },
+  assert.deepEqual(view.policy, { rerouteOnProviderFault: 'manual', reroutePreferApi: false },
     'the view renders the policy with its defaults resolved');
 
   // The policy is a closed vocabulary, enforced in the lane that knows best: the contract refuses
@@ -282,7 +281,7 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
 test('443-b1: `auto` performs the resume onto the first candidate, carrying the workspace and the why', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
-    policy: { rerouteOnProviderFault: 'auto', resumeContinuation: 'auto' }, tag: 'b1',
+    policy: { rerouteOnProviderFault: 'auto' }, tag: 'b1',
   });
   const policies = rowsOf(w.store, 'swarm.policy_updated');
   assert.equal(policies.length, 1, 'the swarm-level policy is one recorded row');
@@ -345,9 +344,6 @@ test('443-b2: a hand-typed resume of a faulted seat still says why the successor
     swarmId: SWARM, participantId: 'beta', objective: 'continue alpha', resumeFrom: 'alpha',
     options: { exact: { ...OPEN_API } },
   });
-  // #525: the hand-typed resume lands the continuation question; the answer starts the seat and
-  // its brief is composed then.
-  await w.call('guide', { swarmId: SWARM, participantId: 'beta', message: 'Continue alpha\'s lane.' });
   const brief = w.store.swarm(SWARM).participants.beta.brief;
   const section = brief.slice(brief.indexOf('## Re-routed')).split('\n\n## ')[0];
   assert.ok(section.includes(PROVIDER_FAULT_CODES.quota), 'the fault that ended the predecessor');
@@ -360,36 +356,24 @@ test('443-b2: a hand-typed resume of a faulted seat still says why the successor
   assert.ok(brief.includes('## Inheritance from alpha'));
 });
 
-test('443-b3: an auto-rerouted successor under the default continuation policy pends for the answer', async (t) => {
-  // The two policies compose independently (docs/52 D5): `auto` lets the runtime PERFORM the
-  // resume, while the default `manual` continuation still makes the recovered seat wait for its
-  // orchestrator's decision — the recovery is automated, the question is not skipped.
+test('443-b3: an auto-rerouted successor is started by the resume itself, with no question recorded', async (t) => {
+  // Issue #572: the resume is performed and the seat started by the one act — nothing asks the
+  // orchestrator whether the recovered seat may work.
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
     policy: { rerouteOnProviderFault: 'auto' }, tag: 'b3',
   });
-  const view = await w.call('view', { swarmId: SWARM });
+  await w.call('view', { swarmId: SWARM });
   const successorId = rowsOf(w.store, 'swarm.rerouted')[0]?.payload.successor ?? null;
   assert.ok(successorId !== null, 'the auto policy performed the resume and recorded it');
 
   const successor = w.store.swarm(SWARM).participants[successorId];
   assert.equal(successor.status, 'active');
-  assert.equal(successor.bindings.length, 0, 'no worker is bound before the answer (docs/52 D1)');
-  assert.equal(w.starts.length, 2, 'the auto reroute started no run for the successor');
-  const requests = rowsOf(w.store, 'swarm.resume_decision_requested')
-    .filter((row) => row.payload.participantId === successorId);
-  assert.equal(requests.length, 1, 'the question is recorded for the auto-rerouted successor');
-  assert.equal(requests[0].payload.predecessor, 'alpha');
-  const attention = view.attention.find((row) => row.kind === 'resume_decision_required'
-    && row.participantId === successorId);
-  assert.ok(attention, 'and the view pages the orchestrator for it');
-
-  // The answer starts the seat on the route the auto policy chose.
-  await w.call('guide', { swarmId: SWARM, participantId: successorId, message: 'Continue the lane.' });
-  const bound = w.store.swarm(SWARM).participants[successorId];
-  assert.equal(bound.bindings.length, 1, 'the answer binds the successor');
-  assert.deepEqual({ ...bound.route }, { ...OPEN_SUBSCRIPTION },
+  assert.equal(successor.bindings.length, 1, 'the successor is bound by the act that recovered it');
+  assert.deepEqual({ ...successor.route }, { ...OPEN_SUBSCRIPTION },
     'on the candidate the auto policy chose');
+  assert.equal(rowsOf(w.store, 'swarm.resume_decision_requested').length, 0,
+    'no question is recorded, so no seat waits on an orchestrator');
 });
 
 // ── (c) subscription awareness: a closed window is named, never silently dropped ────────────────
