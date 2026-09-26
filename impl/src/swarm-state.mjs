@@ -2310,6 +2310,10 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       // receipt so the exclusion is never a silent one. Absent when the landing excluded nothing.
       ...(Array.isArray(p.inherited) && p.inherited.length > 0
         ? { inherited: Object.freeze([...p.inherited]) } : {}),
+      // Issue #254: the ignored additions the landing dropped, kept on the receipt so the
+      // exclusion is never a silent one. Absent when the landing filtered nothing.
+      ...(Array.isArray(p.debris) && p.debris.length > 0
+        ? { debris: Object.freeze([...p.debris]) } : {}),
       issue: p.issue ?? null,
       dryRun: p.dryRun === true,
       actor: meta.actor, seq: meta.seq, ts: meta.ts,

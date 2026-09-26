@@ -2703,7 +2703,7 @@ export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
  *   start hook (#459): called once, the moment the scratch checkout exists and before the squash
  *   or any gate, so the durable record of a landing names its directory while it is still running
  * @returns {Promise<{base: string, target: string, targetHeadBefore: string, targetHeadAfter: string|null,
- *   squashSha: string, changedPaths: string[], regenerated: string[],
+ *   squashSha: string, changedPaths: string[], regenerated: string[], debris: string[],
  *   gates: {baseSha: string, files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
  */
 export async function landContribution(repoRoot, request) {
@@ -2918,6 +2918,23 @@ export async function landContribution(repoRoot, request) {
         gitFile(['rm', '--cached', '--quiet', '--', path], checkout.dir, { stdio: 'pipe' });
         inherited.push(path);
       }
+      // Issue #254 (the operator ruling on the debris the 2026-09-26 branches carried — a
+      // node_modules symlink and __pycache__ trees): the repository's ignore rules decide what
+      // an ADDED path may name. A path the squash adds that the repository's .gitignore matches
+      // is build debris, and it leaves the index here, beside the inherited exclusions above;
+      // modifications and deletions pass untouched. The receipt names every path it took.
+      const debris = [];
+      for (const path of sh('git', ['diff', '--cached', '--name-only', '--diff-filter=A'], checkout.dir)
+        .split('\n').filter((line) => line.length > 0)) {
+        let ignored = false;
+        try {
+          sh('git', ['check-ignore', '-q', '--no-index', '--', path], checkout.dir);
+          ignored = true;
+        } catch { /* exit 1: the path is not ignored */ }
+        if (!ignored) continue;
+        gitFile(['rm', '--cached', '--quiet', '--', path], checkout.dir, { stdio: 'pipe' });
+        debris.push(path);
+      }
       const changed = sh('git', ['diff', '--cached', '--name-only'], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const regenerated = changed.filter((path) => !changedBeforeRegeneration.includes(path));
@@ -2933,7 +2950,7 @@ export async function landContribution(repoRoot, request) {
       const targetChanged = sh('git', ['diff', '--name-only', base, ontoHead], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const overlaps = changed.filter((path) => targetChanged.includes(path));
-      return { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead };
+      return { checkout, squashSha, changed, regenerated, overlaps, inherited, debris, ontoHead };
     } catch (error) {
       await checkout.cleanup();
       throw error;
@@ -3064,12 +3081,14 @@ export async function landContribution(repoRoot, request) {
       changedPaths: landed.changed, dryRun,
       ...(reboundOnto === null ? {} : { verdictSquash, reboundOnto }),
       ...(landed.inherited.length === 0 ? {} : { inherited: landed.inherited }),
+      ...(landed.debris.length === 0 ? {} : { debris: landed.debris }),
     });
     return {
       base, target, targetHeadBefore,
       targetHeadAfter: dryRun ? null : landed.squashSha,
       squashSha: landed.squashSha, changedPaths: landed.changed,
       regenerated: landed.regenerated, overlaps: landed.overlaps, inherited: landed.inherited,
+      debris: landed.debris,
       gates: {
         baseSha: gateBase,
         files: [...(gates?.files ?? [])],

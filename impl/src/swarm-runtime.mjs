@@ -7748,7 +7748,11 @@ export class SwarmRuntime {
         : `- gates: skipped — ${receipt.gates.skipped}`,
     ];
     if (receipt.regenerated.length > 0) lines.push(`- regenerated: ${receipt.regenerated.join(', ')}`);
-    // Issue #466: the close guidance is composed ONLY for an issue the landing can attribute to the
+    // Issue #254: the ignored additions the squash dropped — named here so the target's history
+    // keeps the exclusion beside the landing it rode, never a silent drop.
+    if (Array.isArray(receipt.debris) && receipt.debris.length > 0) {
+      lines.push(`- ignored additions dropped (issue #254): ${receipt.debris.join(', ')}`);
+    }
     // contribution itself — the number is on the receipt and this is the text the root posts with
     // it. A contribution whose seat carried no package has no issue, and a comment that guessed one
     // (the swarm's purpose, a region's label) is exactly the mis-attribution the live landing made:
@@ -8036,6 +8040,10 @@ export class SwarmRuntime {
       // here is what keeps the exclusion from being a silent drop.
       ...(Array.isArray(landed.inherited) && landed.inherited.length > 0
         ? { inherited: [...landed.inherited] } : {}),
+      // Issue #254: the ignored additions the squash dropped, named on the receipt for the same
+      // reason inherited names its own exclusions.
+      ...(Array.isArray(landed.debris) && landed.debris.length > 0
+        ? { debris: [...landed.debris] } : {}),
       issue, dryRun: landed.dryRun,
     };
     // A key of its OWN: `_once` already recorded the operation REQUEST under the operation key, and a
