@@ -23,6 +23,7 @@ type Command is Data:
   Inbox{id: String}
   Land{worker: String, repo: String, target: String}
   LandChecked{worker: String, repo: String, target: String, check: String, files: String}
+  Push{repo: String, branch: String, remote: String}
   Status{}
   Workers{}
   Turns{id: String}
@@ -103,6 +104,7 @@ def sql(command: Command) -> String:
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
     case Land{worker,repo,target}: ""
     case LandChecked{worker,repo,target,check,files}: ""
+    case Push{repo,branch,remote}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Worktree{id}: ""
     case Invalid{}: ""
@@ -127,8 +129,9 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
+      Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{})))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{}))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:

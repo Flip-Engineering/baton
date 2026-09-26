@@ -143,5 +143,56 @@ class Land(unittest.TestCase):
         error = self.call('land', 'w3', self.repo, 'main', ok=False)
         self.assertIn('no recorded branch', error)
 
+    def test_push_publishes_branch_to_remote(self):
+        remote = self.directory / 'remote.git'
+        subprocess.run(
+            ['git', 'init', '-q', '--bare', str(remote)],
+            check=True, capture_output=True,
+        )
+        self.git('remote', 'add', 'test-remote', str(remote))
+        self.git('push', '-q', 'test-remote', 'main')
+        commit = self.recruit_and_commit()
+        self.call('land', 'w1', self.repo, 'main')
+        result = self.call('push', self.repo, 'main', 'test-remote')
+        self.assertEqual(result['status'], 'pushed')
+        self.assertEqual(result['branch'], 'main')
+        self.assertEqual(result['remote'], 'test-remote')
+        remote_tip = subprocess.run(
+            ['git', '-C', str(remote), 'rev-parse', 'main'],
+            check=True, text=True, capture_output=True,
+        ).stdout.strip()
+        self.assertEqual(remote_tip, commit)
+
+    def test_push_rejected_when_remote_ahead(self):
+        remote = self.directory / 'remote.git'
+        subprocess.run(
+            ['git', 'init', '-q', '--bare', str(remote)],
+            check=True, capture_output=True,
+        )
+        self.git('remote', 'add', 'test-remote', str(remote))
+        self.git('push', '-q', 'test-remote', 'main')
+        clone = self.directory / 'clone'
+        subprocess.run(
+            ['git', 'clone', '-q', '-b', 'main', str(remote), str(clone)],
+            check=True, capture_output=True,
+        )
+        for k, v in [('user.name', 'Other'), ('user.email', 'o@e.i')]:
+            subprocess.run(
+                ['git', '-C', str(clone), 'config', k, v],
+                check=True, capture_output=True,
+            )
+        subprocess.run(
+            ['git', '-C', str(clone), 'commit', '-q', '--allow-empty', '-m', 'ahead'],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ['git', 'push', str(remote), 'main'],
+            cwd=str(clone), check=True, capture_output=True,
+        )
+        self.recruit_and_commit()
+        self.call('land', 'w1', self.repo, 'main')
+        result = self.call('push', self.repo, 'main', 'test-remote')
+        self.assertEqual(result['status'], 'rejected')
+
 if __name__ == '__main__':
     unittest.main()
