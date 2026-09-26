@@ -31,15 +31,23 @@ export async function serveResidentMcp({ claudeRoot = false } = {}) {
         autoWake: claudeRoot ? null : wakeAutoSubscription(process.env),
       });
     })();
-    const server = wrapProductionMcpServer(rawServer, { expandNative: true });
     const stopInput = () => { if (!process.stdin.destroyed) process.stdin.destroy(); };
-    if (claudeRoot) attachClaudeRootChannel(server, {
+    // Issue #592, OBSERVED 2026-09-26 on the real entry process: `attachClaudeRootChannel`
+    // replaces `server.handle`. Attached to the WRAPPED server, that assignment lands on the
+    // convergence proxy's target while the convergence wrapper keeps dispatching through the same
+    // target property — so `initialize` re-enters the channel wrapper, and the entry dies with
+    // `RangeError: Maximum call stack size exceeded` before it can greet the native client. No
+    // root session could ever attach. The channel is attached to the raw server it dispatches
+    // through, which keeps the convergence wrapper the outermost facade: it still augments the
+    // greeting the channel composed, and it still forwards the tools the session is served.
+    if (claudeRoot) attachClaudeRootChannel(rawServer, {
       open: (onAttention) => rawServer.application.client.openRootAttention(onAttention),
       onClose: (error) => {
         process.stderr.write(`Baton root attachment closed${error ? `: ${error.code ?? error.message}` : ''}; reconnect the native MCP channel.\n`);
         stopInput();
       },
     });
+    const server = wrapProductionMcpServer(rawServer, { expandNative: true });
     process.on('SIGINT', stopInput);
     process.on('SIGTERM', stopInput);
     try {
