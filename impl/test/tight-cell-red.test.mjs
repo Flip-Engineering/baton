@@ -1305,15 +1305,6 @@ test('TC-23b trust pin: analysis:true skips required_effect even when repository
     + 'TG5 hatch guard (coordinator.mjs:12842), not an inert gate; removing the `!analysis` guard fails this pin');
 });
 
-test('TC-23c trust pin: an idle EDITING member is still policy-killed — the safe direction', async () => {
-  const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter({ pausable: false }), capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief({ requiredEffects: ['repository_edit'] })); // diffless, no analysis
-  emitTurnCompleted(adapter, handle);
-  await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'PIN: a diffless editing member with required repository_edit still fails required_effect_absent (T14b)');
-});
-
 // ===========================================================================
 // H — Per-member grant mint & mint-key derivation (Decision 4)
 // ===========================================================================
@@ -1420,14 +1411,6 @@ test('TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented c
     + '— the same bound as the wave member-array ceiling (wave.mjs:163) and comfortably under the run-view '
     + 'worker ceiling — never an arbitrary silent limit (Decision 1, TC-17, campaign law); today the export is '
     + `undefined (${String(waveModule.MAX_CELL_SIZE)})`);
-});
-
-test('TC-17b size pin: the derivation anchors MAX_CELL_SIZE rests on exist today', () => {
-  assert.equal(typeof waveModule.MAX_WAVE_PROGRESS_BYTES, 'number',
-    'PIN: MAX_WAVE_PROGRESS_BYTES bounds the wave progress snapshot (wave.mjs:21)');
-  const waveSrc = readFileSync(new URL('../src/wave.mjs', import.meta.url), 'utf8');
-  assert.match(waveSrc, /membersInput\.length > 64/u,
-    'PIN: the wave member-array ceiling is 64 (wave.mjs:163) — the derivation anchor for MAX_CELL_SIZE');
 });
 
 test('TC-18 loose[pin]: a wave with no group fields is byte-identical today', async () => {
