@@ -3250,7 +3250,17 @@ export async function reap(repoRoot, taskId, opts = {}) {
       try {
         const meta = validatedMetadata(repoRoot, taskId);
         deletable = sh('git', ['rev-parse', '--verify', `refs/heads/baton/${taskId}^{commit}`], repoRoot) === meta.baseSha;
-      } catch { deletable = false; } // unprovable → the branch is retained custody
+      } catch {
+        // Issue #604: a rolled-back failed-create transaction retains the receipt and the branch
+        // but not the meta. The receipt carries the same allocation base — in any of its
+        // lifecycle states: a branch still at it names no work and the deletion holds; anything
+        // unprovable stays retained custody.
+        try {
+          const receipt = readWorkspaceOwnerReceipt(repoRoot, taskId);
+          deletable = receipt !== null
+            && sh('git', ['rev-parse', '--verify', `refs/heads/baton/${taskId}^{commit}`], repoRoot) === receipt.baseSha;
+        } catch { deletable = false; }
+      }
     }
     if (deletable) {
       try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot); }
