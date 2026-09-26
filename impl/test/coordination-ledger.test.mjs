@@ -35,6 +35,7 @@ import test from 'node:test';
 import * as coordinationLedger from '../src/coordination-ledger.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { memberSource, memberSpans } from './seam-member-source.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -197,7 +198,8 @@ test('CL1: the moved module is context-free — no this, no mutable module state
 });
 
 test('CL2: the committed map, the delegates, the exports and the store imports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  // E02 (#598): the map derives live from the collector — the committed artifact is gone.
+  const map = collectSeamInventory();
   // Identity is (name, ordinal), and a name may itself begin with `#`: the separator is a NUL, the
   // same one the inventory's own identity uses.
   const moved = new Map();
@@ -371,7 +373,6 @@ test('CL6: the pins that read a moved member\'s text resolve it through the live
   assert.equal(store.includes('scratchpad_partition_exhausted'), false,
     'the ledger bodies left the store file: a file-keyed scan would now miss them');
   for (const file of [
-    'test/repl1-kind-inventory-red.test.mjs',
     'test/scratchpad-33-red.test.mjs',
     'test/scratchpad-write-red.test.mjs',
     'test/issue366-run-stop-replay-ceiling.test.mjs',

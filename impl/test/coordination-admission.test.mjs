@@ -33,6 +33,7 @@ import test from 'node:test';
 import * as coordinationAdmission from '../src/coordination-admission.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { STORE_MODULE_FILES, memberSource, memberSpans } from './seam-member-source.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -191,7 +192,7 @@ test('CA1: the moved module is context-free — no this, no mutable module state
 });
 
 test('CA2: the committed map, the delegates, the exports and the store imports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  const map = collectSeamInventory();
   const moved = new Map();
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':admission_port'))) moved.set(`${member.name}\u0000${member.ordinal}`, member.name);

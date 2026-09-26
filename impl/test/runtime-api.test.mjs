@@ -27,6 +27,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
+
 import * as runtimeApi from '../src/runtime-api.mjs';
 import { Coordinator, WorkerNotFoundError } from '../src/coordinator.mjs';
 
@@ -35,7 +37,6 @@ const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/runtime-api.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -92,7 +93,7 @@ test('AP1: receiver discipline — bare coordinator, no recording spelling, an a
 });
 
 test('AP2: the delegates keep name, parameter list, and forward this without a recorder', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const surfaceNames = coordinatorFile.members
     .filter((member) => member.seam === 'surface')
@@ -132,7 +133,7 @@ test('AP2: the delegates keep name, parameter list, and forward this without a r
 });
 
 test('AP3: the inverse-transform residue — module bodies read as the members they were', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const surfaceNames = coordinatorFile.members
     .filter((member) => member.seam === 'surface')
@@ -161,7 +162,7 @@ test('AP3: the inverse-transform residue — module bodies read as the members t
 });
 
 test('AP4: the map sees the move — the target carries the surface members, _publicHandle keeps its evidence', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-api target');
   for (const member of target.members) {

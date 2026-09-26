@@ -19,6 +19,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
+
 import * as applicationObservation from '../src/application-observation.mjs';
 import { BatonApplication } from '../src/application.mjs';
 
@@ -27,7 +29,6 @@ const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/application-observation.mjs';
 const HOST_FILE = 'impl/src/application.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL('../../' + relative, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -46,7 +47,7 @@ test('AO1: the module imports neither monolith and contains no implicit receiver
 });
 
 test('AO2: every observation_port delegate keeps the member name, parameter list, and arity', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const hostFile = map.files.find((file) => file.file === HOST_FILE);
   const delegated = hostFile.members
     .filter((member) => member.evidence.includes('observation:application_observation_port'))
@@ -132,7 +133,7 @@ test("AO4: the helpers moved once; the host imports back its staying readers and
 });
 
 test('AO5: the map sees the move — a new target, the host unchanged, every delegate on the port rule', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact must carry the application-observation target');
   const hostFile = map.files.find((file) => file.file === HOST_FILE);

@@ -20,6 +20,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
+
 import * as runtimeObservation from '../src/runtime-observation.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 
@@ -28,7 +30,6 @@ const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/runtime-observation.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
-const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
@@ -56,7 +57,7 @@ test('RO1: the module imports neither monolith and contains no implicit receiver
 });
 
 test('RO2: every observation_port delegate keeps the member name, parameter list, and hands over the recorder', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegated = coordinatorFile.members
     .filter((member) => member.evidence.includes('observation:observation_port'))
@@ -198,7 +199,7 @@ test('RO4: the relocated helpers moved once; the import-back names are imported 
 });
 
 test('RO5: the map sees the move', () => {
-  const map = JSON.parse(read(MAP_FILE));
+  const map = collectSeamInventory();
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-observation target');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);

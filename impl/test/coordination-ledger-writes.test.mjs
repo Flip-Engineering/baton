@@ -27,6 +27,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
+
 import * as coordinationLedgerWrites from '../src/coordination-ledger-writes.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 
@@ -150,7 +152,7 @@ test('CLW1: the module is context-free — no this, no mutable module state, no 
 });
 
 test('CLW2: the committed map, the delegates, and the exports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  const map = collectSeamInventory();
   const moved = new Map();
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':ledger_writes_port'))) {
