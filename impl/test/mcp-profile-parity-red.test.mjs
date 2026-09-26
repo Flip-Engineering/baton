@@ -528,7 +528,7 @@ const PINNED_TOOL_LIST_SITES = [
   ['phase67', join(repoRoot, 'impl', 'test', 'phase67-progressive-agent-experience.test.mjs'),
     'assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), northboundApplicationToolNames())'],
   ['phase72', join(repoRoot, 'impl', 'test', 'phase72-kimi-orchestrator-mcp.test.mjs'),
-    'assert.deepEqual(listed.result.tools.map((tool) => tool.name), northboundApplicationToolNames())'],
+    'const served = northboundApplicationToolNames().filter((name) => {'],
 ];
 
 test('RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)', () => {
