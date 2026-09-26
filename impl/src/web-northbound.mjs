@@ -1065,9 +1065,22 @@ function validateEnvelope(envelope) {
   // only. A read that carries one still honors its shape; a mutation without one still refuses.
   const readOnly = READ_ONLY_COMMANDS.has(envelope.command);
   const envelopeKey = envelope.idempotencyKey;
-  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.commandId ?? '')
-    || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)
-    || (envelopeKey == null ? !readOnly : !/^[A-Za-z0-9._:-]{1,256}$/.test(envelopeKey))) return 'command identity, idempotencyKey, repoId, and origin are required';
+  // Issue #139: name the required field(s) this envelope failed, never the class — the rule every
+  // other closed-shape validator in this tree already follows (#43 AX R1/R2: the bridge names every
+  // missing field, and the W1/W2 arms above name the offending KEY). `field` carries a name from
+  // this list only, and the submitted VALUE is never echoed back (#160 R4, the PKG-1 value law).
+  const requiredRefused = [
+    ['commandId', /^[A-Za-z0-9._:-]{1,128}$/.test(envelope.commandId ?? '')],
+    ['command', string(envelope.command)],
+    ['repoId', string(envelope.repoId)],
+    ['origin', string(envelope.origin)],
+    ['idempotencyKey', envelopeKey == null ? readOnly : /^[A-Za-z0-9._:-]{1,256}$/.test(envelopeKey)],
+  ].filter(([, ok]) => !ok);
+  if (requiredRefused.length > 0) {
+    const named = requiredRefused.map(([name]) => (envelope[name] === undefined || envelope[name] === null
+      ? `missing required field: ${name}` : `invalid required field: ${name}`));
+    return { code: 'invalid_command', field: requiredRefused[0][0], message: named.join('; ') };
+  }
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
   if (Object.hasOwn(envelope, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.runId ?? '')) return 'invalid_run_id';
   if (!isRecord(envelope.args)) return 'args must be an object';
