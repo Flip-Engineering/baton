@@ -33,12 +33,11 @@ when retried. Large transcripts and check output are files referenced by those
 records. Git stores source history. Live process and worktree facts are read
 from the host and Git when needed.
 
-The service is the database's single writer. It accepts local authenticated
-connections with session-bound identities: a worker can report and ask, and
-manage workers it recruited; the root can manage the whole tree. Identity comes
-from the connection established at attachment or recruitment. Runtime files
-and connection credentials are private to the local user. This boundary
-coordinates cooperating agents running with that user's repository access.
+The service is the database's single writer. It binds local connections to
+session IDs for message routing and parentage. Workers report and ask through
+that identity; parent IDs route their reports and guidance. The agents share
+the local user's repository access. Session IDs establish routing, not a security
+boundary between these agents.
 
 ## Commands and notifications
 
@@ -88,8 +87,8 @@ new failures as AGENTS.md requires. Missing verdicts and newly failing tests
 block the landing. Checks use task behavior as their specification.
 
 A successful landing advances the target to the checked candidate only while
-its prior commit still matches. A changed target requires preparing and checking
-the new candidate. The target branch must be free of another checked-out worktree
+its prior commit still matches. A changed target triggers a rebase of the candidate. A clean
+rebase uses the existing check result; a conflict returns to the requester. The target branch must be free of another checked-out worktree
 before a direct ref update. Recovery reads Git to resolve a lost acknowledgment;
 worker branches remain available. The result names the actual target commit.
 The first slice lands locally; remote publication is a later explicit operation.

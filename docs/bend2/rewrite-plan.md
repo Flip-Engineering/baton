@@ -51,11 +51,6 @@ runtime. Run production host effects in the native executable. Test libraries
 through dedicated entry points. The existing `run-checks.mjs` command exercises
 the earlier probes and is optional reference verification.
 
-The current deployment contract also requests `npm test --prefix impl`. Record
-its actual outcome separately; its assertions describe the existing JavaScript
-runtime and do not specify the rewrite. A failure there must be reported with
-its evidence, not hidden by changing expected outcomes.
-
 After the first slice, use Baton to implement another real task. Add the remaining
 harness attachments and address failures observed in that use. Evaluate usability
 by whether the root can recruit, guide, receive questions and reports, and land
