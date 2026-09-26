@@ -47,3 +47,17 @@ def land_worker(+db: String, +worker: String, +repo: String, +target: String) ->
     branch : String <- require_branch(line(branch_raw))
     outcome : G.LandOutcome <- GitLand.land(repo, branch, target)
     show_outcome(outcome)
+
+def show_checked(r: Result<&1, &1, G.GitFail, G.LandOutcome>) -> IO(Unit):
+  match r:
+    case Fail{error}: IO.die(Unit, 1, G.fail_text(error))
+    case Done{value}: show_outcome(value)
+
+def land_checked_worker(+db: String, +worker: String, +repo: String, +target: String, +script: String, +scratch: String, +filesContent: String) -> IO(Unit):
+  do IO<Unit>:
+    worker_row : String <- IO.try(String, Store.apply(db, C.Session{worker}))
+    present : Unit <- require_worker(Bool.not(String.is_empty(worker_row)))
+    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+    branch : String <- require_branch(line(branch_raw))
+    result : Result<&1, &1, G.GitFail, G.LandOutcome> <- GitLand.land_checked(repo, target, branch, script, Tx.split_lines(filesContent), scratch)
+    show_checked(result)

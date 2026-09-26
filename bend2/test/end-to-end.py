@@ -189,5 +189,77 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(main_tip, worker_commit)
 
 
+    def test_recruit_report_land_checked(self):
+        # Detach HEAD so land_checked can advance main.
+        self.git('checkout', '-q', '--detach', 'HEAD')
+
+        # 1. Attach root and recruit a worker.
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
+        self.coord('recruit', 'w1', 'root', 'omp', 'model', 'high',
+                   self.repo, 'w1-branch', 'wt', self.base)
+
+        # 2. Worker makes a commit.
+        wt = self.repo / 'wt'
+        (wt / 'feature.txt').write_text('worker delivered this feature')
+        subprocess.run(['git', '-C', str(wt), 'add', 'feature.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', 'worker feature'],
+                       check=True, capture_output=True)
+
+        # 3. Worker reports its result.
+        self.coord('report', 'turn-1', 'w1', 'Feature implemented and committed.')
+
+        # 4. Write a passing check script and files list.
+        script = self.directory / 'check.sh'
+        script.write_text('exit 0')
+        files_path = self.directory / 'files.txt'
+        files_path.write_text('feature.txt')
+        scratch = str(self.directory / 'scratch')
+
+        # 5. Start the MCP server and receive the notification.
+        proc = self.start_mcp()
+        self.initialize_mcp(proc)
+
+        notification = read_mcp(proc, timeout=5)
+        self.assertEqual(notification['method'], 'notifications/claude/channel')
+
+        # 6. Ack the report.
+        send_mcp(proc, {
+            'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+            'params': {
+                'name': 'baton2_ack',
+                'arguments': {'id': 'turn-1', 'receipt': 'channel-delivered'},
+            },
+        })
+        ack_resp = read_mcp(proc, timeout=5)
+        while 'method' in ack_resp:
+            ack_resp = read_mcp(proc, timeout=5)
+
+        # 7. Land through the checked path via MCP.
+        send_mcp(proc, {
+            'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
+            'params': {
+                'name': 'baton2_land_checked',
+                'arguments': {
+                    'worker': 'w1',
+                    'repo': str(self.repo),
+                    'target': 'main',
+                    'script': str(script),
+                    'scratch': scratch,
+                    'files': ['feature.txt'],
+                },
+            },
+        })
+        land_resp = read_mcp(proc, timeout=10)
+        while 'method' in land_resp:
+            land_resp = read_mcp(proc, timeout=10)
+        land_result = json.loads(land_resp['result']['content'][0]['text'])
+        self.assertEqual(land_result['status'], 'landed')
+
+        # 8. Verify the target branch advanced.
+        main_tip = self.git('rev-parse', 'main').strip()
+        self.assertEqual(main_tip, land_result['commit'])
+
+
 if __name__ == '__main__':
     unittest.main()

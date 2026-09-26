@@ -14,8 +14,9 @@
 
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync, writeFileSync, mkdtempSync, unlinkSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -153,7 +154,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_land',
-    description: 'Land a worker\'s committed changes onto a target branch.',
+    description: 'Land a worker\'s committed changes onto a target branch (fast-forward).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -162,6 +163,23 @@ const TOOLS = [
         target: { type: 'string', description: 'Target branch name' },
       },
       required: ['worker', 'repo', 'target'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'baton2_land_checked',
+    description: 'Land a worker\'s changes through the gated landing: squash, run checks, block on new failures, CAS advance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worker: { type: 'string', description: 'Worker session ID' },
+        repo: { type: 'string', description: 'Repository path' },
+        target: { type: 'string', description: 'Target branch name' },
+        script: { type: 'string', description: 'Path to the check script (run as /bin/sh <script> <file>)' },
+        scratch: { type: 'string', description: 'Scratch directory path for candidate worktree' },
+        files: { type: 'array', items: { type: 'string' }, description: 'Selected files to check' },
+      },
+      required: ['worker', 'repo', 'target', 'script', 'scratch', 'files'],
       additionalProperties: false,
     },
   },
@@ -288,6 +306,17 @@ function handleToolCall(msg) {
       case 'baton2_land':
         result = coord('land', args.worker, args.repo, args.target);
         break;
+      case 'baton2_land_checked': {
+        const filesDir = mkdtempSync(join(tmpdir(), 'baton-files-'));
+        const filesPath = join(filesDir, 'files.txt');
+        writeFileSync(filesPath, (args.files || []).join('\n'));
+        try {
+          result = coord('land-checked', args.worker, args.repo, args.target, args.script, args.scratch, filesPath);
+        } finally {
+          try { unlinkSync(filesPath); } catch {}
+        }
+        break;
+      }
       default:
         sendError(msg.id, -32602, `Unknown tool: ${name}`);
         return;

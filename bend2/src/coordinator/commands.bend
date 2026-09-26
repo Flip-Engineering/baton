@@ -20,6 +20,7 @@ type Command is Data:
   Pending{}
   Inbox{id: String}
   Land{worker: String, repo: String, target: String}
+  LandChecked{worker: String, repo: String, target: String, script: String, scratch: String, filesPath: String}
   Status{}
   Invalid{}
 
@@ -90,6 +91,7 @@ def sql(command: Command) -> String:
     case ReportFile{id,sender,path}: ""
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
     case Land{worker,repo,target}: ""
+    case LandChecked{worker,repo,target,script,scratch,filesPath}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Worktree{id}: ""
     case Invalid{}: ""
@@ -118,6 +120,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Invalid{})))
+    case +verb <> +one <> +two <> +three <> +four <> +five <> +six <> Nil{}:
+      Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{one,two,three,four,five,six},Invalid{})
     case +verb <> id <> parent <> harness <> model <> effort <> workspace <> branch <> base <> Nil{}:
       Bool.pick(Command, String.eq(verb,"worker"),Worker{id,parent,harness,model,effort,workspace,branch,base},Invalid{})
     case +verb <> +worker <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:

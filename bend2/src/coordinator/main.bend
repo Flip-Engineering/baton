@@ -22,11 +22,15 @@ def run(db: String, command: C.Command) -> IO(Unit):
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Invalid{}:
-      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nworker ID PARENT HARNESS MODEL EFFORT WORKSPACE BRANCH BASE\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve ID WORKER EVENT_JSON\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nreport-file ID WORKER PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nland WORKER_ID REPO TARGET_BRANCH\nturn WORKER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
+      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nworker ID PARENT HARNESS MODEL EFFORT WORKSPACE BRANCH BASE\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve ID WORKER EVENT_JSON\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nreport-file ID WORKER PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nland WORKER_ID REPO TARGET_BRANCH\nland-checked WORKER REPO TARGET SCRIPT SCRATCH FILES_PATH\nturn WORKER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Land{worker,repo,target}:
       Land.land_worker(db,worker,repo,target)
+    case C.LandChecked{worker,repo,target,script,scratch,filesPath}:
+      do IO<Unit>:
+        filesContent : String <- IO.try(String, T.Text.read(filesPath))
+        Land.land_checked_worker(db,worker,repo,target,script,scratch,filesContent)
     case C.Worktree{id}: Recruit.inspect(db,id)
     case C.RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}:
       Turn.run(db,worker,id,cmd,model,effort,cwd,task,log,session)

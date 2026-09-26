@@ -36,6 +36,7 @@ a target that moved meanwhile rebases the candidate once.
 .scratch/bend2/baton2 state.db inbox root
 .scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
 .scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
+.scratch/bend2/baton2 state.db land-checked worker1 /path/to/repo target-branch /path/to/check.sh /path/to/scratch /path/to/files.txt
 .scratch/bend2/baton2 state.db status
 ```
 
@@ -76,6 +77,16 @@ with a `status` field: `landed` with the new target commit, `already` when the
 target already contains the worker commit, or `blocked` with a reason (the
 worker branch diverged or the target moved during the update). Worker branches
 and worktrees are retained after landing.
+
+`land-checked WORKER REPO TARGET SCRIPT SCRATCH FILES_PATH` runs the gated
+landing. It looks up the worker's branch, prepares a squashed candidate in a
+scratch worktree at SCRATCH, runs `/bin/sh SCRIPT <file>` for each file listed
+in FILES_PATH (one per line) on both the candidate and a tree at the target tip,
+and blocks when the candidate shows failures the target run does not. The
+target advances through a compare-and-swap ref update; a target that moved
+meanwhile rebases the candidate once. The answer has the same JSON shape as
+`land`, with an additional `conflict` status naming unmerged paths and the
+candidate directory when a rebase fails.
 
 ## Native turns
 
