@@ -1,13 +1,15 @@
 # debris: the added paths a repository's own ignore rules exclude, removed from
-# a staged tree before the tree is captured or landed.
+# a staged tree before the tree is committed.
 #
 # A worker worktree can hold build output the repository excludes while the
 # worktree's own copy of the ignore rules does not: the branch's .gitignore can
-# predate the rule, and a worker can force-add a path. The landing and the
-# recovery snapshot both judge their staged additions against the repository's
-# own rules, read at the repository root with --no-index so the checked-out copy
-# cannot decide, and remove every match from the index before the tree is
-# written. The caller names the paths dropped.
+# predate the rule, and a worker can force-add a path. A caller judges its
+# staged additions against the repository's own rules, read at the repository
+# root with --no-index so the checked-out copy cannot decide, and removes every
+# match from the index before the tree is written; the caller names the paths
+# dropped. The checked landing is that caller and judges the scratch checkout's
+# own index; INDEX names a private index file for a caller whose staged tree is
+# not the worktree's own index.
 #
 # A judgement that cannot be made fails the caller: a drop that cannot say what
 # it excluded is not a drop. The added set is read with -z, so a name holding a
