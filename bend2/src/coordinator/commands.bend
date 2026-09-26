@@ -22,6 +22,7 @@ type Command is Data:
   Land{worker: String, repo: String, target: String}
   LandChecked{worker: String, repo: String, target: String, check: String, files: String}
   Status{}
+  Workers{}
   Invalid{}
 
 def escaped(s: String) -> String:
@@ -86,6 +87,8 @@ def sql(command: Command) -> String:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body) AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND receipt IS NULL ORDER BY seq);"
     case Status{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base,'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL)) AS item FROM sessions ORDER BY id);"
+    case Workers{}:
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',s.id,'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL)) AS item FROM sessions s WHERE s.parent IS NOT NULL ORDER BY s.id);"
     case ObserveFile{id,worker,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
     case ReportFile{id,sender,path}: ""
@@ -100,7 +103,8 @@ def parse(args: List<String>) -> Command:
   match args:
     case +verb <> Nil{}:
       Bool.pick(Command, String.eq(verb,"status"),Status{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{}))
+      Bool.pick(Command, String.eq(verb,"workers"),Workers{},
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},

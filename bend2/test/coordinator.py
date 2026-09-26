@@ -154,6 +154,21 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'root')[0]['body'], text)
         self.assertEqual(len(self.call('status')), 3)
 
+    def test_workers_lists_workers_with_latest_report(self):
+        self.call('worker', 'other', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base2')
+        self.call('report', 'r1', 'worker', 'Task completed successfully.')
+
+        workers = self.call('workers')
+
+        reported = next(w for w in workers if w['id'] == 'worker')
+        self.assertEqual(reported['parent'], 'root')
+        self.assertEqual(reported['latestReport'], 'Task completed successfully.')
+        self.assertEqual(reported['latestReportId'], 'r1')
+
+        idle = next(w for w in workers if w['id'] == 'other')
+        self.assertIsNone(idle['latestReport'])
+        self.assertIsNone(idle['latestReportId'])
+
     def test_parallel_reports_have_one_durable_record_per_id(self):
         def report(i):
             return self.call('report', f'turn-{i % 4}', 'worker', f'body-{i % 4}')
