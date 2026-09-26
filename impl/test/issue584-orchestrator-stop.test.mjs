@@ -72,3 +72,19 @@ test('#584 (c): a seat that leads nothing cannot stop its own lead — the relat
     'a recruited seat does not lead its recruiter: the flat refusal stands',
   );
 });
+
+test('#584 (d): a lead reads the stop it holds over the seats it leads', async (t) => {
+  const f = fixture(t);
+  const { lead } = await f.team();
+  const view = await f.call('view', {}, lead);
+  assert.ok(view.availableActions.includes('swarm.stop'),
+    `the lead's own view names swarm.stop: ${JSON.stringify(view.availableActions)}`);
+});
+
+test('#584 (e): a seat that holds no flat stop still reads swarm.stop — the relation admits stopping itself', async (t) => {
+  const f = fixture(t);
+  await f.team();
+  const view = await f.call('view', {}, principal('w-2'));
+  assert.ok(view.availableActions.includes('swarm.stop'),
+    `a recruited seat's view names swarm.stop: ${JSON.stringify(view.availableActions)}`);
+});
