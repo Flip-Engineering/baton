@@ -551,3 +551,46 @@ test('475-f: the operator\'s probe is spelled through a flag the CLI admits, and
   assert.match(help, /--options/u, 'through the flag that carries it');
   assert.match(help, /route_degraded/u, 'and what a recruit reads while a probe holds the episode');
 });
+
+// ── (g) a probe seat whose worker is gone releases the episode at the deadline, hands free ───────
+
+test('475-g: a probe seat whose worker is gone releases the episode at the deadline with no hand stop', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  // The #588 shape: the probe seat is DEAD — its worker is gone from the fleet (host death,
+  // process loss) while the seat row itself stays active, and no one stops it by hand. The
+  // episode must free its next step on its own once the probe deadline has passed with no live
+  // worker left for the Run, exactly as a settled seat releases it at once (475-e).
+  const { deployment } = await degradedRoute(t, 'worker-gone', { window: '5 hour', faultAgo: MINUTE_MS });
+  const fixture = routeFixture(liveRows(deployment));
+  await fixture.call('create', { purpose: 'probe worker gone' });
+  const probe = await fixture.call('recruit', {
+    participantId: 'lane-probe', objective: 'probe the route',
+    options: { exact: DEGRADED_ROUTE, routeProbe: true },
+  });
+  assert.equal(probe.admission?.kind, 'probe', 'the probe is admitted');
+  const seat = fixture.seatRow('lane-probe');
+  assert.ok(seat?.runId, 'the probe seat holds a Run');
+  assert.equal(seat.status, 'active', 'the seat row itself is still active');
+
+  // The worker that ran the probe's Run dies. While the probe is in flight the episode still
+  // holds the route — the deadline has not passed, so the release cannot yet distinguish a
+  // lost seat from a slow one.
+  fixture.workers.splice(fixture.workers.findIndex((row) => row.runId === seat.runId), 1);
+  const refused = await refusalOf(fixture.call('recruit',
+    { participantId: 'lane-2', objective: 'work', options: { exact: DEGRADED_ROUTE } }));
+  assert.equal(refused?.code, 'route_degraded', 'the episode holds while the probe is in flight');
+  assert.equal(refused.detail?.probeSeat, 'lane-probe', 'still naming the seat that is out');
+
+  // Past the deadline with no live worker left for the Run, the episode's next step is free
+  // again: the next recruit admits attempt 2 with no hand action, under its own attempt key.
+  t.mock.timers.tick(PROBE_DEADLINE_MS + MINUTE_MS);
+  const next = await fixture.call('recruit',
+    { participantId: 'lane-next', objective: 'probe again', options: { exact: DEGRADED_ROUTE } });
+  assert.equal(next.admission?.state, 'admitted', 'the dead seat released the episode');
+  assert.equal(next.admission?.kind, 'probe', 'as the probe the next attempt is');
+  assert.equal(next.admission?.probe?.attempt, 2, 'attempt 2 for the same episode');
+  const admissions = fixture.rowsOfKind('route.probe_admitted');
+  assert.equal(admissions.length, 2, 'both attempts are durable');
+  assert.equal(admissions[1].idempotencyKey, `${admissions[0].idempotencyKey}:2`,
+    'and the second attempt extends the first attempt\'s key');
+});
