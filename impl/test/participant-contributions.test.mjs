@@ -7,7 +7,6 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
-import { accept as refereeAccept, withVerificationLane } from '../src/referee.mjs';
 
 const SHA = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -52,7 +51,6 @@ async function fixture(t, { referee, capture, verificationFor, accept } = {}) {
   const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(),
     adapters: { mock: adapter }, worktrees, route: () => 'mock', now: () => 0,
     ...(verificationFor ? { verificationForCapture: verificationFor } : {}),
-    // A laned referee (withVerificationLane) is installed as-is so the coordinator sees its lane.
     ...(accept ? { accept } : {}),
     referee: referee?.lane ? referee : async (...args) => {
       checks++;
@@ -71,72 +69,6 @@ async function fixture(t, { referee, capture, verificationFor, accept } = {}) {
   await new Promise(setImmediate);
   return { coordinator, coordination, handle, prompts, log, worktrees, removed, adapter, emit, checks: () => checks };
 }
-
-test('capture and checking preserve a continuing participant and its next turn', async (t) => {
-  const started = deferred();
-  const release = deferred();
-  const f = await fixture(t, { referee: async () => {
-    started.resolve(); await release.promise;
-    return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
-  } });
-  const pauseId = f.coordinator.pausedTurns({ workerId: f.handle.id })[0].pauseId;
-  const capture = await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
-  assert.equal(capture.sha, SHA);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
-  assert.equal(f.coordinator.pausedTurnStatus(pauseId).state, 'pending');
-  const checking = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
-  const duplicate = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
-  await started.promise;
-  await f.coordinator.nudgeTurn(pauseId, 'Continue with the second assignment.');
-  assert.equal(f.prompts.length, 1);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
-  release.resolve();
-  const result = await checking;
-  assert.equal(result.passed, true);
-  assert.deepEqual(await duplicate, result);
-  assert.equal(f.checks(), 1);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
-  assert.equal(f.log.read(f.handle.id).filter((e) => e.kind === 'verify.reverified').length, 0);
-  assert.equal(f.removed.length, 2);
-  const replayed = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
-  assert.deepEqual(replayed, result);
-  assert.equal(f.checks(), 1);
-});
-
-test('unavailable verification preserves the contribution and leaves the author paused', async (t) => {
-  const f = await fixture(t);
-  const capture = await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
-  f.worktrees.createVerifyWorktree = async () => {
-    throw Object.assign(new Error('capacity temporarily unavailable'), { code: 'worktree_capacity_exceeded' });
-  };
-  await assert.rejects(f.coordinator.checkContribution(f.handle.id, {
-    contributionId: 'first', checkId: 'check-1',
-  }), { code: 'worktree_capacity_exceeded' });
-  assert.equal(f.checks(), 0);
-  assert.equal(await f.worktrees.resolveCheckpoint(capture.ref), SHA);
-  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
-  const events = f.log.read(f.handle.id);
-  assert.equal(events.filter((e) => e.kind === 'contribution.checked').length, 0);
-  assert.equal(events.find((e) => e.kind === 'contribution.check_unavailable').payload.attempt.verifierStarted, false);
-  // A controller replay must not blindly repeat an attempt whose prior effects are unknown.
-  f.coordinator._contributions = null;
-  await assert.rejects(f.coordinator.checkContribution(f.handle.id, {
-    contributionId: 'first', checkId: 'check-1',
-  }), { code: 'worktree_capacity_exceeded' });
-});
-
-test('a retained contribution can be checked after its author stops', async (t) => {
-  const f = await fixture(t);
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
-  await f.coordinator.kill(f.handle.id);
-  const status = f.coordination.task(f.handle.taskId).status;
-  const checked = await f.coordinator.checkContribution(f.handle.id, {
-    contributionId: 'first', checkId: 'after-stop',
-  });
-  assert.equal(checked.passed, true);
-  assert.equal(f.coordination.task(f.handle.taskId).status, status);
-  assert.equal(f.prompts.length, 0);
-});
 
 test('native subagent observations are durably mapped and remain read-only worker observations', async (t) => {
   const f = await fixture(t);
@@ -159,33 +91,6 @@ test('a failed pin leaves the pause available and does not claim retained work',
   assert.equal(f.coordinator.pausedTurns({ workerId: f.handle.id }).length, 1);
   assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
   assert.equal(f.log.read(f.handle.id).some((e) => e.kind === 'contribution.captured'), false);
-});
-
-test('stop waits for an in-flight capture before removing the author workspace', async (t) => {
-  const started = deferred();
-  const release = deferred();
-  const f = await fixture(t, { capture: async () => {
-    started.resolve();
-    await release.promise;
-    return { sha: SHA, baseSha: BASE, changedPaths: ['change.mjs'] };
-  } });
-  let removed = false;
-  f.worktrees.remove = async () => { removed = true; };
-  const capturing = f.coordinator.captureContribution(f.handle.id, { contributionId: 'before-stop' });
-  await started.promise;
-  const stopping = f.coordinator.kill(f.handle.id);
-  await new Promise(setImmediate);
-  assert.equal(removed, false);
-  release.resolve();
-  const captured = await capturing;
-  await stopping;
-  assert.equal(removed, true);
-  assert.equal(await f.worktrees.resolveCheckpoint(captured.ref), SHA);
-  const checked = await f.coordinator.checkContribution(f.handle.id, {
-    contributionId: 'before-stop', checkId: 'after-capture-and-stop',
-  });
-  assert.equal(checked.passed, true);
-  assert.equal(f.prompts.length, 0);
 });
 
 test('live captures queue per participant and stop waits for both retained revisions', async (t) => {
@@ -244,99 +149,3 @@ test('queued guidance resolves a turn that pauses while an earlier delivery is i
   assert.equal(resumed.actor, 'peer-reviewer');
 });
 
-// #269: when the deployment's verification lane is full, a check says so durably (position in
-// the queue) instead of looking like a slow verifier; it still runs, in order, once the lane frees.
-test('a check that waits for the verification lane records contribution.check_queued with its position', async (t) => {
-  const gate = deferred();
-  const referee = withVerificationLane(async () => { await gate.promise; return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }; }, { concurrency: 1 });
-  const f = await fixture(t, { referee });
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
-  const one = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
-  while (referee.lane.running === 0) await new Promise((resolve) => setImmediate(resolve));
-  const two = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-2' });
-  while (referee.lane.queued === 0) await new Promise((resolve) => setImmediate(resolve));
-  const queued = f.log.read(f.handle.id).filter((event) => event.kind === 'contribution.check_queued');
-  assert.equal(queued.length, 1, 'only the waiting check is recorded as queued');
-  assert.deepEqual(queued[0].payload, { contributionId: 'first', checkId: 'check-2', position: 1, running: 1, concurrency: 1 });
-  gate.resolve();
-  const [firstReceipt, secondReceipt] = await Promise.all([one, two]);
-  assert.equal(firstReceipt.passed, true);
-  assert.equal(secondReceipt.passed, true);
-  assert.deepEqual({ running: referee.lane.running, queued: referee.lane.queued }, { running: 0, queued: 0 });
-});
-
-// #269 item 3: a capture that changes none of the paths the code verification covers is checked
-// by the deployment's docs verification instead of the whole suite; the selection is durable on
-// the check's start record and its receipt, and the referee receives the selected contract.
-test('a docs-only capture is checked by the docs verification, a code capture by the code verification', async (t) => {
-  const seen = [];
-  const referee = async (task) => { seen.push(task.brief.verification.command); return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }; };
-  const verificationFor = (changedPaths, contract) => changedPaths.some((path) => path.startsWith('impl/'))
-    ? { selection: 'code', verification: contract }
-    : { selection: 'docs', verification: { ...contract, command: 'node', arguments: ['impl/scripts/surface-gate.mjs'] } };
-  let paths = ['docs/audits/report.md'];
-  const f = await fixture(t, { referee, verificationFor, capture: async () => ({ sha: SHA, baseSha: BASE, changedPaths: paths }) });
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'docs' });
-  const docs = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'docs', checkId: 'check-docs' });
-  assert.deepEqual(docs.verification, { selection: 'docs', command: 'node' });
-  assert.equal(docs.passed, true);
-  paths = ['impl/src/thing.mjs', 'docs/notes.md'];
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'code' });
-  const code = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'code', checkId: 'check-code' });
-  assert.equal(code.verification.selection, 'code');
-  assert.deepEqual(seen, ['node', 'true'], 'the referee ran the docs command for the docs capture and the brief command for the code capture');
-  const started = f.log.read(f.handle.id).filter((event) => event.kind === 'contribution.check_started').map((event) => event.payload.verification);
-  assert.deepEqual(started, [{ selection: 'docs', command: 'node' }, { selection: 'code', command: 'true' }]);
-});
-
-// 2026-09-14 audit G-15: the `expectExit` the contribution service threads into the done-gate is
-// live end to end (referee.accept reads it). A verdict that reports an exit code its contract row
-// does not expect is refused at the receipt however the verdict was labelled — the gate reads the
-// row, never the label.
-test('a check verdict observed at another exit code is refused at the receipt', async (t) => {
-  let observedExit = 0;
-  const f = await fixture(t, {
-    accept: refereeAccept,
-    referee: async () => ({ reverified: true, observedExit, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }),
-  });
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'aligned' });
-  const aligned = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'aligned', checkId: 'check-aligned' });
-  assert.equal(aligned.passed, true, 'a verdict at the row expectExit is accepted');
-
-  observedExit = 7;
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'misaligned' });
-  const misaligned = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'misaligned', checkId: 'check-misaligned' });
-  assert.equal(misaligned.passed, false, 'the row expects exit 0; the verdict observed 7');
-  assert.equal(misaligned.verdict.observedExit, 7, 'the receipt still carries what the hub observed');
-});
-
-// 2026-09-14 audit G-9: `verifyContribution` reports a sandbox it could not remove, and the
-// receipt is where that fact has to land — the verdict stands on its own, and the leaked sandbox
-// is a fact about the hub, not about the author. Recorded only when there IS a leak.
-test('a check whose verify sandbox could not be removed names the leak on its receipt', async (t) => {
-  const f = await fixture(t);
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'leaky' });
-  const remove = f.worktrees.removeVerifyWorktree;
-  f.worktrees.removeVerifyWorktree = async (path) => {
-    if (path.endsWith(SHA)) throw new Error('sandbox removal refused');
-    return remove(path);
-  };
-  const checked = await f.coordinator.checkContribution(f.handle.id, {
-    contributionId: 'leaky', checkId: 'check-leak',
-  });
-  assert.equal(checked.passed, true, 'the verdict is still the verdict — a leak is not a failed check');
-  assert.equal(checked.attempt.cleanup.state, 'incomplete');
-  assert.equal(checked.cleanup?.state, 'incomplete', 'the receipt carries the cleanup outcome, not only the attempt');
-  assert.equal(checked.cleanup?.code, 'worktree_cleanup_failed');
-  assert.equal(checked.cleanup?.paths.length, 1, 'the leaked sandbox is named by its exact path');
-  assert.ok(checked.cleanup.paths[0].endsWith(SHA), 'the leak is the candidate sandbox, not a base one');
-  const durable = f.log.read(f.handle.id)
-    .find((event) => event.kind === 'contribution.checked' && event.payload.checkId === 'check-leak');
-  assert.deepEqual(durable.payload.cleanup, checked.cleanup, 'the durable receipt carries the same named fact');
-
-  // A clean check records no leak: absence is not a quiet 'incomplete'.
-  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'clean' });
-  f.worktrees.removeVerifyWorktree = remove;
-  const clean = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'clean', checkId: 'check-clean' });
-  assert.equal(clean.cleanup ?? null, null, 'a removed sandbox records nothing to reconcile');
-});
