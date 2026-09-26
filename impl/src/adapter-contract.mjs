@@ -27,9 +27,10 @@
 // that loses an axis refuses where it is constructed.
 import { FRAME_LIMITS } from './limits.mjs';
 import { normalizeWorkerPolicyCard } from './worker-policy.mjs';
-// #387: the provider-refusal axis is declared beside the vocabulary it checks (adapter.mjs) in the
-// same {axis, consumes, validate} shape; this table admits it by reference, never a second rule.
-import { PROVIDER_REFUSALS_CARD_AXIS, providerRefusalsForHarness } from './adapter.mjs';
+// #387: the provider-refusal axis is declared beside the vocabulary it checks
+// (provider-refusals.mjs) in the same {axis, consumes, validate} shape; this table admits it by
+// reference, never a second rule.
+import { PROVIDER_REFUSALS_CARD_AXIS, providerRefusalsForHarness } from './provider-refusals.mjs';
 
 const VERB_VERDICTS = Object.freeze(['native', 'emulated', 'unsupported']);
 export const ADAPTER_VERB_KEYS = Object.freeze([

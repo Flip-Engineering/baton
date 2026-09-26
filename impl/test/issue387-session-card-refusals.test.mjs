@@ -2,7 +2,7 @@
 // read from published no provider-refusal table at all.
 //
 // The degradation this pins: the omp card, the CLI-adapter family and the legacy tiers all publish
-// `providerRefusalsForHarness` (adapter.mjs, #341 part 2), and the deployment's readiness derivation
+// `providerRefusalsForHarness` (provider-refusals.mjs, #341 part 2), and the deployment's readiness derivation
 // matches a crash/turn-failure text against exactly THAT table (`refusalEvidenceOf` →
 // `matchProviderRefusal`, application-deployment.mjs). The session tiers — claude-session.mjs,
 // codex-appserver.mjs (and the ACP tiers kimi-acp.mjs/grok-acp.mjs) — published no such key, so
@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PROVIDER_REFUSAL_CODES, PROVIDER_REFUSALS_CARD_AXIS, assertCardProviderRefusals,
   matchProviderRefusal, providerRefusalsForHarness,
-} from '../src/adapter.mjs';
+} from '../src/provider-refusals.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from '../src/claude-session.mjs';
 import { ClaudeCli, CodexCli, MuseCli } from '../src/cli-adapters.mjs';
 import { CodexAppServerCli } from '../src/codex-appserver.mjs';

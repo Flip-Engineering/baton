@@ -19,8 +19,9 @@ import { FRAME_LIMITS } from './limits.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { CLI_PROMPT_DIALECT, assertCardProviderRefusals, providerRefusalsForHarness, renderBrief } from './adapter.mjs';
+import { CLI_PROMPT_DIALECT, renderBrief } from './adapter.mjs';
 import { assertAdapterCard } from './adapter-contract.mjs';
+import { assertCardProviderRefusals, providerRefusalsForHarness } from './provider-refusals.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;

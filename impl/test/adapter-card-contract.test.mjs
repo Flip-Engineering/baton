@@ -1,14 +1,14 @@
 // 2026-09-14 audit A-G10: the legacy SubprocessAdapterBase tier (CodexAdapter, ClaudeAdapter,
-// GlmAdapter — adapter.mjs) publishes cards that no current gate can consume: no governance, no
-// modelSelection, no workerPolicy. `assertIsAdapter` duck-types methods and passes them, and the
-// dispatch path then normalizes workerPolicy and throws a generic `worker_policy_invalid`, so the
-// refusal never names the axis the card is missing.
+// GlmAdapter — adapter.mjs) published cards no current gate could consume: no governance, no
+// modelSelection, no workerPolicy. `assertIsAdapter` duck-types methods and passed them, and the
+// dispatch path then normalized workerPolicy and threw a generic `worker_policy_invalid`, so the
+// refusal never named the axis the card was missing.
 //
 // impl/src/adapter-contract.mjs is the ONE contract those cards are read against: the axes with
 // the gate that consumes each, a refusal that names the missing axis, and the declared completion
-// (`completeLegacySubprocessCard`) a tier that observes nothing publishes — the fix the tier's own
-// card() applies. The live CLI tier renders through it; the legacy tier's published cards are
-// pinned red-first below (reason A-G10) until its own module renders through the same contract.
+// (`completeLegacySubprocessCard`) a tier that observes nothing publishes. Each legacy class
+// declares its own card in `_declaration()` and `card()` completes it, so this file pins the
+// contract and the cards both tiers publish against it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -21,7 +21,8 @@ import { CLI_ADAPTERS } from '../src/cli-adapters.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import { normalizeWorkerPolicyCard, resolveWorkerPolicy } from '../src/worker-policy.mjs';
 
-const LEGACY_CARD = () => new CodexAdapter().card();
+// The tier's own declaration, before the contract completes it — the input `card()` completes.
+const LEGACY_CARD = () => new CodexAdapter()._declaration();
 
 test('A-G10: the contract names the axes a consumable card carries and the gate each exists for', () => {
   assert.deepEqual(ADAPTER_CARD_AXES.map((entry) => entry.axis),
@@ -88,10 +89,9 @@ test('A-G10: the legacy completion is derived from the card, declares the unobse
   );
 });
 
-test('A-G10 RED: the legacy subprocess tier publishes cards no gate can consume (reason A-G10)', () => {
-  // Red-first: the three legacy classes are live exports whose card() does not yet render through
-  // impl/src/adapter-contract.mjs. Completing the card through the contract is the fix — this row
-  // goes green the moment adapter.mjs renders its cards through it.
+test('A-G10: the legacy subprocess tier publishes cards every gate can consume', () => {
+  // The three legacy classes are live exports; each one's `card()` is its own declaration completed
+  // through impl/src/adapter-contract.mjs, so every axis a gate reads is present where it is built.
   for (const [name, adapter] of [
     ['CodexAdapter', new CodexAdapter()],
     ['ClaudeAdapter', new ClaudeAdapter()],

@@ -18,7 +18,8 @@
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { providerRefusalsForHarness, renderBrief } from './adapter.mjs';
+import { renderBrief } from './adapter.mjs';
+import { providerRefusalsForHarness } from './provider-refusals.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { FRAME_LIMITS } from './limits.mjs';

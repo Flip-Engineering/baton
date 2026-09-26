@@ -32,7 +32,7 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { openBatonDeployment, routeAdmissionGate } from '../src/application-deployment.mjs';
 import { routeQuotaKey } from '../src/route-quota.mjs';
-import { matchProviderRefusal, providerRefusalsForHarness } from '../src/adapter.mjs';
+import { matchProviderRefusal, providerRefusalsForHarness } from '../src/provider-refusals.mjs';
 import { MockAdapter, createDriver } from '../src/index.mjs';
 import { Log } from '../src/log.mjs';
 import { PROVIDER_FAULT_CODES } from '../src/provider-faults.mjs';
