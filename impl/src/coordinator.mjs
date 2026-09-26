@@ -5816,10 +5816,14 @@ export class Coordinator {
   }
 
   /** BD3-A/A6b + codex #1: runHorizon(runId) — the closure of {the run's own KG nodes, nodes
-   * promoted under that runId, findings whose evidence cites the run's task/elevation events,
-   * and the project-tier nodes the ambient slice serves}. Every query kind intersects its
-   * results with this predicate AFTER lookup. runId null (a bare task) has no run horizon and
-   * is not served by run-scoped kinds. */
+   * promoted under that runId, findings whose evidence cites the run's task/elevation events}.
+   * A run-scoped read kind (knowledge, finding) intersects its results with this predicate AFTER
+   * lookup, and the closure is the whole of what those reads serve: a node carrying runId null or
+   * a foreign runId stays outside it, so knowledge shared across the runs of one wave goes
+   * through the orchestrator's per-runId re-seeding (issue #96). The brief seam is the other
+   * serving path — serveKnowledge (:5427) keyword-matches every Finding and renders the bounded
+   * buildKnowledgeSlice, independent of this horizon. runId null (a bare task) has no run horizon
+   * and is not served by run-scoped kinds. */
     _runHorizonNodeIds(runId) {
     return runtimeObservation._runHorizonNodeIds(this, this._recorder, runId);
   }
