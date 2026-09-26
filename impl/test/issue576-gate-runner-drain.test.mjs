@@ -91,8 +91,9 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
   const markerPath = join(directory, 'gate-run-finished.marker');
   const capacityRoot = join(directory, 'host-capacity');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 576');
-  git(repo, 'config', 'user.email', 'issue576@example.invalid');
+  // #605: fixture identity rides the test process environment — no test writes a repository config.
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 576', GIT_COMMITTER_NAME: 'Issue 576' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue576@example.invalid', GIT_COMMITTER_EMAIL: 'issue576@example.invalid' });
   write(repo, '.gitignore', 'node_modules/\n');
   write(repo, 'README.md', 'base\n');
   for (const script of REGENERATORS) {
@@ -101,6 +102,11 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
   write(repo, 'impl/scripts/run-suite.mjs', runnerSource({ sleepMs: gateSleepMs, markerPath }));
   write(repo, 'impl/package.json', '{"name":"fixture-app","private":true}\n');
   write(repo, 'impl/src/coordinator.mjs', 'export const lane = 1;\n');
+  // A test file that imports the changed module: the landing's selection derives its gate run
+  // from the checkout's own import graph, and a change with no affected test file skips the gate
+  // entirely (`no_affected_tests`) — the queued-for-the-lease state row (d) pins never forms.
+  write(repo, 'impl/test/coordinator.test.mjs',
+    "import test from 'node:test';\nimport { lane } from '../src/coordinator.mjs';\ntest('fixture', () => { lane; });\n");
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');
@@ -112,6 +118,12 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
   const tip = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'checkout', '-q', 'master');
   const targetHead = git(repo, 'rev-parse', 'master');
+
+  // #558: the deployment DECLARES its shared remote and the landing publishes the landed ref to
+  // it — a real landing without the declaration refuses integrate_publish_undeclared before the
+  // gate run, so this fixture declares the bare remote a landing publishes to.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
 
   const store = new CoordinationStore(join(directory, 'ledger'));
   const pool = new SupervisedProcesses();
@@ -128,7 +140,7 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
     prepareRun: (request) => request,
     startRun: async () => { throw new Error('no native runs in this fixture'); },
     stopRun: async () => {},
-    integration: { repoRoot: repo },
+    integration: { repoRoot: repo, publishRemote },
   });
   t.after(() => {
     runtime.close();
@@ -239,8 +251,9 @@ test('576-c: drainAndClose cancels and reaps a gate runner the pool still holds'
   const repo = join(directory, 'repo');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 576');
-  git(repo, 'config', 'user.email', 'issue576@example.invalid');
+  // #605: fixture identity rides the test process environment — no test writes a repository config.
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 576', GIT_COMMITTER_NAME: 'Issue 576' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue576@example.invalid', GIT_COMMITTER_EMAIL: 'issue576@example.invalid' });
   write(repo, 'README.md', 'base\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
