@@ -147,6 +147,13 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    issue's file mentions plus the #296 landing-table gates — is NOT in this wave; §9.1.)
 4. **Refusals are typed pre-effect** — nothing is admitted, no seat joins:
    - `gh` missing or unauthenticated → `issue_reader_unavailable {issue, reason}`;
+   - the deployment checkout's own remotes resolve no GitHub repository → `issue_reader_no_repository
+     {issue, reason}`: the reader resolves the repository from that checkout (one hop through a
+     clone resident's local-path `origin`, #540) and names it to `gh` with `--repo OWNER/NAME`, so
+     the read never depends on which remote the process cwd carries. gh's own no-repository answer
+     recommends `gh auth login`, so it is classified before the authentication test — recording it
+     as an authentication failure sent the operator to repair a credential that was never the
+     problem;
    - the issue not found → `issue_not_found {issue}`;
    - a named path that ESCAPES the checkout, or a document the reader cannot use →
      `context_doc_unreadable {path}`; a source over the per-document registry row
@@ -259,7 +266,7 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
 | text-artifact admit into the CAS | `context-program.mjs` · `StatelessContextBench.admitSource` |
 | branch read projection (the ONE shape) | `application.mjs` · `projectContextPackageBranch` |
 | CLI argv vocabulary, usage rows | `application-cli.mjs` · `parseSwarmCli`, `SWARM_PARSER_LEG_FLAGS`; `swarm-surface.mjs` |
-| CLI refusal codes (`issue_reader_unavailable`, `issue_not_found`, `context_doc_unreadable`, `context_source_oversize`) | `application-cli.mjs`, the #430/#431 closed refusal shape |
+| CLI refusal codes (`issue_reader_unavailable`, `issue_reader_no_repository`, `issue_not_found`, `context_doc_unreadable`, `context_source_oversize`) | `application-cli.mjs`, the #430/#431 closed refusal shape |
 | registry byte rows (`context_package.brief_bytes`, `context_package.source_bytes`, the read-verb bounds) | `limits.mjs` · `FRAME_LIMITS` |
 | recruit args→attach seam, the `## Context package` brief section | `swarm-runtime.mjs` · `swarm.recruit` effect, `_composeRecruitBrief` |
 | the three read verbs: dispatch table rows | `swarm-runtime.mjs` · the knowledge-dispatch region (:236–350) |
