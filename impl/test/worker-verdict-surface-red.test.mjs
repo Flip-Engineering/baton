@@ -779,7 +779,9 @@ test('C4 (PIN): the surface never rides the refinement brief — task.brief stay
   const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt'] });
   const { coordinator } = setup({ adapter, capture: outOfScope });
   const { handle, task } = await spawn(coordinator, { pathScope: ['reports/**'] });
-  stageCompletedTurn(adapter, handle, ['outside.txt']);
+  // #142: the trust gate that minted this error is removed, so the event is staged directly — the
+  // helper the sibling C rows already use. What this row pins is the SURFACE's behaviour.
+  emitScopeGateEvent(adapter, handle.id);
   await flush();
   const gate = coordinator._log.read(handle.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');

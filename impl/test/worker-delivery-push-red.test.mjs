@@ -58,6 +58,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Coordinator } from '../src/coordinator.mjs';
+import { canonicalDigest } from '../src/runtime-recovery.mjs';
 import * as coordinatorNs from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
@@ -244,6 +245,25 @@ function stageCompletedTurn(adapter, handle, files) {
       artifacts: { commits: [], files },
       verification: { command: 'true', claimedExit: 0 },
       budgetUsed: { tokens: 1, usd: 0 },
+    },
+  });
+}
+
+/** The trust-gate scope error the coordinator minted for an out-of-scope capture. Issue #142
+ * removed that gate (it had no observed failure requiring it), so the projection consumers below
+ * stage the SAME event directly — the F6 pattern — because what they read is the event's shape,
+ * its static message and its digests+counts evidence, not the gate that wrote it. */
+function stageScopeGateError(coordinator, handle, { changed, inScope, outOfScope }) {
+  coordinator._log.append({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'error', actor: 'policy',
+    payload: {
+      message: 'captured worker result changed paths outside approved Plan scope',
+      code: 'worker_path_scope_violation', phase: 'trust_gate', trustPhase: 'path_scope',
+      pathScopeEvidence: {
+        changedPathCount: changed.length, changedPathsDigest: canonicalDigest(changed),
+        inScopeChangedPathCount: inScope.length, inScopeChangedPathsDigest: canonicalDigest(inScope),
+        outOfScopeChangedPathCount: outOfScope.length, outOfScopeChangedPathsDigest: canonicalDigest(outOfScope),
+      },
     },
   });
 }
@@ -874,6 +894,9 @@ test('F1 (RED): a scope-gate refusal never reaches the judged worker’s next-tu
   const { handle, task } = await spawn(coordinator, { pathScope: ['reports/**'] });
   stageCompletedTurn(adapter, handle, ['outside.txt']);
   await flush();
+  // #142: the gate is gone, so the event its consumers read is staged directly (above).
+  stageScopeGateError(coordinator, handle, { changed: ['outside.txt'], inScope: [], outOfScope: ['outside.txt'] });
+  await flush();
   const gate = coordinator._log.read(handle.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
   assert.ok(gate, 'precondition: the scope violation minted the real trust-gate error');
@@ -899,6 +922,10 @@ test('F2 (PIN): the trust-gate pathScopeEvidence is digests+counts only — the 
   const { coordinator } = setup({ adapter, capture: outOfScope });
   const { handle } = await spawn(coordinator, { pathScope: ['reports/**'] });
   stageCompletedTurn(adapter, handle, ['outside.txt', 'reports/in.md']);
+  await flush();
+  stageScopeGateError(coordinator, handle, {
+    changed: ['outside.txt', 'reports/in.md'], inScope: ['reports/in.md'], outOfScope: ['outside.txt'],
+  });
   await flush();
   const gate = coordinator._log.read(handle.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
@@ -933,6 +960,8 @@ test('F4 (PIN): the trust-gate error message is the static string — message so
   const { handle } = await spawn(coordinator, { pathScope: ['reports/**'] });
   stageCompletedTurn(adapter, handle, ['outside.txt']);
   await flush();
+  stageScopeGateError(coordinator, handle, { changed: ['outside.txt'], inScope: [], outOfScope: ['outside.txt'] });
+  await flush();
   const gate = coordinator._log.read(handle.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
   assert.ok(gate, 'the scope violation minted the real trust-gate error');
@@ -950,6 +979,8 @@ test('F5 (RED): the verdict is pinned per-WORKER — worker B never receives wor
   const { handle: handleA, task: taskA } = await spawn(coordinator, { pathScope: ['reports/**'] });
   const { handle: handleB, task: taskB } = await spawn(coordinator, { pathScope: ['reports/**'] });
   stageCompletedTurn(adapter, handleA, ['outside.txt']);
+  await flush();
+  stageScopeGateError(coordinator, handleA, { changed: ['outside.txt'], inScope: [], outOfScope: ['outside.txt'] });
   await flush();
   const gate = coordinator._log.read(handleA.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');

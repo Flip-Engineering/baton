@@ -289,7 +289,7 @@ test('PH5: a Plan without repository_edit refuses an observed edit before verifi
   assert.equal(JSON.stringify(failure).includes('impl/forbidden.txt'), false);
 });
 
-test('captured mixed-scope changes fail before verifier or result retention', async (t) => {
+test('captured mixed-scope changes no longer fail the task: the scope-violation gate is removed (#142)', async (t) => {
   const instance = driver('mixed-scope-capture', {
     'impl/allowed.txt': 'allowed\n',
     'outside-plan.txt': 'forbidden\n',
@@ -301,24 +301,13 @@ test('captured mixed-scope changes fail before verifier or result retention', as
     const current = await instance.coordinator.result(handle.id);
     return current.ready ? current : null;
   });
-  assert.equal(result.status, 'failed');
-  assert.deepEqual(result.terminalCause, {
-    kind: 'policy_failure', code: 'worker_path_scope_violation',
-  });
-  assert.equal(result.capturedSha, null);
-  assert.equal(result.retainedResultRef, null);
-  assert.equal(result.verdict, null);
-  assert.equal(instance.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
-  const failure = instance.log.read(handle.id).find((event) => (
+  // The gate that failed this capture is removed (#142): an out-of-scope path beside an in-scope
+  // one no longer kills a task whose approved edit did land in scope. What remains is the
+  // required-effect check — a Plan that required an edit and produced NO in-scope change still
+  // refuses (PH4), and the forbidden-effect check is unmoved (PH5).
+  assert.notEqual(result.terminalCause?.code, 'worker_path_scope_violation',
+    'the scope violation is no longer a terminal cause');
+  assert.equal(instance.log.read(handle.id).some((event) => (
     event.kind === 'error' && event.payload?.code === 'worker_path_scope_violation'
-  ));
-  assert.deepEqual({
-    changed: failure.payload.pathScopeEvidence.changedPathCount,
-    inScope: failure.payload.pathScopeEvidence.inScopeChangedPathCount,
-    outside: failure.payload.pathScopeEvidence.outOfScopeChangedPathCount,
-  }, { changed: 2, inScope: 1, outside: 1 });
-  assert.match(failure.payload.pathScopeEvidence.outOfScopeChangedPathsDigest, /^[a-f0-9]{64}$/u);
-  assert.equal(JSON.stringify(failure.payload.pathScopeEvidence).includes('outside-plan.txt'), false);
-  assert.equal(instance.coordination.snapshot().artifacts
-    .filter((artifact) => artifact.taskId === 'phase73-mixed-scope').length, 0);
+  )), false, 'and the trust gate mints no scope-violation row');
 });

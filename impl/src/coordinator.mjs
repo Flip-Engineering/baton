@@ -6373,21 +6373,13 @@ export class Coordinator {
         );
       }
       const inScopeChangedPaths = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
-      const outOfScopeChangedPaths = changedPaths.filter((path) => !pathInScope(task.brief.pathScope, path));
-      if (outOfScopeChangedPaths.length > 0) {
-        trustPhase = 'path_scope';
-        throw Object.assign(new Error('captured worker result changed paths outside approved Plan scope'), {
-          code: 'worker_path_scope_violation',
-          pathScopeEvidence: {
-            changedPathCount: changedPaths.length,
-            changedPathsDigest: canonicalDigest(changedPaths),
-            inScopeChangedPathCount: inScopeChangedPaths.length,
-            inScopeChangedPathsDigest: canonicalDigest(inScopeChangedPaths),
-            outOfScopeChangedPathCount: outOfScopeChangedPaths.length,
-            outOfScopeChangedPathsDigest: canonicalDigest(outOfScopeChangedPaths),
-          },
-        });
-      }
+      // Ruling on #142: the out-of-scope VIOLATION gate is removed. It has no observed failure
+      // that requires it — zero firings in this deployment's recorded ledger and worker logs
+      // (every occurrence of the code in them is a worker grepping for the string), and no doc,
+      // comment or commit names a run it caught — while its one recorded firing (the #114 opus
+      // re-drive) failed a COMPLETED task over a blocker file the brief itself invited. What a
+      // planned edit must reach is still checked: the required-effect gate below refuses when an
+      // approved `repository_edit` produced no in-scope change at all.
       // TG5: `analysis: true` documents repository_edit as not-required for this node — the
       // required_effect progress verdict is skipped; every other phase (capture, forbidden_effect,
       // path_scope, environment, coverage) still runs.
