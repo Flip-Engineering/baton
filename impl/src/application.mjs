@@ -5962,10 +5962,16 @@ export class BatonApplication {
         await this.driver.coordinator.wait(remaining);
       }
     };
+    // Issue #164 (DR-1(a)): the durable-stop predicate is WAIT-LOCAL, never a canonical-set edit
+    // (the row's A8 pin keeps applicationTerminal('stopping') FALSE when it lands). A run whose
+    // stop is already admitted reads phase 'stopping' — outside both sets below — and that
+    // admitted stop IS the projected truth the caller waited for, so the wait returns it on the
+    // first cycle instead of entering a blind cycle that only the clock ends.
+    const durablyStopped = (v) => v?.phase === 'stopping';
     // docs/36 §4.1 read row / R-OP-9 — `--until terminal` blocks until the application Run itself is
     // terminal; the default (settled) preserves run.wait's historical provider-settlement block.
     if (options.until === 'terminal') {
-      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && Date.now() < deadline) {
+      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && !durablyStopped(view) && Date.now() < deadline) {
         await this.driver.coordinator.wait(0);
         const remaining = deadline - Date.now();
         if (remaining <= 0) break;
@@ -5974,7 +5980,7 @@ export class BatonApplication {
       }
       return view;
     }
-    while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
+    while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && !durablyStopped(view) && Date.now() < deadline) {
       await this.driver.coordinator.wait(0);
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
