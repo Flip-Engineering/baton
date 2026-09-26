@@ -15,3 +15,4 @@ baton-status.json
 # and writes network and build scratch under .scratch/; neither is a source artifact.
 .bend/
 .scratch/
+__pycache__/
