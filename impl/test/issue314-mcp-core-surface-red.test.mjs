@@ -118,7 +118,7 @@ const CORE = Object.freeze([
   },
   {
     name: 'baton_swarm',
-    description: 'One swarm: create, list, view (the sliced read), update (the closed event set), recruit, guide, capture, check. capture/check are identity-keyed; the rest carry idempotencyKey.',
+    description: 'One swarm: create, list, view (the sliced read), update (the closed event set), recruit, guide, capture. capture is identity-keyed; the rest carry idempotencyKey.',
     verbs: {
       create: { requires: ['purpose', 'idempotencyKey'], mutation: true, long: false,
         fields: {
@@ -155,11 +155,6 @@ const CORE = Object.freeze([
         fields: {
           swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA,
           view: { type: 'boolean' },
-        } },
-      check: { requires: ['swarmId', 'participantId', 'contributionId'], mutation: true, long: true,
-        fields: {
-          swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA,
-          checkId: ID_SCHEMA, view: { type: 'boolean' },
         } },
     },
   },
