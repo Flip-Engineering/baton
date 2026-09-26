@@ -79,14 +79,6 @@ export function suiteLeasePollMs(env = process.env) {
   return positiveInt(env?.BATON_HOST_CAPACITY_POLL_MS);
 }
 
-/** #561/#598: which verify holders HOLD in the admission queue on a standing-tight host — a
- * landing gate (integrate:*) and an admitted seat (participant:*) — instead of taking the
- * degraded answer. Any other holder (a fixture, an ad-hoc run) proceeds degraded at once. */
-export function suiteLeaseDurable(envOrHolder = process.env) {
-  const holder = typeof envOrHolder === 'string' ? envOrHolder : suiteLeaseHolder(envOrHolder);
-  return typeof holder === 'string'
-    && (holder.startsWith('participant:') || holder.startsWith('integrate:'));
-}
 
 /** The authority this runner admits through: the shared host directory, never a fixture. */
 export function createSuiteLeaseAuthority(env = process.env) {
@@ -142,16 +134,18 @@ export function formatSuitePlan({
     : `${expanded} file(s) in the whole suite`;
   return `baton test runner: plan — ${selection}: ${parallel} in the parallel lane (x${parallelism}), ${serial} in the serial lane; progress deadline ${idleMs} ms per file`;
 }
-
 /** Acquire the runner's verify lease, printing the queued row while it waits. Resolves with
  * `{disabled, nested, token, degraded, authority, release}`; a bypassed or nested run resolves
  * `{disabled: true}` without touching the lease directory. The wait is not bounded (#541): the
  * run is admitted when the verdicts ahead of it release. A host that cannot fund a suite at all
- * answers `degraded` at once with the shortfall, and the run proceeds without a lease. */
+ * answers `degraded` at once with the shortfall, and the run proceeds without a lease —
+ * except a DURABLE request (#561/#598: the landing gate names itself durable), which HOLDS in
+ * the admission queue with no deadline until measured memory funds one more suite. */
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
   env = process.env, holder = suiteLeaseHolder(env),
   log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
+  durable = false,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
     return Object.freeze({
@@ -161,12 +155,9 @@ export async function acquireSuiteVerifyLease({
   }
   const resolved = authority ?? createAuthority(env);
   let reported = false;
-  // #561/#598: the holder decides durability — a landing gate (integrate:*) and an admitted
-  // seat (participant:*) HOLD in the admission queue with no deadline when the host is
-  // standing-tight; any other holder takes the degraded answer at once.
   const outcome = await resolved.acquire('verify', {
     holder,
-    durable: suiteLeaseDurable(holder),
+    durable: durable === true,
     onQueued: (row) => {
       if (reported) return;
       reported = true;

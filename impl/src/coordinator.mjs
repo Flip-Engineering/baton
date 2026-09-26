@@ -494,6 +494,11 @@ export async function runSupervisedGateRun({
   // memory shortfall) answers `degraded` at once and the gate run proceeds without a lease.
   lease = await acquireSuiteVerifyLease({
     authority, holder, log: () => {},
+    // #561/#598: the landing gate names its own start durable — under a standing-tight host the
+    // start HOLDS in the admission queue with no deadline until measured memory funds one more
+    // suite, and the gates already running finish (observed 21:51Z: nine gates started degraded
+    // at once, the third near-crash).
+    durable: true,
     // #576: the pool's fence signal — a stopping resident ends this wait instead of hanging
     // behind a queue it can no longer answer for.
     ...(pool?.signal ? { signal: pool.signal } : {}),
