@@ -2697,7 +2697,7 @@ function parseSwarmCli(args, idempotencyKey) {
   // the flag: the integrate row's usage does not yet (swarm-surface.mjs, named in the lane's
   // needsFromOthers), and the #431 pin reads that admission list off the same derivation, so the
   // teaching stays exactly as wide as the rendered usage lines until that hunk lands.
-  const follow = ['watch', 'check', 'recruit', 'integrate'].includes(verb) && flag(args, '--follow');
+  const follow = ['watch', 'recruit', 'integrate'].includes(verb) && flag(args, '--follow');
   // Issue #441: the recruit's context leg is consumed BEFORE the closed-argv check — `--issue`/
   // `--doc` are the ROOT's own reading (the root host holds the credential), never wire arguments:
   // the recruit carries `options.contextPackage = {digest}`. Every other verb refuses them the
@@ -2796,12 +2796,6 @@ function parseSwarmCli(args, idempotencyKey) {
   noRemainder(args);
   if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
     values.idempotencyKey = idempotencyKey;
-  }
-  if (follow && verb === 'check') {
-    return {
-      kind: 'swarm_check_follow', swarmId: values.swarmId, participantId: values.participantId,
-      contributionId: values.contributionId, checkId: values.checkId, idempotencyKey,
-    };
   }
   if (follow && verb === 'recruit') {
     return {
@@ -3186,40 +3180,6 @@ export async function readDeploymentWakePage(parsed, client) {
   });
 }
 
-/** The durable verdict row one check wrote, or null while it is still running. The runtime composes
- * `Check <checkId>: passed|failed for <sha>; cleanup <state>` into the contribution's review row, and
- * that row is the only check-id referent the swarm view carries — so the check id is matched
- * against the row's own composed reason. */
-export function swarmCheckVerdict(view, parsed) {
-  const reviews = view?.reviews?.[parsed.contributionId];
-  if (!Array.isArray(reviews)) return null;
-  return reviews.find((review) => typeof review?.reason === 'string'
-    && review.reason.startsWith(`Check ${parsed.checkId}:`)) ?? null;
-}
-
-/** Issue #522: whether the host-capacity `verify` lease one check runs under says the check is
- * still the resident's work. A check holds that lease — the same lease the suite runner takes,
- * under the holder template `check:<contributionId>:<checkId>` — for its whole verdict, so a
- * holder still waiting in the verify queue, or a verify lease held at all, means the verification
- * this caller waits on is still running. They are read from the deployment rows the swarm view
- * publishes (`deployment.hostCapacity`, the resident's own non-mutating host-capacity observation).
- *
- * A deployment that publishes no host-capacity observation (`null`: host admission disabled, or a
- * bare application) runs its checks without a lease it can report, so there is no lease state to
- * read and the answer is `true`: the check's own verdict, or the typed refusal a re-dispatched
- * check answers with, is what ends that wait. A probe that cannot be read at all is a different
- * fact and yields `false`: the caller's pending receipt is the answer for a check whose progress
- * it cannot observe. */
-export function swarmCheckVerifyLeaseHeld(view, contributionId, checkId) {
-  const capacity = view?.deployment?.hostCapacity ?? null;
-  if (capacity === null || typeof capacity !== 'object' || Array.isArray(capacity)) return true;
-  const queued = (Array.isArray(capacity.queue) ? capacity.queue : [])
-    .some((row) => row?.kind === 'verify' && row?.holder === `check:${contributionId}:${checkId}`);
-  if (queued) return true;
-  const held = capacity.used?.leases?.verify;
-  return Number.isSafeInteger(held) && held > 0;
-}
-
 const LIVE_RUNTIME_STATES = new Set(['pending', 'working', 'blocked', 'idle', 'stopping']);
 
 /** One wake line: what changed (the matched event), the organization truth an orchestrator acts
@@ -3516,46 +3476,6 @@ function watchAnswer(view, projection, wake, wakeClass) {
   };
 }
 
-/** R-5 (issue #288): `baton swarm check … --follow` — admit the check (identity-idempotent, so a
- * replay is the same check), then watch the swarm's own feed until the verdict row for THIS check
- * appears and return it. The resident records the verdict durably (`swarm.contribution_reviewed`);
- * this is CLI-side observation, so a check that outlives the CLI's request bound is still
- * observable instead of lost to a transport refusal. */
-export async function followSwarmCheck(parsed, client, options = {}) {
-  const check = await client.command('swarm.check', {
-    swarmId: parsed.swarmId, participantId: parsed.participantId,
-    contributionId: parsed.contributionId, checkId: parsed.checkId,
-  }, `${parsed.idempotencyKey}:check`);
-  // The verdict row may already be durable (an instant check, or a replay of one this caller ran
-  // before), so the current view is read before any waiting starts.
-  let view = await client.command('swarm.view', { swarmId: parsed.swarmId }, `${parsed.idempotencyKey}:view`);
-  for (;;) {
-    const verdict = swarmCheckVerdict(view, parsed);
-    if (verdict !== null) {
-      return Object.freeze({
-        schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
-        contributionId: parsed.contributionId, checkId: parsed.checkId,
-        verdict: Object.freeze({ ...verdict }),
-        check,
-      });
-    }
-    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) {
-      // The swarm is closed and nothing is alive: no further event can write the verdict row.
-      return Object.freeze({
-        schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
-        contributionId: parsed.contributionId, checkId: parsed.checkId,
-        verdict: null, check,
-      });
-    }
-    const cursor = view?.cursor;
-    view = await watchSwarmCommand(client, parsed.swarmId, {
-      swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
-      ...(parsed.timeoutMs === undefined ? {} : { timeoutMs: parsed.timeoutMs }),
-    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
-    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
-  }
-}
-
 /** The seat rows one recruit wrote, classified for the follow leg (issue #331). The admission
  * slice carries the host authority's queued / admitted / timed_out rows per seat; the
  * participant row carries the seat itself — including the `leftReason: 'recruit_refused'` /
@@ -3570,7 +3490,7 @@ export function swarmRecruitSeat(view, participantId, since) {
   const participants = Array.isArray(view?.participants) ? view.participants : [];
   const participant = participants.find((row) => row?.participantId === participantId) ?? null;
   const admission = (Array.isArray(view?.admission) ? view.admission : [])
-    .filter((row) => row?.participantId === participantId && row?.command !== 'swarm.check')
+    .filter((row) => row?.participantId === participantId)
     .filter((row) => !Number.isSafeInteger(since)
       || !Number.isSafeInteger(row?.seq) || row.seq >= since)
     .find(() => true) ?? null;
@@ -3817,14 +3737,6 @@ function integrationRefusalRow(refusal, found) {
  * is observed on that same seat row, where status left with leftReason stopped lands. */
 export function commandObservation(name, args, commandId) {
   const value = record(args) ? args : {};
-  if (name === 'swarm.check' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
-    const invocation = ['swarm', 'check', value.swarmId, value.participantId, value.contributionId, value.checkId]
-      .filter(nonempty).join(' ');
-    return Object.freeze({
-      command: `baton ${invocation} --follow`,
-      row: `reviews["${value.contributionId}"] in \`baton swarm view ${value.swarmId}\` — the row naming "Check ${value.checkId}"`,
-    });
-  }
   if (name === 'swarm.recruit' && nonempty(value.swarmId) && nonempty(value.participantId)) {
     return Object.freeze({
       command: `baton swarm view ${value.swarmId} --participant-id ${value.participantId}`,
@@ -5154,9 +5066,7 @@ export class BatonWebClient {
         if (waitSignal?.aborted) throw error;
         const pending = await this._pendingReceiptOrNull(name, args, envelope, error);
         if (pending === null) throw error;
-        if (name !== 'swarm.check' || !await this._swarmCheckVerifyLeaseHeld(args, waitSignal)) {
-          throw pending;
-        }
+        throw pending;
       }
     }
     if (body.status !== 'admitted') return body.result ?? body;
@@ -5183,28 +5093,6 @@ export class BatonWebClient {
       },
       retryable: false,
     });
-  }
-
-  /** Issue #522: one round's progress observation for a check that outlived this caller's bound.
-   * A check holds its host-capacity `verify` lease for the whole verdict, so the swarm view's
-   * deployment rows (`deployment.hostCapacity`) answer whether that lease is still queued for the
-   * check or held. A probe that cannot be read reports no progress: the caller's pending receipt
-   * is then the honest answer. The probe is a plain read of the swarm's own view, so it mints no
-   * receipt and carries no caller key. */
-  async _swarmCheckVerifyLeaseHeld(args, waitSignal) {
-    const envelope = {
-      schemaVersion: 1, commandId: randomUUID(), idempotencyKey: randomUUID(),
-      command: 'swarm_view', args: { swarmId: args.swarmId },
-      repoId: this.repoId, origin: this.origin,
-    };
-    let body;
-    try {
-      body = await this._json('/v1/commands', {
-        method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-      }, this.requestTimeoutMs, waitSignal);
-    } catch { return false; }
-    if (body.status === 'admitted') return false;
-    return swarmCheckVerifyLeaseHeld(body.result ?? body, args.contributionId, args.checkId);
   }
 
   /** One live probe: does the deployment answer at all? Any HTTP answer — including a refusal —
@@ -5706,7 +5594,6 @@ export async function runBatonCli(parsed, client, options = {}) {
     if (parsed.name === 'swarm.guide') return runSwarmGuideCli(parsed, client);
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
-  if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_integrate_follow') return followSwarmIntegrate(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_recruit_follow') {
     const admitted = await admitRecruitContextPackage(parsed, client, options ?? {});

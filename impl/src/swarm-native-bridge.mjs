@@ -781,8 +781,8 @@ function bridgeHelpText(command = null) {
       'commandReceipt.idempotencyKey. That key REPLAYS an operation that already completed;',
       're-attempting under it is admitted only for swarm.recruit and swarm.holder_released — every',
       'other command refuses /swarm_operation_unconfirmed/ until the attempt is reconciled, so a',
-      'NEW attempt needs a NEW key. swarm.capture and swarm.check take no key at all: their',
-      '(participantId, contributionId[, checkId]) coordinates are the identity.',
+      'NEW attempt needs a NEW key. swarm.capture takes no key at all: its',
+      '(participantId, contributionId) coordinates are the identity.',
       'A refusal is the command\'s answer: one JSON document ({ok:false,error:{message,code,detail}})',
       'on STDOUT with a non-zero exit — the same stream a success envelope uses.',
     ].join('\n');

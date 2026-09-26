@@ -59,7 +59,7 @@ export function rootContributionAttention(swarm, contribution) {
   const rows = [];
   if (!reviewed && !reviewerAvailable) {
     rows.push({ ...base, owed: 'review_owed', ask: null,
-      next: { command: 'swarm.check', ...base } });
+      next: { command: 'swarm.view', swarmId: swarm.swarmId } });
   }
   for (const { to, ask, needId } of contributionNeeds(contribution)) {
     if (to !== 'root') continue;

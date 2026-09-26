@@ -103,9 +103,8 @@ test('delegated coordinator recruits within grants and implementers can contribu
   assert.equal(f.store.swarm('baton').participants.builder.parentId, 'lead');
   const builder = principal('w-2');
   const view = await f.call('view', {}, builder);
-  assert.ok(view.availableActions.includes('swarm.check'));
   assert.ok(view.availableActions.includes('swarm.update'));
-  assert.deepEqual(view.actionTargets['swarm.check'].participantIds, ['builder']);
+  assert.equal(view.availableActions.includes('swarm.check'), false);
   assert.equal(view.availableActions.includes('swarm.recruit'), false);
   await f.call('update', { event: 'swarm.contribution_recorded', payload: {
     contributionId: 'finding', participantId: 'builder', body: 'The current interface needs another operation.',
@@ -117,15 +116,13 @@ test('delegated coordinator recruits within grants and implementers can contribu
   await assert.rejects(f.call('view', {}, principal('unknown')), { code: 'swarm_membership_required' });
 });
 
-test('reviewers check and accept contributions while authors remain available for further guidance', async (t) => {
+test('reviewers accept contributions while authors remain available for further guidance', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Continuous review' });
   await f.recruit('builder');
   await f.recruit('reviewer', ['read', 'review', 'communicate']);
   const reviewer = principal('w-2');
   await f.call('capture', { participantId: 'builder', contributionId: 'revision' }, reviewer);
-  const result = await f.call('check', { participantId: 'builder', contributionId: 'revision', checkId: 'initial' }, reviewer);
-  assert.equal(result.passed, true);
   await f.call('update', { event: 'swarm.contribution_reviewed', payload: {
     contributionId: 'revision', decision: 'accept', reason: 'Ready for integration.',
   } }, reviewer);
@@ -134,7 +131,6 @@ test('reviewers check and accept contributions while authors remain available fo
   assert.equal(f.store.swarm('baton').participants.builder.status, 'active');
   assert.equal(f.prompts.length, 1);
   await f.call('stop', { participantId: 'builder', reason: 'Session no longer needed' });
-  await f.call('check', { participantId: 'builder', contributionId: 'revision', checkId: 'after-stop' }, reviewer);
   assert.equal(f.workers[0].status, 'dead');
 });
 
@@ -186,7 +182,6 @@ test('a captured revision attaches to an existing finding without replacing its 
   await assert.rejects(f.call('capture', { participantId: 'reviewer', contributionId: 'critique' }), {
     code: 'swarm_replay_conflict',
   });
-  assert.equal((await f.call('check', { participantId: 'builder', contributionId: 'critique', checkId: 'review' }, principal('w-2'))).passed, true);
 });
 
 test('recruitment recovers through the existing idempotent Run authority and retains its original shared context', async (t) => {
