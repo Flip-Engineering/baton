@@ -371,15 +371,6 @@ const LONG_VERBS = Object.freeze([
     foreign: wakeFrame({ seq: 14, wakeClass: 'dead', swarmId: 'swarm-other', participantId: 'seat-314' }),
   }),
   Object.freeze({
-    label: 'baton_swarm {verb: check} (swarm.check)',
-    tool: 'baton_swarm', verb: 'check',
-    args: { swarmId: 'swarm-314', participantId: 'seat-314', contributionId: 'contribution-314', checkId: 'check-314' },
-    answers: { swarm_check: swarmReceipt('swarm.check', 'swarm.contribution_reviewed', 'contribution-314') },
-    kinds: ['reviewed'], settleOn: ['reviewed'],
-    swarms: ['swarm-314'], participants: null,
-    settle: wakeFrame({ seq: 15, wakeClass: 'reviewed', swarmId: 'swarm-314', participantId: 'seat-314' }),
-  }),
-  Object.freeze({
     label: 'baton_waves {verb: start} (waves.start)',
     tool: 'baton_waves', verb: 'start',
     args: { members: [{ role: 'builder', objective: 'lane 2 member', exact: { harness: 'mock', model: 'model-a', effort: 'low' } }] },

@@ -47,15 +47,7 @@ import { renderRouteUsageLines } from './adapter.mjs';
 // Issue #585 (docs/56 D6.2): the seat's wake lines carry the same derived status prefix every
 // other wake-row rendering reads, so one class spells the same word wherever a seat meets it.
 import { flipStatusPrefix } from './brand.mjs';
-// Issue #296: the landing verb's two collaborators. `gateSetForPaths` turns the squash's changed
-// paths into the tests that cover them, and `landContribution` is the #301 git authority's own
-// landing mechanism — this module never spawns git for a landing, exactly as it never spawns git
-// for a capture.
-// Issue #466: the second half of that gate derivation is the RUNNER's own selector
-// (`selectFromRepository`, the function `node impl/scripts/run-suite.mjs --changed` calls). The
-// landing composes the two — never a second table — so a lane that ships a test with its change
-// runs that test, which is the rule the landing's region table alone could not carry.
-import { gateSetForPaths, issueNumberOf } from './landing-table.mjs';
+import { issueNumberOf } from './landing-table.mjs';
 import {
   NO_BASE_FILES, compareSuiteVerdicts, comparisonCountsLine, confirmSuiteFailures, confirmationLine,
   unaccountedFiles, verdictFailures,
@@ -1258,7 +1250,7 @@ if (Object.keys(UPDATE_PERMISSIONS).sort().join('\0') !== [...SWARM_EVENT_KINDS]
 const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
-  'swarm.check': 'review', 'swarm.stop': 'stop',
+  'swarm.stop': 'stop',
   // Issue #311 (item 2): a peer message is the same kind of act a guide is — a seat speaking to
   // another seat — so it takes the same authority, and the receipt read is a plain read.
   'swarm.notify': 'communicate', 'swarm.notifications': 'read',
@@ -4743,25 +4735,14 @@ export class SwarmRuntime {
       organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => this._canAct(row)).map((row) => row.participantId) });
     }
     // #329 (+ #269 item 2): host admission, folded from the runtime's own durable rows — the
-    // LATEST of queued / admitted / timed-out for each recruited seat, and for each check. A
-    // seat still queued has no participant row yet, and a seat whose wait is spent never got one,
-    // so the ONLY place an orchestrator can learn "the host refused my recruit, and why" is here:
-    // `recruit_queued` names the position and the dimension it waits on; `recruit_queue_timeout`
-    // names the dimension, the numbers and the operator bypass. A check's rows ride the SAME
-    // kinds; the command tells them apart, and a check folds per (contribution, check) — one seat
-    // may wait on many — minting `check_queued` / `check_queue_timeout` with the same facts.
     const admission = new Map();
     for (const event of ledger) {
       const payload = event.kind === 'driver.recorded' ? event.payload : null;
       if (payload?.swarmId !== swarm.swarmId || typeof payload.participantId !== 'string') continue;
       if (payload.kind !== 'swarm.admission_queued' && payload.kind !== 'swarm.admission_admitted'
         && payload.kind !== 'swarm.admission_timeout') continue;
-      const check = payload.command === 'swarm.check'
-        && typeof payload.contributionId === 'string' && typeof payload.checkId === 'string';
-      admission.set(check ? `check\0${payload.contributionId}\0${payload.checkId}` : payload.participantId, {
+      admission.set(payload.participantId, {
         participantId: payload.participantId, seq: event.seq, ts: event.ts,
-        ...(check ? { command: payload.command,
-          contributionId: payload.contributionId, checkId: payload.checkId } : {}),
         state: payload.kind === 'swarm.admission_queued' ? 'queued'
           : payload.kind === 'swarm.admission_admitted' ? 'admitted' : 'timed_out',
         authority: payload.authority ?? 'host', leaseKind: payload.leaseKind ?? 'worker',
@@ -4772,22 +4753,6 @@ export class SwarmRuntime {
       });
     }
     for (const row of admission.values()) {
-      if (row.command === 'swarm.check') {
-        if (row.state === 'queued') {
-          organization.push({ kind: 'check_queued', participantId: row.participantId,
-            contributionId: row.contributionId, checkId: row.checkId,
-            position: row.position, ahead: row.ahead, shortfall: row.shortfall, seq: row.seq, ts: row.ts });
-        } else if (row.state === 'timed_out') {
-          organization.push({ kind: 'check_queue_timeout', participantId: row.participantId,
-            contributionId: row.contributionId, checkId: row.checkId, code: row.code,
-            position: row.position, ahead: row.ahead, shortfall: row.shortfall,
-            waitMs: row.waitMs, bypass: row.bypass,
-            seq: row.seq, ts: row.ts,
-            next: { command: 'swarm.check', swarmId: swarm.swarmId, participantId: row.participantId,
-              contributionId: row.contributionId, checkId: row.checkId } });
-        }
-        continue;
-      }
       if (row.state === 'queued' && !participantsById.has(row.participantId)) {
         organization.push({ kind: 'recruit_queued', participantId: row.participantId, position: row.position,
           ahead: row.ahead, shortfall: row.shortfall, seq: row.seq, ts: row.ts });
@@ -4815,15 +4780,6 @@ export class SwarmRuntime {
           swept: [...(payload.swept ?? [])], seq: event.seq, ts: event.ts ?? null } }
         : { ...row, failure: { target: payload.target, code: payload.code,
           detail: payload.detail ?? {}, seq: event.seq, ts: event.ts ?? null } });
-    }
-    // #269 item 2: the latest still-queued check per contribution, so the contribution rows name
-    // the wait they sit behind. Latest by seq wins; a settled check (admitted / timed_out)
-    // replaces its queued row in the fold above and clears the contribution row.
-    const queuedCheckByContribution = new Map();
-    for (const row of admission.values()) {
-      if (row.command !== 'swarm.check' || row.state !== 'queued') continue;
-      const prior = queuedCheckByContribution.get(row.contributionId);
-      if (!prior || row.seq > prior.seq) queuedCheckByContribution.set(row.contributionId, row);
     }
     // Issue #357 remainder (#357/#310/#346): three rows from facts the runtime already
     // holds, derived here beside the other organization rows — view-derived, never
@@ -4885,7 +4841,7 @@ export class SwarmRuntime {
         contributionId: contribution.contributionId, seq: contribution.seq,
         waitingSince: contribution.ts ?? null,
         cadence: { crossedBy: 'swarm.participant_joined', seq: crossing },
-        next: { command: 'swarm.check', swarmId: swarm.swarmId,
+        next: { command: 'swarm.view', swarmId: swarm.swarmId,
           participantId: contribution.participantId, contributionId: contribution.contributionId } });
     }
     for (const obligation of rootAttentionObligations(swarm, ledger, {
@@ -5028,7 +4984,6 @@ export class SwarmRuntime {
     });
     const availableActions = Object.entries(COMMAND_PERMISSIONS)
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
-    if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
     if (permissions.includes('review') && !availableActions.includes('swarm.capture')) availableActions.push('swarm.capture');
     // The update kinds and knowledge verbs this caller may send NOW, each with the permission
     // that admits it — derived by the SAME functions the dispatch checks use (`_updatePermission`
@@ -5168,38 +5123,16 @@ export class SwarmRuntime {
       // Every read path (view, watch, bridge, MCP) carries these rows through unchanged.
       contributions: [...rowsOf(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
         && scopeWorkIds.has(contribution.workId)).map((row) => {
-        // #269 item 2: a contribution whose check still waits on the host authority reads as
-        // queued where the contribution reads — the position, ahead and shortfall of the wait.
-        const queued = queuedCheckByContribution.get(row.contributionId) ?? null;
-        // Issue #310: a contract-claiming body projects its contract as rows beside the stored
-        // row — subject, commit, item statuses, verification summary, hand-off counts.
         const contract = projectContributionContract(row.body);
-        // Issue #433 (docs/46 §2.1) + #441 (lane C): the row's `reviewState` and the read's own
-        // `files`/`decision` come from the ONE derivation (`contributionLedgerRows`) — the same
-        // rows `run.contributions.read` answers — so a root's landing loop and a seat's read can
-        // never disagree. The derivation's OTHER fields are deliberately not copied onto the row:
-        // `summary`, `subject`, `items`, `commit` and `integration` are the SAME facts the fold row
-        // already carries in their fuller spelling (`body`, `refs`, `contract`, the fold's own
-        // `integration`), and a contribution row is priced by the bridge's frame budget
-        // (swarm-bridge-truth), where a second copy of a body is the difference between an answer
-        // and a refusal.
         const derived = derivedContributions.get(row.contributionId) ?? null;
         const landing = integrationByContribution.get(row.contributionId) ?? null;
-        // Issue #481: the stored body a reader sees — a defective string body projects as the
-        // typed marker, never as text a reader folds into one key per character.
         const defect = storedBodyDefect(row.body);
-        const projected = { ...row, ...(defect === null ? {} : { body: defect }),
+        return { ...row, ...(defect === null ? {} : { body: defect }),
         ...(derived === null ? {} : {
           files: derived.files, decision: derived.decision, reviewState: derived.reviewState,
         }), ...(contract === null ? {} : { contract }),
-        // Issue #459: the landing this contribution has open (its scratch checkout), and the
-        // failure one stopped with — the two rows a landing that outlives its caller leaves.
         ...(landing?.started === undefined ? {} : { integrationStarted: landing.started }),
         ...(landing?.failure === undefined ? {} : { integrationFailure: landing.failure }) };
-        return queued ? { ...projected, admission: { state: 'queued', authority: queued.authority,
-          leaseKind: queued.leaseKind, position: queued.position, ahead: queued.ahead,
-          shortfall: queued.shortfall, checkId: queued.checkId, participantId: queued.participantId,
-          seq: queued.seq, ts: queued.ts } } : projected;
       }),
       ...noteRows],
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
@@ -5263,13 +5196,11 @@ export class SwarmRuntime {
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
         lastRefusal: caller ? lastRefusal(caller.participantId) : null },
       availableActions, attention: scopedAttention,
-      // #329 (+ #269 item 2): host admission per recruited seat and per check (queued /
-      // admitted / timed_out with the dimension and numbers), the rows the recruit_queued /
-      // recruit_queue_timeout and check_queued / check_queue_timeout attention derives from.
+      // #329: host admission per recruited seat (queued / admitted / timed_out with the dimension
+      // and numbers), the rows the recruit_queued / recruit_queue_timeout attention derives from.
       admission: [...admission.values()].filter((row) => !scope || scopeSubtree.includes(row.participantId)),
       actionTargets: {
         'swarm.capture': { participantIds: contributionTargets },
-        'swarm.check': { participantIds: contributionTargets },
       },
       updates,
       // Knowledge-verb rows (#318) share the `updates` array with event-kind rows but carry a
@@ -8011,8 +7942,6 @@ export class SwarmRuntime {
     // by reading the LITERAL second argument of every refuse() in this module, so a variable here
     // would silence the only check that a landing refusal is in the family's closed set at all.
     switch (raised) {
-      case 'integrate_contribution_not_accepted':
-        refuse(message, 'integrate_contribution_not_accepted', detail); break;
       case 'integrate_commit_unreachable':
         refuse(message, 'integrate_commit_unreachable', detail); break;
       case 'integrate_conflict':
@@ -8156,18 +8085,6 @@ export class SwarmRuntime {
         contributionId: args.contributionId, rule: 'contribution-exists',
       });
     }
-    // The #350/#433 derivation, read from the same review rows `contributionLedgerRows` reads:
-    // accepted when an accept exists and no LATER reject revokes it.
-    if (!this._acceptedContribution(swarm, args.contributionId)) {
-      const settling = (swarm.reviews?.[args.contributionId] ?? [])
-        .filter((review) => review.decision !== 'comment');
-      const reviewState = settling.length === 0 ? 'unreviewed'
-        : settling[settling.length - 1].decision === 'accept' ? 'accepted' : 'rejected';
-      refuse(`Contribution ${args.contributionId} is ${reviewState}: land only work that carries an`
-        + ' unrevoked accept review', 'integrate_contribution_not_accepted', {
-        contributionId: args.contributionId, reviewState, rule: 'unrevoked-accept',
-      });
-    }
     const tip = this._contributionTip(contribution);
     if (tip === null) {
       refuse(`Contribution ${args.contributionId} names no commit: publish the lane's commit in its`
@@ -8276,29 +8193,15 @@ export class SwarmRuntime {
           return regenerate(dir, regenerateContext);
         },
         runGates: async (dir, changed, gateContext) => {
-          // The gate set is DERIVED from what the squash actually changed, by the TWO derivations
-          // the rest of the system already reads — never a second table (#466). Both read the
-          // CHECKOUT the squash produced: the runner's own selector (`selectFromRepository`, the
-          // function `node impl/scripts/run-suite.mjs --changed` calls) builds its import graph
-          // there, and the landing table lists that checkout's test directory and reads its seam
-          // inventory (the `root` it is handed). A lane's OWN new test is therefore visible the
-          // moment the squash is staged, and a test file the change REMOVED or renamed away is not
-          // selected: a listing read from any other checkout names a file that is not there, and
-          // the gate then fails on a file the change legitimately deleted (#466, the removal half).
-          // The table's region, seam and issue gates are ADDED to that selection, so the regions an
-          // import graph cannot see keep running exactly as they did.
-          const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue], root: dir });
           const runner = selectFromRepository({ root: dir, changedPaths: changed });
-          // Issue #463: the derived selection reaches the runner in the RUNNER'S shape and at the
-          // runner's root — `<tests>/<file>` relative to the suite root the runner runs from — and
-          // never as a bare basename resolved against the checkout root. Both halves arrive in
-          // that one shape, so the union is a set of names the runner takes, not of paths it must
-          // re-derive.
-          const files = [...new Set([
-            ...runner.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file)),
-            ...gate.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file)),
-          ])].sort();
-          gateSelection = this._gateSelection(changed, gate, files, issue, runner);
+          const files = runner.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file)).sort();
+          gateSelection = Object.freeze({
+            files: Object.freeze([...files]),
+            reason: runner.reason,
+            provenance: Object.freeze(runner.provenance.map((row) => Object.freeze({
+              path: gateRunnerFile(GATE_RUNNER_LAYOUT, row.path), reason: row.reason, via: row.via ?? null,
+            }))),
+          });
           gateRegenerated = changedBeforeRegeneration === null ? null
             : changed.filter((path) => !changedBeforeRegeneration.includes(path));
           // Issue #463: an empty derivation is a DECISION — the change touches no tested path —
@@ -8324,9 +8227,9 @@ export class SwarmRuntime {
           }
           const verdict = typeof authority.runGates === 'function'
             ? await authority.runGates(dir, files, {
-              ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId })
+              ...gateContext, selection: gateSelection, contributionId: args.contributionId })
             : await defaultIntegrationGates(dir, files, {
-              ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId },
+              ...gateContext, selection: gateSelection, contributionId: args.contributionId },
             { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null,
               signal: integrationAbort.signal });
           gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
@@ -8420,67 +8323,6 @@ export class SwarmRuntime {
         code, detail: this._landingFailureDetail(error, this._swarm(args.swarmId), facts),
       }, principal, `swarm-integration-failed:${operationKey}`);
     } catch { /* the refusal below is the caller's answer; a raced failure row is evidence only */ }
-  }
-
-  /** Issue #463: the selection a landing's gate derivation actually made, in the shape the #300
-   * receipt uses — `{files, reason, provenance}` — so a red gate can say "these files were SELECTED
-   * for this change" and never read as "these files failed".
-   *
-   * `files` are the gate files in the runner's own shape (`<tests>/<file>`, relative to the suite
-   * root the runner runs from); `reason` is the one-line account of the derivation — how many
-   * changed paths selected how many files, through which causes; `provenance` names, per file, the
-   * cause that put it in the set.
-   *
-   * Issue #466: the causes are the two derivations' OWN words, never a third re-reading. A file the
-   * runner selected carries the runner's reason verbatim — `changed` (a changed test file selects
-   * itself), `imports` (it imports a changed module), `fixture-path` (it names an otherwise
-   * unimported file) — with the runner's own `via`, so a reader can hold this receipt beside the
-   * selection `run-suite.mjs --changed` prints and see the same spellings for the same causes. A
-   * file only the landing table selected reads `region` — the table's one word for its region, seam
-   * and issue rows — with `via` naming the changed path that put it there, or `#<n>` when the
-   * contribution's own issue rows did. Those table causes are read by asking the SAME table one
-   * changed path at a time (and once for the issue rows), never by re-reading its region table
-   * here: a second copy of the rule is exactly what would drift from the set that ran. A landing's
-   * change set is its squash, so the calls are proportional to the files the squash carries. */
-  _gateSelection(changed, gate, files, issue, runner = null) {
-    const issues = issue === null || issue === undefined ? [] : [issue];
-    // The rows the contribution's own issue selects, read from the table with no changed paths at
-    // all — the one basis a per-path reading below cannot see.
-    const issueRows = new Set(gateSetForPaths([], { issues }).files);
-    const byPath = changed.map((path) => ({
-      path, files: new Set(gateSetForPaths([path], { issues: [] }).files),
-    }));
-    // The runner's per-file causes, keyed by the name the runner takes, so both halves of the union
-    // are compared in ONE shape.
-    const byRunner = new Map((runner?.provenance ?? [])
-      .map((row) => [gateRunnerFile(GATE_RUNNER_LAYOUT, row.path), row]));
-    const provenance = files.map((file) => {
-      const ran = byRunner.get(file);
-      if (ran !== undefined) {
-        return Object.freeze({ path: file, reason: ran.reason, via: ran.via ?? null });
-      }
-      const name = basename(file);
-      const cause = byPath.find((entry) => entry.files.has(name));
-      if (cause !== undefined) return Object.freeze({ path: file, reason: 'region', via: cause.path });
-      return Object.freeze(issueRows.has(name)
-        ? { path: file, reason: 'region', via: `#${issues.join(', #')}` }
-        : { path: file, reason: 'region', via: null });
-    });
-    const count = (reason) => provenance.filter((row) => row.reason === reason).length;
-    const account = [`${changed.length} changed path(s) select ${files.length} gate file(s)`];
-    if (count('imports') > 0) account.push(`${count('imports')} importing changed module(s)`);
-    if (count('changed') > 0) account.push(`${count('changed')} changed test file(s)`);
-    if (count('fixture-path') > 0) {
-      account.push(`${count('fixture-path')} naming an otherwise-unimported file in a fixture path`);
-    }
-    if (count('region') > 0) account.push(`${count('region')} region gate(s)`);
-    if (gate.regions.length > 0) account.push(`regions ${gate.regions.join(', ')}`);
-    if (gate.inventoried.length > 0) account.push(`${gate.inventoried.length} inventoried seam path(s)`);
-    if (issues.length > 0) account.push(`issue #${issues.join(', #')}`);
-    const reason = files.length === 0
-      ? `${changed.length} changed path(s) touch no gate file: the landing runs no gate`
-      : account.join(': ');
-    return Object.freeze({ files: Object.freeze([...files]), reason, provenance: Object.freeze(provenance) });
   }
 
   /** The ONE write behind the landing's own two lifecycle rows (#459): a runtime-owned driver row,
@@ -8595,7 +8437,7 @@ export class SwarmRuntime {
     let permission = command === 'swarm.update'
       ? this._updatePermission(args.event, member, args.payload, swarm)
       : COMMAND_PERMISSIONS[command];
-    if (command === 'swarm.check' || command === 'swarm.capture') {
+    if (command === 'swarm.capture') {
       permission = member?.participantId === args.participantId ? 'contribute' : 'review';
     }
     if (!permission) refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
@@ -9574,114 +9416,6 @@ export class SwarmRuntime {
         ...clone(capture), participantId: participant.participantId,
         ...(base?.mergeBase ? { mergeBase: base.mergeBase } : {}),
       });
-    }
-    if (command === 'swarm.check') {
-      // #269 item 4: reviewer independence — the contributing seat cannot check its own
-      // contribution. A check is an independent observation about identified work, never a
-      // substitute for the author's own status, so the seat that authored the contribution is
-      // refused BEFORE any effect: no check runs, no review row lands.
-      const authored = Object.hasOwn(this._swarm(args.swarmId).contributions ?? {}, args.contributionId)
-        ? this._swarm(args.swarmId).contributions[args.contributionId] : null;
-      if (caller && authored && authored.participantId === caller.participantId) {
-        refuse(`A contribution cannot be checked by its own author: a check is an independent observation, never a substitute for the author's own status (contribution ${args.contributionId} by ${caller.participantId})`,
-          'self_check_refused', { rule: 'check-reviewer-independence',
-            participantId: caller.participantId, contributionId: args.contributionId });
-      }
-      // #269 item 2: the host admits this verdict inside the coordinator (the verify lease the
-      // contribution service holds for the suite), so the check path watches the authority's own
-      // visible queue for its holder and records the same durable queued/admitted/timeout rows a
-      // recruit gets — the view folds them the way #329 folds recruits. The holder template is
-      // owned by the contribution service (`check:${contributionId}:${checkId}`); this path only
-      // ever READS it back, never mints a lease of its own.
-      const checkOperationKey = this._operationKey(command, args, principal);
-      const checkHolder = `check:${args.contributionId}:${args.checkId}`;
-      let checkQueued = false;
-      const writeCheckQueued = (row) => {
-        if (checkQueued) return;
-        checkQueued = true;
-        try {
-          this.store.recordDriver('swarm.admission_queued', {
-            swarmId: args.swarmId, participantId: participant.participantId, command,
-            contributionId: args.contributionId, checkId: args.checkId,
-            authority: 'host', leaseKind: 'verify',
-            position: row.position ?? null, ahead: row.ahead ?? null,
-            shortfall: row.shortfall ?? null,
-          }, { actor: principal.actor, key: `${checkOperationKey}:queued` });
-        } catch { /* a raced operation row is evidence, never admission-critical */ }
-      };
-      const observeCheckQueue = () => {
-        if (checkQueued || typeof this.hostCapacity?.observeNow !== 'function') return;
-        let observed = null;
-        try {
-          observed = this.hostCapacity.observeNow();
-        } catch { return; }
-        const entry = Array.isArray(observed?.queue)
-          ? observed.queue.find((row) => row?.holder === checkHolder && row?.kind === 'verify') : null;
-        if (!entry) return;
-        let shortfall = null;
-        try {
-          shortfall = hostCapacityShortfall('verify', observed.capacity, observed.used) ?? null;
-        } catch { shortfall = null; }
-        writeCheckQueued({ position: entry.position ?? null, ahead: entry.ahead ?? null, shortfall });
-      };
-      observeCheckQueue();
-      const checkQueuePoll = typeof this.hostCapacity?.observeNow === 'function'
-        ? setInterval(observeCheckQueue, 25) : null;
-      if (checkQueuePoll && typeof checkQueuePoll.unref === 'function') checkQueuePoll.unref();
-      let checked;
-      try {
-        checked = await this.coordinator.checkContribution(worker.id, {
-          contributionId: args.contributionId, checkId: args.checkId,
-        });
-      } catch (error) {
-        if (checkQueuePoll) clearInterval(checkQueuePoll);
-        // A spent wait is recorded AGAINST THE CHECK the way #329 records one against the seat —
-        // the queued facts ride the same `:queued` key (a poller that already saw the wait keeps
-        // its row), then the timeout row names the dimension and the operator bypass.
-        if (error?.code === 'host_capacity_queue_timeout') {
-          writeCheckQueued({ position: error.queuePosition ?? null, ahead: error.queueAhead ?? null,
-            shortfall: error.shortfall ?? null });
-          try {
-            this.store.recordDriver('swarm.admission_timeout', {
-              swarmId: args.swarmId, participantId: participant.participantId, command,
-              contributionId: args.contributionId, checkId: args.checkId,
-              authority: 'host', leaseKind: 'verify', code: error.code,
-              position: error.queuePosition ?? null, ahead: error.queueAhead ?? null,
-              shortfall: error.shortfall ?? null, waitMs: error.waitMs ?? null,
-              bypass: error.bypass ?? HOST_CAPACITY_BYPASS,
-            }, { actor: principal.actor, key: `${checkOperationKey}:timeout` });
-          } catch { /* evidence row only */ }
-        }
-        throw error;
-      }
-      if (checkQueuePoll) clearInterval(checkQueuePoll);
-      // The receipt carries the typed admission row when the wait happened (#297: position and
-      // ahead ride it only when the check queued); the durable rows mirror it under the
-      // operation's own keys, so a retried check never mints a second pair.
-      if (checked?.admission?.position !== undefined && checked?.admission?.position !== null) {
-        writeCheckQueued({ position: checked.admission.position ?? null,
-          ahead: checked.admission.ahead ?? null, shortfall: null });
-        try {
-          this.store.recordDriver('swarm.admission_admitted', {
-            swarmId: args.swarmId, participantId: participant.participantId, command,
-            contributionId: args.contributionId, checkId: args.checkId,
-            authority: 'host', leaseKind: 'verify',
-            position: checked.admission.position ?? null, ahead: checked.admission.ahead ?? null,
-            queuedAt: checked.admission.queuedAt ?? null,
-          }, { actor: principal.actor, key: `${checkOperationKey}:admitted` });
-        } catch { /* evidence row only */ }
-      }
-      const key = `swarm-check:${hash([args.swarmId, participant.participantId, args.contributionId, args.checkId])}`;
-      const writes = [];
-      if (!this.store.priorCoordinationEvent(key)) {
-        writes.push(this._write('swarm.contribution_reviewed', {
-          swarmId: args.swarmId, contributionId: args.contributionId,
-          reviewerId: this._actorOf(caller, principal), decision: 'comment',
-          reason: `Check ${args.checkId}: ${checked.passed ? 'passed' : 'failed'} for ${checked.sha}; cleanup ${checked.attempt?.cleanup?.state ?? 'unknown'}.`,
-        }, principal, key));
-      }
-      this._recordOperationCompleted(command, args, principal, context);
-      return this._mutationResult(command, args, writes, principal, context, { ...clone(checked) });
     }
     if (command === 'swarm.guide' && decisionPending) {
       const result = await this._once(command, args, principal, async () => {

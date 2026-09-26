@@ -50,8 +50,8 @@ export function prepareVerificationRuntime(policy) {
  * the hub's divided by the cores one verification takes — one, on any machine, until
  * `advanced.verification.concurrency` says a verification is known to be lighter. The 2026-09-14
  * audit (G-29) caught the previous formula giving a two-core machine two concurrent suites.
- * Issue #269: without this, every swarm.check and every run verification spawned its own full
- * suite and three of them drove a load average past 140. */
+ * Issue #269: without this, every run verification spawned its own full suite and three of them
+ * drove a load average past 140. */
 export function defaultVerificationConcurrency({ cores = availableParallelism(), verificationCores = Math.max(1, cores - 1) } = {}) {
   return Math.max(1, Math.floor(Math.max(1, cores - 1) / Math.max(1, verificationCores)));
 }

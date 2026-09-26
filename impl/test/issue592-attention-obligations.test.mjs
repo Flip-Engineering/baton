@@ -41,7 +41,7 @@ test('source contributions remain owed when a crash prevented secondary wake mat
   assert.deepEqual(owed.source, { kind: 'swarm.contribution_recorded', seq: source.seq });
   assert.deepEqual(owed.delivery, { state: 'none', code: null });
   assert.deepEqual(owed.recipient, { kind: 'root' });
-  assert.deepEqual(owed.next, { command: 'swarm.check', swarmId, participantId: 'author', contributionId: 'c1' });
+  assert.deepEqual(owed.next, { command: 'swarm.view', swarmId });
   const reopened = new CoordinationStore(f.directory);
   assert.deepEqual(rootAttentionObligations(reopened.swarm(swarmId), reopened.eventsView()), f.read());
 });
