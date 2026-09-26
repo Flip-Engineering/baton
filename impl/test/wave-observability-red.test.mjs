@@ -781,14 +781,14 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 57,
+  assert.equal(names.length, 56,
     'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47), then #294 adds baton_wakes_subscribe/unsubscribe/since (47 → 50), then #318 adds baton_evidence_search (50 → 51); the enumeration reads 54 at #317\u2019s base (the swarm message family #311 and the canonical sibling twins landed after the pin\u2019s narration), #317 adds baton_services_list (54 → 55), and #566 absorbs the two post-narration additions — the #99/#179 resultpin/harvest pair (55 → 57)');
   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
   assert.equal(names[15], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
   assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 57, 'the sorted ordinary surface reads 57 tools (the 55 the #317 pin narrated — baton_waves_compile #170, baton_run_scratchpad_append #158, ten fleet_swarm_* docs/39, three #294 baton_wakes_* tools, baton_evidence_search #318, baton_services_list #317 — plus the #99/#179 resultpin/harvest pair the #566 composition restores)');
+  assert.equal(sorted.length, 56, 'the sorted ordinary surface reads 56 tools (#598 removed baton_swarm_check from the 57 the #566 composition restored — baton_waves_compile #170, baton_run_scratchpad_append #158, ten fleet_swarm_* docs/39, three #294 baton_wakes_* tools, baton_evidence_search #318, baton_services_list #317 — plus the #99/#179 resultpin/harvest pair the #566 composition restores)');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

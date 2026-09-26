@@ -240,7 +240,7 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 57, 'application tools/list count 57 (stage: application-tools-count-49)'); // composition (#566 restore): the #317-pin ordinary 55 + the #99/#179 harvest pair; the 14 minted baton_run_* lifecycle siblings left with the d1288fd9 regression restore
+  assert.equal(names.length, 56, 'application tools/list count 56 (stage: application-tools-count-49)'); // composition (#566 restore): the #317-pin ordinary 55 + the #99/#179 harvest pair; the 14 minted baton_run_* lifecycle siblings left with the d1288fd9 regression restore
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the count ties to the restored composition, so a
   // bare 57 of arbitrary self-consistent names cannot pass: the #233 canonical dot twins of the
   // retained legacy tools are advertised (the twin closure), and the registry-operation direct
@@ -452,7 +452,7 @@ test('RG-09 RE-DERIVED (#566): combined tools/list is the served combined table 
   // Issue #566 composition: the combined surface carries the restored ordinary table (55 + the
   // harvest pair) plus the fleet/advanced/reflex families and the #233 canonical dot twins — the
   // 14 minted baton_run_* lifecycle siblings left with the regression restore.
-  assert.equal(names.length, 150, 'combined tools/list count 150 (stage: combined-102-includes-siblings)');
+  assert.equal(names.length, 148, 'combined tools/list count 148 (stage: combined-102-includes-siblings)');
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');

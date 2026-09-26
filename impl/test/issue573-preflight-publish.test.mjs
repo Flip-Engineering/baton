@@ -187,6 +187,8 @@ async function world(t, { mode, withCredential = false }) {
   git(repo, 'config', 'user.name', 'Issue 573');
   git(repo, 'config', 'user.email', 'issue573@example.invalid');
   write(repo, 'README.md', 'base\n');
+  write(repo, 'impl/src/worktree.mjs', '// base module\n');
+  write(repo, 'impl/test/gate-coverage.test.mjs', 'import \'../src/worktree.mjs\';\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
   const observedHead = git(repo, 'rev-parse', 'HEAD');

@@ -69,8 +69,8 @@ test('S-G1: a document missing a kind is refused by the gate, naming the block',
 
 test('S-G1: the attention vocabulary is read from the runtime mint sites, in source order', () => {
   const kinds = swarmAttentionKinds();
-  // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout); #269 item 2
-  // adds the two check-admission rows (check_queued, check_queue_timeout), minted first in source.
+  // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout).
+  // #598 removed the two check-admission rows (check_queued, check_queue_timeout).
   // The #357 remainder adds three derived rows (worktree_foreign_changes,
   // turn_ended_without_contribution, provider_auth_expired), minted after the admission fold.
   // #425 adds the writer-coupling bypass row (coupling_writer_bypassed), minted inside the
@@ -91,7 +91,7 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // #525 adds the recovered seat's own row (resume_decision_required), minted in the same loop
   // after the re-route arms: a seat whose `resume_decision_requested` has no answer yet.
   // The list below is the mint order the extractor reads.
-  assert.equal(kinds.length, 26, 'the runtime mints twenty-six attention kinds');
+  assert.equal(kinds.length, 24, 'the runtime mints twenty-four attention kinds');
   assert.deepEqual(kinds, [
     'worker_lost_on_restart',
     'participant_runtime_dead',
@@ -107,8 +107,6 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
     'coupling_writer_gone',
     'coupling_writer_bypassed',
     'closed_with_live_participants',
-    'check_queued',
-    'check_queue_timeout',
     'recruit_queued',
     'recruit_queue_timeout',
     'unreviewed_contribution',
