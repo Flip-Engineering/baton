@@ -183,16 +183,17 @@ test('(f) the successor brief cites a sibling carriedForward verbatim', async (t
   await f.recruit('alpha', undefined, lead);
   const body = { ...contractBody(),
     carriedForward: ['HANDOFF-310-7 keeps the iface freeze through the next lane'],
-    needsFromOthers: ['NEED-310-3 reviewer verdict on the iface freeze'] };
+    needsFromOthers: [{to: 'root', ask: 'NEED-310-3 reviewer verdict on the iface freeze'}] };
   await f.call('update', { event: 'swarm.contribution_recorded',
     payload: { contributionId: 'c-handoff', participantId: 'alpha', body } }, principal('w-2'));
   await f.recruit('bravo', undefined, lead);
   const brief = f.store.swarm('baton').participants.bravo.brief;
   assert.ok(brief.includes('carries forward: "HANDOFF-310-7 keeps the iface freeze through the next lane"'),
     'the successor brief cites the sibling carriedForward verbatim');
-  assert.ok(brief.includes('needs from others: "NEED-310-3 reviewer verdict on the iface freeze"'),
+  assert.ok(brief.includes('needs from others: {"to":"root","ask":"NEED-310-3 reviewer verdict on the iface freeze"}'),
     'the successor brief cites the sibling needsFromOthers verbatim');
   assert.ok(brief.includes('## Contribution contract'), 'the brief renders the expected shape');
+  assert.ok(brief.includes('needsFromOthers: needs may be text or addressed objects'), 'the brief teaches the typed address');
   assert.ok(brief.includes('delivered|partial|not_delivered'),
     'the rendered shape names the closed item states');
 });

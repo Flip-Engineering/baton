@@ -550,7 +550,7 @@ runtime from durable state — never asserted by a caller:
 - `recruit_queued`
 - `recruit_queue_timeout`
 - `unreviewed_contribution`
-- `root_wake_undelivered`
+- `root_attention_owed`
 - `worktree_foreign_changes`
 - `turn_ended_without_contribution`
 - `provider_auth_expired`

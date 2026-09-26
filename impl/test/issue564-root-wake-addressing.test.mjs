@@ -194,10 +194,10 @@ test('564-c1: review_owed fires with no other active reviewer seat, needs_root o
   await f.call('update', {
     event: 'swarm.contribution_recorded',
     payload: { participantId: 'author', body: f.contractBody([
-      'the root: restore the publish path',
-      'root: land the queue',
-      'root cause: the park is stale',
-      'the root of the issue is elsewhere',
+      { to: 'root', ask: 'the root: restore the publish path' },
+      { to: 'root', ask: 'root: land the queue' },
+      { to: 'participant', participantId: 'idle-peer', ask: 'root cause: the park is stale' },
+      { to: 'participant', participantId: 'idle-peer', ask: 'the root of the issue is elsewhere' },
     ]) },
   });
 
@@ -215,7 +215,7 @@ test('564-c1: review_owed fires with no other active reviewer seat, needs_root o
   assert.ok(f.store.swarm(SWARM_ID).contributions[reviewOwed[0].payload.contributionId],
     'the row names a contribution the fold holds');
 
-  // needs_root: the ADDRESS form only — prose containing the word never wakes the root.
+  // The typed address determines which needs reach the root.
   const needsRoot = rows.filter((event) => event.payload.owed === 'needs_root');
   assert.deepEqual(needsRoot.map((event) => event.payload.ask),
     ['the root: restore the publish path', 'root: land the queue']);
@@ -230,10 +230,10 @@ test('564-c1: review_owed fires with no other active reviewer seat, needs_root o
     swarmId: SWARM_ID, idempotencyKey: 'issue564-4',
     event: 'swarm.contribution_recorded',
     payload: { participantId: 'author', body: f.contractBody([
-      'the root: restore the publish path',
-      'root: land the queue',
-      'root cause: the park is stale',
-      'the root of the issue is elsewhere',
+      { to: 'root', ask: 'the root: restore the publish path' },
+      { to: 'root', ask: 'root: land the queue' },
+      { to: 'participant', participantId: 'idle-peer', ask: 'root cause: the park is stale' },
+      { to: 'participant', participantId: 'idle-peer', ask: 'the root of the issue is elsewhere' },
     ]) },
   }, owner);
   assert.equal(f.attentionRows().length, rows.length, 'a replay records no second row');
@@ -299,7 +299,7 @@ test('564-d: an append fault after the contribution row faults the mutation unac
   f.failRootAttention(true);
   const attempt = f.call('update', {
     event: 'swarm.contribution_recorded',
-    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+    payload: { participantId: 'author', body: f.contractBody([{ to: 'root', ask: 'root: land the queue' }]) },
   });
   await assert.rejects(attempt, (error) => error.code === 'injected_append_fault',
     'the append fault is the mutation answer, never a swallowed loss');
@@ -316,7 +316,7 @@ test('564-d: an append fault after the contribution row faults the mutation unac
   await f.runtime.command('swarm.update', {
     swarmId: SWARM_ID, idempotencyKey: 'issue564-3',
     event: 'swarm.contribution_recorded',
-    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+    payload: { participantId: 'author', body: f.contractBody([{ to: 'root', ask: 'root: land the queue' }]) },
   }, owner);
   const rows = f.attentionRows();
   assert.equal(rows.length, 2, 'the replay records exactly the two owed rows');
@@ -340,7 +340,7 @@ test('564-c4: an existing unreviewed contribution is re-addressed when its sole 
   // root-addressed need still fires — its trigger is the write, not the roster.
   await f.call('update', {
     event: 'swarm.contribution_recorded',
-    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+    payload: { participantId: 'author', body: f.contractBody([{ to: 'root', ask: 'root: land the queue' }]) },
   });
   assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0,
     'the active reviewer holds the check at the write instant');
@@ -373,7 +373,7 @@ test('564-e: an append fault at the stop path is repaired by a later stop even t
 
   await f.call('update', {
     event: 'swarm.contribution_recorded',
-    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+    payload: { participantId: 'author', body: f.contractBody([{ to: 'root', ask: 'root: land the queue' }]) },
   });
   assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0);
 
@@ -407,7 +407,7 @@ test('564-f: an append fault at the provider-fault observation is repaired by a 
 
   await f.call('update', {
     event: 'swarm.contribution_recorded',
-    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+    payload: { participantId: 'author', body: f.contractBody([{ to: 'root', ask: 'root: land the queue' }]) },
   });
   assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0);
 

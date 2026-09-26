@@ -1,3 +1,6 @@
+import { rootAttentionObligations, rootContributionAttention, turnReportAsk } from './attention-obligations.mjs';
+import { contributionNeeds } from './contribution-needs.mjs';
+import { AttentionDispatcher } from './attention-dispatcher.mjs';
 import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
   SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
@@ -411,6 +414,7 @@ const NOTIFICATION_ROW_KIND = 'swarm.notification_sent';
  * `swarm_guidance_reply_target_not_found`. */
 const GUIDANCE_REPLY_TARGET_KINDS = Object.freeze([...GUIDANCE_ROW_KINDS, 'message.sent', 'message.delivered',
   'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_integrated',
+  'swarm.turn_reported', 'swarm.root_attention_owed',
   NOTIFICATION_ROW_KIND]);
 
 /** WHO one guidance is from, for the swarm's own record (#273): the sender's identity is read by
@@ -1013,62 +1017,6 @@ const boundedCarryText = (value) => {
   const text = typeof value === 'string' ? value : '';
   return text.length <= CARRY_REASON_BYTES ? text : text.slice(-CARRY_REASON_BYTES);
 };
-// Issue #564: the ADDRESS form a needsFromOthers item must open with to wake the root — the item
-// hands work TO the root ("the root: restart the resident", "root: land the queue"); prose that
-// merely contains the word ("root cause: …", "the root of the issue …") is not addressed to it.
-const ROOT_ADDRESSED_NEED = /^(?:the\s+)?root\s*:/i;
-
-/** Issue #564: the root-addressed wake rows one recorded contribution owes, derived from what is
- * present — the contribution's own body and the swarm fold's participant rows — and nothing else.
- * No state is kept: each row is a pure function of its trigger, so a replay re-derives the same
- * rows under the same idempotency keys and the ledger holds each trigger once. At most one
- * `review_owed` row — no OTHER active seat holds the review permission at that moment (the
- * author's own permission never reviews its own work) — and one `needs_root` row per addressed
- * item, its ask bounded by the ONE role-head bound every rendered row rides. The trigger rides
- * `owed`, never `kind` (the name the reporting half reads): the ledger's driver container records `{kind, ...payload}`
- * (coordination-ledger.mjs recordDriver), so a payload field named `kind` would overwrite the
- * row's own operational identity and the row would never wake its class. */
-/** Issue #564 x #572: the bounded text a turn-report owed row carries. The report is a
- * WorkerResult OBJECT by the time it is recorded, so the summary is read when it is a string; a
- * string report rides whole; a reporter fallback (its parent guidance refused) falls back to the
- * failure reason. Anything else is null rather than a serialized object the attention row cannot
- * read. */
-function turnReportAsk(payload) {
-  const report = payload?.report;
-  if (typeof report === 'string' && report.length > 0) return report;
-  if (typeof report?.summary === 'string' && report.summary.length > 0) return report.summary;
-  const reason = payload?.deliveryFailure?.reason;
-  return typeof reason === 'string' && reason.length > 0 ? reason : null;
-}
-
-function rootAttentionRowPayloads(swarm, contribution) {
-  const authorId = contribution?.participantId ?? null;
-  const reviewHeld = Object.values(swarm?.participants ?? {}).some((seat) => seat?.status === 'active'
-    && seat?.participantId !== authorId
-    && Array.isArray(seat?.permissions) && seat.permissions.includes('review'));
-  const rows = [];
-  if (!reviewHeld) {
-    rows.push({
-      swarmId: swarm.swarmId, participantId: authorId, contributionId: contribution.contributionId,
-      owed: 'review_owed', ask: null,
-      next: { command: 'swarm.check', swarmId: swarm.swarmId, participantId: authorId,
-        contributionId: contribution.contributionId },
-    });
-  }
-  const body = contribution?.body ?? null;
-  const needs = body !== null && typeof body === 'object' && !Array.isArray(body)
-    && Array.isArray(body.needsFromOthers) ? body.needsFromOthers : [];
-  for (const item of needs) {
-    if (typeof item !== 'string' || !ROOT_ADDRESSED_NEED.test(item)) continue;
-    rows.push({
-      swarmId: swarm.swarmId, participantId: authorId, contributionId: contribution.contributionId,
-      owed: 'needs_root', ask: sliceUtf8(item, FRAME_LIMITS['view.role.head'].value),
-      next: { command: 'swarm.view', swarmId: swarm.swarmId },
-    });
-  }
-  return rows;
-}
-
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
@@ -1723,8 +1671,8 @@ const PIPELINE_TEXT_BYTES = 240;
  * contributions wait on a review and who can give it, which accepted rows are valid
  * `swarm integrate` targets, and which `needsFromOthers` obligations are still open.
  *
- * An obligation is open while its contribution carries no landing: the need a contract declares is
- * work its author asked of a peer before the row could land, so the landing receipt closes it.
+ * Addressed needs stay open until their recipient answers. Historical unaddressed handoff text
+ * retains its existing display rule through the contribution's landing.
  * Each list is capped at PIPELINE_LIST_CAP rows and each text at PIPELINE_TEXT_BYTES, and the
  * count the cap drops rides `omitted`. */
 export function swarmPipelineRows(contributions = [], participants = []) {
@@ -1754,11 +1702,13 @@ export function swarmPipelineRows(contributions = [], participants = []) {
     else if (row.reviewState === 'accepted' && !landed) {
       add(readyToLand, 'readyToLand', { ...entry, commit: row.commit ?? row.contract?.commit ?? null });
     }
-    if (landed) continue;
-    for (const need of Array.isArray(row.body?.needsFromOthers) ? row.body.needsFromOthers : []) {
+    for (const value of Array.isArray(row.body?.needsFromOthers) ? row.body.needsFromOthers : []) {
+      const need = contributionNeeds({ body: { needsFromOthers: [value] } })[0]
+        ?? { ask: value, needId: null, to: null };
+      if (landed && need.to === null) continue;
       add(openNeeds, 'openNeeds', {
         contributionId: row.contributionId, participantId: row.participantId ?? null,
-        workId: row.workId ?? null, need: bounded(need),
+        workId: row.workId ?? null, need: bounded(need.ask), needId: need.needId, to: need.to,
       });
     }
   }
@@ -2723,7 +2673,7 @@ export class SwarmRuntime {
       && Array.isArray(seat?.permissions) && seat.permissions.includes('review')));
     if (owed.length === 0) return [];
     return this._recordRootAttentionRows(swarm,
-      owed.flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
+      owed.flatMap((contribution) => rootContributionAttention(swarm, contribution))
         .filter((row) => row.owed === 'review_owed'), actor);
   }
 
@@ -2744,9 +2694,9 @@ export class SwarmRuntime {
     const owed = [...this._routeProbeLedger.turns.values()]
       .filter((row) => row.payload.swarmId === swarm.swarmId);
     if (owed.length === 0) return [];
-    return owed.map(({ payload, turn }) => {
+    return owed.map(({ payload, turn, seq }) => {
       const event = this.store.recordDriver('swarm.root_attention_owed', {
-        swarmId: swarm.swarmId, participantId: payload.participantId, owed: 'turn_reported',
+        swarmId: swarm.swarmId, participantId: payload.participantId, owed: 'turn_reported', reportSeq: seq,
         ask: turnReportAsk(payload),
         next: { command: 'swarm.view', swarmId: swarm.swarmId },
       }, { actor, key: `swarm-turn-report-owed:${swarm.swarmId}:${turn}` }).event;
@@ -3044,7 +2994,7 @@ export class SwarmRuntime {
       else if (payload.kind === 'swarm.turn_reported'
         && (payload.parentId === null || payload.parentId === undefined)) {
         const turn = `${payload.participantId}:${payload.workerId ?? ''}:${payload.turnEpoch ?? ''}:${payload.turnSeq ?? ''}`;
-        ledger.turns.set(`${payload.swarmId}|${turn}`, { payload, turn });
+        ledger.turns.set(`${payload.swarmId}|${turn}`, { payload, turn, seq: event.seq });
       }
     }
     ledger.cursor = head;
@@ -4954,37 +4904,11 @@ export class SwarmRuntime {
         next: { command: 'swarm.check', swarmId: swarm.swarmId,
           participantId: contribution.participantId, contributionId: contribution.contributionId } });
     }
-    // Issue #564: a root-addressed wake that reached no session is attention this view reports.
-    // The owed row is durable (`swarm.root_attention_owed`, recorded where the runtime observes
-    // work waiting on the root); a delivery attempt is durable too, keyed by the SAME wake
-    // identity — the ledger seq of the owed row the frame came from. Nothing here is stored: the
-    // read joins the two row sets, so a later delivery clears the row on the next read and a
-    // failed delivery keeps it, naming the code the attempt failed under.
-    const rootWakeDelivered = new Set();
-    const rootWakeFailed = new Map();
-    for (const event of ledger) {
-      const payload = event.kind === 'driver.recorded' ? event.payload : null;
-      if (payload?.swarmId !== swarm.swarmId || !Number.isSafeInteger(payload.seq)) continue;
-      if (payload.kind === 'wake.root_delivered') rootWakeDelivered.add(payload.seq);
-      else if (payload.kind === 'wake.root_undelivered') {
-        rootWakeFailed.set(payload.seq, typeof payload.code === 'string' ? payload.code : null);
-      }
-    }
-    for (const event of ledger) {
-      const payload = event.kind === 'driver.recorded' ? event.payload : null;
-      if (payload?.kind !== 'swarm.root_attention_owed' || payload.swarmId !== swarm.swarmId) continue;
-      if (rootWakeDelivered.has(event.seq)) continue;
-      const nextAct = payload.next;
-      organization.push({ kind: 'root_wake_undelivered',
-        participantId: typeof payload.participantId === 'string' ? payload.participantId : null,
-        contributionId: typeof payload.contributionId === 'string' ? payload.contributionId : null,
-        owed: typeof payload.owed === 'string' ? payload.owed : null,
-        ask: typeof payload.ask === 'string' ? payload.ask : null,
-        seq: event.seq,
-        delivery: rootWakeFailed.has(event.seq)
-          ? { state: 'failed', code: rootWakeFailed.get(event.seq) }
-          : { state: 'none', code: null },
-        ...(nextAct !== null && typeof nextAct === 'object' && !Array.isArray(nextAct) ? { next: nextAct } : {}) });
+    for (const obligation of rootAttentionObligations(swarm, ledger, {
+      // Historical #564 rows used the view heading limit when storing asks.
+      legacyAsk: (text) => sliceUtf8(text, FRAME_LIMITS['view.role.head'].value),
+    })) {
+      organization.push({ kind: 'root_attention_owed', ...obligation });
     }
     for (const row of participants) {
       if (row.status !== 'active') continue;
@@ -5387,12 +5311,18 @@ export class SwarmRuntime {
     return projectSwarmView(view, projection ?? SWARM_VIEW_DEFAULT_PROJECTION);
   }
 
+  startAttentionDelivery({ resolveRecipient, onFault }) {
+    this.attentionDelivery ??= new AttentionDispatcher({ store: this.store, resolveRecipient, onFault }).start();
+    return this.attentionDelivery;
+  }
+
   close() {
     this.watchController.abort();
     // Issue #459: a runtime that owns its own supervised pool (a bare host with no coordinator)
     // kills what it started, exactly as the resident's fence kills the deployment's pooled
     // children. A landing's orphaned gate run is never this close's legacy.
     this._gatePool?.killAll();
+    return this.attentionDelivery?.close();
   }
 
   async _watch(args, principal, context) {
@@ -8775,7 +8705,7 @@ export class SwarmRuntime {
         const recordedContribution = recordedSwarm.contributions?.[payload.contributionId] ?? null;
         if (recordedContribution !== null) {
           rootAttention = this._recordRootAttentionRows(recordedSwarm,
-            rootAttentionRowPayloads(recordedSwarm, recordedContribution), principal.actor);
+            rootContributionAttention(recordedSwarm, recordedContribution), principal.actor);
         }
         // Issue #594: a contract's own commit is published when the update that records it
         // lands — the commit the contribution names, pushed like any seat commit.
