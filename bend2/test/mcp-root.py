@@ -262,6 +262,42 @@ class McpRoot(unittest.TestCase):
         self.assertIn('Pending across restart', notif2['params']['content'])
         self.assertIn('turn-1', notif2['params']['meta']['messageIds'])
 
+    def test_workers_and_turns_tools_return_coordinator_data(self):
+        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.coord('observe', 'turn-1', 'w1', json.dumps({'type': 'result', 'result': 'done'}))
+
+        proc = self.start_mcp()
+        self.initialize(proc)
+        send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+
+        def tool_call(call_id, name, arguments=None):
+            send_mcp(proc, {
+                'jsonrpc': '2.0', 'id': call_id, 'method': 'tools/call',
+                'params': {'name': name, 'arguments': arguments or {}},
+            })
+            resp = read_mcp(proc, timeout=5)
+            while 'method' in resp:
+                resp = read_mcp(proc, timeout=5)
+            return resp
+
+        workers_resp = tool_call(30, 'baton2_workers')
+        workers = json.loads(workers_resp['result']['content'][0]['text'])
+        self.assertEqual(len(workers), 1)
+        self.assertEqual(workers[0]['id'], 'w1')
+        self.assertEqual(workers[0]['latestReport'], 'done')
+
+        turns_resp = tool_call(31, 'baton2_turns', {'worker': 'w1'})
+        turns = json.loads(turns_resp['result']['content'][0]['text'])
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]['id'], 'turn-1')
+        self.assertEqual(turns[0]['eventType'], 'result')
+
+        pending_resp = tool_call(32, 'baton2_pending')
+        pending = json.loads(pending_resp['result']['content'][0]['text'])
+        self.assertTrue(len(pending) >= 1)
+        self.assertEqual(pending[0]['id'], 'turn-1')
+
     def test_duplicate_notification_not_sent(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
