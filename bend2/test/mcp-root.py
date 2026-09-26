@@ -187,6 +187,43 @@ class McpRoot(unittest.TestCase):
             resp = read_mcp(proc, timeout=5)
         self.assertEqual(json.loads(resp['result']['content'][0]['text']), [])
 
+    def test_guide_sends_message_to_worker_inbox(self):
+        # Set up root and worker sessions
+        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+
+        # Start MCP and initialize
+        proc = self.start_mcp()
+        self.initialize(proc)
+        send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+
+        # Send guidance via the baton2_guide tool
+        send_mcp(proc, {
+            'jsonrpc': '2.0', 'id': 20, 'method': 'tools/call',
+            'params': {
+                'name': 'baton2_guide',
+                'arguments': {
+                    'id': 'guide-1',
+                    'worker': 'w1',
+                    'body': 'Focus on the login endpoint first.',
+                },
+            },
+        })
+        resp = read_mcp(proc, timeout=5)
+        while 'method' in resp:
+            resp = read_mcp(proc, timeout=5)
+        # The guide tool should succeed
+        self.assertNotIn('isError', resp.get('result', {}))
+
+        # Verify the message landed in the worker's inbox via the coordinator
+        inbox = self.coord('inbox', 'w1')
+        import json as _json
+        messages = _json.loads(inbox)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]['id'], 'guide-1')
+        self.assertEqual(messages[0]['kind'], 'guidance')
+        self.assertIn('login endpoint', messages[0]['body'])
+
     def test_restart_delivers_pending_report(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
