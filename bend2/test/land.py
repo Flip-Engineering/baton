@@ -48,7 +48,7 @@ class Land(unittest.TestCase):
         self.call('recruit', worker, 'root', 'omp', 'model', 'high',
                   self.repo, branch, path, self.base)
         wt = self.repo / path
-        (wt / 'file.txt').write_text('worker change')
+        (wt / 'file.txt').write_text(f'worker change for {worker}')
         subprocess.run(
             ['git', '-C', str(wt), 'add', 'file.txt'],
             check=True, capture_output=True,
