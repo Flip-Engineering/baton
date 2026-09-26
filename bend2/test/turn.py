@@ -112,4 +112,26 @@ print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assi
         self.assertEqual(resumed[resumed.index('--resume')+1],'omp-native')
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
 
+    def test_muse_resumed_turn_reads_new_task_in_recorded_session(self):
+        self.call('worker','muse-worker','root','muse','requested-model','low',str(self.cwd),'muse-branch','base')
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+args=sys.argv
+assert args[1]=='exec'
+prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+pathlib.Path('received.txt').write_text(prompt)
+session=args[args.index('--session-id')+1] if '--session-id' in args else 'native-muse'
+print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.model.configured','payload':{'kind':'run_model_configured','model_id':'actual-muse'}}))
+print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','text':prompt}}))
+''')
+        self.call('turn','muse-worker','muse-1',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        native=json.loads(self.call('session','muse-worker'))['native']
+        self.assertEqual(native,'native-muse')
+        self.task.write_text('Continue with a new task λ.')
+        self.call('turn','muse-worker','muse-2',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.cwd/'resumed.jsonl'),native)
+        self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
+        reports=json.loads(self.call('inbox','root'))
+        self.assertEqual([r['id'] for r in reports],['muse-1','muse-2'])
+        self.assertEqual(reports[-1]['body'],self.task.read_text())
+        self.assertEqual(json.loads(self.call('session','muse-worker'))['native'],native)
+
 if __name__=='__main__': unittest.main()

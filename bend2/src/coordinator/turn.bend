@@ -108,7 +108,7 @@ def claude_launch(cmd: String, model: String, effort: String, cwd: String, stder
 def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, task: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
     case True{}: Muse.start_worker(cmd,model,effort,cwd,stderr,task)
-    case False{}: Muse.resume_worker(cmd,model,effort,cwd,stderr,session)
+    case False{}: Muse.resume_worker(cmd,model,effort,cwd,stderr,session,task)
 
 def launch(+db: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),

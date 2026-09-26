@@ -108,6 +108,50 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('pending'), [])
         self.assertEqual(self.call('delivery', 'turn-1')['receipt'], 'accepted')
 
+    def test_muse_session_envelope_supplies_native_resume_identity(self):
+        # Live muse-review-2 emitted this envelope before any terminal result.
+        event = {
+            'schema_version': 1,
+            'stream': {'kind': 'session', 'id': '01a0df98-f209-76e0-b110-8c178a29e221'},
+            'payload_type': 'run.model.configured',
+            'payload': {'kind': 'run_model_configured', 'provider_id': 'meta',
+                        'model_id': 'muse-spark-1.3-contributor'},
+        }
+        self.call('worker', 'muse', 'root', 'muse', 'requested-muse', 'low',
+                  '/retained/muse', 'muse-branch', 'base')
+        self.assertIsNone(self.call('observe', 'muse-turn', 'muse', json.dumps(event))['reportId'])
+        session = self.call('session', 'muse')
+        self.assertEqual(session['native'], event['stream']['id'])
+        self.assertEqual(session['model'], 'requested-muse')
+        self.assertEqual(session['observedModel'], 'muse-spark-1.3-contributor')
+        worker = next(w for w in self.call('workers') if w['id'] == 'muse')
+        self.assertEqual(worker['native'], event['stream']['id'])
+        self.assertIsNone(worker['lastTurnId'])
+        self.assertEqual(self.call('inbox', 'root'), [])
+
+    def test_muse_terminal_envelope_reports_text_and_retains_source(self):
+        event = {
+            'schema_version': 1,
+            'stream': {'kind': 'session', 'id': 'muse-native'},
+            'payload_type': 'run.terminal.completed',
+            'payload': {'kind': 'run_terminal', 'terminal': 'completed',
+                        'text': 'Resumed Muse receives no task.\nFull report λ', 'reason': None},
+        }
+        observed = self.call('observe', 'muse-turn', 'worker', json.dumps(event))
+        self.assertEqual(observed['reportId'], 'muse-turn')
+        self.assertEqual(observed['eventType'], 'run.terminal.completed')
+        self.assertEqual(self.call('inbox', 'root')[0]['body'], event['payload']['text'])
+        with sqlite3.connect(self.db) as db:
+            source = db.execute('SELECT event FROM turns WHERE id=?', ('muse-turn',)).fetchone()[0]
+        self.assertEqual(json.loads(source), event)
+        worker = self.call('workers')[0]
+        self.assertEqual(worker['native'], 'muse-native')
+        self.assertEqual(worker['lastTurnId'], 'muse-turn')
+        self.assertEqual(worker['lastTurnEvent'], 'run.terminal.completed')
+        self.assertEqual(self.call('turns', 'worker')[0]['eventType'], 'run.terminal.completed')
+        self.call('observe', 'muse-turn', 'worker', json.dumps(event))
+        self.assertEqual(len(self.call('inbox', 'root')), 1)
+
     def test_native_result_automatically_reports_with_full_source(self):
         init = {'type': 'system', 'subtype': 'init', 'session_id': 'native-1', 'model': 'actual-model'}
         self.assertIsNone(self.call('observe', 'turn-1', 'worker', json.dumps(init))['reportId'])

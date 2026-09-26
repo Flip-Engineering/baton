@@ -19,7 +19,7 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 ## Coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude
-Code and OMP turns. Recruitment creates a Git worktree and records its resolved base. Native parent
+Code, OMP and Muse turns. Recruitment creates a Git worktree and records its resolved base. Native parent
 delivery through Claude Code Channels MCP is connected to this interface. Git
 landing advances a target branch to include a worker's committed tip, and the
 checked landing (bend2/src/git/land_checked in bend2/src/git/land.bend)
@@ -113,8 +113,12 @@ After registering the worker, run:
 
 The last argument is the native session to resume; an empty string starts a new
 session. The worker's recorded harness selects the adapter. Claude uses stream JSON; OMP
-uses `--print --mode json` and retains sessions beside the database. The harness
-uses its existing login. A launch wrapper can set the harness's documented home
+uses `--print --mode json` and retains sessions beside the database.
+Muse uses `exec --json --prompt-file` and resumes with `--session-id`.
+Its session envelopes record the native session and observed model, and its
+terminal envelope supplies the parent report. `workers` includes the native
+session ID and last completed turn for selecting a session to resume.
+The harness uses its existing login. A launch wrapper can set the harness's documented home
 or config environment before executing its binary. This command runs one foreground
 native process, sends the task, drains output while writing input, and closes
 that process's input stream after the task. A later turn resumes the recorded
