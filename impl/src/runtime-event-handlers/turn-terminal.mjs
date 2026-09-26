@@ -8,6 +8,35 @@ import {
   KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze, typedTerminalCode,
 } from '../runtime-recovery.mjs';
 
+/** Issue #611: the report one turn end carries — the provider's own status when it gave one, the
+ * summary when it wrote one, and nothing invented when it gave neither. */
+function turnReportOf(workerResult) {
+  const status = typeof workerResult?.status === 'string' ? workerResult.status : null;
+  const code = workerResult?.failure?.code ?? workerResult?.code ?? null;
+  const summary = typeof workerResult?.summary === 'string' && workerResult.summary.length > 0
+    ? workerResult.summary : null;
+  return { status, code, summary };
+}
+
+/** Issue #611: report a turn end to the seat's orchestrator. The producer records the durable
+ * `swarm.turn_reported` row and reconciles the root-owed row in the same call; the attention
+ * spine resolves the recipient — the nearest live ancestor, else the root — from the row's
+ * parentId. A worker with no registered participant runtime (a plain Run worker rather than a
+ * swarm seat) reports nothing here. Reporting never decides the turn's outcome: a fault in it is
+ * recorded as an operation failure and the turn settles exactly as it otherwise would. */
+function reportTurn(coordinator, ctx, event, report) {
+  const runtime = coordinator._participantRuntimes?.get(ctx.handle.runId);
+  if (typeof runtime?.onTurnCompleted !== 'function') return;
+  const fail = (error) => coordinator._recordOperationFailure(
+    'turn.report_delivery_failed', ctx.handle, 'turn_report_delivery_failed', error, { turnSeq: event.seq });
+  try {
+    const pending = runtime.onTurnCompleted({
+      workerId: ctx.handle.id, turnSeq: event.seq, turnEpoch: event.turnEpoch, report,
+    });
+    if (pending && typeof pending.then === 'function') pending.catch(fail);
+  } catch (error) { fail(error); }
+}
+
 export function turnCompleted(coordinator, recorder, ctx) {
 // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
@@ -23,6 +52,7 @@ export function turnCompleted(coordinator, recorder, ctx) {
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
+        reportTurn(coordinator, ctx, terminalEvent, turnReportOf(wr));
         // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
@@ -170,6 +200,11 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
 
 export function exited(coordinator, recorder, ctx) {
 const terminalEvent = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
+        reportTurn(coordinator, ctx, terminalEvent, {
+          status: 'exited',
+          code: Number.isSafeInteger(ctx.payload?.code) ? ctx.payload.code : null,
+          summary: 'the worker process exited without producing a terminal turn result',
+        });
         const task = coordinator._tasks.get(ctx.handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
           && task.status !== 'verifying' && !ctx.turnWasTerminal;

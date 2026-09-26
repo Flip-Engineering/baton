@@ -2713,6 +2713,40 @@ export class SwarmRuntime {
     });
   }
 
+  /** Issue #572 x #611: THE TURN-REPORT PRODUCER. A seat's turn end is a durable fact recorded
+   * here, at the moment the turn ends, and never left for a later observation to infer. The row
+   * carries the seat, the worker incarnation that ran the turn, the turn identity, the report
+   * itself, and the parent the report is addressed to (`parentId`; null for a top-level seat).
+   * The attention spine (`turnAttentionObligations`) resolves the recipient — the nearest live
+   * ancestor, else the root — from that parent, and `_reconcileTurnReportedRows` mints the
+   * root-owed row in the same call, so a report never waits on a later observation to page
+   * anybody. ONE row per (seat, worker, turnEpoch): a turn that completes and whose process
+   * later exits reports once, and a replayed call answers the row it already holds. */
+  reportTurnEnd({ swarmId, participantId, workerId, turnSeq, turnEpoch, report = null, assignmentDone = null }) {
+    const swarm = this._swarm(swarmId);
+    const participant = Object.hasOwn(swarm.participants ?? {}, participantId)
+      ? swarm.participants[participantId] : null;
+    if (participant === null) {
+      refuse(`Turn report names participant ${participantId}, which is not in swarm ${swarmId}`,
+        'swarm_payload_invalid', { rule: 'participant-exists', swarmId, participantId });
+    }
+    if (typeof workerId !== 'string' || workerId.length === 0
+      || !Number.isSafeInteger(turnSeq) || turnSeq < 0
+      || !Number.isSafeInteger(turnEpoch) || turnEpoch < 0) {
+      refuse('Turn report needs the participant worker and the recorded turn identity',
+        'swarm_payload_invalid', { rule: 'turn-report-identity', swarmId, participantId });
+    }
+    const key = `swarm-turn-report:${swarmId}:${participantId}:${workerId}:${turnEpoch}`;
+    const prior = this.store.priorCoordinationEvent(key);
+    const event = prior ?? this.store.recordDriver('swarm.turn_reported', {
+      swarmId, participantId, parentId: participant.parentId ?? null, workerId, turnSeq, turnEpoch, report,
+      assignmentDone: assignmentDone === null
+        ? (participant.status === 'left' && participant.leftReason === 'completed') : assignmentDone === true,
+    }, { actor: 'baton-runtime', key }).event;
+    this._reconcileTurnReportedRows(swarm, 'baton-runtime');
+    return event;
+  }
+
 
   /** #373: the recruit mode one participant was started under, read from its durable join —
    * the join carries `mode` for a read_only seat, and a change recruit writes no field, so
