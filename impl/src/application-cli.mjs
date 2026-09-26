@@ -2322,6 +2322,10 @@ function parseServicesCli(args, idempotencyKey) {
 /** The reading leg's closed rule text, keyed by the refusal code it explains. */
 const CONTEXT_READ_RULES = Object.freeze({
   issue_reader_unavailable: 'the issue reader on this host is missing or unauthenticated',
+  // Issue #540: gh resolves the repository from the process cwd's remote, so a clone resident's
+  // local-path `origin` answers "no remote of this checkout resolves to a GitHub host" while the
+  // operator's gh IS authenticated. That answer is its own cause, never an authentication fact.
+  issue_reader_no_repository: 'no remote of this checkout resolves to a GitHub host',
   issue_not_found: 'the reader holds no such issue',
   context_doc_unreadable: 'the doc is outside this checkout or unreadable',
   context_source_oversize: 'the document exceeds the context package branch ceiling',
@@ -2368,13 +2372,84 @@ export function citedDocsInIssue(text) {
   return [...found].sort();
 }
 
+/** Issue #540: the `OWNER/NAME` a remote URL names, or null for any other host (a local path,
+ * another forge, a URL with no host). Handles the forms a checkout carries: `https://github.com/`,
+ * `git@github.com:` and `ssh://git@github.com/`. */
+function githubRepositoryOf(url) {
+  const text = `${url}`.trim();
+  let host = null;
+  let path = null;
+  const scp = /^[^/@\s]+@([^/:\s]+):(.+)$/u.exec(text);
+  if (scp !== null) {
+    host = scp[1];
+    path = scp[2];
+  } else {
+    let parsed = null;
+    try { parsed = new URL(text); } catch { parsed = null; }
+    if (parsed === null) return null;
+    host = parsed.hostname;
+    path = parsed.pathname;
+  }
+  if (host.toLowerCase() !== 'github.com') return null;
+  const parts = path.replace(/\.git$/u, '').replace(/^\/+/u, '').split('/');
+  if (parts.length < 2 || parts[0].length === 0 || parts[1].length === 0) return null;
+  return `${parts[0]}/${parts[1]}`;
+}
+
+/** The checkout a local-path remote names — the intermediate hop a clone resident's `origin`
+ * points at — or null when the remote is not a local path this reader may follow. */
+function localCheckoutPath(url, root) {
+  const text = `${url}`.trim();
+  if (isAbsolute(text)) return text;
+  if (text.startsWith('./') || text.startsWith('../')) return resolve(root, text);
+  if (text.startsWith('file://')) return decodeURIComponent(text.slice('file://'.length));
+  return null;
+}
+
+/** Issue #540: the GitHub repository a `gh` read resolves against, read from a checkout's own
+ * remotes. gh resolves the repository from the process cwd's remote; the standard deployment
+ * layout is a clone resident (`git clone --no-local <primary>`) whose `origin` is a LOCAL PATH,
+ * and gh resolves no repository from a local path. The shared remote is one hop away, so a
+ * local-path remote is followed into the checkout it names and ITS remotes are read. Returns
+ * `OWNER/NAME`, or null when nothing resolves to a GitHub host — absence, never a guess, and
+ * never a refusal (the caller's reader names the cause if the read then fails).
+ */
+export function resolveIssueRepository({ root, exec = execFileSync, hops = 2 } = {}) {
+  if (typeof root !== 'string' || root.length === 0
+    || !Number.isSafeInteger(hops) || hops <= 0) return null;
+  let listing = '';
+  try {
+    listing = exec('git', ['-C', root, 'config', '--get-regexp', '^remote\\..*\\.url$'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return null; }
+  const urls = `${listing}`.split('\n').map((line) => line.trim()).filter(Boolean)
+    .map((line) => line.slice(line.indexOf(' ') + 1).trim()).filter(Boolean);
+  const locals = [];
+  for (const url of urls) {
+    const repository = githubRepositoryOf(url);
+    if (repository !== null) return repository;
+    const local = localCheckoutPath(url, root);
+    if (local !== null) locals.push(local);
+  }
+  for (const local of locals) {
+    const repository = resolveIssueRepository({ root: local, exec, hops: hops - 1 });
+    if (repository !== null) return repository;
+  }
+  return null;
+}
+
 /** The default issue reader: the ROOT host's own `gh issue view`, the ONE credential in play.
  * The reader contract: answer `{number, title, body, labels, url}`, or throw typed — a missing or
- * unauthenticated reader and a missing issue are DIFFERENT facts, and both are named. */
-export function readGitHubIssue({ issue, exec = execFileSync } = {}) {
+ * unauthenticated reader, a checkout with no resolvable GitHub repository and a missing issue are
+ * DIFFERENT facts, and each is named. `repo` (issue #540) is the `OWNER/NAME` the caller resolved
+ * from the deployment's own checkout: named to gh explicitly so the read never depends on which
+ * remote the process cwd happens to carry. */
+export function readGitHubIssue({ issue, exec = execFileSync, repo = null } = {}) {
+  const argv = ['issue', 'view', String(issue), '--json', 'number,title,body,labels,url'];
+  if (typeof repo === 'string' && repo.length > 0) argv.push('--repo', repo);
   let raw;
   try {
-    raw = exec('gh', ['issue', 'view', String(issue), '--json', 'number,title,body,labels,url'],
+    raw = exec('gh', argv,
       { encoding: 'utf8', maxBuffer: FRAME_LIMITS['context_package.source_bytes'].value * 2 });
   } catch (cause) {
     const observed = `${cause?.stderr ?? ''}\n${cause?.message ?? ''}`;
@@ -2382,6 +2457,15 @@ export function readGitHubIssue({ issue, exec = execFileSync } = {}) {
       throw contextReadRefusal('issue_reader_unavailable',
         `the issue reader is unavailable for issue ${issue}: gh is not installed on this host`,
         { field: 'issue', detail: { issue, reason: 'gh is not installed on this host' } });
+    }
+    // Issue #540: gh's no-repository answer names `gh auth login` as its remedy, so it is
+    // classified BEFORE the authentication test below. Recording it as "not authenticated" is
+    // the defect this issue records: the operator was sent to repair a credential that was
+    // never the problem, while the real cause is the checkout's own remotes.
+    if (/point to a known GitHub host|could not resolve to a GitHub/u.test(observed)) {
+      throw contextReadRefusal('issue_reader_no_repository',
+        `the issue reader is unavailable for issue ${issue}: no remote of this checkout resolves to a GitHub host`,
+        { field: 'issue', detail: { issue, reason: 'no remote of this checkout resolves to a GitHub host' } });
     }
     if (/not logged in|gh auth login|authentication|HTTP 401|HTTP 403/u.test(observed)) {
       throw contextReadRefusal('issue_reader_unavailable',
@@ -2627,9 +2711,15 @@ async function admitRecruitContextPackage(parsed, client, options) {
   // never a lane worktree that does not exist yet. ONE derivation, read by every
   // repository-relative path this leg pulls.
   const repoRoot = options?.contextRepoRoot ?? deploymentCheckoutRoot();
+  // Issue #540: the repository gh reads against, resolved from that same checkout's own remotes
+  // (one hop through a clone resident's local-path origin) — a declared fact of the deployment,
+  // never whichever remote the cwd happens to carry. Null when nothing resolves; the reader then
+  // names the cause.
+  const repository = options?.issueRepository !== undefined
+    ? options.issueRepository : resolveIssueRepository({ root: repoRoot });
   let issue_;
   try {
-    issue_ = await reader({ issue: request.issue, exec: execFileSync });
+    issue_ = await reader({ issue: request.issue, exec: execFileSync, repo: repository });
   } catch (error) {
     if (typeof error?.code === 'string' && Object.hasOwn(CONTEXT_READ_RULES, error.code)) throw error;
     throw contextReadRefusal('issue_reader_unavailable',
