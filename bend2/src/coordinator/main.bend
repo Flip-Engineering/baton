@@ -1,5 +1,6 @@
 import Base
 import ./store.bend as Store
+import ./turn.bend as Turn
 import ./commands.bend as C
 import ../host/text.bend as T
 
@@ -19,7 +20,9 @@ def run(db: String, command: C.Command) -> IO(Unit):
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Invalid{}:
-      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nworker ID PARENT HARNESS MODEL EFFORT WORKSPACE BRANCH BASE\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve ID WORKER EVENT_JSON\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nreport-file ID WORKER PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nPATH - reads stdin")
+      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nworker ID PARENT HARNESS MODEL EFFORT WORKSPACE BRANCH BASE\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve ID WORKER EVENT_JSON\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nreport-file ID WORKER PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nturn WORKER TURN_ID CLAUDE_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
+    case C.RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}:
+      Turn.run(db,worker,id,cmd,model,effort,cwd,task,log,session)
     case C.ObserveFile{id,worker,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))

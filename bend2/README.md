@@ -9,8 +9,7 @@ native harness adapters and Git operations. The
 With Bend 2.0.25, clang and SQLite development headers available:
 
 ```sh
-sh bend2/scripts/build-native.sh
-python3 bend2/test/coordinator.py
+sh bend2/scripts/check-native.sh
 ```
 
 The build uses `.bend/bin/bend` or `node_modules/.bend/bin/bend`. Set `BEND` to
@@ -19,8 +18,9 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 
 ## Coordinator storage
 
-The executable currently stores sessions and messages. Harness process control,
-automatic delivery and Git landing are being connected to this interface.
+The executable stores sessions and messages and supervises foreground Claude
+Code turns. Native parent delivery and Git landing are being connected to this
+interface.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
@@ -52,6 +52,31 @@ guidance and questions. `report` routes to the worker's recorded parent.
 existing worker connection while retaining its parent and requested route. Each CLI invocation opens the same
 database, and SQLite serializes transactions.
 Workspaces and source files are retained by these commands.
+
+## Native turns
+
+After registering the worker, run:
+
+```sh
+.scratch/bend2/baton2 state.db turn worker1 turn1 CLAUDE_COMMAND MODEL EFFORT WORKTREE TASK_FILE OUTPUT_LOG ""
+```
+
+The last argument is the native session to resume; an empty string starts a new
+session. The harness uses its existing login. This command runs one foreground
+native process, sends the task, drains output while writing input, and closes
+that process's input stream after the task. A later turn resumes the recorded
+native session. The logical worker and its workspace remain available.
+
+The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
+Native result events create pending parent reports. Process-start failures and
+exits without a result also create reports. Repeating a completed turn ID returns
+its retained report. `pending` shows reports awaiting native acceptance; delivery
+is still being connected. Run one foreground turn at a time for a worker.
+
+The check command builds the coordinator and process test executable, then runs
+persistence, OS-process and controlled-protocol integration tests. A controlled
+process fixture verifies supervision; a real subscription worker and a native
+root acceptance receipt are required for the live-slice result.
 
 ## Source layout
 

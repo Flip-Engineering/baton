@@ -198,25 +198,25 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   static Term name##_run(Env e,Term *f,IoWork *w){return baton_process_begin(e,f,w,kind);} \
   static void __attribute__((constructor)) name##_use(void){io_eff(ID,name##_run,0);}
 #ifdef CID_PROCESSCHILD_SPAWN
-BP_EFFECT(baton_spawn,CID_PROCESSCHILD_SPAWN,BP_SPAWN)
+BP_EFFECT(baton_process_spawn,CID_PROCESSCHILD_SPAWN,BP_SPAWN)
 #endif
 #ifdef CID_PROCESSCHILD_WRITE
-BP_EFFECT(baton_write,CID_PROCESSCHILD_WRITE,BP_WRITE)
+BP_EFFECT(baton_process_write,CID_PROCESSCHILD_WRITE,BP_WRITE)
 #endif
 #ifdef CID_PROCESSCHILD_CLOSE_STDIN
-BP_EFFECT(baton_close,CID_PROCESSCHILD_CLOSE_STDIN,BP_CLOSE)
+BP_EFFECT(baton_process_close,CID_PROCESSCHILD_CLOSE_STDIN,BP_CLOSE)
 #endif
 #ifdef CID_PROCESSCHILD_READ_LINE
-BP_EFFECT(baton_read,CID_PROCESSCHILD_READ_LINE,BP_READ)
+BP_EFFECT(baton_process_read,CID_PROCESSCHILD_READ_LINE,BP_READ)
 #endif
 #ifdef CID_PROCESSCHILD_WAIT
-BP_EFFECT(baton_wait,CID_PROCESSCHILD_WAIT,BP_WAIT)
+BP_EFFECT(baton_process_wait,CID_PROCESSCHILD_WAIT,BP_WAIT)
 #endif
 #ifdef CID_PROCESSCHILD_SIGNAL
-BP_EFFECT(baton_signal,CID_PROCESSCHILD_SIGNAL,BP_SIGNAL)
+BP_EFFECT(baton_process_signal,CID_PROCESSCHILD_SIGNAL,BP_SIGNAL)
 #endif
 #ifdef CID_PROCESSCHILD_PID
-BP_EFFECT(baton_pid,CID_PROCESSCHILD_PID,BP_PID)
+BP_EFFECT(baton_process_pid,CID_PROCESSCHILD_PID,BP_PID)
 #endif
 #undef BP_EFFECT
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
