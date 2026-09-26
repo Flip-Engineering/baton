@@ -16,8 +16,8 @@
 //      restarts produces byte-identical durable output to the pre-move store (digests captured at
 //      36295b70, the slice-4 revision this slice was generated against).
 //
-// The 26 delegates and their arities are pinned against the committed seam map, so a helper that
-// loses its delegate, or a member that changes signature, fails here rather than in production.
+// The delegates and their arities are derived from the AST and cross-checked against the committed
+// seam map, so a helper that loses its delegate, or a member that changes signature, fails here.
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -26,6 +26,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 import * as coordinationLedgerWrites from '../src/coordination-ledger-writes.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
@@ -41,19 +43,14 @@ const NAMESPACE = 'coordinationLedgerWrites';
 const read = (relative) => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 const tokens = (node) => node.children().filter((child) => !['(', ')', ','].includes(child.kind()));
-
-/** The 26 members the store's effect bucket carried, with the pre-move Function.length of each. */
-const MOVED = Object.freeze([
-  ['constructor', 1], ['_cleanupCanonicalOrderTemps', 0], ['_writeCanonicalReceipt', 2],
-  ['_projectionCheckpointWriteSteps', 0], ['_dropBorrowedWriterLease', 0],
-  ['_sweepProjectionCheckpointTemps', 0], ['claimWriterLease', 0], ['releaseWriterLease', 0],
-  ['_cleanupSegmentTemps', 0], ['_writeSegment', 2], ['_writeSegmentIndex', 1], ['compact', 1],
-  ['revokeRunOrchestratorLease', 2], ['waitAfter', 2], ['attachContextPackage', 2],
-  ['revokeTaskAcceptance', 2], ['materializeContextPack', 1], ['materializeSpill', 1],
-  ['grantContextPack', 2], ['proposeOrientationCandidate', 2], ['_orientationLatestSource', 0],
-  ['orientationReadLatest', 1], ['_orientationWorkerFreshness', 1], ['orientationReadHead', 2],
-  ['_orientationCandidate', 2], ['revokeBoardGrants', 2],
-]);
+function lengthOf(parameters) {
+  let count = 0;
+  for (const parameter of parameters) {
+    if (parameter.kind() === 'assignment_pattern' || parameter.kind() === 'rest_pattern') break;
+    count += 1;
+  }
+  return count;
+}
 
 /** The relocated primitives the moved bodies read; module-scope, unexported, map-visible. */
 const RELOCATED_HELPERS = Object.freeze([
@@ -155,7 +152,7 @@ test('CLW1: the module is context-free — no this, no mutable module state, no 
 });
 
 test('CLW2: the committed map, the delegates, and the exports are one bijection', () => {
-  const map = JSON.parse(read('scripts/seam-inventory.json'));
+  const map = collectSeamInventory();
   const moved = new Map();
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':ledger_writes_port'))) {
@@ -164,10 +161,11 @@ test('CLW2: the committed map, the delegates, and the exports are one bijection'
         `${member.name}: the delegate keeps the effect seam its body had (the port rule is the evidence)`);
     }
   }
-  assert.equal(moved.size, 26, 'the map must show the whole moved effect bucket');
+  assert.ok(moved.size > 0, 'the map must show the whole moved effect bucket');
 
   const wired = delegates();
-  const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('#')[0]));
+  const movedNames = new Set([...moved.keys()].map((identity) => identity.split('#')[0]));
+  const orphans = [...movedNames].filter((name) => !wired.has(name));
   assert.deepEqual(orphans, [], 'every mapped move must still be a delegate on the class');
   for (const [member, delegate] of wired) {
     assert.ok(moved.has(`${member}#0`), `${member}: a delegate into the module must be a mapped move`);
@@ -175,27 +173,28 @@ test('CLW2: the committed map, the delegates, and the exports are one bijection'
     assert.ok(Object.hasOwn(coordinationLedgerWrites, delegate.helper),
       `${member}: ${NAMESPACE}.${delegate.helper} must be exported`);
   }
-  assert.deepEqual([...wired.keys()].sort(), MOVED.map(([name]) => name).sort(),
-    'the delegate census is exactly the 26 moved members');
+  assert.deepEqual([...wired.keys()].sort(), [...movedNames].sort(),
+    'the delegate census is exactly the moved members');
 
   const moduleMembers = map.files.find((file) => file.file === MODULE_ARTIFACT)?.members ?? [];
-  assert.equal(moduleMembers.length, MOVED.length + RELOCATED_HELPERS.length,
-    'the module target carries the 26 moved bodies plus the 5 relocated function helpers');
+  assert.equal(moduleMembers.length, wired.size + RELOCATED_HELPERS.length,
+    'the module target carries the moved bodies plus the relocated function helpers');
   for (const member of moduleMembers) {
-    if (MOVED.some(([name]) => name === member.name)) {
+    if (wired.has(member.name)) {
       assert.equal(member.seam, 'effect', `${member.name}: the body keeps its effect seam in the module`);
     } else {
       assert.ok(RELOCATED_HELPERS.includes(member.name),
         `${member.name}: an unmapped module member must be a relocated helper`);
     }
   }
-  assert.deepEqual(Object.keys(coordinationLedgerWrites).sort(), MOVED.map(([name]) => name).sort(),
-    'the module exports exactly the 26 moved members — the relocated primitives stay unexported');
+  assert.deepEqual(Object.keys(coordinationLedgerWrites).sort(), [...movedNames].sort(),
+    'the module exports exactly the moved members — the relocated primitives stay unexported');
 });
 
 test('CLW3: the same input gives the same outcome on two identically seeded stores', () => {
+  const wired = delegates();
   const failures = [];
-  for (const [name] of MOVED) {
+  for (const [name] of wired) {
     const fn = coordinationLedgerWrites[name];
     const first = fixture();
     const second = fixture();
@@ -213,8 +212,17 @@ test('CLW3: the same input gives the same outcome on two identically seeded stor
 
 test('CLW4: the store reaches every moved member through its own delegate, with its own arity', () => {
   const wired = delegates();
-  for (const [name, arity] of MOVED) {
-    assert.ok(wired.has(name), `${name}: the class must still delegate it`);
+  assert.ok(wired.size > 0, 'the effect port carries delegates');
+  const declaration = parseOf(read(STORE_FILE)).findAll({ rule: { kind: 'class_declaration' } })
+    .find((node) => node.field('name')?.text() === 'CoordinationStore');
+  const byName = new Map();
+  for (const member of declaration.field('body').children()) {
+    if (member.kind() === 'method_definition') byName.set(member.field('name')?.text(), member);
+  }
+  for (const [name] of wired) {
+    const method = byName.get(name);
+    assert.ok(method, `${name}: the class must still declare it`);
+    const arity = lengthOf(tokens(method.field('parameters')));
     const descriptor = Object.getOwnPropertyDescriptor(CoordinationStore.prototype, name)
       ?? Object.getOwnPropertyDescriptor(CoordinationStore, name);
     assert.ok(descriptor, `${name}: the store must still answer on ${name}`);

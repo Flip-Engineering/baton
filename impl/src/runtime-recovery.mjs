@@ -1,6 +1,6 @@
 // Issue #259 slice 8: the coordinator's recovery bucket moves here against the injected
 // recorder port (seam-map §4.3; the port itself landed in slice 6, runtime-recorder-port.mjs).
-// The 42 members classified recovery in impl/scripts/seam-inventory.json keep verbatim
+// The recovery members the seam inventory classifies keep verbatim
 // bodies: `this.` became the explicit receiver `coordinator`, recording goes through the
 // port parameter `recorder` (log / coordination / mapEvent / recordDriver — the same port
 // createDriver assembles), and sibling recovery paths call each other inside the module.

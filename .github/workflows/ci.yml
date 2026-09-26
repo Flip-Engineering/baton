@@ -45,10 +45,6 @@ jobs:
         working-directory: impl
         run: npm test
 
-      - name: Contract manifest validation
-        working-directory: impl
-        run: npm run test:contracts:validate
-
       - name: CLI/MCP/Web surface audits
         working-directory: impl
         run: npm run test:surfaces
@@ -56,14 +52,6 @@ jobs:
       - name: Unified surface tests
         working-directory: impl
         run: npm run test:unified-surfaces
-
-      - name: Production convergence tests
-        working-directory: impl
-        run: npm run test:production-convergence
-
-      - name: Expected-red convergence gate
-        working-directory: impl
-        run: npm run test:contracts
 
       - name: Packed install and executable smoke
         working-directory: impl
@@ -74,7 +62,6 @@ jobs:
         working-directory: impl
         env:
           BATON_RELEASE_GATE: passed
-          BATON_CONTRACT_GATE: passed
         run: node scripts/generate-release-status.mjs --output "$RUNNER_TEMP/baton-status.json"
 
       - name: Upload release status

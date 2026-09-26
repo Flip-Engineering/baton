@@ -166,9 +166,9 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
   // MCP-W1/W2 (v1.0.1 adjudication): the ordinary surface gains the wave ergonomics, doctor,
-  // decision.answer, and the four settlement tools (10 additions); decision.answer moves OUT of
+  // decision.answer, and the four settlement tools; decision.answer moves OUT of
   // the reflex inventory, and the three settlement rows leave the S-3 matrix (ordinary tools).
-  assert.equal(names.length, 88, '64 ordinary/advanced tools + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 1 waves.compile (#170) + 1 scratchpad.append (#158) + 14 legacy-and-S-3 reflex tools');
+  // E04: the enumeration's size is the registry's own derivation, never a pinned total.
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list',
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',

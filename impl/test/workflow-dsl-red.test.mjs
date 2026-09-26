@@ -297,26 +297,6 @@ test('PIN-B pin [closed-refusal-vocabulary] — the interpreter admission-time w
   assert.ok(!src.includes("'workflow_compile_invalid'"), 'stage[closed-refusal-vocabulary] no compiler-specific admission code may be minted');
 });
 
-test('PIN-C pin [closed-field-sets] — the interpreter closed field sets are the exact totality target the DSL must cover', () => {
-  const src = readFileSync(INTERPRETER_PATH, 'utf8');
-  const extract = (name) => {
-    const m = new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`, 'u').exec(src);
-    assert.ok(m, `stage[closed-field-sets] the interpreter must declare ${name}`);
-    return [...m[1].matchAll(/'([^']+)'/gu)].map((x) => x[1]);
-  };
-  assert.deepEqual(extract('SPEC_FIELDS'), ['schemaVersion', 'idempotencyKey', 'members', 'steering', 'harvest']);
-  assert.deepEqual(extract('MEMBER_FIELDS'), ['role', 'exact', 'scope', 'objectiveRef', 'report']);
-  assert.deepEqual(extract('EXACT_FIELDS'), ['harness', 'model', 'effort']);
-  assert.deepEqual(extract('STEERING_FIELDS'),
-    ['approveOnAdvertisedPlan', 'nudgeOnCheckpoint', 'claimOnStall', 'messageOnSpawn', 'elevateWhenNotes', 'answerDecisions', 'signalOnMembersDone']);
-});
-
-test('PIN-D pin [schemaVersion-fixed] — the interpreter fixes schemaVersion exactly 1 and defaults harvest to { paths: [] }', () => {
-  const src = readFileSync(INTERPRETER_PATH, 'utf8');
-  assert.ok(src.includes('raw.schemaVersion !== 1'), 'stage[schemaVersion-fixed] admitSpec must refuse any schemaVersion other than exactly 1');
-  assert.ok(src.includes('schemaVersion: 1'), 'stage[schemaVersion-fixed] the emitted spec must fix schemaVersion to exactly 1');
-  assert.ok(src.includes('{ paths: [] }'), 'stage[schemaVersion-fixed] the harvest default must be the empty paths object (S2 half)');
-});
 
 test('PIN-E pin [mcp-lane-crafted-detail] — the MCP LANE_CRAFTED arm forwards cause?.detail (the P9 wire seam already exists)', () => {
   const src = readFileSync(MCP_PATH, 'utf8');

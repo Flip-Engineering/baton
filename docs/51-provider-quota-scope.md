@@ -158,9 +158,7 @@ route stays ready. Each is updated in the same landing, with the inverted assert
 
 ## 6. Verification
 
-- `impl/test/issue523-quota-scope-red.test.mjs` pins the contract in five rows, red at 8ff5bf09
-  (all five fail: the scope derivation does not exist, the authority blocks per effort, the
-  doctor and the recruit refusal read per effort, the fold mints two episodes for two efforts),
-  listed in the expected-red manifest with reason `#523`. The implementation lane turns the rows
-  green, retires the manifest entries, and drops the `-red` suffix (docs/44).
+- `impl/test/issue523-quota-scope-red.test.mjs` pins the contract in five rows: the scope
+  derivation, the authority's per-effort block, the doctor and the recruit refusal reading per
+  effort, and the fold minting one episode per effort.
 - The deployment gate: `npm test --prefix impl`.

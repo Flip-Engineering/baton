@@ -369,7 +369,6 @@ writes to the caches and never triggers a refresh — reads are pure over them.
 | cost rule | `impl/src/swarm-runtime.mjs` · `inspect()`, the per-swarm derived-state cache (new), the workspace-facts cache (new, refreshed at `_settleCheckoutWriterState` and the commit-spool drain) | removal of the read-path `gitRead` call sites named in §7 |
 | grammar surface | `docs/36-unified-control-grammar.md` §7.4 via `impl/scripts/render-surface-docs.mjs` + `surface-gate.mjs --write` | regenerated block: the new attention kind |
 | CLI/web consumers of `attention` | `impl/src/application-cli.mjs`, the web view, `impl/src/visual-model.mjs` | iterate `attention.rows` (the §9 cutover) |
-| expected-red manifest | `impl/scripts/expected-red-tests.json` | the red pins' rows listed with reasons `#433` / `#268` — **outside this design lane's path scope**; listing them (or one `--write-expected-red --expected-red-reason` full-suite run) is the implementing lane's first act (docs/44 rule 5) |
 
 ## 12. Open questions
 

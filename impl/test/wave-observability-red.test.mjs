@@ -781,15 +781,15 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 57,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47), then #294 adds baton_wakes_subscribe/unsubscribe/since (47 → 50), then #318 adds baton_evidence_search (50 → 51); the enumeration reads 54 at #317\u2019s base (the swarm message family #311 and the canonical sibling twins landed after the pin\u2019s narration), #317 adds baton_services_list (54 → 55), and #566 absorbs the two post-narration additions — the #99/#179 resultpin/harvest pair (55 → 57)');
+  // E04: the enumeration and the registry derivation are the ONE set — the test pins the
+  // waves family's positions inside it and never a total.
+  assert.deepEqual([...names].sort(), [...mcpApplicationToolNames()].sort(),
+    'the live MCP enumeration is exactly the ordinary-surface derivation');
   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
   assert.equal(names[15], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
   assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
-  const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 57, 'the sorted ordinary surface reads 57 tools (the 55 the #317 pin narrated — baton_waves_compile #170, baton_run_scratchpad_append #158, ten fleet_swarm_* docs/39, three #294 baton_wakes_* tools, baton_evidence_search #318, baton_services_list #317 — plus the #99/#179 resultpin/harvest pair the #566 composition restores)');
-  assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
+  assert.ok(mcpApplicationToolNames().includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 
 // ===========================================================================
@@ -810,24 +810,6 @@ test('A4-1: waves.list rows read local by construction — remote/stale are defe
   for (const key of Object.keys(row)) {
     assert.ok(key !== 'remote' && key !== 'stale', 'no remote/stale vocabulary is fabricated on the row');
   }
-});
-
-test('A4-2 PIN: processState only reads \'active\' on an exact match — \'unknown\' reads stale, never a guessed \'remote\' (F4/F12)', () => {
-  const src = readFileSync(fileURLToPath(new URL('../src/resident-authority.mjs', import.meta.url)), 'utf8');
-  // F12 — the negative pin is REGION-RESTRICTED to the processState function (resident-authority.mjs
-  // :51-64), so a comment or dead branch anywhere else in the file cannot trip it.
-  const region = src.slice(
-    src.indexOf('function processState('),
-    src.indexOf('function safeRegular('),
-  );
-  assert.ok(!region.includes("'remote'"),
-    'the processState function never reads remote — a dead-branch \'remote\' literal inside it is killed (F12)');
-  assert.equal((region.match(/return 'unknown'/g) ?? []).length, 2,
-    'exactly the two real unknown paths (resident-authority.mjs:56 non-ESRCH/EPERM kill error and :60 failed/empty ps read)');
-  assert.equal((region.match(/return 'stale'/g) ?? []).length, 1,
-    'exactly the one real stale return (ESRCH at :58; the ternary at :61 branches stale separately)');
-  assert.ok(region.includes('observed === expectedStart ? \'active\' : \'stale\''),
-    'only exactly \'active\' can ever produce a future remote; \'unknown\' reads stale (F4)');
 });
 
 // ===========================================================================

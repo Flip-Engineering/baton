@@ -137,7 +137,7 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 | [34](docs/34-knowledge-horizons.md) | Knowledge horizons: task → workflow → project graphs, promotion, brief-time activation |
 | [35](docs/35-turn-checkpoints.md) | Turn checkpoints: steering signals sent between turns |
 | [36](docs/36-unified-control-grammar.md) | One grammar across embedded, web, CLI and MCP; the generated inventories and the conformance gate |
-| [37](docs/37-wave-driver.md) · [37b](docs/37-holistic-runtime-convergence.md) | The shipped wave driver; holistic runtime convergence |
+| [37](docs/37-wave-driver.md) | The shipped wave driver |
 | [38](docs/38-flip-experience.md) · [38b](docs/38-flip-visual-surfaces.md) | The operator experience and visual surfaces (`baton top`) |
 | [39](docs/39-swarm-runtime.md) | The swarm runtime: living swarms, tight and loose coupling, communication and shared context, the knowledge verbs on the bridge |
 | [40](docs/40-runtime-review-2026-09-12.md) · [41](docs/41-verification-recovery-review.md) | The runtime review with checked results; verification and contribution recovery |

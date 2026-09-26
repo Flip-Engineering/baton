@@ -47,9 +47,6 @@ fails.
   §Waking the orchestrator); the retirement below names MCP tools only.
 - **The kernel/authoring/host profiles stay un-unified** (docs/36 §11). The descriptor's
   `advanced`/`combined` surfaces serve what they serve today.
-- **The manifest discipline** (docs/44): the red rows are listed under `#314` in
-  `impl/scripts/expected-red-tests.json` in this change; a landing moves them, never the
-  reverse.
 
 ## 1. Measured baseline
 
