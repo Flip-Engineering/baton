@@ -16,8 +16,8 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 // #207 (row-admission-align): the run.start objective cap comes from the frame-economics registry —
 // Decision 8's no-re-declare law (the interpreter never re-declares a cataloged lane's byte
 // literal). limits.mjs is pure data + one refusal-text composer and imports only node:crypto, so
@@ -312,6 +312,7 @@ function admitHarvestEntry(entry, repoRoot) {
   if (typeof entry === 'string') {
     if (entry.length === 0) throw harvestInvalid('a harvest "paths" entry must be a non-empty string');
     assertHarvestContained(entry, repoRoot);
+    assertHarvestNamesFile(entry, repoRoot);
     return { path: entry };
   }
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw harvestInvalid('a harvest "paths" entry must be a string or an object');
@@ -321,6 +322,7 @@ function admitHarvestEntry(entry, repoRoot) {
   if (typeof entry.path !== 'string' || entry.path.length === 0) throw harvestInvalid('a harvest "paths" entry "path" must be a non-empty string');
   if (entry.mustContain !== undefined && typeof entry.mustContain !== 'string') throw harvestInvalid('a harvest "paths" entry "mustContain" must be a string');
   assertHarvestContained(entry.path, repoRoot);
+  assertHarvestNamesFile(entry.path, repoRoot);
   const out = { path: entry.path };
   if (entry.mustContain !== undefined) out.mustContain = entry.mustContain;
   return out;
@@ -334,6 +336,20 @@ function assertHarvestContained(path, repoRoot) {
   }
   if (repoRoot && escapesRepo(repoRoot, path)) {
     throw harvestInvalid(`the harvest path "${path}" resolves outside the repository root (symlink escape)`);
+  }
+}
+
+// D1b (#165): a harvest path names a FILE. `git show <sha>:<dir>` returns the directory's listing,
+// so a directory target surfaces only after the wave has run, as a post-run `harvest_miss`. The
+// launch tree is the one place the caller can still fix the spec, so a path that already resolves
+// to a directory in the repository refuses at admission. A path that does not exist yet is
+// admitted: it is the file the run is expected to produce.
+function assertHarvestNamesFile(path, repoRoot) {
+  if (typeof repoRoot !== 'string' || repoRoot.length === 0) return;
+  let stat = null;
+  try { stat = statSync(join(repoRoot, path)); } catch { return; }
+  if (stat.isDirectory()) {
+    throw harvestInvalid(`the harvest path "${path}" names a directory in the launch tree — harvest paths name FILES, never directories`);
   }
 }
 
