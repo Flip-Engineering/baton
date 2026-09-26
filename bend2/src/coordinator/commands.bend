@@ -14,6 +14,8 @@ type Command is Data:
   ObserveFile{id: String, worker: String, path: String}
   ReportFile{id: String, sender: String, path: String}
   Report{id: String, sender: String, body: String}
+  Ask{id: String, worker: String, body: String}
+  AskFile{id: String, worker: String, path: String}
   Ack{id: String, recipient: String, receipt: String}
   Session{id: String}
   Delivery{id: String}
@@ -77,6 +79,8 @@ def sql(command: Command) -> String:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Report{+id, +sender, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(sender) ++ "),'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
+    case Ask{+id, +worker, body}:
+      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(worker) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(worker) ++ "),'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ack{+id, +recipient, receipt}:
       "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)
@@ -95,6 +99,7 @@ def sql(command: Command) -> String:
     case ObserveFile{id,worker,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
     case ReportFile{id,sender,path}: ""
+    case AskFile{id,worker,path}: ""
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
     case Land{worker,repo,target}: ""
     case LandChecked{worker,repo,target,check,files}: ""
@@ -121,7 +126,9 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"observe"),Observe{id,one,two},
       Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},
-      Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
+      Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{})))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:

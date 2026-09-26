@@ -69,6 +69,32 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'worker'), [])
         self.assertEqual(len(self.call('inbox', 'root')), 1)
 
+    def test_ask_records_full_question_to_parent_and_retry_does_not_duplicate(self):
+        text = "Question with apostrophe ' and unicode λ🙂.\n" * 40
+        asked = self.call('ask', 'askq-1', 'worker', text)
+        self.assertEqual(asked['sender'], 'worker')
+        self.assertEqual(asked['recipient'], 'root')
+        self.assertEqual(asked['kind'], 'question')
+        self.assertEqual(asked['body'], text)
+        self.assertEqual(self.call('ask', 'askq-1', 'worker', text)['body'], text)
+        self.call('ask', 'askq-1', 'worker', text + 'changed', success=False)
+        inbox = self.call('inbox', 'root')
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]['id'], 'askq-1')
+        self.assertEqual(inbox[0]['kind'], 'question')
+        self.assertEqual(inbox[0]['body'], text)
+
+    def test_ask_file_reads_file_and_stdin_into_complete_questions(self):
+        text = "Piped question with apostrophe ' and unicode λ🙂.\n" * 6000
+        question = pathlib.Path(self.temp.name) / 'question.txt'
+        question.write_text(text)
+        self.assertEqual(self.call('ask-file', 'askq-file', 'worker', str(question))['body'], text)
+        p = subprocess.run([str(EXE), str(self.db), 'ask-file', 'askq-stdin', 'worker', '-'],
+                           input=text, text=True, capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout)['body'], text)
+        self.assertEqual(len(self.call('inbox', 'root')), 2)
+
     def test_delivery_uses_current_native_attachment(self):
         self.call('report', 'turn-1', 'worker', 'work available')
         self.call('attach', 'root', 'native-test', 'new-native-session', 'new-endpoint')
