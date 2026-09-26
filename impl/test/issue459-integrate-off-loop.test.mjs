@@ -75,10 +75,9 @@ function reapVerdictScratch(t, failures) {
   t.after(() => rmSync(dirname(path), { recursive: true, force: true }));
 }
 
-// The three scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
+// The two scripts a landing regenerates with (`INTEGRATION_REGENERATORS`). They are TRACKED on
 // the base commit — the integration checkout checks them out, and the landing runs them for real.
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
@@ -93,8 +92,8 @@ function regeneratorSource(artifact) {
 
 /** The runner a landing's gate run invokes, as the deployment's own seam invokes it: it takes the
  * sleep the row asked for, records WHEN it finished (the marker the rows date their observations
- * against), then writes the verdict document the deployment's expected-red manifest would have
- * judged — green, or red with the unexpected rows the row names. */
+ * against), then writes the verdict document the gate run records — green, or red with the
+ * unexpected rows the row names. */
 function runnerSource({ sleepMs, green, unexpected, markerPath, die = false }) {
   // The die mode: stream two REAL per-file result blocks the way run-suite prints them, then
   // kill the runner's own process before any marker or verdict exists — a run that lost its

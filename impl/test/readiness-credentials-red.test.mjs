@@ -8,9 +8,9 @@
 // readiness substrate, the existing wave_driver_route_unready preflight code).
 //
 // STATUS (2026-09-18, #460): the #47 bounded actual-inference tier, the #83 fleet_roster surface
-// and the #84 credential controllers are LANDED — all 26 rows now assert and pass. The manifest
-// declares this file `converged` (#47) with no expected-red row; RT-3b's timeout classification is
-// re-pointed to the landed #375 verdict, and every fixture await carries a declared bound. Before
+// and the #84 credential controllers are LANDED — all 26 rows now assert and pass. RT-3b's
+// timeout classification is re-pointed to the landed #375 verdict, and every fixture await
+// carries a declared bound. Before
 // the #460 repair this file was cancelled end to end: 26 rows, zero assertions.
 //
 // Harness architecture mirrors test/bidirectional-v3-red.test.mjs (ScriptableAdapter pattern,

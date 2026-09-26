@@ -15,8 +15,8 @@
 //   • root standing gap b — no synthesized `root` participant row, so the root's reviews land with
 //     `reviewerId: null` and no actor row renders them;
 //   • root standing gap c — `attention` is a bare array with no `{rows, coverage}` envelope.
-// Each row's message names what the implementer must land. When a row goes green the expected-red
-// manifest entry for it is stale and is retired with the landing (docs/44).
+// Each row's message names what the implementer must land. When a row goes green the row
+// leaves with the landing (docs/44).
 //
 // Fixture: the light SwarmRuntime harness (swarm-runtime.test.mjs) — no adapter. The no-spawn row
 // shims `git` on PATH: any spawn lands in the spy log, and exit 1 reads as absence.

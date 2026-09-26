@@ -149,12 +149,12 @@ async function world(t, {
     stopRun: async () => {},
     // The deployment's landing authority. The gate runner and the regenerators are the fixture's:
     // the verb's OWN derivation of the gate set is asserted separately (row c), and the deployment
-    // owns what a landing regenerates (in the real repository, the three `impl/scripts` writers).
+    // owns what a landing regenerates (in the real repository, the two `impl/scripts` writers).
     // The fixture's regenerator writes a real file, so "folded into the ONE commit" is provable.
     integration: {
       repoRoot: repo,
       publishRemote,
-      regenerate: async (dir) => { write(dir, 'impl/scripts/seam-inventory.json', '{}\n'); },
+      regenerate: async (dir) => { write(dir, 'impl/scripts/render-surface-docs.out', '{}\n'); },
       runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
     },
   });

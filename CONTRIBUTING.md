@@ -109,8 +109,8 @@ that loop for anyone who wants to reproduce it, either on this repository or the
    `commit.branch` the lane branch:
    ```bash
    git log --reverse master..baton/<workspaceId>            # the full range in order, never the tip alone
-   git cherry-pick <sha...>                                  # on a seam-inventory.json conflict, take theirs, then regenerate
-   node scripts/seam-inventory.mjs --write && node scripts/surface-gate.mjs --write && node scripts/render-surface-docs.mjs --write
+   git cherry-pick <sha...>
+   node scripts/surface-gate.mjs --write && node scripts/render-surface-docs.mjs --write
    BATON_SUITE_VERDICT_FILE=/tmp/verdict.json node scripts/run-suite.mjs test/<gate files>
    ```
    Pick the whole commit range in order, regenerate the shared artifacts, and run the gate files

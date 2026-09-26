@@ -306,11 +306,10 @@ const seatPrincipal = (principalId) => ({
   actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`,
 });
 
-/** The three regenerators a landing runs, as exit-0 stubs: this fixture is about the authority's
+/** The two regenerators a landing runs, as exit-0 stubs: this fixture is about the authority's
  * declared remote, and the real regenerators belong to the baton tree, not to a temporary repo. The
  * supervisor runs each one as `node <script> --write` in the landing checkout. */
 const REGENERATOR_STUBS = [
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ];

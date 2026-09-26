@@ -230,9 +230,8 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
 - The contributions read derives review state at read time through the ONE exported derivation
   (`contributionLedgerRows` + `SWARM_REVIEW_STATES`, docs/46 §2.1); no durable row is rewritten.
 - The wave-13 red-before skeleton (`impl/test/issue441-reading-half-red.test.mjs`) is a
-  conformance pin now and carries no expected-red row: `impl/scripts/expected-red-tests.json`
-  lists the file under `converged` with reason `#441`, and nothing in its row set pins an
-  unlanded promise — no row remains red. Its six rows assert the LANDED spellings, re-derived
+  conformance pin now: nothing in its row set pins an unlanded promise — no row remains red.
+  Its six rows assert the LANDED spellings, re-derived
   after the four lanes landed: (a) `--issue N` parses onto the recruit's context leg and the
   runtime attaches the ONE admitted package to the seat's run; (b) the brief's `## Context
   package` section names each branch, its digest and the issue title; (c) `run.package.read`

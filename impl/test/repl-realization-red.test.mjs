@@ -98,8 +98,8 @@ import {
 import { applicationSemanticRegistry } from '../src/application-semantics.mjs';
 
 // Verified split (runs from the repo root).
-//   Before the realization (the served base): tests 34 · pass 12 · fail 22 — the 22 rows the
-//   expected-red manifest pinned under #69; B1 and G2 had already converged with #79/#143.
+//   Before the realization (the served base): tests 34 · pass 12 · fail 22 — the 22 rows that
+//   were red at the served base; B1 and G2 had already converged with #79/#143.
 //   After the realization (two consecutive runs): tests 34 · pass 34 · fail 0 · cancelled 0 ·
 //   skipped 0 · todo 0. The ten PIN rows and the two rows that had converged stay green.
 

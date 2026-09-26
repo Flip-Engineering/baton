@@ -1,11 +1,6 @@
-// The swarm slice's red-first rows (2026-09-14 audit S-G2/S-N1): the swarm runtime's known gaps
-// belong in this manifest like every other known gap, because the canonical gate must be able to
-// say "we know this is broken" about the swarm too — its equivalent knowledge otherwise lives only
-// in issues and audit documents, where a GREEN verdict says nothing about it.
-//
-// Each row pins the contract one audit item names, and each fails today for a NAMED stage. When a
-// row goes green the verdict refuses it as a stale expectation, so the row is removed with the
-// fix, never left to rot.
+// The swarm slice's red-first rows (2026-09-14 audit S-G2/S-N1): each row pins the contract one
+// audit item names, and each fails today for a NAMED stage. When a row goes green the row is
+// removed with the fix, never left to rot.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
