@@ -2990,27 +2990,21 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_run_attention_watch') {
-      try {
-        value = await this.application.command('run.attention.watch', {
-          runId: args.runId,
-          ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
-          ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
-        }, {
-          actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-          principalId: principal.userId, sessionId: principal.sessionId,
-        }, this._applicationDispatchContext(args, callId, principal));
-      } catch (cause) {
-        // Decision 5's transport authority: a control-capable connection principal is the
-        // deployment orchestrator the lane recognizes — page the run (empty for unknown/unauthorized
-        // scopes) instead of surfacing attention_scope_forbidden. Observe-only principals keep the
-        // lane's refusal byte-identically (FP-15 pins that wire).
-        if (cause?.code === 'attention_scope_forbidden' && Array.isArray(principal.capabilities)
-          && principal.capabilities.includes('control')) {
-          value = { schemaVersion: 1, runId: args.runId, afterCursor: 0, throughCursor: 0, reasons: [] };
-        } else {
-          throw cause;
-        }
-      }
+      // Ruling on #108: a cursor-0 caller gets the SAME refusal as one at cursor > 0, so the
+      // fabricated empty page is gone. The lane's authority is principal-shaped and its refusal is
+      // typed; converting `attention_scope_forbidden` into `{afterCursor: 0, throughCursor: 0,
+      // reasons: []}` answered \"no news\" to a caller whose scope was refused AND rewound the
+      // requested cursor to 0 — the rewind the surface-watch leg already refuses by name
+      // ('refusing silent empty fallback', production-mcp-convergence.mjs). A refusal crosses as
+      // itself, and an authorized scope still pages through the lane untouched.
+      value = await this.application.command('run.attention.watch', {
+        runId: args.runId,
+        ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
+        ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_run_scratchpad_read') {
       value = await this.application.command('run.scratchpad.read', {
