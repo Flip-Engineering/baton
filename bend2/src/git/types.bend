@@ -39,9 +39,10 @@ type GitFail is Data:
 
 # The answer of land. LLanded names the actual target commit after the
 # advance. LAlready answers a retry whose worker commit the target already
-# contains. LConflict names the unmerged paths and keeps the prepared worktree
-# at dir for the requester. LBlocked names the failure identities that are new
-# on the candidate or the selected files no run could judge.
+# contains and names that worker commit. LConflict names the unmerged paths
+# and keeps the prepared worktree at dir for the requester. LBlocked names
+# the failure identities that are new on the candidate or the selected files
+# no run could judge.
 type LandOutcome is Data:
   LLanded{target: String, commit: String}
   LAlready{commit: String}

@@ -115,13 +115,14 @@ class Land(unittest.TestCase):
         self.git('add', 'check-pass.sh')
         self.git('commit', '-q', '-m', 'check fixture')
         self.git('checkout', '-q', '--detach')
-        self.recruit_and_commit()
+        commit = self.recruit_and_commit()
         first = self.call('land-checked', 'w1', self.repo, 'main',
                           'check-pass.sh', 'file.txt')
         self.assertEqual(first['status'], 'landed')
         second = self.call('land-checked', 'w1', self.repo, 'main',
                            'check-pass.sh', 'file.txt')
         self.assertEqual(second['status'], 'already')
+        self.assertEqual(second['commit'], commit)
         self.assertEqual(self.git('rev-parse', 'main').strip(), first['commit'])
 
     def test_fast_forward_repeated_landing_keeps_one_result(self):

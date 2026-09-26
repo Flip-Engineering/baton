@@ -96,9 +96,9 @@ def is_landed(r: Result<&1, &1, T.GitFail, T.LandOutcome>, want: String) -> Stri
     case Done{T.LBlocked{reason}}: Tx.str_cat("land: blocked where landing expected: ", reason)
     case Fail{fail}: Tx.str_cat("land refused: ", Tx.trim_nl(T.fail_text(fail)))
 
-def is_already(r: Result<&1, &1, T.GitFail, T.LandOutcome>) -> String:
+def is_already(r: Result<&1, &1, T.GitFail, T.LandOutcome>, want: String) -> String:
   match r:
-    case Done{T.LAlready{commit}}: ""
+    case Done{T.LAlready{commit}}: eq_or(Tx.str_eq(commit, want), "land: already commit mismatch")
     case Done{T.LLanded{target, commit}}: "land: landed where already expected"
     case Done{T.LConflict{files, dir}}: "land: conflict where already expected"
     case Done{T.LBlocked{reason}}: "land: blocked where already expected"
@@ -289,7 +289,7 @@ def land_b(r: String, base: String, tipA: String, headA: String, acc: String) ->
   +a2 = acc
   do IO<Unit>:
     res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", t2, Con{"feat.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lb"))
-    f1 : String <- IO.pure(String, is_already(res))
+    f1 : String <- IO.pure(String, is_already(res, t2))
     land_c(r2, b2, t2, h2, Tx.str_cat(a2, f1))
 
 def land_a_j2(res: Result<&1, &1, T.GitFail, T.LandOutcome>, head: String, blob: String, tip: String, r: String, base: String, acc: String) -> IO(Unit):

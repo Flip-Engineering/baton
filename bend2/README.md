@@ -96,7 +96,11 @@ test file: a selection under `bend2/test/` builds the coordinator binary in
 the checked tree first, the selected file runs, and each failing case prints
 one identity line of four hex-encoded fields: file, test id, failure type, and
 semantic code. The `blocked` answer names every candidate failure line the
-target run does not show, and an unjudged check run blocks the landing.
+target run does not show, and an unjudged check run blocks the landing. The
+answer is JSON with a `status` field: `landed` with the new target commit
+(the squash candidate), `already` naming the worker commit the target
+contains, `conflict` naming the unmerged paths and the retained scratch
+worktree, or `blocked` with a reason.
 
 ## Native turns
 
