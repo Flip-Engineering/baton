@@ -20,7 +20,8 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 
 The executable stores sessions and messages and supervises foreground Claude
 Code and OMP turns. Recruitment creates a Git worktree and records its resolved base. Native parent
-delivery and Git landing are being connected to this interface.
+delivery through Claude Code Channels MCP and Git landing are being connected
+to this interface.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
