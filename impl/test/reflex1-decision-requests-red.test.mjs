@@ -185,13 +185,15 @@ test('createDecisionRequest refuses duplicate option ids', () => {
   })), ValidationError);
 });
 
-test('createDecisionRequest refuses an option label over 160 bytes and a summary over 512 bytes', () => {
-  assert.throws(() => createDecisionRequest(decisionRequestFields({
-    options: [{ id: 'opt-a', label: 'x'.repeat(161) }],
-  })), ValidationError);
-  assert.throws(() => createDecisionRequest(decisionRequestFields({
-    options: [{ id: 'opt-a', label: 'A', summary: 'x'.repeat(513) }],
-  })), ValidationError);
+test('createDecisionRequest admits a long option label and summary whole', () => {
+  const request = createDecisionRequest(decisionRequestFields({
+    options: [
+      { id: 'opt-a', label: 'x'.repeat(161) },
+      { id: 'opt-b', label: 'B', summary: 'y'.repeat(513) },
+    ],
+  }));
+  assert.equal(request.options[0].label.length, 161);
+  assert.equal(request.options[1].summary.length, 513);
 });
 
 test('createDecisionRequest refuses recommended naming a nonexistent option', () => {

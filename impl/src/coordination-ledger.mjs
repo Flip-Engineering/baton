@@ -348,12 +348,9 @@ export const SAFE_BOARD_OWNER = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 const BOARD_ITEM_STATES = new Set(['open', 'closed', 'dropped']);
 
-// Live board bounds imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the
-// store is a first-class registry consumer, never a second door for a cataloged lane.
-export const MAX_STORE_BOARD_TITLE_BYTES = FRAME_LIMITS['board.title'].value;
-
-export const MAX_STORE_BOARD_DETAIL_BYTES = FRAME_LIMITS['board.detail'].value;
-
+// Live board bound imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the store
+// is a first-class registry consumer, never a second door for a cataloged lane. A title and a
+// detail carry no byte ceiling: they are shown whole.
 const MAX_STORE_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
 
 export const MAX_STORE_BOARD_EVIDENCE = 8;
@@ -373,8 +370,12 @@ export function validBoardEvidenceRef(ref) {
   return false;
 }
 
+export function boardNonEmpty(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
 export function boardBounded(value, maxBytes) {
-  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
+  return boardNonEmpty(value) && Buffer.byteLength(value) <= maxBytes;
 }
 
 /** Epic #78 Decision 6 rule 3: the kernel-level request digest for worker board mutations. It
@@ -6523,17 +6524,9 @@ export function postBoardItem(store, fields, auth, appendGate = null, boardAdmis
   if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(store._boardItems.get(prior.payload.itemId)) };
   if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new CoordinationRefusal('board item requires fields', 'invalid_board_item');
   if (typeof fields.board !== 'string' || !SAFE_BOARD_ID.test(fields.board)) throw new CoordinationRefusal('board item requires a safe board id', 'invalid_board');
-  if (!boardBounded(fields.title, MAX_STORE_BOARD_TITLE_BYTES)) {
-    const titleBytes = typeof fields.title === 'string' ? Buffer.byteLength(fields.title) : 0;
-    if (titleBytes > MAX_STORE_BOARD_TITLE_BYTES) throw coachingRefusal(FRAME_LIMITS['board.title'], titleBytes, MAX_STORE_BOARD_TITLE_BYTES);
-    throw new CoordinationRefusal('board item requires a bounded non-empty title', 'invalid_board_title');
-  }
+  if (!boardNonEmpty(fields.title)) throw new CoordinationRefusal('board item requires a non-empty title', 'invalid_board_title');
   const detail = fields.detail ?? null;
-  if (detail !== null && !boardBounded(detail, MAX_STORE_BOARD_DETAIL_BYTES)) {
-    const detailBytes = Buffer.byteLength(detail);
-    if (detailBytes > MAX_STORE_BOARD_DETAIL_BYTES) throw coachingRefusal(FRAME_LIMITS['board.detail'], detailBytes, MAX_STORE_BOARD_DETAIL_BYTES);
-    throw new CoordinationRefusal('board item detail must be null or bounded', 'invalid_board_detail');
-  }
+  if (detail !== null && !boardNonEmpty(detail)) throw new CoordinationRefusal('board item detail must be null or a non-empty string', 'invalid_board_detail');
   const owner = fields.owner ?? null;
   if (owner !== null && (typeof owner !== 'string' || !SAFE_BOARD_OWNER.test(owner))) throw new CoordinationRefusal('board item owner must be null or a safe id', 'invalid_board_owner');
   const evidence = fields.evidence ?? [];
@@ -6622,8 +6615,8 @@ export function _boardSuccessor(store, itemId, kind, changes, auth, appendGate =
 export function retitleBoardItem(store, itemId, fields, auth, appendGate = null, boardAdmission = null) {
   const prior = store._byKey.get(auth?.key);
   if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(store._boardItems.get(itemId)) };
-  if (!boardBounded(fields?.title, MAX_STORE_BOARD_TITLE_BYTES)) throw new CoordinationRefusal('board retitle requires a bounded non-empty title', 'invalid_board_title');
-  if (fields.detail !== undefined && fields.detail !== null && !boardBounded(fields.detail, MAX_STORE_BOARD_DETAIL_BYTES)) throw new CoordinationRefusal('board detail must be null or bounded', 'invalid_board_detail');
+  if (!boardNonEmpty(fields?.title)) throw new CoordinationRefusal('board retitle requires a non-empty title', 'invalid_board_title');
+  if (fields.detail !== undefined && fields.detail !== null && !boardNonEmpty(fields.detail)) throw new CoordinationRefusal('board detail must be null or a non-empty string', 'invalid_board_detail');
   return store._boardSuccessor(itemId, 'board.item_retitled', { title: fields.title, detail: fields.detail, itemDigest: fields?.itemDigest }, auth, appendGate, boardAdmission);
 }
 

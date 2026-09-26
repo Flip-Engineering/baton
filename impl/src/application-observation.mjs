@@ -337,9 +337,7 @@ export function boundedAttentionText(value) {
   if (typeof value !== 'string') return '';
   const normalized = value.normalize('NFKC').trim();
   if (SECRET_SHAPED_TEXT.some((pattern) => pattern.test(normalized))) return '[credential-shaped content redacted]';
-  const bytes = Buffer.from(normalized);
-  if (bytes.length <= MAX_ATTENTION_TEXT_BYTES) return normalized;
-  return `${bytes.subarray(0, MAX_ATTENTION_TEXT_BYTES).toString('utf8')}…`;
+  return normalized;
 }
 // REFLEX-3 (docs/32 §3.3 Part D, issue #18; red-team F14): a context package branch's resolved
 // content is untrusted input to every reader (a worker or a prior package can shape it). Every
