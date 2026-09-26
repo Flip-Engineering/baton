@@ -20,8 +20,8 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 
 The executable stores sessions and messages and supervises foreground Claude
 Code and OMP turns. Recruitment creates a Git worktree and records its resolved base. Native parent
-delivery through Claude Code Channels MCP and Git landing are being connected
-to this interface.
+delivery through Claude Code Channels MCP is connected to this interface. Git
+landing advances a target branch to include a worker's committed tip.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
@@ -30,6 +30,7 @@ to this interface.
 .scratch/bend2/baton2 state.db report-file turn1 worker1 REPORT_FILE
 .scratch/bend2/baton2 state.db inbox root
 .scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
+.scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
 .scratch/bend2/baton2 state.db status
 ```
 
@@ -62,6 +63,14 @@ as a commit ID. A matching repeated recruitment returns the existing worker.
 `worktree ID` reads its current Git branch, commit and dirty state.
 `worker` registers an existing workspace. If registration fails after Git has
 created a worktree, the checkout is retained and can be registered with `worker`.
+
+`land WORKER_ID REPO TARGET_BRANCH` looks up the worker's branch from the
+database, verifies the worker tip is a fast-forward from the target, and
+advances the target with a compare-and-swap `update-ref`. The answer is JSON
+with a `status` field: `landed` with the new target commit, `already` when the
+target already contains the worker commit, or `blocked` with a reason (the
+worker branch diverged or the target moved during the update). Worker branches
+and worktrees are retained after landing.
 
 ## Native turns
 

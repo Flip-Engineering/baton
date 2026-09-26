@@ -151,6 +151,20 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'baton2_land',
+    description: 'Land a worker\'s committed changes onto a target branch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worker: { type: 'string', description: 'Worker session ID' },
+        repo: { type: 'string', description: 'Repository path' },
+        target: { type: 'string', description: 'Target branch name' },
+      },
+      required: ['worker', 'repo', 'target'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // State.
@@ -270,6 +284,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_worker_status':
         result = coord('worktree', args.worker);
+        break;
+      case 'baton2_land':
+        result = coord('land', args.worker, args.repo, args.target);
         break;
       default:
         sendError(msg.id, -32602, `Unknown tool: ${name}`);
