@@ -66,4 +66,25 @@ class Recruit(unittest.TestCase):
         self.assertNotIn('another-branch',self.git('branch','--list'))
         self.assertEqual(self.call('session','worker')['branch'],'worker-branch')
 
+    def test_failed_worker_leaves_dirty_work_available(self):
+        self.recruit()
+        workspace = self.repo / 'work λ'
+        (workspace / 'partial.txt').write_text('uncommitted work in progress')
+        (workspace / 'committed.txt').write_text('committed change')
+        subprocess.run(
+            ['git', '-C', str(workspace), 'add', 'committed.txt'],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ['git', '-C', str(workspace), 'commit', '-q', '-m', 'partial delivery'],
+            check=True, capture_output=True,
+        )
+
+        status = self.call('worktree', 'worker', cwd=self.directory)
+        self.assertTrue(status['dirty'])
+        self.assertNotEqual(status['commit'], self.base)
+        self.assertTrue((workspace / 'partial.txt').exists())
+        self.assertEqual((workspace / 'partial.txt').read_text(), 'uncommitted work in progress')
+        self.assertTrue((workspace / 'committed.txt').exists())
+
 if __name__=='__main__': unittest.main()

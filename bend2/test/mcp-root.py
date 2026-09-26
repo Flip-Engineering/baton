@@ -187,6 +187,44 @@ class McpRoot(unittest.TestCase):
             resp = read_mcp(proc, timeout=5)
         self.assertEqual(json.loads(resp['result']['content'][0]['text']), [])
 
+    def test_restart_delivers_pending_report(self):
+        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.coord('report', 'turn-1', 'w1', 'Pending across restart.')
+
+        proc1 = self.start_mcp()
+        self.initialize(proc1)
+        send_mcp(proc1, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        notif1 = read_mcp(proc1, timeout=5)
+        self.assertEqual(notif1['method'], 'notifications/claude/channel')
+        self.assertIn('Pending across restart', notif1['params']['content'])
+
+        proc1.terminate()
+        proc1.wait()
+
+        proc2 = subprocess.Popen(
+            ['node', str(MCP_SCRIPT), str(self.db), str(EXE)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.addCleanup(lambda: (proc2.terminate(), proc2.wait()))
+
+        send_mcp(proc2, {
+            'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+            'params': {
+                'protocolVersion': '2024-11-05',
+                'capabilities': {},
+                'clientInfo': {'name': 'test', 'version': '0.0.1'},
+            },
+        })
+        read_mcp(proc2)
+        send_mcp(proc2, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+
+        notif2 = read_mcp(proc2, timeout=5)
+        self.assertEqual(notif2['method'], 'notifications/claude/channel')
+        self.assertIn('Pending across restart', notif2['params']['content'])
+        self.assertIn('turn-1', notif2['params']['meta']['messageIds'])
+
     def test_duplicate_notification_not_sent(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
