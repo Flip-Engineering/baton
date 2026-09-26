@@ -1196,7 +1196,9 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
       return coordinator._deliverFollowUp(handle, coordinator._tasks.get(handle.taskId), message, opts);
     }
     if (admission.handoff === 'nudgeTurn') {
-      return coordinator.nudgeTurn(admission.pause.pauseId, message, { actor: opts.actor });
+      const result = await coordinator.nudgeTurn(admission.pause.pauseId, message, { actor: opts.actor });
+      if (result.ok === true) recordDeliveryMessage(coordinator, recorder, workerId, message, 'turn', opts);
+      return result;
     }
     if (admission.handoff === 'interruptThenGoverned') {
       return coordinator._interruptThenGoverned(handle, message, opts.actor ?? 'orchestrator');
@@ -1272,19 +1274,7 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     if ((mode === 'steer' || mode === 'nudge') && handle.watchdogActions?.has('stall')) {
       coordinator._armStallCycle(handle, task, { nudgeId: mode === 'nudge' ? `nudge:${workerId}:${recorder.log.tail(workerId)}` : null, controlId: opts.controlId ?? null });
     }
-    // BD3-C: run.send / nudge_turn are ALIASES over the lane — the legacy names mint lane
-    // receipts (message.sent / message.delivered) with identical worker-visible behavior.
-    if (opts.internalKindToken !== ORIENTATION_DELIVERY && recorder.coordination.recordMessage) {
-      const laneKind = mode === 'nudge' ? 'nudge' : mode === 'steer' ? 'steer' : 'turn';
-      try {
-        recorder.coordination.recordMessage('message.sent', {
-          messageId: `message:${canonicalDigest({ lane: true, workerId, kind: laneKind, body: message, seq: recorder.log.tail(workerId) })}`,
-          kind: laneKind, from: opts.actor ?? 'orchestrator', to: { workerId },
-          body: typeof message === 'string' ? message : JSON.stringify(message),
-          targetCount: 1, alias: true,
-        }, { actor: 'orchestrator', key: `message.sent:${workerId}:${recorder.log.tail(workerId)}` });
-      } catch (error) { coordinator._noteFailure('lane_delivery_audit', error); }
-    }
+    recordDeliveryMessage(coordinator, recorder, workerId, message, mode, opts);
     return { ok: true, result: 'ok', emulated: ack && ack.emulated === true };
 }
 
@@ -1476,4 +1466,19 @@ export function _finalizeStop(coordinator, recorder, workerId, waiter) {
       });
       coordinator._stopWaiters.delete(workerId);
     });
+}
+
+// #601: the resumed-turn handoff and live guidance both record the lane that took the message.
+function recordDeliveryMessage(coordinator, recorder, workerId, message, mode, opts) {
+    if (opts.internalKindToken !== ORIENTATION_DELIVERY && recorder.coordination.recordMessage) {
+      const laneKind = mode === 'nudge' ? 'nudge' : mode === 'steer' ? 'steer' : 'turn';
+      try {
+        recorder.coordination.recordMessage('message.sent', {
+          messageId: `message:${canonicalDigest({ lane: true, workerId, kind: laneKind, body: message, seq: recorder.log.tail(workerId) })}`,
+          kind: laneKind, from: opts.actor ?? 'orchestrator', to: { workerId },
+          body: typeof message === 'string' ? message : JSON.stringify(message),
+          targetCount: 1, alias: true,
+        }, { actor: 'orchestrator', key: `message.sent:${workerId}:${recorder.log.tail(workerId)}` });
+      } catch (error) { coordinator._noteFailure('lane_delivery_audit', error); }
+    }
 }

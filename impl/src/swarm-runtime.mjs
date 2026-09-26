@@ -6337,10 +6337,10 @@ export class SwarmRuntime {
         messageId = park.result?.messageId ?? null;
         delivery = { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true };
       } else {
-        // The lane receipt is durable coordination log, not process state: the newest nudge/steer
+        // The lane receipt is durable coordination log, not process state: the newest nudge/steer/turn
         // row for this binding past the pre-call cursor is the row THIS delivery wrote.
         const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
-          && ['nudge', 'steer'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
+          && ['nudge', 'steer', 'turn'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
           && event.seq > cursor).at(-1) ?? null;
         delivery = guided?.ok === true
           ? { state: 'delivered', lane: sent === null ? null : { seq: sent.seq,
@@ -7121,11 +7121,7 @@ export class SwarmRuntime {
     }
   }
 
-  /** Record the delivered half of one guide (#273): the swarm.guidance_sent row is the row the
-   * receipt names. A lane that took the message writes `delivered` and NAMES the lane receipt it
-   * rode (the paused-turn lane writes none — the turn itself carries the guidance, and the row
-   * says so with lane: null); a lane that took nothing on a harness that CAN deliver writes
-   * `refused`, so the guidance is never silently dropped. */
+  /** Record guidance delivery with the message lane that accepted it, including a resumed turn. */
   _recordGuidanceSent(swarmId, participant, principal, args, guidance, lane, guided) {
     const messageId = lane?.payload?.messageId
       ?? `message:${hash(['swarm.guidance_sent', swarmId, participant.participantId, args.message,
@@ -7178,10 +7174,10 @@ export class SwarmRuntime {
         guidance, 'worker_not_active');
     }
     // The lane receipt is durable coordination log, not process state: deliveries are serialized
-    // per worker, so the newest nudge/steer row for this binding past the pre-call cursor is the
+    // per worker, so the newest nudge/steer/turn row for this binding past the pre-call cursor is the
     // row THIS delivery wrote — named by the receipt's own row, never copied in.
     const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
-      && ['nudge', 'steer'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
+      && ['nudge', 'steer', 'turn'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
       && event.seq > cursor).at(-1) ?? null;
     return this._recordGuidanceSent(swarmId, participant, principal, args, guidance, sent, guided);
   }
