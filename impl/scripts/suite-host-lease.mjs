@@ -69,28 +69,20 @@ export function suiteLeaseHolder(env = process.env) {
   return `run-suite:${process.pid}`;
 }
 
-/** #561: whether this runner's verify request is DURABLE — whether a standing-tight host must
- * queue it with no deadline instead of answering degraded. A suite a worker seat started takes
- * the same verify lease a landing gate takes, so a seat-run verdict waits for the host; a
- * runner outside a swarm keeps the degraded answer. The holder the runtime projects into the
- * worker environment names the seat, so the holder prefix is the fact. Takes the holder string
- * or the environment the holder derives from. */
-export function suiteLeaseDurable(envOrHolder = process.env) {
-  const holder = typeof envOrHolder === 'string' ? envOrHolder : suiteLeaseHolder(envOrHolder);
-  return typeof holder === 'string' && holder.startsWith('participant:');
-}
-
 function positiveInt(value) {
   const parsed = typeof value === 'string' && value.trim().length > 0 ? Number(value) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 /** The runner's own queue poll interval, when the operator pins one. */
-export function suiteLeasePollMs(env = process.env) {
-  return positiveInt(env?.BATON_HOST_CAPACITY_POLL_MS);
+export function suiteLeaseDurable(envOrHolder = process.env) {
+  const holder = typeof envOrHolder === 'string' ? envOrHolder : suiteLeaseHolder(envOrHolder);
+  // #561/#598: a landing gate's start is durable — under a standing-tight host it HOLDS in the
+  // admission queue with no deadline until measured memory funds one more suite, instead of
+  // taking the degraded answer nine gates at once. Seat-run suites keep the degraded answer.
+  return typeof holder === 'string'
+    && (holder.startsWith('participant:') || holder.startsWith('integrate:'));
 }
-
-/** The authority this runner admits through: the shared host directory, never a fixture. */
 export function createSuiteLeaseAuthority(env = process.env) {
   return new HostCapacityAuthority({
     ...(typeof env?.BATON_HOST_CAPACITY_ROOT === 'string' && env.BATON_HOST_CAPACITY_ROOT.length > 0
@@ -153,7 +145,7 @@ export function formatSuitePlan({
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
   env = process.env, holder = suiteLeaseHolder(env),
-  log = (line) => process.stderr.write(`${line}\n`), onQueued = null, signal = null,
+  log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
     return Object.freeze({
@@ -165,11 +157,6 @@ export async function acquireSuiteVerifyLease({
   let reported = false;
   const outcome = await resolved.acquire('verify', {
     holder,
-    // #561: a suite a worker seat started waits for the lease a landing gate takes.
-    durable: suiteLeaseDurable(holder),
-    // #576: a stopping resident's fence aborts the wait — a cancelled gate never hangs its
-    // resident in the queue.
-    ...(signal !== null ? { signal } : {}),
     onQueued: (row) => {
       if (reported) return;
       reported = true;
