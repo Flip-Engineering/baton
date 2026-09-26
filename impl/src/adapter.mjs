@@ -483,6 +483,7 @@ export function renderRouteUsageLines(rows) {
     const parts = [`${tag}: ${row.state}`];
     if (row.usage) parts.push(`turns=${row.usage.turns} tokens=${row.usage.tokens}`);
     if (row.quota?.state === 'exhausted') parts.push(`quota=exhausted resetAt=${row.quota.resetAt ?? 'unknown'}`);
+    if (row.staticBlock?.code) parts.push(`blocked=${row.staticBlock.code}`);
     if (row.concurrency) parts.push(`concurrency=${row.concurrency.inUse}/${row.concurrency.ceiling ?? '∞'}`);
     const design = row.profile?.design?.arenas?.[0] ?? null;
     if (design !== null) parts.push(`design: ${design.arena} ${design.elo}`);

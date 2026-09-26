@@ -534,6 +534,13 @@ const routeText = (route) => `${route.harness}/${route.model}${route.effort ? `@
 const routeEquals = (left, right) => left != null && right != null
   && left.harness === right.harness && left.model === right.model
   && (left.effort ?? null) === (right.effort ?? null);
+/** The served harness label an adapter event's resolved spelling carries. A worker event names
+ * its adapter `harness@version` (the card's own composition — adapter.mjs `_emit`), while the
+ * route table, the doctor rows and every probe admission spell the bare harness name. The probe
+ * lane matches an answering turn's observation against the route its seat was admitted on, so
+ * the label is read at the served spelling: the text before the version separator. */
+const servedHarnessLabel = (harness) => (typeof harness === 'string' && harness.includes('@')
+  ? harness.slice(0, harness.indexOf('@')) : harness);
 
 /** Issue #469 (docs/46 §7 cost rule; the #465 breakdown's largest kind): the objective a
  * `swarm.stop` receipt wraps is ONE durable fact — the `swarm.participant_joined` row the seat's
@@ -3030,7 +3037,8 @@ export class SwarmRuntime {
     this._routeProbeLedger.observed.set(runId, Object.freeze({
       runId, at, seq: Number.isSafeInteger(event.seq) ? event.seq : null,
       route: swarmRouteShape({
-        harness: payload.harnessResolved, model: payload.modelResolved, effort: payload.effortResolved,
+        harness: servedHarnessLabel(payload.harnessResolved),
+        model: payload.modelResolved, effort: payload.effortResolved,
       }),
     }));
   }
@@ -3162,12 +3170,14 @@ export class SwarmRuntime {
   }
 
   /** Whether a usage row names a route a recruit could be admitted on right now: ready, not
-   * exhausted on the quota axis, and not degraded by its provider. A blocked row is never chosen —
-   * its `code` says who refused it — and a degraded one is the route #316 keeps recruits off
-   * until a probe succeeds. */
+   * exhausted on the quota axis, not degraded by its provider, and not statically blocked by the
+   * doctor (a credential, the harness, the route policy — the verdict #591 carries on the row as
+   * `staticBlock`). A blocked row is never chosen — its `code` says who refused it — and a
+   * degraded one is the route #316 keeps recruits off until a probe succeeds. */
   _routeEligible(row) {
     return row?.state !== 'blocked' && row?.state !== 'degraded'
-      && row?.degraded == null && row?.quota?.state !== 'exhausted';
+      && row?.degraded == null && row?.quota?.state !== 'exhausted'
+      && row?.staticBlock == null;
   }
 
   /** #316 (a): the degrade episode a recruit's own selection lands on, or null when none of the
@@ -3219,16 +3229,18 @@ export class SwarmRuntime {
     if (considered.some((row) => this._routeEligible(row))) return null;
     const representative = considered[0];
     const reason = representative?.quota?.state === 'exhausted' ? 'quota_exhausted'
-      : representative?.state === 'blocked' ? 'blocked' : 'ineligible';
+      : representative?.state === 'blocked' || representative?.staticBlock != null
+        ? 'blocked' : 'ineligible';
     return Object.freeze({
       route: Object.freeze({ ...representative.route }),
       reason,
       state: representative.state ?? null,
-      code: representative.code ?? null,
+      code: representative.code ?? representative.staticBlock?.code ?? null,
       resetAt: representative.resetAt ?? representative.quota?.resetAt ?? null,
       considered: Object.freeze(considered.map((row) => Object.freeze({
         route: Object.freeze({ ...row.route }),
-        state: row.state ?? null, code: row.code ?? null,
+        state: row.state ?? null, code: row.code ?? row.staticBlock?.code ?? null,
+        staticBlock: row.staticBlock ?? null,
         resetAt: row.resetAt ?? null, quota: row.quota ?? null,
       }))),
     });

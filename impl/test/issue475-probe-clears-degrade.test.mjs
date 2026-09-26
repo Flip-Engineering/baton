@@ -257,10 +257,11 @@ function observedRow(route, runId, workerId) {
   };
 }
 
-const recordObservation = (fixture, route, participantId, workerId = 'w-probe') => {
+const recordObservation = (fixture, route, participantId, workerId = 'w-probe', overrides = {}) => {
   const seat = fixture.seatRow(participantId);
   assert.ok(seat?.runId, `the probe seat ${participantId} holds a Run`);
-  return fixture.store.recordDriver('route.observed', observedRow(route, seat.runId, workerId),
+  return fixture.store.recordDriver('route.observed',
+    { ...observedRow(route, seat.runId, workerId), ...overrides },
     { actor: 'policy', key: `driver.route_observed:${seat.runId}:1` })?.event ?? null;
 };
 
@@ -323,6 +324,36 @@ test('475-a: the probed route\'s own observed turn mints route.recovered at that
   assert.equal(recovered[0].route.effort, DEGRADED_ROUTE.effort);
   assert.equal(fixture.runs.length, 1, 'and no recruit was needed to settle it — the turn did');
 });
+// ── (a2) the answering observation spells its adapter harness@version, and the episode still closes ──
+
+test('475-a2: the answering observation\'s version-suffixed harness label still closes the episode', async (t) => {
+  // Observed on the 2026-09-25/26 codex/gpt-6-astra incident: the coordinator's route.observed row
+  // names the adapter's own `harness@version` composition in harnessResolved (`codex@codex-cli
+  // 0.156.1`), while the probe admission spells the served route (`codex`). The answer-matching
+  // guard compared the two spellings exactly, threw every real answer away, and a route its probe
+  // answered sat degraded for hours (#575's residual half).
+  const { deployment, row } = await degradedRoute(t, 'answered-versioned', { faultAgo: 3 * HOUR_MS, window: '1 hour' });
+  assert.ok(Date.parse(row.degraded.clearsAt) < Date.now(), 'a probe is due');
+
+  const fixture = routeFixture(liveRows(deployment));
+  await fixture.call('create', { purpose: 'probe answered under a versioned label' });
+  const probe = await fixture.call('recruit',
+    { participantId: 'lane-probe', objective: 'probe the route', options: { exact: DEGRADED_ROUTE } });
+  assert.equal(probe.admission?.kind, 'probe', 'the due probe is what is admitted');
+  const admission = fixture.rowsOfKind('route.probe_admitted')[0];
+
+  const observed = recordObservation(fixture, DEGRADED_ROUTE, 'lane-probe', 'w-probe', {
+    harnessResolved: `${DEGRADED_ROUTE.harness}@omp/17.4.0`,
+  });
+  assert.ok(observed, 'the observation is durable');
+
+  await fixture.call('view', {});
+  const recovered = fixture.rowsOfKind('route.recovered');
+  assert.equal(recovered.length, 1,
+    'the version-suffixed resolved label is the same turn on the same route — the episode closes');
+  assert.equal(recovered[0].probeKey, admission.idempotencyKey, 'keyed by the admission it answers');
+});
+
 
 // ── (b) the next recruit is admitted normally, and the comparison reads the route ready ──────────
 
