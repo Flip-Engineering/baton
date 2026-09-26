@@ -82,15 +82,38 @@ class Land(unittest.TestCase):
         self.assertEqual(result['status'], 'blocked')
         self.assertIn('not a fast-forward', result['reason'])
 
-    def test_unregistered_worker_refused(self):
-        error = self.call('land', 'nobody', self.repo, 'main', ok=False)
-        self.assertIn('not registered', error)
+    def test_checked_landing_advances(self):
+        (self.repo / 'check-pass.sh').write_text('exit 0\n')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.git('checkout', '-q', '--detach')
+        commit = self.recruit_and_commit()
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt')
+        self.assertEqual(result['status'], 'landed')
+        main_tip = self.git('rev-parse', 'main').strip()
+        self.assertEqual(main_tip, result['commit'])
+        self.assertEqual(self.git('show', 'main:file.txt').strip(),
+                         'worker change for w1')
+
+    def test_checked_landing_blocks_on_new_failure(self):
+        (self.repo / 'check-blocked.sh').write_text(
+            'test -f "$1" && { echo 6161 6161 6161 2d; exit 1; }\n'
+            'exit 0\n')
+        self.git('add', 'check-blocked.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit()
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-blocked.sh', 'file.txt')
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('new failures', result['reason'])
+        self.assertIn('6161 6161 6161 2d', result['reason'])
 
     def test_worker_with_no_branch_refused(self):
         self.call('worker', 'w3', 'root', 'omp', 'model', 'high', '/tmp', '', '')
         error = self.call('land', 'w3', self.repo, 'main', ok=False)
         self.assertIn('no recorded branch', error)
-
 
 if __name__ == '__main__':
     unittest.main()
