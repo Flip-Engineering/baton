@@ -136,7 +136,7 @@ function runOmpTurn(prompt, sessionDir, sessionId) {
 
     const child = spawn(ompExe, args, {
       cwd: ROOT,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
     });
 
