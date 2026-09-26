@@ -53,7 +53,7 @@ test('DS-1: DEFAULT_ROUTES registers omp deepseek flash as the adapter default a
   assert.deepEqual(flash.map((route) => route.effort), ['low', 'high', 'max']);
   assert.deepEqual(pro.map((route) => route.effort), ['low', 'medium']);
   assert.equal(routes[0]?.model, 'deepseek/deepseek-flash', 'the adapter-configuring first route is flash');
-  assert.equal(routes.length, 5, 'no uncontracted DeepSeek model or effort is registered');
+  assert.equal(routes.length, flash.length + pro.length, 'no uncontracted DeepSeek model or effort is registered');
   const glm = deploymentModule.DEFAULT_BATON_DEPLOYMENT_ROUTES
     .filter((route) => route.harness === 'omp' && route.model.startsWith('zai/'));
   assert.deepEqual(glm.map((route) => route.effort), ['low', 'high', 'max'],
