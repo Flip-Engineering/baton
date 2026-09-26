@@ -373,8 +373,8 @@ function gitFixture(t) {
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const run = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
   run(['-c', 'init.defaultBranch=main', 'init']);
-  run(['config', 'user.email', 'swarm@example.test']);
-  run(['config', 'user.name', 'Swarm Test']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'swarm@example.test', GIT_COMMITTER_EMAIL: 'swarm@example.test' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Swarm Test', GIT_COMMITTER_NAME: 'Swarm Test' });
   mkdirSync(join(repo, 'impl'));
   writeFileSync(join(repo, 'impl', 'a.txt'), 'one\n');
   run(['add', '.']);

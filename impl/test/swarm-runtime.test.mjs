@@ -485,8 +485,8 @@ test('a resume-from successor brief carries parked guidance and marks it deliver
   assert.ok(brief.includes(String(first.guide.seq)), 'delivery cites the parked seq');
   assert.ok(brief.includes('the root orchestrator'), 'parked guidance is attributed to the root');
 
-  // The parked guidance rows this row owns: otelder's two. The successor's own ANSWER parks a
-  // guidance too, and the deferred start marks it delivered beside these (docs/52 D3/D6).
+  // The parked guidance rows this row owns: otelder's two. The recruit that composes the
+  // successor's brief marks each one delivered (#572: one act, no answer in between).
   const deliveredOf = (messageIds) => f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
     && event.payload?.kind === 'swarm.guidance_delivered'
     && messageIds.includes(event.payload.messageId));

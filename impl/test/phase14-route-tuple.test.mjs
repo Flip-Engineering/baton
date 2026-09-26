@@ -35,8 +35,8 @@ const until = async (fn, timeoutMs = 2000) => {
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), 'baton-rt-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'baton@test.invalid'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton@test.invalid', GIT_COMMITTER_EMAIL: 'baton@test.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: dir });
   return dir;
 }

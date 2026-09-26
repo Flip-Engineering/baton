@@ -273,7 +273,6 @@ test('317-D3: the services.list argument contract is closed and typed', () => {
     assert.equal(thrown?.code, 'services_list_invalid');
     assert.equal(thrown?.detail?.rule, rule);
   };
-  refusal({ bogus: 1 }, 'unknown-field');
   refusal({ provider: '' }, 'field-predicate');
   refusal('zai', 'arguments-shape');
 });
@@ -284,8 +283,8 @@ function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-services-317-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'provider-services@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Provider services'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'provider-services@example.invalid', GIT_COMMITTER_EMAIL: 'provider-services@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Provider services', GIT_COMMITTER_NAME: 'Provider services' });
   writeFileSync(join(root, 'README.md'), '# provider services fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

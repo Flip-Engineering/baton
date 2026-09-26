@@ -56,8 +56,8 @@ async function fixture(t, { sharedCheckout = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-coupling-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Swarm coupling'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'coupling@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Swarm coupling', GIT_COMMITTER_NAME: 'Swarm coupling' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'coupling@example.invalid', GIT_COMMITTER_EMAIL: 'coupling@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -66,8 +66,8 @@ function world(label) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['-C', repo, 'config', 'user.email', 'issue442@example.invalid']);
-  execFileSync('git', ['-C', repo, 'config', 'user.name', 'issue442']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue442@example.invalid', GIT_COMMITTER_EMAIL: 'issue442@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue442', GIT_COMMITTER_NAME: 'issue442' });
   execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'seed']);
   const logDir = join(root, 'deployment');
   mkdirSync(logDir, { recursive: true });
@@ -235,7 +235,7 @@ test('442-a1: a provider-fault kill folds ONE fault row, settles the seat, and p
     'the row names both commands that settle the seat');
 });
 
-test('442-a2: the fault-settled seat is still resumable — the attention row\'s own next act works', async (t) => {
+test('442-a2: the fault-settled seat is still resumable — the one recruit continues it', async (t) => {
   const f = world('a2');
   const seat = await faultedSeat(f, { label: 'a2' });
   t.after(() => close(seat));
@@ -247,11 +247,10 @@ test('442-a2: the fault-settled seat is still resumable — the attention row\'s
   const recruited = await seat.call('recruit', {
     swarmId: 'sw', participantId: 'beta', objective: "continue alpha's lane", resumeFrom: 'alpha',
   });
-  assert.equal(recruited.resumeDecision?.state, 'pending',
-    'a resume of the faulted predecessor lands the continuation question (docs/52 D1)');
-  // The question's answer starts the successor (#525 D3): the faulted lane's own next act, one
-  // guide later.
-  await seat.call('guide', { swarmId: 'sw', participantId: 'beta', message: "Continue alpha's lane." });
+  // Issue #572: the resume performs the continuation itself. No question is recorded for an
+  // orchestrator to answer, so the recovered seat starts without an external act.
+  assert.equal(recruited.resumeDecision ?? null, null,
+    'the resume leaves no decision pending');
   const brief = seat.driver.coordination.swarm('sw').participants.beta.brief;
   const situation = brief.split('## Swarm situation')[1] ?? '';
   assert.equal(situation.includes('- alpha'), false,
@@ -308,8 +307,8 @@ function gitRepo(label) {
   const root = tmpDir(label);
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['checkout', '-q', '-b', 'master'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue442@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 442'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue442@example.invalid', GIT_COMMITTER_EMAIL: 'issue442@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 442', GIT_COMMITTER_NAME: 'Issue 442' });
   writeFileSync(join(root, 'README.md'), '# issue 442\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

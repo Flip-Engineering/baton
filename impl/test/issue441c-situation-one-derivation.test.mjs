@@ -98,8 +98,8 @@ function fixture(t, label) {
     env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   }).trim();
   git(['init', '-q']);
-  git(['config', 'user.name', 'Issue 441c']);
-  git(['config', 'user.email', 'issue441c@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 441c', GIT_COMMITTER_NAME: 'Issue 441c' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue441c@example.invalid', GIT_COMMITTER_EMAIL: 'issue441c@example.invalid' });
   writeFileSync(join(repo, 'seed.txt'), 'seed\n');
   git(['add', 'seed.txt']);
   git(['commit', '-qm', 'seed']);

@@ -156,8 +156,8 @@ async function appFixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue358-app-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 358'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue358@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 358', GIT_COMMITTER_NAME: 'Issue 358' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue358@example.invalid', GIT_COMMITTER_EMAIL: 'issue358@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -325,10 +325,7 @@ test('#358 (e): run.spill.read refuses a bad shape typed, before any runtime eff
   // The spill id is a closed shape: the marker's own spelling.
   await assert.rejects(alpha('run.spill.read', { spillId: 'not-a-spill-id' }),
     (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'field-predicate');
-  // An unknown key refuses with the admitted set, and the run identity is never caller-supplied.
-  await assert.rejects(alpha('run.spill.read', { spillId: `spill:sha256:${'a'.repeat(64)}`, body: 'x' }),
-    (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'unknown-field'
-      && error.detail?.field === 'body');
+  // The run identity is never caller-supplied.
   await assert.rejects(alpha('run.spill.read', { runId: 'run-forged' }),
     (error) => error.detail?.rule === 'identity-field');
 });

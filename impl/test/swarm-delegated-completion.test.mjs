@@ -42,8 +42,8 @@ async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-delegated-completion-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Delegated completion'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'delegation@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Delegated completion', GIT_COMMITTER_NAME: 'Delegated completion' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'delegation@example.invalid', GIT_COMMITTER_EMAIL: 'delegation@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

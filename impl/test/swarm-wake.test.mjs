@@ -34,8 +34,8 @@ const SESSION = Object.freeze({
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'bt-wake-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'wake@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Wake'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'wake@example.invalid', GIT_COMMITTER_EMAIL: 'wake@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Wake', GIT_COMMITTER_NAME: 'Wake' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'));
   writeFileSync(join(root, 'test', 'smoke.test.mjs'), "import test from 'node:test';\ntest('smoke', () => {});\n");
@@ -108,7 +108,7 @@ test('followSwarm emits one summary per matched event and returns when the swarm
   assert.deepEqual(swarmWakeSummary(views[0] ?? last).participants[0], { participantId: 'a', status: 'active', state: 'dead', turn: null });
 });
 
-test('a real resident wakes a real `baton swarm watch --follow` child on guidance, contribution, and close', { timeout: 60_000 }, async (t) => {
+test('a real resident wakes a real `baton swarm watch --follow` child on coordination rows and ends it on close', { timeout: 60_000 }, async (t) => {
   const repo = repository(t);
   const configured = options(t, repo);
   const owner = await openBaton({ repo, advanced: configured.advanced });
@@ -130,31 +130,41 @@ test('a real resident wakes a real `baton swarm watch --follow` child on guidanc
   const exited = new Promise((resolve) => child.once('close', (code) => resolve(code)));
   const wakes = async (count) => { const deadline = Date.now() + 20_000; while (lines.length < count) { if (Date.now() > deadline) throw new Error(`only ${lines.length} wakes; stderr: ${stderr}`); await new Promise((resolve) => setTimeout(resolve, 50)); } };
 
-  await swarm.guide('worker', 'Report what you see.');
-  await wakes(1);
+  // A guide to a paused seat rides the nudge lane (#273): the receipt is the delivery evidence.
+  // The stream's guidance class names a DELIVERED parked guidance (#337), so the rows this test
+  // drives at the follower are the contribution, the context row and the close.
+  const guideReceipt = await swarm.guide('worker', 'Report what you see.');
+  assert.equal(guideReceipt.result?.ok, true, 'the guide reaches the paused seat through its lane');
   await swarm.update('swarm.contribution_recorded', 'a finding from the root');
-  await wakes(2);
+  await wakes(1);
   // #272: a context row wakes naming the key it wrote, so the follower never re-reads the view.
   await swarm.update('swarm.context_updated', { key: 'wake:proof', body: { phase: 'context-subject-proof' } });
-  await wakes(3);
+  await wakes(2);
   await untilPaused();
   await swarm.stop('worker', 'done');
   await swarm.close({ reason: 'proof complete' });
   const code = await exited;
   assert.equal(code, 0, `follow child exit ${code}; stderr: ${stderr}`);
-  assert.ok(lines.length >= 3, `at least guidance, contribution and close wakes: ${lines.length}`);
-  for (const line of lines) {
+  // #365: after the wakes the follow prints its ended row on the SAME stream — one compact JSON
+  // line per frame (#294), so every stdout line parses and the wakes stay distinguishable from
+  // the attachment's own verdict row.
+  const wakeFrames = lines.filter((line) => line.kind === 'baton.wake');
+  const ended = lines.find((line) => line.kind === 'baton.wake_stream_ended');
+  assert.ok(wakeFrames.length >= 3, `at least contribution, context and close wakes: ${wakeFrames.length}`);
+  for (const line of wakeFrames) {
     assert.equal(line.kind, 'baton.wake');
     assert.equal(line.swarmId, swarm.id);
     assert.ok(typeof line.wakeClass === 'string' && line.wakeClass.length > 0, 'every wake names the class that caused it');
     assert.ok(typeof line.actor === 'string' && line.actor.length > 0, 'every wake names its actor');
     assert.ok(line.subject !== null && typeof line.subject?.id === 'string', 'every wake names its subject');
   }
-  assert.equal(lines.at(-1).wakeClass, 'closed');
-  assert.ok(lines.some((line) => line.wakeClass === 'guidance_delivered'));
-  assert.ok(lines.some((line) => line.wakeClass === 'contribution_recorded'));
-  const context = lines.find((line) => line.wakeClass === 'context_updated');
+  assert.equal(wakeFrames.at(-1).wakeClass, 'closed');
+  assert.ok(wakeFrames.some((line) => line.wakeClass === 'contribution_recorded'));
+  const context = wakeFrames.find((line) => line.wakeClass === 'context_updated');
   assert.deepEqual(context?.subject, { kind: 'context', id: 'wake:proof' });
+  assert.ok(ended, 'the follow ends with its ended row');
+  assert.equal(ended.reason, 'swarm_closed');
+  assert.equal(ended.closed?.swarmId, swarm.id);
   const closed = await owner.close();
   assert.equal(closed.state, 'closed');
 

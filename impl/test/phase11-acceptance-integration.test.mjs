@@ -14,8 +14,8 @@ const receiptDigest = (value) => createHash('sha256').update(JSON.stringify(valu
 function repo() {
   const root = mkdtempSync(join(tmpdir(), 'baton-acceptance-'));
   git(['init', '-q'], root);
-  git(['config', 'user.email', 'baton-test@example.com'], root);
-  git(['config', 'user.name', 'Baton Test'], root);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   return root;
 }
 function commitBase(root, files = {}) {

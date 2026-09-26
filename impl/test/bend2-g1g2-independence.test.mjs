@@ -34,7 +34,6 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { SWARM_RESUME_CONTINUATION_MODES, resumeDecisionPending } from '../src/swarm-state.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { selectAffectedTests, selectFromRepository } from '../src/verification-selection.mjs';
 import { allocatePhysicalWorkspaceOwner, createFromBase } from '../src/worktree.mjs';
@@ -73,8 +72,8 @@ function fixture(t) {
   const repo = join(directory, 'repo');
   mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Bend2 independence']);
-  git(repo, ['config', 'user.email', 'bend2-independence@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Bend2 independence', GIT_COMMITTER_NAME: 'Bend2 independence' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'bend2-independence@example.invalid', GIT_COMMITTER_EMAIL: 'bend2-independence@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'base']);
@@ -393,61 +392,36 @@ test('G1 required prerequisites: the prerequisite the runtime demands is the sam
 
 // ── G1: continuation transitions ──────────────────────────────────────────────────────────────
 
-test('G1 continuation transitions: the recovery decision is pending under every annotation', async (t) => {
+test('G1 continuation transitions: the recovery transition is the same under every annotation', async (t) => {
   const { f } = await interruptedSeat(t);
   await f.recruit('baseline', { resumeFrom: 'alpha' });
   const clean = seatFacts(f, 'baseline');
+  // Issue #572: the recovery is the recruit's own act. The successor is bound and working, and no
+  // question is recorded for an orchestrator to answer before it may continue.
   assert.deepEqual(clean, { status: 'active', resumeFrom: 'alpha', parentId: null,
-    bindings: 0, worker: false, leases: 0 },
-  'under manual continuation the successor asks before it works, holding no lease');
-  assert.equal(f.seat('baseline').resumeDecision.requested.predecessor, 'alpha');
-  assert.equal(resumeDecisionPending(f.seat('baseline')), true);
+    bindings: 1, worker: true, leases: 1 }, 'the recovery transition starts the successor');
+  assert.equal(f.seat('baseline').resumeDecision ?? null, null,
+    'no seat waits on an orchestrator to decide whether it continues');
 
   await f.annotate();
 
   await f.recruit('annotated', { resumeFrom: 'alpha' });
   assert.deepEqual(seatFacts(f, 'annotated'), clean,
     'the continuation transition is the same under every annotation');
-  assert.equal(f.seat('annotated').resumeDecision.requested.predecessor, 'alpha');
-
-  // The predicate reads the row's own events: an answer settles it, an annotation never does.
-  const row = { ...f.seat('annotated'), converged: true, expectedFailures: 417, census: 47 };
-  assert.equal(resumeDecisionPending(row), true, 'an annotation on the row changes no pending state');
-  assert.equal(resumeDecisionPending({ ...row, resumeDecision: { requested: row.resumeDecision.requested,
-    answered: { at: '2026-09-25T00:00:00.000Z' } } }), false,
-  'the orchestrator\'s answer is what settles it');
-  assert.equal(resumeDecisionPending({ ...row, status: 'left' }), false,
-    'a seat that left is not decision-pending');
-  assert.deepEqual([...SWARM_RESUME_CONTINUATION_MODES], ['manual', 'auto'],
-    'the posture is the operator\'s own closed decision axis');
 });
 
-// ── G2: a blocked continuation names the missing decision, its party and its enabling acts ────
+// ── G2: a continuation is not blocked, and no decision is invented for it ─────────────────────
 
-test('G2 blocked continuation: the row names the missing decision, the party that answers and both acts that enable it', async (t) => {
+test('G2 continuation: the recovery demands no decision and pages nobody for one', async (t) => {
   const { f } = await interruptedSeat(t);
   await f.recruit('bravo', { resumeFrom: 'alpha' });
 
   const view = await f.call('view');
-  const row = (view.attention ?? []).find((entry) => entry.kind === 'resume_decision_required'
-    && entry.participantId === 'bravo');
-  assert.ok(row, 'the blocked continuation is one attention row');
-  assert.equal(row.predecessor, 'alpha', 'the row names what the recovery resumes');
-  assert.equal(row.since, f.seat('bravo').resumeDecision.requested.at,
-    'and when the question was asked');
-  assert.ok(row.responsibleParticipant === null ? row.responsibleActor !== null
-    : row.responsibleParticipant !== null,
-  'the row names the party that must answer — a seat or the swarm\'s actor, never nobody');
-  assert.equal(row.next?.continue?.command, 'swarm.guide',
-    'one enabling act is the answer that continues the seat');
-  assert.equal(row.next?.continue?.participantId, 'bravo');
-  assert.equal(row.next?.stop?.command, 'swarm.stop',
-    'the other is the decision not to continue');
-  assert.equal(row.next?.stop?.participantId, 'bravo');
-
-  const request = f.eventsOf('swarm.resume_decision_requested', 'bravo');
-  assert.equal(request.length, 1, 'the question is one durable row, never only an attention row');
-  assert.equal(request[0].payload.carry?.how, 'bound', 'it names the carry the answer would take');
+  assert.equal((view.attention ?? []).find((entry) => entry.kind === 'resume_decision_required'),
+    undefined, 'no attention row names a decision a recovery waits on');
+  assert.equal(f.eventsOf('swarm.resume_decision_requested', 'bravo').length, 0,
+    'no question is recorded, so no seat waits on an orchestrator');
+  assert.notEqual(f.workerOf('bravo'), null, 'the one act starts the successor');
 });
 
 // ── G2: no administrative declaration satisfies a prerequisite ────────────────────────────────
@@ -468,10 +442,8 @@ test('G2 no administrative declaration satisfies a prerequisite', async (t) => {
     'a declaration is not the accepted contribution the prerequisite names');
   assert.deepEqual(refusal.detail, { workId: 'W-3', accepted: [] });
 
-  assert.equal(f.seat('bravo').resumeDecision.answered ?? null, null,
-    'an annotation is not the orchestrator\'s answer, so the seat stays pending');
-  assert.equal(f.workerOf('bravo'), null, 'and it is not started by one');
-  assert.equal(resumeDecisionPending(f.seat('bravo')), true);
+  assert.notEqual(f.workerOf('bravo'), null,
+    'a recovery is started by its own act, so no declaration decides whether it works');
 
   // A declaration is not the prerequisite even when it cites work: only an unrevoked accept is.
   const cited = await f.call('update', { event: 'swarm.work_updated',
@@ -498,13 +470,6 @@ test('G2 enabling effect: every prerequisite the runtime demands names the act t
   assert.match(refusal.message, /cite accepted contributions with basis\.contributionIds/,
     'and the second act that does');
 
-  const view = await f.call('view');
-  const row = (view.attention ?? []).find((entry) => entry.kind === 'resume_decision_required'
-    && entry.participantId === 'bravo');
-  assert.ok(row, 'the pending recovery is the runtime\'s other blocked continuation');
-  assert.ok(Object.keys(row.next ?? {}).length === 2,
-    'the blocked continuation names exactly the acts that enable it, and nothing else');
-
   // A measured prerequisite names its dimension and numbers, never a bare refusal.
   const capacity = deriveHostCapacity({ cores: 8, totalBytes: 32e9, freeBytes: 1e6, availableBytes: 1e6, load1m: 0.5 });
   const shortfall = hostCapacityShortfall('verify', capacity, { cores: 0, bytes: 0 });
@@ -512,11 +477,11 @@ test('G2 enabling effect: every prerequisite the runtime demands names the act t
     'a blocked admission names why, what was observed and what was required');
 });
 
-// ── G2: the runtime wakes the party the prerequisite names ───────────────────────────────────
+// ── G2: a recovery owes no notice, and its join still names its orchestrator ──────────────────
 
-test('G2 wake: the ask reaches the party the row names responsible', async (t) => {
+test('G2 wake: a recovery owes no notice, and the join names the orchestrator it answers to', async (t) => {
   const f = fixture(t);
-  await f.call('create', { purpose: 'A recovery decision finds the level that recruited the seat' });
+  await f.call('create', { purpose: 'A recovery continues under the party that recruited the seat' });
   await f.recruit('sub', { permissions: ['read', 'communicate', 'contribute', 'recruit'] });
   const subWorker = f.workerOf('sub');
   assert.ok(subWorker !== null);
@@ -526,19 +491,11 @@ test('G2 wake: the ask reaches the party the row names responsible', async (t) =
   await f.call('stop', { participantId: 'alpha', reason: 'Interrupted mid-lane' });
 
   await f.recruit('bravo', { resumeFrom: 'alpha' });
-  const row = (await f.call('view')).attention
-    .find((entry) => entry.kind === 'resume_decision_required' && entry.participantId === 'bravo');
-  assert.ok(row, 'the question pages as one attention row');
-  assert.equal(row.responsibleParticipant, 'sub',
-    'the row names the sub-orchestrator as the party that answers');
+  const view = await f.call('view');
+  assert.equal(view.attention.find((entry) => entry.kind === 'resume_decision_required'), undefined,
+    'the recovery owes no notice, so no party is woken to answer one');
   assert.equal(f.seat('bravo').parentId, 'sub',
-    'the join names the same party, so the seat a question pages and the seat its ask reaches are one');
-
-  const ask = f.guides.find((entry) => entry.workerId === subWorker.id
-    && /Resume decision for bravo/.test(entry.message));
-  assert.ok(ask, 'the runtime woke the party the prerequisite names');
-  assert.match(ask.message, /baton swarm guide independence bravo/,
-    'the ask names the enabling act');
-  assert.match(ask.message, /baton swarm stop independence bravo/,
-    'and the other act that settles the question');
+    'the join still names the party the predecessor answered to');
+  assert.equal(f.guides.filter((entry) => /Resume decision for bravo/.test(entry.message)).length, 0,
+    'and no decision ask is sent on the recovery');
 });

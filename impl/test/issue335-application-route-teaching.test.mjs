@@ -95,8 +95,8 @@ async function fixture(t) {
   roots.push(directory);
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue335 test'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue335@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue335 test', GIT_COMMITTER_NAME: 'Issue335 test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue335@example.invalid', GIT_COMMITTER_EMAIL: 'issue335@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

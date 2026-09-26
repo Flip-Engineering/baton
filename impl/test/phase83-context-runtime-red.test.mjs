@@ -38,8 +38,8 @@ test('CR83-0: repository Context uses the canonical star, double-star, and quest
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase83-context-runtime-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase83@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 83'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase83@example.invalid', GIT_COMMITTER_EMAIL: 'phase83@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 83', GIT_COMMITTER_NAME: 'Phase 83' });
   mkdirSync(join(root, 'src'));
   mkdirSync(join(root, '.docker'));
   mkdirSync(join(root, 'credentials'));

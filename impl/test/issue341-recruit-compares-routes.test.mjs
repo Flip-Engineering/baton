@@ -234,8 +234,8 @@ function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-recruit-341-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'recruit-341@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Recruit 341'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'recruit-341@example.invalid', GIT_COMMITTER_EMAIL: 'recruit-341@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Recruit 341', GIT_COMMITTER_NAME: 'Recruit 341' });
   writeFileSync(join(root, 'README.md'), '# recruit 341 fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

@@ -14,8 +14,8 @@ test('AX85-1: createDriver rebuilds truthful worker activity from durable operat
   const logDir = join(root, 'state');
   mkdirSync(repoRoot, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: repoRoot });
-  execFileSync('git', ['config', 'user.email', 'phase85@example.invalid'], { cwd: repoRoot });
-  execFileSync('git', ['config', 'user.name', 'Phase 85'], { cwd: repoRoot });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase85@example.invalid', GIT_COMMITTER_EMAIL: 'phase85@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 85', GIT_COMMITTER_NAME: 'Phase 85' });
   writeFileSync(join(repoRoot, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repoRoot });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repoRoot });

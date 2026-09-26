@@ -60,8 +60,8 @@ const principal = (principalId) => Object.freeze({
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase80-revision-restart-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase80@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 80'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase80@example.invalid', GIT_COMMITTER_EMAIL: 'phase80@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 80', GIT_COMMITTER_NAME: 'Phase 80' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

@@ -53,8 +53,8 @@ function fixture(label, { projection = false } = {}) {
   const logDir = join(world, 'log');
   mkdirSync(repo);
   git(['init', '-q'], repo);
-  git(['config', 'user.name', 'Baton Phase 59'], repo);
-  git(['config', 'user.email', 'phase59@example.invalid'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 59', GIT_COMMITTER_NAME: 'Baton Phase 59' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase59@example.invalid', GIT_COMMITTER_EMAIL: 'phase59@example.invalid' });
   write(repo, 'src/selected.txt', 'selected-tree-bytes\n');
   write(repo, 'src/other.txt', 'other-tree-bytes\n');
   write(repo, 'docs/hidden.txt', 'hidden-tree-bytes\n');
@@ -433,7 +433,11 @@ test('WC4: concurrent admission atomically reserves one worker and refuses the c
   assert.equal(
     !existsSync(join(f.repo, '.baton', 'wt'))
       ? 0
-      : readdirSync(join(f.repo, '.baton', 'wt')).filter((entry) => !entry.endsWith('.json') && !entry.endsWith('.exclude')).length,
+      // The subject is the CHECKOUTS the race created, so count directories: the per-owner
+      // metadata beside them (.meta.json, .projection.exclude, .linked-worktrees.jsonl) is not a
+      // workspace, and a suffix list here would need an edit for every record file added later.
+      : readdirSync(join(f.repo, '.baton', 'wt'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink()).length,
     1,
   );
 

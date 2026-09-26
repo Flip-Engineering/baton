@@ -33,8 +33,8 @@ function repoFixture(label) {
   const repo = join(world, 'repo');
   mkdirSync(repo);
   git(['init', '-q'], repo);
-  git(['config', 'user.name', 'Baton Phase 58 adversary'], repo);
-  git(['config', 'user.email', 'phase58-adversary@example.invalid'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 58 adversary', GIT_COMMITTER_NAME: 'Baton Phase 58 adversary' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase58-adversary@example.invalid', GIT_COMMITTER_EMAIL: 'phase58-adversary@example.invalid' });
   write(repo, 'src/input.txt', 'source\n');
   git(['add', '-A'], repo);
   git(['commit', '-qm', 'fixture'], repo);

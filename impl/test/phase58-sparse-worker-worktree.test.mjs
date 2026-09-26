@@ -25,8 +25,8 @@ function write(root, path, content) {
 function makeRepo(label = 'repo') {
   const repo = mkdtempSync(join(tmpdir(), `baton-pg58-${label}-`));
   sh('git', ['init', '-q'], repo);
-  sh('git', ['config', 'user.email', 'phase58@example.test'], repo);
-  sh('git', ['config', 'user.name', 'Baton Phase 58'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase58@example.test', GIT_COMMITTER_EMAIL: 'phase58@example.test' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 58', GIT_COMMITTER_NAME: 'Baton Phase 58' });
   write(repo, 'README.md', '# phase 58\n');
   write(repo, 'src/main.js', 'export const value = 1;\n');
   write(repo, 'src/nested/helper.js', 'export const helper = true;\n');

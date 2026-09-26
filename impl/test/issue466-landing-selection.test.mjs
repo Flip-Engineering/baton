@@ -126,8 +126,8 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue466-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 466');
-  git(repo, 'config', 'user.email', 'issue466@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 466', GIT_COMMITTER_NAME: 'Issue 466' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue466@example.invalid', GIT_COMMITTER_EMAIL: 'issue466@example.invalid' });
   write(repo, 'README.md', 'base\n');
   // The base tree's own source and tests: a test that imports a module, and one that only NAMES a
   // module in a fixture path. Neither is changed by the lane, so neither may be selected — the

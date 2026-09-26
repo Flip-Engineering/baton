@@ -39,8 +39,8 @@ function temporary(t, label) {
 function materializedExport(t, label) {
   const repoRoot = temporary(t, `${label}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repoRoot });
-  execFileSync('git', ['config', 'user.email', 'phase66@example.invalid'], { cwd: repoRoot });
-  execFileSync('git', ['config', 'user.name', 'Phase 66'], { cwd: repoRoot });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase66@example.invalid', GIT_COMMITTER_EMAIL: 'phase66@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 66', GIT_COMMITTER_NAME: 'Phase 66' });
   mkdirSync(join(repoRoot, 'bin'));
   writeFileSync(join(repoRoot, 'alpha.txt'), 'alpha\n');
   writeFileSync(join(repoRoot, 'bin', 'run.sh'), '#!/bin/sh\necho retained\n', { mode: 0o755 });

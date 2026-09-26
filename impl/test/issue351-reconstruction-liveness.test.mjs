@@ -49,8 +49,8 @@ function fixtureRoot(t, label) {
 function repository(root) {
   const repo = join(root, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['-C', repo, 'config', 'user.email', 'bt351r@example.invalid']);
-  execFileSync('git', ['-C', repo, 'config', 'user.name', 'BT351R']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'bt351r@example.invalid', GIT_COMMITTER_EMAIL: 'bt351r@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'BT351R', GIT_COMMITTER_NAME: 'BT351R' });
   execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'seed']);
   return repo;
 }

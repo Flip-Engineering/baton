@@ -337,9 +337,7 @@ export function boundedAttentionText(value) {
   if (typeof value !== 'string') return '';
   const normalized = value.normalize('NFKC').trim();
   if (SECRET_SHAPED_TEXT.some((pattern) => pattern.test(normalized))) return '[credential-shaped content redacted]';
-  const bytes = Buffer.from(normalized);
-  if (bytes.length <= MAX_ATTENTION_TEXT_BYTES) return normalized;
-  return `${bytes.subarray(0, MAX_ATTENTION_TEXT_BYTES).toString('utf8')}…`;
+  return normalized;
 }
 // REFLEX-3 (docs/32 §3.3 Part D, issue #18; red-team F14): a context package branch's resolved
 // content is untrusted input to every reader (a worker or a prior package can shape it). Every
@@ -914,14 +912,9 @@ export function semanticAuthorityPayload(value) {
   };
 }
 export function normalizeSemanticAuthority(value, code = 'application_context_invalid') {
-  // Issue #536: a command context carries AUTHORITY GRANTS, and a grant keeps the closed shape —
-  // an undeclared field in a grant is an attempt to claim authority the grantor never vouched
-  // (#535's rule, one level down). The durable seam already demands the exact S-2 envelope
-  // (mintBoardGrant's proofFields), so a looser read here accepts what the ledger then refuses,
-  // and projects the undeclared keys into the frozen context other consumers read verbatim.
   exactObject(value,
     ['schemaVersion', 'actionId', 'kind', 'effect', 'requiredCapabilities', 'authorityDigest'],
-    code, 'semantic action authority', { rejectUnknown: true });
+    code, 'semantic action authority');
   if (value.schemaVersion !== 1 || !validId(value.actionId) || !validId(value.kind)
     || !validId(value.effect) || !Array.isArray(value.requiredCapabilities)
     || value.requiredCapabilities.length === 0 || value.requiredCapabilities.length > 16

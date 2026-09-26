@@ -209,8 +209,7 @@ test('443h-a: `swarm create --policy` records the policy row, and the view shows
     'the row carries the declared fields verbatim');
 
   const view = await f.client.command('swarm.view', { swarmId: SWARM_ID }, 'issue443h:view');
-  assert.deepEqual(view.policy,
-    { rerouteOnProviderFault: 'auto', reroutePreferApi: false, resumeContinuation: 'manual' },
+  assert.deepEqual(view.policy, { rerouteOnProviderFault: 'auto', reroutePreferApi: false },
     'the view renders the RESOLVED policy (undeclared fields default) from the first row');
 
   // A create with no policy records no policy row at all: the pre-#443 answer is untouched.

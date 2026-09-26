@@ -721,7 +721,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 195,
+          "size": 198,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -6364,7 +6364,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 24,
+          "size": 18,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -6518,7 +6518,7 @@
         {
           "name": "_normalizeBoardPost",
           "ordinal": 0,
-          "size": 53,
+          "size": 37,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -13437,7 +13437,7 @@
         {
           "name": "_policyOf",
           "ordinal": 0,
-          "size": 10,
+          "size": 8,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13693,7 +13693,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1140,
+          "size": 1131,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -14144,15 +14144,6 @@
           ]
         },
         {
-          "name": "_performDeferredStart",
-          "ordinal": 0,
-          "size": 223,
-          "seam": "admission",
-          "evidence": [
-            "admission:swarm_refusal"
-          ]
-        },
-        {
           "name": "_recordGuidanceSent",
           "ordinal": 0,
           "size": 20,
@@ -14223,16 +14214,6 @@
           "seam": "effect",
           "evidence": [
             "effect:action_verb"
-          ]
-        },
-        {
-          "name": "_askResumeDecision",
-          "ordinal": 0,
-          "size": 19,
-          "seam": "effect",
-          "evidence": [
-            "delegates:effect",
-            "delegates:observation"
           ]
         },
         {
@@ -14368,7 +14349,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1278,
+          "size": 1205,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -16395,6 +16376,15 @@
           ]
         },
         {
+          "name": "boardNonEmpty",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "boardBounded",
           "ordinal": 0,
           "size": 3,
@@ -18350,7 +18340,7 @@
         {
           "name": "postBoardItem",
           "ordinal": 0,
-          "size": 31,
+          "size": 23,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -19180,7 +19170,7 @@
         {
           "name": "_validateReuseDecisionPayload",
           "ordinal": 0,
-          "size": 148,
+          "size": 135,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -21744,7 +21734,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 144,
+          "size": 147,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -23392,7 +23382,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 516,
+          "size": 502,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -23550,7 +23540,7 @@
         {
           "name": "_admitPauseRecord",
           "ordinal": 0,
-          "size": 64,
+          "size": 65,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -25229,7 +25219,7 @@
         {
           "name": "boundedAttentionText",
           "ordinal": 0,
-          "size": 8,
+          "size": 6,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"

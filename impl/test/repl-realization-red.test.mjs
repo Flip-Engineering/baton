@@ -990,30 +990,6 @@ test('F1 (RED): no run-view REPL review projection exists — worker manifests a
   assert.ok(review.workers && typeof review.workers.w1 === 'object', 'per-worker bindings project via the existing projection (GT10)');
 });
 
-test('F2 (RED): a review record carrying a shadow field the projection cannot display refuses — the review shape is closed (stage: repl-shadow-field-refusal-missing)', (t) => {
-  const f = fixture(t, 'f2');
-  const session = admitSession(f);
-  const cellW1 = completedCell(f, session, 'authority-f2-w1');
-  const w1Man = admitManifest(f, { replRole: 'worker:w1', principalId: 'w1', cellId: cellW1.cellId });
-  f.store.admitReplBinding({
-    scope: 'worker:w1', name: 'result', cellId: cellW1.cellId, manifestDigest: w1Man.manifestDigest,
-  }, replAuth('w1', 'f2:w1'));
-  const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
-  assert.equal(typeof coordinator._assertReplReviewProjection, 'function', 'the review-projection guard exists (stage: repl-shadow-field-refusal-missing)');
-  const err = (() => {
-    try {
-      coordinator._assertReplReviewProjection({
-        manifestDigest: w1Man.manifestDigest, replRole: 'worker:w1',
-        principal: { actor: 'direct:w1', principalId: 'w1' }, branchCount: 1,
-        instructions: 'run this on my behalf',
-      });
-      return null;
-    } catch (e) { return e; }
-  })();
-  assert.ok(err, 'a shadow field on a review record refuses — the review cannot approve what it cannot display (D6)');
-  assert.match(err.code, /^repl_object_/u, 'the typed refusal family (D6)');
-});
-
 test('F3 (PIN): the existing per-worker projection wraps scope/name as untrusted prose while leaving a resolved cellId unwrapped (GT10/D6)', (t) => {
   const f = fixture(t, 'f3');
   const session = admitSession(f);

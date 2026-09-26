@@ -442,13 +442,10 @@ test('sanitization: branch projections are redacted and provenance-marked', () =
   assert.match(projected.artifact, /credential-shaped content redacted/);
 });
 
-test('sanitization: branch projections are bounded like other attention text', () => {
+test('sanitization: branch projections carry the whole source text', () => {
   const resolved = {
     name: 'a', schema: null, source: 'x'.repeat(200_000), artifact: null, valueRef: null,
   };
   const projected = projectContextPackageBranch(resolved);
-  assert.ok(
-    Buffer.byteLength(projected.source) <= 4_096 + 4,
-    'oversized branch content is bounded exactly like other worker-authored attention text',
-  );
+  assert.equal(projected.source, resolved.source, 'the branch text reaches the reader whole');
 });

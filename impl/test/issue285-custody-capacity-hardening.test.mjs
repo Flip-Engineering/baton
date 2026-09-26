@@ -46,8 +46,8 @@ function sh(cmd, args, cwd, opts = {}) {
 function makeRepo(label, files) {
   const dir = mkdtempSync(join(tmpdir(), `baton-issue285-${label}-`));
   sh('git', ['init', '-q'], dir);
-  sh('git', ['config', 'user.email', 'issue285@example.invalid'], dir);
-  sh('git', ['config', 'user.name', 'Issue 285'], dir);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue285@example.invalid', GIT_COMMITTER_EMAIL: 'issue285@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 285', GIT_COMMITTER_NAME: 'Issue 285' });
   for (const [path, content] of files) {
     mkdirSync(join(dir, dirname(path)), { recursive: true });
     writeFileSync(join(dir, path), content);

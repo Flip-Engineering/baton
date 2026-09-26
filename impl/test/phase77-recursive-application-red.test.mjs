@@ -168,8 +168,8 @@ function fixture(label, { clock = mutableClock() } = {}) {
   const repository = root(`${label}-repo`);
   const logDir = root(`${label}-log`);
   execFileSync('git', ['init', '-q'], { cwd: repository });
-  execFileSync('git', ['config', 'user.email', 'phase77@example.invalid'], { cwd: repository });
-  execFileSync('git', ['config', 'user.name', 'Phase 77'], { cwd: repository });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase77@example.invalid', GIT_COMMITTER_EMAIL: 'phase77@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 77', GIT_COMMITTER_NAME: 'Phase 77' });
   writeFileSync(join(repository, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repository });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repository });

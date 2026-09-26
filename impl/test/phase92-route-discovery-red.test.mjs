@@ -19,8 +19,8 @@ function fixture() {
   const bin = join(root, 'bin');
   mkdirSync(repo); mkdirSync(home); mkdirSync(bin);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase92-routes@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 92 routes'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase92-routes@example.invalid', GIT_COMMITTER_EMAIL: 'phase92-routes@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 92 routes', GIT_COMMITTER_NAME: 'Phase 92 routes' });
   writeFileSync(join(repo, 'README.md'), '# route fixture\n');
   writeFileSync(join(repo, 'glm_key.json'), '{"glm_key":"fixture-not-live"}\n', { mode: 0o600 });
   execFileSync('git', ['add', '.'], { cwd: repo });

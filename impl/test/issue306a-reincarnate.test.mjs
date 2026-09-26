@@ -63,8 +63,8 @@ function world(label) {
   for (const directory of [repo, home, configRoot, deploymentRoot]) mkdirSync(directory, { recursive: true });
   const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
   git(['init', '-q']);
-  git(['config', 'user.email', 'issue306a@example.invalid']);
-  git(['config', 'user.name', 'Issue306a']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue306a@example.invalid', GIT_COMMITTER_EMAIL: 'issue306a@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue306a', GIT_COMMITTER_NAME: 'Issue306a' });
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(repo, 'test'), { recursive: true });
   writeFileSync(join(repo, 'test', 'smoke.test.mjs'),
@@ -357,8 +357,8 @@ test('306a-e2: a target only the deployment remote holds is fetched, then resolv
   f.git(['push', '-q', 'origin', 'HEAD:refs/heads/landing']);
   const scratch = join(f.root, 'scratch');
   execFileSync('git', ['clone', '-q', remote, scratch]);
-  execFileSync('git', ['-C', scratch, 'config', 'user.email', 'issue306a@example.invalid']);
-  execFileSync('git', ['-C', scratch, 'config', 'user.name', 'Issue306a']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue306a@example.invalid', GIT_COMMITTER_EMAIL: 'issue306a@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue306a', GIT_COMMITTER_NAME: 'Issue306a' });
   writeFileSync(join(scratch, 'remote-only.txt'), 'remote only\n');
   execFileSync('git', ['-C', scratch, 'add', '.']);
   execFileSync('git', ['-C', scratch, 'commit', '-qm', 'remote only']);

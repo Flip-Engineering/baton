@@ -243,8 +243,8 @@ test('WAVE-ATTRIBUTION: concurrent missing results never assign one fallback pin
   t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
   git('init', '-q');
-  git('config', 'user.name', 'Baton Test');
-  git('config', 'user.email', 'baton@example.test');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton@example.test', GIT_COMMITTER_EMAIL: 'baton@example.test' });
   writeFileSync(join(repoRoot, 'alpha.md'), 'first report');
   writeFileSync(join(repoRoot, 'beta.md'), 'second report');
   git('add', '.');

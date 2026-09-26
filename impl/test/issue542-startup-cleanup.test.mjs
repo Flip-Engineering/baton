@@ -47,8 +47,8 @@ const git = (cwd, args) => execFileSync('git', args, {
 function repository(label) {
   const root = temp(label);
   git(root, ['init', '-q']);
-  git(root, ['config', 'user.email', 'issue542@example.invalid']);
-  git(root, ['config', 'user.name', 'issue542']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue542@example.invalid', GIT_COMMITTER_EMAIL: 'issue542@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue542', GIT_COMMITTER_NAME: 'issue542' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'), { recursive: true });
   writeFileSync(join(root, 'test', 'smoke.test.mjs'),

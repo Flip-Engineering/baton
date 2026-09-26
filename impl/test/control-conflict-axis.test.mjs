@@ -42,8 +42,8 @@ const principal = (principalId) => ({ actor: `direct:${principalId}`, principalI
 function fixture(name) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'f14@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'F14'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'f14@example.invalid', GIT_COMMITTER_EMAIL: 'f14@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'F14', GIT_COMMITTER_NAME: 'F14' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

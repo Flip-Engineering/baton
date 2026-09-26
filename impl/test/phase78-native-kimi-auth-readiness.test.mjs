@@ -22,8 +22,8 @@ function repository(root) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'kimi-auth@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Kimi auth fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'kimi-auth@example.invalid', GIT_COMMITTER_EMAIL: 'kimi-auth@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Kimi auth fixture', GIT_COMMITTER_NAME: 'Kimi auth fixture' });
   writeFileSync(join(repo, 'README.md'), '# native Kimi auth fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

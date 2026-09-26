@@ -20,8 +20,8 @@ function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-quota-readiness-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'quota-readiness@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Quota readiness'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'quota-readiness@example.invalid', GIT_COMMITTER_EMAIL: 'quota-readiness@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Quota readiness', GIT_COMMITTER_NAME: 'Quota readiness' });
   writeFileSync(join(root, 'README.md'), '# quota readiness fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

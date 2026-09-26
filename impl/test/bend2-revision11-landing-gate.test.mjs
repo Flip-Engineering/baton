@@ -138,8 +138,8 @@ async function world(t, { script }) {
     }
   });
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Revision 11');
-  git(repo, 'config', 'user.email', 'revision11@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Revision 11', GIT_COMMITTER_NAME: 'Revision 11' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'revision11@example.invalid', GIT_COMMITTER_EMAIL: 'revision11@example.invalid' });
   write(repo, '.gitignore', 'node_modules/\n');
   write(repo, 'README.md', 'base\n');
   for (const regenerator of REGENERATORS) {

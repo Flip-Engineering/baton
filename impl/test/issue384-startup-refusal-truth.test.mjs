@@ -45,8 +45,8 @@ const canonical = (value) => Array.isArray(value) ? value.map(canonical)
 function repository(label) {
   const root = temp(label);
   git(root, ['init', '-q']);
-  git(root, ['config', 'user.email', 'issue384@example.invalid']);
-  git(root, ['config', 'user.name', 'issue384']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue384@example.invalid', GIT_COMMITTER_EMAIL: 'issue384@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue384', GIT_COMMITTER_NAME: 'issue384' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'), { recursive: true });
   writeFileSync(join(root, 'test', 'smoke.test.mjs'),

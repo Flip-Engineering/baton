@@ -298,8 +298,8 @@ function emitScopeGateEvent(adapter, workerId, {
 function repository() {
   const dir = mkdtempSync(join(tmpdir(), 'ffh-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'ffh@example.invalid'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'FFH'], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'ffh@example.invalid', GIT_COMMITTER_EMAIL: 'ffh@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'FFH', GIT_COMMITTER_NAME: 'FFH' });
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '.'], { cwd: dir });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: dir });

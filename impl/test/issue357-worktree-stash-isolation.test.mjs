@@ -43,8 +43,8 @@ function makeIsolation(tag) {
 
 function initRepo(dir) {
   execFileSync('git', ['init'], { cwd: dir, env: { ...process.env, ...QUIET_GIT_ENV } });
-  execFileSync('git', ['config', 'user.email', 'seat-357@test'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'seat-357'], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'seat-357@test', GIT_COMMITTER_EMAIL: 'seat-357@test' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'seat-357', GIT_COMMITTER_NAME: 'seat-357' });
   execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
   writeFileSync(join(dir, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: dir });

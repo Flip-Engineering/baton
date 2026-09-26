@@ -17,29 +17,34 @@ export async function serveResidentMcp({ claudeRoot = false } = {}) {
     assertCliMcpControlParity();
     assertUnifiedCapabilityCoverage();
     assertSurfaceCapabilityNameClosure();
-    const rawServer = await (async () => {
-      const coordination = new CoordinationStore(join(stateRoot, 'coordination'));
-      // Issue #343: the bridge frame IS the declared wire.frame substrate row — the same ceiling
-      // the resident narrows swarm.view answers against (web-northbound.mjs), so a narrowed
-      // answer fits instead of tripping the oversize refusal. No number is re-declared here.
-      return createBatonWebMcpServer({
-        coordination, cwd: process.cwd(), maxMessageBytes: FRAME_LIMITS['wire.frame'].value,
-        // Issue #529 (docs/54 §4): the session's wake auto-subscription is derived from the
-        // environment the deployment published this seat's bridge under — a seat's session
-        // receives its own swarm's events, a session without seat coordinates receives every
-        // event the deployment produces. It arrives as notifications/baton/wake with no tool call.
-        autoWake: claudeRoot ? null : wakeAutoSubscription(process.env),
-      });
-    })();
-    const server = wrapProductionMcpServer(rawServer, { expandNative: true });
+    // A host session that launches this bridge while the resident is mid-restart — the gap
+    // between one `baton serve` dying and the next binding its socket and republishing the
+    // connection — met the one-shot discovery refusal and EXITED, and the host then kept the
+    // MCP surface closed for its whole session long after the resident returned (the root's
+    // Claude Code session on 2026-09-25: CONNECTION_CLOSED at session start, Baton driven
+    // through the CLI for the day). The startup open waits a bounded window for the
+    // publication: the refusals that mean "no live resident connection yet" are retried with
+    // backoff; any other refusal, and a window that lapses, fail the startup exactly as
+    // before. BATON_MCP_WEB_STARTUP_WINDOW_MS (integer milliseconds, 0 restores the one-shot
+    // open) bounds the window.
+    const rawServer = await openWithStartupRetry(stateRoot, claudeRoot);
     const stopInput = () => { if (!process.stdin.destroyed) process.stdin.destroy(); };
-    if (claudeRoot) attachClaudeRootChannel(server, {
+    // Issue #592, OBSERVED 2026-09-26 on the real entry process: `attachClaudeRootChannel`
+    // replaces `server.handle`. Attached to the WRAPPED server, that assignment lands on the
+    // convergence proxy's target while the convergence wrapper keeps dispatching through the same
+    // target property — so `initialize` re-enters the channel wrapper, and the entry dies with
+    // `RangeError: Maximum call stack size exceeded` before it can greet the native client. No
+    // root session could ever attach. The channel is attached to the raw server it dispatches
+    // through, which keeps the convergence wrapper the outermost facade: it still augments the
+    // greeting the channel composed, and it still forwards the tools the session is served.
+    if (claudeRoot) attachClaudeRootChannel(rawServer, {
       open: (onAttention) => rawServer.application.client.openRootAttention(onAttention),
       onClose: (error) => {
         process.stderr.write(`Baton root attachment closed${error ? `: ${error.code ?? error.message}` : ''}; reconnect the native MCP channel.\n`);
         stopInput();
       },
     });
+    const server = wrapProductionMcpServer(rawServer, { expandNative: true });
     process.on('SIGINT', stopInput);
     process.on('SIGTERM', stopInput);
     try {
@@ -54,5 +59,43 @@ export async function serveResidentMcp({ claudeRoot = false } = {}) {
     process.exitCode = 1;
   } finally {
     rmSync(stateRoot, { recursive: true, force: true });
+  }
+}
+
+const STARTUP_RETRY_WINDOW_MS_DEFAULT = 20_000;
+const STARTUP_RETRY_BACKOFF_MS = 250;
+
+/** Open the resident bridge, retrying the publication gap. The retryable family is the one the
+ * resident's own restart produces: the application not ready yet (`application_unavailable`),
+ * the socket still unbound mid-restart (`cli_transport_failed`), and the user connection
+ * profile not published or not yet matching (`user_profile_*` causes). Every other refusal
+ * fails the startup on its first sight. */
+async function openWithStartupRetry(stateRoot, claudeRoot) {
+  const declared = Number.parseInt(process.env.BATON_MCP_WEB_STARTUP_WINDOW_MS ?? '', 10);
+  const windowMs = Number.isSafeInteger(declared) && declared >= 0
+    ? declared : STARTUP_RETRY_WINDOW_MS_DEFAULT;
+  const deadline = Date.now() + windowMs;
+  const transient = (error) => error?.code === 'application_unavailable'
+    || error?.code === 'cli_transport_failed'
+    || (error?.code === 'cli_config_invalid' && typeof error?.cause === 'string'
+      && error.cause.startsWith('user_profile_'));
+  for (;;) {
+    try {
+      const coordination = new CoordinationStore(join(stateRoot, 'coordination'));
+      // Issue #343: the bridge frame IS the declared wire.frame substrate row — the same ceiling
+      // the resident narrows swarm.view answers against (web-northbound.mjs), so a narrowed
+      // answer fits instead of tripping the oversize refusal. No number is re-declared here.
+      return await createBatonWebMcpServer({
+        coordination, cwd: process.cwd(), maxMessageBytes: FRAME_LIMITS['wire.frame'].value,
+        // Issue #529 (docs/54 §4): the session's wake auto-subscription is derived from the
+        // environment the deployment published this seat's bridge under. The Claude root
+        // channel carries no seat coordinates and takes no swarm wake subscription.
+        autoWake: claudeRoot ? null : wakeAutoSubscription(process.env),
+      });
+    } catch (error) {
+      if (!transient(error) || Date.now() >= deadline) throw error;
+      process.stderr.write(`baton-mcp-web: the resident connection is not open yet (${error.cause ?? error.code}); retrying within the startup window\n`);
+      await new Promise((resolveRetry) => setTimeout(resolveRetry, STARTUP_RETRY_BACKOFF_MS));
+    }
   }
 }

@@ -137,8 +137,8 @@ const repoId = 'repo-run-show-verdict';
 function gitRepo(name) {
   const repo = mkdtempSync(join(tmpdir(), `baton-rsv-${name}-repo-`));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'run-show-verdict@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Run Show Verdict'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'run-show-verdict@example.invalid', GIT_COMMITTER_EMAIL: 'run-show-verdict@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Run Show Verdict', GIT_COMMITTER_NAME: 'Run Show Verdict' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -252,10 +252,12 @@ async function driveToFailed(context, runId) {
   await context.application.command('run.act', { runId, actionId: approve.actionId, inputs: {} }, principal('owner'));
   for (let attempt = 0; attempt < 600; attempt += 1) {
     outline = await inspectOutline(context.application, runId);
-    if (['failed', 'work_completed', 'completed'].includes(outline.outline.phase)) break;
+    // 'inconclusive' is terminal too (#334): a verification the base shares rests there with no
+    // accepted result, so the driver waits it out like a failed run.
+    if (['failed', 'inconclusive', 'work_completed', 'completed'].includes(outline.outline.phase)) break;
     await sleep(10);
   }
-  assert.equal(outline.outline.phase, 'failed', JSON.stringify(outline.outline.progress));
+  assert.ok(['failed', 'inconclusive'].includes(outline.outline.phase), JSON.stringify(outline.outline.progress));
   return outline;
 }
 
@@ -293,10 +295,11 @@ test('V6: the outline verdict never leaks paths or the checkpoint ref', async (t
   assert.equal(rendered.includes(f.repo), false, 'no repository path in the verdict block');
   assert.equal(rendered.includes('/tmp/'), false, 'no sandbox path in the verdict block');
 });
-
-test('V7: a candidate-owned exit mismatch reads as its own closed code on run show', async (t) => {
-  // The pinned command fails on the candidate (exit 3 against expectExit 0) while node
-  // itself spawns: the referee owns the mismatch verdict, never the route.
+test('V7: an exit mismatch the base shares reads as its own closed code with the baseline named the owner', async (t) => {
+  // The pinned command fails everywhere (exit 3 against expectExit 0) and the candidate's tree
+  // carries no change, so the base fails the same contract: the referee refuses to blame the
+  // candidate and rests the run inconclusive (referee.mjs — candidate ownership requires a base
+  // that passes the same check).
   const binDir = mkdtempSync(join(tmpdir(), 'baton-rsv-fixed-bin-'));
   symlinkSync(process.execPath, join(binDir, 'node'));
   const contract = {
@@ -312,16 +315,10 @@ test('V7: a candidate-owned exit mismatch reads as its own closed code on run sh
   });
   const outline = await driveToFailed(f, 'run-show-verdict-candidate');
   const verification = outline.outline.verification;
-  assert.ok(verification, 'stage: run-verdict-missing — the outline carries the verification verdict block');
-  // The referee owns its code choice (here verification_claim_diverged: the candidate's
-  // exit claim diverged from the observed exit); the outline's contract is the shared
-  // shape over WHATEVER closed code the referee minted — never a bare failed string.
-  assert.equal(typeof verification.diagnosticCode, 'string', 'the referee names its closed code');
+  assert.equal(verification.diagnosticCode, 'verification_claim_diverged', 'the referee names the closed claim-divergence code');
   assert.equal(verification.gate, 'unknown', 'a non-gate diagnostic degrades to the honest unknown gate');
   assert.equal(verification.check, verification.diagnosticCode, 'WHAT was checked — the closed code itself');
   assert.equal(verification.corrective, null, 'a null-table code carries honest-null corrective (escalate)');
-  assert.ok(['candidate_failed', 'inconclusive'].includes(verification.outcome),
-    'the outcome is the closed referee outcome, never a bare failed string');
-  assert.ok(['candidate', 'verifier', 'baseline_or_environment'].includes(verification.failureOwnership),
-    'ownership is the closed referee ownership — the route is blamed only when proven');
+  assert.equal(verification.outcome, 'inconclusive', 'the shared failure reads inconclusive, never a bare failed string');
+  assert.equal(verification.failureOwnership, 'baseline_or_environment', 'the base that fails the same check owns the failure');
 });

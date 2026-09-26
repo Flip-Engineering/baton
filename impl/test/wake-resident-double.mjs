@@ -9,11 +9,10 @@
 // (`/readyz`, `/v1/application-card`, `/v1/session`) are what every Baton client opens with, so the
 // consumers under test are built by the PRODUCTION paths (`createBatonWebMcpServer`, BatonWebClient)
 // against this socket instead of by hand.
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
+import { fixtureSocketRoot } from './fixture-root.mjs';
 export const WAKE_STREAM_PATH = '/v1/wakes';
 
 export function wakeFrame({ seq, wakeClass, swarmId = null, participantId = null, row = null }) {
@@ -43,8 +42,10 @@ export async function startWakeResident({ token, frames = [], card, session } = 
     throw new TypeError('the double needs the served card and session');
   }
   // A short, owner-only path: the consumer's local transport bounds the socket path at 103 bytes and
-  // validates the socket's own mode on every request.
-  const directory = mkdtempSync(join(tmpdir(), 'bt-wake-double-'));
+  // validates the socket's own mode on every request. The fixture root is measured, then allowed to
+  // fall back to the short system root when the ambient TMPDIR runs deep (#571, fixture-root.mjs);
+  // close removes the directory, so the fallback leaves no fixture behind.
+  const directory = fixtureSocketRoot('bt-wake-double-');
   const socketPath = join(directory, 'resident.sock');
   const ledger = [...frames];
   const attachments = new Set();

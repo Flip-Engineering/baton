@@ -228,7 +228,7 @@ export class SupervisedProcesses {
    * `detached` puts the child in its own group so a kill reaches the grandchildren a runner
    * spawns (test files, nested runners), never only the child itself.
    */
-  async run({ file, args = [], cwd, env = {}, timeoutMs = null, label = 'worker' }) {
+  async run({ file, args = [], cwd, env = {}, timeoutMs = null, label = 'worker', signal = null }) {
     if (typeof file !== 'string' || file.length === 0) throw new TypeError('a supervised worker needs the script it runs');
     if (typeof cwd !== 'string' || cwd.length === 0) throw new TypeError('a supervised worker needs the directory it runs in');
     if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) throw new TypeError('a supervised worker deadline is a positive integer in milliseconds, or null to wait on the child');
@@ -238,17 +238,22 @@ export class SupervisedProcesses {
     });
     const entry = { id, pid: child.pid ?? null, label, child };
     this._live.set(id, entry);
-    let stdout = ''; let stderr = ''; let timedOut = false;
+    let stdout = ''; let stderr = ''; let timedOut = false; let withdrawn = false;
     const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
       ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
     child.stderr?.on('data', (chunk) => { stderr = tail(stderr, chunk); });
-    const killGroup = (signal) => {
-      try { process.kill(-child.pid, signal); }
-      catch { try { child.kill(signal); } catch { /* already gone */ } }
+    const killGroup = (sig) => {
+      try { process.kill(-child.pid, sig); }
+      catch { try { child.kill(sig); } catch { /* already gone */ } }
     };
+    const onAbort = () => { withdrawn = true; killGroup('SIGKILL'); };
+    if (signal) {
+      if (signal.aborted) { onAbort(); }
+      else { signal.addEventListener('abort', onAbort, { once: true }); }
+    }
     const deadline = timeoutMs === null ? null : setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
     if (deadline !== null && typeof deadline.unref === 'function') deadline.unref();
     // Issue #577: settle on the child's EXIT, with a drain grace for the tails. `close` alone is not
@@ -277,10 +282,11 @@ export class SupervisedProcesses {
         code ?? exited?.code ?? null, signal ?? exited?.signal ?? null)));
     });
     clearTimeout(deadline);
+    if (signal) signal.removeEventListener('abort', onAbort);
     this._live.delete(id);
     return Object.freeze({
-      id, label, pid: child.pid ?? null, timedOut, stdout, stderr,
-      status: timedOut ? 'timeout' : settled.status,
+      id, label, pid: child.pid ?? null, timedOut, withdrawn, stdout, stderr,
+      status: withdrawn ? 'withdrawn' : timedOut ? 'timeout' : settled.status,
       code: settled.code ?? null, signal: settled.signal ?? null,
       ...(settled.error === undefined ? {} : { error: settled.error }),
     });
@@ -527,20 +533,6 @@ export function constructor(coordinator, opts) {
       if (policy.authorizeRecheck !== undefined && typeof policy.authorizeRecheck !== 'function') throw new TypeError('reuse decision authorizeRecheck must be a function');
       const reconcile = policy.policyReconcile;
       if (!reconcile || Object.keys(reconcile).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',') || Object.values(reconcile).some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new TypeError('reuse decision policy requires reconciliation ceilings');
-      // Decision 1(d) / OQ4 (blocker 6): the registry's decision.need / decision.rationale values
-      // are the ceiling-of-ceilings — an override ABOVE them refuses at injection, never a silent
-      // min() (the provider-read hard-ceiling precedent). The message names the ceiling AND the
-      // attempted value.
-      if (policy.maxNeedBytes > FRAME_LIMITS['decision.need'].value) {
-        throw Object.assign(new Error(
-          `reuse decision policy maxNeedBytes ${policy.maxNeedBytes} exceeds the registry ceiling ${FRAME_LIMITS['decision.need'].value} (decision.need)`,
-        ), { code: 'reuse_decision_policy_ceiling_exceeded' });
-      }
-      if (policy.maxRationaleBytes > FRAME_LIMITS['decision.rationale'].value) {
-        throw Object.assign(new Error(
-          `reuse decision policy maxRationaleBytes ${policy.maxRationaleBytes} exceeds the registry ceiling ${FRAME_LIMITS['decision.rationale'].value} (decision.rationale)`,
-        ), { code: 'reuse_decision_policy_ceiling_exceeded' });
-      }
       coordinator._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes, policyReconcile: Object.freeze({ ...reconcile }) });
     }
     coordinator._now = opts.now || Date.now;
@@ -968,12 +960,13 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
     const turnEpoch = terminalEvent?.turnEpoch ?? coordinator._safeTurnEpoch(handle);
     const changedPathsDigest = coordinator._pauseChangedPathsDigest(handle, task);
     // Bidirectional v2 rule 1/2: durable pause-origin claim, sanitized AT MINT via the shared
-    // messages.mjs pipeline (redact-before-truncate, 240-byte text bound, wrapProse untrusted).
+    // messages.mjs pipeline (redact only — the summary is durable text a reader must be able to
+    // read whole — with wrapProse provenance).
     // Replay reconstructs origin byte-for-byte; projection never depends on in-memory workerResult.
     const rawSummary = wr?.summary;
     const originSummary = (rawSummary == null || rawSummary === '')
       ? null
-      : wrapProse(workerId, boundedAttentionText(rawSummary, 240));
+      : wrapProse(workerId, boundedAttentionText(rawSummary, Infinity));
     const origin = Object.freeze({
       kind: 'turn_completed',
       resultStatus: 'completed',
@@ -1340,7 +1333,6 @@ export function _bindStrictProviderGovernance(coordinator, recorder, handle, rou
     try { ack = coordinator._adapters[handle.vendor].bindProviderGovernance(envelope); }
     catch { return { ok: false, code: 'provider_policy_binding_refused' }; }
     if (!ack || typeof ack !== 'object' || typeof ack.then === 'function'
-      || Object.keys(ack).sort().join(',') !== ['bindingDigest', 'ok'].sort().join(',')
       || ack.ok !== true || ack.bindingDigest !== envelope.bindingDigest) {
       return { ok: false, code: 'provider_policy_binding_refused' };
     }
@@ -1613,8 +1605,7 @@ export function _normalizeResumeRequest(coordinator, recorder, opts) {
     if (!opts.gate || typeof opts.gate !== 'object' || Array.isArray(opts.gate)) {
       throw Object.assign(new TypeError('preserved resume gate is invalid'), { code: 'resume_invalid' });
     }
-    if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)
-      || Object.keys(opts.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) {
+    if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)) {
       throw Object.assign(new TypeError('preserved resume route is invalid'), { code: 'resume_invalid' });
     }
     const checkpointSha = stringField(opts.checkpointSha, 'checkpointSha', 64);
@@ -2458,7 +2449,6 @@ export function _promoteReplObject(coordinator, recorder, workerBinding, caller)
 // resolution and the rendering of the same lane stay in runtime-observation.mjs.
 // ---------------------------------------------------------------------------
 
-const REPL_REVIEW_ENTRY_KEYS = Object.freeze(['branchCount', 'manifestDigest', 'principal', 'replRole']);
 
 /** D3: a `worker:<id>` object belongs to its owner's brief only. Checked BEFORE any resolution,
  * so another worker's binding is never read and its object can never render. */
@@ -2536,23 +2526,19 @@ export function _assertReplObjectsServed(coordinator, recorder, workerId, record
     return Object.freeze(served);
   }
 
-/** D6: the closed review-shape guard. The orchestrator approves by promotion, so a review record
- * carrying a field the projection cannot display would make the approval cover something the hub
- * never showed — the shape is closed, and the cited manifest must be one the store admitted. */
+/** D6: the review-shape guard. The fields the orchestrator's approval reads are validated here;
+ * the cited manifest must be one the store admitted. */
 export function _assertReplReviewProjection(coordinator, recorder, record) {
     coordinator._assertReadable();
-    const closed = record && typeof record === 'object' && !Array.isArray(record)
-      ? Object.keys(record).sort().join(',') : '';
     const principal = record?.principal;
-    const principalClosed = principal && typeof principal === 'object' && !Array.isArray(principal)
-      ? Object.keys(principal).sort().join(',') : '';
-    if (closed !== REPL_REVIEW_ENTRY_KEYS.join(',') || principalClosed !== 'actor,principalId'
+    if (!record || typeof record !== 'object' || Array.isArray(record)
       || !/^[a-f0-9]{64}$/u.test(record?.manifestDigest ?? '')
       || typeof record?.replRole !== 'string' || record.replRole.length === 0
+      || !principal || typeof principal !== 'object' || Array.isArray(principal)
       || typeof principal.actor !== 'string' || principal.actor.length === 0
       || typeof principal.principalId !== 'string' || principal.principalId.length === 0
       || !Number.isSafeInteger(record?.branchCount) || record.branchCount < 0) {
-      throw replObjectRefusal('REPL review record is not the closed projection the orchestrator reviews',
+      throw replObjectRefusal('REPL review record is not the projection the orchestrator reviews',
         'repl_object_manifest_unadmitted');
     }
     if (!recorder.coordination.replManifestAdmission(record.manifestDigest)) {

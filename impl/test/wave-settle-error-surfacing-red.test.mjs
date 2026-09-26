@@ -26,8 +26,8 @@ test('SETTLE-SURFACING: a member whose approve throws settles failed-with-cause,
   const repo = root('swallow-repo');
   const logDir = root('swallow-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 's@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'S'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 's@example.invalid', GIT_COMMITTER_EMAIL: 's@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'S', GIT_COMMITTER_NAME: 'S' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

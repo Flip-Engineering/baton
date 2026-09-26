@@ -185,8 +185,8 @@ test.after(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force:
 function gitRepo(label, files = {}) {
   const root = tmpDir(`repo-${label}`);
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'pd72@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'PD72'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'pd72@example.invalid', GIT_COMMITTER_EMAIL: 'pd72@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'PD72', GIT_COMMITTER_NAME: 'PD72' });
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(join(root, path, '..'), { recursive: true });
     writeFileSync(join(root, path), content);

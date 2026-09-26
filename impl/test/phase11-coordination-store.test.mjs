@@ -172,8 +172,8 @@ test('ER5: emergency kill timeout keeps ownership when native confirmation never
 test('CK1/CK9: terminal artifact-batch failure poisons the driver and restarts as durable failed', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
@@ -251,11 +251,11 @@ test('CK2: terminal state is immutable across replay', () => {
   assert.equal(new CoordinationStore(root).task('a').status, 'completed');
 });
 
-test('CK8/CK9: public driver exposes coordination and queued DAG survives restart before dispatch', async () => {
+test('CK8/CK9: public driver exposes coordination and the queued DAG runs in dependency order across restart', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
@@ -265,28 +265,40 @@ test('CK8/CK9: public driver exposes coordination and queued DAG survives restar
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
-  const brief = { goal: 'queued', constraints: [], pathScope: [], definitionOfDone: 'never dispatch', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
+  const brief = { goal: 'queued', constraints: [], pathScope: [], definitionOfDone: 'x', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
   const first = make();
   const base = await first.coordinator.spawn('mock', brief, { taskId: 'base' });
-  const child = await first.coordinator.spawn('mock', brief, { taskId: 'child', deps: ['base'] });
   assert.ok(first.coordination instanceof CoordinationStore);
-  assert.deepEqual(first.coordination.readyTasks().map((task) => task.id), ['base']);
-  assert.equal(first.log.workers().length, 0, 'neither queued task reached a worker log');
-
-  first.close(); const replay = make();
-  assert.deepEqual(replay.coordinator.list().map((worker) => worker.taskId), ['base', 'child']);
-  assert.equal(replay.coordinator.list().find((worker) => worker.id === base.id)?.status, 'pending');
-  assert.equal(replay.coordinator.list().find((worker) => worker.id === child.id)?.status, 'pending');
+  // The design: a spawn's own tick dispatches the dependency-ready task it just admitted — a
+  // mutating command's own effects are what the dispatch pass follows — so the base task is
+  // claimed and working the moment spawn resolves.
+  assert.equal(first.coordination.task('base').status, 'working');
+  assert.equal(first.coordination.task('base').assignee, base.id);
+  assert.deepEqual(first.coordination.readyTasks().map((task) => task.id), []);
+  const child = await first.coordinator.spawn('mock', brief, { taskId: 'child', deps: ['base'] });
+  // The queued DAG: the child's unmet dependency keeps it pending and unclaimed, ready for
+  // nobody while the base works.
+  assert.deepEqual(first.coordination.task('child').deps, ['base']);
+  assert.equal(first.coordination.task('child').status, 'pending');
+  assert.equal(first.coordination.task('child').assignee, null);
+  assert.deepEqual(first.coordination.readyTasks().map((task) => task.id), []);
+  // The dep edge releases: the completed base dispatches the queued child, which completes.
+  await until(() => first.coordination.task('base').status === 'completed');
+  await until(() => first.coordination.task('child').status === 'working');
+  await until(() => first.coordination.task('child').status === 'completed');
+  await first.drainAndClose('ck8-restart');
+  // The durable rows survive the restart: both terminal tasks with the dependency edge intact.
+  const replay = make();
+  assert.deepEqual(replay.coordination.snapshot().tasks.map((task) => [task.id, task.status]), [['base', 'completed'], ['child', 'completed']]);
   assert.deepEqual(replay.coordination.task('child').deps, ['base']);
-  assert.equal(replay.coordination.task('child').assignee, null);
-  assert.deepEqual(replay.coordination.readyTasks().map((task) => task.id), ['base']);
+  await replay.drainAndClose('ck8-restart');
 });
 
 test('CK2/CK9: restart terminalizes a durable claim that crashed before operational spawn', () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
@@ -384,8 +396,8 @@ test('CK3/CK9: terminal task and accepted manifests commit in one append batch',
 test('CK8/CK9: completed public task maps verification evidence, terminal state, and manifests', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
@@ -420,8 +432,8 @@ test('CK8/CK9: completed public task maps verification evidence, terminal state,
 test('CK2/CK8: blocking input and resolution transition durably before terminal verification', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
@@ -446,8 +458,8 @@ test('CK2/CK8: blocking input and resolution transition durably before terminal 
 test('CK8/CK9: input transition append failure poisons before pending/blocked state becomes visible', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
   const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
@@ -471,8 +483,8 @@ test('CK8/CK9: input transition append failure poisons before pending/blocked st
 test('CK8/CK9: stop-intent append failure calls no adapter and leaves durable task working', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
   let adapterKills = 0;
@@ -497,8 +509,8 @@ test('CK8/CK9: stop-intent append failure calls no adapter and leaves durable ta
 test('CK8/CK9: cancellation completion failure resolves bounded, keeps stop intent, and restart closes task', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const logDir = dir();
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
@@ -621,8 +633,8 @@ test('CK7: failed knowledge and Scratch read appends return no recalled content'
 test('CK2/CK8: confirmed kill durably cancels an active public task', async () => {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const driver = createDriver({
     repoRoot: repo, logDir: dir(), stopDeadlineMs: 1000,

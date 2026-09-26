@@ -30,7 +30,7 @@ function git(args, cwd) {
 
 function repo(label) {
   const world = root(label); const directory = join(world, 'repo'); mkdirSync(directory);
-  git(['init', '-q'], directory); git(['config', 'user.name', 'Baton Phase 56'], directory); git(['config', 'user.email', 'phase56@example.invalid'], directory);
+  git(['init', '-q'], directory); Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 56', GIT_COMMITTER_NAME: 'Baton Phase 56' }); Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase56@example.invalid', GIT_COMMITTER_EMAIL: 'phase56@example.invalid' });
   writeFileSync(join(directory, 'README.md'), '# fixture\n'); git(['add', 'README.md'], directory); git(['commit', '-qm', 'fixture'], directory);
   return { world, directory, logDir: join(world, 'log') };
 }
@@ -123,7 +123,7 @@ test('DC2-DC7: one drain cancels pending work, kill-confirms active work, fences
 
 test('DC4: linked-worktree controllers start and drain without reconciling each other\'s live branch authority', async (t) => {
   const world = root('controller-isolation'); const main = join(world, 'main'); mkdirSync(main);
-  git(['init', '-q'], main); git(['config', 'user.name', 'Baton Phase 56'], main); git(['config', 'user.email', 'phase56@example.invalid'], main);
+  git(['init', '-q'], main); Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 56', GIT_COMMITTER_NAME: 'Baton Phase 56' }); Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase56@example.invalid', GIT_COMMITTER_EMAIL: 'phase56@example.invalid' });
   writeFileSync(join(main, 'README.md'), '# fixture\n'); git(['add', 'README.md'], main); git(['commit', '-qm', 'fixture'], main);
   const sha = git(['rev-parse', 'HEAD'], main); const controllerA = join(world, 'controller-a'); const controllerB = join(world, 'controller-b');
   git(['worktree', 'add', '--detach', controllerA, sha], main); git(['worktree', 'add', '--detach', controllerB, sha], main);

@@ -234,8 +234,8 @@ function gitRepo(t, label) {
   // The branch the resident is started from is the target the doctor measures the served commit
   // against, so the fixture names it instead of inheriting the host's init.defaultBranch.
   execFileSync('git', ['checkout', '-q', '-b', 'master'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue316@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 316'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue316@example.invalid', GIT_COMMITTER_EMAIL: 'issue316@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 316', GIT_COMMITTER_NAME: 'Issue 316' });
   writeFileSync(join(root, 'README.md'), '# issue 316\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

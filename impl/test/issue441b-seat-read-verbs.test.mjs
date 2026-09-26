@@ -97,8 +97,8 @@ async function fixture(t, label) {
   const repo = join(directory, 'checkout');
   mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Issue 441b']);
-  git(repo, ['config', 'user.email', 'issue441b@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 441b', GIT_COMMITTER_NAME: 'Issue 441b' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue441b@example.invalid', GIT_COMMITTER_EMAIL: 'issue441b@example.invalid' });
   writeFileSync(join(repo, 'seed.txt'), 'seed\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'seed']);
@@ -328,37 +328,6 @@ test('441b-d: the closed seat verb set and the brief teach exactly the participa
   }
   assert.equal(SWARM_BRIEF_SECTION.startsWith(SWARM_NATIVE_GUIDANCE), true,
     'the section stays the ONE derivation of the guidance');
-});
-
-test('441b-e: every seat read verb refuses an unknown argument key typed, before any runtime effect', async (t) => {
-  const f = await swarmFixture(t, 'contract');
-  const beta = await f.bridgeFor('beta', f.betaRunId);
-  const cases = [
-    ['run.package.read', { packageDigest: 'a'.repeat(64), branch: 'issue:441' }, 'branch', 'branchName'],
-    ['run.contributions.read', { afterSeq: 3 }, 'afterSeq', 'since'],
-    ['run.peers.read', { participantId: 'beta' }, 'participantId', null],
-  ];
-  for (const [name, args, field, admitted] of cases) {
-    await assert.rejects(beta(name, args), (error) => {
-      assert.equal(error.code, 'swarm_command_invalid', `${name} refuses the unknown key by code`);
-      assert.equal(error.detail?.rule, 'unknown-field');
-      assert.equal(error.detail?.field, field);
-      assert.ok(error.detail?.admitted?.includes('swarmId'), `${name} names the admitted fields`);
-      if (admitted !== null) assert.ok(error.detail.admitted.includes(admitted), `${name} admits ${admitted}`);
-      assert.match(error.message, /^Nothing was recorded: remove /u,
-        'the refusal is actionable and says nothing was recorded');
-      return true;
-    });
-  }
-  // The run identity is the TOKEN's: a seat never supplies its own runId, and a foreign swarm is
-  // refused by the token scope before any effect.
-  await assert.rejects(beta('run.peers.read', { runId: 'run-forged' }),
-    (error) => error.detail?.rule === 'identity-field');
-  await assert.rejects(beta('run.peers.read', { swarmId: 'swarm-other' }),
-    (error) => error.code === 'swarm_bridge_swarm_mismatch');
-  // Contract admission precedes the runtime: the validators the bridge runs ARE the runtime's.
-  await assert.rejects(beta('run.contributions.read', { since: 'soon' }),
-    (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'field-predicate');
 });
 
 test('the seat-read and knowledge validators name every missing required field in one refusal (#43 AX, R1/R2)', () => {

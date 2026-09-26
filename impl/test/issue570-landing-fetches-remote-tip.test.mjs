@@ -66,8 +66,8 @@ async function world(t, { advanceRemote = false, advanceLocal = false, gatesRed 
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue570-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 570');
-  git(repo, 'config', 'user.email', 'issue570@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 570', GIT_COMMITTER_NAME: 'Issue 570' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue570@example.invalid', GIT_COMMITTER_EMAIL: 'issue570@example.invalid' });
   write(repo, 'README.md', 'base\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
@@ -92,8 +92,8 @@ async function world(t, { advanceRemote = false, advanceLocal = false, gatesRed 
     // The remote tip moves one commit past the local ref — the drift the resident woke to.
     const advance = join(directory, 'advance');
     execFileSync('git', ['clone', '-q', remote, advance], { env: { ...process.env, ...QUIET_GIT_ENV } });
-    git(advance, 'config', 'user.name', 'Issue 570 remote');
-    git(advance, 'config', 'user.email', 'issue570-remote@example.invalid');
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 570 remote', GIT_COMMITTER_NAME: 'Issue 570 remote' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue570-remote@example.invalid', GIT_COMMITTER_EMAIL: 'issue570-remote@example.invalid' });
     write(advance, 'REMOTE_NOTE.md', 'landed on the shared remote ahead of the deployment\n');
     git(advance, 'add', '-A');
     git(advance, 'commit', '-qm', 'remote advance (#570)');

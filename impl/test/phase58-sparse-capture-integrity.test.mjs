@@ -39,8 +39,8 @@ function fixture(label) {
   try {
     mkdirSync(repo);
     git(['init', '-q'], repo);
-    git(['config', 'user.name', 'Baton Phase 58 Integrity'], repo);
-    git(['config', 'user.email', 'phase58-integrity@example.invalid'], repo);
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 58 Integrity', GIT_COMMITTER_NAME: 'Baton Phase 58 Integrity' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase58-integrity@example.invalid', GIT_COMMITTER_EMAIL: 'phase58-integrity@example.invalid' });
     write(repo, 'README.md', '# sparse integrity fixture\n');
     write(repo, 'src/main.js', 'export const value = 1;\n');
     write(repo, 'src/nested/helper.js', 'export const helper = true;\n');

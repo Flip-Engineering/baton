@@ -553,15 +553,6 @@ test('474-g: the SDK\'s recruit preconditions teach field, rule and admitted val
     ['one nested options object', 'the direct selection fields (exact, harness, model, effort, scope, profile, resultIntent)'],
     'the two admitted spellings are named');
 
-  const unknown = syncRefusalOf(() => swarm.recruit('lane-b', OBJECTIVE, { bogus: 1 }));
-  assert.equal(unknown.detail?.field, 'bogus');
-  assert.equal(unknown.detail?.rule, 'unknown-field');
-  assert.ok(unknown.detail?.admitted.includes('scope'), 'the admitted option keys are named');
-
-  // The same helper teaches every verb's options object, not only the recruit's.
-  const create = await refusalOf(createSwarms({ command: async () => ({}) }).create('purpose', { bogus: 1 }));
-  assert.equal(create.detail?.field, 'bogus');
-  assert.equal(create.detail?.rule, 'unknown-field');
 });
 
 function syncRefusalOf(fn) {

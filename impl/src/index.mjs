@@ -1089,11 +1089,23 @@ function worktreeManager(repoRoot, opts = {}) {
               reason: `session worktree records base ${context.baseSha}, which is not a commit in this repository; HEAD is ${head}` };
           }
           if (!reaches(context.baseSha, 'HEAD')) {
-            return reaches(head, context.baseSha)
-              ? { ok: false, code: 'session_worktree_base_rewound',
-                reason: `session worktree branch was rewound behind its recorded base: HEAD ${head} is an ancestor of base ${context.baseSha}; restore the recorded base as an ancestor of HEAD, or admit a fresh seat at ${head}` }
-              : { ok: false, code: 'session_worktree_base_diverged',
+            if (reaches(head, context.baseSha)) {
+              return { ok: false, code: 'session_worktree_base_rewound',
+                reason: `session worktree branch was rewound behind its recorded base: HEAD ${head} is an ancestor of base ${context.baseSha}; restore the recorded base as an ancestor of HEAD, or admit a fresh seat at ${head}` };
+            }
+            // Issue #603: a seat may re-cut its lane onto a moved target, so a checkout whose
+            // remaining custody checks are exact can carry a recorded base HEAD no longer
+            // descends from. A history that still shares a fork point with the recorded base
+            // is that rebase, and the checkout is admitted; a replaced history shares nothing,
+            // and that refusal stays.
+            const fork = (() => {
+              try { return localGit(['merge-base', context.baseSha, head], worktree, { encoding: 'utf8' }).trim(); }
+              catch { return null; }
+            })();
+            if (!fork) {
+              return { ok: false, code: 'session_worktree_base_diverged',
                 reason: `session worktree history diverged from its recorded base ${context.baseSha}: neither HEAD ${head} nor the recorded base contains the other` };
+            }
           }
         }
         if (!Array.isArray(context.sparsePaths) && opts.workerSparseCheckoutIdentity.mode !== 'full') return { ok: false, reason: 'session sparse checkout identity is missing' };
@@ -1127,7 +1139,7 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = []) {
+    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = [], { snapshotUncommitted = false } = {}) {
       if (!Array.isArray(knownPhysicalOwnerIds)
         || knownPhysicalOwnerIds.some((id) => !isPhysicalWorkspaceId(id))) {
         throw new TypeError('known physical workspace owners are invalid');
@@ -1147,6 +1159,11 @@ function worktreeManager(repoRoot, opts = {}) {
         sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         ownerAuthority: opts.ownerAuthority,
         expectedOwnerBindings: expectedEntries,
+        // Issue #568: the capture is opt-in PER CALL. A sweep that cannot prove the owning seat
+        // ENDED must not reclaim a checkout a resume-from successor may still carry (#385/#517),
+        // so the startup recovery leaves it false and the drain's converged historical sweep
+        // opts in. The capability itself is unchanged.
+        snapshotUncommitted,
         ...custody(),
         ...(opts.log ? { log: opts.log } : {}),
         ...(opts.worktreeCapacity ? {

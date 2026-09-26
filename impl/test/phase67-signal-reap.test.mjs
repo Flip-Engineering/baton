@@ -33,8 +33,8 @@ async function until(read, label) {
 test('AX8: SIGINT then SIGHUP await exact GLM process, worktree, branch, writer, and application reaping', async (t) => {
   const repo = root('repo');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase67-signal@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 67 Signal'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase67-signal@example.invalid', GIT_COMMITTER_EMAIL: 'phase67-signal@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 67 Signal', GIT_COMMITTER_NAME: 'Phase 67 Signal' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

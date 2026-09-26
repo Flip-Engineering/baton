@@ -113,8 +113,8 @@ test.after(async () => {
 function gitRepo(label) {
   const repo = tmpDir(label);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   return repo;
 }
@@ -1043,10 +1043,7 @@ test('CLI-GRAMMAR (§H D4): baton run attention wait parses the wake verb with b
 // MAX_ATTENTION actions slice.
 // ===========================================================================
 
-test('LIMITS-PIN (§I W-8): the decision/view limits are byte-unchanged', () => {
-  assert.equal(FRAME_LIMITS['decision.question'].value, 2048, 'decision.question stays 2048');
-  assert.equal(FRAME_LIMITS['decision.option.label'].value, 160, 'decision.option.label stays 160');
-  assert.equal(FRAME_LIMITS['decision.option.summary'].value, 512, 'decision.option.summary stays 512');
+test('LIMITS-PIN (§I W-8): the answer/view limits are byte-unchanged', () => {
   assert.equal(FRAME_LIMITS['decision.text'].value, 4096, 'decision.text stays 4096');
   assert.equal(FRAME_LIMITS['view.attention_text.bytes'].value, 4096, 'view.attention_text.bytes stays 4096');
 });

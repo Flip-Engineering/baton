@@ -21,8 +21,8 @@ const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'h
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'bt-mcpweb-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'mcpweb@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'MCP Web'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'mcpweb@example.invalid', GIT_COMMITTER_EMAIL: 'mcpweb@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'MCP Web', GIT_COMMITTER_NAME: 'MCP Web' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({
     private: true, scripts: { test: 'node --test' },
   }));

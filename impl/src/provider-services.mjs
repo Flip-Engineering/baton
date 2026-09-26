@@ -451,17 +451,12 @@ const listError = (message, field, rule, expectation) => Object.assign(new Error
 });
 
 /** Validate one services.list request against the canonical shape. Answers the normalized
- * filters; anything else refuses typed with the field, the rule and the expectation. */
+ * filters; unknown keys ride along unread, and anything that names a known field badly refuses
+ * typed with the field, the rule and the expectation. */
 export function validateServicesListArgs(args) {
   if (args === undefined || args === null) return validateServicesListArgs({});
   if (typeof args !== 'object' || Array.isArray(args)) {
     throw listError('services list arguments must be one JSON object', null, 'arguments-shape', 'one JSON object');
-  }
-  for (const key of Object.keys(args)) {
-    if (!SERVICES_LIST_FILTERS.includes(key)) {
-      throw listError(`services list takes no field ${key}`, key, 'unknown-field',
-        `one of ${SERVICES_LIST_FILTERS.join(', ')}`);
-    }
   }
   const provider = args.provider ?? null;
   if (provider !== null && (typeof provider !== 'string' || provider.length === 0

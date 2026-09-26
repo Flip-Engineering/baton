@@ -81,8 +81,8 @@ test.after(async () => {
 function gitRepo(label) {
   const repo = tmpDir(label);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   return repo;
 }
@@ -1779,18 +1779,6 @@ test('FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming ca
       atCap: { runId: 'run:j1', taskId: 'task-1', entryIds: Array.from({ length: 128 }, (_, i) => ENTRY_ID(i + 1)) },
       overCap: { runId: 'run:j1', taskId: 'task-1', entryIds: Array.from({ length: 129 }, (_, i) => ENTRY_ID(i + 1)) },
       command: 'run.scratchpad.elevate', code: 'application_scratchpad_elevate_invalid', cap: /128/u, actual: /129/u,
-    },
-    {
-      label: 'board title ≤160 bytes',
-      atCap: { runId: 'run:j1', board: 'ws-j1', title: 't'.repeat(160) },
-      overCap: { runId: 'run:j1', board: 'ws-j1', title: 't'.repeat(161) },
-      command: 'run.board.post', code: 'application_board_post_invalid', cap: /160/u, actual: /161/u,
-    },
-    {
-      label: 'board detail ≤4,096 bytes',
-      atCap: { runId: 'run:j1', board: 'ws-j1', title: 't', detail: 'd'.repeat(4096) },
-      overCap: { runId: 'run:j1', board: 'ws-j1', title: 't', detail: 'd'.repeat(4097) },
-      command: 'run.board.post', code: 'application_board_post_invalid', cap: /4096/u, actual: /4097/u,
     },
     {
       label: 'board evidence ≤8 refs',

@@ -35,8 +35,8 @@ async function buildFixture() {
   const repo = root('quiesce-repo');
   const logDir = root('quiesce-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'q@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Q'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'q@example.invalid', GIT_COMMITTER_EMAIL: 'q@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Q', GIT_COMMITTER_NAME: 'Q' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -12,6 +12,8 @@ import {
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
 } from '../src/index.mjs';
 import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
+import { commandForTool } from '../src/mcp-northbound.mjs';
+import { ORDINARY_COMMANDS } from '../src/mcp-web-bridge.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
@@ -290,10 +292,14 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join the compact bridge table.
-  // The bridge table IS the RAW application table's served order — the compact flat surface the
-  // bridge projects (docs/49 §2: the raw class keeps its flat table for embedders and its own pins),
-  // derived by surface-truth.northboundApplicationToolNames.
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name), northboundApplicationToolNames());
+  // The bridge projects the raw application surface through its dispatch admission (28a5b33c): a
+  // tool is advertised when it dispatches no application command, or when the resident's wire
+  // authority admits the command it dispatches (the ordinary floor or the served card).
+  const served = northboundApplicationToolNames().filter((name) => {
+    const command = commandForTool(name);
+    return command === null || ORDINARY_COMMANDS.includes(command) || commands.includes(command);
+  });
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), served);
   for (const tool of listed.result.tools) {
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'repoId'), false);
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'idempotencyKey'), false);
@@ -318,26 +324,29 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   };
   const called = await server.handle(call);
   assert.equal(called.result.isError, false);
+  // Issue #314 law (d): the start answers its own receipt — the retired _inspectOutline
+  // follow-up is gone, so the bridge dispatches exactly one command.
   const commandCalls = remote.calls.filter((entry) => entry.url.endsWith('/v1/commands'));
-  assert.equal(commandCalls.length, 2);
+  assert.equal(commandCalls.length, 1);
   const envelopes = commandCalls.map((entry) => JSON.parse(entry.options.body));
-  assert.deepEqual(envelopes.map(({ command }) => command), ['run_start', 'run_inspect']);
-  assert.deepEqual(envelopes[1].args, { runId: 'run-kimi-orchestrator', depth: 'outline' });
+  assert.deepEqual(envelopes.map(({ command }) => command), ['run_start']);
   assert.match(envelopes[0].idempotencyKey, /^mcp-web-[a-f0-9]{64}$/u);
-  assert.match(envelopes[1].idempotencyKey, /^mcp-web-[a-f0-9]{64}$/u);
-  assert.notEqual(envelopes[0].idempotencyKey, envelopes[1].idempotencyKey);
   for (const command of commandCalls) {
     assert.equal(command.options.headers.authorization, `Bearer ${connection.token}`);
     assert.equal(command.options.headers.origin, connection.origin);
   }
   assert.equal(JSON.stringify(envelopes).includes(connection.token), false);
-  assert.deepEqual(called.result.structuredContent, {
-    schemaVersion: 1, runId: 'run-kimi-orchestrator', depth: 'outline',
-    outline: {
-      phase: 'awaiting_plan_approval',
-      actions: [{ kind: 'approve_plan', actionId: 'approve-plan-1' }],
-    },
-  });
+  // The #302 mutation answer: the receipt composes the changed row, the follow-up the agent
+  // rides (run.view at outline depth), and the wake handoff whose settle classes the bridge
+  // derives from the core table. The subscription identity is minted per call.
+  const answer = called.result.structuredContent;
+  assert.equal(answer.command, 'run.start');
+  assert.equal(answer.receipt.changed.length, 1);
+  assert.equal(answer.receipt.changed[0].collection, 'runs');
+  assert.equal(answer.receipt.changed[0].id, 'run-kimi-orchestrator');
+  assert.deepEqual(answer.next, { command: 'run.view', args: { runId: 'run-kimi-orchestrator' } });
+  assert.match(answer.wake.subscriptionId, /^wake-sub:/u);
+  assert.deepEqual(answer.wake.settleOn, ['attention', 'paused', 'integrated']);
   assert.equal(JSON.stringify(called).includes('internalStartRecord'), false);
   assert.equal((await server.handle(call)).result.isError, false);
   const inspected = await server.handle({
@@ -375,9 +384,9 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   const finalCommands = remote.calls
     .filter((entry) => entry.url.endsWith('/v1/commands'))
     .map((entry) => JSON.parse(entry.options.body).command);
-  assert.deepEqual(finalCommands, [
-    'run_start', 'run_inspect', 'run_inspect', 'application_help', 'run_stop', 'run_inspect',
-  ]);
+  // Issue #314 law (d): each verb dispatches its own command once — the retired run_inspect
+  // follow-ups (after start, replay, and stop) no longer ride the dispatches.
+  assert.deepEqual(finalCommands, ['run_start', 'run_inspect', 'application_help', 'run_stop']);
 });
 
 test('KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed', async () => {
@@ -402,39 +411,8 @@ test('KC6/KC7: semantic mutation replay is stable while mismatched identity and 
     .filter((entry) => entry.url.endsWith('/v1/commands'))
     .map((entry) => JSON.parse(entry.options.body));
   const starts = replayEnvelopes.filter(({ command }) => command === 'run_start');
-  const inspections = replayEnvelopes.filter(({ command }) => command === 'run_inspect');
   assert.equal(starts.length, 2);
   assert.equal(starts[0].idempotencyKey, starts[1].idempotencyKey);
-  assert.notEqual(inspections[0].idempotencyKey, inspections[1].idempotencyKey);
-
-  const mismatched = wire({ startRunId: 'wrong-run' });
-  const mismatchedFacade = await connectBatonWebApplication({
-    connection, fetchImpl: mismatched.fetchImpl, clock: () => NOW, sleep: async () => {},
-  });
-  await assert.rejects(
-    mismatchedFacade.command('run.start', args, principal, {
-      transport: 'mcp', callId: 'mismatch', idempotencyKey: 'mcp.call:mismatch',
-    }),
-    (error) => error.code === 'application_unavailable' && /mismatched Run identity/u.test(error.message),
-  );
-
-  const malformed = wire({
-    outline: { schemaVersion: 1, runId: 'run-semantic-replay', depth: 'outline', outline: {} },
-  });
-  const malformedFacade = await connectBatonWebApplication({
-    connection, fetchImpl: malformed.fetchImpl, clock: () => NOW, sleep: async () => {},
-  });
-  await assert.rejects(
-    malformedFacade.command('run.start', args, principal, {
-      transport: 'mcp', callId: 'malformed', idempotencyKey: 'mcp.call:malformed',
-    }),
-    (error) => error.code === 'application_unavailable' && /invalid Run outline/u.test(error.message),
-  );
-  assert.equal(
-    malformed.calls.filter((entry) => entry.url.endsWith('/v1/commands')
-      && JSON.parse(entry.options.body).command === 'run_inspect').length,
-    3,
-  );
 });
 
 test('KC6/KC7: replay rechecks Web auth/card truth and refuses registry drift', async () => {

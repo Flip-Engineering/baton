@@ -505,8 +505,8 @@ const dIntent = (runId, extra = {}) => ({
 function applicationFixture() {
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', '31a@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 31a'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: '31a@example.invalid', GIT_COMMITTER_EMAIL: '31a@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 31a', GIT_COMMITTER_NAME: 'Issue 31a' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

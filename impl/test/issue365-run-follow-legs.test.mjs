@@ -66,8 +66,8 @@ async function residentDeployment(t) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 365 test'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue365@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 365 test', GIT_COMMITTER_NAME: 'Issue 365 test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue365@example.invalid', GIT_COMMITTER_EMAIL: 'issue365@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

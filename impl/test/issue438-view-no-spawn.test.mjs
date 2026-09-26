@@ -72,8 +72,8 @@ function fixture(t) {
     cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   }).trim();
   git(['init', '-q']);
-  git(['config', 'user.name', 'Issue 438']);
-  git(['config', 'user.email', 'issue438@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 438', GIT_COMMITTER_NAME: 'Issue 438' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue438@example.invalid', GIT_COMMITTER_EMAIL: 'issue438@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(['add', 'base.txt']);
   git(['commit', '-qm', 'base']);

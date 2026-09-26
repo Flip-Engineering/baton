@@ -86,8 +86,8 @@ const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).
 function gitRepo(label) {
   const repo = tmpDir(label);
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'baton-harvest@example.com'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Baton Harvest'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-harvest@example.com', GIT_COMMITTER_EMAIL: 'baton-harvest@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Harvest', GIT_COMMITTER_NAME: 'Baton Harvest' });
   writeFileSync(join(repo, 'x.md'), 'hello\n');
   execFileSync('git', ['add', '-A'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });

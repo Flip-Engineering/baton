@@ -315,8 +315,8 @@ function gitDriver(name, files, options = {}) {
   const logDir = join(tmpDir(), `${name}-log`);
   mkdirSync(logDir, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'bu@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'BU red'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'bu@example.invalid', GIT_COMMITTER_EMAIL: 'bu@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'BU red', GIT_COMMITTER_NAME: 'BU red' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

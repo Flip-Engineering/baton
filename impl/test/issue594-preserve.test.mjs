@@ -39,8 +39,8 @@ function fixture(t) {
   const checkout = join(directory, 'checkout');
   mkdirSync(checkout);
   g(['init', '--initial-branch', 'baton/lane-1', checkout]);
-  g(['config', 'user.email', 'lane@test'], checkout);
-  g(['config', 'user.name', 'lane'], checkout);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'lane@test', GIT_COMMITTER_EMAIL: 'lane@test' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'lane', GIT_COMMITTER_NAME: 'lane' });
   writeFileSync(join(checkout, 'file.txt'), 'one\n');
   g(['add', '.'], checkout);
   g(['commit', '-m', 'one'], checkout);
@@ -121,8 +121,8 @@ test('594-t6: the runtime drains a commit observation into a push, and a turn bo
   const checkout = join(directory, 'checkout');
   mkdirSync(checkout);
   g(['init', '--initial-branch', 'baton/lane-1', checkout]);
-  g(['config', 'user.email', 'lane@test'], checkout);
-  g(['config', 'user.name', 'lane'], checkout);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'lane@test', GIT_COMMITTER_EMAIL: 'lane@test' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'lane', GIT_COMMITTER_NAME: 'lane' });
   writeFileSync(join(checkout, 'file.txt'), 'one\n');
   g(['add', '.'], checkout);
   g(['commit', '-m', 'one'], checkout);
