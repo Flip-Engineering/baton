@@ -40,6 +40,7 @@ import { allocatePhysicalWorkspaceOwner, createFromBase } from '../src/worktree.
 import {
   defaultSuiteParallelism, deriveHostCapacity, hostCapacityObservation, hostCapacityShortfall,
 } from '../src/host-capacity.mjs';
+import { wakeClassFor } from '../src/wake-stream.mjs';
 
 const SWARM_ID = 'independence';
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
@@ -416,9 +417,8 @@ test('G2 continuation: the recovery demands no decision and pages nobody for one
   const { f } = await interruptedSeat(t);
   await f.recruit('bravo', { resumeFrom: 'alpha' });
 
-  const view = await f.call('view');
-  assert.equal((view.attention ?? []).find((entry) => entry.kind === 'resume_decision_required'),
-    undefined, 'no attention row names a decision a recovery waits on');
+  assert.equal(wakeClassFor({ kind: 'swarm.resume_decision_requested', payload: { swarmId: SWARM_ID } }),
+    null, 'the retired request row derives no wake class, so no party is woken to answer one');
   assert.equal(f.eventsOf('swarm.resume_decision_requested', 'bravo').length, 0,
     'no question is recorded, so no seat waits on an orchestrator');
   assert.notEqual(f.workerOf('bravo'), null, 'the one act starts the successor');
@@ -491,9 +491,8 @@ test('G2 wake: a recovery owes no notice, and the join names the orchestrator it
   await f.call('stop', { participantId: 'alpha', reason: 'Interrupted mid-lane' });
 
   await f.recruit('bravo', { resumeFrom: 'alpha' });
-  const view = await f.call('view');
-  assert.equal(view.attention.find((entry) => entry.kind === 'resume_decision_required'), undefined,
-    'the recovery owes no notice, so no party is woken to answer one');
+  assert.equal(wakeClassFor({ kind: 'swarm.resume_decision_requested', payload: { swarmId: SWARM_ID } }),
+    null, 'the retired request row derives no wake class, so the recovery owes no notice');
   assert.equal(f.seat('bravo').parentId, 'sub',
     'the join still names the party the predecessor answered to');
   assert.equal(f.guides.filter((entry) => /Resume decision for bravo/.test(entry.message)).length, 0,

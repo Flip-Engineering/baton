@@ -13,17 +13,17 @@ const SMILE = '✦(◕‿◕)✦';
 
 const frame = {
   schemaVersion: 1, kind: 'baton.wake', seq: 46460, ts: '2026-09-25T05:08:39.791Z',
-  wakeClass: 'resume_decision_required', swarmId: 'swarm-visual-20260925',
+  wakeClass: 'root_owed', swarmId: 'swarm-visual-20260925',
   participantId: 'visual-lead5', workerId: null, runId: null, actor: null,
   subject: { kind: 'participant', id: 'visual-lead5' },
-  next: 'baton swarm guide swarm-visual-20260925 visual-lead5',
+  next: 'baton swarm view swarm-visual-20260925',
   observation: false, served: { commit: '67b165685045c8f579fbbaba55d1f95c0f6f30f3', behind: 0 },
 };
 
 test('a derivable wake class renders its status word, the class, the subject and the next act', () => {
   const line = renderWakeLine(frame, { tty: true });
   assert.equal(line,
-    `${SMILE} ▲ needs you — #46460 resume_decision_required participant visual-lead5 · next: baton swarm guide swarm-visual-20260925 visual-lead5`);
+    `${SMILE} ▲ needs you — #46460 root_owed participant visual-lead5 · next: baton swarm view swarm-visual-20260925`);
 });
 
 test('an event-shaped class renders without an invented status word', () => {
@@ -49,7 +49,7 @@ test('a row that is not a wake frame renders nothing', () => {
 
 test('a frame with no subject and no next action renders the sequence and the class alone', () => {
   const line = renderWakeLine({ ...frame, subject: null, next: null }, { tty: true });
-  assert.equal(line, `${SMILE} ▲ needs you — #46460 resume_decision_required`);
+  assert.equal(line, `${SMILE} ▲ needs you — #46460 root_owed`);
 });
 
 function streams() {
@@ -68,7 +68,7 @@ test('a follow page writes the machine frame to stdout and the human line to a T
   });
   assert.equal(wrote, true);
   assert.equal(io.written.stdout, '{"machine":46460}\n');
-  assert.equal(io.written.stderr, `${SMILE} ▲ needs you — #46460 resume_decision_required participant visual-lead5 · next: baton swarm guide swarm-visual-20260925 visual-lead5\n`);
+  assert.equal(io.written.stderr, `${SMILE} ▲ needs you — #46460 root_owed participant visual-lead5 · next: baton swarm view swarm-visual-20260925\n`);
 });
 
 test('a piped stderr receives the machine frame alone', () => {

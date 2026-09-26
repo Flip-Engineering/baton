@@ -18,7 +18,7 @@ Design:
 
 1. `STATUS_DERIVATION` admits the wake classes that name a lifecycle state of their subject and
    no others. The additions are exactly: `capacity_pressure` → needs you (the operator must free
-   space), `resume_decision_required` → needs you, `reroute_proposed` → needs you,
+   space), `reroute_proposed` → needs you,
    `root_owed` → needs you, `contribution_integrated` → done, `resident_lifecycle` → ready,
    `incarnation_changed` → ready, `queued` → idle, `stalled` (already present),
    `draining` (already present). Event classes that report activity without a subject state
@@ -143,7 +143,7 @@ runtime-briefing.mjs seam rule):
    of counts derived from the table — `Routes: 12 ready · 1 degraded · 2 exhausted · 9 recruitable`.
    A brief with no routeUsage renders no section (the absence-on-empty law).
 2. Wake rows delivered into a seat's session are prefixed with the derived status word when the
-   wake class derives one (D1's table), e.g. `▲ needs you — resume_decision_required: …`. The
+   wake class derives one (D1's table), e.g. `▲ needs you — root_owed: …`. The
    prefix is applied at the seat-facing renderer (the bridge's wake-to-message seam), not to the
    frame itself; undervivable classes render unprefixed.
 
@@ -230,7 +230,7 @@ Nothing else spells the mark.
 ### One status derivation
 
 `flipStatus` (brand.mjs) gains the wake classes that name a lifecycle state of their subject:
-`capacity_pressure`, `resume_decision_required`, `reroute_proposed` and `root_owed` derive
+`capacity_pressure`, `reroute_proposed` and `root_owed` derive
 `needs you`; `contribution_integrated` derives `done`; `resident_lifecycle` and
 `incarnation_changed` derive `ready`; `queued` derives `idle`. `open` (a live swarm) derives
 `ready`. Event-shaped classes
