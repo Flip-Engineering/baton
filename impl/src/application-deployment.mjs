@@ -4042,6 +4042,14 @@ class BatonDeployment {
         // #316 (a): the degrade episode itself — since, fault class, every participant it took, the
         // window, and the next act — so the refusal a recruit draws names the fact that refused it.
         degraded,
+        // #591: the doctor's own verdict rides the row beside the subscription facts (#523): a
+        // route the doctor blocks for a non-provider reason — a credential, the harness, the
+        // route policy — keeps this row's state the provider's answer and carries the block
+        // here, so a reader that admits seats on this row refuses it instead of naming it
+        // ready. Null when the doctor holds no static block against the route.
+        staticBlock: blocked && !quotaRefused && !(code?.startsWith('provider_'))
+          ? Object.freeze({ code: doctorRow.code ?? null, summary: doctorRow.summary ?? null })
+          : null,
       });
     }));
   }
