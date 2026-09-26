@@ -5,13 +5,14 @@
 //   pins A1-A7, open questions OQ1-OQ6. Red-team: redteam-165.md (four blockers; D2-H1 the prose-parses-as-path attack this
 //   suite's A3 discriminates). Verification HEAD e371f70.
 //
-// Row inventory — every §red-first-acceptance pin becomes a row at its named stage. 12 tests = 9 red capability rows
-// (A1, A2, A3, A3-nearmiss, A4, A4-object, A5, A7, S1) + 3 green guard/pin rows (A6, P2, E1). The 9 red rows each fail
-// at HEAD at a NAMED stage (the stage string in the assertion message); the 3 green rows guard landed behavior the
-// contract says is unchanged (A6 the normalization non-refusal that binds the D2 implementation; P2 the landed
-// containment admission; E1 the verified driver exit-code map).
+// Row inventory — every §red-first-acceptance pin becomes a row at its named stage. 12 tests = 9
+// capability rows (A1, A2, A3, A3-nearmiss, A4, A4-object, A5, A7, S1) + 3 guard/pin rows (A6, P2,
+// E1). Issue #165 landed the implementation these rows describe — the driver's D1a/D2a launch
+// refusals and the interpreter's D1b/D2b axes over one shared deliverable-coverage grammar — so the
+// file drops the `-red` suffix (docs/44 rule 3) and every row passes. The last column records the
+// drafting HEAD's state, before that implementation.
 //
-//   Row   | Contract pin        | Stage (named)                     | At HEAD
+//   Row   | Contract pin        | Stage (named)                     | Drafting HEAD (e371f70)
 //   ------|-------------------- |------------------------------------|------------------------------
 //   A1    | D1a driver dir      | d1a-directory-refused             | RED — driver checks --targets presence only (run-task-wave.mjs:44-47)
 //   A2    | D2a driver coverage | d2a-coverage-refused              | RED — driver never reads the brief (run-task-wave.mjs:60, G6)
@@ -33,8 +34,7 @@
 // controls (FAR_FUTURE parsed once at module load). Static anchors are EXISTENCE/byte-string assertions only — never
 // absolute line windows (#166). NUL discipline: application.mjs / coordination-store.mjs are never read whole.
 //
-// Verified split: 9 red / 3 green — `node impl/scripts/run-suite.mjs impl/test/launch-validation-red.test.mjs` from the
-// repo root, twice (stable): tests 12 · pass 3 · fail 9 (each red row failing at its named stage — see suite-notes-165.md).
+// Verified split: 12 pass / 0 fail — `node impl/scripts/run-suite.mjs impl/test/launch-validation.test.mjs` from the repo root.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

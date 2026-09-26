@@ -10,9 +10,10 @@
 //     [--harness deepseek] [--model deepseek-v4-flash] [--effort high] [--salt-prefix xx]
 //     [--deadline-min 90]
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { openBaton } from '../../../impl/src/index.mjs';
+import { parseDeliverableDeclarations, uncoveredDeliverables } from '../../../impl/src/deliverable-coverage.mjs';
 
 const args = process.argv.slice(2);
 const take = (flag) => {
@@ -47,6 +48,40 @@ if (!take('--evidence') || !ROLE || !BRIEF || SCOPES.length === 0 || TARGETS.len
 }
 if (Buffer.byteLength(BRIEF) > 3072) { console.error('brief path suspiciously long — pass a path, not content'); process.exit(2); }
 
+// Issue #165 (contract-165 D1a/D2): the launch-time harvest-contract refusals. A directory
+// `--targets` entry and a brief whose `## Deliverables` front-matter is unreadable, malformed, or
+// not covered by `--targets` all refuse HERE — before `waves.start` — with exit 2 (the driver's
+// launch-refusal class). The driver knows the launch tree's shape and the brief's declarations, so
+// a poisoned harvest or a silently dropped deliverable is a launch error, not a wave to run.
+const refuseLaunch = (token, message) => { console.error(`${token}: ${message}`); process.exit(2); };
+
+const briefRel = BRIEF.startsWith('docs/') || BRIEF.startsWith('impl/') ? BRIEF : `docs/reference/evidence/${EVIDENCE.split('/').slice(-1)[0]}/${BRIEF}`;
+
+// D1a: `--targets` name FILES, never directories (friction-ledger App-D row 1). A path absent at
+// launch passes — the wave may create it.
+for (const target of TARGETS) {
+  const resolved = resolve(repo, target);
+  if (existsSync(resolved) && statSync(resolved).isDirectory()) {
+    refuseLaunch('target_directory_refused', `--targets "${target}" names a directory — targets name FILES, never directories (the file-only law); a directory target poisons the whole harvest (friction-ledger App-D row 1)`);
+  }
+}
+
+// D2a: the brief's optional `## Deliverables` front-matter must be readable, parseable, and covered
+// by `--targets`. An unreadable brief is a broken launch, not a wave to run.
+const briefPath = [resolve(repo, BRIEF), resolve(EVIDENCE, BRIEF), resolve(repo, briefRel)]
+  .find((candidate) => existsSync(candidate)) ?? resolve(repo, briefRel);
+let briefText;
+try { briefText = readFileSync(briefPath, 'utf8'); }
+catch { refuseLaunch('brief_unreadable', `the brief "${briefRel}" cannot be read at launch`); }
+const declarations = parseDeliverableDeclarations(briefText);
+if (declarations.malformed !== null) {
+  refuseLaunch('deliverables_malformed', `the brief "${briefRel}" carries a "## Deliverables" line that is not a strict bullet or bare path: ${declarations.malformed} — the deliverable front-matter declares paths, not prose`);
+}
+const uncovered = uncoveredDeliverables(declarations.declared, TARGETS);
+if (uncovered.length > 0) {
+  refuseLaunch('deliverables_uncovered', `--targets does not cover the brief's deliverable(s): ${uncovered.join(' · ')} — every brief-named deliverable must be in --targets (the file-only harvest law)`);
+}
+
 mkdirSync(EVIDENCE, { recursive: true });
 const ATTEMPT = new Date().toISOString();
 const SALT = `${SALT_PREFIX}${ATTEMPT.replace(/[-:T.Z]/g, '').slice(0, 14)}`;
@@ -57,7 +92,6 @@ const RECEIPT_PATH = resolve(EVIDENCE, `${ROLE}-receipt.json`);
 const persist = () => writeFileSync(RECEIPT_PATH, `${JSON.stringify(receipts, null, 2)}\n`);
 const step = (name, receipt) => { receipts.steps.push({ step: name, receipt: receipt ?? null }); persist(); log(`${name}: ${JSON.stringify(receipt)?.slice(0, 140) ?? 'done'}`); };
 
-const briefRel = BRIEF.startsWith('docs/') || BRIEF.startsWith('impl/') ? BRIEF : `docs/reference/evidence/${EVIDENCE.split('/').slice(-1)[0]}/${BRIEF}`;
 const OBJECTIVE = [
   `[attempt: ${SALT_PREFIX}-${ATTEMPT}] Your complete brief is ${briefRel} — read it IN FULL first; it carries your read-order with verified anchors, your decisions/tasks, the campaign laws, and your deliverables. Then execute exactly.`,
   `Deliverables (edit ONLY these): ${TARGETS.join(' · ')}.`,
