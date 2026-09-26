@@ -951,6 +951,15 @@ export class BatonWebApplicationFacade {
   async _commandOnce(name, args, idempotencyKey, principal, context) {
     await this._attestSession(principal, context);
     const result = await this.client.command(name, args, idempotencyKey);
+    // The start receipt names the Run it created: a receipt whose identity differs from the
+    // admitted intent is a mismatched dispatch, refused before the answer composes. (The retired
+    // outline follow-up used to catch this; the check belongs at the receipt boundary itself.)
+    if (name === 'run.start' && typeof args?.intent?.runId === 'string') {
+      const answered = result?.runId ?? result?.result?.runId ?? null;
+      if (answered !== null && answered !== args.intent.runId) {
+        throw bridgeError(`Remote Baton started a mismatched Run identity: ${answered}`, 'application_unavailable');
+      }
+    }
     // Issue #314 law (d), docs/49 §5: a core MUTATION answers the #302 receipt, and a long verb's
     // answer adds the wake handoff its follow-up rides — the call returns as soon as the receipt
     // exists, never holding the turn on the operation's settle (the retired `_inspectOutline`
