@@ -228,3 +228,5 @@ def run_res(r: Result<&1, &1, U32 & String, String>) -> T.RunRes:
       (code, text) = error
       T.RSpawn{text}
     case Done{value}: run_res_done(value)
+def prepend(h: String, t: List<String>) -> List<String>:
+  Con{h, t}
