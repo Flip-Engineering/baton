@@ -129,7 +129,6 @@ function entryProcess(f) {
   const child = spawn(process.execPath, [ENTRY], {
     cwd: f.repo, env: discoveryEnv(f), stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const frames = [];
   const waiters = new Set();
   let stderr = '';
   let exited = null;
@@ -139,7 +138,6 @@ function entryProcess(f) {
     if (!line.trim()) return;
     let frame;
     try { frame = JSON.parse(line); } catch { return; }
-    frames.push(frame);
     for (const waiter of [...waiters]) {
       if (!waiter.match(frame)) continue;
       waiters.delete(waiter);
@@ -147,26 +145,18 @@ function entryProcess(f) {
     }
   });
   return {
-    child,
-    frames,
-    stderr: () => stderr,
-    exited: () => exited,
     send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
     /** Await the first frame this predicate accepts; a process that ends first reports the exit. */
     await: (match, { timeoutMs = DELIVERY_WAIT_MS, label = 'frame' } = {}) => new Promise((resolve, reject) => {
-      const waiter = { match, resolve: (frame) => { clearInterval(poll); resolve(frame); } };
+      let poll = null;
+      const stop = () => { clearInterval(poll); clearTimeout(timer); waiters.delete(waiter); };
+      const waiter = { match, resolve: (frame) => { stop(); resolve(frame); } };
+      const fail = (message) => { stop(); reject(new Error(message)); };
       waiters.add(waiter);
-      const poll = setInterval(() => {
-        if (exited === null) return;
-        waiters.delete(waiter);
-        clearInterval(poll);
-        reject(new Error(`the entry exited (${JSON.stringify(exited)}) before ${label}; stderr: ${stderr.slice(-800)}`));
+      poll = setInterval(() => {
+        if (exited !== null) fail(`the entry exited (${JSON.stringify(exited)}) before ${label}; stderr: ${stderr.slice(-800)}`);
       }, 50);
-      setTimeout(() => {
-        waiters.delete(waiter);
-        clearInterval(poll);
-        reject(new Error(`timed out waiting for ${label}; stderr: ${stderr.slice(-800)}`));
-      }, timeoutMs).unref?.();
+      const timer = setTimeout(() => fail(`timed out waiting for ${label}; stderr: ${stderr.slice(-800)}`), timeoutMs);
     }),
     close: async () => {
       child.stdin.end();
