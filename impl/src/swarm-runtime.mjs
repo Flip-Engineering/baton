@@ -7456,8 +7456,9 @@ export class SwarmRuntime {
       ].join('\n'));
     }
     // Issue #525 D6: EVERY resume-from successor reads the recovery in one section — who it
-    // continues, how that seat's turn ended, what it carries, the objective it is picking up, and
-    // the standing rule that the orchestrator's answer decides whether any of it continues. The
+    // continues, how that seat's turn ended, what it carries, and the objective it is picking up.
+    // Issue #572: the section states that objective as the work the seat continues from; a decision
+    // the resume needs is a notice to its orchestrator, and no seat is parked for one. The
     // `## Re-routed` section above keeps the fault mechanics; this one is the recovery itself.
     if (predecessor) {
       const recovery = [`## Recovery from ${predecessor.participantId}`];
@@ -7473,9 +7474,9 @@ export class SwarmRuntime {
       recovery.push(predecessor.lastCheckpoint
         ? `- Last checkpoint: ${predecessor.lastCheckpoint.sha} (retained ref ${predecessor.lastCheckpoint.ref})`
         : '- Last checkpoint: none was recorded for this predecessor.');
-      recovery.push('- First reading: this section and your orchestrator\'s answer to this seat'
-        + ' (`swarm.guide`) — the predecessor objective above is a proposal that answer ratifies,'
-        + ' supersedes or retires.');
+      recovery.push('- Continue from the predecessor\'s objective above. A decision the resume needs'
+        + ' goes to your orchestrator as a notice — the turn report, or a contribution\'s'
+        + ' `needsFromOthers` addressed to it.');
       blocks.push(recovery.join('\n'));
     }
     if (predecessor) {

@@ -49,8 +49,9 @@ stops it. A recovered seat is work the runtime can perform, so it performs it.
   predecessor's parked guidance into the brief and marks each message delivered.
 - `swarm.resume_decision_requested` and `swarm.resume_decision_answered` remain in the event fold,
   so the ledgers of deployments that ran the mechanism still replay. No writer emits them.
-- The `resume_decision_required` wake class and its status word remain in the projection tables for
-  the same reason: historical rows still render.
+- The `resume_decision_required` wake class and its status word leave the projection tables (issue
+  #572 remainder): the class named a state the runtime does not produce. The two event kinds stay
+  in the fold so those ledgers replay, and a row of either kind derives no wake row.
 
 ## Design sections withdrawn
 

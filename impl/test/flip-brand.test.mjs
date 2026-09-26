@@ -53,7 +53,7 @@ test('ONE function derives the closed status set from the projection classes', (
   // canonical run phases that hold work for a person join them (issue #585 follow-up: the desk and
   // the terminal frame both read a run's phase through this table).
   const wakeDerivation = {
-    capacity_pressure: 'needs you', resume_decision_required: 'needs you',
+    capacity_pressure: 'needs you',
     reroute_proposed: 'needs you', root_owed: 'needs you',
     contribution_integrated: 'done', resident_lifecycle: 'ready',
     incarnation_changed: 'ready', queued: 'idle', open: 'ready',
@@ -124,7 +124,7 @@ test('ONE rule for the mark: flipHumanLine composes a human line, flipStatusPref
   // An underivable class renders the text with no invented status word.
   assert.equal(flipHumanLine('x', { statusClass: 'contribution_recorded' }), `${SMILE} x`);
   // The wake-row prefix is the same derivation, spelled once.
-  assert.equal(flipStatusPrefix('resume_decision_required'), '▲ needs you — ');
+  assert.equal(flipStatusPrefix('root_owed'), '▲ needs you — ');
   assert.equal(flipStatusPrefix('contribution_recorded'), '');
   assert.equal(flipStatusPrefix(null), '');
   // flipAnnounce keeps its TTY gate and reads the same composer.

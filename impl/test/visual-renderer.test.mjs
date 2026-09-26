@@ -51,7 +51,7 @@ test('timeline wake rows carry the derived status word, and the bare class when 
       attached: true,
       lastSeq: 5,
       items: [
-        { seq: 4, wakeClass: 'resume_decision_required', subject: 'worker:render' },
+        { seq: 4, wakeClass: 'root_owed', subject: 'worker:render' },
         { seq: 5, wakeClass: 'contribution_recorded', subject: 'worker:render', next: 'contribution.settle worker:render' },
       ],
     },
@@ -62,7 +62,7 @@ test('timeline wake rows carry the derived status word, and the bare class when 
   assert.ok(lines.includes('  #5  contribution_recorded  worker:render'), timeline);
   assert.ok(lines.includes('      → contribution.settle worker:render'), timeline);
   // A derivable class renders the closed status word, never the raw class name.
-  assert.equal(timeline.includes('resume_decision_required'), false);
+  assert.equal(timeline.includes('root_owed'), false);
 });
 
 test('MCP presentation carries static text, optional animation frames and refresh arguments', () => {
