@@ -4525,6 +4525,15 @@
           ]
         },
         {
+          "name": "startAttentionDelivery",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
           "name": "_swarmRuntime",
           "ordinal": 0,
           "size": 123,
@@ -6355,7 +6364,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 29,
+          "size": 24,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -7162,6 +7171,15 @@
           "evidence": [
             "observation:ledger_name",
             "observation:ledger_port"
+          ]
+        },
+        {
+          "name": "waitForCommit",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -13675,16 +13693,25 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1165,
+          "size": 1139,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
           ]
         },
         {
+          "name": "startAttentionDelivery",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
           "name": "close",
           "ordinal": 0,
-          "size": 7,
+          "size": 8,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -16718,7 +16745,7 @@
         {
           "name": "_flushLedgerSync",
           "ordinal": 0,
-          "size": 8,
+          "size": 11,
           "seam": "observation",
           "evidence": [
             "observation:ledger_name"
@@ -21441,7 +21468,7 @@
         {
           "name": "releaseWriterLease",
           "ordinal": 0,
-          "size": 44,
+          "size": 45,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation"
@@ -21731,14 +21758,13 @@
         {
           "name": "_deliver",
           "ordinal": 0,
-          "size": 102,
+          "size": 92,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
             "effect:action_verb",
             "admission:policy_gate",
             "observation:log_append",
-            "observation:durable_read",
             "admission:runtime_admission_port"
           ]
         },
@@ -21751,6 +21777,16 @@
             "effect:adapter_verb",
             "admission:policy_gate",
             "observation:log_append"
+          ]
+        },
+        {
+          "name": "recordDeliveryMessage",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
           ]
         }
       ]
