@@ -599,7 +599,12 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
           actor: 'worker',
           harness: coordinator._harnessOf(sourceVendor),
         };
-        if (coordinator._fatalError) {
+        // An unlogged reap (an explicit emergency stop whose own audit rows cannot be written)
+        // settles on the terminal it observes, exactly as the fatal case does — without it the
+        // reap would wait forever while the process it is reaping is already gone.
+        const unloggedReap = coordinator._fatalStopWaiters?.has?.(observed.worker) === true;
+        if (coordinator._fatalError
+          || (unloggedReap && ['kill.confirmed', 'lifecycle.process_closed'].includes(observed.kind))) {
           coordinator._observeEmergencyTerminal(observed, sourceVendor);
           return;
         }

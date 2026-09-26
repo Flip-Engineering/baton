@@ -3983,7 +3983,16 @@ export class Coordinator {
       if (!runtimeRemoved) return { ok: false, result: 'cleanup_failed' };
       return { ok: true, result: 'already_dead' };
     }
-    return this._beginStop(handle, 'kill', undefined, actor, { rule });
+    try {
+      return await this._beginStop(handle, 'kill', undefined, actor, { rule });
+    } catch (error) {
+      // #562: the stop's own audit rows could not be written. A caller that explicitly asked for
+      // an emergency stop reaps anyway — reaping is the act it asked for, the unlogged shape says
+      // the audit is missing, and the fatal branch above answers the same way. Every other stop
+      // fails its act with the append's typed error, exactly as every other act does.
+      if (opts.emergency !== true) throw error;
+      return this._emergencyKillUnlogged(handle);
+    }
   }
 
   _emergencyKillUnlogged(handle) {

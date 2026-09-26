@@ -1033,7 +1033,7 @@ test('PL7/PL10: poisoned emergency kill retries a dead-but-unconfirmed process i
   assert.equal(killCalls >= 3, true); assert.equal(coordinator._workers.get(handle.id).processRef.state, 'closed'); assert.equal(coordinator._workers.get(handle.id).localAuthority, false);
 });
 
-test('PL7/PL10: spawn-time log poison cannot exempt locally owned pending resources from drain', async () => {
+test('PL7/PL10: a failed spawn record settles its handle so no later act is stranded', async () => {
   let releaseWorktree; const worktreeGate = new Promise((resolve) => { releaseWorktree = resolve; });
   const rawLog = new Log(mkdtempSync(join(tmpdir(), 'phase51-pending-poison-log-'))); const append = rawLog.append.bind(rawLog);
   rawLog.append = (event) => { if (event.kind === 'lifecycle.spawned' && event.actor === 'orchestrator') throw new Error('fixture log failure'); return append(event); };
@@ -1046,10 +1046,17 @@ test('PL7/PL10: spawn-time log poison cannot exempt locally owned pending resour
     referee: async () => ({}), route: () => 'stub', stopDeadlineMs: 100,
   });
   await assert.rejects(coordinator.spawn('stub', brief(), { taskId: 'phase51-pending-poison', model: 'stub-model', effort: 'low' }), (error) => error.code === 'operational_log_unavailable');
-  const owned = [...coordinator._workers.values()][0]; assert.equal(owned.status, 'pending'); assert.equal(owned.localAuthority, true); assert.equal(owned.runtimeScope.active, true);
-  assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
-  assert.equal((await withLiveLoop(() => coordinator.kill(owned.id, 'policy', { emergency: true }))).result, 'confirmed_unlogged');
-  releaseWorktree({ path: tmpdir() }); await until(() => removed > 0, 'pending poison cleanup');
+  const owned = [...coordinator._workers.values()][0];
+  assert.equal(owned.status, 'exited', 'the act that could not record its spawn settles its own handle');
+  assert.equal(owned.localAuthority, false, 'and gives up the local authority a stop would need');
+  assert.equal(owned.runtimeScope.active, true, 'the runtime scope this attempt created is the reap\'s to remove');
+  // #562: the durable claim the failed spawn left behind is never re-dispatched into a stranded
+  // refusal, so the NEXT act is attempted normally and fails on its own append, not on the claim.
+  const second = await coordinator.spawn('stub', brief(), { taskId: 'phase51-second-spawn', model: 'stub-model', effort: 'low' })
+    .then(() => null, (error) => error);
+  assert.equal(second?.code, 'operational_log_unavailable',
+    'the next spawn is attempted normally — never refused as already_assigned');
+  releaseWorktree({ path: tmpdir() }); await until(() => removed > 0, 'failed-spawn cleanup');
 });
 
 test('PL7: verification and its deferred cleanup remain writer-authority operations', async () => {
@@ -1095,7 +1102,7 @@ test('PL7/PL10: runtime cleanup failure during verification is retained and retr
   assert.equal(runtimeRemovals, 2); assert.equal(coordinator._workers.get(handle.id).runtimeScope.active, false); assert.equal(coordinator.closeAuthority(), true);
 });
 
-test('PL3/PL10: poisoned-log emergency close still requires exact source and process correlation', async () => {
+test('PL3/PL10: an unlogged emergency close still requires exact source and process correlation', async () => {
   const rawLog = new Log(mkdtempSync(join(tmpdir(), 'phase51-emergency-correlation-log-'))); const append = rawLog.append.bind(rawLog); let fail = false;
   rawLog.append = (event) => { if (fail) throw new Error('fixture disk full'); return append(event); };
   const coordination = coordinationForLog(rawLog); let killCalls = 0; let removed = 0;
@@ -1107,14 +1114,21 @@ test('PL3/PL10: poisoned-log emergency close still requires exact source and pro
   });
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-emergency-correlation', model: 'stub-model', effort: 'low' });
   await until(() => coordinator._workers.get(handle.id)?.processRef, 'emergency source process');
-  fail = true; adapter.emit('content.message', handle.id, { text: 'poison next append' });
-  adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 999, pid: 9999, processGroupId: 9999, code: 0, signal: null, ready: false });
-  await until(() => killCalls > 0, 'emergency kill after mismatched close');
   const owned = coordinator._workers.get(handle.id);
+  // #562: the log refuses every row, so the ordinary stop fails its act and the explicit
+  // emergency stop reaps unlogged — the reap the fatal branch used to provide through the poison.
+  fail = true;
+  await assert.rejects(coordinator.kill(handle.id), (error) => error.code === 'operational_log_unavailable');
+  const emergency = coordinator.kill(handle.id, 'policy', { emergency: true });
+  await until(() => killCalls > 0, 'emergency kill in flight');
+  // The log works again, so the terminals the reap correlates on are observable.
+  fail = false;
+  adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 999, pid: 9999, processGroupId: 9999, code: 0, signal: null, ready: false });
   assert.equal(owned.processRef.state, 'initializing'); assert.equal(owned.processRef.pid, 4242); assert.equal(owned.localAuthority, true); assert.equal(removed, 0);
   adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
   await until(() => removed === 1 && owned.localAuthority === false, 'exact emergency cleanup');
   assert.equal(owned.processRef.state, 'closed'); assert.equal(owned.localAuthority, false);
+  assert.deepEqual(await emergency, { ok: true, result: 'confirmed_unlogged', auditUnavailable: true });
 });
 
 test('PL3: adapter callback source identity cannot close another adapter worker', async () => {
