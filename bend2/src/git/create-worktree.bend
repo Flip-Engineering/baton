@@ -59,7 +59,7 @@ def cw_stage3_pick(r: T.RunRes, bc: String, path: String) -> CW:
 def cw_stage3(bc: String, repo: String, branch: String, path: String) -> IO(CW):
   +p2 = path
   do IO<CW>:
-    r : T.RunRes <- Git.runFull(Con{"/bin/ls", Con{"-d", Con{p2, Nil{}}}}, ".")
+    r : T.RunRes <- Git.runFull(["/bin/ls","-d","--",p2],repo)
     IO.pure(CW, cw_stage3_pick(r, bc, p2))
 
 def cw_go3(r: CW, repo: String, branch: String, path: String) -> IO(CW):

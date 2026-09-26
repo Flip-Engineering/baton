@@ -130,7 +130,7 @@ def run_all4(b: String, acc: String) -> IO(Unit):
 def run_all3(b: String, acc: String) -> IO(Unit):
   +a3 = acc
   +b2 = b
-  IO.bind(String, Unit, chk_path_exists(".scratch/bend2-git-test", ".scratch/bend2-git-test/.scratch/bend2-git-wt", b2),
+  IO.bind(String, Unit, chk_path_exists(".scratch/bend2-git-test", ".scratch/bend2-git-wt", b2),
     f3 => run_all4(b2, Tx.str_cat(a3, f3)))
 
 def run_all2(b: String, acc: String) -> IO(Unit):
