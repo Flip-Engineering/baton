@@ -12,6 +12,17 @@ import { OmpRpcProcess } from '../src/omp-rpc.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Issue #586: wait for the fact an assertion needs, never a fixed wall-clock guess. The 150 ms
+ * this file slept for the child's exit lost under load: a child that had not exited yet left
+ * `notify()` able to write its frame, so the "a later write refuses" row failed 1 run in 3. */
+const waitFor = async (predicate, what, timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(5);
+  }
+};
+
 function exitedChild() {
   const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: ['pipe', 'pipe', 'pipe'] });
   return new Promise((resolve) => child.once('close', () => resolve(child)));
@@ -47,7 +58,7 @@ test('#383 child (b): OmpRpcProcess guards its child at start and reports the pi
     onTransportStall: (row) => stalls.push(row),
   });
   client.start();
-  await sleep(150);
+  await waitFor(() => client._exited === true, 'the child to exit');
   let uncaught = null;
   const onUncaught = (error) => { uncaught = error; };
   process.once('uncaughtException', onUncaught);
