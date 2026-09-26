@@ -2017,12 +2017,12 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     // Issue #443: the swarm-level policy. A row changes the fields it NAMES and leaves the rest
     // standing, so the record reads exactly what an orchestrator declared — the runtime resolves
     // the DEFAULTS (manual, no billing preference) when it derives the row a view renders, never
-    // by writing them into the fold.
+    // by writing them into the fold. #572 retired `resumeContinuation`: a row from a ledger that
+    // still carries it folds without the field, so no reader sees a policy the runtime dropped.
     const policy = Object.freeze({
       ...(swarm.policy ?? {}),
       ...(p.rerouteOnProviderFault === undefined ? {} : { rerouteOnProviderFault: p.rerouteOnProviderFault }),
       ...(p.reroutePreferApi === undefined ? {} : { reroutePreferApi: p.reroutePreferApi }),
-      ...(p.resumeContinuation === undefined ? {} : { resumeContinuation: p.resumeContinuation }),
     });
     swarms.set(p.swarmId, Object.freeze({
       ...swarm, policy, actor: meta.actor, seq: meta.seq, ts: meta.ts,

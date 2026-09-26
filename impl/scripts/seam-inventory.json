@@ -12788,7 +12788,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 69,
+          "size": 70,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13437,7 +13437,7 @@
         {
           "name": "_policyOf",
           "ordinal": 0,
-          "size": 10,
+          "size": 8,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13693,7 +13693,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1140,
+          "size": 1070,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13711,7 +13711,7 @@
         {
           "name": "close",
           "ordinal": 0,
-          "size": 8,
+          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -14144,15 +14144,6 @@
           ]
         },
         {
-          "name": "_performDeferredStart",
-          "ordinal": 0,
-          "size": 223,
-          "seam": "admission",
-          "evidence": [
-            "admission:swarm_refusal"
-          ]
-        },
-        {
           "name": "_recordGuidanceSent",
           "ordinal": 0,
           "size": 20,
@@ -14226,16 +14217,6 @@
           ]
         },
         {
-          "name": "_askResumeDecision",
-          "ordinal": 0,
-          "size": 19,
-          "seam": "effect",
-          "evidence": [
-            "delegates:effect",
-            "delegates:observation"
-          ]
-        },
-        {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
           "size": 377,
@@ -14303,7 +14284,7 @@
         {
           "name": "_landingFailureDetail",
           "ordinal": 0,
-          "size": 53,
+          "size": 56,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -14328,9 +14309,36 @@
           ]
         },
         {
+          "name": "_withdrawIntegration",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_withdrawSupersededIntegrations",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_withdrawIntegrationForSupersession",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 241,
+          "size": 231,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -14348,15 +14356,6 @@
           ]
         },
         {
-          "name": "_gateSelection",
-          "ordinal": 0,
-          "size": 40,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
           "name": "_recordIntegrationRow",
           "ordinal": 0,
           "size": 4,
@@ -14368,7 +14367,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1278,
+          "size": 1209,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -23697,7 +23696,7 @@
         {
           "name": "_bindStrictProviderGovernance",
           "ordinal": 0,
-          "size": 25,
+          "size": 24,
           "seam": "admission",
           "evidence": [
             "admission:typed_refusal"
@@ -23816,7 +23815,7 @@
         {
           "name": "_normalizeResumeRequest",
           "ordinal": 0,
-          "size": 53,
+          "size": 52,
           "seam": "admission",
           "evidence": [
             "admission:typed_refusal",
@@ -24290,7 +24289,7 @@
         {
           "name": "_assertReplReviewProjection",
           "ordinal": 0,
-          "size": 26,
+          "size": 23,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -25474,7 +25473,7 @@
         {
           "name": "normalizeSemanticAuthority",
           "ordinal": 0,
-          "size": 24,
+          "size": 19,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
