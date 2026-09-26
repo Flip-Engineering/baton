@@ -1396,7 +1396,19 @@ export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
   if (opts.expectedBranch !== undefined && meta.branch !== opts.expectedBranch) throw sparseError('owned worktree branch metadata disagrees with admitted branch', 'worker_sparse_metadata_invalid');
   if (opts.expectedBaseSha !== undefined && meta.baseSha !== opts.expectedBaseSha) throw sparseError('owned worktree base metadata disagrees with admitted base', 'worker_sparse_metadata_invalid');
   try { gitFile(['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], dir, { stdio: 'ignore' }); }
-  catch { throw new UnknownWorktreeError('owned worktree base identity mismatch'); }
+  catch {
+    // Issue #603: a lane re-cut onto a moved target keeps its history connected to the recorded
+    // base through their fork point; a rewound history or a replaced one does not, and refuses.
+    const fork = (() => {
+      try { return gitFile(['merge-base', meta.baseSha, 'HEAD'], dir, { encoding: 'utf8' }).trim(); }
+      catch { return null; }
+    })();
+    const rewound = fork !== null && (() => {
+      try { gitFile(['merge-base', '--is-ancestor', 'HEAD', meta.baseSha], dir, { stdio: 'ignore' }); return true; }
+      catch { return false; }
+    })();
+    if (fork === null || rewound) throw new UnknownWorktreeError('owned worktree base identity mismatch');
+  }
   const expectedIdentity = opts.sparseCheckoutIdentity === undefined ? meta.sparseCheckoutIdentity : normalizeSparseCheckoutIdentity(opts.sparseCheckoutIdentity);
   if (!sameSparseIdentity(meta.sparseCheckoutIdentity, expectedIdentity)) throw sparseError('owned worktree sparse deployment identity mismatch', 'worker_sparse_projection_changed');
   let liveIdentity;
