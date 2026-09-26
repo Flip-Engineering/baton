@@ -16,13 +16,16 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 // #207 (row-admission-align): the run.start objective cap comes from the frame-economics registry —
 // Decision 8's no-re-declare law (the interpreter never re-declares a cataloged lane's byte
 // literal). limits.mjs is pure data + one refusal-text composer and imports only node:crypto, so
 // the lane's W5 transitive-graph law (no reachable module runs a top-level wave start) holds.
 import { FRAME_LIMITS } from './limits.mjs';
+// Issue #165 (contract-165 D2b): the deliverable-coverage predicate rides the objective render —
+// one grammar, one normalization, one law shared with the driver's launch check.
+import { parseDeliverableDeclarations, uncoveredDeliverables } from './deliverable-coverage.mjs';
 
 // ---------------------------------------------------------------------------
 // Refusal vocabulary (D — field/role-named, recursive).
@@ -312,6 +315,7 @@ function admitHarvestEntry(entry, repoRoot) {
   if (typeof entry === 'string') {
     if (entry.length === 0) throw harvestInvalid('a harvest "paths" entry must be a non-empty string');
     assertHarvestContained(entry, repoRoot);
+    assertHarvestFileShaped(entry, repoRoot);
     return { path: entry };
   }
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw harvestInvalid('a harvest "paths" entry must be a string or an object');
@@ -321,6 +325,7 @@ function admitHarvestEntry(entry, repoRoot) {
   if (typeof entry.path !== 'string' || entry.path.length === 0) throw harvestInvalid('a harvest "paths" entry "path" must be a non-empty string');
   if (entry.mustContain !== undefined && typeof entry.mustContain !== 'string') throw harvestInvalid('a harvest "paths" entry "mustContain" must be a string');
   assertHarvestContained(entry.path, repoRoot);
+  assertHarvestFileShaped(entry.path, repoRoot);
   const out = { path: entry.path };
   if (entry.mustContain !== undefined) out.mustContain = entry.mustContain;
   return out;
@@ -337,22 +342,52 @@ function assertHarvestContained(path, repoRoot) {
   }
 }
 
+// D1b (#165): a harvest path naming a directory in the LAUNCH working tree refuses at admission —
+// the file-only law applied to the harvest field (the scope class refuses a bare directory the same
+// way, admitMember above). An absent path passes: the wave may create it, and the harvest-time blob
+// check (harvestOne) stays the backstop for a path that ends as a directory at the result sha.
+function assertHarvestFileShaped(path, repoRoot) {
+  if (!repoRoot) return;
+  const resolved = resolve(repoRoot, path);
+  if (existsSync(resolved) && statSync(resolved).isDirectory()) {
+    throw harvestInvalid(`the harvest path "${path}" names a directory — harvest paths name FILES (the file-only law)`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // D5 — render each member's objective from its objectiveRef (containment).
 // ---------------------------------------------------------------------------
 
-function renderObjective(repoRoot, member, salt) {
+function renderObjective(repoRoot, member, salt, harvestPaths = []) {
   const ref = member.objectiveRef;
   if (!repoRoot) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" cannot be resolved (no repository root)`);
   if (escapesRepo(repoRoot, ref)) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" escapes the repository root`);
   const target = resolve(repoRoot, ref);
   if (!existsSync(target)) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" does not exist`);
   const text = readFileSync(target, 'utf8');
+  // D2b (#165): the member's objectiveRef brief is the same source of truth as the driver's
+  // `--brief`, so its optional `## Deliverables` front-matter is coverage-checked against
+  // harvest.paths here, before waves.start — riding this existing read, adding no new I/O.
+  assertDeliverableCoverage(member, text, harvestPaths);
   // The salt line (`[attempt: <salt> <role>] `) mirrors createWaveDriver's own prefix
   // (wave-driver.mjs:334) so the wave's attempt marker rides the member's committed report and the
   // D4 harvest can attribute it (B2). The interpreter is the sole salt owner here (createWave does
   // not salt), so the wave starts with saltObjectives off implicitly (raw objective already salted).
   return `[attempt: ${salt} ${member.role}] ${text}`;
+}
+
+// D2b (#165): `deliverables ⊆ harvest.paths` over the one-pass normalization. A malformed section
+// refuses the same way as an uncovered one — the coverage guarantee is never silently vacuous.
+function assertDeliverableCoverage(member, text, harvestPaths) {
+  const { declared, malformed } = parseDeliverableDeclarations(text);
+  if (malformed !== null) {
+    throw harvestInvalid(`the member "${member.role}" objectiveRef brief carries a "## Deliverables" line that is not a strict bullet or bare path: ${malformed} — the deliverable front-matter declares paths, not prose`);
+  }
+  if (declared.length === 0) return;
+  const uncovered = uncoveredDeliverables(declared, harvestPaths);
+  if (uncovered.length > 0) {
+    throw harvestInvalid(`the member "${member.role}" objectiveRef brief declares deliverable(s) absent from harvest.paths: ${uncovered.join(' · ')} — every brief-named deliverable must be in harvest.paths (the file-only harvest law)`);
+  }
 }
 
 // #207 — the admission alignment: a member objective the run machinery cannot start refuses HERE
@@ -589,7 +624,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   // machinery is touched — a brief the members cannot start refuses the SPEC at compile/admit.
   const salt = randomUUID();
   const rendered = spec.members.map((member) => {
-    const objective = renderObjective(repoRoot, member, salt);
+    const objective = renderObjective(repoRoot, member, salt, spec.harvest.paths);
     assertObjectiveAdmissible(member, objective);
     const renderedMember = {
       role: member.role,
