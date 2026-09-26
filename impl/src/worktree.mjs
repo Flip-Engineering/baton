@@ -1836,7 +1836,19 @@ export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
   if (opts.expectedBranch !== undefined && meta.branch !== opts.expectedBranch) throw sparseError('owned worktree branch metadata disagrees with admitted branch', 'worker_sparse_metadata_invalid');
   if (opts.expectedBaseSha !== undefined && meta.baseSha !== opts.expectedBaseSha) throw sparseError('owned worktree base metadata disagrees with admitted base', 'worker_sparse_metadata_invalid');
   try { gitFile(['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], dir, { stdio: 'ignore' }); }
-  catch { throw new UnknownWorktreeError('owned worktree base identity mismatch'); }
+  catch {
+    // Issue #603: a lane re-cut onto a moved target keeps its history connected to the recorded
+    // base through their fork point; a rewound history or a replaced one does not, and refuses.
+    const fork = (() => {
+      try { return gitFile(['merge-base', meta.baseSha, 'HEAD'], dir, { encoding: 'utf8' }).trim(); }
+      catch { return null; }
+    })();
+    const rewound = fork !== null && (() => {
+      try { gitFile(['merge-base', '--is-ancestor', 'HEAD', meta.baseSha], dir, { stdio: 'ignore' }); return true; }
+      catch { return false; }
+    })();
+    if (fork === null || rewound) throw new UnknownWorktreeError('owned worktree base identity mismatch');
+  }
   const expectedIdentity = opts.sparseCheckoutIdentity === undefined ? meta.sparseCheckoutIdentity : normalizeSparseCheckoutIdentity(opts.sparseCheckoutIdentity);
   if (!sameSparseIdentity(meta.sparseCheckoutIdentity, expectedIdentity)) throw sparseError('owned worktree sparse deployment identity mismatch', 'worker_sparse_projection_changed');
   let liveIdentity;
@@ -1851,19 +1863,24 @@ export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
 // ensureBatonExcluded
 // ---------------------------------------------------------------------------
 
-/** Idempotently ensures '.baton/' is present in Git's info/exclude for repoRoot, preserving
- * existing content. Ask Git for the path because `.git` is a file in linked worktrees.
+/** Idempotently ensures Baton's standing exclusions — '.baton/' and macOS Finder's
+ * '.DS_Store' (issue #602: an unignored `.DS_Store` inside a seat checkout read as untracked
+ * work and marked every checkout dirty) — are present in Git's info/exclude for repoRoot,
+ * preserving existing content. info/exclude lives in the common git dir, so one write covers
+ * every linked worktree, and it applies under the global-config-stripped environments Baton's
+ * own git calls run in. Ask Git for the path because `.git` is a file in linked worktrees.
  * Additive export per RECONCILIATION.md D7's addendum (C6). */
 export function ensureBatonExcluded(repoRoot) {
   const rawExcludePath = sh('git', ['rev-parse', '--git-path', 'info/exclude'], repoRoot);
   const excludePath = isAbsolute(rawExcludePath) ? rawExcludePath : pathResolve(repoRoot, rawExcludePath);
   let existing = '';
   if (existsSync(excludePath)) existing = readFileSync(excludePath, 'utf8');
-  const lines = existing.split('\n');
-  if (lines.some((l) => l.trim() === '.baton/')) return; // already present — no-op
+  const lines = existing.split('\n').map((l) => l.trim());
+  const missing = ['.baton/', '.DS_Store'].filter((entry) => !lines.includes(entry));
+  if (missing.length === 0) return; // already present — no-op
   const withNewline = existing.length > 0 && !existing.endsWith('\n') ? existing + '\n' : existing;
   mkdirSync(dirname(excludePath), { recursive: true });
-  writeFileSync(excludePath, `${withNewline}.baton/\n`, 'utf8');
+  writeFileSync(excludePath, `${withNewline}${missing.join('\n')}\n`, 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -3307,6 +3324,11 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   let registrationsBeforePrune = [];
   try { registrationsBeforePrune = listWorktrees(repoRoot); }
   catch (err) { report.errors.push(`registration-scan: ${err.message || err}`); }
+  // Issue #602: the open observes every seat checkout after this pass, so the standing
+  // exclusions are ensured HERE — before any workspace row can read Finder metadata inside a
+  // checkout as untracked work.
+  try { ensureBatonExcluded(repoRoot); }
+  catch (err) { report.errors.push(`exclude-ensure: ${err.message || err}`); }
   // A shared repository is not an exclusive controller namespace. Verification and
   // integration handles own their explicit cleanup; directory placement alone proves neither
   // abandonment nor process closure. Until these operations carry durable ownership/closure
@@ -3327,6 +3349,14 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       const root = authorityRoot(repoRoot, kind, { create: false });
       if (!root) continue;
       for (const entry of readdirSync(root)) {
+        // Issue #602 (the 04:40Z restart outage): a plain file here — Finder drops a
+        // `.DS_Store` into any `.baton` folder an operator opens — is not a sandbox and can
+        // never be a controller's cwd, so it is skipped. Symlinks and confinement failures
+        // still report: this scan retains, never removes, and an escape attempt is an error.
+        let entryStat = null;
+        try { entryStat = lstatSync(join(root, entry)); }
+        catch { /* vanished between the listing and here — the child check reports ENOENT */ }
+        if (entryStat && !entryStat.isSymbolicLink() && !entryStat.isDirectory()) continue;
         try {
           const path = authorityChild(repoRoot, kind, entry, { kind: 'directory', mustExist: true });
           retainSandbox(path, kind);

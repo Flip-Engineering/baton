@@ -7,7 +7,8 @@ import { once } from 'node:events';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { freshVerifySandbox, listWorktrees, reconcile } from '../src/worktree.mjs';
+import { dirname } from 'node:path';
+import { ensureBatonExcluded, freshVerifySandbox, listWorktrees, reconcile } from '../src/worktree.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-auxiliary-owner-'));
@@ -119,3 +120,27 @@ for (const unsafe of [false, true]) {
     }
   });
 }
+
+test('a Finder metadata file in an auxiliary root is not a reconciliation error (#602)', (t) => {
+  const { root } = fixture(t);
+  const verify = join(root, '.baton', 'verify'); mkdirSync(verify, { recursive: true });
+  writeFileSync(join(verify, '.DS_Store'), 'Finder junk');
+  const report = reconcile(root, []);
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.diagnostics.some((row) => typeof row.path === 'string' && row.path.endsWith('.DS_Store')), false);
+});
+
+test('ensureBatonExcluded hides Finder metadata inside a linked seat checkout (#602)', (t) => {
+  const { root, sha } = fixture(t);
+  ensureBatonExcluded(root);
+  const seat = join(root, '.baton', 'wt', 'ws-finder');
+  mkdirSync(dirname(seat), { recursive: true });
+  execFileSync('git', ['worktree', 'add', '--detach', seat, sha], { cwd: root, stdio: 'ignore' });
+  writeFileSync(join(seat, '.DS_Store'), 'Finder junk');
+  const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: seat, encoding: 'utf8' });
+  assert.equal(status.trim(), '');
+  ensureBatonExcluded(root);
+  const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
+  assert.ok(exclude.split('\n').includes('.baton/'));
+  assert.ok(exclude.split('\n').includes('.DS_Store'));
+});
