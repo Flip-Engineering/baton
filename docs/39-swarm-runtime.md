@@ -993,22 +993,28 @@ retires the hand chain in README.md.
 
 **A provider fault proposes a re-route (#443).** Beside the #442 fault fold the runtime records
 `swarm.reroute_proposed {participantId, workerId, from, code, resetAt, resetAtText, candidates,
-excluded, carry, policy}` — candidates are the served routes that are ready and not faulted,
-ranked by the #429 profile comparison with `billing` read from each route's measured profile; a
-subscription route whose window is closed is listed under `excluded` with
-`excluded_window_closed`, never proposed. The swarm-level policy is one caller-submittable row,
+`excluded, carry, policy}` — candidates are the served routes that are ready, not faulted, and
+not on a harness the operator's routing rule excludes, ranked by the #429 profile comparison with
+`billing` read from each route's measured profile. A subscription route whose window is closed is
+listed under `excluded` with `excluded_window_closed`, and a route the operator's rule excludes is
+listed there with `excluded_by_operator` (#574), so the decision row audits every served route.
+`advanced.routing.excludeHarnesses` (`BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok` on a config-less
+serve) is that rule: the recruit selection, the `recruitable` flag, the re-route candidates and
+the pre-effect refusal all read it through the ONE eligibility predicate, and a recruit onto an
+excluded harness refuses `route_excluded`. The swarm-level policy is one caller-submittable row,
 `swarm.policy_updated {rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}` (`organize`,
 through `swarm.update`, or at the open: `baton swarm create <purpose> --policy
-'{"rerouteOnProviderFault":"auto"}'` writes the same row in the create's own mutation, validated
+'{"rerouteOnProviderFault":"manual"}'` writes the same row in the create's own mutation, validated
 against the fold's closed sets before `swarm.created` lands, so a refused policy leaves no swarm
-behind and the row is on the ledger before any recruit — #443 hand-back). Under `manual` the
-proposal is the whole act: the `reroute_proposed` wake class and the `reroute_proposed` /
-`reroute_no_candidate` attention rows page the root or sub-orchestrator with the resume spelling.
-Under `auto` the runtime performs the resume itself onto the first candidate (successor
-`<seat>-reroute-<deathSeq>`, operation key `swarm-reroute:<swarm>:<seat>:<seq>`, both stable so a
-retry is safe), recording `swarm.rerouted {from, to, successor, carriedFrom, proposalSeq}`; the
-successor's brief carries `## Re-routed` (the fault, its reset, the route it came from, the route
-it went to, what was carried). Both runtime-recorded kinds refuse caller submission. Until #453
+behind and the row is on the ledger before any recruit — #443 hand-back). A swarm that declares
+nothing resolves to `auto`, and the runtime performs the resume itself onto the first candidate
+(successor `<seat>-reroute-<deathSeq>`, operation key `swarm-reroute:<swarm>:<seat>:<seq>`, both
+stable so a retry is safe), recording `swarm.rerouted {from, to, successor, carriedFrom,
+proposalSeq}`; the successor's brief carries `## Re-routed` (the fault, its reset, the route it
+came from, the route it went to, what was carried). A declared `manual` stops at the proposal: the
+`reroute_proposed` wake class and the `reroute_proposed` / `reroute_no_candidate` attention rows
+page the root or sub-orchestrator with the resume spelling. Both runtime-recorded kinds refuse
+caller submission. Until #453
 lands, "what was carried" can be an empty list for a predecessor whose snapshot held files.
 
 ## The stop names what it released, the open names its checkpoint, the resident reincarnates (issues #450, #449, #306, 2026-09-18)

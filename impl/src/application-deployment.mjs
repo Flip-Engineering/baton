@@ -6394,7 +6394,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'routing', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #558: the declared shared remote landings publish to, validated at open.
   const rawIntegration = advanced.integration ?? {};
   closed(rawIntegration, ['publishRemote'], 'advanced integration');
@@ -6442,6 +6442,21 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     || residentOptions.pollMs > residentOptions.commandTimeoutMs) {
     throw deploymentError('advanced resident configuration is invalid');
   }
+  // Issue #574: the operator's declared routing rule — harnesses no seat may be routed onto.
+  // A declaration, never an inference: the closed set keeps the field list known, the entries are
+  // validated here, and an absent declaration excludes nothing.
+  const rawRouting = advanced.routing ?? {};
+  closed(rawRouting, ['excludeHarnesses'], 'advanced routing');
+  const rawExcludeHarnesses = rawRouting.excludeHarnesses ?? [];
+  if (!Array.isArray(rawExcludeHarnesses)) {
+    throw deploymentError('advanced routing.excludeHarnesses must be an array of harness names');
+  }
+  const routingExcludedHarnesses = Object.freeze(rawExcludeHarnesses.map((harness) => {
+    if (typeof harness !== 'string' || harness.trim().length === 0) {
+      throw deploymentError('advanced routing.excludeHarnesses entries must be non-empty harness names');
+    }
+    return harness.trim().toLowerCase();
+  }));
   const capacity = normalizeCapacity(advanced.capacity);
   const configuredRoutes = advanced.routes === undefined ? locallyConfiguredRoutes(repository.root) : null;
   const routes = normalizeRoutes(advanced.routes
@@ -6822,6 +6837,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
     hostCapacity: hostCapacityAuthority,
+    routingExcludedHarnesses,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,
