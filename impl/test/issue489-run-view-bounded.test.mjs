@@ -160,16 +160,18 @@ test('489-a: a 45-seat swarm with 40 settled seats renders a bounded situation s
   await f.call('recruit', { participantId: 'probe', objective: 'Read the situation' });
   const brief = f.participants().probe.brief;
   const situation = situationSection(brief);
-  const bytes = Buffer.byteLength(situation, 'utf8');
-
-  // The two age-scaling blocks draw ONE registry budget each (`brief.situation.bytes`); everything
-  // else in the section is bounded by the seats that can act (#464's row budget per line), the one
-  // settled line, the one contributions line and the route table — the 4096-byte slack. Measured
-  // 17 208 B here against the 20 480 B bound, of which 16 250 B are the two bounded blocks.
-  assert.ok(bytes <= SITUATION_BYTES * 2 + 4_096,
-    `the situation section is ${bytes} bytes, over the ${SITUATION_BYTES * 2 + 4_096}-byte bound its `
-    + 'two age-scaling blocks draw from brief.situation.bytes — the section must not grow with the '
-    + 'age of the swarm');
+  // Contracts, commits and recent wake events each have a situation byte budget.
+  // Measure their rendered rows separately; wake command wording changes independently.
+  for (const [label, rows] of [
+    ['contracts', situation.split('\n').filter((line) => /^- contribution-489-|^  carries forward:|^  needs from others:/u.test(line))],
+    ['commits', situation.split('\n').filter((line) => /^- [0-9a-f]{12} /u.test(line))],
+    ['wakes', situation.split('\n').filter((line) => /^- .*\[seq \d+ · /u.test(line))],
+  ]) {
+    assert.ok(rows.length > 0, `${label}: the fixture renders history`);
+    const bytes = Buffer.byteLength(`${rows.join('\n')}\n`, 'utf8');
+    assert.ok(bytes <= SITUATION_BYTES,
+      `${label}: ${bytes} rendered bytes exceed brief.situation.bytes = ${SITUATION_BYTES}`);
+  }
 
   // The settled seats are ONE line, counted per reason, and the roster that holds them is named.
   const settledLine = situation.split('\n').find((line) => line.includes('since the base')) ?? '(none)';

@@ -197,7 +197,7 @@ test('one attachment receives the rows of every swarm the resident hosts, includ
   }
   const contribution = frames.find((frame) => frame.wakeClass === 'contribution_recorded' && frame.swarmId === second.id);
   assert.equal(contribution.subject.kind, 'contribution');
-  assert.ok(contribution.next.startsWith('baton_swarm_check / baton swarm check'), 'the terminal class names the command that acts on it');
+  assert.ok(contribution.next.startsWith('baton_swarm_view / baton swarm view'), 'the terminal class names the command that acts on it');
   // The stream serves both swarms: one attachment, no per-swarm process, no grep.
   assert.deepEqual([...new Set(frames.map((frame) => frame.swarmId))].filter(Boolean).sort(), [first.id, second.id].sort());
   attachment.close();
@@ -359,7 +359,7 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
     [{ seq: 6, ts: 'T', kind: 'swarm.context_updated', actor: 'root',
       payload: { key: 'k', body: {}, swarmId: 's1' } }, null],
     [{ seq: 7, ts: 'T', kind: 'swarm.contribution_recorded', actor: 'p1',
-      payload: { contributionId: 'c1', participantId: 'p1', swarmId: 's1' } }, 'baton_swarm_check / baton swarm check s1 p1 c1 CHECK_ID'],
+      payload: { contributionId: 'c1', participantId: 'p1', swarmId: 's1' } }, 'baton_swarm_view / baton swarm view s1 --projection contributions'],
     [{ seq: 8, ts: 'T', kind: 'swarm.contribution_reviewed', actor: 'lead',
       payload: { contributionId: 'c1', swarmId: 's1' } }, null],
     [{ seq: 9, ts: 'T', kind: 'knowledge.node_added', actor: 'p1',

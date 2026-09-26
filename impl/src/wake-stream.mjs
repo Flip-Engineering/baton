@@ -165,8 +165,8 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'contribution_recorded', scope: 'swarm', terminal: true,
-    next: 'baton_swarm_check / baton swarm check {swarmId} {participantId} {contributionId} CHECK_ID',
-    summary: 'a contribution landed and waits for an independent check',
+    next: 'baton_swarm_view / baton swarm view {swarmId} --projection contributions',
+    summary: 'a contribution was published and is available for review',
     rows: [ledgerKind('swarm.contribution_recorded'), ledgerKind('swarm.contribution_revision_attached')],
     subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
