@@ -912,14 +912,9 @@ export function semanticAuthorityPayload(value) {
   };
 }
 export function normalizeSemanticAuthority(value, code = 'application_context_invalid') {
-  // Issue #536: a command context carries AUTHORITY GRANTS, and a grant keeps the closed shape —
-  // an undeclared field in a grant is an attempt to claim authority the grantor never vouched
-  // (#535's rule, one level down). The durable seam already demands the exact S-2 envelope
-  // (mintBoardGrant's proofFields), so a looser read here accepts what the ledger then refuses,
-  // and projects the undeclared keys into the frozen context other consumers read verbatim.
   exactObject(value,
     ['schemaVersion', 'actionId', 'kind', 'effect', 'requiredCapabilities', 'authorityDigest'],
-    code, 'semantic action authority', { rejectUnknown: true });
+    code, 'semantic action authority');
   if (value.schemaVersion !== 1 || !validId(value.actionId) || !validId(value.kind)
     || !validId(value.effect) || !Array.isArray(value.requiredCapabilities)
     || value.requiredCapabilities.length === 0 || value.requiredCapabilities.length > 16

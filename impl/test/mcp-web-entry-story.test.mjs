@@ -110,7 +110,12 @@ test('ES-A (#314 lane 4): the bridge refuses an argument typed and names the hea
 
   // The bare invocation is unchanged: it proceeds to discover its own connection (and, outside a
   // checkout, refuses there — the CT7 posture), never with the usage line of a bad invocation.
-  const bare = await execFileAsync(process.execPath, [BRIDGE_ENTRY.pathname], { cwd: directory })
+  const bare = await execFileAsync(process.execPath, [BRIDGE_ENTRY.pathname], {
+    cwd: directory,
+    // The startup-retry window is the resident-restart bridge; this row pins the discovery
+    // refusal shape itself, so it runs the one-shot open.
+    env: { ...process.env, BATON_MCP_WEB_STARTUP_WINDOW_MS: '0' },
+  })
     .then(() => ({ code: 0, stderr: '' }), (error) => ({ code: error.code, stderr: error.stderr ?? '' }));
   assert.equal(bare.code, 1, 'a bare bridge start outside a checkout fails in discovery');
   assert.doesNotMatch(bare.stderr, /takes no arguments/u, 'no argument was supplied, so none is refused');

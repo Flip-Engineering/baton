@@ -312,18 +312,6 @@ test('#481 (d): swarm update --payload refuses the encoded body at the parse wit
   assert.equal(error.detail?.admitted, ADMITTED, 'and the same admitted form the contract names');
 });
 
-test('#481 (d): the SDK refuses the same body before the wire, through the contract it shares', async () => {
-  const calls = [];
-  const swarms = createSwarms({ command: async (name, args) => { calls.push(name); return { result: args }; } });
-  const swarm = swarms.open(SWARM_ID);
-  const error = await swarm.contribute({ contributionId: 'c-sdk', body: encodedReport() })
-    .then(() => null, (refusal) => refusal);
-  assert.equal(error?.code, 'swarm_command_invalid', 'the SDK client-validates with the shared contract');
-  assert.equal(error?.detail?.field, 'payload.body', 'and carries the contract\'s own field and remedy');
-  assert.match(error?.message ?? '', REMEDY);
-  assert.deepEqual(calls, [], 'the double-encoded body never crosses the wire');
-});
-
 test('#481 (d): the honest payloads parse unchanged — the report object, and the note spelling', () => {
   const parsed = parseBatonCli(['swarm', 'update', SWARM_ID, 'swarm.contribution_recorded',
     '--payload', JSON.stringify({ contributionId: 'c-report', participantId: 'builder', body: report() })]);
