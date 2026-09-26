@@ -1,0 +1,3 @@
+RESULT|spawned|handle=0
+RESULT|read-line|got: hello from bend2
+RESULT|exited|0
