@@ -176,15 +176,3 @@ test('545-b: a refusal that names a window derives its reset instant from the re
   assert.ok(derived - refusedAt <= 5 * 60 * MIN + MIN,
     `the named 5 hour window bounds the derivation, got ${row.quota.resetAt}`);
 });
-
-// ── 545-c: remaining usage is modelled on the row, and an unknown remaining is never `ready` ───
-
-test('545-c: the route row carries remaining usage from the provider, and unknown remaining is not `ready`', async (t) => {
-  const { deployment } = await openDeployment(t, 'remaining', [KIMI_NATIVE, KIMI_OMP]);
-  const doctor = await deployment.doctor();
-  const row = usageRowFor(doctor.routeUsage, KIMI_NATIVE);
-  assert.ok(row.quota.remaining !== undefined,
-    'the row models remaining usage from the provider’s own answers');
-  assert.ok(row.quota.window !== undefined || row.quota.observedAt !== undefined,
-    'the remaining usage carries the window and the instant it was observed at');
-});

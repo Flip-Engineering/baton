@@ -9,7 +9,7 @@
 //
 // Rows:
 //   RECRUIT-341-A   a prefix recruit chooses the ready route and names the blocked routes with codes
-//   RECRUIT-341-A2  the chosen route is the one with the most remaining headroom (slots, then turns)
+//   RECRUIT-341-A2  the chosen route is the one with the most remaining headroom (free slots)
 //   RECRUIT-341-B   an exact recruit on a refused route refuses pre-effect through the deployment's
 //                   own admission gate, naming the ready alternative, and joins nobody
 //   RECRUIT-341-B2  the same refusal crosses the deployment run/explore lane (part 2's path)
@@ -56,13 +56,12 @@ const routeLabel = (route) => `${route.harness}/${route.model}@${route.effort}`;
 
 /** One usage row as part 1's deployment derivation publishes it. */
 function usageRow(route, {
-  state = 'ready', code = null, resetAt = null, turns = 0, tokens = 0,
+  state = 'ready', code = null, resetAt = null,
   ceiling = null, inUse = 0, refusalText = null, quotaResetAt = null,
 } = {}) {
   return Object.freeze({
     route: Object.freeze({ ...route }),
     state, code, resetAt,
-    usage: Object.freeze({ turns, tokens, usd: 0 }),
     concurrency: Object.freeze({ ceiling, inUse }),
     lastProviderRefusal: refusalText === null ? null
       : Object.freeze({ code, text: refusalText, at: new Date(Date.now() - 1_000).toISOString(), resetAt }),
@@ -120,9 +119,9 @@ const rowByEffort = (rows, effort) => rows.find((row) => row.route.effort === ef
 
 test('RECRUIT-341-A: a prefix recruit chooses the ready route and names the blocked routes with their codes', async (t) => {
   const fixture = swarmFixture(t, [
-    usageRow(ROUTE_READY, { turns: 3, tokens: 1_200, ceiling: 4 }),
-    usageRow(ROUTE_QUOTA, { state: 'blocked', code: QUOTA_CODE, resetAt: RESET_AT, turns: 9, ceiling: 4, refusalText: 'usage limit reached' }),
-    usageRow(ROUTE_AUTH, { state: 'blocked', code: AUTH_CODE, turns: 1, ceiling: 4, refusalText: 'missing meta credentials' }),
+    usageRow(ROUTE_READY, { ceiling: 4 }),
+    usageRow(ROUTE_QUOTA, { state: 'blocked', code: QUOTA_CODE, resetAt: RESET_AT, ceiling: 4, refusalText: 'usage limit reached' }),
+    usageRow(ROUTE_AUTH, { state: 'blocked', code: AUTH_CODE, ceiling: 4, refusalText: 'missing meta credentials' }),
   ]);
   await fixture.call('create', { purpose: 'route comparison' });
 
@@ -141,7 +140,6 @@ test('RECRUIT-341-A: a prefix recruit chooses the ready route and names the bloc
   assert.equal(quota.code, QUOTA_CODE, 'the refused route is named with its typed code');
   assert.equal(quota.resetAt, RESET_AT);
   assert.equal(quota.quota.state, 'exhausted');
-  assert.equal(quota.usage.turns, 9, 'the usage row rides the comparison');
   const auth = rowByEffort(recruited.routes.considered, 'low');
   assert.equal(auth.code, AUTH_CODE);
 
@@ -156,16 +154,16 @@ test('RECRUIT-341-A: a prefix recruit chooses the ready route and names the bloc
   assert.deepEqual(fixture.seen[0].options.exact, ROUTE_READY, 'the chosen route is admitted exactly');
 });
 
-// ── RECRUIT-341-A2: the choice is the most remaining headroom, then the fewest turns ────────────
+// ── RECRUIT-341-A2: the choice is the most remaining headroom ──────────────────────────────────
 
-test('RECRUIT-341-A2: the ready route with the most remaining headroom wins, then the fewest turns', async (t) => {
+test('RECRUIT-341-A2: the ready route with the most remaining headroom wins', async (t) => {
   const busiest = Object.freeze({ harness: 'codex', model: 'gpt-5.6-pro', effort: 'high' });
   const crowded = Object.freeze({ harness: 'codex', model: 'gpt-5.6-mini', effort: 'high' });
   const freshest = Object.freeze({ harness: 'codex', model: 'gpt-5.6-air', effort: 'high' });
   const fixture = swarmFixture(t, [
-    usageRow(busiest, { turns: 4, ceiling: 2, inUse: 0 }),
-    usageRow(crowded, { turns: 1, ceiling: 2, inUse: 1 }),
-    usageRow(freshest, { turns: 0, ceiling: 2, inUse: 0 }),
+    usageRow(crowded, { ceiling: 2, inUse: 1 }),
+    usageRow(freshest, { ceiling: 2, inUse: 0 }),
+    usageRow(busiest, { ceiling: 2, inUse: 2 }),
   ]);
   await fixture.call('create', { purpose: 'headroom' });
 
@@ -174,7 +172,7 @@ test('RECRUIT-341-A2: the ready route with the most remaining headroom wins, the
   });
   assert.equal(recruited.routes.considered.length, 3, 'the model prefix compares every route it names');
   assert.deepEqual(recruited.routes.chosen.route, freshest,
-    'equal free slots are broken by the fewest turns, never by configuration order');
+    'the route with the most free concurrency slots is chosen');
   assert.equal(fixture.seen[0].options.exact.effort, 'high');
   assert.deepEqual(fixture.seen[0].options.exact, freshest);
 });
@@ -358,8 +356,8 @@ test('RECRUIT-341-B2: the deployment run lane refuses the refused route pre-effe
 
 test('RECRUIT-341-C: the seat brief lists the served routes with usage and marks them recruitable by grant', async (t) => {
   const rows = [
-    usageRow(ROUTE_READY, { turns: 5, tokens: 900, ceiling: 4, inUse: 1 }),
-    usageRow(ROUTE_QUOTA, { state: 'blocked', code: QUOTA_CODE, resetAt: RESET_AT, turns: 9, ceiling: 4 }),
+    usageRow(ROUTE_READY, { ceiling: 4, inUse: 1 }),
+    usageRow(ROUTE_QUOTA, { state: 'blocked', code: QUOTA_CODE, resetAt: RESET_AT, ceiling: 4 }),
   ];
   const granted = swarmFixture(t, rows);
   await granted.call('create', { purpose: 'recruitable brief' });
@@ -374,7 +372,6 @@ test('RECRUIT-341-C: the seat brief lists the served routes with usage and marks
   assert.match(brief, /### Route usage/u, 'the seat’s brief carries the route usage subsection');
   assert.match(brief, new RegExp(routeLabel(ROUTE_READY), 'u'));
   assert.match(brief, /recruitable=true/u, 'a seat holding the recruit grant reads the ready route as recruitable');
-  assert.match(brief, /turns=5/u, 'the usage row rides the brief');
 
   const ungranted = swarmFixture(t, rows);
   await ungranted.call('create', { purpose: 'no recruit grant' });
@@ -435,7 +432,7 @@ test('RECRUIT-341-E: the deployment’s usage accessor is the doctor’s own der
   assert.deepEqual(rows, doctor.routeUsage, 'the rows a recruit compares are the rows the doctor publishes');
   assert.deepEqual(rows[0].route, ROUTE_READY);
   for (const row of rows) {
-    assert.ok(row.route && row.usage && row.concurrency && row.quota, 'every row carries what a comparison reads');
+    assert.ok(row.route && row.concurrency && row.quota, 'every row carries what a comparison reads');
     assert.equal(typeof row.state, 'string');
   }
 });
@@ -445,8 +442,8 @@ test('RECRUIT-341-E: the deployment’s usage accessor is the doctor’s own der
 test('RECRUIT-341-F: an exact recruit answers its own row beside the ready alternatives', async (t) => {
   const alt = Object.freeze({ harness: 'codex', model: 'gpt-5.6-pro', effort: 'high' });
   const fixture = swarmFixture(t, [
-    usageRow(ROUTE_READY, { turns: 2, ceiling: 4 }),
-    usageRow(alt, { turns: 7, ceiling: 4 }),
+    usageRow(ROUTE_READY, { ceiling: 4 }),
+    usageRow(alt, { ceiling: 4 }),
     usageRow(ROUTE_QUOTA, { state: 'blocked', code: QUOTA_CODE, resetAt: RESET_AT, ceiling: 4 }),
   ]);
   await fixture.call('create', { purpose: 'exact selection' });

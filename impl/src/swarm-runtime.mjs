@@ -3395,16 +3395,14 @@ export class SwarmRuntime {
     const rows = this._routeUsageRows() ?? [];
     return rows.filter((row) => this._routeEligible(row)).map((row) => this._routeLabel(row.route));
   }
-  /** The remaining headroom a usage row carries, DERIVED from the row itself and never from a
-   * threshold this module would have to invent: free concurrency slots (a route with no declared
-   * ceiling has no bound to run out of), then the fewest turns recorded on it. */
+  /** The remaining headroom a usage row carries, DERIVED from the row itself: free concurrency
+   * slots (a route with no declared ceiling has no bound to run out of). */
   _routeHeadroom(row) {
     const ceiling = row?.concurrency?.ceiling;
     const inUse = row?.concurrency?.inUse;
     return {
       slots: typeof ceiling === 'number' ? ceiling - (typeof inUse === 'number' ? inUse : 0)
         : Number.POSITIVE_INFINITY,
-      turns: typeof row?.usage?.turns === 'number' ? row.usage.turns : 0,
     };
   }
 
@@ -3449,7 +3447,7 @@ export class SwarmRuntime {
     if (left !== null && right !== null && left.value !== right.value) return right.value - left.value;
     const leftHead = this._routeHeadroom(a);
     const rightHead = this._routeHeadroom(b);
-    return rightHead.slots - leftHead.slots || leftHead.turns - rightHead.turns;
+    return rightHead.slots === leftHead.slots ? 0 : rightHead.slots - leftHead.slots;
   }
 
   /** Issue #443: a route's billing basis as the row itself publishes it. #429 puts the basis on the
@@ -3609,10 +3607,10 @@ export class SwarmRuntime {
             ? `ready with the best design Elo (${fact.label}) among the routes compared`
             : `ready with the highest measured quality (${fact.label}) among the routes compared`;
         }
-        const { slots, turns } = this._routeHeadroom(row);
+        const { slots } = this._routeHeadroom(row);
         return slots === Number.POSITIVE_INFINITY
-          ? `ready with no declared concurrency ceiling; fewest turns compared (${turns})`
-          : `ready with the most remaining headroom (${row.concurrency.inUse}/${row.concurrency.ceiling} in use, ${turns} turns)`;
+          ? 'ready with no declared concurrency ceiling'
+          : `ready with the most remaining headroom (${row.concurrency.inUse}/${row.concurrency.ceiling} in use)`;
       }
       if (!this._routeEligible(row)) {
         return `blocked (${row.code ?? 'unknown'})${row.resetAt ? ` until ${row.resetAt}` : ' until a later turn succeeds'}`;

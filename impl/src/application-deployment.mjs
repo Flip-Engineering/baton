@@ -3918,40 +3918,17 @@ class BatonDeployment {
     return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
   }
 
-  /** #341: the per-route usage row — turns, tokens, usd, the card's concurrency ceiling, and the
-   * route's provider-derived state, read off the SAME composed doctor rows this document publishes
+  /** #341: the per-route row — the card's concurrency ceiling and the route's provider-derived
+   * state, read off the SAME composed doctor rows this document publishes
    * (never a second reading of the ledger), so the usage row and the readiness row can never
    * disagree about what the provider said. #429: `profiles` is the doctor read's own per-route
    * profile map (or null when this deployment has no profile authority), so the row a recruit
    * compares carries the SAME measured profile the doctor publishes for that route. */
   #routeUsageRows(doctorRows, profiles = null) {
-    const log = this.#driver?.log ?? null;
     const stateOf = new Map((doctorRows ?? []).map((row) => [
       routeQuotaKey({ harness: row.harness, model: row.model, effort: row.effort }), row,
     ]));
     return Object.freeze(this.#routes.map((route) => {
-      let turns = 0;
-      let tokens = 0;
-      let usd = 0;
-      // #545: the LAST rate-limit answer this route's provider gave, read on the walk that already
-      // visits every token row of the route — the provider's own statement about the account.
-      let rateLimits = null;
-      if (log) {
-        for (const worker of log.workers()) {
-          for (const ev of log.byKind(worker, 'lifecycle.turn_started')) {
-            if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) turns += 1;
-          }
-          for (const ev of log.byKind(worker, 'resource.tokens')) {
-            if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) {
-              tokens += typeof ev.payload?.tokens === 'number' ? ev.payload.tokens : 0;
-              usd += typeof ev.payload?.usd === 'number' ? ev.payload.usd : 0;
-              if (ev.payload?.source === 'rateLimit' && record(ev.payload.rateLimits)) {
-                rateLimits = { limits: ev.payload.rateLimits, at: ev.ts };
-              }
-            }
-          }
-        }
-      }
       const key = routeQuotaKey(route);
       const doctorRow = key === null ? null : stateOf.get(key) ?? null;
       const blocked = doctorRow?.state === 'blocked';
@@ -3982,24 +3959,13 @@ class BatonDeployment {
       const quotaWindow = declaredUsage === null ? null : Object.freeze({
         kind: declaredUsage.windowKind ?? 'unknown', periodMs: declaredUsage.windowMs,
       });
-      // #545: the provider's OWN remaining usage rides the quota axis, so a route whose account was
-      // measured says how much is left in the window the provider itself reported, and when. A
-      // route nothing measured carries remaining: null — the absence is stated rather than left
-      // for a reader to read as an unqualified 'ready'. The percent is derived from the provider's
-      // own usedPercent, never from a token count this side invents.
-      const primary = record(rateLimits?.limits?.primary) ? rateLimits.limits.primary : null;
-      const quotaObservations = Object.freeze({
-        remaining: primary !== null && Number.isFinite(primary.usedPercent)
-          ? Math.max(0, 100 - primary.usedPercent) : null,
-        observedAt: typeof rateLimits?.at === 'string' ? rateLimits.at : null,
-      });
       const quota = quotaRefused
         ? Object.freeze({
-          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt, ...quotaObservations,
+          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         })
         : Object.freeze({
-          state: 'ok', resetAt: null, ...quotaObservations,
+          state: 'ok', resetAt: null,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         });
       const occupancy = this.#occupancyFor(route);
@@ -4032,7 +3998,6 @@ class BatonDeployment {
         // #442 item 2: which fault took the route down — the typed class this row's `state` is a
         // consequence of, null on a route nothing faulted.
         reason: degraded?.reason ?? (quotaBlock?.code ?? ((blocked && code?.startsWith('provider_')) ? code : null)),
-        usage: Object.freeze({ turns, tokens, usd }),
         concurrency: Object.freeze({ ceiling, inUse: occupancy.inFlight }),
         lastProviderRefusal: doctorRow?.lastProviderRefusal ?? null,
         // #346: the credential facts the route's doctor row publishes — expiresAt and whether the

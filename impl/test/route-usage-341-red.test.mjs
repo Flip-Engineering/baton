@@ -120,12 +120,6 @@ test('USAGE-341-1: doctorReadiness includes routeUsage rows for each served rout
   assert.ok(rowA, 'route A usage row must be present');
   assert.ok(rowB, 'route B usage row must be present');
 
-  // Usage shape
-  assert.equal(typeof rowA.usage.turns, 'number', 'turns is a number');
-  assert.equal(typeof rowA.usage.tokens, 'number', 'tokens is a number');
-  assert.equal(rowA.usage.turns, 0, 'no turns yet');
-  assert.equal(rowA.usage.tokens, 0, 'no tokens yet');
-
   // Concurrency shape
   assert.ok('ceiling' in rowA.concurrency, 'concurrency.ceiling is present');
   assert.ok('inUse' in rowA.concurrency, 'concurrency.inUse is present');
@@ -208,45 +202,6 @@ test('USAGE-341-4: recruit on an exhausted route is refused and the refusal name
     blockedRoutes.some((r) => r.effort === ROUTE_A.effort),
     '#523: route A is blocked by the scope-wide quota',
   );
-});
-
-// ── USAGE-341-5: usage row tracks turns from the operational log ─────────────
-
-test('USAGE-341-5: usage row reflects turn counts from the operational log', async (t) => {
-  const { deployment, driverOptions } = await openDeployment(t, 'turns', [ROUTE_A]);
-  const log = new Log(driverOptions.logDir);
-
-  const workerId = 'fixture-worker-1';
-  log.append({
-    worker: workerId, harness: 'codex', turnEpoch: 1,
-    kind: 'lifecycle.turn_started', actor: 'orchestrator',
-    harnessResolved: ROUTE_A.harness, modelResolved: ROUTE_A.model, effortResolved: ROUTE_A.effort,
-    payload: {},
-  });
-  log.append({
-    worker: workerId, harness: 'codex', turnEpoch: 1,
-    kind: 'resource.tokens', actor: 'worker',
-    harnessResolved: ROUTE_A.harness, modelResolved: ROUTE_A.model, effortResolved: ROUTE_A.effort,
-    payload: { tokens: 5000, usd: 0.05, accounting: 'delta', source: 'fixture' },
-  });
-  log.append({
-    worker: workerId, harness: 'codex', turnEpoch: 2,
-    kind: 'lifecycle.turn_started', actor: 'orchestrator',
-    harnessResolved: ROUTE_A.harness, modelResolved: ROUTE_A.model, effortResolved: ROUTE_A.effort,
-    payload: {},
-  });
-  log.append({
-    worker: workerId, harness: 'codex', turnEpoch: 2,
-    kind: 'resource.tokens', actor: 'worker',
-    harnessResolved: ROUTE_A.harness, modelResolved: ROUTE_A.model, effortResolved: ROUTE_A.effort,
-    payload: { tokens: 3000, usd: 0.03, accounting: 'delta', source: 'fixture' },
-  });
-
-  const doctor = await deployment.doctor();
-  const row = doctor.routeUsage?.[0];
-  assert.ok(row, 'usage row must be present');
-  assert.equal(row.usage.turns, 2, 'two turns were recorded');
-  assert.equal(row.usage.tokens, 8000, 'token sum is correct');
 });
 
 // ── USAGE-341-6: route usage includes lastProviderRefusal when present ───────
