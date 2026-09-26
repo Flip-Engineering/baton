@@ -701,7 +701,7 @@ export class HostCapacityAuthority {
    * `onQueued` is called once with {position, ahead}. The wait is not bounded: a request that
    * cannot be admitted now is admitted when the requests ahead of it release, and is never
    * refused for having waited (#541). A worker never queues (see roomFor). */
-  async acquire(kind, { holder = '', onQueued = null } = {}) {
+  async acquire(kind, { holder = '', onQueued = null, signal = null } = {}) {
     if (!HOST_CAPACITY_LEASE_KINDS.includes(kind)) throw new TypeError(`host capacity lease kind must be one of ${HOST_CAPACITY_LEASE_KINDS.join(', ')}`);
     if (typeof holder !== 'string') throw new TypeError('host capacity lease holder must be a string');
     if (onQueued !== null && typeof onQueued !== 'function') throw new TypeError('host capacity onQueued must be a function');
@@ -710,6 +710,18 @@ export class HostCapacityAuthority {
     let queuedAt = null;
     let reportedQueue = false;
     for (;;) {
+      if (signal?.aborted) {
+        try {
+          for (const name of readdirSync(this.queueDir)) {
+            if (name.includes(nonce)) { rmSync(join(this.queueDir, name), { force: true }); break; }
+          }
+        } catch { /* queue entry may not exist */ }
+        const reason = signal.reason;
+        throw Object.assign(
+          new Error(typeof reason?.message === 'string' ? reason.message : 'lease acquisition aborted'),
+          { code: typeof reason?.code === 'string' ? reason.code : 'integrate_withdrawn' },
+        );
+      }
       const outcome = await this._mutex(() => {
         this.#sweep();
         const capacity = deriveHostCapacity(hostCapacityObservation(this.observation()));

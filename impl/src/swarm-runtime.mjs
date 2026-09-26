@@ -183,7 +183,7 @@ function gateVerdictScratch() {
 
 /** One supervised run of the suite runner over `files` in `dir`, with its verdict document read
  * back (null when the runner wrote none) and its last words and exit status. */
-async function runGateFiles(dir, files, { pool = null, holder = null, leaseAuthority = null } = {}) {
+async function runGateFiles(dir, files, { pool = null, holder = null, leaseAuthority = null, signal = null } = {}) {
   // Issue #551: whether this incarnation read a verdict document at all. An unjudged run keeps
   // its scratch directory, because the verdict it may still write is the one a successor reads.
   let judged = false;
@@ -191,7 +191,7 @@ async function runGateFiles(dir, files, { pool = null, holder = null, leaseAutho
   const verdictPath = join(scratch, 'verdict.json');
   try {
     const result = await runSupervisedGateRun({
-      file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority,
+      file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority, signal,
       env: { BATON_SUITE_VERDICT_FILE: verdictPath },
     });
     let document = null;
@@ -247,7 +247,7 @@ function checkoutLandingTree(dir, sha) {
  * impl/src/suite-comparison.mjs, the module the contribution check reads too. On top of it this
  * gate requires that the change's run accounted for every file the gate selected. */
 async function defaultIntegrationGates(dir, files, context, supervision = {}) {
-  const change = await runGateFiles(dir, files, supervision);
+  const change = await runGateFiles(dir, files, { ...supervision });
   const { result, document, verdictPath, stderrTail, exit } = change;
   if (document === null) {
     // A runner that died before it could judge is not a green gate set. No resident-side wall
@@ -1951,6 +1951,7 @@ export class SwarmRuntime {
     // Issue #594: the turn fence epochs this incarnation has reconciled, keyed by worker id —
     // the boundary detector the uncommitted snapshots ride.
     this.preserveTurnEpochs = new Map();
+    this._pendingIntegrations = new Map();
   }
 
   /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
@@ -5305,6 +5306,10 @@ export class SwarmRuntime {
     // kills what it started, exactly as the resident's fence kills the deployment's pooled
     // children. A landing's orphaned gate run is never this close's legacy.
     this._gatePool?.killAll();
+    for (const entry of this._pendingIntegrations.values()) {
+      entry.abort.abort(Object.assign(new Error('runtime closed'), { code: 'integrate_withdrawn' }));
+    }
+    this._pendingIntegrations.clear();
     return this.attentionDelivery?.close();
   }
 
@@ -7986,6 +7991,9 @@ export class SwarmRuntime {
       detail.script = context.script;
     }
     if (detail.exit === undefined && Number.isSafeInteger(context.exit)) detail.exit = context.exit;
+    if (typeof error.phase === 'string') detail.phase = error.phase;
+    if (typeof error.withdrawnBy === 'string') detail.withdrawnBy = error.withdrawnBy;
+    if (typeof error.supersededBy === 'string') detail.supersededBy = error.supersededBy;
     return detail;
   }
 
@@ -8039,6 +8047,8 @@ export class SwarmRuntime {
         refuse(message, 'integrate_target_diverged', detail); break;
       case 'integrate_change_invalid':
         refuse(message, 'integrate_change_invalid', detail); break;
+      case 'integrate_withdrawn':
+        refuse(message, 'integrate_withdrawn', detail); break;
       default:
         throw error;
     }
@@ -8079,6 +8089,63 @@ export class SwarmRuntime {
     }
     if (items.length > 0) lines.push('', `Delivered: ${items.map((item) => item.id).join(', ')}`);
     return lines.join('\n');
+  }
+
+  _withdrawIntegration(args, principal, context, swarm) {
+    const contributionId = args.contributionId;
+    const entry = this._pendingIntegrations.get(contributionId);
+    if (!entry) {
+      refuse(`No landing for contribution ${contributionId} is queued or running`,
+        'integrate_not_in_flight', {
+          contributionId, swarmId: args.swarmId, rule: 'in-flight',
+        });
+    }
+    const phase = entry.phase;
+    const reason = typeof args.reason === 'string' && args.reason.length > 0
+      ? args.reason : 'caller requested';
+    entry.abort.abort(Object.assign(
+      new Error(`integration withdrawn (${phase}): ${reason}`),
+      { code: 'integrate_withdrawn' },
+    ));
+    this._recordIntegrationRow('swarm.integration_failed', {
+      swarmId: args.swarmId, contributionId,
+      participantId: entry.participantId,
+      target: null,
+      code: 'integrate_withdrawn',
+      detail: { phase, reason, actor: principal.actor },
+    }, principal, `swarm-integration-withdrawn:${hash([args.swarmId, contributionId, principal.principalId, args.idempotencyKey])}`);
+    return this._mutationResult('swarm.integrate', args, [], principal, context, {
+      withdrawn: { contributionId, phase, reason },
+    });
+  }
+
+  _withdrawSupersededIntegrations(swarm, newContribution, newContributionId, principal) {
+    const participantId = newContribution.participantId;
+    if (typeof participantId !== 'string' || participantId.length === 0) return;
+    for (const [candidateId, entry] of this._pendingIntegrations) {
+      if (candidateId === newContributionId) continue;
+      if (entry.swarmId !== swarm.swarmId) continue;
+      if (entry.participantId !== participantId) continue;
+      this._withdrawIntegrationForSupersession(swarm.swarmId, candidateId, newContributionId, principal);
+    }
+  }
+
+  _withdrawIntegrationForSupersession(swarmId, contributionId, supersededBy, principal) {
+    const entry = this._pendingIntegrations.get(contributionId);
+    if (!entry) return;
+    const phase = entry.phase;
+    const reason = `superseded by ${supersededBy}`;
+    entry.abort.abort(Object.assign(
+      new Error(`integration withdrawn (${phase}): ${reason}`),
+      { code: 'integrate_withdrawn' },
+    ));
+    this._recordIntegrationRow('swarm.integration_failed', {
+      swarmId, contributionId,
+      participantId: entry.participantId,
+      target: null,
+      code: 'integrate_withdrawn',
+      detail: { phase, reason, supersededBy, actor: principal.actor },
+    }, principal, `swarm-integration-superseded:${hash([swarmId, contributionId, supersededBy])}`);
   }
 
   async _integrate(args, principal, context, swarm) {
@@ -8146,6 +8213,11 @@ export class SwarmRuntime {
     const pool = this._supervisedPool();
     const gateHolder = `integrate:${args.swarmId}:${args.contributionId}`;
     const swept = [...(this._integrationSweep ?? [])];
+    const integrationAbort = new AbortController();
+    this._pendingIntegrations.set(args.contributionId, {
+      abort: integrationAbort, swarmId: args.swarmId,
+      participantId: contribution.participantId, phase: 'queued',
+    });
     let started = null;
     let landed;
     // Issue #463: what this landing's OWN gate derivation and gate run answered. The worktree
@@ -8242,12 +8314,21 @@ export class SwarmRuntime {
           // admitted through the RESIDENT's own host-capacity authority when it has one (the same
           // authority a seat's admission runs through, so both read one host observation), else
           // through the suite runner's own seam.
+          if (integrationAbort.signal.aborted) {
+            throw Object.assign(new Error('integration withdrawn before gate run'),
+              { code: 'integrate_withdrawn' });
+          }
+          {
+            const entry = this._pendingIntegrations.get(args.contributionId);
+            if (entry) entry.phase = 'running';
+          }
           const verdict = typeof authority.runGates === 'function'
             ? await authority.runGates(dir, files, {
               ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId })
             : await defaultIntegrationGates(dir, files, {
               ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId },
-            { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null });
+            { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null,
+              signal: integrationAbort.signal });
           gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
             ? verdict.stderrTail : null;
           gateExit = Number.isSafeInteger(verdict?.exit) ? verdict.exit : null;
@@ -8263,6 +8344,7 @@ export class SwarmRuntime {
         },
       });
     } catch (error) {
+      this._pendingIntegrations.delete(args.contributionId);
       // Issue #459: the durable failure row BEFORE the refusal crosses. An outcome that can land
       // after its caller is gone (a CLI that timed out, a root that moved on) must be readable
       // from the record: the code the landing failed with, the detail that explains it, and the
@@ -8278,6 +8360,7 @@ export class SwarmRuntime {
       }
       this._refuseLanding(error, swarm, landingFacts);
     }
+    this._pendingIntegrations.delete(args.contributionId);
     const receipt = {
       contributionId: args.contributionId, participantId: contribution.participantId,
       base: landed.base, target: landed.target,
@@ -8543,6 +8626,9 @@ export class SwarmRuntime {
     // attempt whose outcome was never confirmed refuses (the family's own rule — only swarm.recruit
     // and swarm.holder_released replay blind).
     if (command === 'swarm.integrate') {
+      if (args.withdraw === true) {
+        return this._withdrawIntegration(args, principal, context, swarm);
+      }
       return this._once('swarm.integrate', args, principal,
         async () => this._integrate(args, principal, context, swarm));
     }
@@ -8685,6 +8771,7 @@ export class SwarmRuntime {
         if (recordedContribution !== null) {
           rootAttention = this._recordRootAttentionRows(recordedSwarm,
             rootContributionAttention(recordedSwarm, recordedContribution), principal.actor);
+          this._withdrawSupersededIntegrations(recordedSwarm, recordedContribution, payload.contributionId, principal);
         }
         // Issue #594: a contract's own commit is published when the update that records it
         // lands — the commit the contribution names, pushed like any seat commit.

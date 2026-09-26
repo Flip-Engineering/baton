@@ -228,7 +228,7 @@ export class SupervisedProcesses {
    * `detached` puts the child in its own group so a kill reaches the grandchildren a runner
    * spawns (test files, nested runners), never only the child itself.
    */
-  async run({ file, args = [], cwd, env = {}, timeoutMs = null, label = 'worker' }) {
+  async run({ file, args = [], cwd, env = {}, timeoutMs = null, label = 'worker', signal = null }) {
     if (typeof file !== 'string' || file.length === 0) throw new TypeError('a supervised worker needs the script it runs');
     if (typeof cwd !== 'string' || cwd.length === 0) throw new TypeError('a supervised worker needs the directory it runs in');
     if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) throw new TypeError('a supervised worker deadline is a positive integer in milliseconds, or null to wait on the child');
@@ -238,17 +238,22 @@ export class SupervisedProcesses {
     });
     const entry = { id, pid: child.pid ?? null, label, child };
     this._live.set(id, entry);
-    let stdout = ''; let stderr = ''; let timedOut = false;
+    let stdout = ''; let stderr = ''; let timedOut = false; let withdrawn = false;
     const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
       ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
     child.stderr?.on('data', (chunk) => { stderr = tail(stderr, chunk); });
-    const killGroup = (signal) => {
-      try { process.kill(-child.pid, signal); }
-      catch { try { child.kill(signal); } catch { /* already gone */ } }
+    const killGroup = (sig) => {
+      try { process.kill(-child.pid, sig); }
+      catch { try { child.kill(sig); } catch { /* already gone */ } }
     };
+    const onAbort = () => { withdrawn = true; killGroup('SIGKILL'); };
+    if (signal) {
+      if (signal.aborted) { onAbort(); }
+      else { signal.addEventListener('abort', onAbort, { once: true }); }
+    }
     const deadline = timeoutMs === null ? null : setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
     if (deadline !== null && typeof deadline.unref === 'function') deadline.unref();
     // Issue #577: settle on the child's EXIT, with a drain grace for the tails. `close` alone is not
@@ -277,10 +282,11 @@ export class SupervisedProcesses {
         code ?? exited?.code ?? null, signal ?? exited?.signal ?? null)));
     });
     clearTimeout(deadline);
+    if (signal) signal.removeEventListener('abort', onAbort);
     this._live.delete(id);
     return Object.freeze({
-      id, label, pid: child.pid ?? null, timedOut, stdout, stderr,
-      status: timedOut ? 'timeout' : settled.status,
+      id, label, pid: child.pid ?? null, timedOut, withdrawn, stdout, stderr,
+      status: withdrawn ? 'withdrawn' : timedOut ? 'timeout' : settled.status,
       code: settled.code ?? null, signal: settled.signal ?? null,
       ...(settled.error === undefined ? {} : { error: settled.error }),
     });
