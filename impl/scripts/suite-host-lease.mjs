@@ -165,7 +165,6 @@ export async function acquireSuiteVerifyLease({
   return Object.freeze({
     disabled: false, nested: false,
     token: outcome.token,
-    degraded: outcome.degraded ?? null,
     authority: resolved,
     release: async () => {
       if (released || outcome.token === null) return false;
