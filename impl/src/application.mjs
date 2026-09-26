@@ -9592,6 +9592,10 @@ export class BatonApplication {
 
   async _shutdownAuthorized(principal) {
     await this._swarmService?.close();
+    // Issue #576: a landing the stop abandons unwinds on the fence close() dropped (its gate run
+    // cancelled) and records its retryable abandoned-attempt row. Awaiting that settle HERE —
+    // before the drain starts on the writer lease — keeps the row from racing the lease release.
+    await this._swarmService?.settleLandings?.();
     await this._swarmNativeAccess?.close();
     for (const controller of this._followControllers) controller.abort();
     for (const controllers of this._contextControllers?.values() ?? []) {

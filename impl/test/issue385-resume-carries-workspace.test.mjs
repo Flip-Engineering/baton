@@ -3,8 +3,9 @@
 // clean checkout.
 //
 // Contracts pinned by this file:
-//   (a) same workspace binding — the successor binds to the predecessor's checkout when
-//       no live worker holds it;
+//   (a) crash-reclaim carry (#568) — a restart that finds the predecessor's owner dead reclaims
+//       its checkout once the work is durable on the kept lane branch, and the resume-from
+//       successor carries the preserved ref's diff into its fresh workspace;
 //   (b) snapshot carry — when the worktree is gone but a snapshot commit exists, changes
 //       are applied from the snapshot into the successor's new worktree;
 //   (c) held-workspace refusal — recruiting a successor while the predecessor's workspace
@@ -232,7 +233,7 @@ test('385-c: a successor of a LIVE predecessor starts in a fresh workspace and c
 // (a) Same workspace binding — multi-incarnation test
 // ——————————————————————————————————————————————————————————————————
 
-test('385-a: a resume-from successor binds to the predecessor\'s same workspace when no live worker holds it', async (t) => {
+test('385-a: a resume-from successor of a crash-reclaimed seat carries the preserved ref into a fresh workspace', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue385-a-'));
   const repo = join(directory, 'repo');
   initRepo(repo);
@@ -289,23 +290,27 @@ test('385-a: a resume-from successor binds to the predecessor\'s same workspace 
     try { await inc.driver.drainAndClose('issue385:test'); }
     catch { try { inc.driver.coordination.releaseWriterLease(); } catch { /* best effort */ } }
   };
+  const working = (driver, runId) => new Promise((resolve, reject) => {
+    const deadline = Date.now() + 8_000;
+    const poll = () => {
+      const handle = driver.coordinator.list().find(
+        (row) => row.runId === runId && row.status === 'working' && row.worktree);
+      if (handle) return resolve(handle);
+      if (Date.now() >= deadline) return reject(new Error(`worker ${runId} never started working`));
+      setTimeout(poll, 10);
+    };
+    poll();
+  });
 
   // First incarnation: recruit alpha and write to its worktree.
   const first = incarnation('i1');
   await first.call('create', { swarmId: 'carry', purpose: 'Workspace carry' });
-  await first.call('recruit', { swarmId: 'carry', participantId: 'alpha', objective: 'Build alpha' });
+  const alphaRecruit = await first.call('recruit', { swarmId: 'carry', participantId: 'alpha', objective: 'Build alpha' });
 
-  const deadline = Date.now() + 8_000;
-  let alphaWorker;
-  for (;;) {
-    alphaWorker = first.driver.coordinator.list().find(
-      (row) => row.status === 'working' && row.worktree);
-    if (alphaWorker) break;
-    if (Date.now() >= deadline) throw new Error('alpha never started working');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+  const alphaWorker = await working(first.driver, alphaRecruit.runId);
   const alphaWorkspaceId = alphaWorker.sessionContext.ownerTaskId;
   const alphaWorktree = alphaWorker.worktree;
+  const alphaBaseSha = alphaWorker.sessionContext.baseSha;
   assert.ok(existsSync(alphaWorktree), 'alpha worktree exists');
 
   writeFileSync(join(alphaWorktree, 'carried.txt'), 'alpha work that must survive\n');
@@ -314,38 +319,63 @@ test('385-a: a resume-from successor binds to the predecessor\'s same workspace 
   release(first);
   assert.ok(existsSync(join(alphaWorktree, 'carried.txt')), 'the worktree survives the release');
 
-  // Second incarnation: alpha's runtime is lost, bravo carries its workspace.
+  // Second incarnation: alpha's runtime is lost. The startup reconcile proves the owner dead,
+  // captures the uncommitted work onto the lane branch, and reclaims the checkout (#568): the
+  // durable worktree.removed row names the snapshot, the kept branch and the recorded base.
   const second = incarnation('i2');
   t.after(() => close(second));
+
+  assert.equal(existsSync(alphaWorktree), false,
+    'the startup reconcile reclaims the lost seat\'s checkout once its work is durable');
+
+  const kindOf = (event) => (event.kind === 'driver.recorded' ? event.payload?.kind : event.kind);
+  const events = () => second.driver.coordination.eventsView();
+  const removedRows = events().filter((event) => kindOf(event) === 'worktree.removed'
+    && (event.payload ?? {}).workspaceId === alphaWorkspaceId);
+  assert.equal(removedRows.length, 1, 'one durable removal row names the reclaim');
+  const removal = removedRows[0].payload;
+  assert.equal(removal.reason, 'crash_reconciliation');
+  assert.equal(removal.branch, `baton/${alphaWorkspaceId}`, 'the kept branch ref is named');
+  assert.equal(removal.baseSha, alphaBaseSha, 'the row names the base the snapshot diffed from');
+  assert.match(removal.snapshot ?? '', /^[0-9a-f]{40}$/u, 'the row names the preserved snapshot');
+
+  // The branch ref is kept, and it carries the uncommitted work.
+  assert.equal(git(repo, ['rev-parse', removal.branch]), removal.snapshot,
+    'the kept lane branch names the snapshot commit');
+  assert.equal(git(repo, ['show', `${removal.snapshot}:carried.txt`]),
+    'alpha work that must survive', 'the preserved ref carries the uncommitted work');
 
   // The swarm fold sees alpha as active (runtime_lost does not change status).
   const swarm = second.driver.coordination.swarm('carry');
   assert.equal(swarm.participants.alpha.status, 'active');
 
-  // Recruit bravo with resumeFrom: alpha.
-  await second.call('recruit', {
+  // Recruit bravo with resumeFrom: alpha — the carry runs when the orchestrator's answer
+  // starts the seat (#525): a fresh checkout, with the preserved ref's diff applied.
+  const bravoRecruit = await second.call('recruit', {
     swarmId: 'carry', participantId: 'bravo', objective: 'Continue from alpha',
     resumeFrom: 'alpha',
   });
-  // #525: the carry and the binding happen when the orchestrator's answer starts the seat.
   await second.call('guide', {
     swarmId: 'carry', participantId: 'bravo', message: 'Continue the lane.',
   });
   const bravoParticipant = second.driver.coordination.swarm('carry').participants.bravo;
-  assert.equal(bravoParticipant.workspaceId, alphaWorkspaceId,
-    'bravo is bound to the SAME workspace as alpha');
+  assert.notEqual(bravoParticipant.workspaceId, alphaWorkspaceId,
+    'a reclaimed checkout is not bound: the successor starts in a fresh workspace');
 
-  // The carried.txt file is present in the workspace.
-  assert.ok(existsSync(join(alphaWorktree, 'carried.txt')),
-    'the predecessor file is still in the carried workspace');
+  const bravoWorker = await working(second.driver, bravoRecruit.runId);
+  assert.equal(readFileSync(join(bravoWorker.worktree, 'carried.txt'), 'utf8'),
+    'alpha work that must survive\n',
+    'the successor\'s fresh checkout holds the work the preserved ref carried');
 
-  // The workspace.carried_from event is recorded.
-  const carryEvents = second.driver.coordination.eventsView()
-    .filter((e) => e.kind === 'workspace.carried_from');
+  // The workspace.carried_from event records the carry from the preserved ref.
+  const carryEvents = events().filter((e) => e.kind === 'workspace.carried_from');
   assert.equal(carryEvents.length, 1, 'one workspace.carried_from event');
   assert.equal(carryEvents[0].payload.participantId, 'bravo');
   assert.equal(carryEvents[0].payload.predecessor, 'alpha');
-  assert.equal(carryEvents[0].payload.workspaceId, alphaWorkspaceId);
+  assert.equal(carryEvents[0].payload.how, 'applied');
+  assert.equal(carryEvents[0].payload.snapshotSha, removal.snapshot,
+    'the carry names the snapshot the reclaim preserved');
+  assert.deepEqual(carryEvents[0].payload.paths, ['carried.txt']);
 
   // The brief names the carried workspace.
   assert.match(bravoParticipant.brief, /Carried workspace/,
