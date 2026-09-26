@@ -6,6 +6,7 @@ import ../host/text.bend as T
 import ../host/process.bend as P
 import ../harness/claude-worker.bend as Claude
 import ../harness/omp-worker.bend as Omp
+import ../harness/muse-worker.bend as Muse
 
 def error_text(error: U32 & String) -> String:
   (code,text)=error
@@ -60,14 +61,16 @@ def send_result(first: Result<&1,&1,U32 & String,Unit>, closed: Result<&1,&1,U32
     case Fail{error}: Fail{error}
     case Done{unit}: closed
 
-def input(handle: U32, prompt: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match omp:
-    case True{}: Omp.input(handle,prompt)
-    case False{}: Claude.input(handle,prompt)
+def input(+handle: U32, +prompt: String, +harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"omp\n"),
+    Omp.input(handle,prompt),
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"muse\n"),
+    Muse.input(handle,prompt),
+    Claude.input(handle,prompt)))
 
 def send_prompt(+handle: U32,prompt: String,harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,String.eq(harness,"omp\n"))
+    sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness)
     closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
@@ -102,17 +105,24 @@ def claude_launch(cmd: String, model: String, effort: String, cwd: String, stder
     case True{}: Claude.start_worker(cmd,model,effort,cwd,stderr)
     case False{}: Claude.resume_worker(cmd,model,effort,cwd,stderr,session)
 
-def launch(db: String, cmd: String, model: String, effort: String, cwd: String, log: String, +session: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
-  match omp:
-    case True{}: Omp.start_worker(cmd,model,effort,cwd,log,db ++ ".sessions",session,String.is_empty(session))
-    case False{}: claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session))
+def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+  match fresh:
+    case True{}: Muse.start_worker(cmd,model,effort,cwd,stderr)
+    case False{}: Muse.resume_worker(cmd,model,effort,cwd,stderr,session)
+
+def launch(+db: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
+    Omp.start_worker(cmd,model,effort,cwd,log,db ++ ".sessions",session,String.is_empty(session)),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
+    muse_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
+    claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session))))
 
 def prompt_read(+db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, +log: String, +session: String, +harness: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: report(db,worker,id,"Worker task could not be read: " ++ error_text(error))
     case Done{prompt}:
       do IO<Unit>:
-        child : Result<&1,&1,U32 & String,U32> <- launch(db,cmd,model,effort,cwd,log,session,String.eq(harness,"omp\n"))
+        child : Result<&1,&1,U32 & String,U32> <- launch(db,cmd,model,effort,cwd,log,session,harness)
         started(db,worker,id,log,prompt,harness,child)
 
 def fresh(db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String) -> IO(Unit):
@@ -143,7 +153,7 @@ def worker_checked(+db: String, +worker: String, +id: String, cmd: String, model
     case True{}: IO.die(Unit,2,"Worker has no recorded parent and workspace; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
-        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"claude-code\n")))
+        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n"))))
         foreign : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');"))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         found : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"))
