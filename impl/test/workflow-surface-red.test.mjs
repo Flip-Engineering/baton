@@ -673,9 +673,12 @@ test('FP-05 (stage: facade receipt absent): resolve-then-authorize â€” unknown â
   const toDead = await fx2.driver.coordinator.sendMessage({
     kind: 'inform', to: { workerId: deadHandle.id }, body: 'delivered, then the process died',
   }, { actor: 'orchestrator' });
-  fx2.adapter.emit({
-    worker: deadHandle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.process_closed', actor: 'worker', payload: { code: 143 },
-  });
+  // Issue #611: the death is staged by the coordinator's own stop. An unattributable
+  // process-close observation is recorded as lifecycle.process_attribution_refused and kills
+  // nothing now, so it can no longer stand in for a death.
+  const killing = fx2.driver.coordinator.kill(deadHandle.id, 'the process died');
+  fx2.adapter.emit({ worker: deadHandle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'kill.confirmed', actor: 'worker', payload: {} });
+  await killing;
   await flush();
   assert.deepEqual(fx2.driver.coordinator.messageReceipt(toDead.messageId),
     { delivered: true, read: null, actedOn: null, reply: null, replies: [] },
