@@ -56,6 +56,7 @@ function systemInstructions() {
     `  ${COORD} ${DB} message ID root WORKER guidance BODY — send guidance to a worker`,
     `  ${COORD} ${DB} land WORKER REPO TARGET — fast-forward land a worker's branch`,
     `  ${COORD} ${DB} land-checked WORKER REPO TARGET CHECK FILES — gated landing`,
+    `  ${COORD} ${DB} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
     `  ${COORD} ${DB} worktree WORKER — show a worker's Git state`,
     '',
     'When you receive a worker report, review it and acknowledge it.',

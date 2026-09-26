@@ -785,3 +785,11 @@ def land_checked(repo: String, target: String, worker: String, script: String, f
 # The coordinator's current entry point: the fast-forward landing.
 def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
   land_fast_forward(repo, workerBranch, target)
+
+def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
+  +r2 = repo
+  +b2 = branch
+  +rm = remote
+  do IO<T.GitOut>:
+    g : T.GitOut <- Git.runGit(r2, ["push", rm, b2])
+    IO.pure(T.GitOut, g)

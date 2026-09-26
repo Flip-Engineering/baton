@@ -72,3 +72,18 @@ def land_checked_worker(+db: String, +worker: String, +repo: String, +target: St
     branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
     branch : String <- require_branch(line(branch_raw))
     run_checked(db, worker, repo, target, check, files, branch)
+
+def push_ok(ok: Bool, out: String, branch: String, remote: String) -> IO(Unit):
+  match ok:
+    case True{}: IO.print("{\"status\":\"pushed\",\"branch\":" ++ J.string_literal(branch) ++ ",\"remote\":" ++ J.string_literal(remote) ++ "}")
+    case False{}: IO.print("{\"status\":\"rejected\",\"reason\":" ++ J.string_literal(out) ++ "}")
+
+def push_pick(r: G.GitOut, branch: String, remote: String) -> IO(Unit):
+  match r:
+    case G.GRun{code, out}: push_ok(U32.is_eq(code, 0), Tx.trim_nl(out), branch, remote)
+    case G.GBroken{detail}: IO.die(Unit, 1, detail)
+
+def push_branch(+repo: String, +branch: String, +remote: String) -> IO(Unit):
+  do IO<Unit>:
+    r : G.GitOut <- GitLand.push_git(repo, branch, remote)
+    push_pick(r, branch, remote)

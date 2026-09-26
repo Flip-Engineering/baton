@@ -201,6 +201,20 @@ const TOOLS = [
     description: 'List all undelivered messages with their recipients\' current native endpoints.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'baton2_push',
+    description: 'Push a branch to a remote after landing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Repository path' },
+        branch: { type: 'string', description: 'Branch name to push' },
+        remote: { type: 'string', description: 'Remote name (e.g. origin)' },
+      },
+      required: ['repo', 'branch', 'remote'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // State.
@@ -335,6 +349,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_pending':
         result = coord('pending');
+        break;
+      case 'baton2_push':
+        result = coord('push', args.repo, args.branch, args.remote);
         break;
       default:
         sendError(msg.id, -32602, `Unknown tool: ${name}`);
