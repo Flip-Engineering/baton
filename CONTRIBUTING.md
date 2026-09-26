@@ -11,7 +11,7 @@ you can redistribute or reuse the code, even if you are contributing to it.
 
 ```bash
 cd impl && npm ci
-node scripts/run-suite.mjs         # the whole suite; the verdict lists every failure
+node scripts/run-suite.mjs --all   # the whole suite; the verdict lists every failure
 node scripts/surface-gate.mjs      # grammar lint, generated artifacts, MCP dispatch (--write regenerates)
 ```
 
@@ -44,6 +44,11 @@ substitute for a full run. On a host that is also running development lanes, the
 verify lease so two suite runs never compete for the same CPU cores (see
 [#333](https://github.com/Flip-Engineering/baton/issues/333)); `BATON_HOST_CAPACITY_DISABLED=1`
 bypasses that lease for a maintainer-run gate.
+
+A run names the files it verifies (`node scripts/run-suite.mjs test/<file> …`). With no file list
+it refuses and names the fix: `test/<file>` paths, or `--all` for the whole canonical suite
+(`npm test` passes `--all`). A named path the checkout does not carry is refused, and the name is
+printed.
 
 ## Operating a resident
 

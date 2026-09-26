@@ -200,7 +200,7 @@ const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)
 // suite-lanes.json run one
 // at a time afterwards. Explicit file arguments run through the same scheduler; any other
 // node --test option (--watch, --test-name-pattern, …) keeps the legacy passthrough.
-const runnerFlags = new Set(['--test-concurrency']);
+const runnerFlags = new Set(['--test-concurrency', '--all']);
 // #300: `--changed <paths…>` selects the affected test files through the import graph
 // (verification-selection.mjs) instead of naming files by hand. The paths are the capture's
 // changedPaths — the flag's INPUT, never passthrough file names — and the selection itself is
@@ -243,6 +243,22 @@ const checkoutRootPath = fileURLToPath(new URL('../../', import.meta.url));
 const reporterUrl = new URL('./suite-verdict-reporter.mjs', import.meta.url).href;
 const watchdogUrl = new URL('./suite-orphan-watchdog.mjs', import.meta.url).href;
 const lanesPath = new URL('./suite-lanes.json', import.meta.url);
+
+// Issue #606: a run that names no files is not a silent whole-suite run. An empty list (a failed
+// selection, a name spelled against the wrong root, an unset variable) used to expand to every
+// file in the suite: on 2026-09-26 13:31Z sixteen such runs started at once and took the host to
+// load 187 and swap 87%. A run outside a landing gate names the files its change touches; `--all`
+// is the deliberate whole-suite spelling, and a landing gate passes its own derived selection.
+const allRequested = process.argv.includes('--all');
+const landingGateRun = process.env.BATON_SUITE_GATE === '1';
+if (!allRequested && !landingGateRun && changedPaths.length === 0 && explicitFiles.length === 0) {
+  const canonical = readdirSync(testRoot).filter((name) => name.endsWith('.test.mjs')).length;
+  process.stderr.write(
+    `baton test runner: no test files were named — a run with no file list would silently run all ${canonical} files.`
+    + ' Name the files your change touches as test/<file> paths (a landing gate derives and runs its own selection),'
+    + ' or pass --all to run the whole canonical suite on purpose\n');
+  process.exit(1);
+}
 // The runner's own liveness bound: a file that emits no test event for this long is hung and
 // is reaped instead of holding the verdict hostage. A wall-clock bound on the runner is a real
 // resource constraint (an operator waiting), so it is configurable, never hidden.
@@ -286,6 +302,11 @@ function relativeTestPath(file) {
 // the verdict with that reason; the verdict judges only the files that ran.
 const TEST_FRAMEWORK_IMPORT = /['"`]node:test['"`]/u;
 
+/** The reason a named path the checkout does not carry is skipped. Inside a landing gate this is a
+ * deletion the change itself carries (#582); outside one it is a name the runner cannot resolve,
+ * and the caller is told rather than handed a green over the files that remain (#606). */
+const ABSENT_NAMED_FILE = 'file absent from the checkout (deleted by this change)';
+
 function fileImportsTestFramework(file) {
   try {
     return TEST_FRAMEWORK_IMPORT.test(readFileSync(file, 'utf8'));
@@ -319,7 +340,7 @@ function laneFiles(changedSelection = null) {
     // a removal lands on its merits). There is nothing to run and the absence is the change
     // itself, so it skips as a named deletion — the verdict judges only the files that ran.
     if (!isAbsolute(file) && !existsSync(path)) {
-      skipped.push({ file, reason: 'file absent from the checkout (deleted by this change)' });
+      skipped.push({ file, reason: ABSENT_NAMED_FILE });
       continue;
     }
     // The #508 classification guards the suite's own territory: a file under impl/ that never
@@ -641,6 +662,18 @@ if (legacyPassthrough) {
   const files = laneFiles(changedSelection);
   for (const row of files.skipped) {
     process.stderr.write(`baton test runner: skipped (${row.reason}): ${row.file}\n`);
+  }
+  // Issue #606: a name the runner cannot resolve is reported, never silently dropped. The landing
+  // gate is the one caller whose names are derived from the resident's own tree, so a name it
+  // cannot open may be a file the change deleted (#582) and stays a skip; every other caller
+  // refuses, because judging the files that remain would report a green over a name the caller
+  // believed it had verified.
+  const unresolved = files.skipped
+    .filter((row) => row.reason === ABSENT_NAMED_FILE).map((row) => row.file);
+  if (unresolved.length > 0 && !landingGateRun) {
+    process.stderr.write(`baton test runner: ${unresolved.length} named path(s) do not resolve to a file in this checkout: ${unresolved.join(', ')}`
+      + ' — name test/<file> paths the checkout carries, or --all for the whole canonical suite\n');
+    process.exit(1);
   }
   // Issue #424: the plan — what this run expanded and the lane width it resolved (the derivation
   // reads the host's load, so a saturated host resolves one lane) — prints BEFORE admission and

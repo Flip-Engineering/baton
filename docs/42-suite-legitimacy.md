@@ -131,6 +131,10 @@ selection is now derived, and both the check's comparison and the landing's gate
   reads (`node:test`); the #300 selection and a direct file name can both reach a driver script
   or helper module under `test/` (#508), and the verdict reports such a file as
   `skipped: no test-framework import` while judging only the files that ran.
+- A run with no file list refuses outside a landing gate (#606); the refusal names the fix,
+  `test/<file>` paths or `--all` for the whole canonical suite (`npm test` passes `--all`).
+  Outside a landing gate, a named path the checkout does not carry is refused with the name
+  printed; inside a gate such a name is a file the change deleted and stays a skip (#582).
 
 Over-selection is the safe direction for both entries: a selected file the change does not really
 affect costs seconds and is visible in the receipt's provenance. Under-selection is what would let
