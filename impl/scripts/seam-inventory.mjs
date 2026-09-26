@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// seam-inventory.mjs — issue #259: the machine-checked seam map of the runtime's monoliths
+// seam-inventory.mjs — issue #259: the machine-derived seam map of the runtime's monoliths
 // (impl/src/coordinator.mjs, impl/src/application.mjs, impl/src/coordination-store.mjs), of the
 // classes that grew beside them (impl/src/swarm-runtime.mjs), and of the modules the split has
 // already carved out (impl/src/coordination-internals.mjs, impl/src/coordination-replay.mjs).
@@ -8,11 +8,11 @@
 // runtime does to processes, worktrees, providers), observation (what is recorded and projected),
 // and recovery (what restart reconciles) — behind one class, plus the surface that transports
 // call into. Slice 0 changes no behavior: it only makes the entanglement *countable*, so the
-// split slices can be reviewed against a committed map instead of prose.
+// split slices can be reviewed against the map this collects.
 //
-//   node impl/scripts/seam-inventory.mjs           # check; findings on stderr, exit 1 when stale
-//   node impl/scripts/seam-inventory.mjs --write   # regenerate impl/scripts/seam-inventory.json
 //   node impl/scripts/seam-inventory.mjs --report  # per-seam counts + the entangled members
+//
+// The map is collected from the sources every time it is read; no copy is committed (#598 E02).
 //
 // Classification is by EVIDENCE, never by hand. Every member of a declared target — a top-level
 // method_definition of the named class, or a top-level function of a module target (`className:
@@ -47,14 +47,13 @@
 // touch", not "is this member well factored" — the split's review is the second question, and
 // docs/audits/2026-09-13-runtime-policy/seam-map.md carries the proposals.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { Lang, parse } from '@ast-grep/napi';
 
 /** Repo root, so the inventory's `file` fields stay root-relative and portable. */
 export const REPO_ROOT_URL = new URL('../../', import.meta.url);
-export const INVENTORY_PATH = fileURLToPath(new URL('./seam-inventory.json', import.meta.url));
 export const SCHEMA_VERSION = 1;
 
 export const SEAMS = Object.freeze(['admission', 'effect', 'observation', 'recovery', 'surface']);
@@ -523,83 +522,6 @@ export function collectSeamInventory() {
   return { schemaVersion: SCHEMA_VERSION, generatedBy: 'impl/scripts/seam-inventory.mjs', seams: [...SEAMS], files };
 }
 
-/** The committed form: positions stripped, so the map is stable under edits that move code. */
-export function committedSeamInventory(inventory) {
-  return {
-    ...inventory,
-    files: inventory.files.map((file) => ({
-      ...file,
-      members: file.members.map(({ name, ordinal, size, seam, evidence }) => ({ name, ordinal, size, seam, evidence })),
-    })),
-  };
-}
-
-export function renderSeamInventory(inventory) {
-  return `${JSON.stringify(committedSeamInventory(inventory), null, 2)}\n`;
-}
-
-export function writeSeamInventory() {
-  const inventory = collectSeamInventory();
-  writeFileSync(INVENTORY_PATH, renderSeamInventory(inventory));
-  return inventory;
-}
-
-/** Parse the committed artifact; `{ error }` keeps a corrupt file a finding, not a crash. */
-function parseCommitted(text) {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    return { error: error.message };
-  }
-}
-
-/** Compare the committed artifact with a fresh regeneration. Findings are human-readable. The
- * committed artifact's per-target member counts are the floor (issue #510): a count may grow or
- * hold between commits, and a drop — or a target the regeneration loses entirely — is refused by
- * name with both counts. */
-export function checkSeamInventory({ path = INVENTORY_PATH, fresh = collectSeamInventory() } = {}) {
-  const findings = [];
-  let committed;
-  try {
-    committed = parseCommitted(readFileSync(path, 'utf8'));
-  } catch (error) {
-    return [`committed inventory is unreadable: ${error.message} (run --write)`];
-  }
-  if (committed.error) return [`committed inventory is not JSON: ${committed.error} (run --write)`];
-  // A member is a DEFINITION: the key is (file, name, ordinal), so Coordinator declaring one
-  // method twice shows as two rows, and a line that moves (every ordinary edit) changes nothing.
-  const identity = (file, member) => `${file}#${member.name}#${member.ordinal ?? 0}`;
-  const committedIndex = new Map((committed.files ?? []).flatMap((file) => (file.members ?? []).map((member) => [identity(file.file, member), member])));
-  const freshIndex = new Map(fresh.files.flatMap((file) => file.members.map((member) => [identity(file.file, member), member])));
-  for (const [key, member] of committedIndex) {
-    if (!freshIndex.has(key)) findings.push(`${key.split('#')[0]}: ${member.name}#${member.ordinal ?? 0} is committed but no longer exists (run --write)`);
-  }
-  for (const file of fresh.files) {
-    for (const member of file.members) {
-      const prior = committedIndex.get(identity(file.file, member));
-      if (!prior) { findings.push(`${file.file}:${member.line}: ${member.name} is uncommitted (run --write)`); continue; }
-      if (prior.seam !== member.seam) findings.push(`${file.file}:${member.line}: ${member.name} is committed as ${prior.seam} but classifies as ${member.seam} (run --write)`);
-      else if (JSON.stringify(prior.evidence) !== JSON.stringify(member.evidence)) findings.push(`${file.file}:${member.line}: ${member.name} evidence drifted (run --write)`);
-    }
-  }
-  // The per-target floor (issue #510): the committed artifact's per-target member counts are the
-  // floor a fresh regeneration must meet. A count may grow or hold between commits; a drop, or a
-  // committed target the regeneration no longer carries at all, is the dropped-TARGETS-entry
-  // incident, refused here by target with both counts.
-  const committedCounts = new Map((committed.files ?? []).map((file) => [file.file, (file.members ?? []).length]));
-  const freshCounts = new Map(fresh.files.map((file) => [file.file, file.members.length]));
-  for (const [file, before] of committedCounts) {
-    const after = freshCounts.get(file);
-    if (after === undefined) findings.push(`${file}: target absent from the regeneration (committed ${before} members, regenerated 0)`);
-    else if (after < before) findings.push(`${file}: member count dropped (committed ${before}, regenerated ${after})`);
-  }
-  // Sizes and ordering are part of the committed form too (a member that grew is worth a review).
-  if (findings.length === 0 && renderSeamInventory(committed) !== renderSeamInventory(fresh)) {
-    findings.push('committed inventory does not match a fresh regeneration (run --write)');
-  }
-  return findings;
-}
-
 /** Per-seam tallies plus the members whose evidence crosses three or more seams. */
 export function summarizeSeamInventory(inventory) {
   const counts = Object.fromEntries(SEAMS.map((seam) => [seam, 0]));
@@ -619,22 +541,17 @@ export function summarizeSeamInventory(inventory) {
   return { counts, perFile, entangled };
 }
 
+/** The one mode: the map is collected from the sources on every read, so there is no committed
+ * copy to check against and none to regenerate (#598 E02). `--report` names that mode. */
 export function runSeamInventoryMain(argv) {
-  if (argv.includes('--write')) {
-    const inventory = writeSeamInventory();
-    process.stdout.write(`seam-inventory: wrote ${INVENTORY_PATH} (${inventory.files.reduce((sum, file) => sum + file.members.length, 0)} members)\n`);
-    return 0;
+  const unknown = argv.filter((arg) => arg !== '--report');
+  if (unknown.length > 0) {
+    process.stderr.write(`seam-inventory: unknown argument ${unknown.join(' ')} (accepted: --report)\n`);
+    return 1;
   }
-  if (argv.includes('--report')) {
-    const { counts, perFile, entangled } = summarizeSeamInventory(collectSeamInventory());
-    process.stdout.write(`${JSON.stringify({ counts, perFile, entangled: entangled.length }, null, 2)}\n`);
-    for (const row of entangled) process.stdout.write(`entangled(${row.seams.length}) ${row.file}:${row.line} ${row.name} -> ${row.seam} [${row.seams.join(', ')}]\n`);
-    return 0;
-  }
-  const findings = checkSeamInventory();
-  for (const finding of findings) process.stderr.write(`seam-inventory: ${finding}\n`);
-  if (findings.length > 0) return 1;
-  process.stdout.write('seam-inventory: ok\n');
+  const { counts, perFile, entangled } = summarizeSeamInventory(collectSeamInventory());
+  process.stdout.write(`${JSON.stringify({ counts, perFile, entangled: entangled.length }, null, 2)}\n`);
+  for (const row of entangled) process.stdout.write(`entangled(${row.seams.length}) ${row.file}:${row.line} ${row.name} -> ${row.seam} [${row.seams.join(', ')}]\n`);
   return 0;
 }
 
