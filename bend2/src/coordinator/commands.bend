@@ -19,6 +19,7 @@ type Command is Data:
   Delivery{id: String}
   Pending{}
   Inbox{id: String}
+  Land{worker: String, repo: String, target: String}
   Status{}
   Invalid{}
 
@@ -88,6 +89,7 @@ def sql(command: Command) -> String:
     case MessageFile{id,sender,recipient,kind,path}: ""
     case ReportFile{id,sender,path}: ""
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
+    case Land{worker,repo,target}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Worktree{id}: ""
     case Invalid{}: ""
@@ -108,7 +110,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"report-file"),ReportFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"observe"),Observe{id,one,two},
       Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
-      Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},Invalid{}))))))
+      Bool.pick(Command, String.eq(verb,"connect"),Connect{id,one,two},
+      Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},Invalid{})))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
