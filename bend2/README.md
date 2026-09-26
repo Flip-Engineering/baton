@@ -45,7 +45,9 @@ Requested and observed routes are stored separately. Reading status reports the
 stored session binding; it does not establish that a process is alive.
 
 `message ID SENDER RECIPIENT KIND BODY` and its `message-file` variant store
-guidance and questions. `report` routes to the worker's recorded parent.
+guidance and questions. `report` routes a report and `ask ID WORKER BODY`
+routes a question to the worker's recorded parent, with the same retry
+behavior; `ask-file` reads the question from a path or `-` for stdin.
 `delivery ID` returns the message with its recipient's current native endpoint.
 `pending` returns undelivered messages with those current endpoints, and
 `session ID` reads one stored binding. `connect ID NATIVE ENDPOINT` updates an
