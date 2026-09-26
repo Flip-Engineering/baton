@@ -38,6 +38,16 @@ Commands return JSON. `report-file` accepts `-` to read stdin. It saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the first result, including its delivery receipt. Conflicting reuse of
 an ID fails. `ack` records native acceptance after the adapter observes it.
+
+`observe ID WORKER EVENT_JSON` and `observe-file ID WORKER PATH` consume one
+native harness event. An initialization event (type `session`) updates the
+worker's observed native session and model. A terminal event (type `result`
+or a terminal `agent_end`) creates a pending parent report containing the
+extracted result text and records the turn. Non-terminal events are recorded
+without creating a report. `observe-file` reads the JSON from a file; `observe`
+accepts it as a command-line argument. A repeated observe with the same ID
+and matching content returns the original result.
+
 `observe-file ID WORKER PATH` consumes one native JSON event. An initialization
 event updates the observed session/model; a Claude result or terminal OMP
 `agent_end` event saves a
