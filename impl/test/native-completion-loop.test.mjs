@@ -191,7 +191,7 @@ async function flush(times = 60) {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
+const gateCodes = ['forbidden_effect_observed', 'required_effect_absent'];
 const gateEvents = (coordinator, workerId) =>
   coordinator._log.read(workerId).filter((event) => gateCodes.includes(event.payload?.code));
 const verifyRuns = (coordinator, workerId) =>

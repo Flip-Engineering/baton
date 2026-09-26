@@ -418,7 +418,7 @@ function claimOutcomeGuarded(coordinator, pauseId, ms = 3000) {
   ]);
 }
 
-const GATE_EVENT_CODES = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
+const GATE_EVENT_CODES = ['forbidden_effect_observed', 'required_effect_absent'];
 function streamAfter(coordinator, handle, seq) {
   return coordinator._log.read(handle.id).filter((event) => event.seq > seq);
 }

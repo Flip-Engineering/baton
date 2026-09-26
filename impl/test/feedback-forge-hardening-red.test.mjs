@@ -272,22 +272,14 @@ const emit = (adapter, workerId, kind, payload) => adapter.emit({
   worker: workerId, harness: 'mock@1.0.0', turnEpoch: 1, kind, actor: 'worker', payload,
 });
 
-function emitScopeGateEvent(adapter, workerId, {
-  digestA = DIGEST_A, digestB = DIGEST_B, digestC = DIGEST_C,
-} = {}) {
+// #142 removed the trust gate that minted a path-scope refusal, so the fixture stages the LIVE
+// forbidden-effect refusal instead — the same failure leg, a code the vocabulary still carries.
+function emitForbiddenEffectEvent(adapter, workerId) {
   emit(adapter, workerId, 'error', {
-    message: 'scope',
-    code: 'worker_path_scope_violation',
+    message: 'captured worker result observed an effect forbidden by its approved Plan',
+    code: 'forbidden_effect_observed',
     phase: 'trust_gate',
-    trustPhase: 'path_scope',
-    pathScopeEvidence: {
-      changedPathCount: 1,
-      changedPathsDigest: digestA,
-      inScopeChangedPathCount: 0,
-      inScopeChangedPathsDigest: digestB,
-      outOfScopeChangedPathCount: 1,
-      outOfScopeChangedPathsDigest: digestC,
-    },
+    trustPhase: 'forbidden_effect',
   });
 }
 
@@ -407,7 +399,7 @@ function readWorkerGateSeq(deploymentRoot, workerId, runId, taskId) {
     .trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const gate = source.find((event) => (
     event.kind === 'error'
-    && event.payload?.code === 'worker_path_scope_violation'
+    && event.payload?.code === 'forbidden_effect_observed'
     && event.runId === runId && event.taskId === taskId
   ));
   return gate?.seq ?? null;
@@ -421,7 +413,7 @@ function readWorkerGateSeqs(deploymentRoot, workerId, runId, taskId) {
   return source
     .filter((event) => (
       event.kind === 'error'
-      && event.payload?.code === 'worker_path_scope_violation'
+      && event.payload?.code === 'forbidden_effect_observed'
       && event.runId === runId && event.taskId === taskId
     ))
     .map((event) => event.seq)
@@ -505,10 +497,10 @@ test('P1 (PIN): G2 shape boundary — gate-shaped input passes normalization, re
   const { application, baton, adapter } = dg1Harness(t);
   const { workerId, runId } = await startRun(baton);
 
-  emitScopeGateEvent(adapter, workerId);
+  emitForbiddenEffectEvent(adapter, workerId);
   const debug = await application.debug({ runId }, principal('observer'));
   const failure = debug.members[0]?.failure;
-  assert.equal(failure?.gate, 'scope', 'precondition: the debug failure leg projects the scope gate');
+  assert.equal(failure?.gate, 'forbidden_effect', 'precondition: the debug failure leg projects the gate');
 
   // Gate-shaped {gate, detail} must be accepted by input normalization (never the shape code) and
   // refuse only at the workflow gate on a non-workflow run (GREEN-1 / G2 discriminator).
@@ -567,23 +559,16 @@ test('P4 (PIN): GREEN-5a run.debug failure shape — the honest referent a forge
   const { application, baton, adapter } = dg1Harness(t);
   const { workerId, runId } = await startRun(baton);
 
-  emitScopeGateEvent(adapter, workerId);
+  emitForbiddenEffectEvent(adapter, workerId);
   const debug = await application.debug({ runId }, principal('observer'));
   assert.deepEqual(debug.members[0].failure, {
     kind: 'error',
-    code: 'worker_path_scope_violation',
-    message: 'scope',
-    gate: 'scope',
-    check: 'path_scope',
-    detail: {
-      digests: {
-        changedPathsDigest: DIGEST_A,
-        inScopeChangedPathsDigest: DIGEST_B,
-        outOfScopeChangedPathsDigest: DIGEST_C,
-      },
-      counts: { changedPathCount: 1, inScopeChangedPathCount: 0, outOfScopeChangedPathCount: 1 },
-    },
-    corrective: 'in_scope_revision',
+    code: 'forbidden_effect_observed',
+    message: 'captured worker result observed an effect forbidden by its approved Plan',
+    gate: 'forbidden_effect',
+    check: 'forbidden_effect',
+    detail: {},
+    corrective: 'forbidden_effect_retraction',
   });
 });
 
@@ -730,7 +715,7 @@ test('R2 (RED): validated-or-replaced — a verdict with a REAL gate referent is
   assert.ok(workerId && taskId, 'precondition: verified candidate');
 
   // stage: emit_real_gate_event — a real scope-gate failure on the candidate's worker stream.
-  emitScopeGateEvent(adapters.codex, workerId);
+  emitForbiddenEffectEvent(adapters.codex, workerId);
   const gateSeq = readWorkerGateSeq(deploymentRoot, workerId, workflow.id, taskId);
   assert.ok(
     Number.isSafeInteger(gateSeq) && gateSeq > 0,
@@ -786,7 +771,7 @@ test('R2 (RED): validated-or-replaced — a verdict with a REAL gate referent is
 
   // stage: second_gate_event — M2 (B4 replay-stability). A SECOND scope-gate event lands on the
   // same worker stream with DIFFERENT digests after the verdict was recorded.
-  emitScopeGateEvent(adapters.codex, workerId, {
+  emitForbiddenEffectEvent(adapters.codex, workerId, {
     digestA: DIGEST_D, digestB: DIGEST_E, digestC: DIGEST_F,
   });
   const gateSeqs = readWorkerGateSeqs(deploymentRoot, workerId, workflow.id, taskId);
@@ -857,7 +842,7 @@ test('R4 (RED): consumer safety — a verdict packet in the revision set must no
   assert.ok(workerId, 'precondition: verified candidate');
 
   // A REAL gate referent so the hardened admission can produce a legitimate derived verdict.
-  emitScopeGateEvent(adapters.codex, workerId);
+  emitForbiddenEffectEvent(adapters.codex, workerId);
   await workflow.sendFeedback('builder', scopeGatePayload()).then(
     () => ({ ok: true }),
     (error) => ({ ok: false, code: error?.code, message: error?.message }),
@@ -983,7 +968,7 @@ test('R7 (RED): S1 — the referent boundary is candidate-scoped: run-2 same-sha
 
   // Run 1: a REAL gate referent binds a genuine derived verdict — proving a same-shaped record
   // legitimately exists in this deployment (so run 2's refusal is a scoping fact, not a void).
-  emitScopeGateEvent(adapters.codex, worker1);
+  emitForbiddenEffectEvent(adapters.codex, worker1);
   await workflow.sendFeedback('builder', scopeGatePayload()).then(
     () => ({ ok: true }),
     (error) => ({ ok: false, code: error?.code, message: error?.message }),
@@ -1012,7 +997,7 @@ test('R7 (RED): S1 — the referent boundary is candidate-scoped: run-2 same-sha
     .trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const w2Gates = w2Events.filter((event) => (
     event.kind === 'error'
-    && event.payload?.code === 'worker_path_scope_violation'
+    && event.payload?.code === 'forbidden_effect_observed'
     && event.runId === w2.id && event.taskId === taskId2
   ));
   assert.equal(

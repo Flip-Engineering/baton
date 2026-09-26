@@ -198,7 +198,6 @@ const DIGEST_E = 'e'.repeat(64);
 
 // The R3 hub-minted corrective table (keyed by terminal CODE — #73 law) + the null rows.
 const CORRECTIVE_TABLE_EXPECTED = Object.freeze({
-  worker_path_scope_violation: 'in_scope_revision',
   forbidden_effect_observed: 'forbidden_effect_retraction',
   required_effect_absent: 'in_scope_edit',
   verification_red_green_failed: 'failing_check_fix',
@@ -207,7 +206,7 @@ const CORRECTIVE_TABLE_EXPECTED = Object.freeze({
 // The terminal codes REACHABLE on the surface (OQ1): the 5 corrective rows + the 8 reachable
 // verifier diagnostics that carry corrective: null. A code absent from the closed table escalates.
 const REACHABLE_TERMINAL_CODES = Object.freeze([
-  'worker_path_scope_violation', 'forbidden_effect_observed', 'required_effect_absent',
+  'forbidden_effect_observed', 'required_effect_absent',
   'verification_red_green_failed', 'verification_coverage_failed',
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_mutation_failed', 'verification_coverage_unavailable',
@@ -241,27 +240,6 @@ const NAMED_SOURCE_PATTERNS = [
 
 function baseEvent(worker, seq) {
   return { worker, harness: 'mock@1.0.0', turnEpoch: 1, seq, actor: 'worker', kind: 'error' };
-}
-
-// A real trust-gate scope refusal (the coordinator.mjs:13510-13517 mint shape).
-function scopeRefusalEvent({ worker = 'w-1', seq = 7 } = {}) {
-  return {
-    ...baseEvent(worker, seq),
-    payload: {
-      message: 'captured worker result changed paths outside approved Plan scope',
-      code: 'worker_path_scope_violation',
-      phase: 'trust_gate',
-      trustPhase: 'path_scope',
-      pathScopeEvidence: {
-        changedPathCount: 3,
-        changedPathsDigest: DIGEST_A,
-        inScopeChangedPathCount: 1,
-        inScopeChangedPathsDigest: DIGEST_B,
-        outOfScopeChangedPathCount: 2,
-        outOfScopeChangedPathsDigest: DIGEST_C,
-      },
-    },
-  };
 }
 
 // A real trust-gate forbidden-effect refusal (the coordinator.mjs:13196-13200 mint — the throw
@@ -544,22 +522,14 @@ async function startRun(baton) {
   return { run, workerId, runId: run.id ?? status?.runId ?? view?.runId };
 }
 
-function emitScopeGateEvent(adapter, workerId) {
+function emitForbiddenEffectEvent(adapter, workerId) {
   adapter.emit({
     worker: workerId, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'error', actor: 'worker',
     payload: {
-      message: 'scope',
-      code: 'worker_path_scope_violation',
+      message: 'captured worker result observed an effect forbidden by its approved Plan',
+      code: 'forbidden_effect_observed',
       phase: 'trust_gate',
-      trustPhase: 'path_scope',
-      pathScopeEvidence: {
-        changedPathCount: 1,
-        changedPathsDigest: DIGEST_A,
-        inScopeChangedPathCount: 0,
-        inScopeChangedPathsDigest: DIGEST_B,
-        outOfScopeChangedPathCount: 1,
-        outOfScopeChangedPathsDigest: DIGEST_C,
-      },
+      trustPhase: 'forbidden_effect',
     },
   });
 }
@@ -568,22 +538,16 @@ function emitScopeGateEvent(adapter, workerId) {
 // Section A — R1 the four-field projection (shape + closed check domain)
 // ===========================================================================
 
-test('A1 (RED): a scope refusal projects the four-field surface with the exact key `detail` (stage: verdict-surface-missing)', () => {
+test('A1 (RED): a forbidden-effect refusal projects the four-field surface with the exact key `detail` (stage: verdict-surface-missing)', () => {
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing — projectVerdictSurface(events) is the invented four-field projection');
-  const surface = applicationNs.projectVerdictSurface([scopeRefusalEvent()]);
-  assert.ok(surface, 'a scope refusal projects a surface record');
-  assert.equal(surface.gate, 'scope', 'WHICH gate — debugGateFromLiveCode maps the scope violation');
-  assert.equal(surface.code, 'worker_path_scope_violation', 'the durable terminal code rides the record');
-  assert.equal(surface.check, 'path_scope', 'WHAT was checked — the whitelisted trustPhase');
-  assert.deepEqual(surface.detail, {
-    digests: {
-      changedPathsDigest: DIGEST_A,
-      inScopeChangedPathsDigest: DIGEST_B,
-      outOfScopeChangedPathsDigest: DIGEST_C,
-    },
-    counts: { changedPathCount: 3, inScopeChangedPathCount: 1, outOfScopeChangedPathCount: 2 },
-  }, 'detail is the {digests, counts} evidence class — never path strings (R2)');
-  assert.equal(surface.corrective, 'in_scope_revision', 'the corrective class is hub-minted, keyed by the terminal code (R3)');
+  const surface = applicationNs.projectVerdictSurface([forbiddenEffectEvent()]);
+  assert.ok(surface, 'a forbidden-effect refusal projects a surface record');
+  assert.equal(surface.gate, 'forbidden_effect', 'WHICH gate — debugGateFromLiveCode maps the refusal code');
+  assert.equal(surface.code, 'forbidden_effect_observed', 'the durable terminal code rides the record');
+  assert.equal(surface.check, 'forbidden_effect', 'WHAT was checked — the whitelisted trustPhase');
+  assert.deepEqual(surface.detail, {},
+    'the forbidden-effect refusal carries no evidence detail (the path-scope digest/count class left with its gate, #142)');
+  assert.equal(surface.corrective, 'forbidden_effect_retraction', 'the corrective class is hub-minted, keyed by the terminal code (R3)');
   assert.ok('detail' in surface, 'the exact key is `detail` — a #79-shape reader and an R1 reader read the same key (fold B2)');
   assert.equal('evidence' in surface, false, 'the field is never named `evidence` (fold B2)');
 });
@@ -677,7 +641,6 @@ test('B2 (RED): VERDICT_CORRECTIVE_TABLE is the frozen hub-minted corrective tab
   assert.ok(applicationNs.VERDICT_CORRECTIVE_TABLE, 'stage: corrective-table-missing — VERDICT_CORRECTIVE_TABLE is a module export (application.mjs)');
   assert.ok(Object.isFrozen(applicationNs.VERDICT_CORRECTIVE_TABLE), 'the table is frozen — a caller cannot rewrite a corrective (#73)');
   const table = applicationNs.VERDICT_CORRECTIVE_TABLE;
-  assert.equal(table.worker_path_scope_violation, 'in_scope_revision');
   assert.equal(table.forbidden_effect_observed, 'forbidden_effect_retraction');
   assert.equal(table.required_effect_absent, 'in_scope_edit');
   assert.equal(table.verification_red_green_failed, 'failing_check_fix');
@@ -714,16 +677,16 @@ test('B4 (RED): a forced corrective outside the closed table refuses verdict_sur
   // map-wide throw.
   const malformed = verifierRefusalEvent('verification_red_green_failed', { seq: 9 });
   malformed.payload.corrective = 'caller_minted';
-  const valid = scopeRefusalEvent({ seq: 7 });
+  const valid = forbiddenEffectEvent({ seq: 7 });
   const mixed = (() => {
     try { return { surface: applicationNs.projectVerdictSurface([valid, malformed]) }; }
     catch (error) { return { refused: error.code }; }
   })();
   assert.equal(mixed.refused, undefined, 'stage: forced-corrective-refusal-missing — the refusal degrades per-record, never a map-wide throw');
   assert.ok(mixed.surface, 'the remaining valid record survives the refused record');
-  assert.equal(mixed.surface.code, 'worker_path_scope_violation', 'the malformed record is excluded — the projection falls back to the prior valid evidence (the forged corrective is never absorbed)');
-  assert.equal(mixed.surface.check, 'path_scope', 'the surviving record carries WHAT was checked');
-  assert.equal(mixed.surface.corrective, 'in_scope_revision', 'the surviving record carries its own table-minted corrective');
+  assert.equal(mixed.surface.code, 'forbidden_effect_observed', 'the malformed record is excluded — the projection falls back to the prior valid evidence (the forged corrective is never absorbed)');
+  assert.equal(mixed.surface.check, 'forbidden_effect', 'the surviving record carries WHAT was checked');
+  assert.equal(mixed.surface.corrective, 'forbidden_effect_retraction', 'the surviving record carries its own table-minted corrective');
   assert.ok(!JSON.stringify(mixed.surface).includes('caller_minted'), 'the caller-authored corrective never crosses to any consumer');
   const only = (() => {
     try { return { surface: applicationNs.projectVerdictSurface([malformed]) }; }
@@ -740,7 +703,7 @@ test('B4 (RED): a forced corrective outside the closed table refuses verdict_sur
 
 test('C1 (RED): two replays over the same log derive the same surface; the latest evidence supersedes (stage: verdict-surface-missing)', () => {
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
-  const events = [scopeRefusalEvent(), verifierRefusalEvent('verification_red_green_failed')];
+  const events = [forbiddenEffectEvent(), verifierRefusalEvent('verification_red_green_failed')];
   const first = applicationNs.projectVerdictSurface(events);
   const second = applicationNs.projectVerdictSurface(events);
   assert.deepEqual(first, second, 'a pure function of the durable event log — replay-stable (R4)');
@@ -750,12 +713,12 @@ test('C1 (RED): two replays over the same log derive the same surface; the lates
 
 test('C2 (RED): a worker receives ITS OWN surface — the projection is worker-scoped, never run-wide (stage: verdict-surface-missing)', () => {
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
-  const aEvents = [scopeRefusalEvent({ worker: 'w-a', seq: 5 })];
+  const aEvents = [forbiddenEffectEvent({ worker: 'w-a', seq: 5 })];
   const bEvents = [requiredEffectAbsentEvent({ worker: 'w-b', seq: 6 })];
   const all = [...aEvents, ...bEvents];
   const aSurface = applicationNs.projectVerdictSurface(all.filter((event) => event.worker === 'w-a'));
   const bSurface = applicationNs.projectVerdictSurface(all.filter((event) => event.worker === 'w-b'));
-  assert.equal(aSurface.check, 'path_scope', 'worker A receives ITS OWN scope refusal');
+  assert.equal(aSurface.check, 'forbidden_effect', 'worker A receives ITS OWN scope refusal');
   assert.equal(bSurface.check, 'required_effect', 'worker B receives ITS OWN required-effect refusal');
   assert.equal(bSurface.corrective, 'in_scope_edit', 'worker B’s corrective is its own');
   assert.equal(applicationNs.projectVerdictSurface(all).code, 'required_effect_absent',
@@ -765,12 +728,12 @@ test('C2 (RED): a worker receives ITS OWN surface — the projection is worker-s
 test('C3 (RED): the run.debug failure leg carries the same check/corrective — the shared projection on the DG-1 consumer (stage: run-debug-verdict-missing)', async (t) => {
   const { application, baton, adapter } = dg1Harness(t);
   const { workerId, runId } = await startRun(baton);
-  emitScopeGateEvent(adapter, workerId);
+  emitForbiddenEffectEvent(adapter, workerId);
   const debug = await application.debug({ runId }, principal('observer'));
   const failure = debug.members[0]?.failure;
-  assert.equal(failure?.gate, 'scope', 'precondition: the failure leg projects the scope gate');
-  assert.equal(failure?.check, 'path_scope', 'stage: run-debug-verdict-missing — the failure leg carries WHAT was checked');
-  assert.equal(failure?.corrective, 'in_scope_revision', 'the corrective class rides the same projection');
+  assert.equal(failure?.gate, 'forbidden_effect', 'precondition: the failure leg projects the scope gate');
+  assert.equal(failure?.check, 'forbidden_effect', 'stage: run-debug-verdict-missing — the failure leg carries WHAT was checked');
+  assert.equal(failure?.corrective, 'forbidden_effect_retraction', 'the corrective class rides the same projection');
   assert.ok('detail' in (failure ?? {}), 'the sanitized evidence key is `detail` on this consumer too (fold B2)');
 });
 
@@ -781,7 +744,7 @@ test('C4 (PIN): the surface never rides the refinement brief — task.brief stay
   const { handle, task } = await spawn(coordinator, { pathScope: ['reports/**'] });
   // #142: the trust gate that minted this error is removed, so the event is staged directly — the
   // helper the sibling C rows already use. What this row pins is the SURFACE's behaviour.
-  emitScopeGateEvent(adapter, handle.id);
+  emitForbiddenEffectEvent(adapter, handle.id);
   await flush();
   const gate = coordinator._log.read(handle.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
@@ -789,7 +752,7 @@ test('C4 (PIN): the surface never rides the refinement brief — task.brief stay
   const snapshot = structuredClone(task.brief);
   coordinator._providerBrief(task.brief, handle.id); // the delivery seam — the surface rides the push, never the brief
   assert.deepEqual(task.brief, snapshot, 'the admitted brief is byte-stable — the recovery-refinement digest pin never moves (R5)');
-  assert.ok(!JSON.stringify(task.brief).includes('in_scope_revision'),
+  assert.ok(!JSON.stringify(task.brief).includes('forbidden_effect_retraction'),
     'no corrective class ever lands in the brief (the surface rides the push, not the objective text)');
   assert.ok(
     memberSource('_validateRecoveryRefinementRequest').includes('recovery_refinement_conflict')
@@ -812,7 +775,7 @@ test('C5 (RED): the #79 gate_verdict push carries check/corrective — the third
   const gate = coordinator._log.read(handle.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
   assert.ok(gate, 'precondition: the scope violation minted the real trust-gate error');
-  assert.equal(gate.payload.code, 'worker_path_scope_violation', 'precondition: the gate code is the scope violation');
+  assert.equal(gate.payload.code, 'forbidden_effect_observed', 'precondition: the gate code is the scope violation');
   const composed = coordinator._providerBrief(task.brief, handle.id);
   assert.ok(
     Array.isArray(composed?.attention),
@@ -821,9 +784,9 @@ test('C5 (RED): the #79 gate_verdict push carries check/corrective — the third
   const verdict = composed.attention.find((entry) => entry.kind === 'gate_verdict');
   assert.ok(verdict, 'the sanitized gate_verdict item is pushed');
   assert.equal(verdict.workerId, handle.id, 'the verdict is the judged worker’s OWN (GT3)');
-  assert.equal(verdict.gate, 'scope', 'WHICH gate rides the push');
-  assert.equal(verdict.check, 'path_scope', 'stage: push-verdict-missing — the pushed item carries WHAT was checked (fold B3)');
-  assert.equal(verdict.corrective, 'in_scope_revision', 'the corrective rides the push from the SAME projection (R4)');
+  assert.equal(verdict.gate, 'forbidden_effect', 'WHICH gate rides the push');
+  assert.equal(verdict.check, 'forbidden_effect', 'stage: push-verdict-missing — the pushed item carries WHAT was checked (fold B3)');
+  assert.equal(verdict.corrective, 'forbidden_effect_retraction', 'the corrective rides the push from the SAME projection (R4)');
   assert.ok('detail' in verdict, 'the sanitized evidence key is `detail` on this consumer too (fold B2)');
 });
 
@@ -1180,20 +1143,6 @@ test('D12 (RED): the composed block drives the REAL recipe objective render seam
 // ===========================================================================
 // Section E — PIN rows (green today AND under the correct implementation)
 // ===========================================================================
-
-test('E1 (PIN): the run.debug scope detail is {digests, counts} in ACTUAL order and never path strings — the sanitized evidence projection holds (R2)', async (t) => {
-  const { application, baton, adapter } = dg1Harness(t);
-  const { workerId, runId } = await startRun(baton);
-  emitScopeGateEvent(adapter, workerId);
-  const debug = await application.debug({ runId }, principal('observer'));
-  const detail = debug.members[0]?.failure?.detail;
-  assert.ok(detail, 'the failure leg carries the projected detail');
-  assert.deepEqual(Object.keys(detail), ['digests', 'counts'],
-    'the scope detail shape is {digests, counts} — ACTUAL source order (application.mjs:962)');
-  assert.ok(!JSON.stringify(detail).includes('outside.txt'), 'never a path string crosses the projection');
-  assert.match(detail.digests.changedPathsDigest, HEX64, 'the digest is sha256 hex');
-  assert.equal(typeof detail.counts.changedPathCount, 'number', 'the count is a number');
-});
 
 test('E4 (PIN): the cross-referenced refusal laws stay alive — the #73 closed caller schema and the R5 recovery-digest pin (refusal vocabulary)', () => {
   assert.ok(

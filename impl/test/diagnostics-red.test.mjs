@@ -211,8 +211,8 @@ test('DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan', () 
   );
   // Gate diagnosis fields land on the failure leg (DIAG-2 amendment).
   assert.ok(
-    /\bgate\b/.test(source) && /pathScopeEvidence|outOfScopeChangedPathsDigest/.test(source),
-    'DIAG-2 amendment must project gate diagnosis from pathScopeEvidence digests',
+    /\bgate\b/.test(source) && /debugGateFromLiveCode/.test(source),
+    'DIAG-2 amendment must project the gate diagnosis from the live refusal code',
   );
   // Sanitizer reuse is pinned (never a parallel redaction path).
   assert.ok(
@@ -224,49 +224,6 @@ test('DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan', () 
 // ---------------------------------------------------------------------------
 // DG-1b — DIAG-2: trust-gate rejection diagnosis {gate, detail}
 // ---------------------------------------------------------------------------
-
-test("DG-1b: scope refusal carries {gate:'scope', detail:{digests, counts}} — no path strings", async (t) => {
-  const { application, baton, adapter } = harness(t);
-  const { workerId, runId } = await startRun(baton);
-
-  // Live coordinator mint (pathScopeEvidence digests-only — deliberately no path strings).
-  emit(adapter, workerId, 'error', {
-    message: 'captured worker result changed paths outside approved Plan scope',
-    code: 'worker_path_scope_violation',
-    phase: 'trust_gate',
-    trustPhase: 'path_scope',
-    pathScopeEvidence: {
-      changedPathCount: 3,
-      changedPathsDigest: DIGEST_A,
-      inScopeChangedPathCount: 1,
-      inScopeChangedPathsDigest: DIGEST_B,
-      outOfScopeChangedPathCount: 2,
-      outOfScopeChangedPathsDigest: DIGEST_C,
-      // A fixture that tried to plant path strings must not leak through projection.
-      offendingPaths: ['secret/outside-plan.txt', 'reports/ok.md'],
-    },
-  });
-
-  const debug = await application.debug({ runId }, principal('observer'));
-  const failure = debug.members[0].failure;
-  assert.ok(failure, 'scope refusal must land on the failure leg');
-  assert.equal(failure.gate, 'scope');
-  assert.ok(failure.detail && typeof failure.detail === 'object');
-  assert.deepEqual(failure.detail.digests, {
-    changedPathsDigest: DIGEST_A,
-    inScopeChangedPathsDigest: DIGEST_B,
-    outOfScopeChangedPathsDigest: DIGEST_C,
-  });
-  assert.deepEqual(failure.detail.counts, {
-    changedPathCount: 3,
-    inScopeChangedPathCount: 1,
-    outOfScopeChangedPathCount: 2,
-  });
-  const serialized = JSON.stringify(failure);
-  assert.ok(!serialized.includes('outside-plan'), `path string leaked: ${serialized}`);
-  assert.ok(!serialized.includes('offendingPaths'), `offendingPaths key leaked: ${serialized}`);
-  assert.ok(!serialized.includes('secret/'), `path fragment leaked: ${serialized}`);
-});
 
 test("DG-1b: red_green refusal carries sanitized tail; secret-shaped line never appears", async (t) => {
   const { application, baton, adapter } = harness(t);
@@ -361,18 +318,10 @@ test('DG-1b: run.feedback accepts the same {gate, detail} payload the debug fail
   const { workerId, runId } = await startRun(baton);
 
   emit(adapter, workerId, 'error', {
-    message: 'scope',
-    code: 'worker_path_scope_violation',
+    message: 'captured worker result observed an effect forbidden by its approved Plan',
+    code: 'forbidden_effect_observed',
     phase: 'trust_gate',
-    trustPhase: 'path_scope',
-    pathScopeEvidence: {
-      changedPathCount: 1,
-      changedPathsDigest: DIGEST_A,
-      inScopeChangedPathCount: 0,
-      inScopeChangedPathsDigest: DIGEST_B,
-      outOfScopeChangedPathCount: 1,
-      outOfScopeChangedPathsDigest: DIGEST_C,
-    },
+    trustPhase: 'forbidden_effect',
   });
 
   const debug = await application.debug({ runId }, principal('observer'));
@@ -380,7 +329,7 @@ test('DG-1b: run.feedback accepts the same {gate, detail} payload the debug fail
     gate: debug.members[0].failure.gate,
     detail: debug.members[0].failure.detail,
   };
-  assert.equal(diagnosis.gate, 'scope');
+  assert.equal(diagnosis.gate, 'forbidden_effect');
 
   // Shape is accepted by run.feedback (R-DG-6: same structured inputs). On a non-workflow
   // wave run the command refuses at the workflow gate AFTER input normalization — so a shape

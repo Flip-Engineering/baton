@@ -147,7 +147,7 @@ test('T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no v
   assert.notEqual(task.status, 'completed', 'no acceptance at a checkpoint either — deferral is non-dispatch');
   assert.equal(adapter.calls.kill.length, 0, 'the healthy multi-turn worker is never killed');
   assert.equal(verifyWorktrees, 0, 'non-dispatch means the gate never even builds its verify sandbox');
-  const gateEvents = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
+  const gateEvents = ['forbidden_effect_observed', 'required_effect_absent'];
   assert.equal(coordinator._log.read(handle.id).filter((event) => gateEvents.includes(event.payload?.code)).length, 0,
     'zero gate verdict events');
   const nudges = adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:'));

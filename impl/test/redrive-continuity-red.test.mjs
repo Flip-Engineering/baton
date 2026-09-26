@@ -235,7 +235,7 @@ function continuityBlock(overrides = {}) {
     },
     items: [
       { scope: 'terminal', entryId: 'terminal:run:dead:1', digest: 'a'.repeat(64), text: 'budget_exceeded budget_tokens used 90000 limit 100000 ratio 0.9' },
-      { scope: 'refusals', entryId: 'refusal:run:dead:1', digest: 'b'.repeat(64), text: 'gate scope worker_path_scope_violation — counts only' },
+      { scope: 'refusals', entryId: 'refusal:run:dead:1', digest: 'b'.repeat(64), text: 'gate forbidden_effect forbidden_effect_observed — sanitized tail only' },
       { scope: 'scratchpad', entryId: 'note:run:dead:3', digest: 'c'.repeat(64), text: 'the load-bearing note' },
       { scope: 'pins', entryId: 'pin:run:dead:1', digest: 'd'.repeat(64), text: 'resolveResultPin {report: results/spec.md, startedAtMs: 1000, excludeShas: []} → 2 shas' },
     ],

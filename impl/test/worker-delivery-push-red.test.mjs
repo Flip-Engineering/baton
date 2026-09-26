@@ -23,8 +23,7 @@
 //   D6     RED    D3 interaction push    (pending-attention-push-missing — answer_question/answer_approval push + dedup)
 //   E1     RED    D4 delivered receipt   (attention-pushed-event-missing)
 //   E2     RED    D4 read receipt        (attention-receipt-projection-missing — delivered-then-read BOTH cases)
-//   F1     RED    D6 verdict push        (gate-verdict-push-missing)
-//   F2-F4  PIN    D6 sanitized shape     (pathScopeEvidence digests+counts, sanitizer, static message)
+//   F3     PIN    D6 sanitizer           (the never-raw redaction law)
 //   F5     RED    D6 per-worker verdict  (gate-verdict-push-missing — run-wide scoping fails)
 //   F6     RED    D6 never-raw tail      (gate-verdict-push-missing — adversarial red_green capsule)
 //   G1     RED    refusal vocabulary     (push-refusal-codes-missing)
@@ -58,7 +57,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Coordinator } from '../src/coordinator.mjs';
-import { canonicalDigest } from '../src/runtime-recovery.mjs';
 import * as coordinatorNs from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
@@ -249,25 +247,6 @@ function stageCompletedTurn(adapter, handle, files) {
   });
 }
 
-/** The trust-gate scope error the coordinator minted for an out-of-scope capture. Issue #142
- * removed that gate (it had no observed failure requiring it), so the projection consumers below
- * stage the SAME event directly — the F6 pattern — because what they read is the event's shape,
- * its static message and its digests+counts evidence, not the gate that wrote it. */
-function stageScopeGateError(coordinator, handle, { changed, inScope, outOfScope }) {
-  coordinator._log.append({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'error', actor: 'policy',
-    payload: {
-      message: 'captured worker result changed paths outside approved Plan scope',
-      code: 'worker_path_scope_violation', phase: 'trust_gate', trustPhase: 'path_scope',
-      pathScopeEvidence: {
-        changedPathCount: changed.length, changedPathsDigest: canonicalDigest(changed),
-        inScopeChangedPathCount: inScope.length, inScopeChangedPathsDigest: canonicalDigest(inScope),
-        outOfScopeChangedPathCount: outOfScope.length, outOfScopeChangedPathsDigest: canonicalDigest(outOfScope),
-      },
-    },
-  });
-}
-
 function stageSpillRead(adapter, handle, spill, key) {
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'context.read', actor: 'worker',
@@ -304,7 +283,7 @@ test('A1 (RED): renderBrief does not emit `## Pending attention` for a brief car
     knowledge: { items: [{ ref: 'k1', validFrom: 'a', validTo: 'z', snippet: 'a recalled snippet' }], truncated: false },
     attention: [
       { kind: 'scratchpad_write_failed', requestId: 'swf:w-1:5', workerId: 'w-1', code: 'scratchpad_entry_invalid', text: 'scratchpad.entry.body is 42 bytes (cap 8192)' },
-      { kind: 'gate_verdict', requestId: 'gate:7', workerId: 'w-1', gate: 'scope', code: 'worker_path_scope_violation', detail: { digests: {}, counts: {} } },
+      { kind: 'gate_verdict', requestId: 'gate:7', workerId: 'w-1', gate: 'forbidden_effect', code: 'forbidden_effect_observed', detail: {} },
     ],
   });
   const rendered = renderBrief(brief, 'mock');
@@ -887,61 +866,6 @@ test('E2 (RED): the replay-derived read receipt projection does not exist — de
 // Section F — D6 the verdict push (TG4)
 // ===========================================================================
 
-test('F1 (RED): a scope-gate refusal never reaches the judged worker’s next-turn brief (stage: gate-verdict-push-missing)', async () => {
-  const adapter = new ScriptableAdapter();
-  const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt'] });
-  const { coordinator } = setup({ adapter, capture: outOfScope });
-  const { handle, task } = await spawn(coordinator, { pathScope: ['reports/**'] });
-  stageCompletedTurn(adapter, handle, ['outside.txt']);
-  await flush();
-  // #142: the gate is gone, so the event its consumers read is staged directly (above).
-  stageScopeGateError(coordinator, handle, { changed: ['outside.txt'], inScope: [], outOfScope: ['outside.txt'] });
-  await flush();
-  const gate = coordinator._log.read(handle.id)
-    .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
-  assert.ok(gate, 'precondition: the scope violation minted the real trust-gate error');
-  assert.equal(gate.payload.code, 'worker_path_scope_violation', 'precondition: the gate code is the scope violation');
-
-  const composed = coordinator._providerBrief(task.brief, handle.id);
-  assert.ok(
-    Array.isArray(composed?.attention),
-    'the judged worker’s next-turn brief carries the attention block (stage: gate-verdict-push-missing)',
-  );
-  const verdict = composed.attention.find((entry) => entry.kind === 'gate_verdict');
-  assert.ok(verdict, 'the sanitized {gate, detail} verdict item is pushed (R2)');
-  assert.equal(verdict.workerId, handle.id, 'the verdict is the judged worker’s OWN (D6)');
-  assert.equal(verdict.requestId, `gate:${gate.seq}`, 'keyed gate:${event.seq} from the worker-scoped latest event (D5)');
-  assert.equal(verdict.gate, 'scope');
-  assert.deepEqual(Object.keys(verdict.detail), ['digests', 'counts'], 'the scope detail shape is {digests, counts}');
-  assert.ok(!JSON.stringify(verdict.detail).includes('outside.txt'), 'NEVER a path string crosses (D6)');
-});
-
-test('F2 (PIN): the trust-gate pathScopeEvidence is digests+counts only — the sanitized shape source (D6)', async () => {
-  const adapter = new ScriptableAdapter();
-  const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt', 'reports/in.md'] });
-  const { coordinator } = setup({ adapter, capture: outOfScope });
-  const { handle } = await spawn(coordinator, { pathScope: ['reports/**'] });
-  stageCompletedTurn(adapter, handle, ['outside.txt', 'reports/in.md']);
-  await flush();
-  stageScopeGateError(coordinator, handle, {
-    changed: ['outside.txt', 'reports/in.md'], inScope: ['reports/in.md'], outOfScope: ['outside.txt'],
-  });
-  await flush();
-  const gate = coordinator._log.read(handle.id)
-    .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
-  assert.ok(gate, 'the scope violation minted the real trust-gate error');
-  const evidence = gate.payload.pathScopeEvidence;
-  assert.ok(evidence, 'the gate mints pathScopeEvidence');
-  assert.deepEqual(Object.keys(evidence).sort(), [...PATH_SCOPE_EVIDENCE_KEYS], 'ACTUAL sorted key set — digests + counts');
-  assert.equal(typeof evidence.changedPathCount, 'number');
-  assert.equal(typeof evidence.inScopeChangedPathCount, 'number');
-  assert.equal(typeof evidence.outOfScopeChangedPathCount, 'number');
-  assert.match(evidence.changedPathsDigest ?? '', HEX64, 'changedPathsDigest is sha256');
-  assert.match(evidence.inScopeChangedPathsDigest ?? '', HEX64);
-  assert.match(evidence.outOfScopeChangedPathsDigest ?? '', HEX64);
-  assert.ok(!JSON.stringify(evidence).includes('outside.txt'), 'the path string itself NEVER crosses — digests+counts only');
-});
-
 test('F3 (PIN): sanitizeVerifierDiagnosticText redacts home paths, JWTs and provider tokens — the never-raw law (D6)', () => {
   assert.equal(typeof sanitizeVerifierDiagnosticText, 'function', 'the sanitizer is the ONE redaction path (GT6)');
   const home = sanitizeVerifierDiagnosticText('trace at /Users/alice/projects/secret/lib.rs:12');
@@ -953,25 +877,6 @@ test('F3 (PIN): sanitizeVerifierDiagnosticText redacts home paths, JWTs and prov
   assert.ok(!ghp.text.includes('ghp_'), 'a provider token is redacted');
 });
 
-test('F4 (PIN): the trust-gate error message is the static string — message sources are static today (D6)', async () => {
-  const adapter = new ScriptableAdapter();
-  const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt'] });
-  const { coordinator } = setup({ adapter, capture: outOfScope });
-  const { handle } = await spawn(coordinator, { pathScope: ['reports/**'] });
-  stageCompletedTurn(adapter, handle, ['outside.txt']);
-  await flush();
-  stageScopeGateError(coordinator, handle, { changed: ['outside.txt'], inScope: [], outOfScope: ['outside.txt'] });
-  await flush();
-  const gate = coordinator._log.read(handle.id)
-    .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
-  assert.ok(gate, 'the scope violation minted the real trust-gate error');
-  assert.equal(
-    gate.payload.message,
-    'captured worker result changed paths outside approved Plan scope',
-    'the minted message is a static string — no raw capsule, no embedded path (D6)',
-  );
-});
-
 test('F5 (RED): the verdict is pinned per-WORKER — worker B never receives worker A\'s judged verdict (stage: gate-verdict-push-missing)', async () => {
   const adapter = new ScriptableAdapter();
   const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt'] });
@@ -980,11 +885,19 @@ test('F5 (RED): the verdict is pinned per-WORKER — worker B never receives wor
   const { handle: handleB, task: taskB } = await spawn(coordinator, { pathScope: ['reports/**'] });
   stageCompletedTurn(adapter, handleA, ['outside.txt']);
   await flush();
-  stageScopeGateError(coordinator, handleA, { changed: ['outside.txt'], inScope: [], outOfScope: ['outside.txt'] });
+  // #142 removed the trust gate that minted this event, so the push's own source is staged
+  // directly (the F6 pattern) — what this row pins is the push's per-worker scoping.
+  coordinator._log.append({
+    worker: handleA.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'error', actor: 'policy',
+    payload: {
+      message: 'captured worker result observed an effect forbidden by its approved Plan',
+      code: 'forbidden_effect_observed', phase: 'trust_gate', trustPhase: 'forbidden_effect',
+    },
+  });
   await flush();
   const gate = coordinator._log.read(handleA.id)
     .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
-  assert.ok(gate, 'precondition: worker A\'s scope violation minted the real trust-gate error');
+  assert.ok(gate, 'precondition: worker A\'s gate refusal is on the log');
   assert.equal(gate.worker, handleA.id, 'precondition: the gate error is worker-attributed — the D6 filter source');
 
   const composedA = coordinator._providerBrief(taskA.brief, handleA.id);

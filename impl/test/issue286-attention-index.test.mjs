@@ -120,12 +120,8 @@ async function history() {
     payload: { requestId: 'ap:pending', toolName: 'Bash', input: { command: 'git push --force' }, blocking: false },
   });
   append('error', {
-    phase: 'trust_gate', code: 'worker_path_scope_violation', message: 'out of scope',
-    pathScopeEvidence: {
-      changedPathCount: 2, inScopeChangedPathCount: 1, outOfScopeChangedPathCount: 1,
-      changedPathsDigest: 'a'.repeat(64), inScopeChangedPathsDigest: 'b'.repeat(64),
-      outOfScopeChangedPathsDigest: 'c'.repeat(64),
-    },
+    phase: 'trust_gate', code: 'forbidden_effect_observed',
+    message: 'observed an effect the approved Plan forbids',
   });
   append('verify.reverified', { accept: false, verdict: { diagnosticCode: 'verification_red_green_failed' } });
   fx.adapter.emit({
@@ -173,7 +169,6 @@ function receiptReference(events) {
 }
 
 const GATE_OF_CODE = Object.freeze({
-  worker_path_scope_violation: 'scope',
   forbidden_effect_observed: 'forbidden_effect',
   verification_red_green_failed: 'red_green',
   verification_coverage_failed: 'coverage',
