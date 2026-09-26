@@ -1068,7 +1068,6 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
   }
   return Object.freeze(snapshots);
 }
-
 function recoverWorkspaceOwnerPublication(repoRoot, root, binding, authority) {
   const candidates = new Map();
   for (const name of readdirSync(root).sort()) {
@@ -3620,9 +3619,21 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       // Only a checkout whose branch contains its HEAD may be removed here, and the row
       // says so before the removal happens.
       let crashSnapshotSha = null;
+      // #568: the base the preserved ref diffed from, so a later --resume-from can carry the
+      // snapshot after the owner metadata is gone (the durable worktree.removed row is then
+      // the only record that names it).
+      const crashBaseSha = typeof ownerReceipt?.baseSha === 'string' ? ownerReceipt.baseSha : null;
       if (isPhysicalWorkspaceId(normalizedTaskId) && existsSync(fullDir)) {
         const lane = laneBranchState(repoRoot, normalizedTaskId, fullDir);
-        if (!lane.branchSha || !lane.contained) {
+        // "Contained" is the WHOLE checkout's state, never only its commits: the snapshot a
+        // removal records is the branch tip, so work the tree holds beyond that commit
+        // (modified or untracked paths) is provably uncaptured by it — such a checkout is
+        // LEFT IN PLACE for its resume successor (#517), exactly like an uncontained HEAD.
+        let treeUncaptured = false;
+        try {
+          treeUncaptured = sh('git', ['status', '--porcelain=v1', '--untracked-files=all'], fullDir).length > 0;
+        } catch { treeUncaptured = true; } // an unreadable tree state is never proof of containment
+        if (!lane.branchSha || !lane.contained || treeUncaptured) {
           report.diagnostics.push(Object.freeze({
             code: 'workspace_owner_head_uncontained_retained', physicalOwnerId: normalizedTaskId,
             deploymentId: ownerReceipt?.deploymentId ?? null,
@@ -3754,6 +3765,16 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           continue;
         }
       }
+      // A restarted deployment records its cleanup intent before the checkout disappears. If the
+      // process stops between filesystem removal and receipt release, the next restart can
+      // distinguish that stopped owner from an invented ready receipt beside an unrelated ref.
+      if (ownerReceipt && ownerState === 'local_dead' && ownerReceipt.state === 'ready') {
+        try { ownerReceipt = updateWorkspaceOwnerState(repoRoot, normalizedTaskId, 'stopped'); }
+        catch (error) {
+          report.errors.push(`${taskId}: ${error.message || error}`);
+          continue;
+        }
+      }
       try {
         const hadDir = existsSync(fullDir); const hadResidue = hadDir || existsSync(metaFile) || existsSync(projectionExclude);
         if (hadDir) {
@@ -3795,13 +3816,13 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           logEvent(opts, taskId, 'worktree.removed', {
             workspaceId: normalizedTaskId, participantId: null,
             reason: 'crash_reconciliation', snapshot: crashSnapshotSha,
-            branch: `baton/${taskId}`,
+            branch: `baton/${taskId}`, baseSha: crashBaseSha,
           });
         }
         if (hadDir && physicalOwner) {
           report.removedWorkspaces.push(Object.freeze({
             physicalOwnerId: normalizedTaskId, snapshot: crashSnapshotSha,
-            branch: `baton/${taskId}`,
+            branch: `baton/${taskId}`, baseSha: crashBaseSha,
           }));
         }
         if (ownerReceipt) {
