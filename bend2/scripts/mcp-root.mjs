@@ -153,7 +153,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_land',
-    description: 'Land a worker\'s committed changes onto a target branch.',
+    description: 'Land a worker\'s committed changes onto a target branch (fast-forward only).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -164,6 +164,42 @@ const TOOLS = [
       required: ['worker', 'repo', 'target'],
       additionalProperties: false,
     },
+  },
+  {
+    name: 'baton2_land_checked',
+    description: 'Land a worker\'s changes onto a target branch with a check script gate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worker: { type: 'string', description: 'Worker session ID' },
+        repo: { type: 'string', description: 'Repository path' },
+        target: { type: 'string', description: 'Target branch name' },
+        check: { type: 'string', description: 'Check script path' },
+        files: { type: 'string', description: 'Space-separated list of files to check' },
+      },
+      required: ['worker', 'repo', 'target', 'check', 'files'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'baton2_workers',
+    description: 'List all workers with their harness, route, workspace, latest report and pending message count.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'baton2_turns',
+    description: 'List all turns for a worker with event type, report body and receipt status.',
+    inputSchema: {
+      type: 'object',
+      properties: { worker: { type: 'string', description: 'Worker session ID' } },
+      required: ['worker'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'baton2_pending',
+    description: 'List all undelivered messages with their recipients\' current native endpoints.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
 ];
 
@@ -233,7 +269,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-root', version: '0.1.0' },
-      instructions: 'Bend2 coordinator root attachment. Worker reports arrive as channel notifications. Use baton2_inbox to see pending messages and baton2_ack to acknowledge delivery. Use baton2_guide to direct workers.',
+      instructions: 'Bend2 coordinator root attachment. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct workers. Use baton2_workers to list workers and baton2_turns to see a worker\'s turn history. Use baton2_land or baton2_land_checked to land a worker\'s changes.',
     });
     return;
   }
@@ -287,6 +323,18 @@ function handleToolCall(msg) {
         break;
       case 'baton2_land':
         result = coord('land', args.worker, args.repo, args.target);
+        break;
+      case 'baton2_land_checked':
+        result = coord('land-checked', args.worker, args.repo, args.target, args.check, args.files);
+        break;
+      case 'baton2_workers':
+        result = coord('workers');
+        break;
+      case 'baton2_turns':
+        result = coord('turns', args.worker);
+        break;
+      case 'baton2_pending':
+        result = coord('pending');
         break;
       default:
         sendError(msg.id, -32602, `Unknown tool: ${name}`);
