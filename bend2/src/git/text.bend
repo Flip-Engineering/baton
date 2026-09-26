@@ -138,30 +138,6 @@ def starts_with(s: String, p: String) -> Bool:
       +eq = U32.is_eq(Char.to_u32(sc), Char.to_u32(pc))
       Bool.pick(Bool, eq, starts_with(sr, pr), False{})
 
-def hex_val(c: Char) -> U32:
-  +code = Char.to_u32(c)
-  +is_lo = Bool.pick(Bool, U32.is_lt(96, code), U32.is_lt(code, 123), False{})
-  +is_up = Bool.pick(Bool, U32.is_lt(64, code), U32.is_lt(code, 91), False{})
-  +is_dg = Bool.pick(Bool, U32.is_lt(47, code), U32.is_lt(code, 58), False{})
-  Bool.pick(U32, is_dg, U32.sub(code, 48),
-    Bool.pick(U32, is_lo, U32.sub(code, 87),
-      Bool.pick(U32, is_up, U32.sub(code, 55), 0)))
-
-def hex_char2(a: Char, b: Char) -> Char:
-  +hi = hex_val(a)
-  +lo = hex_val(b)
-  Char.from_u32(U32.add(U32.mul(hi, 16), lo))
-
-def hex_char_b(a: Char, rest: String) -> Char:
-  match rest:
-    case SNil{}: Char.from_u32(0)
-    case SCon{b, more}: hex_char2(a, b)
-
-def hex_char_a(p: String) -> Char:
-  match p:
-    case SNil{}: Char.from_u32(0)
-    case SCon{a, rest}: hex_char_b(a, rest)
-
 def hex_pairs_emit(prev: String, a: Char, out: List<String>) -> List<String>:
   match prev:
     case SNil{}: out
@@ -175,24 +151,6 @@ def hex_pairs_end(prev: String, out: List<String>) -> List<String>:
 def one_char(c: Char) -> String:
   SCon{c, SNil{}}
 
-def hex_pairs_go(s: String, prev: String, out: List<String>) -> List<String>:
-  match s:
-    case SNil{}: hex_pairs_end(prev, out)
-    case SCon{a, rest}:
-      +a2 = a
-      hex_pairs_go(rest, one_char(a2), hex_pairs_emit(prev, a2, out))
-
-def hex_cat_go(xs: List<String>, acc: String) -> String:
-  match xs:
-    case Nil{}: str_rev(acc)
-    case Con{p, rest}:
-      +acc2 = acc
-      hex_cat_go(rest, SCon{hex_char_a(p), acc2})
-
-def hex_decode(s: String) -> String:
-  hex_cat_go(hex_pairs_go(s, SNil{}, Nil{}), SNil{})
-
-# The argv encoding of the process effect: each element as its UTF-8 byte
 def enc_argv_go(xs: List<String>, acc: String) -> String:
   match xs:
     case Nil{}: acc
