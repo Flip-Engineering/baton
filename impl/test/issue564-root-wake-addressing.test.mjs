@@ -145,7 +145,7 @@ test('564-a: wakeClassFor maps the swarm.root_attention_owed driver row to the r
   assert.ok(WAKE_CLASSES.includes('root_owed'), 'root_owed is in the closed class vocabulary');
   assert.equal(row.scope, 'deployment', 'deployment scope is what a root session subscribes to');
   assert.equal(row.terminal, true, 'the row names the act; the wake is terminal');
-  assert.equal(row.next, 'baton swarm view {swarmId}');
+  assert.equal(row.next, 'baton_swarm_view / baton swarm view {swarmId}');
   assert.deepEqual(
     row.rows.map((matcher) => matcher.payloadKind), ['swarm.root_attention_owed'],
     'the class derives from exactly its one operational row kind');
@@ -167,7 +167,7 @@ test('564-b: deriveWakeFrame renders a terminal frame whose next carries the coo
   assert.equal(frame.wakeClass, 'root_owed');
   assert.equal(frame.swarmId, 'swarm-1');
   assert.equal(frame.participantId, 'ada');
-  assert.equal(frame.next, 'baton swarm view swarm-1', 'the terminal command renders the coordinates');
+  assert.equal(frame.next, 'baton_swarm_view / baton swarm view swarm-1', 'the terminal command renders the coordinates');
   assert.deepEqual(frame.subject, { kind: 'participant', id: 'ada' },
     'the subject reads the participant the row is about');
   assert.equal(frame.row.payloadKind, 'swarm.root_attention_owed');
@@ -177,7 +177,7 @@ test('564-b: deriveWakeFrame renders a terminal frame whose next carries the coo
       contributionId: 'contribution-ada-1', owed: 'needs_root', ask: 'the root: restart the resident',
       next: { command: 'swarm.view', swarmId: 'swarm-1' } } });
   assert.equal(bare.wakeClass, 'root_owed');
-  assert.equal(bare.next, 'baton swarm view swarm-1');
+  assert.equal(bare.next, 'baton_swarm_view / baton swarm view swarm-1');
 });
 
 // ── (c) the runtime derives the rows on the contribution write path ─────────────

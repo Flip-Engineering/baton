@@ -125,7 +125,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
-    wakeClass: 'left', scope: 'swarm', terminal: true, next: 'baton swarm view {swarmId}',
+    wakeClass: 'left', scope: 'swarm', terminal: true, next: 'baton_swarm_view / baton swarm view {swarmId}',
     summary: 'a participant left the swarm and keeps the assignments it already holds',
     rows: [ledgerKind('swarm.participant_left')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
@@ -165,7 +165,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'contribution_recorded', scope: 'swarm', terminal: true,
-    next: 'baton swarm check {swarmId} {participantId} {contributionId} CHECK_ID',
+    next: 'baton_swarm_check / baton swarm check {swarmId} {participantId} {contributionId} CHECK_ID',
     summary: 'a contribution landed and waits for an independent check',
     rows: [ledgerKind('swarm.contribution_recorded'), ledgerKind('swarm.contribution_revision_attached')],
     subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
@@ -181,7 +181,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // and the acknowledgement is a read. One class per ledger row (the table's own invariant), so
     // the failure never mints a second wake vocabulary for landing.
     wakeClass: 'contribution_integrated', scope: 'swarm', terminal: true,
-    next: 'baton swarm view {swarmId}',
+    next: 'baton_swarm_view / baton swarm view {swarmId}',
     summary: 'a landing settled on a target — the contribution squashed and the receipt recorded, or the landing that opened stopped with the code it failed under',
     // The landing's own driver rows (issue #459): a landing that FAILED is the other half of the
     // same act, and the half a caller who is gone can only learn from the record.
@@ -206,13 +206,13 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'id', kind: 'knowledge', fallback: { field: 'runId', kind: 'run' } },
   }),
   wakeRow({
-    wakeClass: 'closed', scope: 'swarm', terminal: true, next: 'baton swarm view {swarmId}',
+    wakeClass: 'closed', scope: 'swarm', terminal: true, next: 'baton_swarm_view / baton swarm view {swarmId}',
     summary: 'a swarm was closed; its participants keep running until each is stopped explicitly',
     rows: [ledgerKind('swarm.closed')],
     subject: { field: 'swarmId', kind: 'swarm', fallback: null },
   }),
   wakeRow({
-    wakeClass: 'refused', scope: 'swarm', terminal: true, next: 'baton swarm view {swarmId}',
+    wakeClass: 'refused', scope: 'swarm', terminal: true, next: 'baton_swarm_view / baton swarm view {swarmId}',
     summary: 'the runtime refused a swarm mutation and recorded why',
     // #329: a recruit whose host-admission wait is spent is a refusal recorded against the seat,
     // naming the dimension (load, memory, budget), the numbers and the operator bypass.
@@ -230,7 +230,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'dead', scope: 'deployment', terminal: true,
-    next: 'baton swarm update {swarmId} swarm.holder_released',
+    next: 'baton_swarm_update / baton swarm update {swarmId} swarm.holder_released',
     summary: 'a worker runtime died — a crash, or a seat whose provider killed it; its holder seats are still assigned to it until released',
     // #442: a seat whose provider killed its worker IS a worker death, and it is the class that
     // was silent through six GLM kills: the fault death is a FAILED TURN followed by a policy kill,
@@ -244,7 +244,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'reroute_proposed', scope: 'swarm', terminal: true,
-    next: 'baton swarm recruit {swarmId} SUCCESSOR --resume-from {participantId}',
+    next: 'baton_swarm_recruit / baton swarm recruit {swarmId} SUCCESSOR --resume-from {participantId}',
     summary: 'a seat died under a provider fault and the runtime recorded which routes could carry its work next',
     // #443: the sibling of `dead`, and the half that class could not carry — a death the swarm can
     // ANSWER. The fault observation records a decision (`swarm.reroute_proposed`) naming the
@@ -256,7 +256,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'resume_decision_required', scope: 'swarm', terminal: true,
-    next: 'baton swarm guide {swarmId} {participantId}',
+    next: 'baton_swarm_guide / baton swarm guide {swarmId} {participantId}',
     summary: 'a recovered seat awaits its orchestrator\'s decision whether to continue the interrupted work',
     rows: [ledgerKind('swarm.resume_decision_requested')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
@@ -281,14 +281,14 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
-    next: 'baton swarm guide {swarmId} {participantId}',
+    next: 'baton_swarm_guide / baton swarm guide {swarmId} {participantId}',
     summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
     rows: [operationalKind('turn.paused')],
     subject: { field: 'worker', kind: 'worker', fallback: { field: 'taskId', kind: 'task' } },
   }),
   wakeRow({
     wakeClass: 'attention', scope: 'deployment', terminal: true,
-    next: 'baton run answer {runId} {requestId} --text TEXT',
+    next: 'baton_decision_answer / baton run answer {runId} {requestId} --text TEXT',
     summary: 'a question, approval, or decision was asked, answered, or expired',
     rows: [
       operationalKind('question.asked'), operationalKind('question.answered'), operationalKind('question.expired'),
@@ -306,7 +306,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // deployment-wide subscription receives it, exactly like `attention`, its sibling. Terminal:
     // the row names the act (run the check, read the view), and the acknowledgement is that act.
     wakeClass: 'root_owed', scope: 'deployment', terminal: true,
-    next: 'baton swarm view {swarmId}',
+    next: 'baton_swarm_view / baton swarm view {swarmId}',
     summary: 'a contribution waits on the root — a check no other active seat can review, or a needsFromOthers item addressed to the root',
     rows: [operationalKind('swarm.root_attention_owed')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
@@ -317,7 +317,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // is terminal because the report is the completed turn's durable handoff. A run carries its
     // read command; a direct worker has no run command to render.
     wakeClass: 'root_turn_reported', scope: 'deployment', terminal: true,
-    next: 'baton run view {runId}',
+    next: 'baton_run_view / baton run view {runId}',
     summary: 'a parentless turn ended and reported its result to the deployment root',
     rows: [operationalKind('worker.turn_reported')],
     subject: { field: 'runId', kind: 'run', fallback: { field: 'worker', kind: 'worker' } },
@@ -329,7 +329,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'messageId', kind: 'message', fallback: { field: 'worker', kind: 'worker' } },
   }),
   wakeRow({
-    wakeClass: 'integrated', scope: 'deployment', terminal: true, next: 'baton run view {runId}',
+    wakeClass: 'integrated', scope: 'deployment', terminal: true, next: 'baton_run_view / baton run view {runId}',
     summary: 'a Run result was integrated into the repository',
     rows: [operationalKind('integration.completed')],
     subject: { field: 'taskId', kind: 'task', fallback: { field: 'runId', kind: 'run' } },
@@ -341,7 +341,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'taskId', kind: 'task', fallback: { field: 'worker', kind: 'worker' } },
   }),
   wakeRow({
-    wakeClass: 'capacity_pressure', scope: 'deployment', terminal: true, next: 'baton doctor --check',
+    wakeClass: 'capacity_pressure', scope: 'deployment', terminal: true, next: 'baton_deployment_doctor / baton doctor --check',
     summary: 'the deployment workspace observation crossed the capacity floor: every dispatch refuses until space is freed',
     // Deployment observation, never a ledger row: the doctor observes workspace capacity FRESH on
     // every read (#35), so there is no durable row to project. This is the class that stalled seven
@@ -351,7 +351,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'code', kind: 'capacity', fallback: null },
   }),
   wakeRow({
-    wakeClass: 'resident_lifecycle', scope: 'deployment', terminal: true, next: 'baton doctor --check',
+    wakeClass: 'resident_lifecycle', scope: 'deployment', terminal: true, next: 'baton_deployment_doctor / baton doctor --check',
     summary: 'the resident publication changed — a new incarnation, deployment, or transport bound the socket',
     rows: [],
     observation: 'resident', announceStanding: false,
