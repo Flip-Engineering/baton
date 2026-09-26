@@ -11,6 +11,8 @@ import {
   connectBatonWebApplication, createAuthenticatedWebServer, createBatonWebMcpServer,
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
 } from '../src/index.mjs';
+import { commandForTool } from '../src/mcp-northbound.mjs';
+import { ORDINARY_COMMANDS } from '../src/mcp-web-bridge.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
@@ -289,10 +291,14 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join the compact bridge table.
-  // The bridge table IS the RAW application table's served order — the compact flat surface the
-  // bridge projects (docs/49 §2: the raw class keeps its flat table for embedders and its own pins),
-  // derived by surface-truth.northboundApplicationToolNames.
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name), northboundApplicationToolNames());
+  // The bridge projects the raw application surface through its dispatch admission (28a5b33c): a
+  // tool is advertised when it dispatches no application command, or when the resident's wire
+  // authority admits the command it dispatches (the ordinary floor or the served card).
+  const served = northboundApplicationToolNames().filter((name) => {
+    const command = commandForTool(name);
+    return command === null || ORDINARY_COMMANDS.includes(command) || commands.includes(command);
+  });
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), served);
   for (const tool of listed.result.tools) {
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'repoId'), false);
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'idempotencyKey'), false);
