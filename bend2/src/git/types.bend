@@ -19,19 +19,6 @@ type GitOut is Data:
   GRun{code: U32, out: String}
   GBroken{detail: String}
 
-# One failing test on one check run. The four fields are the failure identity
-# of AGENTS.md: file, test, failure type and the stable semantic code when the
-# check tool supplies one ("-": none). Fields travel hex-encoded so any name
-# can carry spaces.
-type Ident is Data:
-  Id{file: String, test: String, kind: String, code: String}
-
-# The check a landing runs: cmd is an argv template whose element exactly
-# "@FILE@" is replaced by one selected file per run; files are the selected
-# check files, relative to the repository root.
-type Check is Data:
-  Chk{cmd: +List<String>, files: +List<String>}
-
 # The answer of create-worktree: commit names the resolved base commit the new
 # worktree starts from.
 type WorktreeCreated is Data:

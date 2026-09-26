@@ -21,7 +21,12 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 The executable stores sessions and messages and supervises foreground Claude
 Code and OMP turns. Recruitment creates a Git worktree and records its resolved base. Native parent
 delivery through Claude Code Channels MCP is connected to this interface. Git
-landing advances a target branch to include a worker's committed tip.
+landing advances a target branch to include a worker's committed tip, and the
+checked landing (bend2/src/git/land_checked in bend2/src/git/land.bend)
+prepares a squashed candidate in a scratch worktree, runs the selected checks
+on the candidate and on a tree at the target tip, blocks on failures the
+target run does not show, and advances the target through a compare-and-swap
+ref update; a target that moved meanwhile rebases the candidate once.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
