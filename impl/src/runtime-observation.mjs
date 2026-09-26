@@ -2984,7 +2984,21 @@ export function recordWorkerGeneration(coordinator, recorder, handle) {
         workerId: handle.id, processGeneration: handle.processGeneration,
         runId: task.runId ?? null, taskId: task.id, taskVersion: durableTask.version,
       }, { actor: 'hub', key: `worker.generation_bound:${handle.id}:${handle.processGeneration}` });
-    } catch {
+    } catch (error) {
+      // Issue #402: a lost durable generation binding says so. The failure rides the worker's
+      // operational log — the same receipt writer every other worker-scoped act here uses —
+      // instead of a silent null; a failed append fails this one act (#562). The return stays
+      // null: the caller's flow is unchanged.
+      recorder.log.append({
+        worker: handle.id, harness: coordinator._harnessOf(handle.vendor),
+        turnEpoch: handle.turnEpoch ?? null, kind: 'worker.generation_bind_failed', actor: 'hub',
+        payload: {
+          workerId: handle.id, processGeneration: handle.processGeneration,
+          taskId: task.id, runId: task.runId ?? null,
+          code: error?.code ?? null,
+          message: String(error?.message ?? error).slice(0, 300),
+        },
+      });
       return null;
     }
   }
