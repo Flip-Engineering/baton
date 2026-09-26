@@ -105,30 +105,30 @@ def claude_launch(cmd: String, model: String, effort: String, cwd: String, stder
     case True{}: Claude.start_worker(cmd,model,effort,cwd,stderr)
     case False{}: Claude.resume_worker(cmd,model,effort,cwd,stderr,session)
 
-def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, task: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
-    case True{}: Muse.start_worker(cmd,model,effort,cwd,stderr)
+    case True{}: Muse.start_worker(cmd,model,effort,cwd,stderr,task)
     case False{}: Muse.resume_worker(cmd,model,effort,cwd,stderr,session)
 
-def launch(+db: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def launch(+db: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
     Omp.start_worker(cmd,model,effort,cwd,log,db ++ ".sessions",session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
-    muse_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
+    muse_launch(cmd,model,effort,cwd,log ++ ".stderr",session,task,String.is_empty(session)),
     claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session))))
 
-def prompt_read(+db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, +log: String, +session: String, +harness: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+def prompt_read(+db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, +log: String, +session: String, +harness: String, task: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: report(db,worker,id,"Worker task could not be read: " ++ error_text(error))
     case Done{prompt}:
       do IO<Unit>:
-        child : Result<&1,&1,U32 & String,U32> <- launch(db,cmd,model,effort,cwd,log,session,harness)
+        child : Result<&1,&1,U32 & String,U32> <- launch(db,cmd,model,effort,cwd,log,session,harness,task)
         started(db,worker,id,log,prompt,harness,child)
 
-def fresh(db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String) -> IO(Unit):
+def fresh(db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String) -> IO(Unit):
   do IO<Unit>:
     prompt : Result<&1,&1,U32 & String,String> <- T.Text.read(task)
-    prompt_read(db,worker,id,cmd,model,effort,cwd,log,session,harness,prompt)
+    prompt_read(db,worker,id,cmd,model,effort,cwd,log,session,harness,task,prompt)
 
 def choose(+db: String, worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Unit):
   match replay:
