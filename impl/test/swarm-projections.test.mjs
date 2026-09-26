@@ -55,8 +55,8 @@ async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-projections-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Swarm projections'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'projections@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Swarm projections', GIT_COMMITTER_NAME: 'Swarm projections' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'projections@example.invalid', GIT_COMMITTER_EMAIL: 'projections@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

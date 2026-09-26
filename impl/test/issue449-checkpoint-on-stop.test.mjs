@@ -335,8 +335,8 @@ test('449-e: the resident\u2019s own open row names the stale shape, the commit 
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const repo = join(base, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['-C', repo, 'config', 'user.email', 'issue449@example.invalid']);
-  execFileSync('git', ['-C', repo, 'config', 'user.name', 'issue449']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue449@example.invalid', GIT_COMMITTER_EMAIL: 'issue449@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue449', GIT_COMMITTER_NAME: 'issue449' });
   execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'seed']);
   const deploymentRoot = join(base, 'deployment');
   const coordination = join(deploymentRoot, 'state', 'coordination');

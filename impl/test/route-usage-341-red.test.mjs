@@ -32,8 +32,8 @@ function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-route-usage-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'route-usage@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Route usage'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'route-usage@example.invalid', GIT_COMMITTER_EMAIL: 'route-usage@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Route usage', GIT_COMMITTER_NAME: 'Route usage' });
   writeFileSync(join(root, 'README.md'), '# route usage fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

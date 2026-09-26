@@ -15,8 +15,8 @@ function repository(root) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'selection@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'selection fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'selection@example.invalid', GIT_COMMITTER_EMAIL: 'selection@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'selection fixture', GIT_COMMITTER_NAME: 'selection fixture' });
   writeFileSync(join(repo, 'README.md'), '# selection fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

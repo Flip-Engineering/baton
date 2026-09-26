@@ -137,8 +137,8 @@ const repoId = 'repo-run-show-verdict';
 function gitRepo(name) {
   const repo = mkdtempSync(join(tmpdir(), `baton-rsv-${name}-repo-`));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'run-show-verdict@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Run Show Verdict'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'run-show-verdict@example.invalid', GIT_COMMITTER_EMAIL: 'run-show-verdict@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Run Show Verdict', GIT_COMMITTER_NAME: 'Run Show Verdict' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

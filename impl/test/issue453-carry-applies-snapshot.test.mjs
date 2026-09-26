@@ -59,8 +59,8 @@ const rowsOf = (store, kind) => store.eventsView().filter((event) => event.kind 
 
 function initRepo(repo) {
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 453 carry'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue453@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 453 carry', GIT_COMMITTER_NAME: 'Issue 453 carry' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue453@example.invalid', GIT_COMMITTER_EMAIL: 'issue453@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

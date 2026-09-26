@@ -34,8 +34,8 @@ function fixture(t) {
   // read-only git authority the view already uses (worktreeChangedPaths, docs/45 §5).
   const sharedRepo = join(directory, 'shared');
   execFileSync('git', ['init', '-q', sharedRepo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 423'], { cwd: sharedRepo });
-  execFileSync('git', ['config', 'user.email', 'issue-423@example.invalid'], { cwd: sharedRepo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 423', GIT_COMMITTER_NAME: 'Issue 423' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue-423@example.invalid', GIT_COMMITTER_EMAIL: 'issue-423@example.invalid' });
   mkdirSync(join(sharedRepo, 'impl', 'src'), { recursive: true });
   writeFileSync(join(sharedRepo, 'impl', 'src', 'held.mjs'), '// held\n');
   execFileSync('git', ['add', '.'], { cwd: sharedRepo });

@@ -392,8 +392,8 @@ const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: 
 function appFixture(name, { driverOpts = {} } = {}) {
   const repo = tmpDir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'fe@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', `FE ${name}`], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'fe@example.invalid', GIT_COMMITTER_EMAIL: 'fe@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: `FE ${name}`, GIT_COMMITTER_NAME: `FE ${name}` });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

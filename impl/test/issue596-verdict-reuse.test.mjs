@@ -41,8 +41,8 @@ function world(t) {
   const remote = join(directory, 'shared.git');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
   execFileSync('git', ['init', '-q', '--bare', remote], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 596');
-  git(repo, 'config', 'user.email', 'issue596@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 596', GIT_COMMITTER_NAME: 'Issue 596' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue596@example.invalid', GIT_COMMITTER_EMAIL: 'issue596@example.invalid' });
   write(repo, 'README.md', 'base\n');
   write(repo, LANE_FILE, 'export const lane = 1;\n');
   git(repo, 'add', '-A');

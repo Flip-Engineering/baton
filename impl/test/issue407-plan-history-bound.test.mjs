@@ -73,8 +73,8 @@ const principal = (principalId) => Object.freeze({
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-issue407-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue407@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 407'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue407@example.invalid', GIT_COMMITTER_EMAIL: 'issue407@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 407', GIT_COMMITTER_NAME: 'Issue 407' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

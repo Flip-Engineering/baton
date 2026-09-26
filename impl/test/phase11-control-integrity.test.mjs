@@ -344,8 +344,8 @@ test('CI3 (#163): the driver arms no wall-budget killer, and an explicit stop re
   let driverHandle = null;
   try {
     git(['init', '-q'], repoRoot);
-    git(['config', 'user.email', 'baton-test@example.com'], repoRoot);
-    git(['config', 'user.name', 'Baton Test'], repoRoot);
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@example.com', GIT_COMMITTER_EMAIL: 'baton-test@example.com' });
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
     git(['commit', '--allow-empty', '-q', '-m', 'base'], repoRoot);
 
     const realSetTimeout = globalThis.setTimeout;

@@ -66,8 +66,8 @@ function world(label) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['-C', repo, 'config', 'user.email', 'issue442@example.invalid']);
-  execFileSync('git', ['-C', repo, 'config', 'user.name', 'issue442']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue442@example.invalid', GIT_COMMITTER_EMAIL: 'issue442@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'issue442', GIT_COMMITTER_NAME: 'issue442' });
   execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'seed']);
   const logDir = join(root, 'deployment');
   mkdirSync(logDir, { recursive: true });
@@ -308,8 +308,8 @@ function gitRepo(label) {
   const root = tmpDir(label);
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['checkout', '-q', '-b', 'master'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue442@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 442'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue442@example.invalid', GIT_COMMITTER_EMAIL: 'issue442@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 442', GIT_COMMITTER_NAME: 'Issue 442' });
   writeFileSync(join(root, 'README.md'), '# issue 442\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

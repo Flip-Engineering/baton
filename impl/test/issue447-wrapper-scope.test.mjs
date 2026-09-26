@@ -64,8 +64,8 @@ function fixture(t) {
   const initRepo = (dir) => {
     mkdirSync(dir, { recursive: true });
     git(['init', '-q'], dir);
-    git(['config', 'user.name', 'Issue 447'], dir);
-    git(['config', 'user.email', 'issue447@example.invalid'], dir);
+    Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 447', GIT_COMMITTER_NAME: 'Issue 447' });
+    Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue447@example.invalid', GIT_COMMITTER_EMAIL: 'issue447@example.invalid' });
   };
   // The deployment's repository, and the seat's own checkout: a real lane worktree of it, the
   // shape worktree.mjs mints for every seat.

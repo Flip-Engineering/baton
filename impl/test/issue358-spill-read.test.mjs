@@ -156,8 +156,8 @@ async function appFixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue358-app-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 358'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue358@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 358', GIT_COMMITTER_NAME: 'Issue 358' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue358@example.invalid', GIT_COMMITTER_EMAIL: 'issue358@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

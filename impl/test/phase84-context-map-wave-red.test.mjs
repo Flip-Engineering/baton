@@ -28,8 +28,8 @@ function canonicalDigest(value) {
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase84-context-map-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase84@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 84'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase84@example.invalid', GIT_COMMITTER_EMAIL: 'phase84@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 84', GIT_COMMITTER_NAME: 'Phase 84' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   writeFileSync(join(root, 'alpha.mjs'), 'export const alpha = 1;\n');
   writeFileSync(join(root, 'beta.mjs'), 'export const beta = 2;\n');

@@ -51,8 +51,8 @@ function sh(cmd, args, cwd, input) {
 function makeRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'baton-wt-test-'));
   sh('git', ['init', '-q'], dir);
-  sh('git', ['config', 'user.email', 'test@example.com'], dir);
-  sh('git', ['config', 'user.name', 'Baton Test'], dir);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(dir, 'README.md'), '# base\n');
   sh('git', ['add', '-A'], dir);
   sh('git', ['commit', '-q', '-m', 'base'], dir);
@@ -534,8 +534,8 @@ test('reconcile does not claim or delete a live Baton branch owned by another li
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   const main = join(parent, 'main'); mkdirSync(main);
   sh('git', ['init', '-q'], main);
-  sh('git', ['config', 'user.email', 'test@example.com'], main);
-  sh('git', ['config', 'user.name', 'Baton Test'], main);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(main, 'README.md'), '# base\n');
   sh('git', ['add', '-A'], main); sh('git', ['commit', '-qm', 'base'], main);
   const baseSha = sh('git', ['rev-parse', 'HEAD'], main);
@@ -586,8 +586,8 @@ test('changedLines reports added lines in a new file and modified lines in an ex
   const dir = mkdtempSync(join(tmpdir(), 'baton-wt-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   sh('git', ['init', '-q'], dir);
-  sh('git', ['config', 'user.email', 'test@example.com'], dir);
-  sh('git', ['config', 'user.name', 'Baton Test'], dir);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   writeFileSync(join(dir, 'bar.js'), 'line1\nline2\n');
   sh('git', ['add', '-A'], dir);
   sh('git', ['commit', '-q', '-m', 'base'], dir);

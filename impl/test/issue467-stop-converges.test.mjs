@@ -142,8 +142,8 @@ function deploymentAdapter() {
 
 function initRepo(repo) {
   execFileSync('git', ['init', '-q', repo]);
-  execFileSync('git', ['config', 'user.name', 'Issue 467 stop'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue467@example.invalid'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 467 stop', GIT_COMMITTER_NAME: 'Issue 467 stop' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue467@example.invalid', GIT_COMMITTER_EMAIL: 'issue467@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

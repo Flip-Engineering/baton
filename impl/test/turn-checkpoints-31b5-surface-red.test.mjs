@@ -91,8 +91,8 @@ const intent = (runId, extra = {}) => ({
 function pausableFixture(name, { turnDelayMs = 0 } = {}) {
   const repo = dir(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', '31b5@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 31b5'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: '31b5@example.invalid', GIT_COMMITTER_EMAIL: '31b5@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 31b5', GIT_COMMITTER_NAME: 'Issue 31b5' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

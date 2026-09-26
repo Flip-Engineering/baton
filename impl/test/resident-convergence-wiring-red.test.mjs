@@ -17,8 +17,8 @@ import { join } from 'node:path';
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-resident-conv-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'resident-conv@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Resident Conv'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'resident-conv@example.invalid', GIT_COMMITTER_EMAIL: 'resident-conv@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Resident Conv', GIT_COMMITTER_NAME: 'Resident Conv' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '-A'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'init'], { cwd: root });

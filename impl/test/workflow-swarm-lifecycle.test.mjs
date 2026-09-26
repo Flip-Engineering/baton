@@ -12,8 +12,8 @@ function fixture(t, definitions, { closeError = null, residueUnknown = false } =
   mkdirSync(join(repoRoot, 'objectives'));
   const git = (...args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
   git('init', '-q');
-  git('config', 'user.name', 'Baton Test');
-  git('config', 'user.email', 'baton@example.test');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton@example.test', GIT_COMMITTER_EMAIL: 'baton@example.test' });
   const members = Object.keys(definitions).map((role) => {
     writeFileSync(join(repoRoot, 'objectives', `${role}.md`), `Collaborate on ${role}.`);
     return { role, exact: { harness: 'mock', model: 'mock', effort: 'low' },

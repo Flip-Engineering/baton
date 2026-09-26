@@ -20,8 +20,8 @@ const sha = (character) => character.repeat(64);
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase85-result-repo-'));
   git(root, ['init', '-q']);
-  git(root, ['config', 'user.email', 'phase85@example.invalid']);
-  git(root, ['config', 'user.name', 'Phase 85']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase85@example.invalid', GIT_COMMITTER_EMAIL: 'phase85@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 85', GIT_COMMITTER_NAME: 'Phase 85' });
   mkdirSync(join(root, 'reviews'), { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   writeFileSync(join(root, 'reviews', 'result.md'), 'initial review\n');

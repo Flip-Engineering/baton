@@ -214,8 +214,8 @@ async function world(t, { change = 'impl/src/coordinator.mjs', gate = {} } = {})
     }
   });
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 463');
-  git(repo, 'config', 'user.email', 'issue463@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 463', GIT_COMMITTER_NAME: 'Issue 463' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue463@example.invalid', GIT_COMMITTER_EMAIL: 'issue463@example.invalid' });
   write(repo, '.gitignore', 'node_modules/\n');
   write(repo, 'README.md', 'base\n');
   for (const script of REGENERATORS) {

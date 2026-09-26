@@ -17,8 +17,8 @@ const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'h
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'bt89-resident-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase89@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 89'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase89@example.invalid', GIT_COMMITTER_EMAIL: 'phase89@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 89', GIT_COMMITTER_NAME: 'Phase 89' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({
     private: true, scripts: { test: 'node --test' },
   }));

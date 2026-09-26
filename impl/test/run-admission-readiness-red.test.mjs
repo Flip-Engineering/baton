@@ -64,8 +64,8 @@ function fixtureRepo(t, label) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'run-admission@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Run admission'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'run-admission@example.invalid', GIT_COMMITTER_EMAIL: 'run-admission@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Run admission', GIT_COMMITTER_NAME: 'Run admission' });
   writeFileSync(join(repo, 'README.md'), '# run admission fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -182,8 +182,8 @@ async function innerApplication(t, label, readiness, spawnCalls) {
   const logDir = mkdtempSync(join(tmpdir(), `baton-run-admission-${label}-applog-`));
   t.after(() => rmSync(logDir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'run-admission@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Run admission'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'run-admission@example.invalid', GIT_COMMITTER_EMAIL: 'run-admission@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Run admission', GIT_COMMITTER_NAME: 'Run admission' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -24,8 +24,8 @@ function repository(name) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'deepseek-routes@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'DeepSeek routes'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'deepseek-routes@example.invalid', GIT_COMMITTER_EMAIL: 'deepseek-routes@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'DeepSeek routes', GIT_COMMITTER_NAME: 'DeepSeek routes' });
   writeFileSync(join(repo, 'README.md'), '# DeepSeek route fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

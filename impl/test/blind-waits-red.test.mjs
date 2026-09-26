@@ -328,8 +328,8 @@ function fixture(label, { clock = mutableClock(), authorize = async () => true }
   const repository = root(`${label}-repo`);
   const logDir = root(`${label}-log`);
   execFileSync('git', ['init', '-q'], { cwd: repository });
-  execFileSync('git', ['config', 'user.email', 'blind-waits@example.invalid'], { cwd: repository });
-  execFileSync('git', ['config', 'user.name', 'Blind Waits 164'], { cwd: repository });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'blind-waits@example.invalid', GIT_COMMITTER_EMAIL: 'blind-waits@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Blind Waits 164', GIT_COMMITTER_NAME: 'Blind Waits 164' });
   writeFileSync(join(repository, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repository });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repository });

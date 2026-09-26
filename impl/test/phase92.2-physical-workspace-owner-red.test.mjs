@@ -28,8 +28,8 @@ function fixture(label) {
   const world = mkdtempSync(join(tmpdir(), `baton-phase92-2-${label}-`));
   const repo = join(world, 'repo'); mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Phase 92.2 Fixture']);
-  git(repo, ['config', 'user.email', 'phase92.2@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 92.2 Fixture', GIT_COMMITTER_NAME: 'Phase 92.2 Fixture' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase92.2@example.invalid', GIT_COMMITTER_EMAIL: 'phase92.2@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(repo, ['add', 'base.txt']); git(repo, ['commit', '-qm', 'base']);
   return { world, repo, baseSha: git(repo, ['rev-parse', 'HEAD']) };

@@ -95,8 +95,8 @@ async function buildFixture() {
   const repo = root('coordinator-plan-effects-repo');
   const logDir = root('coordinator-plan-effects-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'plan-effects@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Plan Effects 240'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'plan-effects@example.invalid', GIT_COMMITTER_EMAIL: 'plan-effects@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Plan Effects 240', GIT_COMMITTER_NAME: 'Plan Effects 240' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -34,8 +34,8 @@ const SESSION = Object.freeze({
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'bt-wake-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'wake@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Wake'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'wake@example.invalid', GIT_COMMITTER_EMAIL: 'wake@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Wake', GIT_COMMITTER_NAME: 'Wake' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'));
   writeFileSync(join(root, 'test', 'smoke.test.mjs'), "import test from 'node:test';\ntest('smoke', () => {});\n");

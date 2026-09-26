@@ -15,8 +15,8 @@ function repository(root) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'grok-auth@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Grok auth fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'grok-auth@example.invalid', GIT_COMMITTER_EMAIL: 'grok-auth@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Grok auth fixture', GIT_COMMITTER_NAME: 'Grok auth fixture' });
   writeFileSync(join(repo, 'README.md'), '# Grok auth fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

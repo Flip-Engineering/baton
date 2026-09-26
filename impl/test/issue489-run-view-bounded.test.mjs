@@ -257,8 +257,8 @@ function profile(definitionOfDone) {
 async function applicationFixture(t, { definitionOfDone = ['the deployment verification passes'] } = {}) {
   const repo = scratch('repo');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'i489@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 489'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'i489@example.invalid', GIT_COMMITTER_EMAIL: 'i489@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 489', GIT_COMMITTER_NAME: 'Issue 489' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

@@ -13,8 +13,8 @@ const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'h
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-real-convergence-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'convergence@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Baton Convergence'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'convergence@example.invalid', GIT_COMMITTER_EMAIL: 'convergence@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Convergence', GIT_COMMITTER_NAME: 'Baton Convergence' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({
     private: true, scripts: { test: 'node --test' },
   }));

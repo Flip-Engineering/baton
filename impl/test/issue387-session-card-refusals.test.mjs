@@ -173,8 +173,8 @@ function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-refusal-387-${name}-`));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'session-card-refusals@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Session card refusals'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'session-card-refusals@example.invalid', GIT_COMMITTER_EMAIL: 'session-card-refusals@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Session card refusals', GIT_COMMITTER_NAME: 'Session card refusals' });
   writeFileSync(join(root, 'README.md'), '# session card refusals fixture\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

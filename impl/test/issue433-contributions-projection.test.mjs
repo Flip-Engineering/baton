@@ -471,8 +471,8 @@ function spawnFixture(t) {
     cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   }).trim();
   git(['init', '-q']);
-  git(['config', 'user.name', 'Issue 433']);
-  git(['config', 'user.email', 'issue433@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 433', GIT_COMMITTER_NAME: 'Issue 433' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue433@example.invalid', GIT_COMMITTER_EMAIL: 'issue433@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(['add', 'base.txt']);
   git(['commit', '-qm', 'base']);

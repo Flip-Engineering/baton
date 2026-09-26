@@ -73,8 +73,8 @@ function fixture(t) {
   const repo = join(directory, 'repo');
   mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Bend2 independence']);
-  git(repo, ['config', 'user.email', 'bend2-independence@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Bend2 independence', GIT_COMMITTER_NAME: 'Bend2 independence' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'bend2-independence@example.invalid', GIT_COMMITTER_EMAIL: 'bend2-independence@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'base']);

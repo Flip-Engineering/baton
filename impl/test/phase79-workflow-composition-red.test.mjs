@@ -20,8 +20,8 @@ const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(v
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase79@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 79'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase79@example.invalid', GIT_COMMITTER_EMAIL: 'phase79@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 79', GIT_COMMITTER_NAME: 'Phase 79' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

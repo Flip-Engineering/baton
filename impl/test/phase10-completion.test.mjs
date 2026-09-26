@@ -350,8 +350,8 @@ test('SC5d: a failed verification reads as idle (verification failed), never sil
 function makeRealRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'p10-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'baton-test@localhost'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'baton-test'], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton-test@localhost', GIT_COMMITTER_EMAIL: 'baton-test@localhost' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'baton-test', GIT_COMMITTER_NAME: 'baton-test' });
   writeFileSync(join(dir, 'README.md'), 'phase10\n');
   execFileSync('git', ['add', '-A'], { cwd: dir });
   execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: dir });

@@ -13,7 +13,7 @@ const until = async (fn, timeout = 5000) => { const end = Date.now() + timeout; 
 
 function repo() {
   const root = mkdtempSync(join(tmpdir(), 'baton-sm-repo-'));
-  git(['init', '-q', '-b', 'main'], root); git(['config', 'user.email', 'test@example.com'], root); git(['config', 'user.name', 'Test'], root);
+  git(['init', '-q', '-b', 'main'], root); Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' }); Object.assign(process.env, { GIT_AUTHOR_NAME: 'Test', GIT_COMMITTER_NAME: 'Test' });
   write(root, 'src/value.js', 'export const values = { alpha: 1 };\n'); commit(root, 'base'); return root;
 }
 

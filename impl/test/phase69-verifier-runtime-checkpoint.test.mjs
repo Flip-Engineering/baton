@@ -229,8 +229,8 @@ test('VR3: a passing base owns a candidate failure; a failing base leaves owners
 function repo() {
   const dir = root('repo');
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'phase69@example.invalid'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'Phase 69'], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase69@example.invalid', GIT_COMMITTER_EMAIL: 'phase69@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 69', GIT_COMMITTER_NAME: 'Phase 69' });
   writeFileSync(join(dir, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: dir });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: dir });

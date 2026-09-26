@@ -30,8 +30,8 @@ function digest(value) {
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase85-effect-admission-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase85@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 85'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase85@example.invalid', GIT_COMMITTER_EMAIL: 'phase85@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 85', GIT_COMMITTER_NAME: 'Phase 85' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   writeFileSync(join(root, 'alpha.mjs'), 'export const alpha = 1;\n');
   writeFileSync(join(root, 'beta.mjs'), 'export const beta = 2;\n');

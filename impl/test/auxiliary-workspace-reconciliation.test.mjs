@@ -17,7 +17,7 @@ function fixture(t) {
     finally { rmSync(root, { recursive: true, force: true }); }
   });
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  git('init', '-q'); git('config', 'user.name', 'Baton test'); git('config', 'user.email', 'baton@example.invalid');
+  git('init', '-q'); Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton test', GIT_COMMITTER_NAME: 'Baton test' }); Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton@example.invalid', GIT_COMMITTER_EMAIL: 'baton@example.invalid' });
   writeFileSync(join(root, 'input.txt'), 'verification input\n');
   git('add', 'input.txt'); git('commit', '-qm', 'base');
   return { root, sha: git('rev-parse', 'HEAD'), cleanup: (operation) => cleanups.push(operation) };

@@ -11,7 +11,7 @@ import { MockAdapter } from '../src/adapter.mjs';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase50-${name}-`));
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 function repo() {
-  const dir = root('repo'); git(['init', '-q'], dir); git(['config', 'user.email', 'baton@example.test'], dir); git(['config', 'user.name', 'Baton'], dir);
+  const dir = root('repo'); git(['init', '-q'], dir); Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'baton@example.test', GIT_COMMITTER_EMAIL: 'baton@example.test' }); Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton', GIT_COMMITTER_NAME: 'Baton' });
   git(['commit', '--allow-empty', '-q', '-m', 'base'], dir); return dir;
 }
 function routedAdapter(harness, family, models, scenario = { outcome: 'blocked', blocker: 'hold' }) {

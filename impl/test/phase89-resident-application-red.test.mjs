@@ -99,8 +99,8 @@ function adapter() {
 function repository(name) {
   const root = mkdtempSync(join(tmpdir(), `baton-phase89-resident-${name}-`));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'phase89@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Phase 89'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase89@example.invalid', GIT_COMMITTER_EMAIL: 'phase89@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 89', GIT_COMMITTER_NAME: 'Phase 89' });
   writeFileSync(join(root, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

@@ -53,8 +53,8 @@ function sh(cmd, args, cwd) {
 function makeRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'baton-test-'));
   sh('git', ['init', '-q'], dir);
-  sh('git', ['config', 'user.email', 'test@example.com'], dir);
-  sh('git', ['config', 'user.name', 'Baton Test'], dir);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_EMAIL: 'test@example.com' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Test', GIT_COMMITTER_NAME: 'Baton Test' });
   sh('git', ['commit', '--allow-empty', '-q', '-m', 'base'], dir);
   return dir;
 }

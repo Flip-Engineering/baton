@@ -48,8 +48,8 @@ function fixture(t, { midTurn = 'supported' } = {}) {
   const repo = join(directory, 'repo');
   mkdirSync(repo);
   git(repo, ['init', '-q']);
-  git(repo, ['config', 'user.name', 'Issue 543']);
-  git(repo, ['config', 'user.email', 'issue543@example.invalid']);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 543', GIT_COMMITTER_NAME: 'Issue 543' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue543@example.invalid', GIT_COMMITTER_EMAIL: 'issue543@example.invalid' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'base']);

@@ -37,8 +37,8 @@ function repository(root) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue348@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 348 fixture'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue348@example.invalid', GIT_COMMITTER_EMAIL: 'issue348@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 348 fixture', GIT_COMMITTER_NAME: 'Issue 348 fixture' });
   writeFileSync(join(repo, 'README.md'), '# issue 348 kimi harness fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

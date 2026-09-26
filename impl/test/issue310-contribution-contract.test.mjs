@@ -67,8 +67,8 @@ function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-310-lane-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'lane@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Lane'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'lane@example.invalid', GIT_COMMITTER_EMAIL: 'lane@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Lane', GIT_COMMITTER_NAME: 'Lane' });
   writeFileSync(join(root, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

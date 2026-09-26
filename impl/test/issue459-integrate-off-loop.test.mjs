@@ -181,8 +181,8 @@ async function world(t, { gate = {} } = {}) {
     try { process.kill(Number(readFileSync(leakPidPath, 'utf8')), 'SIGKILL'); } catch { /* never leaked */ }
   });
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 459');
-  git(repo, 'config', 'user.email', 'issue459@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 459', GIT_COMMITTER_NAME: 'Issue 459' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue459@example.invalid', GIT_COMMITTER_EMAIL: 'issue459@example.invalid' });
   write(repo, '.gitignore', 'node_modules/\n');
   write(repo, 'README.md', 'base\n');
   for (const script of REGENERATORS) {

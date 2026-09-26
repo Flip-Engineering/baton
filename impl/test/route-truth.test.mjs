@@ -43,8 +43,8 @@ function repository(name) {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'route-truth@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Route truth'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'route-truth@example.invalid', GIT_COMMITTER_EMAIL: 'route-truth@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Route truth', GIT_COMMITTER_NAME: 'Route truth' });
   writeFileSync(join(repo, 'README.md'), '# Route truth fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

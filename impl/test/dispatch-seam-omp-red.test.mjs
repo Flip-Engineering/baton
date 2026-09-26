@@ -47,8 +47,8 @@ async function buildFixture() {
   const repo = root('dispatch-seam-repo');
   const logDir = root('dispatch-seam-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'seam@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Seam Pin'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'seam@example.invalid', GIT_COMMITTER_EMAIL: 'seam@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Seam Pin', GIT_COMMITTER_NAME: 'Seam Pin' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

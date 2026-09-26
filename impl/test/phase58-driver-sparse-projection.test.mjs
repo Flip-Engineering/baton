@@ -35,8 +35,8 @@ function fixture() {
   const toolchain = join(world, 'toolchain');
   mkdirSync(repo); mkdirSync(toolchain);
   git(['init', '-q'], repo);
-  git(['config', 'user.name', 'Baton Phase 58'], repo);
-  git(['config', 'user.email', 'phase58@example.invalid'], repo);
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Baton Phase 58', GIT_COMMITTER_NAME: 'Baton Phase 58' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase58@example.invalid', GIT_COMMITTER_EMAIL: 'phase58@example.invalid' });
   write(repo, 'src/input.txt', 'source-value\n');
   write(repo, 'report/.gitkeep', '');
   write(repo, 'secret/hidden.txt', 'must not enter sparse worker or verifier\n');

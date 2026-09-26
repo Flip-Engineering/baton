@@ -414,8 +414,8 @@ function fileRepo() {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'muse-fileauth@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Muse fileauth'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'muse-fileauth@example.invalid', GIT_COMMITTER_EMAIL: 'muse-fileauth@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Muse fileauth', GIT_COMMITTER_NAME: 'Muse fileauth' });
   writeFileSync(join(repo, 'README.md'), '# Muse fileauth fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

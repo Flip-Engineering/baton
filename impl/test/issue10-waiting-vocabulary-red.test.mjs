@@ -212,8 +212,8 @@ function principal(id) {
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-waiting-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'waiting@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Waiting Vocabulary Test'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'waiting@example.invalid', GIT_COMMITTER_EMAIL: 'waiting@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Waiting Vocabulary Test', GIT_COMMITTER_NAME: 'Waiting Vocabulary Test' });
   writeFileSync(join(root, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

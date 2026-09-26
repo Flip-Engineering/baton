@@ -60,8 +60,8 @@ async function world(t, { laneKind = 'delete' } = {}) {
   const directory = rmLater(t);
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
-  git(repo, 'config', 'user.name', 'Issue 575');
-  git(repo, 'config', 'user.email', 'issue575@example.invalid');
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 575', GIT_COMMITTER_NAME: 'Issue 575' });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue575@example.invalid', GIT_COMMITTER_EMAIL: 'issue575@example.invalid' });
   write(repo, '.gitignore', 'node_modules/\n');
   write(repo, 'README.md', 'base\n');
   write(repo, 'impl/src/retired.module.mjs', 'export const retired = true;\n');

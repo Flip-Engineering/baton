@@ -56,8 +56,8 @@ function fixture(name, {
 } = {}) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase65@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 65'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase65@example.invalid', GIT_COMMITTER_EMAIL: 'phase65@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 65', GIT_COMMITTER_NAME: 'Phase 65' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

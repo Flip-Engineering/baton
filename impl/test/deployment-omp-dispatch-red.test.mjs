@@ -25,8 +25,8 @@ const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
 async function buildDeployment() {
   const repo = root('omp-deploy-repo');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'omp@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Omp Pin'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'omp@example.invalid', GIT_COMMITTER_EMAIL: 'omp@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Omp Pin', GIT_COMMITTER_NAME: 'Omp Pin' });
   // #293: the omp route's provider credential is the repo-local key file; without it the
   // deployment refuses the route at admission, before the dispatch seam this pin measures.
   // Only its presence is a deployment fact — the contents are never read or printed.

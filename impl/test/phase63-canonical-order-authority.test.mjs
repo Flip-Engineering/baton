@@ -235,8 +235,8 @@ test('CO4/CO6: empty bootstrap is private and removes only stale receipt tempora
 test('CO4/CO8: createDriver wires and re-attests an explicitly deployed canonical-order policy', () => {
   const repo = root('driver-repo'); const logDir = root('driver-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase63@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 63'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase63@example.invalid', GIT_COMMITTER_EMAIL: 'phase63@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 63', GIT_COMMITTER_NAME: 'Phase 63' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

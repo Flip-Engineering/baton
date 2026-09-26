@@ -19,8 +19,8 @@ const ROUTE = Object.freeze({ harness: 'mock', model: 'capacity-visibility', eff
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-capvis-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'capvis@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Capacity Visibility'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'capvis@example.invalid', GIT_COMMITTER_EMAIL: 'capvis@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Capacity Visibility', GIT_COMMITTER_NAME: 'Capacity Visibility' });
   writeFileSync(join(root, 'README.md'), '# capacity visibility target\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

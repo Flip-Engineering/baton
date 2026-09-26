@@ -45,8 +45,8 @@ function temporary(t, label) {
 function repository(t, label, acceptedBytes) {
   const repo = temporary(t, `${label}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'issue413@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Issue 413'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue413@example.invalid', GIT_COMMITTER_EMAIL: 'issue413@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 413', GIT_COMMITTER_NAME: 'Issue 413' });
   writeFileSync(join(repo, 'accepted.txt'), `${'a'.repeat(acceptedBytes - 'accepted result\n'.length)}\n`);
   execFileSync('git', ['add', '--all'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'accepted result'], { cwd: repo });

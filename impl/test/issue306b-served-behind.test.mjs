@@ -54,8 +54,8 @@ function repo(label) {
   const root = join(tmp(label), 'repo');
   mkdirSync(root);
   git(['init', '-q', '-b', 'main'], root);
-  git(['config', 'user.email', 'served-behind@example.invalid'], root);
-  git(['config', 'user.name', 'Served-behind fixture'], root);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'served-behind@example.invalid', GIT_COMMITTER_EMAIL: 'served-behind@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Served-behind fixture', GIT_COMMITTER_NAME: 'Served-behind fixture' });
   writeFileSync(join(root, 'README.md'), '# served-behind fixture\n');
   git(['add', '.'], root);
   git(['commit', '-qm', 'base'], root);

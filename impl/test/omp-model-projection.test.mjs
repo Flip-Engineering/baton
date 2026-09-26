@@ -53,8 +53,8 @@ function makeOmpHome(label, { withModels = false } = {}) {
 function makeRepo(label) {
   const dir = temporary(`repo-${label}`);
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', `omp-probe-${label}@example.invalid`], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', `OMP Probe ${label}`], { cwd: dir });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: `omp-probe-${label}@example.invalid`, GIT_COMMITTER_EMAIL: `omp-probe-${label}@example.invalid` });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: `OMP Probe ${label}`, GIT_COMMITTER_NAME: `OMP Probe ${label}` });
   // #293: an omp route's provider credential is the repo-local key file, so the deployment
   // refuses the route before the projector ever runs without it. The fixture provisions it —
   // only its presence is a deployment fact, and its contents are never read or printed.

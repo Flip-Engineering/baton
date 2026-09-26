@@ -95,8 +95,8 @@ function world(label) {
   mkdirSync(join(deploymentRoot, 'resident'), { recursive: true });
   const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
   git(['init', '-q']);
-  git(['config', 'user.email', 'issue462@example.invalid']);
-  git(['config', 'user.name', 'Issue462']);
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue462@example.invalid', GIT_COMMITTER_EMAIL: 'issue462@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue462', GIT_COMMITTER_NAME: 'Issue462' });
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(repo, 'test'), { recursive: true });
   writeFileSync(join(repo, 'test', 'smoke.test.mjs'),

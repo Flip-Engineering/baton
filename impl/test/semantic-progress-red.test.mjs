@@ -36,8 +36,8 @@ const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-sp-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'sp@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'SP Test'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'sp@example.invalid', GIT_COMMITTER_EMAIL: 'sp@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'SP Test', GIT_COMMITTER_NAME: 'SP Test' });
   writeFileSync(join(root, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: root });

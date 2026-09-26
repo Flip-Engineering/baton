@@ -33,8 +33,8 @@ const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'h
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'bt507-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue507@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 507'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue507@example.invalid', GIT_COMMITTER_EMAIL: 'issue507@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 507', GIT_COMMITTER_NAME: 'Issue 507' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(root, 'test'));
   writeFileSync(join(root, 'test', 'smoke.test.mjs'), "import test from 'node:test';\ntest('smoke', () => {});\n");

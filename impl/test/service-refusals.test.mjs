@@ -67,8 +67,8 @@ test('protocol drift refuses by naming the resident\'s registry digest, this CLI
 function residentFixture(t) {
   const repo = scratch(t, 'repo');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'refusals@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Refusals'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'refusals@example.invalid', GIT_COMMITTER_EMAIL: 'refusals@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Refusals', GIT_COMMITTER_NAME: 'Refusals' });
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(repo, 'test'));
   writeFileSync(join(repo, 'test', 'smoke.test.mjs'), "import test from 'node:test';\ntest('smoke', () => {});\n");

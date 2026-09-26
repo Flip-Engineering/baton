@@ -132,8 +132,8 @@ function fixture(name, {
 } = {}) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase64@example.invalid', GIT_COMMITTER_EMAIL: 'phase64@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 64', GIT_COMMITTER_NAME: 'Phase 64' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -275,8 +275,8 @@ test('UA2/RT5: Pythonic Run streams consume internal pagination and expose attri
 test('UA1/KC1: application profiles resolve a public harness through one exact private adapter route', async () => {
   const repo = root('public-private-route-repo');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase64@example.invalid', GIT_COMMITTER_EMAIL: 'phase64@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 64', GIT_COMMITTER_NAME: 'Phase 64' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
@@ -317,8 +317,8 @@ test('UA1/KC1: application profiles resolve a public harness through one exact p
 test('WP9: profile v2 binds unattended full access through Plan, Brief, adapter options, and route identity', async () => {
   const repo = root('worker-policy-profile-repo');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase64@example.invalid', GIT_COMMITTER_EMAIL: 'phase64@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 64', GIT_COMMITTER_NAME: 'Phase 64' });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

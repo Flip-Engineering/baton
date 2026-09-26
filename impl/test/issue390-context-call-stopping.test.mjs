@@ -50,8 +50,8 @@ function digest(value) {
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-issue390-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue390@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 390'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue390@example.invalid', GIT_COMMITTER_EMAIL: 'issue390@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 390', GIT_COMMITTER_NAME: 'Issue 390' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   writeFileSync(join(root, 'alpha.mjs'), 'export const alpha = 1;\n');
   writeFileSync(join(root, 'beta.mjs'), 'export const beta = 2;\n');

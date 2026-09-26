@@ -88,8 +88,8 @@ function seatTree(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-issue357-${name}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'issue357@example.invalid'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Issue 357'], { cwd: root });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'issue357@example.invalid', GIT_COMMITTER_EMAIL: 'issue357@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 357', GIT_COMMITTER_NAME: 'Issue 357' });
   mkdirSync(join(root, 'impl'), { recursive: true });
   writeFileSync(join(root, 'impl', 'base.mjs'), '// base\n');
   execFileSync('git', ['add', '.'], { cwd: root });

@@ -90,8 +90,8 @@ function profile() {
 function applicationFixture(t, label) {
   const repo = temporary(t, `${label}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  execFileSync('git', ['config', 'user.email', 'phase66@example.invalid'], { cwd: repo });
-  execFileSync('git', ['config', 'user.name', 'Phase 66'], { cwd: repo });
+  Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase66@example.invalid', GIT_COMMITTER_EMAIL: 'phase66@example.invalid' });
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 66', GIT_COMMITTER_NAME: 'Phase 66' });
   mkdirSync(join(repo, 'impl'), { recursive: true });
   writeFileSync(join(repo, 'README.md'), 'projection fixture\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
