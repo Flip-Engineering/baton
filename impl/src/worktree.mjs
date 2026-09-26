@@ -2493,7 +2493,15 @@ export async function landContribution(repoRoot, request) {
     targetHeadBefore = moved;
   }
 
-  const { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead: gateBase } = attempt;
+  const { checkout, squashSha, changed, ontoHead: gateBase } = attempt;
+  // Issue #596: the attempt the landing PUBLISHES, and the commit the gate verdict judged. A
+  // target that moves while the gate runs re-bases the squash onto the head the target now
+  // carries and keeps the verdict; `verdictSquash` names the commit that verdict judged, so a
+  // receipt built from a re-based landing never reads as a claim about a commit the gate never
+  // saw.
+  let landed = attempt;
+  let verdictSquash = squashSha;
+  let reboundOnto = null;
   try {
     // Issue #570: the gate verdict names the base commit it judged — the head the squash
     // descends from, which is the fetched remote tip when the local ref sat behind the declared
@@ -2519,10 +2527,31 @@ export async function landContribution(repoRoot, request) {
     if (!dryRun) {
       // One atomic compare-and-swap: if anything moved the target after the gates, this fails
       // rather than landing a squash computed against a head the branch no longer has.
+      //
+      // Issue #596: a target that moved while the GATE ran does not cost the verdict. The squash
+      // is re-based onto the head the target now carries — `prepare` applies the same change
+      // against that head, so a conflicting path refuses there exactly as it does at the first
+      // prepare — and a clean re-base lands on the verdict the gate already produced, without
+      // re-running it. A target that moves a second time refuses as it always has.
       try {
-        gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
+        gitFile(['update-ref', ref, landed.squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
       } catch (error) {
-        throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: error });
+        let moved = null;
+        try { moved = sh('git', ['rev-parse', '--verify', ref], repoRoot); } catch { moved = null; }
+        if (reboundOnto !== null || moved === null || moved === targetHeadBefore) {
+          throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: error });
+        }
+        await landed.checkout.cleanup();
+        const rebound = await prepare(moved);
+        verdictSquash = landed.squashSha;
+        reboundOnto = moved;
+        landed = rebound;
+        targetHeadBefore = moved;
+        try {
+          gitFile(['update-ref', ref, landed.squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
+        } catch (again) {
+          throw Object.assign(mergeError(`${target} advanced again while the landing was prepared`, 'integrate_target_moved'), { cause: again });
+        }
       }
       // Issue #558: publish the landed ref to the declared remote. The push names the declared
       // value itself, never a remote name, so no local remote configuration the resident holds
@@ -2533,14 +2562,14 @@ export async function landContribution(repoRoot, request) {
       // prompt. A failed push rolls the local move back, so the target holds no unpublished
       // squash. Neither step checks out a branch: a detached main checkout stays detached.
       try {
-        gitRemote(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
+        gitRemote(['push', publishRemote, `${landed.squashSha}:${ref}`], repoRoot,
           { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
         // Issue #556: read the DECLARED destination back. A push reports success against whatever
         // its URL resolved to, so a landing could publish somewhere else — an intermediate
         // checkout, a push-only rewrite — while every in-process signal read as a real publish.
         // The landed ref has to be the tip the declared destination itself reports.
         const observedTip = publishedTip(repoRoot, publishRemote, ref);
-        if (observedTip !== squashSha) {
+        if (observedTip !== landed.squashSha) {
           throw Object.assign(new Error(`${publishRemote} reports ${observedTip ?? 'no tip'} at ${ref}`), {
             code: 'integrate_publish_unverified', observedTip,
           });
@@ -2548,7 +2577,7 @@ export async function landContribution(repoRoot, request) {
       } catch (error) {
         let rolledBack = false;
         try {
-          gitFile(['update-ref', ref, targetHeadBefore, squashSha], repoRoot, { stdio: 'pipe' });
+          gitFile(['update-ref', ref, targetHeadBefore, landed.squashSha], repoRoot, { stdio: 'pipe' });
           rolledBack = true;
         } catch { /* the refusal below still answers; rolledBack: false names the state */ }
         // #556: a destination that does not report the landed squash is refused under its own code
@@ -2570,13 +2599,16 @@ export async function landContribution(repoRoot, request) {
       }
     }
     logEvent(request, 'worktree', 'worktree.contribution_landed', {
-      contributionId, target, base, targetHeadBefore, squashSha, changedPaths: changed, dryRun,
-      ...(inherited.length === 0 ? {} : { inherited }),
+      contributionId, target, base, targetHeadBefore, squashSha: landed.squashSha,
+      changedPaths: landed.changed, dryRun,
+      ...(reboundOnto === null ? {} : { verdictSquash, reboundOnto }),
+      ...(landed.inherited.length === 0 ? {} : { inherited: landed.inherited }),
     });
     return {
       base, target, targetHeadBefore,
-      targetHeadAfter: dryRun ? null : squashSha,
-      squashSha, changedPaths: changed, regenerated, overlaps, inherited,
+      targetHeadAfter: dryRun ? null : landed.squashSha,
+      squashSha: landed.squashSha, changedPaths: landed.changed,
+      regenerated: landed.regenerated, overlaps: landed.overlaps, inherited: landed.inherited,
       gates: {
         baseSha: gateBase,
         files: [...(gates?.files ?? [])],
@@ -2586,11 +2618,15 @@ export async function landContribution(repoRoot, request) {
         // receipt rather than dropped in silence.
         ...(Array.isArray(gates?.unconfirmed) && gates.unconfirmed.length > 0
           ? { unconfirmed: [...gates.unconfirmed] } : {}),
+        // Issue #596: when the target moved under the gate and the squash was re-based, the
+        // receipt names the commit the verdict judged and the head the re-base took, so the
+        // verdict is never read as a claim about the commit that landed.
+        ...(reboundOnto === null ? {} : { verdictSquash, reboundOnto }),
       },
       dryRun,
     };
   } finally {
-    await checkout.cleanup();
+    await landed.checkout.cleanup();
   }
 }
 

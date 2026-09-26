@@ -1,8 +1,7 @@
 // attention-message.mjs — the message a person reads when Baton owes them attention (issue #585).
 //
 // This is a pure composer over one owed item. It does not know how the message reaches a session:
-// the delivery that calls it today (wake-delivery.mjs) is being replaced by the #592 attention
-// dispatcher, which calls the same function. The message is human text composed through the one
+// the attention dispatcher calls it; the message is human text composed through the one
 // mark rule (brand.mjs flipHumanLine) and carries no JSON. Every value the item carries is shown
 // whole: the ask, the subject and the identities are the facts the reader needs to act, and none
 // is shortened.

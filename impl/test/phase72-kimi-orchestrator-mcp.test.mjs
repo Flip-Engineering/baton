@@ -11,6 +11,7 @@ import {
   connectBatonWebApplication, createAuthenticatedWebServer, createBatonWebMcpServer,
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
 } from '../src/index.mjs';
+import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
@@ -464,10 +465,7 @@ test('KC8: project Kimi MCP entry contains no credential and allowlists only sem
   assert.equal(entry.enabled, true);
   assert.equal(entry.startupTimeoutMs, 30_000);
   assert.equal(entry.toolTimeoutMs, 180_000);
-  assert.deepEqual(entry.enabledTools, [
-    'baton_deployment', 'baton_run', 'baton_swarm', 'baton_waves',
-    'baton_knowledge', 'baton_wakes', 'baton_services', 'baton_surface',
-  ]);
+  assert.deepEqual(entry.enabledTools, [...CORE_TOOL_NAMES]);
   assert.equal(Object.hasOwn(entry, 'env'), false);
   assert.equal(JSON.stringify(entry).includes('token'), false);
 
@@ -623,10 +621,7 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
     assert.equal(frame.method, 'notifications/baton/wake');
   }
   assert.deepEqual(answers.map((entry) => entry.id), [1, 2, 3]);
-  assert.deepEqual(answers[1].result.tools.map((tool) => tool.name), [
-    'baton_deployment', 'baton_run', 'baton_swarm', 'baton_waves',
-    'baton_knowledge', 'baton_wakes', 'baton_services', 'baton_surface',
-  ]);
+  assert.deepEqual(answers[1].result.tools.map((tool) => tool.name), [...CORE_TOOL_NAMES]);
   assert.equal(answers[2].result.isError, false);
   assert.match(answers[2].result.content[0].text, /run-packaged-kimi/u);
   assert.equal(answers[2].result.content[0].text.includes('internalStartRecord'), false);

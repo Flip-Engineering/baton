@@ -10,8 +10,9 @@
 //       facts, the seat, the contribution subject, the ask, and the command that answers the row —
 //       never a JSON payload. Every value is shown whole.
 //
-// The messages are read through the real seam (`deliverRootWakeFrame`), so the class routing that
-// carries `root_owed` and `root_turn_reported` is what these pins exercise.
+// The root messages are composed from the items the ledger holds, through the one mark rule: the
+// owed composer reads `{owed, swarmId, participantId, contributionId, subject, ask, next}` and the
+// turn-report composer reads the report item. The attention dispatcher hands it exactly these.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -23,10 +24,9 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { createBrief } from '../src/messages.mjs';
 import { renderBrief } from '../src/adapter.mjs';
-import { deliverRootWakeFrame } from '../src/wake-delivery.mjs';
+import { composeOwedMessage, composeTurnReportMessage } from '../src/attention-message.mjs';
 
 const SMILE = '✦(◕‿◕)✦';
-const TARGET = { harness: 'claude-code', sessionId: 'session-root' };
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
 const SWARM = 'wake-585';
 const DIALECTS = ['omp-rpc', 'codex-v2', 'claude', 'cli'];
@@ -51,20 +51,22 @@ function memoryStore() {
   };
 }
 
-/** Record one source row, deliver the frame it resolves to, and return the message body the
- * delivery handed the transport. */
-async function rootWakeBody(record, frame) {
+/** Record one source row and compose the message the dispatcher hands the root for it. The owed
+ * composer reads the item the ledger holds, so the subject is resolved from the contribution row
+ * the case records. */
+function rootWakeBody(record, frame) {
   const store = memoryStore();
   const event = record(store);
-  let body = null;
-  const result = await deliverRootWakeFrame({
-    store,
-    frame: { ...frame, seq: event.seq },
-    target: TARGET,
-    deliver: async (context) => { body = context.body; return { delivered: true }; },
-  });
-  assert.equal(result.delivered, true, 'the frame is delivered through the root class routing');
-  return body;
+  if (frame.wakeClass === 'root_turn_reported') {
+    const { worker, report, runId } = event.payload;
+    return composeTurnReportMessage({ worker, report, runId });
+  }
+  const subject = store.rows
+    .filter((row) => row.payload.kind === 'swarm.contribution_recorded'
+      && row.payload.contributionId === event.payload.contributionId)
+    .map((row) => row.payload.body?.subject ?? null)
+    .find((value) => value !== null) ?? null;
+  return composeOwedMessage({ ...event.payload, subject });
 }
 
 const owed = (store, payload, key) => store.recordDriver('swarm.root_attention_owed', payload,

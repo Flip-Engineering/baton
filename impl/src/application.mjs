@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
-import { harnessWakeCapabilityForHarnesses } from './wake-delivery.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
@@ -2301,6 +2300,10 @@ export class BatonApplication {
     if (this._closed) throw applicationError('application is closed', 'application_closed');
     if (this._closing) throw applicationError('application is closing', 'application_closing');
     if (this._detached) throw applicationError('application deployment is detached', 'application_detached');
+  }
+
+  startAttentionDelivery(options) {
+    return this._swarmRuntime().startAttentionDelivery(options);
   }
 
   _swarmRuntime() {
@@ -8518,11 +8521,6 @@ export class BatonApplication {
     return deepFreeze({
       schemaVersion: 1, repoId: this.repoId,
       routes, workspace: Object.freeze({ state: 'ready' }),
-      // Issue #564: the per-harness turn-starting capability of the harnesses THIS deployment can
-      // run. The doctor names, for each, how a root-addressed wake starts a turn in an idle
-      // session of it, or that no channel exists — so a root is never silently deaf.
-      wakeDelivery: harnessWakeCapabilityForHarnesses(
-        [...this.profiles.values()].flatMap((profile) => profile.routes.map((route) => route.harness))),
       limits: Object.freeze({
         version: FRAME_LIMITS_VERSION, digest: FRAME_LIMITS_DIGEST,
         lanes: deepFreeze(lanes),
@@ -9589,7 +9587,7 @@ export class BatonApplication {
       throw applicationError('application has admitted workers; use deployment shutdown for exact fleet drain', 'application_detach_active');
     }
     await this.resultExportLifecycle?.close();
-    this._swarmService?.close();
+    await this._swarmService?.close();
     await this._swarmNativeAccess?.close();
     await this.driver.closeAsync();
     this._detached = true;
@@ -9615,7 +9613,7 @@ export class BatonApplication {
   }
 
   async _shutdownAuthorized(principal) {
-    this._swarmService?.close();
+    await this._swarmService?.close();
     await this._swarmNativeAccess?.close();
     for (const controller of this._followControllers) controller.abort();
     for (const controllers of this._contextControllers?.values() ?? []) {

@@ -21,7 +21,6 @@ import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalA
 import {
   WakeStream, attachmentClosedFrame, attachmentClosedReason, deriveWakeFrame, parseWakeFilter, wakeClassRow,
 } from './wake-stream.mjs';
-import { attachRootWakeDelivery } from './wake-delivery.mjs';
 // Issue #316 (b): the outcome the ONE attachment-end mapping reads as `restart` — the resident
 // itself is ending a wake attachment (a shutdown or restart, or an authority that stopped serving
 // it), never a transport the client closed. `_handleWakes` names its end through it.
@@ -1684,18 +1683,11 @@ export class WebNorthbound {
       throw new TypeError('wake heartbeat interval must be a positive safe integer');
     }
     this._wakeConnections = new Set();
-    // Issue #564: the resident's root delivery is one internal consumer of the SAME deployment
-    // wake stream every external attachment reads. It consumes that stream from the ledger's
-    // start, so an owed row recorded while the resident was down — or one whose earlier attempt
-    // failed — is delivered on the next pass; the durable per-wake receipts make that pass a
-    // duplicate for every wake that already reached the root.
-    this._rootWakeDelivery = opts.rootWakeDelivery === undefined || opts.rootWakeDelivery === null
-      ? null
-      : attachRootWakeDelivery({
-        stream: this.wakes,
-        store: this.coordination,
-        ...opts.rootWakeDelivery,
-      });
+    this._rootAttention = null;
+    this._attentionDelivery = this.application?.startAttentionDelivery?.({
+      resolveRecipient: (recipient) => recipient.kind === 'root' ? this._rootAttention : null,
+      onFault: (cause) => process.stderr.write(`Baton attention dispatch failed: ${cause.message}\n`),
+    }) ?? null;
   }
 
 
@@ -2796,6 +2788,9 @@ export class WebNorthbound {
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, result(200, { ok: true, semanticAuthority }), origin);
     }
+    if (req.method === 'POST' && url.pathname === '/v1/root-attention/claude-code') {
+      return this._handleRootAttention(req, res, origin);
+    }
     // Issue #294: the deployment-scope wake feed, beside the ticketed per-Run event stream. It is
     // principal-authenticated with no ticket: a wake attachment IS the orchestrator's seat, and it
     // must be re-establishable after a resident restart without a second round trip to mint one.
@@ -3205,6 +3200,51 @@ export class WebNorthbound {
     });
   }
 
+  /** The native channel explicitly enrolls its authenticated operator as this deployment's root. */
+  async _handleRootAttention(req, res, origin) {
+    let principal;
+    try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+    const ctx = { principal, origin, csrfToken: req.headers['x-baton-csrf'],
+      transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
+    const failure = this._authenticate(ctx);
+    if (failure) return this._write(res, failure, origin);
+    const authority = this._authorize(ctx, {
+      command: 'swarm_update', repoId: [...this.repoIds][0], origin,
+    });
+    if (authority) return this._write(res, authority, origin);
+    if (!principal.capabilities.includes('approve')) return this._write(res, error(403, 'forbidden'), origin);
+    if (!this._admissionOpen() || !this._attentionDelivery) {
+      return this._write(res, error(503, 'temporarily_unavailable'), origin);
+    }
+    const previous = this._rootAttention;
+    const attachment = {
+      principalId: principal.userId, harness: 'claude-code',
+      sendAttention: async (input) => {
+        if (!this._liveAuthorized(principal, origin)) {
+          finish();
+          throw Object.assign(new Error('Root session authorization ended'), { code: 'unauthenticated' });
+        }
+        await new Promise((resolve, reject) => res.write(`${JSON.stringify(input)}\n`, (cause) => cause ? reject(cause) : resolve()));
+        return { state: 'offered_unknown', transport: 'resident_channel_stream' };
+      },
+      close: () => finish(),
+    };
+    const finish = () => {
+      if (this._rootAttention === attachment) {
+        this._rootAttention = null;
+        this._attentionDelivery.ready({ kind: 'root' }).catch(() => {});
+      }
+      res.end();
+    };
+    res.on('close', finish);
+    res.on('error', finish);
+    res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
+    res.flushHeaders();
+    this._rootAttention = attachment;
+    previous?.close();
+    await this._attentionDelivery.ready({ kind: 'root' });
+  }
+
   /** `GET /v1/wakes` — the deployment-scope wake feed as server-sent events.
    *
    * Frames are `event: wake` with the wake seq as the SSE id, so a reconnect may resume from
@@ -3433,7 +3473,8 @@ export class WebNorthbound {
     try { this.stream.shutdown?.(); } catch { streamOk = false; }
     // A wake attachment is a long-lived socket the server's own close() waits on: abort every one
     // before the drain clock starts, so a quiet deployment never times out its own shutdown.
-    this._rootWakeDelivery?.close();
+    this._rootAttention?.close();
+    this._attentionDelivery?.close();
     this.wakes.close?.();
     for (const finish of [...this._wakeConnections]) { try { finish(); } catch { /* already gone */ } }
     let exportDeliveryOk = true;

@@ -12,6 +12,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, re
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { serialize } from 'node:v8';
+import { ledgerCommitted, ledgerCommitFailed } from './coordination-commit.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
@@ -1117,12 +1118,15 @@ export function _scheduleLedgerSync(store) {
 }
 
 export function _flushLedgerSync(store) {
+  const throughSeq = store._events.length;
   try { store._syncFile(store.file); }
   catch (error) {
     store._ledgerSyncFailure = freeze({
       code: typeof error?.code === 'string' ? error.code : 'coordination_ledger_sync_failed',
     });
   }
+  if (store._ledgerSyncFailure) ledgerCommitFailed(store);
+  else ledgerCommitted(store, throughSeq);
 }
 
 export function projectionPoison(state) {
