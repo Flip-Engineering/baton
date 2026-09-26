@@ -1186,11 +1186,17 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
   const recoveredRuntimeScopes = readdirSync(join(deploymentRoot, 'runtime'));
   assert.deepEqual(recoveredRuntimeScopes, [],
     diagnostic('runtime scopes after recovered startup', recoveredRuntimeScopes));
-  const recoveredWorktreeList = execFileSync('git', ['worktree', 'list', '--porcelain'], {
-    cwd: repo, encoding: 'utf8',
-  }).split('\n').filter((line) => line.startsWith('worktree '));
-  assert.equal(recoveredWorktreeList.length, 1,
-    diagnostic('git worktrees after recovered startup', recoveredWorktreeList));
+  // Issue #608: the recovered startup's workspace reclamation is tracked async startup cleanup —
+  // the open does not hold it behind the facade's ready (reads stay observational during
+  // cleanup), so the registration prune is OBSERVED to convergence here instead of raced; the
+  // reclamation itself was proven correct on the retained probe world (the reconcile removes
+  // both owned workspaces once the deployment authority matches the receipts).
+  await until(() => {
+    const worktreeList = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: repo, encoding: 'utf8',
+    }).split('\n').filter((line) => line.startsWith('worktree '));
+    return worktreeList.length === 1 ? worktreeList : null;
+  }, "the recovered startup to prune the dead workers' worktree registrations", 30_000);
   const capacity = JSON.parse(readFileSync(
     join(repo, '.baton', 'capacity', 'reservations.json'), 'utf8',
   ));

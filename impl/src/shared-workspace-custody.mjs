@@ -42,6 +42,18 @@ export function isPhysicalWorkspaceId(value) {
 export function holdsWorkspace(handle) {
   if (!handle) return false;
   if (WORKSPACE_HOLDER_STATUSES.includes(handle.status)) return true;
+  // Issue #608: an ORPHANED handle is the historical record of a worker that died with an
+  // earlier incarnation (#364) — its process status is a record, not a process. It holds its
+  // checkout only while a kernel-start-bound process generation is proven to have survived the
+  // restart and still owns it (recoveredProcessAuthority, the same split the startup
+  // reconstruction publishes); otherwise its unreleased-cleanup hold would block the very
+  // startup reclamation that is deciding over its own checkout, forever.
+  if (handle.status === 'orphaned') {
+    return handle.recoveredProcessAuthority === true
+      && handle.processRef?.state === 'unconfirmed_after_restart'
+      && handle.workspaceCleanupDeferred == null
+      && handle.physicalWorkspaceCleanupCompleted !== true;
+  }
   return handle.workspaceCleanupDeferred == null
     && handle.physicalWorkspaceCleanupCompleted !== true
     && (handle.worktree !== null && handle.worktree !== undefined || handle.ownedWorktreeAuthority === true);
