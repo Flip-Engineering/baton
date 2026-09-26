@@ -127,9 +127,9 @@ function preserveWorld(t) {
   return { origin, repoRoot, worktree, preserver, rows };
 }
 
-test('254-b: the snapshot judges staged additions against the repository ignore rules and names what it dropped', needsGit, (t) => {
+test('254-b: the snapshot judges staged additions against the repository ignore rules and names what it dropped', needsGit, async (t) => {
   const w = preserveWorld(t);
-  w.preserver.preserveUncommitted({ swarmId: 's254', participantId: 'seat-a', worktree: w.worktree });
+  await w.preserver.preserveUncommitted({ swarmId: 's254', participantId: 'seat-a', worktree: w.worktree });
   const sha = execFileSync('git', ['--git-dir', w.origin, 'rev-parse', 'refs/baton/preserve/uncommitted/seat-a'], { encoding: 'utf8' }).trim();
   const paths = execFileSync('git', ['--git-dir', w.origin, 'diff-tree', '-r', '--name-only', '--root', sha], { encoding: 'utf8' })
     .split('\n').filter((line) => line.length > 0);

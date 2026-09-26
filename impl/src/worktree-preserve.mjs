@@ -20,8 +20,14 @@
 // saw); no timer runs. The worktrees are untouched: an uncommitted snapshot is a commit built
 // from a private index (`GIT_INDEX_FILE` pointed at a temporary file), so the seat's own index
 // and working tree never observe it.
+//
+// Issue #379: every preserve git call runs on an AWAITED child serialized through the
+// preserver's own queue — the event that produced the work answers at once, and a slow push
+// (a cold remote, a credential helper) or an `add --all` over a large checkout never holds the
+// resident's loop. The queue is the ordering authority the per-ref dedupe and the pending
+// retry already reason about: one job at a time, in the order the events produced them.
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,11 +55,12 @@ export function preserveUncommittedRef(participantId) {
  * redirect the call away from the repository it names, and a prompt-hungry credential helper
  * would hang the runtime — both are kept out. */
 function preserveGitEnv(indexFile = null) {
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  if (indexFile === null) delete env.GIT_INDEX_FILE;
-  else env.GIT_INDEX_FILE = indexFile;
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith('GIT_')) env[key] = value;
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  if (indexFile !== null) env.GIT_INDEX_FILE = indexFile;
   return env;
 }
 
@@ -61,7 +68,8 @@ function preserveGitEnv(indexFile = null) {
  * per-ref dedupe and retry state of this incarnation, and records every push outcome as a
  * durable row through the `record` callback the runtime binds to its store. Every method
  * answers without throwing: a push that fails is a recorded outcome, never a fault in the
- * event that carried it. */
+ * event that carried it. The methods return the queued job's promise, so a caller that needs
+ * the outcome awaits it — the runtime's event paths fire and forget. */
 export class WorktreePreserver {
   /** `record(kind, payload, key)` appends one driver row; the runtime binds its store so the
    * rows land in the ONE ledger every reader already folds. A null or empty remote leaves the
@@ -79,32 +87,58 @@ export class WorktreePreserver {
     // push to the same ref supersedes the older, and the newer tip carries the older by
     // ancestry.
     this.pending = new Map();
+    // The serialization queue (#379): one preserve git call at a time, in event order.
+    this.queue = Promise.resolve();
   }
 
   get available() {
     return this.remote !== null && this.repoRoot !== null;
   }
 
+  /** Queue one job after everything this preserver has already started. A job that throws is
+   * its own recorded outcome (the methods never throw), and a rejection never blocks the next. */
+  enqueue(job) {
+    const run = this.queue.then(job, job);
+    this.queue = run.then(() => {}, () => {});
+    // The caller's promise settles when the job settles; a job's failure is a recorded row,
+    // never an unhandled rejection on the event path that fired the work.
+    return run.then(() => {}, () => {});
+  }
+  async drain() {
+    await this.queue;
+  }
+
   /** One git call from the repository the seats' worktrees share: their commits and the
    * preserve refs all live in the one object store and ref namespace. */
   git(args, { cwd = this.repoRoot, indexFile = null } = {}) {
-    try {
-      const ran = spawnSync('git', args, {
-        cwd, encoding: 'utf8', env: preserveGitEnv(indexFile), maxBuffer: 32 * 1024 * 1024,
+    return new Promise((resolve) => {
+      let out = '';
+      let err = '';
+      let child;
+      try {
+        child = spawn('git', args, { cwd, env: preserveGitEnv(indexFile) });
+      } catch (error) {
+        resolve({ ok: false, out: '', err: '', cause: error?.message ?? 'git spawn failed' });
+        return;
+      }
+      child.stdout.on('data', (chunk) => { out += chunk; });
+      child.stderr.on('data', (chunk) => { err += chunk; });
+      child.on('error', (error) => {
+        resolve({ ok: false, out: '', err: '', cause: error?.message ?? 'git spawn failed' });
       });
-      const out = typeof ran.stdout === 'string' ? ran.stdout : '';
-      const err = typeof ran.stderr === 'string' ? ran.stderr : '';
-      return { ok: ran.status === 0, out: out.trim(), err: err.trim(),
-        cause: ran.status === 0 ? null : (err.trim().split('\n').at(-1) ?? `exit ${ran.status}`) };
-    } catch (error) {
-      return { ok: false, out: '', err: '', cause: error?.message ?? 'git spawn failed' };
-    }
+      child.on('close', (status) => {
+        resolve({
+          ok: status === 0, out: out.trim(), err: err.trim(),
+          cause: status === 0 ? null : (err.trim().split('\n').at(-1) ?? `exit ${status}`),
+        });
+      });
+    });
   }
 
   /** The branch a commit sits on, read from the one ref namespace the seat worktrees share;
    * `detached` when no branch points at it. */
-  branchOf(sha) {
-    const ran = this.git(['for-each-ref', '--format=%(refname:short)', '--sort=refname',
+  async branchOf(sha) {
+    const ran = await this.git(['for-each-ref', '--format=%(refname:short)', '--sort=refname',
       '--points-at', sha, 'refs/heads']);
     return ran.ok && ran.out.length > 0 ? ran.out.split('\n')[0] : 'detached';
   }
@@ -118,20 +152,23 @@ export class WorktreePreserver {
 
   /** Publish one commit to its seat-and-branch preserve ref. The producing event names the
    * seat and the commit; the branch is read from the ref namespace at push time. */
-  preserveCommit({ swarmId, participantId, workspaceId = null, sha, work = 'commit' }) {
-    if (!this.available || !GIT_SHA.test(sha ?? '')) return;
-    const ref = preserveBranchRef(participantId, this.branchOf(sha));
-    this.pushSha({ work, swarmId, participantId, workspaceId, sha, ref });
+  preserveCommit(request = {}) {
+    const { swarmId, participantId, workspaceId = null, sha, work = 'commit' } = request;
+    if (!this.available || !GIT_SHA.test(sha ?? '')) return Promise.resolve();
+    return this.enqueue(async () => {
+      const ref = preserveBranchRef(participantId, await this.branchOf(sha));
+      await this.pushSha({ work, swarmId, participantId, workspaceId, sha, ref });
+    });
   }
 
   /** Push one sha to one preserve ref, with the dedupe, the retry of earlier failed pushes,
    * and the outcome rows. A commit whose paths cannot be read is recorded as failed and waits
    * for no retry: the event that carried it is already durable, and the next commit of that
    * seat carries its work by ancestry. */
-  pushSha(entry) {
+  async pushSha(entry) {
     if (this.pushed.get(entry.ref) === entry.sha) return;
-    this.retryPending();
-    if (this.commitPaths(entry.sha) === null) {
+    await this.retryPending();
+    if ((await this.commitPaths(entry.sha)) === null) {
       this.row('worktree.preserve_failed',
         { swarmId: entry.swarmId, participantId: entry.participantId, workspaceId: entry.workspaceId,
           sha: entry.sha, ref: entry.ref, remote: this.remote, work: entry.work,
@@ -139,12 +176,12 @@ export class WorktreePreserver {
         `worktree-preserve-failed:${entry.swarmId}:${entry.participantId}:${entry.sha}`);
       return;
     }
-    this.pushRef(entry);
+    await this.pushRef(entry);
   }
 
   /** The push itself, shared by the fresh pushes and the retries. */
-  pushRef(entry) {
-    const ran = this.git(['push', '--force', this.remote, `${entry.sha}:${entry.ref}`]);
+  async pushRef(entry) {
+    const ran = await this.git(['push', '--force', this.remote, `${entry.sha}:${entry.ref}`]);
     if (ran.ok) {
       this.pushed.set(entry.ref, entry.sha);
       this.pending.delete(entry.ref);
@@ -165,17 +202,17 @@ export class WorktreePreserver {
   /** Retry every push this incarnation has pending. Called from the same events that carry
    * fresh work — a failed push rides its next commit, its next turn boundary, or any other
    * preserve push this runtime performs, and no timer runs. */
-  retryPending() {
+  async retryPending() {
     if (!this.available) return;
     for (const [ref, entry] of [...this.pending]) {
       if (this.pending.get(ref) !== entry) continue;
-      this.pushRef({ ...entry, ref });
+      await this.pushRef({ ...entry, ref });
     }
   }
 
   /** The changed paths one commit carries, or null when the commit cannot be read. */
-  commitPaths(sha) {
-    const ran = this.git(['diff-tree', '-r', '--name-only', '--root', sha]);
+  async commitPaths(sha) {
+    const ran = await this.git(['diff-tree', '-r', '--name-only', '--root', sha]);
     return ran.ok ? ran.out.split('\n').filter((line) => line.length > 0) : null;
   }
 
@@ -186,17 +223,22 @@ export class WorktreePreserver {
    * and pushes nothing — absence is the honest outcome, never a repeated row. After a restart
    * the first boundary of an unchanged dirty state publishes it again: a re-push is a re-run,
    * an acceptable result of a crash. */
-  preserveUncommitted({ swarmId, participantId, workspaceId = null, worktree }) {
-    if (!this.available || typeof worktree !== 'string' || worktree.length === 0) return;
+  preserveUncommitted(request = {}) {
+    const { swarmId, participantId, workspaceId = null, worktree } = request;
+    if (!this.available || typeof worktree !== 'string' || worktree.length === 0) return Promise.resolve();
+    return this.enqueue(() => this._preserveUncommittedNow({ swarmId, participantId, workspaceId, worktree }));
+  }
+
+  async _preserveUncommittedNow({ swarmId, participantId, workspaceId = null, worktree }) {
     const ref = preserveUncommittedRef(participantId);
-    const head = this.git(['rev-parse', 'HEAD'], { cwd: worktree });
+    const head = await this.git(['rev-parse', 'HEAD'], { cwd: worktree });
     if (!head.ok || !GIT_SHA.test(head.out)) return; // no commits: nothing to parent the snapshot against
-    const headTree = this.git(['rev-parse', 'HEAD^{tree}'], { cwd: worktree });
+    const headTree = await this.git(['rev-parse', 'HEAD^{tree}'], { cwd: worktree });
     const index = mkdtempSync(join(tmpdir(), 'baton-preserve-'));
     try {
       const indexFile = join(index, 'index');
-      const read = this.git(['read-tree', 'HEAD'], { cwd: worktree, indexFile });
-      const add = read.ok ? this.git(['add', '--all'], { cwd: worktree, indexFile }) : { ok: false };
+      const read = await this.git(['read-tree', 'HEAD'], { cwd: worktree, indexFile });
+      const add = read.ok ? await this.git(['add', '--all'], { cwd: worktree, indexFile }) : { ok: false };
       // Issue #254 (the operator ruling on the debris the 2026-09-26 branches carried): the
       // repository's ignore rules decide what an untracked path may carry into a snapshot. The
       // checkout's own .gitignore can be stale — the node_modules symlink rode exactly that gap —
@@ -205,14 +247,14 @@ export class WorktreePreserver {
       // written. The dropped paths are named on the snapshot commit, never a silent filter.
       const debris = [];
       if (add.ok) {
-        const added = this.git(['diff', '--cached', '--name-only', '--diff-filter=A'], { cwd: worktree, indexFile });
+        const added = await this.git(['diff', '--cached', '--name-only', '--diff-filter=A'], { cwd: worktree, indexFile });
         for (const path of added.ok ? added.out.split('\n').filter((line) => line.length > 0) : []) {
-          if (!this.git(['check-ignore', '-q', '--no-index', '--', path]).ok) continue;
-          const removed = this.git(['rm', '--cached', '--quiet', '--', path], { cwd: worktree, indexFile });
+          if (!(await this.git(['check-ignore', '-q', '--no-index', '--', path])).ok) continue;
+          const removed = await this.git(['rm', '--cached', '--quiet', '--', path], { cwd: worktree, indexFile });
           if (removed.ok) debris.push(path);
         }
       }
-      const wrote = add.ok ? this.git(['write-tree'], { cwd: worktree, indexFile }) : { ok: false };
+      const wrote = add.ok ? await this.git(['write-tree'], { cwd: worktree, indexFile }) : { ok: false };
       if (!wrote.ok || !GIT_SHA.test(wrote.out)) return;
       const tree = wrote.out;
       if (headTree.ok && headTree.out === tree) return; // clean checkout: nothing uncommitted
@@ -220,13 +262,13 @@ export class WorktreePreserver {
         : `; ignored additions dropped: ${debris.slice(0, 16).join(', ')}${debris.length > 16 ? `, and ${debris.length - 16} more` : ''}`;
       const pushedSha = this.pushed.get(ref) ?? null;
       if (pushedSha !== null) {
-        const deref = this.git(['rev-parse', `${pushedSha}^{tree}`]);
+        const deref = await this.git(['rev-parse', `${pushedSha}^{tree}`]);
         if (deref.ok && deref.out === tree) return; // this exact state is already the ref's tip
       }
       const message = `preserve: uncommitted state of ${participantId} (private-index snapshot, worktree untouched)${debrisNote}`;
-      const commit = this.git(['commit-tree', tree, '-p', head.out, '-m', message], { cwd: worktree });
+      const commit = await this.git(['commit-tree', tree, '-p', head.out, '-m', message], { cwd: worktree });
       if (!commit.ok || !GIT_SHA.test(commit.out)) return;
-      this.pushRef({ work: 'uncommitted', swarmId, participantId, workspaceId, sha: commit.out, ref });
+      await this.pushRef({ work: 'uncommitted', swarmId, participantId, workspaceId, sha: commit.out, ref });
     } finally {
       rmSync(index, { recursive: true, force: true });
     }

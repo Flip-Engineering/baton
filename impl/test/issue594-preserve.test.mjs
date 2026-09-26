@@ -58,42 +58,42 @@ const commitAll = (checkout, message) => {
   return g(['rev-parse', 'HEAD'], checkout);
 };
 
-test('594-t1: a seat commit publishes to its seat-and-branch preserve ref, once', (t) => {
+test('594-t1: a seat commit publishes to its seat-and-branch preserve ref, once', async (t) => {
   const f = fixture(t);
   const sha = g(['rev-parse', 'HEAD'], f.checkout);
-  f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', workspaceId: 'ws-1', sha, work: 'commit' });
+  await f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', workspaceId: 'ws-1', sha, work: 'commit' });
   assert.equal(originRef(f.origin, 'refs/baton/preserve/branches/lane/baton/lane-1'), sha,
     'the preserve ref names the seat and the branch, and carries the commit');
   assert.equal(f.rows.filter((row) => row.kind === 'worktree.preserve_pushed').length, 1, 'one pushed row');
-  f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha, work: 'commit' });
+  await f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha, work: 'commit' });
   assert.equal(f.rows.filter((row) => row.kind === 'worktree.preserve_pushed').length, 1,
     'the same commit pushes once — the dedupe answers the replayed event');
 });
 
-test('594-t3: a failed push records its cause and the next event retries it', (t) => {
+test('594-t3: a failed push records its cause and the next event retries it', async (t) => {
   const f = fixture(t);
   const first = g(['rev-parse', 'HEAD'], f.checkout);
-  f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha: first, work: 'commit' });
+  await f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha: first, work: 'commit' });
   rmSync(f.origin, { recursive: true, force: true });
   writeFileSync(join(f.checkout, 'file.txt'), 'one\ntwo\n');
   const second = commitAll(f.checkout, 'two');
-  f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha: second, work: 'commit' });
+  await f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha: second, work: 'commit' });
   const failed = f.rows.filter((row) => row.kind === 'worktree.preserve_failed');
   assert.equal(failed.length, 1, 'one failed row');
   assert.equal(failed[0].payload.sha, second, 'the row names the commit that did not publish');
   assert.match(failed[0].payload.cause, /./, 'the row records the cause the push reported');
   g(['init', '--bare', '--initial-branch', 'baton/lane-1', f.origin]);
-  f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha: second, work: 'commit' });
+  await f.preserver.preserveCommit({ swarmId: 's1', participantId: 'lane', sha: second, work: 'commit' });
   assert.equal(originRef(f.origin, 'refs/baton/preserve/branches/lane/baton/lane-1'), second,
     'the retried push carries the newest tip, and the newest tip carries the older commit');
 });
 
-test('594-t4: the turn-end snapshot publishes uncommitted work and touches nothing', (t) => {
+test('594-t4: the turn-end snapshot publishes uncommitted work and touches nothing', async (t) => {
   const f = fixture(t);
   const head = g(['rev-parse', 'HEAD'], f.checkout);
   writeFileSync(join(f.checkout, 'draft.txt'), 'unfinished\n');
   const dirtyBefore = g(['status', '--porcelain'], f.checkout);
-  f.preserver.preserveUncommitted({ swarmId: 's1', participantId: 'lane', worktree: f.checkout });
+  await f.preserver.preserveUncommitted({ swarmId: 's1', participantId: 'lane', worktree: f.checkout });
   const snapshot = originRef(f.origin, 'refs/baton/preserve/uncommitted/lane');
   assert.match(snapshot, /^[a-f0-9]{40}$/, 'the snapshot is published under the seat ref');
   assert.match(g(['ls-tree', '--name-only', snapshot], f.checkout), /draft\.txt/,
@@ -102,14 +102,14 @@ test('594-t4: the turn-end snapshot publishes uncommitted work and touches nothi
   assert.equal(g(['status', '--porcelain'], f.checkout), dirtyBefore, 'the worktree keeps its dirty state');
   assert.equal(g(['rev-parse', 'HEAD'], f.checkout), head, 'the worktree HEAD never moved');
   const pushed = f.rows.filter((row) => row.kind === 'worktree.preserve_pushed' && row.payload.work === 'uncommitted');
-  f.preserver.preserveUncommitted({ swarmId: 's1', participantId: 'lane', worktree: f.checkout });
+  await f.preserver.preserveUncommitted({ swarmId: 's1', participantId: 'lane', worktree: f.checkout });
   assert.equal(f.rows.filter((row) => row.kind === 'worktree.preserve_pushed' && row.payload.work === 'uncommitted').length, 1,
     'the same state snapshots once — the ref already holds that tree');
 });
 
-test('594-t5: a clean checkout records nothing', (t) => {
+test('594-t5: a clean checkout records nothing', async (t) => {
   const f = fixture(t);
-  f.preserver.preserveUncommitted({ swarmId: 's1', participantId: 'lane', worktree: f.checkout });
+  await f.preserver.preserveUncommitted({ swarmId: 's1', participantId: 'lane', worktree: f.checkout });
   assert.equal(f.rows.length, 0, 'nothing uncommitted means no rows and no push');
 });
 
@@ -154,12 +154,14 @@ test('594-t6: the runtime drains a commit observation into a push, and a turn bo
   const sha = g(['rev-parse', 'HEAD'], checkout);
   observations.push({ swarmId: 'baton', participantId: 'lane', workerId: 'w-1', workspaceId: 'ws-1', sha, at: '2026-09-25T18:00:00.000Z' });
   runtime._drainCommitObservations();
+  await runtime.preserver.drain();
   assert.equal(originRef(origin, 'refs/baton/preserve/branches/lane/baton/lane-1'), sha,
     'the drained observation is published to the seat-and-branch ref');
 
   writeFileSync(join(checkout, 'draft.txt'), 'unfinished\n');
   workers[0].turnEpoch = 1;
   runtime._drainCommitObservations();
+  await runtime.preserver.drain();
   const snapshot = originRef(origin, 'refs/baton/preserve/uncommitted/lane');
   assert.match(snapshot, /^[a-f0-9]{40}$/, 'the turn boundary published the uncommitted state');
 
