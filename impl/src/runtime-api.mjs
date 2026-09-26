@@ -349,33 +349,13 @@ export function _gateVerdictItemForWorker(coordinator, workerId, verdictKinds) {
         ? event.payload.verdict.diagnosticCode : 'trust_gate_failed')
       : (typeof event.payload?.code === 'string' ? event.payload.code : 'trust_gate_failed');
     let gate;
-    if (liveCode === 'worker_path_scope_violation') gate = 'scope';
-    else if (liveCode === 'forbidden_effect_observed') gate = 'forbidden_effect';
+    if (liveCode === 'forbidden_effect_observed') gate = 'forbidden_effect';
     else if (liveCode === 'verification_red_green_failed') gate = 'red_green';
     else if (liveCode === 'verification_coverage_failed') gate = 'coverage';
     else if (liveCode === 'plan_route_mismatch' || liveCode === 'recovery_route_mismatch') gate = 'route_mismatch';
     else gate = 'unknown';
     let detail = {};
-    if (gate === 'scope') {
-      const evidence = event.payload?.pathScopeEvidence && typeof event.payload.pathScopeEvidence === 'object'
-        ? event.payload.pathScopeEvidence : {};
-      detail = {
-        digests: {
-          changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
-          inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
-            ? evidence.inScopeChangedPathsDigest : null,
-          outOfScopeChangedPathsDigest: typeof evidence.outOfScopeChangedPathsDigest === 'string'
-            ? evidence.outOfScopeChangedPathsDigest : null,
-        },
-        counts: {
-          changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
-          inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
-            ? evidence.inScopeChangedPathCount : 0,
-          outOfScopeChangedPathCount: Number.isSafeInteger(evidence.outOfScopeChangedPathCount)
-            ? evidence.outOfScopeChangedPathCount : 0,
-        },
-      };
-    } else if (gate === 'red_green' || gate === 'coverage') {
+    if (gate === 'red_green' || gate === 'coverage') {
       const raw = typeof event.payload?.verdict?.failureCapsule?.text === 'string'
         ? event.payload.verdict.failureCapsule.text
         : typeof event.payload?.verdict?.output === 'string' ? event.payload.verdict.output : '';

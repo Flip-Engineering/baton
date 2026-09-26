@@ -710,13 +710,11 @@ export function debugTerminalCode(value, fallback) {
     && /^[a-z0-9][a-z0-9._-]*$/iu.test(value) ? value : fallback;
 }
 // Diagnostics DG-1 (DIAG-2): live trust-gate / verifier codes → closed gate enum. Unknown is the
-// honest fallback (diagnostics-decisions.md v2 rule 3). worker_path_scope_violation serializes
-// as `scope`; digests-only pathScopeEvidence is never reopened into path strings.
+// honest fallback (diagnostics-decisions.md v2 rule 3).
 const DEBUG_GATE_CODES = Object.freeze(new Set([
-  'scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown',
+  'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown',
 ]));
 export function debugGateFromLiveCode(code) {
-  if (code === 'worker_path_scope_violation') return 'scope';
   if (code === 'forbidden_effect_observed') return 'forbidden_effect';
   if (code === 'verification_red_green_failed') return 'red_green';
   if (code === 'verification_coverage_failed') return 'coverage';
@@ -724,27 +722,6 @@ export function debugGateFromLiveCode(code) {
   return 'unknown';
 }
 function debugGateDetail(gate, event) {
-  if (gate === 'scope') {
-    const evidence = event.payload?.pathScopeEvidence && typeof event.payload.pathScopeEvidence === 'object'
-      ? event.payload.pathScopeEvidence : {};
-    // Digests + counts only — never path strings (coordinator.mjs pathScopeEvidence mint).
-    return {
-      digests: {
-        changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
-        inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
-          ? evidence.inScopeChangedPathsDigest : null,
-        outOfScopeChangedPathsDigest: typeof evidence.outOfScopeChangedPathsDigest === 'string'
-          ? evidence.outOfScopeChangedPathsDigest : null,
-      },
-      counts: {
-        changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
-        inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
-          ? evidence.inScopeChangedPathCount : 0,
-        outOfScopeChangedPathCount: Number.isSafeInteger(evidence.outOfScopeChangedPathCount)
-          ? evidence.outOfScopeChangedPathCount : 0,
-      },
-    };
-  }
   if (gate === 'red_green' || gate === 'coverage') {
     const raw = typeof event.payload?.verdict?.failureCapsule?.text === 'string'
       ? event.payload.verdict.failureCapsule.text
@@ -785,14 +762,13 @@ export function debugGateRefusal(events) {
 // refusals — everything else escalates to null so a raw gate-internal phase name never
 // crosses to the worker (#73's class).
 const VERDICT_CHECK_PHASES = Object.freeze(new Set([
-  'path_scope', 'forbidden_effect', 'required_effect',
+  'forbidden_effect', 'required_effect',
 ]));
 // Issue #61 D1 + OQ1 — the hub-minted corrective-class table, keyed by terminal CODE
 // (never the coarse gate: required_effect_absent degrades to gate unknown but keeps its
 // corrective). Frozen so a caller cannot rewrite a corrective (#73). A code absent from
 // the table carries corrective null — honest absence, escalate to the orchestrator.
 export const VERDICT_CORRECTIVE_TABLE = Object.freeze({
-  worker_path_scope_violation: 'in_scope_revision',
   forbidden_effect_observed: 'forbidden_effect_retraction',
   required_effect_absent: 'in_scope_edit',
   verification_red_green_failed: 'failing_check_fix',
@@ -1260,34 +1236,6 @@ function normalizeGateCauseFeedback(value) {
   if (!DEBUG_GATE_CODES.has(value.gate)
     || !value.detail || typeof value.detail !== 'object' || Array.isArray(value.detail)) {
     throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
-  }
-  if (value.gate === 'scope') {
-    exactObject(value.detail, ['digests', 'counts'], 'application_workflow_feedback_invalid',
-      'scope gate detail');
-    exactObject(value.detail.digests, [
-      'changedPathsDigest', 'inScopeChangedPathsDigest', 'outOfScopeChangedPathsDigest',
-    ], 'application_workflow_feedback_invalid', 'scope digests');
-    exactObject(value.detail.counts, [
-      'changedPathCount', 'inScopeChangedPathCount', 'outOfScopeChangedPathCount',
-    ], 'application_workflow_feedback_invalid', 'scope counts');
-    for (const key of Object.keys(value.detail.digests)) {
-      const digestValue = value.detail.digests[key];
-      if (digestValue !== null && !HEX64.test(digestValue ?? '')) {
-        throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
-      }
-    }
-    for (const key of Object.keys(value.detail.counts)) {
-      if (!Number.isSafeInteger(value.detail.counts[key]) || value.detail.counts[key] < 0) {
-        throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
-      }
-    }
-    return deepFreeze({
-      gate: 'scope',
-      detail: {
-        digests: { ...value.detail.digests },
-        counts: { ...value.detail.counts },
-      },
-    });
   }
   if (value.gate === 'red_green' || value.gate === 'coverage') {
     exactObject(value.detail, ['tail'], 'application_workflow_feedback_invalid',

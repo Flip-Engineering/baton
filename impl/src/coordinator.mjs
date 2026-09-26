@@ -6695,7 +6695,6 @@ export class Coordinator {
           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
           ...(err?.verificationAttempt ? { verificationAttempt: err.verificationAttempt } : {}),
           ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
-          ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
         },
       });
       let durable = this._coordination.task(task.id);
@@ -6714,8 +6713,7 @@ export class Coordinator {
       }
       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
-      if (task.status !== 'completed') task.verdict = null;
-      if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
+      if (['forbidden_effect_observed', 'required_effect_absent'].includes(code)) {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
         // TG4: the projected terminal cause names the gate — never 'unknown' — on the task
         // surface too (the handle's copy already fed result() and replay).
