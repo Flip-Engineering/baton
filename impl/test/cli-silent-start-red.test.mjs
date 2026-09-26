@@ -149,7 +149,8 @@ const SWEEP_SEEDS = ['show', 'send', 'view', 'attention', 'status', 'list', 'mem
 /** The distinct handling per matched verb for a distance-1 typo (D2 rule 3). Returns the message checks. */
 function checkRefusalMessage(message, neighbor) {
   if (neighbor === 'follow') {
-    return /follow is not shipped by the Run application/u.test(message) && /run start/u.test(message);
+    return /follow is not shipped by the Run application/u.test(message) && /run status RUN_ID --follow/u.test(message)
+      && /run start/u.test(message);
   }
   if (neighbor === 'steer') {
     return /steer was deleted at the M5 alias sunset; use run send/u.test(message) && /run start/u.test(message);
@@ -214,6 +215,7 @@ test('PT-2b capability [refused-position-typos] — distance-1 typos of the refu
     () => parseBatonCli(['run', 'follw']),
     (e) => e?.code === 'cli_command_unavailable'
       && /follow is not shipped by the Run application/u.test(e?.message ?? '')
+      && /run status RUN_ID --follow/u.test(e?.message ?? '')
       && /run start/u.test(e?.message ?? ''),
     'stage[pinned-typo-follw] run follw (~follow) must refuse with follow\'s existing message + the run start escape'
   );

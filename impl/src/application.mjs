@@ -2850,8 +2850,8 @@ export class BatonApplication {
     await this._authorize('run.status', principal, request.runId, { operation: 'action_authority' });
     const { action } = await this._resolveSemanticAction(request, principal, context);
     if (!action) {
-      throw applicationError('Run action is outside the current authority scope',
-        'application_action_scope_mismatch');
+      throw applicationError('Run action is outside the current authority scope; inspect the Run'
+        + ' for the actions it currently advertises', 'application_action_scope_mismatch');
     }
     return semanticAuthorityForAction(action);
   }
@@ -8250,7 +8250,8 @@ export class BatonApplication {
         await this._authorizeSemanticAuthority(authority, principal, request.runId, context);
         return this.inspect({ runId: request.runId, depth: 'outline' }, principal);
       }
-      throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+      throw applicationError('Run action is outside the current authority scope; inspect the Run'
+        + ' for the actions it currently advertises', 'application_action_scope_mismatch');
     }
     const semanticAuthority = semanticAuthorityForAction(action);
     await this._authorizeSemanticAuthority(semanticAuthority, principal, request.runId, context);

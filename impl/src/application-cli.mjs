@@ -2009,7 +2009,7 @@ function cliRunVerbRefusal(action, recognized, next) {
     const verb = neighbors[0];
     if (verb === 'follow') {
       return {
-        message: 'follow is not shipped by the Run application; use run start OBJECTIVE to begin, or run status RUN_ID to read a Run',
+        message: 'follow is not shipped by the Run application; use run status RUN_ID --follow to follow a Run, or run start OBJECTIVE to begin',
         code: 'cli_command_unavailable',
       };
     }

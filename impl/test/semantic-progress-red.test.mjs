@@ -345,8 +345,17 @@ test('SP-2e: a stale actionId after a view change refuses with the existing taxo
     () => application.act({
       runId: started.runId, actionId: staleActionId, inputs: { planDigest: started.plan.digest },
     }, owner),
-    (error) => error.code === 'application_action_scope_mismatch',
+    (error) => error.code === 'application_action_scope_mismatch'
+      && /inspect the Run/u.test(error.message ?? ''),
     'a consumer must re-read before acting on a stale view',
+  );
+  await assert.rejects(
+    () => application.actionAuthority({
+      runId: started.runId, actionId: staleActionId, inputs: { planDigest: started.plan.digest },
+    }, owner),
+    (error) => error.code === 'application_action_scope_mismatch'
+      && /inspect the Run/u.test(error.message ?? ''),
+    'the authority preflight refusal names the same re-inspect remedy at its own site',
   );
 });
 
