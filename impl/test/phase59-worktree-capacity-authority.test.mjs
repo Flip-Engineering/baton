@@ -433,7 +433,11 @@ test('WC4: concurrent admission atomically reserves one worker and refuses the c
   assert.equal(
     !existsSync(join(f.repo, '.baton', 'wt'))
       ? 0
-      : readdirSync(join(f.repo, '.baton', 'wt')).filter((entry) => !entry.endsWith('.json') && !entry.endsWith('.exclude')).length,
+      // The subject is the CHECKOUTS the race created, so count directories: the per-owner
+      // metadata beside them (.meta.json, .projection.exclude, .linked-worktrees.jsonl) is not a
+      // workspace, and a suffix list here would need an edit for every record file added later.
+      : readdirSync(join(f.repo, '.baton', 'wt'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink()).length,
     1,
   );
 

@@ -1067,7 +1067,10 @@ export async function _integrate(coordinator, recorder, workerId, opts = {}) {
     } else if (handle.status === 'exited') {
       await coordinator.kill(workerId, opts.actor ?? 'orchestrator', { rule: KILL_RULES.runStop });
     }
-    await coordinator._removeTaskWorktree(task);
+    // Issue #568: the handle performing this cleanup is not a co-holder of the checkout it
+    // closes, so it is excluded — without it the custody rule retains a workspace whose
+    // directory is already gone because the integrating seat's own handle still lists it.
+    await coordinator._removeTaskWorktree(task, { excludeHolderId: workerId });
 
     let integrated; let structuredStage = null; let structuredVerifyPath = null; let structuredFinalizeStarted = false; let structuredToolchainProjection = null;
     try {
