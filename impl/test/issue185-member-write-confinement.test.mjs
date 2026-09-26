@@ -20,7 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
@@ -96,12 +96,17 @@ test('185: a member\'s repo-relative deliverable lands in its worktree, never th
     assert.ok(worktree, 'dispatch must record the member worktree');
 
     // I1 — the child's OWN view of its cwd is the worktree it was dispatched into, inside the
-    // main checkout but never equal to it.
-    assert.equal(wrote, `wrote:${DELIVERABLE} cwd:${worktree}`,
+    // main checkout but never equal to it. The comparison is by REAL path: the suite runner
+    // sandboxes TMPDIR under `/tmp`, which macOS resolves to `/private/tmp`, so `process.cwd()`
+    // in the child is the resolved spelling of the same directory the coordinator recorded.
+    const reported = /^wrote:(.*) cwd:(.*)$/u.exec(wrote);
+    assert.ok(reported, `the member must report what it wrote and where it ran (got ${JSON.stringify(wrote)})`);
+    assert.equal(reported[1], DELIVERABLE, 'the member wrote its declared deliverable');
+    assert.equal(realpathSync(reported[2]), realpathSync(worktree),
       'the member process must run with its cwd inside its own worktree');
 
     // I2 — the deliverable it wrote at the repo-relative path is in that worktree.
-    const inWorktree = join(worktree, DELIVERABLE);
+    const inWorktree = join(realpathSync(worktree), DELIVERABLE);
     assert.equal(existsSync(inWorktree), true,
       `the member's repo-relative deliverable must land in its worktree (${worktree})`);
     assert.match(readFileSync(inWorktree, 'utf8'), /member deliverable written from/u);
@@ -117,7 +122,7 @@ test('185: a member\'s repo-relative deliverable lands in its worktree, never th
     const escaped = relative(repoRoot, worktree);
     assert.equal(isAbsolute(escaped) || escaped === '..' || escaped.startsWith(`..${sep}`), false,
       `the member worktree must live under the main checkout, not outside it (got ${worktree})`);
-    assert.equal(git(['rev-parse', '--show-toplevel'], worktree), worktree,
+    assert.equal(realpathSync(git(['rev-parse', '--show-toplevel'], worktree)), realpathSync(worktree),
       'the member\'s own git view resolves to its worktree, so relative paths it derives stay there');
   } finally {
     await Promise.resolve(coordinator.kill(handle.id)).catch(() => {});
