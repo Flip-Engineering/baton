@@ -1,0 +1,120 @@
+{
+  "subject": "#582 stages 1-4: bookkeeping ledger artifacts removed from tests and docs",
+  "base": "d343fc542c573b2924ce7e1f7adc220605e08b20",
+  "commit": "584824b528b24b6c9b7e4f7d9a4cd1293c526cd4",
+  "items": [
+    {
+      "stage": 1,
+      "commit": "8629dd9a",
+      "title": "the eleven runtime/coordination map suites derive their maps live",
+      "files": [
+        "impl/test/application-observation.test.mjs",
+        "impl/test/coordination-admission.test.mjs",
+        "impl/test/coordination-internals.test.mjs",
+        "impl/test/coordination-ledger-writes.test.mjs",
+        "impl/test/coordination-ledger.test.mjs",
+        "impl/test/runtime-admission.test.mjs",
+        "impl/test/runtime-api.test.mjs",
+        "impl/test/runtime-effects.test.mjs",
+        "impl/test/runtime-event-handlers.test.mjs",
+        "impl/test/runtime-observation.test.mjs",
+        "impl/test/runtime-recovery.test.mjs"
+      ],
+      "description": "ARITIES/MOVED/RELOCATED census tables removed; maps derived live from source exports"
+    },
+    {
+      "stage": 2,
+      "commit": "89234c69",
+      "title": "count pins removed from MCP, swarm, CLI and route test suites",
+      "files": [
+        "impl/test/mcp-profile-parity-red.test.mjs",
+        "impl/test/harvest-accessor-red.test.mjs",
+        "impl/test/mcp-reflex-surface-red.test.mjs",
+        "impl/test/phase16-mcp-northbound.test.mjs",
+        "impl/test/swarm-family-doc.test.mjs",
+        "impl/test/surface-truth.test.mjs",
+        "impl/test/surfacing-matrix-red.test.mjs",
+        "impl/test/swarm-surface.test.mjs",
+        "impl/test/cli-silent-start-red.test.mjs",
+        "impl/test/muse-adapter.test.mjs",
+        "impl/test/deepseek-routes-red.test.mjs",
+        "impl/test/phase78-grok-auth-readiness.test.mjs",
+        "impl/test/phase92-route-discovery-red.test.mjs",
+        "impl/test/phase78-concise-deployment-factory.test.mjs",
+        "impl/test/phase72-kimi-orchestrator-mcp.test.mjs"
+      ],
+      "description": "Hardcoded count assertions replaced with derivations (> 0, computed lengths, exported constants); hand-copied census arrays single-sourced from CORE_TOOL_NAMES; PINNED_TOOL_LIST_SITES block and RG-P4..P8 cross-file source-reading tests deleted"
+    },
+    {
+      "stage": 3,
+      "commit": "76e1f36b",
+      "title": "tally/fold/converged narration removed from test headers",
+      "files": [
+        "impl/test/cli-silent-start-red.test.mjs",
+        "impl/test/mcp-profile-parity-red.test.mjs"
+      ],
+      "description": "SPLIT RECORD, FOLD RECORD, and VERIFIED SPLIT comment blocks removed — they narrated pass/fail tallies and convergence history that the test runtime derives"
+    },
+    {
+      "stage": 4,
+      "commit": "584824b5",
+      "title": "expected-red manifest references removed from docs",
+      "files": [
+        "docs/45-open-coordination.md",
+        "docs/48-reincarnation-in-place.md",
+        "docs/52-resume-continuation-decision.md"
+      ],
+      "description": "Seam map row for expected-red manifest removed; manifest clause removed from landing-order section and resume-continuation implementation lane"
+    }
+  ],
+  "verification": {
+    "command": "npm test --prefix impl",
+    "status": "PENDING",
+    "perFile": "all 29 changed files verified individually with node scripts/run-suite.mjs",
+    "environmentRed": [
+      {
+        "file": "impl/test/phase78-concise-deployment-factory.test.mjs",
+        "tests": ["DF3", "DF6", "DF7", "DF10", "DF11"],
+        "reason": "pre-existing environment/credential failures, identical on clean base d343fc54"
+      },
+      {
+        "file": "impl/test/phase72-kimi-orchestrator-mcp.test.mjs",
+        "tests": ["KC6", "KC7", "KC8"],
+        "reason": "pre-existing environment/credential failures, identical on clean base d343fc54"
+      }
+    ],
+    "baseVerification": "failures confirmed identical on clean worktree at d343fc54 (/private/tmp/base-p922)"
+  },
+  "carriedForward": [
+    {
+      "file": "impl/test/grammar-m2-red.test.mjs",
+      "reason": "arrays are behavior fixtures tested against imported CANONICAL_ATTENTION_KINDS, already single-sourced"
+    },
+    {
+      "file": "impl/test/host-verb-inventory.test.mjs",
+      "reason": "token list is a membership pin against imported HOST_CLI_VERBS, already derived"
+    },
+    {
+      "file": "impl/test/canonical-naming-233-red.test.mjs",
+      "reason": "KERNEL_WEB_COMMANDS, WEB_DIRECT_PORT_OPERATIONS, RETAINED_MCP_LEGACY_TOOLS, M4B_SIBLING_KEYS are behavior fixtures; no single owning export covers all four"
+    },
+    {
+      "file": "impl/test/issue268-visibility-red.test.mjs",
+      "reason": "RED test waiting for SWARM_PARTICIPANT_RUNTIME_STATES export, no pin to remove"
+    },
+    {
+      "file": "impl/test/grammar-m4b-red.test.mjs",
+      "reason": "fleet tool name lists are behavior tests (deepEqual against live server output), not count pins"
+    },
+    {
+      "file": "impl/test/phase16-mcp-northbound.test.mjs",
+      "reason": "fleet tool name lists are behavior tests (deepEqual against live server output), not count pins — count pin in this file was already removed in stage 2"
+    }
+  ],
+  "needsFromOthers": [],
+  "stats": {
+    "filesChanged": 29,
+    "insertions": 315,
+    "deletions": 741
+  }
+}
