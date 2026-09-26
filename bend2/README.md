@@ -19,12 +19,13 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 ## Coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude
-Code and OMP turns. Native parent delivery and Git landing are being connected to this
-interface.
+Code and OMP turns. Recruitment creates a Git worktree and records its resolved base. Native parent
+delivery through Claude Code Channels MCP and Git landing are being connected
+to this interface.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
-.scratch/bend2/baton2 state.db worker worker1 root omp MODEL high WORKTREE BRANCH BASE
+.scratch/bend2/baton2 state.db recruit worker1 root omp MODEL high REPO BRANCH WORKTREE BASE
 .scratch/bend2/baton2 state.db bind worker1 NATIVE_SESSION omp OBSERVED_MODEL high
 .scratch/bend2/baton2 state.db report-file turn1 worker1 REPORT_FILE
 .scratch/bend2/baton2 state.db inbox root
@@ -54,6 +55,14 @@ existing worker connection while retaining its parent and requested route. Each 
 database, and SQLite serializes transactions.
 Workspaces and source files are retained by these commands.
 
+`recruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE` creates a branch
+and worktree, then records the worker under its parent. A relative `PATH` is
+resolved from `REPO`; the stored workspace path is absolute. The base is stored
+as a commit ID. A matching repeated recruitment returns the existing worker.
+`worktree ID` reads its current Git branch, commit and dirty state.
+`worker` registers an existing workspace. If registration fails after Git has
+created a worktree, the checkout is retained and can be registered with `worker`.
+
 ## Native turns
 
 After registering the worker, run:
@@ -77,8 +86,8 @@ exits without a result also create reports. Repeating a completed turn ID return
 its retained report. `pending` shows reports awaiting native acceptance; delivery
 is still being connected. Run one foreground turn at a time for a worker.
 
-The check command builds the coordinator and process test executable, then runs
-persistence, OS-process and controlled-protocol integration tests. A controlled
+The check command builds the coordinator, process and Git test executables, then
+runs persistence, recruitment, Git, OS-process and controlled-protocol tests. A controlled
 process fixture verifies supervision; a real subscription worker and a native
 root acceptance receipt are required for the live-slice result.
 

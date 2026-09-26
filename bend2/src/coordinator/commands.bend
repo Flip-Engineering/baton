@@ -1,6 +1,8 @@
 import Base
 
 type Command is Data:
+  Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
+  Worktree{id: String}
   RunTurn{worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String}
   Attach{id: String, harness: String, native: String, endpoint: String}
   Worker{id: String, parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String}
@@ -86,6 +88,8 @@ def sql(command: Command) -> String:
     case MessageFile{id,sender,recipient,kind,path}: ""
     case ReportFile{id,sender,path}: ""
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
+    case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
+    case Worktree{id}: ""
     case Invalid{}: ""
 
 def parse(args: List<String>) -> Command:
@@ -96,7 +100,8 @@ def parse(args: List<String>) -> Command:
     case +verb <> +id <> Nil{}:
       Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},
-      Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},Invalid{})))
+      Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
+      Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},Invalid{}))))
     case +verb <> +id <> +one <> +two <> Nil{}:
       Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
       Bool.pick(Command, String.eq(verb,"ack"),Ack{id,one,two},
@@ -112,6 +117,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Invalid{})))
     case +verb <> id <> parent <> harness <> model <> effort <> workspace <> branch <> base <> Nil{}:
       Bool.pick(Command, String.eq(verb,"worker"),Worker{id,parent,harness,model,effort,workspace,branch,base},Invalid{})
-    case +verb <> worker <> id <> cmd <> model <> effort <> cwd <> task <> log <> session <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"turn"),RunTurn{worker,id,cmd,model,effort,cwd,task,log,session},Invalid{})
+    case +verb <> +worker <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"turn"),RunTurn{worker,id,cmd,model,effort,cwd,task,log,session},
+      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{worker,id,cmd,model,effort,cwd,task,log,session},Invalid{}))
     case _: Invalid{}
