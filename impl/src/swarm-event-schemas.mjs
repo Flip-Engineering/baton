@@ -161,10 +161,11 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     reason: STRING('why this decision', { example: 'verified against the running deployment' }),
   }),
   // Issue #443: the swarm-level policy. A row changes the fields it names, so a view reads what an
-  // orchestrator declared and the runtime resolves the default (manual, no billing preference).
+  // orchestrator declared plus the runtime-resolved defaults (auto recovery, no billing
+  // preference); an orchestrator that wants a proposal-and-page posture declares `manual` (#574).
   'swarm.policy_updated': KIND('declare the swarm-level policy a re-route follows when a seat\'s provider kills it', {
     rerouteOnProviderFault: { type: 'string', enum: ['manual', 'auto'], required: false,
-      description: 'what happens when a seat dies under a provider fault: manual (the default) records the decision and pages an orchestrator, auto performs the resume itself onto the first candidate',
+      description: 'what happens when a seat dies under a provider fault: auto (the default) performs the resume itself onto the first candidate, manual records the decision and pages an orchestrator',
       expectation: 'one of manual, auto', example: 'manual' },
     reroutePreferApi: { type: 'boolean', required: false,
       description: 'rank a per-token API route above a subscription route that has headroom (the default ranks a subscription route with headroom first, so an idle plan is spent before API money)',

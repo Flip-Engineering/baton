@@ -5147,7 +5147,7 @@ export class BatonWebClient {
       try {
         body = await this._json('/v1/commands', {
           method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-        }, this._requestTimeoutForCommand(name, args), waitSignal);
+        }, this._requestTimeoutForCommand(bus, args), waitSignal);
         break;
       } catch (error) {
         // A caller's own stop is not "the command outlived its bound": skip the pending-receipt
@@ -5203,10 +5203,15 @@ export class BatonWebClient {
 
   _requestTimeoutForCommand(name, args) {
     if (this.requestTimeoutMs === null) return null;
+    // Issue #392: the dispatch hands over the canonical spelling it serves (`run watch`
+    // dispatches run_watch; the resident answers it under the run.follow wait policy), so the
+    // wait tables resolve the alias table the dispatch itself uses and both spellings keep the
+    // same stretch.
+    const transport = CLI_DISPATCH_ALIASES[name] ?? name;
     let serverWaitMs = 0;
-    if (['run.follow', 'run.wait'].includes(name)) serverWaitMs = args.timeoutMs;
-    if (name === 'swarm.watch') serverWaitMs = args.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS;
-    if (name === 'run.inspect' && args.cursor !== undefined) {
+    if (['run.follow', 'run.wait'].includes(transport)) serverWaitMs = args.timeoutMs;
+    if (transport === 'swarm.watch') serverWaitMs = args.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS;
+    if (transport === 'run.inspect' && args.cursor !== undefined) {
       serverWaitMs = args.waitMs ?? DEFAULT_APPLICATION_WAIT_MS;
     }
     return Number.isSafeInteger(serverWaitMs) && serverWaitMs > 0

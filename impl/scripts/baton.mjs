@@ -18,6 +18,7 @@ import { flipAnnounce, flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
 import { assertCliMcpControlParity, normalizeControlSurfaceError } from '../src/control-surface-unification.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
+import { parseRoutingExcludeHarnesses } from '../src/swarm-runtime.mjs';
 import { openBaton } from '../src/index.mjs';
 import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 import {
@@ -318,14 +319,28 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
  * declaration, never inferred from `origin`. Unset, the deployment opens without one and a real
  * landing refuses instead of reporting a local success. */
 async function serveCheckout() {
-  const openSignals = admitOpenSignals();
-  let deployment;
+  // Issue #574: the operator routing rule rides the same declaration channel as
+  // BATON_PUBLISH_REMOTE — BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok, comma-separated harness
+  // names handed to the open as advanced.routing.excludeHarnesses. Both declarations are read
+  // before a signal owner is admitted, so a malformed one refuses with nothing to release.
+  let excludeHarnesses;
+  try {
+    excludeHarnesses = parseRoutingExcludeHarnesses(process.env.BATON_ROUTING_EXCLUDE_HARNESSES);
+  } catch (error) {
+    throw Object.assign(new Error(error.message), { code: 'application_config_invalid' });
+  }
   const publishRemote = typeof process.env.BATON_PUBLISH_REMOTE === 'string'
     && process.env.BATON_PUBLISH_REMOTE.length > 0 ? process.env.BATON_PUBLISH_REMOTE : undefined;
+  const advanced = {
+    ...(publishRemote === undefined ? {} : { integration: { publishRemote } }),
+    ...(excludeHarnesses === undefined ? {} : { routing: { excludeHarnesses } }),
+  };
+  const openSignals = admitOpenSignals();
+  let deployment;
   try {
     deployment = await openBaton({
       repo: process.cwd(),
-      ...(publishRemote === undefined ? {} : { advanced: { integration: { publishRemote } } }),
+      ...(Object.keys(advanced).length > 0 ? { advanced } : {}),
     });
   } finally { openSignals.release(); }
   await serveDeployment(deployment, openSignals.pendingTrigger());

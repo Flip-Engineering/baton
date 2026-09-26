@@ -230,7 +230,8 @@ test('#295-2: a transient transport fault re-drives the turn on the same session
   assert.equal(retry.length, 1, 'the retry is durable evidence, not an invisible re-prompt');
   assert.equal(retry[0].payload.action, 'new_turn_on_same_session');
   assert.equal(retry[0].payload.attempt, 1);
-  assert.equal(retry[0].payload.of, 1, 'the retry rides the declared turn budget');
+  assert.equal(Object.hasOwn(retry[0].payload, 'of'), false,
+    'no retry ceiling rides the row — the re-drive has no count (#574)');
   assert.deepEqual(retry[0].payload.route, ROUTE);
   assert.equal(workerRow(coordinator, handle.id).status, 'working', 'the member keeps working');
   assert.equal(worktrees.calls.create.length, 1, 'the retry reuses the SAME checkout — no second worktree');
@@ -241,7 +242,7 @@ test('#295-2: a transient transport fault re-drives the turn on the same session
   assert.equal(log.read(handle.id).some((event) => event.kind === 'kill.requested'), false);
 });
 
-test('#295-2: a retry that hits the transient fault again settles the member, and the kill names its rule', async () => {
+test('#295-2: a second transient fault re-drives again — the re-drive carries no retry count (#574)', async () => {
   const { coordinator, adapter, log } = setup();
   const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:pf-retry-twice' });
 
@@ -250,12 +251,13 @@ test('#295-2: a retry that hits the transient fault again settles the member, an
   transient(adapter, handle, 2);
   await coordinator.wait(50);
 
-  assert.equal(adapter.calls.prompt.length, 1, 'the turn budget admits exactly one in-place retry');
-  const kill = log.read(handle.id).find((event) => event.kind === 'kill.requested');
-  assert.ok(kill, 'the second transient fault settles the member');
-  assert.equal(kill.payload.rule, 'provider_fault', 'the kill names the rule it applied');
-  assert.equal(kill.payload.actor, 'policy');
-  assert.notDeepEqual(kill.payload, {}, 'a policy kill is never anonymous');
+  assert.equal(adapter.calls.prompt.length, 2,
+    'each dropped connection earns a fresh turn on the same session; no count stops the re-drive');
+  const retries = log.read(handle.id).filter((event) => event.kind === 'provider.transient_retry');
+  assert.deepEqual(retries.map((event) => event.payload.attempt), [1, 2],
+    'each re-drive is durable evidence and names the attempt it is');
+  assert.equal(adapter.calls.kill.length, 0, 'the member keeps working while its budget admits turns');
+  assert.equal(workerRow(coordinator, handle.id).status, 'working');
 });
 
 test('#295-2: a transient retry rides the member\'s declared turn budget — it is admitted by the same gate as any new provider turn', async () => {

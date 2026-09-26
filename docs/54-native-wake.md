@@ -34,8 +34,7 @@ The complete set of wake classes at HEAD:
 
 **Swarm-scoped:** `recruited`, `left`, `assigned`, `work_updated`, `coupling_updated`,
 `context_updated`, `contribution_recorded`, `contribution_integrated`, `reviewed`, `note`,
-`knowledge`, `closed`, `refused`, `queued`, `dead`, `reroute_proposed`,
-`resume_decision_required`.
+`knowledge`, `closed`, `refused`, `queued`, `dead`, `reroute_proposed`.
 
 **Deployment-scoped:** `incarnation_changed`, `paused`, `attention`, `guidance_delivered`,
 `integrated`, `checkpoint`, `capacity_pressure`, `resident_lifecycle`.

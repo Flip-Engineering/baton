@@ -79,14 +79,13 @@ const STATUS_DERIVATION = Object.freeze({
   working: 'working', running: 'working', progressing: 'working', executing: 'working',
   // needs you — a human must act (docs/38: the attention class, a parked decision, a paused
   // turn waiting for a claim/nudge, a provider selection waiting on the caller). The wake classes
-  // that name a lifecycle state of their subject join here (docs/56 D1): a parked resume decision,
-  // a proposed reroute, capacity the operator must free, and an owed contribution the root alone
-  // can check all wait on a person.
+  // that name a lifecycle state of their subject join here (docs/56 D1): a proposed reroute,
+  // capacity the operator must free, and an owed contribution the root alone can check all wait
+  // on a person.
   attention: 'needs you', blocked: 'needs you', blocked_interaction: 'needs you',
   parked: 'needs you', awaiting: 'needs you', question: 'needs you',
   selection_required: 'needs you', paused: 'needs you',
-  resume_decision_required: 'needs you', reroute_proposed: 'needs you',
-  capacity_pressure: 'needs you', root_owed: 'needs you',
+  reroute_proposed: 'needs you', capacity_pressure: 'needs you', root_owed: 'needs you',
   // The canonical run phases that wait on a person, together with the legacy spelling the run's
   // own projection still carries: `awaiting_approval` holds a Plan for the operator and
   // `awaiting_selection` an accepted result for one; the generic `awaiting` row above anticipated
