@@ -121,7 +121,7 @@ test('the wake-class table derives every class from its own ledger row, and admi
     'a row no class owns wakes nobody');
   // A consumer acts on a terminal wake with a command that exists.
   const closed = deriveWakeFrame({ seq: 4, ts: 'T', kind: 'swarm.closed', actor: 'root', payload: { swarmId: 'swarm-1' } });
-  assert.equal(closed.next, 'baton swarm view swarm-1');
+  assert.equal(closed.next, 'baton_swarm_view / baton swarm view swarm-1');
   assert.deepEqual(closed.subject, { kind: 'swarm', id: 'swarm-1' });
   assert.ok(wakeClassHelpLines().every((line) => typeof line === 'string' && line.length > 0));
 });
@@ -197,7 +197,7 @@ test('one attachment receives the rows of every swarm the resident hosts, includ
   }
   const contribution = frames.find((frame) => frame.wakeClass === 'contribution_recorded' && frame.swarmId === second.id);
   assert.equal(contribution.subject.kind, 'contribution');
-  assert.ok(contribution.next.startsWith('baton swarm check'), 'the terminal class names the command that acts on it');
+  assert.ok(contribution.next.startsWith('baton_swarm_check / baton swarm check'), 'the terminal class names the command that acts on it');
   // The stream serves both swarms: one attachment, no per-swarm process, no grep.
   assert.deepEqual([...new Set(frames.map((frame) => frame.swarmId))].filter(Boolean).sort(), [first.id, second.id].sort());
   attachment.close();
@@ -264,7 +264,7 @@ test('a deployment below its capacity floors wakes capacity_pressure at attach, 
   assert.equal(wake.wakeClass, 'capacity_pressure');
   assert.equal(wake.observation, true, 'a wake with no ledger row says so');
   assert.equal(wake.subject.id, 'worktree_capacity_exceeded');
-  assert.equal(wake.next, 'baton doctor --check');
+  assert.equal(wake.next, 'baton_deployment_doctor / baton doctor --check');
   attachment.close();
   await owner.close();
 });
@@ -349,7 +349,7 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
     [{ seq: 1, ts: 'T', kind: 'swarm.participant_joined', actor: 'root',
       payload: { swarmId: 's1', participantId: 'p1', role: 'the recruit objective' } }, null],
     [{ seq: 2, ts: 'T', kind: 'swarm.participant_left', actor: 'root',
-      payload: { swarmId: 's1', participantId: 'p1' } }, 'baton swarm view s1'],
+      payload: { swarmId: 's1', participantId: 'p1' } }, 'baton_swarm_view / baton swarm view s1'],
     [{ seq: 3, ts: 'T', kind: 'swarm.assignment_updated', actor: 'root',
       payload: { assignmentId: 'a1', swarmId: 's1' } }, null],
     [{ seq: 4, ts: 'T', kind: 'swarm.work_updated', actor: 'root',
@@ -359,30 +359,30 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
     [{ seq: 6, ts: 'T', kind: 'swarm.context_updated', actor: 'root',
       payload: { key: 'k', body: {}, swarmId: 's1' } }, null],
     [{ seq: 7, ts: 'T', kind: 'swarm.contribution_recorded', actor: 'p1',
-      payload: { contributionId: 'c1', participantId: 'p1', swarmId: 's1' } }, 'baton swarm check s1 p1 c1 CHECK_ID'],
+      payload: { contributionId: 'c1', participantId: 'p1', swarmId: 's1' } }, 'baton_swarm_check / baton swarm check s1 p1 c1 CHECK_ID'],
     [{ seq: 8, ts: 'T', kind: 'swarm.contribution_reviewed', actor: 'lead',
       payload: { contributionId: 'c1', swarmId: 's1' } }, null],
     [{ seq: 9, ts: 'T', kind: 'knowledge.node_added', actor: 'p1',
       payload: { id: 'k1', runId: 'r1' } }, null],
-    [{ seq: 10, ts: 'T', kind: 'swarm.closed', actor: 'root', payload: { swarmId: 's1' } }, 'baton swarm view s1'],
+    [{ seq: 10, ts: 'T', kind: 'swarm.closed', actor: 'root', payload: { swarmId: 's1' } }, 'baton_swarm_view / baton swarm view s1'],
     [{ seq: 11, ts: 'T', kind: 'driver.recorded', actor: 'root',
       payload: { kind: 'swarm.operation_refused', swarmId: 's1', command: 'swarm.update' } },
-      'baton swarm view s1'],
+      'baton_swarm_view / baton swarm view s1'],
     [{ seq: 12, ts: 'T', kind: 'driver.recorded', actor: 'root',
       payload: { kind: 'swarm.admission_queued', swarmId: 's1', participantId: 'p1' } }, null],
     [{ seq: 13, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
       payload: { worker: 'w-1', workerSeq: 4, digest: 'd', kind: 'lifecycle.crashed', ts: 'T' } },
-      'baton swarm update s1 swarm.holder_released'],
+      'baton_swarm_update / baton swarm update s1 swarm.holder_released'],
     [{ seq: 14, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
       payload: { worker: 'w-1', workerSeq: 5, digest: 'd', kind: 'turn.paused', ts: 'T' } },
-      'baton swarm guide s1 p1'],
+      'baton_swarm_guide / baton swarm guide s1 p1'],
     [{ seq: 15, ts: 'T', kind: 'driver.recorded', actor: 'policy',
       payload: { kind: 'question.asked', requestId: 'q1', runId: 'r1', worker: 'w-1' } },
-      'baton run answer r1 q1 --text TEXT'],
+      'baton_decision_answer / baton run answer r1 q1 --text TEXT'],
     [{ seq: 16, ts: 'T', kind: 'message.delivered', actor: 'rt',
       payload: { messageId: 'm1', worker: 'w-1' } }, null],
     [{ seq: 17, ts: 'T', kind: 'driver.recorded', actor: 'policy',
-      payload: { kind: 'integration.completed', taskId: 't1' } }, 'baton run view {runId}'],
+      payload: { kind: 'integration.completed', taskId: 't1' } }, 'baton_run_view / baton run view {runId}'],
     [{ seq: 18, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
       payload: { worker: 'w-1', workerSeq: 6, digest: 'd', kind: 'worktree.progress_checkpointed', ts: 'T' } },
       null],
@@ -400,7 +400,7 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
   ]) {
     const frame = deriveObservationFrame(wakeClassRow(wakeClass), observation, 99, 'T');
     assert.equal(typeof frame.next, 'string', `${wakeClass} marks its row with next`);
-    assert.ok(frame.next.startsWith('baton doctor'), `${wakeClass} names the command that acts on it`);
+    assert.ok(frame.next.startsWith('baton_deployment_doctor'), `${wakeClass} names the command that acts on it`);
   }
 });
 
