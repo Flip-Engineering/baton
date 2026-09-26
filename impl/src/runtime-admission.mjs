@@ -1602,6 +1602,7 @@ export function _normalizeResumeRequest(coordinator, recorder, opts) {
     if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)) {
       throw Object.assign(new TypeError('preserved resume route is invalid'), { code: 'resume_invalid' });
     }
+    const checkpointSha = stringField(opts.checkpointSha, 'checkpointSha', 64);
     const checkpointRef = stringField(opts.checkpointRef, 'checkpointRef', 256);
     if (!/^[a-f0-9]{40,64}$/u.test(checkpointSha) || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) {
       throw Object.assign(new TypeError('preserved resume checkpoint attestation is invalid'), { code: 'resume_invalid' });
