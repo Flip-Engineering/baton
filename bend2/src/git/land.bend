@@ -30,6 +30,7 @@ import Base
 import ./types.bend as T
 import ./text.bend as Tx
 import ./process.bend as Git
+import ./debris.bend as Deb
 
 # How one selected check file behaved on one tree: pass, fail with the hex
 # identity block its output carried, or no verdict.
@@ -609,7 +610,6 @@ def ld_stage4(scratch: String, worker: String, sha: String, tip: String) -> IO(L
     g : T.GitOut <- Git.runGit(sc, ["merge", "--squash", w2])
     ld_squash_pick(g, w2, sha, tip, sc)
 
-# Stage 5 commits the candidate and reads its commit.
 def ld_cand_of(ok: Bool, cand: String, tip: String) -> Ld:
   match ok:
     case True{}: LdCand{tip, cand}
@@ -655,13 +655,28 @@ def ld_commit_next(g: T.GitOut, scratch: String, worker: String, sha: String, ti
     case T.GRun{code, out}: ld_commit_ok(U32.is_eq(code, 0), Tx.trim_nl(out), scratch, worker, sha, tip)
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
-def ld_stage5(scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+# Stage 5 drops the added paths this repository's own ignore rules exclude,
+# names them on the candidate's message, then commits the candidate and reads
+# its commit.
+def ld_message(worker: String, paths: String) -> String:
+  "land " ++ worker ++ Deb.debris_note(paths)
+
+def ld_debris_go(d: Deb.Debris, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  match d:
+    case Deb.DFine{paths}:
+      +w2 = worker
+      +sc = scratch
+      do IO<Ld>:
+        g : T.GitOut <- Git.runGit(sc, ["commit", "-q", "-m", ld_message(w2, paths)])
+        ld_commit_next(g, sc, w2, sha, tip)
+    case Deb.DFail{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", "debris judgment failed: " ++ detail}})
+
+def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  +r2 = repo
   +sc = scratch
-  +w2 = worker
-  +t2 = tip
   do IO<Ld>:
-    g : T.GitOut <- Git.runGit(sc, ["commit", "-q", "-m", Tx.str_cat("land ", w2)])
-    ld_commit_next(g, sc, w2, sha, t2)
+    d : Deb.Debris <- Deb.drop_added_ignored(r2, "", sc)
+    ld_debris_go(d, sc, worker, sha, tip)
 
 # The gate: every unjudged run and every candidate failure line the target
 # run does not show blocks; otherwise the advance starts.
@@ -734,12 +749,12 @@ def ld_go3(r: Ld, scratch: String) -> IO(Ld):
     case LdCand{tip, cand}: ld_unreach()
     case LdRe{cand, basis}: ld_unreach()
 
-def ld_go4(r: Ld, scratch: String) -> IO(Ld):
+def ld_go4(r: Ld, repo: String, scratch: String) -> IO(Ld):
   match r:
     case LdDone{made}: IO.pure(Ld, LdDone{made})
     case LdFail{fail}: IO.pure(Ld, LdFail{fail})
     case LdWk{worker, sha}: ld_unreach()
-    case LdTip{worker, sha, tip}: ld_stage5(scratch, worker, sha, tip)
+    case LdTip{worker, sha, tip}: ld_stage5(repo, scratch, worker, sha, tip)
     case LdCand{tip, cand}: ld_unreach()
     case LdRe{cand, basis}: ld_unreach()
 
@@ -777,7 +792,7 @@ def land_checked(repo: String, target: String, worker: String, script: String, f
     b : Ld <- ld_go1(a, r2, t2)
     c : Ld <- ld_go2(b, r2, s2)
     d : Ld <- ld_go3(c, s2)
-    e : Ld <- ld_go4(d, s2)
+    e : Ld <- ld_go4(d, r2, s2)
     f : Ld <- ld_go5(e, r2, t2, k2, files, s2)
     g : Ld <- ld_go6(f, r2, t2, s2)
     ld_answer(g)

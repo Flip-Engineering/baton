@@ -13,6 +13,9 @@ def is_nl(c: Char) -> Bool:
 def is_sp(c: Char) -> Bool:
   Bool.pick(Bool, U32.is_eq(Char.to_u32(c), 32), True{}, False{})
 
+def is_nul(c: Char) -> Bool:
+  Bool.pick(Bool, U32.is_eq(Char.to_u32(c), 0), True{}, False{})
+
 # One UTF-8 byte length per char code.
 def char_bytes(c: Char) -> U32:
   +code = Char.to_u32(c)
@@ -66,6 +69,35 @@ def split_at(s: String, acc: String, out: List<String>) -> List<String>:
 
 def split_lines(s: String) -> List<String>:
   List.reverse(&1, String, split_at(s, SNil{}, Nil{}))
+
+# The NUL splitter, for the -z outputs git writes with one raw path per record
+# and no quoting: split_lines above would keep a name git had to quote.
+def split_keep_nul(nl: Bool, c: Char, acc: String) -> String:
+  match nl:
+    case True{}: SNil{}
+    case False{}: SCon{c, acc}
+
+def split_emit_nul(nl: Bool, acc: String, out: List<String>) -> List<String>:
+  match nl:
+    case True{}: Con{str_rev(acc), out}
+    case False{}: out
+
+def split_flush_nul(acc: String, out: List<String>) -> List<String>:
+  match acc:
+    case SNil{}: out
+    case SCon{c, r}: Con{str_rev(acc), out}
+
+def split_at_nul(s: String, acc: String, out: List<String>) -> List<String>:
+  match s:
+    case SNil{}: split_flush_nul(acc, out)
+    case SCon{c, rest}:
+      +cc = c
+      +nl = is_nul(cc)
+      +acc2 = acc
+      split_at_nul(rest, split_keep_nul(nl, cc, acc2), split_emit_nul(nl, acc2, out))
+
+def split_nul(s: String) -> List<String>:
+  List.reverse(&1, String, split_at_nul(s, SNil{}, Nil{}))
 
 def split_keep_sp(nl: Bool, c: Char, acc: String) -> String:
   match nl:

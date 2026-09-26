@@ -164,6 +164,7 @@ def setup(r: String) -> IO(String):
       ["config", "user.name", "baton test"],
       ["commit", "-q", "--allow-empty", "-m", "seed"]
     ], r2)
+    _f0 : T.RunRes <- Git.runFull(["/bin/sh", "-c", "printf 'build/\\n' > .gitignore"], r2)
     _f1 : T.RunRes <- Git.runFull(["/bin/sh", "-c", "printf 'one\\n' > app.txt"], r2)
     _f2 : T.RunRes <- Git.runFull(["/bin/sh", "-c", "printf 'exit 0\\n' > check-pass.sh"], r2)
     _f3 : T.RunRes <- Git.runFull(["/bin/sh", "-c", nf_script()], r2)
@@ -188,13 +189,63 @@ def finish(all: String) -> IO(Unit):
   +a2 = all
   finish_go(Tx.non_empty(a2), a2)
 
+# K: a worker commit that force-added a path this repository's own rules exclude
+# lands without it, and the candidate message names the drop.
+def cat_ok(g: T.GitOut) -> Bool:
+  match g:
+    case T.GRun{code, out}: U32.is_eq(code, 0)
+    case T.GBroken{detail}: False{}
+
+def path_in(r: String, commit: String, path: String) -> IO(Bool):
+  +r2 = r
+  +c2 = commit
+  do IO<Bool>:
+    g : T.GitOut <- Git.runGit(r2, ["cat-file", "-e", T.str_cat3(c2, ":", path)])
+    IO.pure(Bool, cat_ok(g))
+
+def msg_of(r: String, commit: String) -> IO(String):
+  +r2 = r
+  +c2 = commit
+  do IO<String>:
+    g : T.GitOut <- Git.runGit(r2, ["log", "-1", "--format=%B", c2])
+    IO.pure(String, Tx.trim_nl(out_of(g)))
+
+def drop_line() -> String:
+  "dropped (ignored by this repository): build/out.bin"
+
+def land_k_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, acc: String) -> IO(Unit):
+  match res:
+    case Done{T.LLanded{target, commit}}:
+      +r2 = r
+      +a2 = acc
+      +c2 = commit
+      do IO<Unit>:
+        obj : Bool <- path_in(r2, c2, "build/out.bin")
+        feat : Bool <- path_in(r2, c2, "feat5.txt")
+        msg : String <- msg_of(r2, c2)
+        f1 : String <- IO.pure(String, eq_or(Bool.not(obj), "land K: ignored build output landed"))
+        f2 : String <- IO.pure(String, eq_or(feat, "land K: worker change missing from the landing"))
+        f3 : String <- IO.pure(String, eq_or(LD.block_has(msg, drop_line()), "land K: candidate message does not name the drop"))
+        finish(Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
+    case Done{made}: finish(Tx.str_cat(acc, "land K: landing did not land"))
+    case Fail{fail}: finish(Tx.str_cat(acc, Tx.str_cat("land K refused: ", Tx.trim_nl(T.fail_text(fail)))))
+
+def land_j(r: String, acc: String) -> IO(Unit):
+  +r2 = r
+  +a2 = acc
+  do IO<Unit>:
+    head0 : String <- head_of(r2)
+    tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wj"), "baton/wj", head0, "mkdir -p build; printf 'obj\\n' > build/out.bin; git add -f build/out.bin; printf 'feat5\\n' > feat5.txt")
+    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"feat5.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lj"))
+    land_k_ok(res, r2, a2)
+
 def land_i(r: String, acc: String) -> IO(Unit):
   +r2 = r
   +a2 = acc
   do IO<Unit>:
     res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", "mystery0d8a2c4e", Con{"feat.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-li"))
     f1 : String <- IO.pure(String, is_unknown_base(res))
-    finish(Tx.str_cat(a2, f1))
+    land_j(r2, Tx.str_cat(a2, f1))
 
 def land_h(r: String, acc: String) -> IO(Unit):
   +r2 = r
