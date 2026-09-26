@@ -36,8 +36,8 @@
 //     exists ONLY as coordinator.mjs's mutation-survival token (survivedMutants, :449) — never as a
 //     cell aggregate field (blue-team drift D4).
 //     MAX_CELL_SIZE is not an exported constant; MAX_RUN_VIEW_WORKERS/MAX_RUN_VIEW_BYTES named
-//     constants do not exist yet (the 64-member wave-array bound and MAX_WAVE_PROGRESS_BYTES
-//     do — those are the derivation anchors TC-17 pins).
+//     constants do not exist yet (MAX_WAVE_PROGRESS_BYTES exists; the F-series (#598) removed
+//     the 64-member wave-array ceiling, so no source anchor pins a member-array bound).
 //
 // ===========================================================================
 // Row inventory (30 red / 9 pins)
@@ -83,7 +83,6 @@
 //   PIN (green today; assert what legitimately exists):
 //     TC-07  shared-horizon law              run-scoped nodes serve every worker; foreign runs refuse
 //     TC-09b C5 fan-out receipt              sendMessage({to:{runId}}) -> delivered/targetCount
-//     TC-17b derivation anchors              wave member bound 64 + MAX_WAVE_PROGRESS_BYTES
 //     TC-18  loose form byte-identical       one run/one worker; 3 delivery modes; single-worker target
 //     TC-18a reply lane                         single-worker repeat replies and chains deliver
 //     TC-22b first-worker resolution          waves.send to a runId targets worker[0] only, no targetCount
@@ -1417,17 +1416,9 @@ test('TC-22b grant pin: waves.send resolves worker[0] of the runId — the seam 
 test('TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented count bound of 64', () => {
   assert.equal(waveModule.MAX_CELL_SIZE, 64,
     'stage[cell-size-bound-missing]: MAX_CELL_SIZE is a named, documented count-based circuit breaker set to 64 '
-    + '— the same bound as the wave member-array ceiling (wave.mjs:163) and comfortably under the run-view '
-    + 'worker ceiling — never an arbitrary silent limit (Decision 1, TC-17, campaign law); today the export is '
+    + '— comfortably under the run-view worker ceiling — never an arbitrary silent limit (Decision 1, TC-17, '
+    + 'campaign law); today the export is '
     + `undefined (${String(waveModule.MAX_CELL_SIZE)})`);
-});
-
-test('TC-17b size pin: the derivation anchors MAX_CELL_SIZE rests on exist today', () => {
-  assert.equal(typeof waveModule.MAX_WAVE_PROGRESS_BYTES, 'number',
-    'PIN: MAX_WAVE_PROGRESS_BYTES bounds the wave progress snapshot (wave.mjs:21)');
-  const waveSrc = readFileSync(new URL('../src/wave.mjs', import.meta.url), 'utf8');
-  assert.match(waveSrc, /membersInput\.length > 64/u,
-    'PIN: the wave member-array ceiling is 64 (wave.mjs:163) — the derivation anchor for MAX_CELL_SIZE');
 });
 
 test('TC-18 loose[pin]: a wave with no group fields is byte-identical today', async () => {
