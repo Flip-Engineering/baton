@@ -75,14 +75,20 @@ function positiveInt(value) {
 }
 
 /** The runner's own queue poll interval, when the operator pins one. */
+export function suiteLeasePollMs(env = process.env) {
+  return positiveInt(env?.BATON_HOST_CAPACITY_POLL_MS);
+}
+
+/** #561/#598: which verify holders HOLD in the admission queue on a standing-tight host — a
+ * landing gate (integrate:*) and an admitted seat (participant:*) — instead of taking the
+ * degraded answer. Any other holder (a fixture, an ad-hoc run) proceeds degraded at once. */
 export function suiteLeaseDurable(envOrHolder = process.env) {
   const holder = typeof envOrHolder === 'string' ? envOrHolder : suiteLeaseHolder(envOrHolder);
-  // #561/#598: a landing gate's start is durable — under a standing-tight host it HOLDS in the
-  // admission queue with no deadline until measured memory funds one more suite, instead of
-  // taking the degraded answer nine gates at once. Seat-run suites keep the degraded answer.
   return typeof holder === 'string'
     && (holder.startsWith('participant:') || holder.startsWith('integrate:'));
 }
+
+/** The authority this runner admits through: the shared host directory, never a fixture. */
 export function createSuiteLeaseAuthority(env = process.env) {
   return new HostCapacityAuthority({
     ...(typeof env?.BATON_HOST_CAPACITY_ROOT === 'string' && env.BATON_HOST_CAPACITY_ROOT.length > 0
@@ -155,8 +161,12 @@ export async function acquireSuiteVerifyLease({
   }
   const resolved = authority ?? createAuthority(env);
   let reported = false;
+  // #561/#598: the holder decides durability — a landing gate (integrate:*) and an admitted
+  // seat (participant:*) HOLD in the admission queue with no deadline when the host is
+  // standing-tight; any other holder takes the degraded answer at once.
   const outcome = await resolved.acquire('verify', {
     holder,
+    durable: suiteLeaseDurable(holder),
     onQueued: (row) => {
       if (reported) return;
       reported = true;
