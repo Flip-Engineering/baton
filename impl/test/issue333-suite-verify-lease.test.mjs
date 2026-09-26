@@ -76,8 +76,7 @@ test('S333-1: a staged authority with no room queues the suite lease, prints the
 
 test('S333-1b: a host that cannot fund a suite answers degraded at once — no wait, no queue row', async (t) => {
   const root = leaseRoot(t);
-  // 4 cores / 32 GB: one verdict is entitled to ONE core share (8 GB, #561); 1 GB available
-  // cannot fund it, and nothing staged swaps or disk into the paging headroom.
+  // 4 cores / 32 GB: a suite is entitled to 3 shares (24 GB); 1 GB available cannot fund it.
   const tight = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 1 * G, load1m: 1 });
   const authority = new HostCapacityAuthority({ root, residentId: 's333-tight', observation: tight, pollMs: 10 });
   const printed = [];
@@ -87,7 +86,7 @@ test('S333-1b: a host that cannot fund a suite answers degraded at once — no w
   });
   assert.ok(Date.now() - before < 1_000, 'the answer is immediate');
   assert.equal(lease.token, null, 'no lease: the host cannot fund one');
-  assert.deepEqual(lease.degraded, { dimension: 'memory', observed: 1 * G, required: 8 * G, unit: 'bytes' });
+  assert.deepEqual(lease.degraded, { dimension: 'memory', observed: 1 * G, required: 24 * G, unit: 'bytes' });
   assert.equal(printed.length, 0, 'nothing was queued, so no queue row printed');
   assert.match(formatSuiteDegradedWarning(lease.degraded), /proceeding WITHOUT a host verify lease \(memory: /u);
   assert.equal(await lease.release(), false, 'there is no lease to release');
