@@ -1,5 +1,6 @@
 .DS_Store
 node_modules/
+node_modules
 glm_key.json
 deepseek_key.json
 kimi_key.json
