@@ -1118,7 +1118,7 @@ test('P-CLI GREEN: the CLI run view --until / run status --wait delegate to run.
   // caught, and the #148 driver law's "print the full non-ok envelope" stays a CLI printing duty.
   const viewUntil = srcAnchor('application-cli.mjs', "kind: 'command', name: 'run.wait',");
   const statusWait = srcAnchor('application-cli.mjs', ": { kind: 'command', name: 'run.wait', args: { runId, timeoutMs: duration(wait) }, idempotencyKey };");
-  const serverBudget = srcAnchor('application-cli.mjs', "if (['run.follow', 'run.wait'].includes(name)) serverWaitMs = args.timeoutMs;");
+  const serverBudget = srcAnchor('application-cli.mjs', "if (['run.follow', 'run.wait'].includes(transport)) serverWaitMs = args.timeoutMs;");
   assert.equal(viewUntil.line < statusWait.line, true, 'run view --until (application-cli.mjs:1655) delegates to run.wait before run status --wait (:1712)');
   assert.equal(statusWait.line < serverBudget.line, true, 'the run.follow/run.wait server-side wait budget (:2030) rides the verb dispatch');
 });
