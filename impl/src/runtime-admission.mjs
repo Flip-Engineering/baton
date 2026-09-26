@@ -661,11 +661,12 @@ export function constructor(coordinator, opts) {
     coordinator._setTimeout = opts.setTimeout ?? globalThis.setTimeout;
     coordinator._clearTimeout = opts.clearTimeout ?? globalThis.clearTimeout;
 
-    // D8/CK1: feed the optional story sink, but never turn an authoritative-log failure into a
-    // warning-and-drop. Once an append fails the coordinator is poisoned: every public command
-    // fails closed until process restart/replay, and any not-yet-entered spawn is aborted. A
-    // caller may tear storage down only after it has quiesced the coordinator; racing teardown
-    // is an integrity failure, not a benign sink failure.
+    // D8/CK1, revised by #562 (observed: one failed operational-log append left the resident
+    // poisoned permanently while it kept serving, and every swarm view then failed). The story
+    // sink stays, and an authoritative-log failure is never a warning-and-drop: it fails the ONE
+    // act that attempted the append, with a typed error carrying the cause and the worker whose
+    // log refused it. The coordinator is not poisoned — every other act keeps working, the reads
+    // the views ride included, and the next append is attempted normally.
     {
       const rawAppend = coordinator._log.append.bind(coordinator._log);
       coordinator._appendFailures = 0;
@@ -683,21 +684,12 @@ export function constructor(coordinator, opts) {
           e = rawAppend({ ...partial, taskId, runId });
         } catch (err) {
           coordinator._appendFailures += 1;
-          if (!coordinator._fatalError) {
-            const fatal = new Error(`authoritative operational log append failed: ${err?.message ?? err}`, { cause: err });
-            fatal.name = 'OperationalLogIntegrityError';
-            fatal.code = 'operational_log_unavailable';
-            coordinator._fatalError = fatal;
-            for (const handle of coordinator._workers?.values?.() ?? []) {
-              if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
-                handle.spawnAbort.abort({ reason: 'operational_log_unavailable' });
-              }
-              if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
-                handle.recoverySpawnAbort.abort({ reason: 'operational_log_unavailable' });
-              }
-            }
-          }
-          throw coordinator._fatalError;
+          const failed = new Error(
+            `authoritative operational log append failed: ${err?.message ?? err}`, { cause: err });
+          failed.name = 'OperationalLogIntegrityError';
+          failed.code = 'operational_log_unavailable';
+          failed.worker = partial?.worker ?? null;
+          throw failed;
         }
         if (e.runId !== null && e.taskId !== null && RUN_TIMELINE_OPERATIONAL_KINDS.has(e.kind)) {
           try {

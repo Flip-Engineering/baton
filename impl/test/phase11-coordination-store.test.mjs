@@ -89,7 +89,7 @@ test('CK8/CK9: claim append failure poisons before adapter/worktree dispatch and
   assert.throws(() => coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
 });
 
-test('CK1/CK9: operational append failure poisons the coordinator and restart closes the claimed task', async () => {
+test('CK1/CK9: operational append failure fails that act and restart closes the claimed task', async () => {
   const logRoot = dir();
   const coordination = new CoordinationStore(dir());
   const failedLog = new Log(logRoot);
@@ -108,14 +108,15 @@ test('CK1/CK9: operational append failure poisons the coordinator and restart cl
   const brief = { goal: 'must be durable', constraints: [], pathScope: [], definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
   await assert.rejects(poisoned.spawn('mock', brief, { taskId: 'append-failure' }), (error) => error.code === 'operational_log_unavailable');
   assert.equal(coordination.task('append-failure').status, 'working', 'the durable claim records the exact crash window');
-  assert.throws(() => poisoned.list(), (error) => error.code === 'operational_log_unavailable');
+  assert.equal(Array.isArray(poisoned.list()), true,
+    '#562: the failed append does not poison the coordinator — the read answers');
 
   const replay = make(new Log(logRoot));
   assert.equal(coordination.task('append-failure').status, 'failed');
   assert.equal(replay.list()[0].status, 'exited');
 });
 
-test('ER1-ER5: explicit emergency kill confirms and reaps after operational storage poison', async () => {
+test('ER1-ER5: explicit emergency kill confirms and reaps when the operational log refuses rows', async () => {
   const logRoot = dir(); const rawLog = new Log(logRoot); const append = rawLog.append.bind(rawLog); let fail = false;
   rawLog.append = (event) => { if (fail) throw new Error('disk full'); return append(event); };
   const coordination = new CoordinationStore(dir(), { operationalRead: (worker, seq) => rawLog.read(worker).find((event) => event.seq === seq) ?? null });
@@ -137,15 +138,17 @@ test('ER1-ER5: explicit emergency kill confirms and reaps after operational stor
   await until(() => coordinator.list()[0]?.status === 'blocked');
 
   fail = true;
-  await adapter.prompt(handle.id, 'poison the next callback', 'nudge');
-  assert.throws(() => coordinator.list(), (error) => error.code === 'operational_log_unavailable');
+  // #562: the log refuses rows, so the ordinary stop fails its own act and the coordinator keeps
+  // serving. The explicit emergency stop reaps unlogged: a provider that signals without
+  // recording (the shape the unlogged response names) is still reaped, and no confirmation is
+  // invented in a log that refused the row.
   await assert.rejects(coordinator.kill(handle.id), (error) => error.code === 'operational_log_unavailable');
-
+  assert.equal(Array.isArray(coordinator.list()), true, '#562: and the coordinator is not poisoned');
+  adapter.kill = async () => ({ ok: true, terminal: true });
   const stopped = await coordinator.kill(handle.id, 'policy', { emergency: true });
   assert.deepEqual(stopped, { ok: true, result: 'confirmed_unlogged', auditUnavailable: true });
   assert.equal(removed, 1);
-  assert.equal(adapter._sessions.get(handle.id)?.terminal, true);
-  assert.equal(rawLog.read(handle.id).some((event) => event.kind === 'kill.confirmed'), false, 'no post-poison confirmation may be invented in the log');
+  assert.equal(rawLog.read(handle.id).some((event) => event.kind === 'kill.confirmed'), false, 'no confirmation may be invented in a log that refuses rows');
 });
 
 test('ER5: emergency kill timeout keeps ownership when native confirmation never arrives', async () => {
@@ -162,11 +165,13 @@ test('ER5: emergency kill timeout keeps ownership when native confirmation never
   const brief = { goal: 'retain ownership', constraints: [], pathScope: [], definitionOfDone: 'never completes', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 100, usd: 1, wallMin: 1 } };
   const handle = await coordinator.spawn('mock', brief, { taskId: 'emergency-timeout' });
   await until(() => coordinator.list()[0]?.status === 'blocked');
-  fail = true; await adapter.prompt(handle.id, 'poison', 'nudge');
+  fail = true;
+  await assert.rejects(coordinator.kill(handle.id), (error) => error.code === 'operational_log_unavailable');
+  assert.equal(Array.isArray(coordinator.list()), true, '#562: and the coordinator is not poisoned');
   adapter.kill = async () => ({ ok: true });
   assert.deepEqual(await withLiveLoop(() => coordinator.kill(handle.id, 'policy', { emergency: true })), { ok: false, result: 'confirmation_timeout_unlogged', auditUnavailable: true });
   assert.equal(removed, 0, 'unconfirmed process ownership must not be reaped from underneath it');
-  adapter.kill = originalKill; await originalKill(handle.id);
+  fail = false; adapter.kill = originalKill; await originalKill(handle.id);
 });
 
 test('CK1/CK9: terminal artifact-batch failure poisons the driver and restarts as durable failed', async () => {

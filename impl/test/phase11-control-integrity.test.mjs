@@ -234,7 +234,8 @@ test('CI2/CK9: accepted input followed by append failure releases one racing con
   });
   assert.equal(answers, 1, 'the racing consumer must never redeliver an accepted answer');
   assert.equal(coordinator._pending.get('q-post-effect').state, 'resolved');
-  assert.throws(() => coordinator.list(), (error) => error.code === 'operational_log_unavailable');
+  assert.equal(Array.isArray(coordinator.list()), true,
+    '#562: the append failure fails that act alone — the coordinator is not poisoned, so the read answers');
 
   log._file = originalFile;
   const replay = new Coordinator({
@@ -269,7 +270,8 @@ test('CI2/CK9: accepted approval append failure also releases one racing consume
   });
   assert.equal(approvals, 1);
   assert.equal(coordinator._pending.get('a-post-effect').state, 'resolved');
-  assert.throws(() => coordinator.list(), (error) => error.code === 'operational_log_unavailable');
+  assert.equal(Array.isArray(coordinator.list()), true,
+    '#562: the append failure fails that act alone — the coordinator is not poisoned, so the read answers');
 });
 
 test('CI3/CK9: a crashed turn triggers confirmed transport kill before cleanup', async () => {

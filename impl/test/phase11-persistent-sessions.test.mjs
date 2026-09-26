@@ -1242,9 +1242,15 @@ test('Phase 60 adversarial: post-acceptance exposure log failure emergency-stops
 
   const internal = f.replay._workers.get(f.handle.id);
   assert.equal(f.coordination.recoveryDispatchState(f.handle.id).status, 'dispatch_accepted');
-  assert.equal(internal.status, 'dead');
-  assert.equal(f.resumed.calls.kill.length, 1);
-  assert.deepEqual(f.removedScopes, [f.handle.id]);
-  assert.equal(internal.providerTurn.sealed, true);
+  // #562: the failed exposure act never returns the worker to working, and the stop it would have
+  // recorded is not issued at all — the act fails with the append's error and nothing is invented.
+  assert.notEqual(internal.status, 'working');
+  assert.equal(f.resumed.calls.kill.length, 0, 'no stop is issued on a record that cannot be written');
   assert.equal(f.log.read(f.handle.id).some((event) => event.kind === 'control.recovery_attached'), false);
+  // With the log taking rows again, an explicit stop converges, seals the turn and reaps.
+  await f.replay.kill(f.handle.id, 'policy', { emergency: true });
+  assert.equal(f.resumed.calls.kill.length, 1);
+  assert.equal(internal.status, 'dead');
+  assert.equal(internal.providerTurn.sealed, true);
+  assert.deepEqual(f.removedScopes, [f.handle.id]);
 });

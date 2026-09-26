@@ -287,25 +287,42 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
     coordinator._bestEffort(worktreeReady, 'worktree_ready_observer');
 
     const spawnTurnEpoch = coordinator._fences.current(workerId).turnEpoch;
-    recorder.log.append({
-      worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
-      harnessRequested: task.vendorRequested, harnessResolved: harness,
-      modelRequested: task.modelRequested ?? null, modelResolved: task.modelResolved ?? null, modelObserved: null,
-      effortRequested: task.effortRequested ?? null, effortResolved: task.effortResolved ?? null, effortObserved: null,
-      routeKey: task.routeKey ?? null,
-      payload: {
-        taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
-        modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
-        effortRequested: task.effortRequested, effortResolved: task.effortResolved, routeKey: task.routeKey,
-        workerPolicyRequest: task.workerPolicyRequest,
-        workerPolicyResolution: task.workerPolicyResolution,
-        ...(handle.providerGovernance ? { providerGovernance: handle.providerGovernance } : {}),
-        sessionRequest: task.sessionRequest,
-        lineage: task.lineage,
-        topology: coordinator._taskTopologyProjection(task.id),
-        review: task.review,
-      },
-    });
+    try {
+      recorder.log.append({
+        worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
+        harnessRequested: task.vendorRequested, harnessResolved: harness,
+        modelRequested: task.modelRequested ?? null, modelResolved: task.modelResolved ?? null, modelObserved: null,
+        effortRequested: task.effortRequested ?? null, effortResolved: task.effortResolved ?? null, effortObserved: null,
+        routeKey: task.routeKey ?? null,
+        payload: {
+          taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
+          modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
+          effortRequested: task.effortRequested, effortResolved: task.effortResolved, routeKey: task.routeKey,
+          workerPolicyRequest: task.workerPolicyRequest,
+          workerPolicyResolution: task.workerPolicyResolution,
+          ...(handle.providerGovernance ? { providerGovernance: handle.providerGovernance } : {}),
+          sessionRequest: task.sessionRequest,
+          lineage: task.lineage,
+          topology: coordinator._taskTopologyProjection(task.id),
+          review: task.review,
+        },
+      });
+    } catch (failure) {
+      // #562 (observed: one failed operational-log append left the resident poisoned permanently
+      // while it kept serving, and every swarm view then failed): the spawn record could not be
+      // written, so this attempt fails with the append's own typed error and records nothing —
+      // the crash event the arms above write is not available to an act whose log just refused.
+      // The durable claim (`task.claimed`, written above) stays as the crash window a replay
+      // settles (`task.failed`), and the handle and task are settled HERE so the stranded claim
+      // is not re-dispatched by every later tick: that re-dispatch refuses `already_assigned`,
+      // which is the state that stops every OTHER act from working after one failed append. The
+      // runtime scope this attempt created is left for the reap, which reclaims a handle with no
+      // local authority exactly as it reclaims a crashed one.
+      task.status = 'failed';
+      handle.status = 'exited';
+      handle.localAuthority = false;
+      throw failure;
+    }
 
     const stamp = coordinator._fences.bumpTurn(workerId);
 
