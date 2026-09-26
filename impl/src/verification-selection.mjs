@@ -2,7 +2,9 @@
 // comparison runs, and the same selection a landing's gate set is derived from. The 2026-09-14
 // incident: every check and landing ran the full suite (~25 min at parallelism 6) because the
 //
-//   1. every changed test file selects itself (it is the thing being verified);
+//   1. every changed test file selects itself (it is the thing being verified). A test file is an
+//      entry of the test directory ITSELF — `impl/test/<name>`; a file under `impl/test/fixtures/`
+//      is a fixture, and a change to one falls to rule 3;
 //   2. every test file that statically imports (transitively, across impl/src and impl/test)
 //      a changed module selects itself;
 //   3. a changed file NO test imports still selects the test files that name it in a fixture
@@ -22,10 +24,34 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, posix } from 'node:path';
 
+/** The runtime source directory, repo-relative. */
+export const VERIFICATION_SOURCE_DIR = 'impl/src';
+
+/** The suite's test directory, repo-relative. Its file set is FLAT: the runner's canonical set is
+ * the directory's own entries (`readdirSync(testRoot)` in run-suite.mjs), and `impl/test/fixtures/`
+ * holds fixtures, driver scripts and helper data. */
+export const VERIFICATION_TEST_DIR = 'impl/test';
+
 /** The directories the import graph is scanned across: runtime source and its tests. An
  * import edge MAY point outside them (a test importing `impl/scripts/x.mjs` counts); the
  * scan roots decide whose outgoing edges are read, and scripts are not scanned. */
-export const VERIFICATION_GRAPH_DIRS = Object.freeze(['impl/src', 'impl/test']);
+export const VERIFICATION_GRAPH_DIRS = Object.freeze([VERIFICATION_SOURCE_DIR, VERIFICATION_TEST_DIR]);
+
+/** Is `path` an entry of the suite's test directory ITSELF, rather than a file in one of its
+ * subdirectories? The selection's candidates are exactly these entries. A file under
+ * `impl/test/fixtures/` is a fixture: a change to one selects the tests that read it, through the
+ * import and fixture-path rules, and never selects itself.
+ *
+ * Selecting a nested fixture instead both lost its readers and handed the runner a name the
+ * landing gate had shortened to the fixture's basename (the gate reads the runner's file name as
+ * `test/<basename>`), so the 2026-09-26 landing of `impl/test/fixtures/fake-claude.mjs` ran no
+ * test at all for the 17 test files that read that fixture. */
+export function isTestDirectoryEntry(path) {
+  const named = `${path}`.split('\\').join('/');
+  const prefix = `${VERIFICATION_TEST_DIR}/`;
+  if (!named.startsWith(prefix)) return false;
+  return !named.slice(prefix.length).includes('/');
+}
 
 const IMPORT_SOURCE = /(?:^|[\s;}])import\s[^'"]*?from\s*['"]([^'"\n]+)['"]|(?:^|[\s;}])import\s*['"]([^'"\n]+)['"]|(?:^|[\s;}])export\s[^'"]*?from\s*['"]([^'"\n]+)['"]/gu;
 
@@ -118,9 +144,10 @@ export function selectAffectedTests({ changedPaths, graph, exists = null } = {})
     const prior = selected.get(path);
     if (!prior || REASON_ORDER[reason] < REASON_ORDER[prior.reason]) selected.set(path, { path, reason, via });
   };
-  // 1. every changed test file that exists at the revision selects itself.
+  // 1. every changed test file — an entry of the test directory itself — that exists at the
+  // revision selects itself.
   for (const path of changed) {
-    if (path.startsWith('impl/test/') && present(path)) record(path, 'changed', null);
+    if (isTestDirectoryEntry(path) && present(path)) record(path, 'changed', null);
   }
   // 2. reverse reachability: any test importing (transitively) a changed path selects itself.
   const importers = new Map();
@@ -137,14 +164,14 @@ export function selectAffectedTests({ changedPaths, graph, exists = null } = {})
       if (reached.has(importer)) continue;
       reached.add(importer);
       worklist.push(importer);
-      if (importer.startsWith('impl/test/')) record(importer, 'imports', next);
+      if (isTestDirectoryEntry(importer)) record(importer, 'imports', next);
     }
   }
   // 3. a changed file no test imports: the tests that NAME it in a fixture path.
   const orphaned = changed.filter((path) => !reached.has(path) && !selected.has(path));
   for (const path of orphaned) {
     for (const entry of graph.values()) {
-      if (!entry.path.startsWith('impl/test/') || selected.has(entry.path)) continue;
+      if (!isTestDirectoryEntry(entry.path) || selected.has(entry.path)) continue;
       if (namesInFixturePath(entry.text, path)) record(entry.path, 'fixture-path', path);
     }
   }
