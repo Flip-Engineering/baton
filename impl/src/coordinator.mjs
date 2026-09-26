@@ -1249,12 +1249,17 @@ export class Coordinator {
     return runtimeObservation._mirrorDrainDispositions(this, this._recorder, sourceDrainId, targetDrainId, actor, assertWithinDeadline);
   }
 
-    async _cancelPendingForDrain(deadline) {
-    return runtimeObservation._cancelPendingForDrain(this, this._recorder, deadline);
+    async _cancelPendingForDrain() {
+    return runtimeObservation._cancelPendingForDrain(this, this._recorder);
   }
 
-  async _performDrain(targetWorkerIds, repoId, deadline, physicalDrainId, physicalActor) {
-    await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline, () => ({ reason: 'startup_cleanup_pending', timeoutMs: this._drainPolicy.timeoutMs }));
+  async _performDrain(targetWorkerIds, repoId, physicalDrainId, physicalActor) {
+    // Issue #583: every stage below waits for convergence — the policy window narrates progress
+    // (`control.stop_waiting_on` rows), it never refuses a stop that is still converging. The
+    // observed failure: a stop refused at the 90 s window while the drain was still working, and
+    // completed on its own minutes later, so the caller was told a stop had failed that in fact
+    // succeeded.
+    await Promise.all(this._startupCleanupPromises);
     if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
     // Issue #576: the integrate gate runners are the drain's OWN children, cancelled and reaped
     // as part of it — never after it. The fence drops first (no new gate starts once a stop is
@@ -1262,20 +1267,17 @@ export class Coordinator {
     // killed with its process group, and the wait is for each child's close: when the drain
     // moves on, no gate runner still burns the host, and `closed` can mean the process exits.
     // A landing the cancellation abandons records its own abandoned-attempt row.
-    await this._beforeDrainDeadline(this._supervised.cancelAndReap(), deadline,
-      () => ({ reason: 'gate_runners_pending', timeoutMs: this._drainPolicy.timeoutMs }));
+    await this._supervised.cancelAndReap();
     // Operations admitted before the irreversible fence may finish, but no stop effect races
     // them. In particular, publisher/integration/provider work cannot be relabelled as drained
     // while it still owns an external or repository effect boundary.
-    while (this._authorityOps > 0 && this._now() < deadline) {
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
+    while (this._authorityOps > 0) {
+      await this._sleep(this._drainPolicy.pollMs);
     }
-    if (this._authorityOps > 0) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'authority_operations_in_flight', count: this._authorityOps } });
-    while (this._startupRecoveryState === 'pending' && this._now() < deadline) {
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
+    while (this._startupRecoveryState === 'pending') {
+      await this._sleep(this._drainPolicy.pollMs);
     }
-    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_recovery_pending' } });
-    await this._cancelPendingForDrain(deadline);
+    await this._cancelPendingForDrain();
     if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'pending_interaction_authority', count: this._activeInteractionIds.size } });
     const durablePhysical = this._coordination.fleetDrain(physicalDrainId);
     if (!durablePhysical || durablePhysical.status !== 'admitted'
@@ -1301,7 +1303,6 @@ export class Coordinator {
       dispositions.set(workerId, disposition);
     };
     for (const workerId of targetWorkerIds) {
-      if (this._now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) } });
       if (dispositions.has(workerId)) continue;
       const handle = this._workers.get(workerId); const task = handle ? this._tasks.get(handle.taskId) : null;
       if (!handle) { setDisposition(workerId, 'alreadyTerminal'); continue; }
@@ -1342,9 +1343,10 @@ export class Coordinator {
         // NAMES the worker it stopped waiting on, so the resident's own bounded waits see a settled
         // fact instead of arming the deadline that never ends.
         else if (result?.result === 'stop_attempts_exhausted') this._abandonStopWorker(handle, result);
-      } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
+      } catch { /* exact state below is authoritative; the convergence loop retries it */ }
     };
-    while (this._now() <= deadline) {
+    let narratedAt = this._now();
+    for (;;) {
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
       // #360: release what a settled holder cannot. A worker whose process is exactly closed
       // and whose seat has left/stopped (a durably admitted run stop) is reaped by the drain
@@ -1357,7 +1359,7 @@ export class Coordinator {
       // Issue #467: a target worker whose stop the kill path SETTLED — the kernel's own ESRCH closed
       // its process, and the reap that follows released what it held — is holding nothing and
       // waiting on nothing. Recording the disposition it actually reached here keeps the drain's own
-      // success test reachable instead of running the loop out to its deadline (the observed shape:
+      // success test reachable instead of spinning without progress (the observed shape:
       // `coordinator_drain_incomplete {reason: 'convergence', waitingOn: []}`).
       for (const workerId of targetWorkerIds) {
         if (dispositions.has(workerId)) continue;
@@ -1399,7 +1401,7 @@ export class Coordinator {
         // carry into the deployment's own capacity quiescence check
         // ('driver capacity reservations remained after fleet drain'). Evaluated HERE, in the one
         // branch that mints the receipt, so a busy drain pays for the sweep once; a release that
-        // cannot be settled keeps the loop going until the deadline names the wait.
+        // cannot be settled keeps the loop converging; the window narrates the wait below.
         const orphaned = this.orphanedCapacityReservations();
         if (orphaned.length > 0) {
           const released = await this.releaseGoneWorkerReservations();
@@ -1420,7 +1422,7 @@ export class Coordinator {
             });
           }
           const reconciliation = this._drainHistoricalReconcilePromise;
-          await this._beforeDrainDeadline(reconciliation, deadline, () => ({ reason: 'historical_reconciliation_pending', timeoutMs: this._drainPolicy.timeoutMs }));
+          await reconciliation;
           if (this._drainHistoricalReconcilePromise === reconciliation) this._drainHistoricalReconcilePromise = null;
           this._drainHistoricalReconciled = true;
           continue;
@@ -1447,36 +1449,15 @@ export class Coordinator {
         };
         return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       }
-      await this._beforeDrainDeadline(Promise.all(globalRemaining.map(attempt)), deadline,
-        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(globalRemaining.map((handle) => handle.id), null, physicalActor) }));
-      if (this._now() >= deadline) break;
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
+      await Promise.all(globalRemaining.map(attempt));
+      if (this._now() - narratedAt >= this._drainPolicy.timeoutMs) {
+        // Issue #583: the durable progress row on the SAME cadence the refusal used to ride —
+        // written while the drain goes on working, never a refusal that lies about the outcome.
+        this._stopWaitRows(targetWorkerIds, null, physicalActor);
+        narratedAt = this._now();
+      }
+      await this._sleep(this._drainPolicy.pollMs);
     }
-    // The terminal throw names its wait like every other deadline path (#277 G-21): a bare
-    // non-convergence is never wrapped as its own cause by _drainFailure.
-    throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
-      code: 'coordinator_drain_incomplete',
-      detail: { reason: 'deadline', stage: 'convergence', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) },
-    });
-  }
-
-  /** Races one drain step against the deployment deadline. `describe` names the wait (#265) when
-   * the deadline wins; it is evaluated only then, so a settled step costs nothing. */
-  _beforeDrainDeadline(operation, deadline, describe = null) {
-    const expired = () => {
-      const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
-      if (describe) { try { failure.detail = describe(); } catch { /* a wait that cannot be described is still a named deadline */ } }
-      return failure;
-    };
-    const remaining = deadline - this._now();
-    if (remaining <= 0) return Promise.reject(expired());
-    return new Promise((resolveOperation, rejectOperation) => {
-      const timer = setTimeout(() => rejectOperation(expired()), remaining);
-      Promise.resolve(operation).then(
-        (value) => { clearTimeout(timer); resolveOperation(value); },
-        (error) => { clearTimeout(timer); rejectOperation(error); },
-      );
-    });
   }
 
   /** #360: the seat-left signal the drain may act on. A worker whose process is exactly closed

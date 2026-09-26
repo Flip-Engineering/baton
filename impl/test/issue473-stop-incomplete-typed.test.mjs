@@ -6,10 +6,12 @@
 //
 // What this file pins:
 //   (a) through the REAL served POST /v1/commands transport (#430's parity fixture lane), a
-//       `swarm.stop` on a seat whose run stop stalls — the REAL `Coordinator.stopRunTargets` behind
-//       the swarm runtime's injected `stopRun` port — crosses as `coordinator_run_stop_incomplete`
-//       with HTTP 409 and the coordinator's own detail (the run the stop named, its deadline, and
-//       the rows the leg is holding), never as the transient 503 row;
+//       `swarm.stop` on a seat whose run stop converges LATE — the REAL `Coordinator.stopRunTargets`
+//       behind the swarm runtime's injected `stopRun` port — answers with the stop's own success
+//       once the holds release: the policy window narrates progress (`control.stop_waiting_on`
+//       rows) and never refuses a stop that is still converging (issue #583 removed the deadline
+//       refusal this file used to pin, whose 409 told the operator a stop had failed that in fact
+//       succeeded);
 //   (b) the derivation pin over the coordinator's run-stop / kill / drain refusal sites AND — issue
 //       #483 — over the coordination store's own wait-abort mint (`waitAfter`, the wait a bounded
 //       `swarm.watch` holds): the roster is read from the modules' own code, every code the RUN-STOP
@@ -82,22 +84,24 @@ const envelope = (overrides = {}) => ({
   ...overrides,
 });
 
-// ── the fixture: a REAL coordinator whose run stop cannot converge ───────────────────────────────
-// The refusal #473 reports is the coordinator's own, so the fixture drives the REAL run-stop leg
+// ── the fixture: a REAL coordinator whose run stop converges late ────────────────────────────────
+// The stop the file drives is the coordinator's own, so the fixture drives the REAL run-stop leg
 // (`stopRunTargets`) behind the swarm runtime's injected `stopRun` port: the same seam
 // application.mjs wires (`stopRun: (runId, reason) => this.stop(runId, reason, …)`). The checkout
-// refuses to go away and the adapter acks a kill it never confirms, so the leg sweeps its deadline
-// with the workers it names still held — the non-convergence the resident's log recorded.
-
-/** The WorktreeManager contract (spec §3.2), with a checkout that refuses to go away: the one hold
- * a stop cannot release, exactly as issue450's run-stop fixture spells it. */
-class RefusingWorktreeManager {
-  constructor() { this.calls = { remove: [] }; }
+// holds past the policy window and releases on its own, so the leg waits it out and narrates —
+// the convergence issue #583 now pins instead of the deadline refusal.
+/** The WorktreeManager contract (spec §3.2), with a checkout that holds on while a stop is
+ * converging and releases on its own: the shape issue #583 observed on the real host, where the
+ * stop's holds outlived the old 90 s window and released after it. */
+class LateReleaseWorktreeManager {
+  constructor(failRemovesUntil) { this.calls = { remove: [] }; this.failRemovesUntil = failRemovesUntil; }
   async create(taskId) { return { path: `/tmp/issue473-wt/${taskId}`, branch: `baton/${taskId}`, baseSha: 'sha-base' }; }
   async capture() { return { sha: 'sha-result' }; }
   async remove(taskId) {
     this.calls.remove.push({ taskId });
-    throw Object.assign(new Error('checkout is busy'), { code: 'worktree_busy' });
+    if (Date.now() < this.failRemovesUntil) {
+      throw Object.assign(new Error('checkout is busy'), { code: 'worktree_busy' });
+    }
   }
   async reconcile() {}
   worktreeAvailable() { return true; }
@@ -126,12 +130,13 @@ const bareBrief = (goal) => ({
  * own worker (and records which run it belongs to — the fact the application's run start carries),
  * `list()` reads that fleet back through the ONE liveness derivation, and `stopRun` drives
  * `Coordinator.stopRunTargets` over it. */
-function stalledStopFixture() {
+function lateStopFixture() {
   const directory = scratch('stop');
   const log = new Log(join(directory, 'log'));
   const coordinator = new Coordinator({
     log, coordination: coordinationForLog(log), fences: new FenceTable(),
-    adapters: { mock: new ScriptedAdapter() }, worktrees: new RefusingWorktreeManager(),
+    adapters: { mock: new ScriptedAdapter() },
+    worktrees: new LateReleaseWorktreeManager(Date.now() + STOP_TIMEOUT_MS + 100),
     referee: async (task) => ({
       reverified: true, observedExit: task.brief.verification.expectExit, matchesClaim: true,
       locus: 'fresh_sandbox', evidence: [],
@@ -154,7 +159,7 @@ function stalledStopFixture() {
     authorize: async () => true,
     prepareRun: (request) => request,
     startRun: async (request) => {
-      const handle = await coordinator.spawn('mock', bareBrief('hold a stalled run stop'));
+      const handle = await coordinator.spawn('mock', bareBrief('hold a late-converging run stop'));
       runsByWorker.set(handle.id, request.runId);
     },
     stopRun: async () => coordinator.stopRunTargets([...runsByWorker.keys()], 'swarm:issue473'),
@@ -187,7 +192,7 @@ function stalledStopFixture() {
   let key = 0;
   const call = (command, args) => swarmRuntime.command(command,
     { swarmId: SWARM_ID, idempotencyKey: `issue473-setup-${++key}`, ...args }, principal);
-  return { web, issued, call };
+  return { web, issued, call, log, runsByWorker };
 }
 
 /** A web stack whose application command throws the roster's own code — the #430 (b) lane, used
@@ -228,50 +233,47 @@ async function crossingOf(code) {
   });
 }
 
-// ── (a) the served transport: a stalled run stop crosses typed ───────────────────────────────────
+// ── (a) the served transport: a late-converging run stop answers success, never a refusal ─────────
 
-test('#473 (a): a swarm.stop whose run stop stalls crosses coordinator_run_stop_incomplete as 409 with the run and the wait', async () => {
-  const { web, issued, call } = stalledStopFixture();
-  await call('swarm.create', { purpose: 'issue473 stalled run stop' });
-  const recruited = await call('swarm.recruit', { participantId: SEAT_ID, objective: 'hold a stalled run stop' });
+test('#473 (a) as amended by #583: a swarm.stop whose run stop converges late answers the stop outcome, with its waits narrated while it worked', async () => {
+  const { web, issued, call, log, runsByWorker } = lateStopFixture();
+  await call('swarm.create', { purpose: 'issue473 late-converging run stop' });
+  const recruited = await call('swarm.recruit', { participantId: SEAT_ID, objective: 'hold a late-converging run stop' });
   const runId = recruited?.runId ?? null;
   assert.ok(typeof runId === 'string' && runId.length > 0,
     `the recruit binds the seat to a run: ${JSON.stringify(recruited)}`);
 
+  const started = Date.now();
   const response = await send(web, {
     path: '/v1/commands',
     body: envelope({
-      commandId: 'issue473-stop-stall', idempotencyKey: 'issue473-stop-stall',
+      commandId: 'issue473-stop-late', idempotencyKey: 'issue473-stop-late',
       command: 'swarm.stop',
-      args: { swarmId: SWARM_ID, participantId: SEAT_ID, reason: 'the audit stop', idempotencyKey: 'issue473-stop-stall-args' },
+      args: { swarmId: SWARM_ID, participantId: SEAT_ID, reason: 'the audit stop', idempotencyKey: 'issue473-stop-late-args' },
     }),
     headers: { authorization: `Bearer ${issued.token}` },
   });
+  const elapsed = Date.now() - started;
 
-  assert.equal(response.status, 409,
-    'a stop that did not converge is a state the caller must observe, not a transport fault');
-  assert.equal(response.body.error.code, 'coordinator_run_stop_incomplete',
-    'the coordinator\'s own code crosses as itself');
-  assert.notEqual(response.body.error.code, 'temporarily_unavailable',
-    'the resident used to answer 503 "retry once" here, which told the operator nothing and converged nothing');
-  assert.equal(response.body.error.retryable, false, 'a typed refusal is never retryable');
-  assert.equal(typeof response.body.error.message, 'string');
-  assert.notEqual(response.body.error.message, 'command dispatch failed', 'the refusal keeps its own message');
+  // Issue #583: the stop that outlives the policy window is NOT a refusal — the caller gets the
+  // stop's own outcome once the holds release, never a 409 that lies about a stop that in fact
+  // completed.
+  assert.equal(response.status, 200,
+    `a stop that converged answers its own success: ${JSON.stringify(response.body)}`);
+  assert.equal(response.body?.error ?? null, null, 'no refusal crosses for a stop that completed');
+  assert.ok(elapsed >= STOP_TIMEOUT_MS,
+    `the stop really held past the policy window (${elapsed}ms) before its holds released`);
 
-  const detail = response.body.error.detail;
-  assert.ok(detail !== null && typeof detail === 'object', `the refusal carries the coordinator's detail: ${JSON.stringify(detail)}`);
-  assert.equal(detail.runId, runId, 'the detail names the RUN the seat\'s stop named (the coordinator never sees it)');
-  assert.equal(detail.timeoutMs, STOP_TIMEOUT_MS, 'and the deadline the leg held');
-  assert.ok(Array.isArray(detail.waitingOn) && detail.waitingOn.length > 0,
-    `and the rows the leg is holding: ${JSON.stringify(detail)}`);
-  const row = detail.waitingOn[0];
-  assert.ok(typeof row.workerId === 'string' && row.workerId.length > 0, 'each held row names its worker');
-  assert.ok(Array.isArray(row.waiting) && row.waiting.length > 0, 'and the resources it is waiting on');
-  for (const entry of row.waiting) {
-    assert.equal(typeof entry.resource, 'string', `every wait entry is the #360 shape: ${JSON.stringify(entry)}`);
+  // The window narrated its progress on the worker's durable log while the stop went on working —
+  // the SAME named-wait vocabulary the deadline refusal used to carry in its detail.
+  const workers = [...runsByWorker.keys()];
+  const narrated = workers.flatMap((workerId) => log.byKind(workerId, 'control.stop_waiting_on'));
+  assert.ok(narrated.length > 0,
+    `the stop narrated its wait at least once while it converged: ${workers.length} worker(s) scanned`);
+  for (const row of narrated) {
+    const waiting = row.payload?.waiting ?? [];
+    assert.ok(Array.isArray(waiting), `each narration names its waits: ${JSON.stringify(row)}`);
   }
-  assert.ok(row.waiting.some((entry) => entry.resource.startsWith('local_resources:')),
-    `the checkout hold is named: ${JSON.stringify(row.waiting)}`);
 });
 
 // ── (b) the derivation pin over the coordinator's own stop-path refusal sites ────────────────────
@@ -292,7 +294,7 @@ const STOP_PATH_LEGS = Object.freeze({
     'stopRunTargets', '_admitRunStopTargets', 'cancelRunStopTarget', 'attemptRunStopTarget',
   ]),
   kill: Object.freeze(['kill']),
-  drain: Object.freeze(['drain', '_drainFailure', '_performDrain', '_beforeDrainDeadline']),
+  drain: Object.freeze(['drain', '_drainFailure', '_performDrain']), // Issue #583: the deadline race left with the refusal.
   'terminal resource release': Object.freeze(['releaseTerminalTaskResources']),
 });
 /** Issue #483: the SECOND family the same pin covers — the coordination store's own wait-abort mint

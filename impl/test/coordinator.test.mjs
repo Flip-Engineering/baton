@@ -2021,8 +2021,8 @@ test('replayed Run stop durably closes an absent historical process group withou
 // from the same predicates the convergence loop reads — both on the thrown error and in the
 // worker's durable log. Here the adapter acks the kill but no lifecycle terminal ever arrives:
 // the forced stop leaves closure unconfirmed (cleanupPending), no disposition is ever earned,
-// and the Run stop must say so instead of failing silently at its deadline.
-test('#265: a Run stop that cannot converge names the wait on the error and in the durable log', async () => {
+// and the Run stop settles the worker by abandonment instead of waiting forever (#583).
+test('#265 as amended by #583: a Run stop that cannot converge settles by abandoning the worker and naming the holds durably', async () => {
   const adapter = new ScriptableAdapter();
   const worktrees = new SpyWorktreeManager();
   // The checkout refuses to go away: the one physical hold a stop cannot release by itself.
@@ -2036,45 +2036,34 @@ test('#265: a Run stop that cannot converge names the wait on the error and in t
   });
   const handle = await coordinator.spawn('mock', makeBrief());
   // The kill is forced first (the adapter acks, no terminal ever arrives, the logical deadline
-  // sweeps it), so the Run stop below starts from a settled dead handle whose holds never clear;
-  // its wall-clock deadline is then the only thing that elapses, whatever the machine load.
+  // sweeps it), so the Run stop below starts from a settled dead handle whose holds never clear.
   const kill = coordinator.kill(handle.id, 'operator:stop');
   while (adapter.calls.kill.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
   advance(51);
   coordinator.tick();
   assert.equal((await kill).result, 'forced');
-  await assert.rejects(coordinator.stopRunTargets([handle.id], 'operator:stop'), (error) => {
-    assert.equal(error.code, 'coordinator_run_stop_incomplete');
-    assert.equal(error.detail.timeoutMs, 400);
-    // Issue #450: the Run-stop leg names its waits with the SAME #360 entry objects the fleet
-    // drain uses — {resource, reaper, since} — so a stop and a drain never spell one wait two ways.
-    assert.deepEqual(error.detail.waitingOn.map((row) => ({
-      ...row,
-      waiting: row.waiting.map((entry) => entry.resource),
-    })), [{
-      workerId: handle.id, status: 'dead', disposition: null, processState: null,
-      waiting: ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending'],
-      released: [],
-    }], 'the wait is named from the same predicates the convergence loop reads');
-    for (const entry of error.detail.waitingOn[0].waiting) {
-      assert.deepEqual(Object.keys(entry).sort(), ['reaper', 'resource', 'since'],
-        `every entry is the ONE #360 shape {resource, reaper, since}: ${JSON.stringify(entry)}`);
-      assert.ok(!Number.isNaN(Date.parse(entry.since)), `the entry names since: ${JSON.stringify(entry)}`);
-    }
-    return true;
-  });
-  const named = log.read(handle.id).filter((event) => event.kind === 'control.stop_waiting_on');
-  assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
-  assert.deepEqual(named.at(-1).payload.waiting.map((entry) => entry.resource),
-    ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending']);
-  assert.deepEqual({
-    disposition: named.at(-1).payload.disposition,
-    status: named.at(-1).payload.status,
-    processState: named.at(-1).payload.processState,
-    released: named.at(-1).payload.released,
-  }, { disposition: null, status: 'dead', processState: null, released: [] },
-  'the durable row carries the same wait, its disposition and the released rows');
-  assert.equal(named.at(-1).actor, 'operator:stop');
+  // Issue #583: the stop no longer refuses at its policy window — it converges by SPENDING the
+  // worker's bounded attempts (#467/#472) and naming the holds it gave up on, while the
+  // operator's clock moves on.
+  const stop = coordinator.stopRunTargets([handle.id], 'operator:stop');
+  const advancing = setInterval(() => { advance(60); coordinator.tick(); }, 5);
+  const outcome = await stop;
+  clearInterval(advancing);
+
+  const abandonedRow = log.read(handle.id).find((event) => event.kind === 'control.stop_abandoned');
+  assert.ok(abandonedRow, 'the abandonment is durable in the worker log');
+  assert.deepEqual(
+    [...new Set(abandonedRow.payload.holds)].sort(),
+    ['cleanupPending', 'localAuthority', 'worktree'].map((hold) => `local_resources:${hold}`).sort(),
+    `the abandonment names the holds it kept: ${JSON.stringify(abandonedRow.payload)}`);
+
+
+  assert.equal(outcome.remainingCount, 0, 'the stop settled: no target is left waiting on');
+  assert.ok(outcome.counts.alreadyTerminal >= 1,
+    `the unkillable worker reaches the settled disposition: ${JSON.stringify(outcome.counts)}`);
+  assert.equal(outcome.counts.processesObserved, 0,
+    'an abandoned worker is not an observation — it is counted in neither half of the pair');
+  assert.ok(handle.stopAbandoned, 'the handle carries the abandonment the #472 readers derive from');
 });
 
 // #267 item 3: a sent row that is not keyed by its own messageId is a lane receipt (run.send /

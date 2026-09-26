@@ -876,33 +876,46 @@ export async function stopRunTargets(coordinator, recorder, targetWorkerIds, act
     // exact hop count — a stop must win a preserved-successor delivery racing it.
     await Promise.all(coordinator._startupCleanupPromises);
     if (coordinator._startupCleanupError) throw Object.assign(new Error('Run stop startup reconciliation is incomplete'), { code: 'coordinator_run_stop_incomplete' });
-    const deadline = Date.now() + coordinator._drainPolicy.timeoutMs;
-    // A recovered exact-identity reap may signal just before its bounded confirmation probe
-    // expires. Preserve that effect across convergence attempts: later authoritative absence is
-    // closure of the generation this Run stop targeted, not pre-existing terminal state.
-    const state = { actor, deadline, dispositions: new Map(), recoveredSignals: new Map() };
+    // Issue #583: the stop waits for convergence — the policy window bounds one attempt pass and
+    // narrates progress, it never refuses a stop that is still converging. The observed failure:
+    // `baton swarm stop` answered coordinator_run_stop_incomplete at the 90 s window while its
+    // workers were still being reaped, and the stop completed on its own minutes later, so the
+    // caller was told a stop had failed that in fact succeeded. `state.deadline` stays Infinity so
+    // a recovered reap's confirmation probe keeps its per-attempt bound.
+    const window = Math.max(coordinator._drainPolicy.pollMs, coordinator._drainPolicy.timeoutMs);
+    const state = { actor, deadline: Number.POSITIVE_INFINITY, dispositions: new Map(), recoveredSignals: new Map() };
 
 
     // #360/#450: first-sight bookkeeping for the named waits — `since` is when THIS stop first
-    // observed the wait, so a deadline row reads how long the release has been pending.
+    // observed the wait, so a progress row reads how long the release has been pending.
     coordinator._drainWaitObserve(targetWorkerIds);
-    while (Date.now() <= deadline) {
-      // An attempt that never settles (a cleanup or reap that hangs) must not hide the deadline:
-      // the wait is raced against it and, past the deadline, named below like any other.
-      let deadlineTimer = null;
-      const deadlineElapsed = new Promise((resolve) => { deadlineTimer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now())); });
-      const attemptsSettled = await Promise.race([Promise.all(targetWorkerIds.map((workerId) => attemptRunStopTarget(coordinator, recorder, state, workerId))).then(() => true), deadlineElapsed]);
-      clearTimeout(deadlineTimer);
-      if (!attemptsSettled) break;
+    let narratedAt = Date.now();
+    for (;;) {
+      // An attempt that never settles (a cleanup or reap that hangs) must not hide convergence:
+      // the pass is raced against the policy window and retried, never refused.
+      let windowTimer = null;
+      const windowElapsed = new Promise((resolve) => { windowTimer = setTimeout(() => resolve(false), window); });
+      const attemptsSettled = await Promise.race([Promise.all(targetWorkerIds.map((workerId) => attemptRunStopTarget(coordinator, recorder, state, workerId))).then(() => true), windowElapsed]);
+      clearTimeout(windowTimer);
       const targets = targetWorkerIds.map((id) => coordinator._workers.get(id)).filter(Boolean);
-      const resourcesReleased = targets.every((handle) => !coordinator._ownsLocalResources(handle)
-        && (!handle.processRef || handle.processRef.state === 'closed'));
+      // Issue #472/#583: a worker the stop's own bounded ladder ABANDONED is settled here — the
+      // holds it keeps are named durably (`control.stop_abandoned`), so the stop reaches its
+      // outcome instead of waiting on a worker nothing can force.
+      for (const handle of targets) {
+        if (!state.dispositions.has(handle.id) && handle.stopAbandoned) {
+          state.dispositions.set(handle.id, 'alreadyTerminal');
+        }
+      }
+      const resourcesReleased = targets.every((handle) => handle.stopAbandoned
+        || (!coordinator._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')));
       const interactionsResolved = targets.every((handle) => !handle.pendingApprovalId && !handle.pendingQuestionId);
-      if (state.dispositions.size === targetWorkerIds.length && resourcesReleased && interactionsResolved) {
-        // `resourcesReleased` above already asserts every target's process closed, so the
-        // counts are necessarily equal here: no dead branch to break out of (#277 G-23).
-        const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
-        const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
+      if (attemptsSettled && state.dispositions.size === targetWorkerIds.length && resourcesReleased && interactionsResolved) {
+        // Issue #472: an ABANDONED worker is not an observation — the stop probed it, spent its
+        // bounded attempts and named the holds it kept, so it is counted in neither half of the
+        // observed/closed pair (the drain's own receipt rule).
+        const observedTargets = targets.filter((handle) => !handle.stopAbandoned);
+        const processesObserved = observedTargets.filter((handle) => handle.processRef !== null).length;
+        const processesClosed = observedTargets.filter((handle) => handle.processRef?.state === 'closed').length;
         return Object.freeze({
           targetCount: targetWorkerIds.length,
           remainingCount: 0,
@@ -916,12 +929,15 @@ export async function stopRunTargets(coordinator, recorder, targetWorkerIds, act
           checks: Object.freeze({ interactionsResolved: true, runAuthorityReleased: true }),
         });
       }
-      await coordinator._sleep(Math.min(coordinator._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+      if (Date.now() - narratedAt >= window) {
+        // Issue #583: the one durable progress row — the SAME `_stopWaitRows` derivation the
+        // deadline refusal used to name its wait through, now written while the stop goes on
+        // working instead of a refusal that lies about the outcome.
+        coordinator._stopWaitRows(targetWorkerIds, state.dispositions, actor);
+        narratedAt = Date.now();
+      }
+      await coordinator._sleep(coordinator._drainPolicy.pollMs);
     }
-    throw Object.assign(new Error('Run stop did not converge before its deadline'), {
-      code: 'coordinator_run_stop_incomplete',
-      detail: { timeoutMs: coordinator._drainPolicy.timeoutMs, waitingOn: coordinator._stopWaitingOn(targetWorkerIds, state.dispositions, actor) },
-    });
 }
 
 async function cancelRunStopTarget(coordinator, recorder, state, handle, task, kind) {
@@ -1052,6 +1068,13 @@ async function attemptRunStopTarget(coordinator, recorder, state, workerId) {
         if (result?.ok && result.result === 'confirmed') state.dispositions.set(workerId, 'killConfirmed');
         else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !coordinator._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+          state.dispositions.set(workerId, 'alreadyTerminal');
+        }
+        // Issue #467/#472, applied to this leg by #583: the bounded attempts are spent — the stop
+        // stops asking, names the holds durably, and the worker reaches the one disposition that
+        // means "nothing left for this stop to do", so the stop settles instead of waiting forever.
+        else if (result?.result === 'stop_attempts_exhausted') {
+          coordinator._abandonStopWorker(handle, result);
           state.dispositions.set(workerId, 'alreadyTerminal');
         }
       } catch { /* bounded convergence below retries exact physical state */ }

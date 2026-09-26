@@ -200,7 +200,13 @@ export function drain(coordinator, recorder, ctx = {}) {
     for (const method of ['fleetDrain', 'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain']) {
       if (typeof recorder.coordination[method] !== 'function') throw Object.assign(new Error('fleet drain coordination authority is unavailable'), { code: 'coordinator_drain_unavailable' });
     }
-    const deadline = coordinator._now() + coordinator._drainPolicy.timeoutMs;
+    // Issue #583: the drain waits for convergence — the policy window NARRATES progress
+    // (`control.stop_waiting_on` rows), it never refuses a stop that is still converging. The
+    // observed failure: a stop refused at the 90 s window while its workers were still being
+    // reaped, and completed on its own minutes later, so the caller was told a stop had failed
+    // that in fact succeeded. The guards below stay for structure; with an unbounded horizon
+    // they can no longer fire.
+    const deadline = Number.POSITIVE_INFINITY;
     let targetWorkerIds = null;
     const assertWithinDeadline = () => {
       if (coordinator._now() < deadline) return;
@@ -266,7 +272,7 @@ export function drain(coordinator, recorder, ctx = {}) {
     coordinator._drainState = 'draining';
 
     if (!coordinator._drainPromise) {
-      const physical = coordinator._performDrain(coordinator._drainTargetIds, ctx.repoId, deadline, coordinator._drainPhysicalId, coordinator._drainPhysicalActor);
+      const physical = coordinator._performDrain(coordinator._drainTargetIds, ctx.repoId, coordinator._drainPhysicalId, coordinator._drainPhysicalActor);
       coordinator._drainPromise = physical.then((receipt) => {
         coordinator._drainReceipt = receipt;
         return receipt;
@@ -644,23 +650,16 @@ export function _mirrorDrainDispositions(coordinator, recorder, sourceDrainId, t
     }
   }
 
-export async function _cancelPendingForDrain(coordinator, recorder, deadline) {
+export async function _cancelPendingForDrain(coordinator, recorder) {
     let processed = 0;
     for (const requestId of [...coordinator._activeInteractionIds]) {
       const record = coordinator._pending.get(requestId);
       if (!record) { coordinator._activeInteractionIds.delete(requestId); continue; }
-      if (coordinator._now() >= deadline || processed >= coordinator._drainPolicy.maxInteractions) {
-        throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
-          code: 'coordinator_drain_incomplete',
-          detail: {
-            reason: 'interaction_cancel_deadline',
-            timeoutMs: coordinator._drainPolicy.timeoutMs,
-            processed,
-            ...(coordinator._now() >= deadline
-              ? { waitingOn: coordinator._drainWaitingOn([...coordinator._workers.keys()], null, 'policy') }
-              : { capacity: coordinator._drainPolicy.maxInteractions }),
-          },
-        });
+      // Issue #583: the policy's maxInteractions is a BATCH size, not a refusal — a drain with
+      // more pending interactions than one batch cancels them all, yielding between batches.
+      if (processed >= coordinator._drainPolicy.maxInteractions) {
+        await coordinator._sleep(0);
+        processed = 0;
       }
       processed += 1;
       const handle = coordinator._workers.get(record.worker); const task = handle ? coordinator._tasks.get(handle.taskId) : null;

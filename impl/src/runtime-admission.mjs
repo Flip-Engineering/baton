@@ -941,10 +941,10 @@ export function closeAuthority(coordinator, recorder) {
   }
 
 export function _drainFailure(coordinator, recorder, error) {
-    if (['coordinator_closed', 'coordinator_drain_capacity', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
-    const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
-    // The wrapper names its cause: a deadline that already names the wait keeps it; any other
-    // failure rides as {code, message} so the drain never reports a bare non-convergence.
+    // Issue #583: the deadline refusals are gone, so this wrapper now catches only real drain
+    // failures (a cleanup or release that threw) — the wrap keeps the typed code the web layer
+    // classifies, and names the cause it carried.
+    const failure = Object.assign(new Error('fleet drain failed before it converged'), { code: 'coordinator_drain_incomplete' });
     if (error?.detail !== undefined && error?.detail !== null) failure.detail = error.detail;
     else if (error?.code !== undefined) failure.detail = { cause: { code: error.code, message: error?.message ?? null } };
     return failure;
