@@ -7956,6 +7956,13 @@ export class SwarmRuntime {
               ...gateContext, selection: gateSelection, contributionId: args.contributionId },
             { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null,
               signal: integrationAbort.signal });
+          // A withdraw that fired while the gate ran kills the child: the verdict that comes
+          // back is the kill's own debris — an interrupted run, not a judged red — so the
+          // abort's reason names the outcome for the durable row and the refusal (#600).
+          if (integrationAbort.signal.aborted) {
+            throw integrationAbort.signal.reason
+              ?? Object.assign(new Error('integration withdrawn (running)'), { code: 'integrate_withdrawn' });
+          }
           gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
             ? verdict.stderrTail : null;
           gateExit = Number.isSafeInteger(verdict?.exit) ? verdict.exit : null;

@@ -50,7 +50,6 @@ function write(repo, path, content) {
 }
 
 const REGENERATORS = Object.freeze([
-  'impl/scripts/seam-inventory.mjs',
   'impl/scripts/surface-gate.mjs',
   'impl/scripts/render-surface-docs.mjs',
 ]);
