@@ -11,12 +11,13 @@
 //   (the fixture machinery this suite drives through `waves.run` — which EXISTS at HEAD), and
 //   wave-observability-red.test.mjs / trust-gate-steering-red.test.mjs.
 //
-// Rows: 16 (8 red + 8 green/pin). Red-first: every red row fails today at a NAMED stage —
+// Rows: 16 (7 red + 9 green/pin). Red-first: every red row fails today at a NAMED stage —
 //   coordinator-read-law-missing / read-law-missing / steering-trail-falsified /
-//   coordinator-authority-forbidden-missing / seat-route-hidden / composition-example-refused /
-//   directory-harvest-not-refused — and goes green on the contract's implementation ONLY. The
-//   eight green/pin rows (P-A4, P-A5-static, P-A7, P-A8-dir, P-A9, P-A10, P-D1.4, P-A3g) pin the
-//   substrate the #74 rung builds on; they MUST stay green.
+//   coordinator-authority-forbidden-missing / seat-route-hidden / composition-example-refused —
+//   and goes green on the contract's implementation ONLY. The nine green/pin rows (P-A4,
+//   P-A5-static, P-A7, P-A8-dir, P-A9, P-A10, P-D1.4, P-A3g, A8b) pin the substrate the #74 rung
+//   builds on; they MUST stay green. A8b joined them when #165's D1b landed (see the split note
+//   at the bottom of this header).
 //
 // Invented surfaces (all absent at HEAD; namespace-proof access so a missing code never kills
 // the file at LOAD):
@@ -32,8 +33,10 @@
 //   * the v1.1 example spec's `kind:'brief'` / `kind:'result'` in the steering policy (D4/A8),
 //     whose DELIVERY is asserted (messageOnSpawn messageId + delivered, signalOnMembersDone
 //     recipients, the adapter's received result frame)
-//   * the directory-harvest structural refusal (D4/§4.3) — a directory harvest path refuses
-//     `harvest_miss` regardless of `mustContain`
+//   * the directory-harvest law (D4/§4.3), whose home contract-165 D1b (folded 2026-08-13) split
+//     in two: a path that exists as a directory in the LAUNCH tree refuses at admission with
+//     `workflow_harvest_invalid` (A8b), and a directory the wave itself CREATES refuses
+//     `harvest_miss` at the result sha regardless of `mustContain` (P-A8-dir)
 //
 // Everything else the suite drives through surfaces that EXIST at HEAD: `waves.run`
 // (application.mjs:12512), `waves.start` (:12502), `waves.list` (:12508), `run.scratchpad.read`
@@ -47,6 +50,10 @@
 // identical across both runs):
 //   RED   8 — A1, A2, A3, A3b, A5, A6, A8, A8b   (each fails at its named stage)
 //   GREEN 8 — P-A4, P-A5-static, P-A7, P-A8-dir, P-A9, P-A10, P-D1.4, P-A3g
+//
+// Split update (issue #165, 2026-09-26): A8b asserted the missing structural file-not-directory
+// check; contract-165 D1b landed that check at spec admission, so A8b now asserts the delivered
+// refusal and the split above reads 7 red / 9 green.
 //
 // NUL discipline: application.mjs / coordination-store.mjs carry NUL bytes, so the static
 // source pins use execFileSync grep -an/sed -n — never whole-file reads. Node imports of the
@@ -242,10 +249,14 @@ const decisionScenario = (marker, overrides = {}) => ({
 // reachable in this minimal fixture — see suite-draft-notes.md).
 // ---------------------------------------------------------------------------
 
-async function fixture(t, { authorize = async () => true, adapter = null } = {}) {
+async function fixture(t, { authorize = async () => true, adapter = null, reports = true } = {}) {
   const repo = root('repo');
   const logDir = root('log');
-  mkdirSync(join(repo, 'reports'), { recursive: true });
+  // #165 (contract-165 D1b): `reports` is the launch-tree directory the harvest rows refuse on. A
+  // row exercising the harvest-time BACKSTOP (a directory the wave itself creates) passes
+  // reports:false, so the launch tree holds no `reports` directory and the refusal rides the
+  // result-sha blob check instead of admission.
+  if (reports) mkdirSync(join(repo, 'reports'), { recursive: true });
   mkdirSync(join(repo, 'docs', 'results'), { recursive: true });
   mkdirSync(join(repo, 'objectives'), { recursive: true });
   mkdirSync(join(repo, 'rows'), { recursive: true });
@@ -499,14 +510,15 @@ test('P-A7 pin: capacity honesty — WAITING_ON_KINDS stays the byte-unchanged c
   assert.equal(status.waitingOn, null, 'honest null — a settled member is not waiting');
 });
 
-test('P-A8-dir pin: a DIRECTORY harvest path lands harvest_miss → WAVE-INCOMPLETE with basis = the manifest digest', async (t) => {
-  // D4: the harvest path names a FILE, never a directory. Mechanism correction (blueteam
-  // §4.3): `git show <sha>:<dir>` does NOT fail — it returns the tree listing — so a directory
-  // harvest only refuses today via a `mustContain` MISMATCH on the recovered listing. This pin
-  // drives the directory case WITH a mustContain (the honest refusal shape); the structurally
-  // enforced file-not-directory law is the A8b RED row (a directory path without mustContain
-  // must refuse harvest_miss regardless).
+test('P-A8-dir pin: a DIRECTORY the wave creates lands harvest_miss → WAVE-INCOMPLETE with basis = the manifest digest', async (t) => {
+  // D4/§4.3 + contract-165 D1: a harvest path names a FILE, never a directory. Two homes now: a
+  // directory present in the LAUNCH tree refuses at admission (A8b, `workflow_harvest_invalid`);
+  // a directory the wave itself CREATES — this row — refuses at the result sha, because
+  // `git show <sha>:<dir>` returns the tree listing rather than a blob, so `recovered` stays null
+  // and the miss path refuses `harvest_miss` regardless of `mustContain`. `reports` is absent from
+  // this fixture's launch tree (reports:false), so the wave creates it.
   const fx = await fixture(t, {
+    reports: false,
     adapter: new CarryAdapter({
       harness: 'mock',
       scenariosByMarker: {
@@ -1081,14 +1093,12 @@ test('A8 red: the verbatim v1.1 example spec does NOT drive through waves.run �
   assert.ok(resultPrompts.length > 0, 'the coordinator boundary delivered the result frame to a member (adapter prompt)');
 });
 
-test('A8b red: a DIRECTORY harvest path WITHOUT mustContain recovers the listing — the file-not-directory law is NOT enforced (directory-harvest-not-refused)', async (t) => {
-  // D4/§4.3 (blueteam): `git show <sha>:<dir>` does NOT fail — it returns the tree listing — so
-  // a directory harvest path WITHOUT `mustContain` recovers `ok:true` → WAVE-OK. The contract\'s
-  // file-not-directory law must be enforced structurally: an admission/refusal-time check that each
-  // harvest path is a regular file, refusing `harvest_miss` for directories REGARDLESS of
-  // `mustContain` (the gap P-A8-dir\'s mustContain mismatch currently masks). At HEAD the directory
-  // harvest without mustContain is WAVE-OK → asserting WAVE-INCOMPLETE FAILS → RED at
-  // `directory-harvest-not-refused`.
+test('A8b: a LAUNCH-TREE directory harvest path refuses at admission — workflow_harvest_invalid, never a receipt (contract-165 D1b)', async (t) => {
+  // D4/§4.3 asked for the structural file-not-directory check and named admission as its home.
+  // Contract-165 D1b (folded 2026-08-13) is that law for a path present in the launch tree: the
+  // spec refuses BEFORE waves.start with the typed `workflow_harvest_invalid`, naming the path and
+  // the file-only law. The harvest-time blob check stays the backstop for a directory the wave
+  // creates — the P-A8-dir row above, which keeps `reports` absent at launch.
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
@@ -1105,10 +1115,12 @@ test('A8b red: a DIRECTORY harvest path WITHOUT mustContain recovers the listing
     steering: {},
     harvest: { paths: [{ path: 'reports' }] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
-  // The law: a directory harvest path refuses harvest_miss → WAVE-INCOMPLETE, regardless of
-  // mustContain. At HEAD the listing is recovered (`git show` on a tree does NOT fail) → ok:true
-  // → WAVE-OK → the assertion FAILS → RED at `directory-harvest-not-refused`.
-  assert.equal(receipt.verdict, 'WAVE-INCOMPLETE', 'a directory harvest path refuses WAVE-INCOMPLETE even without mustContain (D4)');
-  assert.ok(receipt.harvest.every((entry) => entry.missed === true && entry.code === 'harvest_miss'), 'harvest_miss entries for the directory path');
+  let refusal = null;
+  try {
+    await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
+  } catch (error) { refusal = error; }
+  assert.equal(refusal?.code, 'workflow_harvest_invalid',
+    'a launch-tree directory harvest path refuses at admission, before any wave resource is spent (contract-165 D1b)');
+  assert.match(refusal?.message ?? '', /reports/u, 'the refusal names the directory path');
+  assert.match(refusal?.message ?? '', /FILES/u, 'the refusal cites the file-only law');
 });
