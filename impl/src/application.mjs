@@ -266,45 +266,21 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'application.help': Object.freeze({ args: Object.freeze(['topic', 'depth', 'runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'runs.list': Object.freeze({ args: Object.freeze(['continuationCursor']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.start': Object.freeze({ args: Object.freeze(['intent']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
-  // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
-  // byte-stable in application-semantics.mjs.
-  // mintWaveDetached + waveId are declared-hidden (S-1 v2 transportHidden): present in the
-  // in-process validator, excluded from advertised MCP/web schemas via transportHidden.
-  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached', 'waveId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true, transportHidden: Object.freeze(['mintWaveDetached', 'waveId']) }),
+  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
-  'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.workstream.stop': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.act': Object.freeze({ args: Object.freeze(['runId', 'actionId', 'inputs']), capabilities: Object.freeze([]), semanticCapabilities: true, web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.status': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.follow': Object.freeze({ args: Object.freeze(['runId', 'afterCursor', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.approve': Object.freeze({ args: Object.freeze(['runId', 'planDigest']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs', 'until']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'evidence.search': Object.freeze({ args: Object.freeze(['swarmId', 'query', 'participantId', 'kind', 'path', 'afterSeq']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   // #317 (docs/50): the provider-services read — the configured services, their models and the
   // routes derived from them, with subscription-window usage where declared or observed.
   'services.list': Object.freeze({ args: Object.freeze(['provider']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
-  'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.recover': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  // S-1 v2: portable atomic attach-and-harvest. Observe-class; no emergency_stop; returns a
-  // closed {outcomes, waveDriverDetached} payload (no live handle over MCP/web/CLI).
-  'waves.attach': Object.freeze({
-    args: Object.freeze(['waveId', 'members', 'timeoutMs', 'repoRoot', 'mintWaveDetached']),
-    capabilities: Object.freeze(['observe']),
-    web: true, mcp: true, mcpStateful: false, reconcilable: true,
-    transportHidden: Object.freeze(['mintWaveDetached']),
-  }),
-  'application.shutdown': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['emergency_stop']), web: false, mcp: false, mcpStateful: false, reconcilable: false }),
 });
 
 // 2026-09-14 audit (U-N5/U-E3): the command table's argument lists and the canonical operation
@@ -857,60 +833,6 @@ function normalizeStop(value) {
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
 
-function normalizeAdopt(value) {
-  exactObject(value, ['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason'], 'application_adopt_invalid', 'Run adoption');
-  if (!validId(value.runId) || !validId(value.nodeKey)
-    || !/^[a-f0-9]{40,64}$/u.test(value.resultSha ?? '')
-    || !/^[a-f0-9]{64}$/u.test(value.evidenceDigest ?? '')
-    || !validText(value.reason, 1_024)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run adoption request is invalid', 'application_adopt_invalid');
-  }
-  return deepFreeze({ ...clone(value), reason: value.reason.normalize('NFKC').trim() });
-}
-
-function normalizeRetryVerification(value) {
-  exactObject(value, ['runId', 'reason'], 'application_retry_invalid', 'Run verification retry');
-  if (!validId(value.runId) || !validText(value.reason, 1_024)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run verification retry request is invalid', 'application_retry_invalid');
-  }
-  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
-}
-
-// PS5: resume_work is coordinate-free. The caller supplies only a bounded audit reason — never a
-// Git ref, SHA, worktree path, harness command, provider credential, budget, or storage ceiling.
-function normalizeResumeWork(value) {
-  exactObject(value, ['runId', 'reason'], 'application_resume_invalid', 'Run resume');
-  if (!validId(value.runId) || !validText(value.reason, 1_024)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run resume request is invalid', 'application_resume_invalid');
-  }
-  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
-}
-
-function normalizeReviewRequest(value) {
-  exactObject(value, ['runId', 'route', 'reason'], 'application_review_invalid', 'Run review');
-  if (!validId(value.runId) || !validText(value.reason, 1_024)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run review request is invalid', 'application_review_invalid');
-  }
-  return deepFreeze({
-    runId: value.runId,
-    route: normalizeRoute(value.route, 'application_review_invalid'),
-    reason: value.reason.normalize('NFKC').trim(),
-  });
-}
-
-function normalizeIntegrationRequest(value) {
-  exactObject(value, ['runId', 'evidenceDigest', 'strategy', 'reason'], 'application_integration_invalid', 'Run integration');
-  if (!validId(value.runId) || !/^[a-f0-9]{64}$/u.test(value.evidenceDigest ?? '')
-    || !['ff-only', 'structured'].includes(value.strategy) || !validText(value.reason, 1_024)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run integration request is invalid', 'application_integration_invalid');
-  }
-  return deepFreeze({ ...clone(value), reason: value.reason.normalize('NFKC').trim() });
-}
 
 
 
@@ -1186,12 +1108,7 @@ export function validateApplicationCommandArgs(name, args) {
         || !/^[A-Za-z0-9_-]+$/u.test(args.pageCursor)))
       || (args.recipient !== undefined && !validId(args.recipient))
       || (args.cursor !== undefined && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))
-      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))
-      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)
-      // 93B (W93-4): waveId rides ONLY with the attach side-channel — it asserts the wave the
-      // caller is attaching, so the mint site can refuse a binding mismatch with a typed code.
-      || (args.waveId !== undefined && (!validId(args.waveId) || args.mintWaveDetached !== true))
-      || (args.mintWaveDetached === true && args.waveId === undefined)) {
+      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))) {
       throw applicationError('Run inspection request is invalid', 'application_inspect_invalid');
     }
     if (args.waitMs !== undefined && args.cursor === undefined) {
@@ -1251,40 +1168,6 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
-  if (name === 'run.workstream.notify') {
-    const allowed = new Set(definition.args);
-    if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some((key) => !allowed.has(key))
-      || !validId(args.runId) || !validId(args.role) || args.role === 'work'
-      || (args.generation !== undefined
-        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
-      || (args.delivery !== undefined && !['nudge', 'now', 'turn'].includes(args.delivery))) {
-      throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
-    }
-    if (typeof args.message !== 'string' || args.message.length === 0 || args.message.includes('\0')) {
-      throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
-    }
-    // v1.2 blue-team blocker 2: the legacy-alias send door is the cataloged admission lane
-    // run.legacy_send.body at its LIVE 16,384 — oversize draws the coaching refusal, never a
-    // numberless application_workstream_notify_invalid.
-    if (Buffer.byteLength(args.message) > FRAME_LIMITS['run.legacy_send.body'].value) {
-      throw coachingApplicationError(FRAME_LIMITS['run.legacy_send.body'],
-        Buffer.byteLength(args.message), FRAME_LIMITS['run.legacy_send.body'].value);
-    }
-    return true;
-  }
-  if (name === 'run.workstream.stop') {
-    const allowed = new Set(definition.args);
-    if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some((key) => !allowed.has(key))
-      || !validId(args.runId) || !validId(args.role) || args.role === 'work'
-      || (args.generation !== undefined
-        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
-      || (args.reason !== undefined && !validText(args.reason, 1_024))) {
-      throw applicationError('Workstream stop is invalid', 'application_workstream_stop_invalid');
-    }
-    return true;
-  }
   if (name === 'run.wait') {
     // docs/36 §4.1 read row / R-OP-9 — `until` is an optional condition selector, so run.wait
     // validates as a subset (like run.inspect) rather than an exact-args command; without it the
@@ -1306,38 +1189,6 @@ export function validateApplicationCommandArgs(name, args) {
     if (!validId(args.runId) || !validId(args.actionId) || !args.inputs
       || typeof args.inputs !== 'object' || Array.isArray(args.inputs)) {
       throw applicationError('Run action request is invalid', 'application_action_invalid');
-    }
-    return true;
-  }
-  if (name === 'waves.attach') {
-    const allowed = new Set(definition.args);
-    if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some((key) => !allowed.has(key))
-      || typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
-      || !Array.isArray(args.members) || args.members.length === 0
-      || (args.timeoutMs !== undefined
-        && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0))
-      || (args.repoRoot !== undefined
-        && (typeof args.repoRoot !== 'string' || args.repoRoot.length < 1 || args.repoRoot.length > 4096))
-      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)) {
-      throw applicationError('Wave attach request is invalid', 'application_wave_attach_invalid');
-    }
-    const roles = new Set();
-    for (const member of args.members) {
-      // The member objective is SHAPE-checked only (non-empty string): the wave.member.objective
-      // byte law admits oversize with spill at the wave-start admission (Decision 2 / OQ5) — the
-      // char wall must never survive behind the driver advisory (v1.2 blue-team blocker 4).
-      if (!member || typeof member !== 'object' || Array.isArray(member)
-        || typeof member.role !== 'string' || !validId(member.role)
-        || typeof member.objective !== 'string' || member.objective.length < 1
-        || Object.keys(member).some((key) => !['role', 'objective'].includes(key))) {
-        throw applicationError('Wave attach member is invalid', 'application_wave_attach_invalid');
-      }
-      if (roles.has(member.role)) {
-        throw applicationError('Wave attach member roles contain duplicates',
-          'application_wave_attach_invalid');
-      }
-      roles.add(member.role);
     }
     return true;
   }
@@ -1386,28 +1237,10 @@ export function validateApplicationCommandArgs(name, args) {
     }
     normalizeAnswer(args.answer);
   }
-  if (name === 'run.feedback') {
-    if (!validId(args.runId) || !validId(args.role)) {
-      throw applicationError('Workflow feedback target is invalid',
-        'application_workflow_feedback_invalid');
-    }
-    normalizeWorkflowFeedback(args.feedback);
-  }
   if (name === 'run.steer') normalizeSteer(args);
   if (name === 'run.stop') normalizeStop(args);
   if (name === 'run.evidence' && !validId(args.runId)) {
     throw applicationError('Run evidence target is invalid', 'application_evidence_invalid');
-  }
-  if (name === 'run.adopt') normalizeAdopt(args);
-  if (name === 'run.retry_verification') normalizeRetryVerification(args);
-  if (name === 'run.resume_work') normalizeResumeWork(args);
-  if (name === 'run.review') normalizeReviewRequest(args);
-  if (name === 'run.integrate') normalizeIntegrationRequest(args);
-  if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
-    throw applicationError('Run export target is invalid', 'application_export_invalid');
-  }
-  if (name === 'run.recover' && !validId(args.runId)) {
-    throw applicationError('Run recovery target is invalid', 'application_recovery_invalid');
   }
   return true;
 }
