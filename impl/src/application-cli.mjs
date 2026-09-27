@@ -22,9 +22,7 @@ import {
   swarmCliCommand, SWARM_REPORT_BODY_VERBS, SWARM_REPORT_BODY_RULE, SWARM_REPORT_BODY_ADMITTED,
   swarmEncodedReportBody, swarmReportBodyRefusalMessage,
 } from './swarm-surface.mjs';
-import {
-  CONTEXT_PACKAGE_BRANCH_CEILING, webAdmittedCommandNames,
-} from './web-northbound.mjs';
+import { webAdmittedCommandNames } from './web-northbound.mjs';
 import { contextSourceSecretShape } from './context-program.mjs';
 import { contextSourceChunkBytes } from './context-program-policy.mjs';
 import { ATTACHMENT_CLOSED_REASONS, WAKE_STREAM_END_REASONS, attachmentClosedFrame, attachmentClosedReason, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
@@ -2680,20 +2678,7 @@ function composeRecruitContextPackage(issue, request, repoRoot) {
       gaps.push(Object.freeze({ path, state: 'unreadable', reason: 'empty' }));
       continue;
     }
-    // The port admits a bounded number of branch documents; a leg that composed more would be
-    // refused by the wire (as a malformed request) after the root's own reading was spent. The
-    // ceiling is the PORT's constant — read, not restated — and the refusal is this leg's own.
-    const planned = branches.length + chunks.length;
-    if (planned > CONTEXT_PACKAGE_BRANCH_CEILING) {
-      throw contextReadRefusal('context_source_oversize',
-        `${path} is ${read.bytes.length} bytes: its ${chunks.length} chunk branches would make`
-          + ` ${planned} branches, over the ${CONTEXT_PACKAGE_BRANCH_CEILING} one context package`
-          + ' admits — recruit without --issue, or cite fewer documents',
-        { field: 'path', detail: {
-          path, bytes: read.bytes.length, chunks: chunks.length, branches: planned,
-          bound: CONTEXT_PACKAGE_BRANCH_CEILING, limit: 'branches',
-        } });
-    }
+    // #530: the port admits however many branch documents a leg composes — the branch ceiling left.
     const sha = createHash('sha256').update(read.bytes).digest('hex');
     const of = chunks.length;
     chunks.forEach((chunk, index) => branches.push({
