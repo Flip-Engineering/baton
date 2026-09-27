@@ -104,6 +104,19 @@ function deathRow(workerId, seq) {
     workerId, taskId: 't-2', runId: 'run-alpha', seq, at: '2026-09-18T17:59:30.000Z',
     code: PROVIDER_FAULT_CODES.quota, route: Object.freeze({ ...FAULTED }),
     resetAt: RESET_AT, resetAtText: RESET_AT, snapshotSha: SNAPSHOT_SHA, retainedWorktree: null,
+    // #614: the seam's own classification — this death IS a provider fault, the ONE class a seat
+    // re-route follows.
+    providerFault: true,
+  });
+}
+/** The OTHER death the coordinator's seam publishes (#550): a resident stop, a transport timeout or
+ * a restart-ended worker — a death the deployment could not name as a provider fault. It carries
+ * the honest code and `providerFault: false`, so no seat it ends is re-routed. */
+function unclassifiedDeathRow(workerId, seq, code = 'timeout') {
+  return Object.freeze({
+    workerId, taskId: 't-2', runId: 'run-alpha', seq, at: '2026-09-18T17:59:30.000Z',
+    code, route: null, resetAt: null, resetAtText: null, snapshotSha: null, retainedWorktree: null,
+    providerFault: false,
   });
 }
 /** ONE swarm runtime over a real store, with a coordinator that answers the two facts the
@@ -577,4 +590,46 @@ test('443-e1: the new rows replay identically and no caller can submit one', asy
       return true;
     });
   }
+});
+
+// ── (f) #614: which deaths compose a re-route ───────────────────────────────────────────────────
+
+test('443-f1: a death the deployment could not name as a provider fault composes NO seat fault and NO re-route (#614)', async (t) => {
+  // The 2026-09-27 02:38Z restart read the deaths of seats the resident itself stopped — the
+  // turn's transport timeout carries code 'timeout' — as provider faults and re-routed them. A
+  // stop is a death, never a provider fault: it composes no seat fault row and no re-route. (The
+  // fault row could not be written for it anyway: the fold requires a route, and such a death
+  // names none.)
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'f1',
+    policy: { rerouteOnProviderFault: 'auto' },
+  });
+  w.deaths.set(w.workerId, unclassifiedDeathRow(w.workerId, 42));
+  const view = await w.call('view', { swarmId: SWARM });
+
+  assert.deepEqual(rowsOf(w.store, 'swarm.participant_faulted'), [],
+    'a death the deployment could not name as a provider fault folds no seat fault row');
+  const alpha = participantRow(view, 'alpha');
+  assert.equal(alpha.status, 'active', 'and the seat is left as the runtime that ended it recorded it');
+  assert.equal(alpha.leftReason, null);
+  assert.deepEqual(rowsOf(w.store, 'swarm.reroute_proposed'), [],
+    'a stop is not a provider fault: no re-route is proposed');
+  assert.deepEqual(rowsOf(w.store, 'swarm.rerouted'), [], 'and none is performed');
+});
+
+test('443-f2: a seat whose work a resumeFrom successor already carries composes no second re-route (#614)', async (t) => {
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()], tag: 'f2',
+    policy: { rerouteOnProviderFault: 'auto' },
+  });
+  // The seat is CONTINUED: a successor joined naming it, before its provider faults. The work is
+  // already carried, so the death composes no second successor.
+  await w.store.recordSwarm('swarm.participant_joined', {
+    swarmId: SWARM, participantId: 'alpha-continued', resumeFrom: 'alpha',
+  }, { actor: 'owner', key: 'f2-continued' });
+  await w.call('view', { swarmId: SWARM });
+
+  assert.equal(rowsOf(w.store, 'swarm.reroute_proposed').length, 0,
+    "a continued seat's death composes no second successor");
+  assert.deepEqual(rowsOf(w.store, 'swarm.rerouted'), []);
 });

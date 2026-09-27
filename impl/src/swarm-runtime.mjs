@@ -2114,6 +2114,15 @@ export class SwarmRuntime {
         if (!binding || participant.status !== 'active') continue;
         const death = this.coordinator.providerFaultDeathFor(binding.workerId);
         if (!death) continue;
+        // Issue #614: a seat is settled by this observation ONLY when a provider fault ended its
+        // current incarnation and its work is not already carried. A death the deployment could not
+        // name as a provider fault — a resident stop, a transport timeout, a restart-ended worker —
+        // is a death, never a provider fault: the runtime that ended the seat already named it (the
+        // runtime-lost reconciliation), so this observation writes nothing for it and no re-route
+        // follows. A seat that already has a `resumeFrom` successor is continued, so its death
+        // composes no second successor.
+        if (death.providerFault !== true) continue;
+        if (this._seatContinued(swarm, participant.participantId)) continue;
         const key = `swarm-participant-faulted:${swarm.swarmId}:${participant.participantId}`
           + `:${binding.workerId}:${death.seq}`;
         if (this.store.priorCoordinationEvent(key)) continue;
@@ -2164,6 +2173,13 @@ export class SwarmRuntime {
       } catch { /* the next observation re-derives under the same keys */ }
     }
     if (changed) this._reconcileHostCapacity();
+  }
+
+  /** #614: whether this seat's work is already carried by a successor — any participant that
+   * joined naming it with `resumeFrom`. A continued seat's death composes no second successor. */
+  _seatContinued(swarm, participantId) {
+    return Object.values(swarm.participants ?? {})
+      .some((row) => row.resumeFrom === participantId);
   }
 
   /** Issue #443: the ONE decision a provider-fault death composes — the route it came from, the
