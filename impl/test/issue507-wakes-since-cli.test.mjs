@@ -238,6 +238,6 @@ test('507-c: the argv reaches discovery — never the pre-fix unavailable-verb r
   });
   assert.notEqual(child.status, 0, 'there is no resident to read');
   assert.doesNotMatch(`${child.stderr}`, /cli_command_unavailable/u,
-    'the verb is admitted: pre-fix this argv refused `deployment requires the watch or reincarnate verb`');
+    'the verb is admitted: pre-fix this argv was refused as an unavailable verb');
   assert.match(`${child.stderr}`, /baton: cli_config_invalid:/u, 'the refusal is about the connection');
 });

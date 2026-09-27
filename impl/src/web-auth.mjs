@@ -61,12 +61,11 @@ export class WebSessionStore {
 
   _load() { this._consume(this._lines()); }
 
-  // Issue #487: one deployment's session ledger outlives its incarnations. The successor publishes
-  // and issues its own resident session BEFORE the old incarnation closes and revokes its own, so
-  // the file has two writers inside the handoff window and a store may never treat its in-memory
-  // length as the file's. This ONE line reader is what `_load`, `_append`, `revoke` and `rotate`
-  // all consume through; a stream that does not end in a newline is a write still in flight and is
-  // refused rather than half-applied.
+  // Issue #487: one deployment's session ledger outlives the process that wrote it, and more than
+  // one store can hold the same file at once (a suite's second store, an embedder, a later
+  // process), so a store may never treat its in-memory length as the file's. This ONE line reader
+  // is what `_load`, `_append`, `revoke` and `rotate` all consume through; a stream that does not
+  // end in a newline is a write still in flight and is refused rather than half-applied.
   _lines() {
     const raw = readFileSync(this.file, 'utf8');
     if (raw.length === 0) return [];
@@ -92,9 +91,9 @@ export class WebSessionStore {
   _append(kind, actor, payload) {
     if (!validId(actor)) throw new TypeError('session audit actor required');
     // #487: the row is numbered from the ledger ON DISK, never from this store's memory alone; the
-    // rows the other incarnation appended since the last read are consumed here, so the state this
-    // append judges is the file's. No lock exists: the numbering rule below is what makes a row
-    // numbered from a stale memory refuse at its own line rather than silently renumber a peer.
+    // rows another writer appended since the last read are consumed here, so the state this append
+    // judges is the file's. No lock exists: the numbering rule below is what makes a row numbered
+    // from a stale memory refuse at its own line rather than silently renumber a peer.
     this._consume(this._lines());
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: new Date(this.now()).toISOString(), kind, actor, payload: freeze(clone(payload)) });
     this._appendFile(this.file, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -176,8 +175,8 @@ export class WebSessionStore {
   }
 
   revoke(sessionId, auth = {}) {
-    // #487: judge the state the file holds — a revoke the other incarnation already wrote is not
-    // owed again (a second one would be refused by `_apply` after it had already been appended).
+    // #487: judge the state the file holds — a revoke another writer already wrote is not owed
+    // again (a second one would be refused by `_apply` after it had already been appended).
     this._consume(this._lines());
     const session = this._sessions.get(sessionId);
     if (!session || session.revoked) return freeze({ ok: true, result: 'not_active' });

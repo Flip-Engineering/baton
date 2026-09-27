@@ -78,8 +78,9 @@ for (const row of cliNative) {
 // Issue #519: "served" is the CLI's own DISPATCH authority — the transports `command()` gates on
 // (application-cli.mjs `cliDispatchCommandNames`, the CLI_DISPATCH_TRANSPORTS derivation) — unioned
 // with the WIRE CARD projection above. Keyed on the card alone, a registry CLI row the CLI really
-// dispatches but the card deliberately omits (`deployment.reincarnate`, admitted by #306 lane W)
-// read as "no served implementation", and the third check below fired on a row that was served.
+// dispatches but the card deliberately omits (a lifecycle verb the resident answers without
+// advertising it) read as "no served implementation", and the third check below fired on a row that
+// was served.
 for (const name of cliDispatchCommandNames()) servedCliSet.add(name);
 // What the three projections above still do not carry is served by the CLI spelling
 // surface-resolution.mjs resolves for the operation — a semantic-action verb (`baton run interrupt`

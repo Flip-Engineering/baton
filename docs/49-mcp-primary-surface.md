@@ -1,9 +1,9 @@
-# 49 — MCP as the primary agent surface: a core tool set, one entry story, receipts and wakes, reincarnation survival (issue #314)
+# 49 — MCP as the primary agent surface: a core tool set, one entry story, receipts and wakes (issue #314)
 
 Design direction: 2026-09-18. The core projection, entry points, receipts, wakes, and resident
 reconnection are implemented. Their contracts are covered by
-`impl/test/issue314-core-table.test.mjs`, `issue314-mcp-core-surface.test.mjs`,
-`issue314-lane2-receipts-wakes.test.mjs`, and `issue314-lane3-reincarnation-rebind.test.mjs`.
+`impl/test/issue314-core-table.test.mjs`, `issue314-mcp-core-surface.test.mjs`, and
+`issue314-lane2-receipts-wakes.test.mjs`.
 
 The production application surface exposes eight core tools: `baton_deployment`, `baton_run`,
 `baton_swarm`, `baton_waves`, `baton_knowledge`, `baton_wakes`, `baton_services`, and
@@ -24,12 +24,7 @@ resident bridge, and `impl/scripts/mcp-stdio.mjs <descriptor.json>`, the descrip
 authenticate today, but the guide leads with the descriptor (impl/MCP.md:1, "descriptor-first")
 although the bridge is the one that carries swarms and wakes. Mutations return the whole view
 (run.start/run.stop answer the full outline — `BatonWebApplicationFacade.command`,
-impl/src/mcp-web-bridge.mjs:638-665). And a bridge session is bound to one resident
-incarnation: the connection is discovered ONCE (`connectBatonWebApplication`,
-impl/src/mcp-web-bridge.mjs:695), the socket path embeds the incarnation (docs/48 §1), and a
-reincarnation withdraws that socket — the wake plane then reconnects to the dead address forever
-(`WakeSubscriptions._scheduleReconnect`, impl/src/mcp-web-bridge.mjs:349-355) and every command
-fails.
+impl/src/mcp-web-bridge.mjs:638-665).
 
 ## 0. Rules that do not change
 
@@ -65,8 +60,7 @@ tool counts are stated above; the historical schema byte counts below belong to 
 | run.start/run.stop answer | the whole run outline | impl/src/mcp-web-bridge.mjs:638-665 (`_inspectOutline`) |
 | connection discovery | once, at session open | impl/src/mcp-web-bridge.mjs:695-739 |
 | stale-incarnation refusal exists | `resident_incarnation_mismatch`, retryable | impl/src/application-cli.mjs:357-359, raised at :4780-4784 |
-| wake attachment end is typed | `baton.wake_attachment_closed`, reason `resident_stopping` | docs/48 §3 (#316 b) |
-| `incarnation_changed` wake class | landed, deployment scope, non-terminal | impl/src/wake-stream.mjs:257-273 |
+| wake attachment end is typed | `baton.wake_attachment_closed`, reason `resident_stopping` | #316 b |
 
 ## 2. The core tool set
 
@@ -361,78 +355,6 @@ headless mode for a host without a resident.
 > `mcp-profile-parity.test.mjs`'s RG-10b/RG-10c read the flat counterparts out of that same block
 > and move with it (already tracked under `#156`).
 
-## 6. Reincarnation survival
-
-**Law (e).** A bridge session survives a resident reincarnation (#306): it re-attests against
-the successor transparently, the client learns it through ONE typed notification, and an
-in-flight call at the boundary is retried once — never surfaced as a session-fatal error.
-
-Today the session dies with the incarnation: the connection (socket path + token) is read once
-(impl/src/mcp-web-bridge.mjs:695-739), the socket path embeds the old incarnation (docs/48 §1),
-the old withdraws it at the handoff's end (docs/48 §2 step 7), and the wake plane's reconnect
-loop re-dials that dead address forever (:349-355). The pieces the fix composes already exist —
-discovery, the per-dispatch attestation (:505-519), the retryable stale-incarnation refusal
-(impl/src/application-cli.mjs:357-359), the typed attachment end, the `incarnation_changed`
-class. The design:
-
-1. **The rebind authority.** `BatonWebApplicationFacade` gains a construction option
-   `rediscover: () => Promise<{client, card, session}>` — the same discovery and session
-   establishment as the open path. `createBatonWebMcpServer` supplies it; a facade constructed
-   without one (a test, an embedder) keeps today's behavior exactly.
-2. **Triggers.** Three, all already typed: a command answered `resident_incarnation_mismatch`;
-   the wake attachment ending with `resident_stopping` (or its socket refusing the reconnect);
-   a command whose transport refuses the dead socket. None is a new code.
-3. **Re-attestation.** The successor's session must name the SAME `userId`, carry a SUPERSET of
-   the bound capabilities, and scope the same repoId (the `_reattestSession` comparison,
-   impl/src/mcp-web-bridge.mjs:487-502) — with one relaxation, explicit and scoped to the
-   rebind: the resident-issued `sessionId` is re-minted per incarnation and re-binds. The
-   client-facing principal (the MCP session's own identity) never changes. A successor whose
-   session narrows the grant is not a reincarnation for this session: the rebind refuses
-   `application_unauthorized` and the session ends typed, as an authority change does today.
-4. **The swap is atomic at the dispatch epoch.** The per-dispatch attestation key
-   (:505-519) means a rebind lands BETWEEN dispatches; no dispatch straddles two clients. The
-   wake plane keeps its subscription records and its `_cursor`; only the client it opens
-   against changes, and the resumed attachment reads the SAME ledger from that cursor — a gap
-   of nothing, including the `host.reincarnated` row, which reaches wake subscribers as the
-   landed `incarnation_changed` class.
-5. **ONE typed notification.** After a successful rebind the session emits exactly one
-   `notifications/baton/resident_reincarnated` with `{from, to, cursor}` — a session-lifecycle
-   fact beside `notifications/baton/wake` (impl/src/mcp-northbound.mjs:926), delivered to the
-   client whether or not it holds a subscription, exactly once per handoff. It is NOT a wake
-   class: the wake table is the deployment's vocabulary; this is the session's own authority
-   event.
-6. **An in-flight call during the window** either completes on the old incarnation (the drain
-   serves it — docs/48 §2 steps 2-3) or fails typed retryable; the facade then rebinds and
-   retries ONCE under the SAME derived idempotency key (`_mutationKey`,
-   impl/src/mcp-web-bridge.mjs:522-530): the coordination ledger is the deployment's, shared
-   across incarnations, so a replayed mutation returns the first attempt's receipt and a
-   replayed read is just a read. A second failure propagates as the refusal it is.
-7. **A resident that is DOWN, not reincarnating, changes nothing:** rediscovery finds no
-   successor publication over the same deployment id, calls keep their typed refusals, and the
-   wake plane keeps its bounded reconnect cadence.
-8. The descriptor (headless) mode has no resident and no reincarnation story: the deployment is
-   the process; nothing here applies, and nothing there changes.
-
-> **Landed (2026-09-18, lane 3).** Law (e) is closed, and the design above landed with three
-> recorded deltas. (1) The rebind authority is `openBatonWebConnection(options)` — the SAME
-> exported derivation `connectBatonWebApplication` opens through — and its answer carries a fourth
-> fact, the `incarnation` the connection names, so `from`/`to` are the incarnations themselves and
-> not a digest restated by hand; `createBatonWebMcpServer` supplies it whenever the caller did not
-> hand an explicit connection (an embedder that did has no publication to re-read and keeps
-> today's behavior exactly). (2) Item 2's trigger list is read through ONE classification
-> (`_rebindableFailure` / `_incarnationGone`): the stale-incarnation refusal and the web
-> transport's own refusal from a dispatch, a `resident_stopping` end (or a socket refusing the
-> reconnect) from the plane, and the `incarnation_changed` class — with the #306r reading that a
-> `host.reincarnation_failed` row is NOT a handoff (the predecessor re-took its authority and the
-> publication still names it), and a handoff is never bound twice before the session is back in
-> contact with the incarnation it bound. (3) Item 6's retry is `_onceAfterRebind`: it wraps the
-> dispatches AND the reads a dead transport can meet (`command`, `doctor`, `actionAuthority`,
-> `authorizeReplay`, `wakeSince`), and the idempotency key is derived once, before the retry.
-> Notification method: `notifications/baton/resident_reincarnated` (mcp-northbound.mjs, beside
-> `WAKE_NOTIFICATION_METHOD`). Pinned by `impl/test/issue314-lane3-reincarnation-rebind.test.mjs`
-> (five rows — a staged handoff over a real resident, an applied-once mutation, a surviving
-> subscription resumed from its cursor, the failed-handoff arm, and the method routing).
-
 ## 7. The migration table
 
 **Law (f).** Every tool the current guide documents maps to exactly one core verb, one surface
@@ -523,8 +445,8 @@ and they ride their core verb instead of refusing (§3).
   surface only.
 - **No per-subscription upstream connections, no wake-protocol change** — the #294 plane is
   composed, not extended. The `rediscover` rebind is a client-side authority swap.
-- **No re-parenting of seat worker processes** — docs/48 §7's exclusions stand; a seat's next
-  turn resumes under the successor exactly as after any restart.
+- **No re-parenting of seat worker processes** — a seat's next turn resumes under the resident
+  that serves the deployment, exactly as after any restart.
 
 ## 10. Closed-set owners
 
@@ -569,13 +491,6 @@ receipt/wake mapping lives on the core rows). Watch: `run.start`/`run.stop` outl
 > `baton_surface {verb}` (landed, its manifest row retired), while the inventory renderer switch is
 > BLOCKED on an out-of-scope hunk — §5's landed note names the pair. Pins:
 > `impl/test/issue314-lane2-receipts-wakes.test.mjs`.
-
-**Lane 3 — reincarnation survival.** Files: `impl/src/mcp-web-bridge.mjs` (the `rediscover`
-construction option, the re-attestation relaxation scoped to rebind, the atomic swap, the wake
-plane's client swap, the once-retry), `impl/src/mcp-northbound.mjs` (the
-`notifications/baton/resident_reincarnated` method beside :926). Red rows: **314-e1, 314-e2**.
-Watch: `WakeSubscriptions` invariants (:186+) — the plane outlives the client it opens through;
-the red file's 314-e1 drives exactly this.
 
 **Lane 4 — the entry story.** Files: `impl/MCP.md` (re-lead: bridge first, descriptor as the
 headless mode), `impl/scripts/mcp-web.mjs` (refuse a descriptor argument),

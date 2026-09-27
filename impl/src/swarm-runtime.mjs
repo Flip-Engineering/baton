@@ -1843,18 +1843,11 @@ const SEAT_FACTS_UNRECORDED = Object.freeze({
 });
 
 /** Issue #483: the ONE teaching a bounded watch carries when the incarnation holding it leaves.
- * Composed from the store's own departure facts, so the reason and the successor are the same two
- * values the refusal's `detail` carries — never a second reading of the ledger. */
+ * Composed from the store's own departure facts, so the reason is the same value the refusal's
+ * `detail` carries — never a second reading of the ledger. */
 function watchAbortMessage(departure) {
   if (departure === null) {
     return 'the watch was torn down: the coordination store closed under it; re-arm the watch against a resident that serves this deployment (`baton doctor --check`)';
-  }
-  if (departure.reason === 'incarnation_withdrawn') {
-    const successor = departure.successor === null ? null : departure.successor.incarnation;
-    return 'the watch was torn down: this incarnation is withdrawing'
-      + (successor === null ? '' : ` and the successor incarnation ${successor} takes the deployment over`)
-      + '; re-arm the watch against the successor, or subscribe to the incarnation_changed wake class'
-      + ' (host.reincarnated / host.reincarnation_failed) and wait for it to publish';
   }
   if (departure.reason === 'resident_stopping') {
     return 'the watch was torn down: this resident is stopping; re-arm the watch once a resident serves '
@@ -2815,7 +2808,7 @@ export class SwarmRuntime {
    * follow leg reads it), `advisory` is the typed `{kind: 'base_behind', ...}` row the receipt and
    * the brief name. Both are null when the resident is current, the target is unknown, or no
    * summary is wired. Advisory only: the seat is admitted regardless, and the root decides whether
-   * to reincarnate first. */
+   * to restart the resident on the target first. */
   _baseBehind() {
     let summary = null;
     try { summary = typeof this.deploymentSummary === 'function' ? this.deploymentSummary() : null; }
@@ -2839,7 +2832,7 @@ export class SwarmRuntime {
       advisory: Object.freeze({
         kind: 'base_behind', served: served.commit,
         target: Object.freeze({ ref, sha: targetSha }), count,
-        next: 'baton deployment reincarnate <target>',
+        next: 'restart the resident on the target commit (`baton serve`)',
       }),
     };
   }
@@ -5035,16 +5028,15 @@ export class SwarmRuntime {
       const swarm = this._swarm(args.swarmId);
       this._permit(swarm, principal, context, 'read');
       // Issue #483: this incarnation may be leaving WHILE the watch is held. The store folds the
-      // deployment's own `host.*` rows as they land (a live stop's first act, the release that
-      // ends a handoff's authority), so re-reading the fact at every wake — the departure row is
-      // itself an append, so the wait returns immediately — is what lets the refusal cross
-      // typed while the resident is still answering, instead of being answered by the transport
-      // that closed first. `afterSeq` is the caller's own re-arm cursor, carried so the watcher
-      // need not remember it.
+      // deployment's own `host.*` rows as they land (a live stop's own acts), so re-reading the
+      // fact at every wake — the departure row is itself an append, so the wait returns
+      // immediately — is what lets the refusal cross typed while the resident is still answering,
+      // instead of being answered by the transport that closed first. `afterSeq` is the caller's
+      // own re-arm cursor, carried so the watcher need not remember it.
       const departure = this._incarnationDeparture();
       if (departure !== null) {
         refuse(watchAbortMessage(departure), 'coordination_wait_aborted', {
-          reason: departure.reason, successor: departure.successor, afterSeq,
+          reason: departure.reason, afterSeq,
         });
       }
       const members = Object.values(swarm.participants);
@@ -5113,14 +5105,13 @@ export class SwarmRuntime {
       } catch (error) {
         // Issue #483: the store's bare abort is the ONE error this loop owns. A wait torn down
         // without a live departure on the ledger (a bare runtime close, an embedding that closed
-        // the store under the watch) crosses with `store_closed`; one torn down by a stop or a
-        // handoff carries that departure's own reason and successor — the same facts the check
-        // above reads, because the abort can arrive before the departure row is re-read.
+        // the store under the watch) crosses with `store_closed`; one torn down by a stop carries
+        // that departure's own reason — the same fact the check above reads, because the abort can
+        // arrive before the departure row is re-read.
         if (error?.code !== 'coordination_wait_aborted') throw error;
         const departure = this._incarnationDeparture();
         refuse(watchAbortMessage(departure), 'coordination_wait_aborted', {
           reason: departure === null ? 'store_closed' : departure.reason,
-          successor: departure === null ? null : departure.successor,
           afterSeq,
         });
       }
@@ -8706,9 +8697,9 @@ export class SwarmRuntime {
             ...(routeProbe === null ? {} : { kind: 'probe', probe: routeProbe }),
           },
           // #306 (3) and (lane B): the seat is admitted, and the root is TOLD when this resident
-          // serves a commit the target branch has moved past — so it chooses to reincarnate
-          // first instead of discovering a stale base on the lane's capture. One derivation, two
-          // projections: the landed `baseBehind`, and the typed `advisory` the brief names.
+          // serves a commit the target branch has moved past — so it restarts the resident on the
+          // target first instead of discovering a stale base on the lane's capture. One derivation,
+          // two projections: the landed `baseBehind`, and the typed `advisory` the brief names.
           baseBehind: baseFacts.baseBehind, advisory: baseFacts.advisory,
           routes: routeSelection?.routes ?? null,
           // #358: the spawn's receipt — {bytes, spilled, spill} for the objective the seat was

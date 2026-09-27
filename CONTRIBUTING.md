@@ -64,11 +64,6 @@ change:
 5. Before trusting the new process, run one `baton swarm recruit` on a low-cost route. A successful
    `baton run` does not prove that recruiting a worker still works; check recruiting directly.
 
-[Issue #306](https://github.com/Flip-Engineering/baton/issues/306) and
-[docs/48](docs/48-reincarnation-in-place.md) describe reincarnation: replacing a running resident's
-process in place, without the manual stop-and-relaunch sequence above, while workers stay attached.
-Where it applies, prefer `baton deployment reincarnate <commit-ish>` over the manual restart.
-
 ## The self-hosted development loop
 
 Since 2026-09-13, every change to this repository has been made by a worker recruited on a running

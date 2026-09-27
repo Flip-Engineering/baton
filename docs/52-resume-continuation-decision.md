@@ -3,7 +3,7 @@
 Status: WITHDRAWN, 2026-09-26. The mechanism this document designed and the runtime landed — a
 resume-from recruit that recorded a continuation question and parked the recovered seat until its
 orchestrator answered — was removed from the runtime by #572.
-Related: #306/docs/48 (reincarnation — the interruption side), #364 (`participant_runtime_lost`),
+Related: #364 (`participant_runtime_lost`),
 #385/#452/#453 (the resume-from carry), #337 (parked guidance), #443 (the reroute decision and its
 policy row), #273 (guidance delivery semantics), #332/#350/#353 (seat settlement).
 

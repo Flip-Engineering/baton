@@ -27,7 +27,7 @@ the human channel is stderr and human-rendered views, machine channels carry no 
 | S5 | MCP server identity and instructions | `impl/src/mcp-northbound.mjs:2314`, `production-mcp-convergence.mjs:525` | MCP `initialize` result | harness client UIs and models |
 | S6 | MCP tool descriptions | `impl/src/mcp-core-tools.mjs`, `mcp-northbound.mjs` | MCP `tools/list` | harness client UIs and models |
 | S7 | MCP tool result envelopes | `mcp-northbound.mjs:289` | MCP `tools/call` results | models |
-| S8 | MCP notifications | `mcp-northbound.mjs:956,962` | `notifications/baton/wake`, `notifications/baton/resident_reincarnated` | MCP clients |
+| S8 | MCP notifications | `mcp-northbound.mjs:956` | `notifications/baton/wake` | MCP clients |
 | S9 | Wake stream frames | `impl/src/wake-stream.mjs` | CLI follow (JSON per row), SSE, WebSocket | operators, scripts, clients |
 | S10 | Harness wake delivery | `impl/src/wake-delivery.mjs` | per-harness mechanism | operator's own harness sessions |
 | S11 | Seat briefs | `impl/src/adapter.mjs` `renderBrief`, `runtime-briefing.mjs`, `swarm-runtime.mjs` | the harness's prompt channel | recruited seats |
@@ -258,10 +258,9 @@ severity or state for a human reader — a client UI rendering the text block sh
 
 ### S8 — MCP notifications
 
-Exactly two notification methods leave the server: `notifications/baton/wake` (a wake frame per
-matching ledger row, for each subscription the session opened) and
-`notifications/baton/resident_reincarnated` (once, when the bridge re-binds to a successor
-incarnation, #306/#314). The wake auto-subscription at `initialize` is opt-in (`autoWake`,
+One notification method leaves the server: `notifications/baton/wake` (a wake frame per matching
+ledger row, for each subscription the session opened). The wake auto-subscription at `initialize`
+is opt-in (`autoWake`,
 mcp-northbound.mjs:2188). No standard MCP notification method is emitted: no
 `notifications/progress`, no `notifications/message` (logging), no `notifications/tools/list_changed`.
 

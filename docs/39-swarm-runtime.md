@@ -272,8 +272,6 @@ of the `--since` axis, `--kinds`/`--swarms`/`--participants` are working spellin
 three. `baton deployment watch` without `--follow` refuses `cli_command_unavailable` and names
 this verb.
 
-**Incarnation changes wake too (#306, 2026-09-18).** `incarnation_changed` is a deployment-scope wake class keyed on `host.reincarnated {from: {incarnation, commit}, to: {incarnation, commit}, predecessorExited}`; it is not terminal — the watcher's act is to re-read the view, because the rows and the attachment it held came from the predecessor incarnation. The handoff's own rows (`host.reincarnation_requested`, `host.successor_started`, `host.successor_published`, `host.publication_withdrawn`, `host.reincarnation_failed`) are durable and readable on the deployment ledger like the #351 stop rows.
-
 **A seat's brief carries the wake events since its lineage's reference point (#529, 2026-09-20;
 first recruits and the MCP path, 2026-09-21).** When a seat is recruited with `--resume-from`, the
 brief's `## Swarm situation` section carries a "Recent wake events" block listing the swarm-scoped
@@ -651,8 +649,8 @@ answer carries `baseBehind {served, branch, target: {ref, commit}, behind}` when
 serves a commit its target branch has moved past — read from the deployment summary's own
 `served` row (docs/43) — and `null` when the resident is current, the target is unknown (a
 detached checkout with no remote), or no summary is wired. Advisory, never a refusal: the seat
-is admitted regardless; the root chooses whether to reincarnate first instead of discovering a
-stale base on the lane's capture.
+is admitted regardless; the root chooses whether to restart the resident on the target first instead
+of discovering a stale base on the lane's capture.
 
 **A refused recruit leaves no phantom, and a retry resumes (#308).** A recruit whose run admission
 refuses rolls its join back with a durable `swarm.participant_left {reason: 'recruit_refused',
@@ -965,7 +963,7 @@ page the root or sub-orchestrator with the resume spelling. Both runtime-recorde
 caller submission. Until #453
 lands, "what was carried" can be an empty list for a predecessor whose snapshot held files.
 
-## The stop names what it released, the open names its checkpoint, the resident reincarnates (issues #450, #449, #306, 2026-09-18)
+## The stop names what it released, the open names its checkpoint (issues #450, #449, 2026-09-18)
 
 **Every stop wait is a row (#450, #437).** A kill-confirmed worker's capacity reservation is released at the seam that observes the confirmation (`drain.resource_released {workerId, resource, how: 'worker_gone'}`); a stop whose fleet drain has no targets still releases and names every reservation whose worker is gone, and `host.stopped` carries them verbatim as `released: [{workerId, resource, how}]` beside `stages`. A wait past the first second — the run-stop leg included — is a `host.stop_waiting` row naming `{resource, reaper, since}`; a participant count the ledger refuses (#437) rides the stop rows as a named refusal, never a silent deadline. Observed cause of the 222-second silence on 2026-09-18: a reservation left by a worker killed two minutes earlier.
 **A stop that abandons a worker still ends with its outcome (#472).** The two bounded deadlines a stop spends per worker (#467) end with the worker named abandoned — and the stop converges anyway: the drain dispositions an abandoned target `alreadyTerminal` (nothing is left for it to do), the fence (`closeAuthority`) and the deployment's capacity quiescence read past the reservation such a worker still holds (`coordinator.abandonedCapacityReservations`, named on the drain receipt as `abandonedReservations`), and the writer-lease release therefore runs and mints `host.stopped` where the ledger used to go silent. The row carries those workers as their OWN list — `abandoned: [{workerId, attempt, alive}]`, the bounded attempt each reached and the liveness the stop observed — beside `released` and never inside it (an abandonment is not a release), empty and never absent for a stop that abandoned nobody; the stop line says it too (`baton serve: host.stopped stopped_after_deadline at <at> … (abandoned 1: <worker> attempt 2, alive null)`). The resident's exit state is `closed` when the named abandonment is the only remainder left and `closed_degraded` only when something ELSE stayed unreleased (a transport that did not close). A drain whose fleet holds nothing but abandoned workers still runs its historical reconciliation, and a refusal that names that step rides the stop as `on: 'reconciliation'` — the deployment answers it with the same bounded convergence retry the worker wait uses, never with a kill.
@@ -974,20 +972,16 @@ lands, "what was carried" can be an empty list for a predecessor whose snapshot 
 
 **The checkpoint is bounded by its own cost (#449).** The release and the deferred housewriting write judge a projection checkpoint by its serialized bytes against `checkpoint.projection_bytes` (a replay frame's own byte budget), never by the ledger's row count; a resident whose projection exceeds that ceiling skips the stop-time write by design and relies on the open's rewrite. The open distinguishes `stale_shape` (the envelope's projection-shape digest or served commit differs from this build: full replay, then a fresh checkpoint written so the next open is bounded) from `corrupt` (an envelope invariant failed, #397); leftover `.projection.checkpoint.<uuid>` temp files are swept and named on the open row.
 
-**A resident reincarnates in place (#306, part 1).** `deployment.reincarnate {target}` (`baton deployment reincarnate <commit-ish>`, `baton serve --reincarnate <commit-ish>`) is a drain-restart: the old incarnation records `host.reincarnation_requested`, closes new-turn admission, waits for in-flight one-shot turns with the #351 stop rows, starts the successor over the same deployment (`host.successor_started {pid, incarnation, argv, log}` — the successor adopts the incarnation the old minted, `argv` is the spawn spelling a reader greps for, and `log` is the path of the successor's OWN serve log, `resident/serve.<incarnation>.log` (#468; the old's tee of the successor's stderr covers the handoff window only). Every resident stream is guarded (#468): a socket, SSE or stdio failure records `host.stream_error {stream, code, at}` and a worker pipe failure the seat's `lifecycle.pipe_error`, never a throw to `process`; the last-resort trigger row carries `code` and `stackHead`), records the publication wait as a durable `host.stop_waiting {wait: {on: 'successor_publication', entries: [{resource, reaper: 'successor', since}]}}` row before releasing the writer lease last so the successor's open can take it, and withdraws its own publication only after observing the successor's (`host.successor_published`, `host.publication_withdrawn`, then the successor's `host.reincarnated {from, to, predecessorExited}`). After the withdrawal the old incarnation releases the successor's process handle and exits by itself — the last tail stage `incarnation_exit` (#461); a signal to an already-withdrawn incarnation drains nothing (it answers 0 participants); a successor that dies before publishing leaves `host.reincarnation_failed {step, cause}` and the old incarnation keeps serving. Participants' rows, checkouts, contracts, parked guidance and claims survive; their next turn runs under the successor. Refusals: `reincarnation_target_unreachable`, `reincarnation_in_flight`, `reincarnation_checkout_held`, `reincarnation_same_commit`; the one bound is `host.reincarnation.wait_ms`. The doctor's `served` block names `target {ref, sha}`, `behind {count, commits}` and `upToDate`; a recruit on a behind resident is admitted with the typed `advisory {kind: 'base_behind', …}` and its brief's `## Base` line; the `incarnation_changed` wake class keys on `host.reincarnated`. The web-lane admission and the canonical operation row for the verb are the last wiring (lane ds-306w).
-
 **A resident under a declared parent is never an orphan (#471).** `baton serve` reads
 `BATON_SERVE_PARENT_PID` — set by the fixture helper
 (`impl/test/fixtures/fixture-resident.mjs`) and by nothing else — and watches that pid with the
-same liveness primitive the successor uses for its predecessor (`reincarnationProcessAlive`) at the
-same 100 ms poll `#watchPredecessorExit` uses. When the pid is gone the resident takes the ordinary
+same liveness primitive the stop's worker read uses (`processIsAlive`) at a 100 ms poll. When the
+pid is gone the resident takes the ordinary
 stop path — the durable request row first, then the same `deployment.close()` a signal runs — and
 the ledger says why: `host.stop_requested {trigger: 'parent_exited', parentPid}` then
 `host.stopped`. Nothing else changes: a resident started without the variable behaves exactly as
-before, a reincarnation successor inherits the declaration (and the predecessor's process group),
-so a fixture successor ends with the runner too, and the fixture helper spawns each resident in its
-own group and ends the group on `t.after`, on the process `exit` event and on
-SIGTERM/SIGINT/SIGHUP.
+before, and the fixture helper spawns each resident in its own group and ends the group on
+`t.after`, on the process `exit` event and on SIGTERM/SIGINT/SIGHUP.
 
 **The situation section reads one derivation (#441 lane C).** The brief's `## Swarm situation` renders peers-now and `N contributions recorded on this swarm` from the participants fold and the ONE exported contributions derivation the `contributions` projection and `run.contributions.read` share; `run.peers.read` and the brief's peer rows share `renderPeerNowLine`. The projection's contribution rows carry the derivation's `files`, `decision` and `reviewState` beside the fold's body.
 
