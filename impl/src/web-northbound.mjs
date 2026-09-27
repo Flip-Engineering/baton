@@ -144,11 +144,10 @@ const WAVE_DOT_ARG_FIELDS = Object.freeze(Object.fromEntries(
 // (`baton deployment reincarnate <commit-ish>`, `baton serve --reincarnate <commit-ish>`) send the
 // underscore transport through this table, so without these rows the resident answers
 // 'unsupported command' and neither spelling reaches the verb. Its capability classes are the
-// lifecycle pair — `emergency_stop`, the class the sibling lifecycle act (application.shutdown)
-// requires and which a seat, bridge or worker session does not hold, beside the `observe` class
-// every admitted row carries — and its whole argument authority is the closed {target} set
-// (validateEnvelope skips validateApplicationCommandArgs for direct ports; the deployment resolves
-// the commit-ish itself).
+// lifecycle pair — `emergency_stop`, the class a seat, bridge or worker session does not hold,
+// beside the `observe` class every admitted row carries — and its whole argument authority is the
+// closed {target} set (validateEnvelope skips validateApplicationCommandArgs for direct ports;
+// the deployment resolves the commit-ish itself).
 const DEPLOYMENT_WEB_ROWS = Object.freeze([
   ['deployment.doctor', Object.freeze(['observe']), Object.freeze([])],
   ['deployment.reincarnate', Object.freeze(['emergency_stop', 'observe']), Object.freeze(['target'])],

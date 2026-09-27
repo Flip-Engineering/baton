@@ -805,28 +805,11 @@ export class BatonWorkstream {
     });
   }
 
-  notify(message, options = {}) {
-    exactOptions(options, new Set(['delivery']), 'workstream notify');
-    return this.#run._command('run.workstream.notify', {
-      runId: this.#run.id, role: this.role, message,
-      ...(this.generation === null ? {} : { generation: this.generation }),
-      ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
-    });
-  }
 
   result() { return this.episode().result(); }
 
   episode() { return new BatonEpisode(this.#run, this.role, this.generation); }
 
-  stop(reason = this.role === 'work'
-    ? 'Operator requested Run stop.'
-    : `Stop and reap the ${this.role} workstream.`) {
-    if (!nonempty(reason)) throw clientError('Workstream stop reason is invalid');
-    return this.#run._command('run.workstream.stop', {
-      runId: this.#run.id, role: this.role, reason,
-      ...(this.generation === null ? {} : { generation: this.generation }),
-    });
-  }
 
   help(depth = 'outline') { return this.#run.help('run.workstreams', depth); }
 }
@@ -1078,6 +1061,10 @@ export class BatonRun {
     if (!this.#last?.outline) await this.inspect();
     const current = this.#last;
     if (options.signal?.aborted || current?.terminal) return current;
+    // A manual-result Run ends at result_ready (recorded as the legacy `work_completed`): the Run
+    // hands its result to the caller and no action on this surface continues it, so drive()
+    // returns there rather than long-polling the continuation the Run keeps offering.
+    if (canonicalRunPhase(current?.outline?.phase) === 'result_ready') return current;
 
     const actions = outlineActions(current);
     if (current?.outline?.attention?.state === 'required'
@@ -1152,21 +1139,10 @@ export class BatonRun {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow Candidate selection is invalid');
     return this.act('select_candidate', { role, reason });
   }
-  stopMember(role, reason = 'Stop and reap this active Workflow member.') {
-    if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow member stop is invalid');
-    return this.act('stop_member', { role, reason });
-  }
-  adopt(reason) {
-    if (reason !== undefined && !nonempty(reason)) throw clientError('Run adoption reason is invalid');
-    return this.act('adopt_result', reason === undefined ? {} : { reason });
-  }
   revise(reason) {
     if (reason !== undefined && !nonempty(reason)) throw clientError('Workflow revision reason is invalid');
     return this.act('revise_candidate', reason === undefined ? {} : { reason });
   }
-  export() { return this.act('export_result'); }
-  review(inputs) { return this.act('semantic_review', inputs); }
-  integrate(options = {}) { return this.apply(options); }
 
   candidates() { return this.inspect({ depth: 'section', section: 'candidates' }); }
 
@@ -1196,40 +1172,6 @@ export class BatonRun {
     return this.#last;
   }
 
-  async sendFeedback(role, feedback) {
-    if (!nonempty(role) || (typeof feedback !== 'string'
-      && (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)))) {
-      throw clientError('Workflow feedback is invalid');
-    }
-    this.#last = await this.#application.command('run.feedback', {
-      runId: this.id, role, feedback,
-    });
-    return this.#last;
-  }
-
-  async apply(options = {}) {
-    exactOptions(options, new Set(['strategy', 'reason']), 'apply');
-    let descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
-    if (!descriptor) {
-      await this.inspect();
-      descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
-    }
-    if (!descriptor) {
-      throw clientError('Run has no adopted result available to apply', 'application_action_unavailable');
-    }
-    const advertised = Array.isArray(descriptor.choices) ? descriptor.choices : [];
-    const strategy = options.strategy
-      ?? descriptor.inputSchema?.properties?.strategy?.default
-      ?? (advertised.includes('ff-only') ? 'ff-only' : advertised[0]);
-    const reason = options.reason
-      ?? descriptor.inputSchema?.properties?.reason?.default
-      ?? 'Apply the adopted verified result.';
-    if (!advertised.includes(strategy) || !nonempty(reason)) {
-      throw clientError('Run apply options are outside the advertised integration authority',
-        'application_action_input_invalid');
-    }
-    return this.act(descriptor.actionId, { strategy, reason });
-  }
 
   async answer(requestId, answer) {
     if (!nonempty(requestId) || !answer || typeof answer !== 'object' || Array.isArray(answer)) {
@@ -1573,14 +1515,6 @@ export class BatonClient {
   get waves() {
     return Object.freeze({
       start: (options = {}) => createWave(this, options),
-      // 93B rule 2: attach-and-harvest over a prior wave's member runs. The callback mints
-      // the exactly-once wave.driver_detached receipt through the run.inspect side gate AND
-      // proves each member's binding (application refuses a waveId mismatch with a typed code).
-      attach: (waveId, members, options = {}) => attachWave(
-        this, waveId, members,
-        (runId) => this.#application.command('run.inspect', { runId, mintWaveDetached: true, waveId }),
-        options?.repoRoot ?? null,
-      ),
       // #170 (D4): the read-only compile seam — a wavefile text lowers to the closed IR object
       // baton.recipes.runWorkflow accepts (the four-surface seam's embedded leg).
       compile: (text, options = {}) => this.#application.command('waves.compile', {

@@ -29,8 +29,6 @@
 //   F8  shallow-greenability — A1-7 pins the FULL 26-key insertion-order set (grammar-m3 M3-8), not
 //       a length check; the row's deploymentId value is asserted against the known host id in
 //       A2-1/A2-3/A3-1/A4-1 so a hardcoded constant cannot pass.
-//   F9  missing row — A2-7 attaches to a started wave (BatonClient.waves.attach matches by objective)
-//       and asserts exactly one wave.started record and exactly one registry row.
 //   F10 missing row — A6-7 drives waves_send {} / {runId:'bad id'} and asserts
 //       application_wave_member_action_invalid on the embedded throw AND the web body post-admission.
 //   F11 missing row — A5-5 runs the CLI parse→dispatch→render pipeline (parseBatonCli + runBatonCli)
@@ -77,7 +75,7 @@
 //         or drops/reorders a row (breaks grammar-m3 M3-8)
 //
 // §B Registry (stage: record-shape-missing / registry-read-missing / malformed-refusal-missing /
-//    wave-closed-fold-missing / attach-duplicate-missing)
+//    wave-closed-fold-missing)
 //   A2-1  wave.started carries the extended projection payload {deploymentId, idempotencyKey,
 //         roster: [{role, route, scope}], waveId} with deploymentId === host.deploymentId (D2.2/F1/F3).
 //         (RED — no deploymentId at HEAD)
@@ -91,15 +89,13 @@
 //         throw). (RED — recordDriver does not fold at HEAD, so no throw)
 //   A2-6  OQ1 — the close side pins a TOP-LEVEL wave.closed fold branch (B1), beside
 //         context.pack_minted. (RED source pin — zero wave.closed references at HEAD)
-//   A2-7  attach is exactly-once — facade start + attach keeps one wave.started record and one
-//         registry row (F9). (RED — the registry read is absent at HEAD)
 //
 // §C waves.list shape (§4 drift)
 //   A3-1  waves.list rows are exactly {closedAtEventSeq, deploymentId, roster, startedAtEventSeq,
 //         state, waveId} with deploymentId === host.deploymentId, paged ≤16 with {cursor, nextCursor};
 //         per-member live reads. (RED)
-//   A3-2  §4 — baton_waves_list lands in the pinned MCP enumeration (33 → 34, 0-based position 15
-//         immediately after baton_waves_stop at 14). (RED — the pinned list is 33 at HEAD)
+//   A3-2  §4 — baton_waves_list lands in the pinned MCP enumeration immediately after
+//         baton_waves_stop, with baton_waves_run after it; the family stays contiguous.
 //
 // §D Liveness (stage: registry-read-missing)
 //   A4-1  every waves.list row reads local by construction (D3/B3 — the registry is per-deployment
@@ -138,7 +134,7 @@
 //   A6-7  F10 — waves_send {} / {runId:'bad id'} is refused application_wave_member_action_invalid on
 //         the embedded throw AND the web body post-admission. (RED — the web verb is not admitted at HEAD)
 //
-// §4 drift OWNED (A3-2): the same +1 row (baton_waves_list at 0-based position 15, count 33 → 34)
+// §4 drift OWNED (A3-2): the same +1 row (baton_waves_list beside the waves family)
 // must land in the four pinned tool enumerations — mcp-reflex-surface.test.mjs:201-213,
 // phase16-mcp-northbound.test.mjs:92-105, phase67-progressive-agent-experience.test.mjs:648-656,
 // phase72-kimi-orchestrator-mcp.test.mjs:298-306 — and the /v1/application-card advertisement
@@ -336,7 +332,7 @@ const member = (role, objective) => ({
   report: `reports/${role}.md`,
 });
 
-// Direct-port member shape (waves.start / waves_attach): the closed `exact` route object.
+// Direct-port member shape (waves.start): the closed `exact` route object.
 const memberExact = (role, objective) => ({
   role, objective, exact: { harness: 'mock', model: 'mock-model', effort: 'low' },
   scope: ['reports/**'],
@@ -583,8 +579,6 @@ test('A1-7 PIN: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the 1
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, verb), false,
       `${verb} stays a WEB_DIRECT_PORT_COMMANDS direct port (application.mjs:12329-12332), never a table row`);
   }
-  assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, 'waves.attach'), true,
-    'waves.attach stays the one table-registered wave row');
 });
 
 // ===========================================================================
@@ -713,24 +707,6 @@ test('A2-6 OQ1: the close side pins a TOP-LEVEL wave.closed fold branch beside c
     'stage: wave-closed-fold-missing — at HEAD the coordination store has zero wave.closed references; B1 folds event.kind === "wave.closed" at the TOP LEVEL of _apply, beside context.pack_minted (coordination-store.mjs:8727-8731), consuming #103\'s actual record');
 });
 
-test('A2-7 F9: attach is exactly-once — the facade start + attach keeps one wave.started record and one registry row', async (t) => {
-  const host = await hostFixture(t);
-  const objective = 'write the alpha report';
-  const started = await host.baton.waves.start({ repoRoot: host.repo, idempotencyKey: 'a2-7', members: [member('alpha', objective)] });
-  assert.equal(driverEvents(host.driver, 'wave.started', started.waveId).length, 1,
-    'the facade start mints wave.started once');
-  // attachWave binds EXISTING runs by objective (wave.mjs:268-274) — re-attaching the same member
-  // must not re-mint the wave.
-  const attached = await host.baton.waves.attach(started.waveId, [member('alpha', objective)], { repoRoot: host.repo });
-  assert.ok(attached !== null && typeof attached === 'object', 'attach resolves over the matching objective');
-  assert.equal(driverEvents(host.driver, 'wave.started', started.waveId).length, 1,
-    'stage: attach-duplicate-missing — attachWave matches by objective and never re-mints wave.started (F9: exactly-once-on-attach, application.mjs:10889,11441)');
-  const listed = await readWavesList(host);
-  assert.ok(listed !== null, 'the registry read resolves');
-  assert.equal(listed.waves.filter((w) => w.waveId === started.waveId).length, 1,
-    'exactly one registry row — attach never double-lists the wave');
-});
-
 // ===========================================================================
 // §C — waves.list shape + §4 drift (A3)
 // ===========================================================================
@@ -771,7 +747,7 @@ test('A3-1: waves.list rows carry the exact registry shape and page ≤16 with {
   assert.equal(pageTwo.nextCursor, null, 'the last page closes the cursor');
 });
 
-test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)', async (t) => {
+test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration immediately after baton_waves_stop, with baton_waves_run after it (#114)', async (t) => {
   const host = await hostFixture(t);
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
@@ -780,10 +756,10 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   // waves family's positions inside it and never a total.
   assert.deepEqual([...names].sort(), [...mcpApplicationToolNames()].sort(),
     'the live MCP enumeration is exactly the ordinary-surface derivation');
-  assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
-  assert.equal(names[15], 'baton_waves_list',
-    'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
-  assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
+  assert.equal(names[names.indexOf('baton_waves_stop') + 1], 'baton_waves_list',
+    'baton_waves_list sits immediately after baton_waves_stop — the §4 pinned insertion point');
+  assert.equal(names[names.indexOf('baton_waves_list') + 1], 'baton_waves_run',
+    'baton_waves_run (#114) follows baton_waves_list — the waves family stays contiguous');
   assert.ok(mcpApplicationToolNames().includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

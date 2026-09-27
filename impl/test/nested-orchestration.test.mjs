@@ -58,8 +58,8 @@
 //   P2  Lease-epoch TTL: lease.expiresAt === issuedAt + leaseTtlMs (min with session TTL);
 //       the lease refuses with run_orchestrator_lease_expired past the epoch — all under an
 //       injected mutable clock, no wall-clock reads.
-//   P3  Recursive-session gate constancy: a sessionAuthority context keeps runs.list and
-//       run.workstream.stop behind run_orchestrator_command_forbidden and keeps
+//   P3  Recursive-session gate constancy: a sessionAuthority context keeps runs.list
+//       behind run_orchestrator_command_forbidden and keeps
 //       application.help admitted (the read lane the gate must never take down).
 //   P4  Transport run_stop constancy: owner (emergency_stop) → 200; non-lease child without
 //       emergency_stop → 403 forbidden. Both stay constant; the carve-out (R4) is narrow.
@@ -552,11 +552,6 @@ test('P3 PIN: the recursive-session gate keeps behind-gate commands forbidden an
   // runs.list is NOT in the gate allowlist: a sessionAuthority context keeps it forbidden.
   const listRefusal = await facadeError(() => fx.application.command('runs.list', {}, childPrincipal, ctx));
   assert.equal(listRefusal?.code, 'run_orchestrator_command_forbidden');
-  // run.workstream.stop likewise — the effect allowlist is exactly {run.start, run.stop}.
-  const workstreamRefusal = await facadeError(() => fx.application.command(
-    'run.workstream.stop', { runId: 'run:p3-parent', role: 'review' }, childPrincipal, ctx,
-  ));
-  assert.equal(workstreamRefusal?.code, 'run_orchestrator_command_forbidden');
   // application.help IS a gate allowlist read lane: the same sessionAuthority context serves it.
   const help = await fx.application.command('application.help', {}, childPrincipal, ctx);
   assert.ok(help && typeof help.schemaVersion === 'number', 'the help read lane survives the gate');

@@ -95,8 +95,8 @@ export function servedCliOrdinaryKeys() {
       .find((op) => op.key === canonical);
     if (!operation) continue;
     // The table's Example column is the row's own dispatch shape: a semantic-action verb
-    // (run.feedback, run.interrupt, run.select, …) compiles to `{kind:'semantic-action'}` and is
-    // taught by its action kind, not by this command table. Only command-shaped rows belong here.
+    // (run.interrupt, run.select, …) compiles to `{kind:'semantic-action'}` and is taught by its
+    // action kind, not by this command table. Only command-shaped rows belong here.
     const witness = resolveOperationSurfaces(operation).witnesses.cli;
     if (witness?.kind !== 'command') continue;
     keys.add(canonical);

@@ -123,10 +123,9 @@ export function cliDispatches(name) {
 // is the CS-3 host-local verb; the set is the resolution witness for a canonical row claiming
 // the cli surface without a web transport (surface-resolution.mjs).
 export const HOST_LOCAL_CLI_COMMANDS = new Set(['run.debug']);
-// CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
-// run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
-// CLI web-client whitelist. Host-local-only verbs stay out: run.debug (CS-3) and
-// application.context_eval (parse-time refusal naming embedded/MCP paths).
+// CS-2 (control-surface v2): the web-admitted verbs (run.episode, run.workstreams; run.result
+// folds to run.episode) join the CLI web-client whitelist. Host-local-only verbs stay out:
+// run.debug (CS-3) and application.context_eval (parse-time refusal naming embedded/MCP paths).
 // docs/36 §7.1 / §9 M5 — the CLI's wait/follow stop set is the canonical settled/terminal
 // vocabulary (legacy `work_completed` resolves to `result_ready`). Every membership check
 // canonicalizes its input, so a still-legacy view phase and its canonical spelling behave alike.
@@ -4212,39 +4211,7 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
-    if (action !== 'attach') {
-      throw cliError('expected waves list, progress, start, send, stop, attach, run, or compile', 'cli_command_unavailable');
-    }
-    const waveId = id(args.shift(), 'wave ID');
-    const membersRaw = take(args, '--members');
-    const timeoutRaw = take(args, '--timeout');
-    const repoRoot = take(args, '--repo-root');
-    noRemainder(args);
-    if (!waveId || typeof waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(waveId)) {
-      throw cliError('wave ID is invalid');
-    }
-    if (membersRaw === null) throw cliError('--members is required');
-    let members;
-    try { members = JSON.parse(membersRaw); }
-    catch { throw cliError('--members must be JSON'); }
-    if (!Array.isArray(members)) {
-      throw cliError('--members must be a JSON array');
-    }
-    const timeoutMs = timeoutRaw === null ? null : Number(timeoutRaw);
-    if (timeoutRaw !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) {
-      throw cliError('--timeout is invalid');
-    }
-    return {
-      kind: 'command',
-      name: 'waves.attach',
-      args: {
-        waveId,
-        members,
-        ...(timeoutMs === null ? {} : { timeoutMs }),
-        ...(repoRoot === null ? {} : { repoRoot }),
-      },
-      idempotencyKey,
-    };
+    throw cliError('expected waves list, progress, start, send, stop, run, or compile', 'cli_command_unavailable');
   }
   // R1/R4 (row-conformance-core / D1): `baton run watch RUN_ID` — the documented run.watch CLI
   // verb (registry example 'baton run watch RUN_ID', inputSchema {runId, channel?, recipient?,
@@ -4513,23 +4480,6 @@ export function parseBatonCli(rawArgs) {
       ...(rawWait === null ? {} : { waitMs: duration(rawWait) }),
     }, idempotencyKey };
   }
-  if (action === 'notify') {
-    const role = id(args.shift(), 'workstream role');
-    const message = args.shift();
-    const rawGeneration = take(args, '--generation');
-    const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
-      .filter(([name]) => flag(args, name));
-    noRemainder(args);
-    const generation = rawGeneration === null ? null : Number(rawGeneration);
-    if (!nonempty(message) || modes.length > 1
-      || (generation !== null && (!Number.isSafeInteger(generation) || generation < 1))) {
-      throw cliError('workstream notification is invalid');
-    }
-    return { kind: 'command', name: 'run.workstream.notify', args: {
-      runId, role, message, delivery: modes[0]?.[1] ?? 'nudge',
-      ...(generation === null ? {} : { generation }),
-    }, idempotencyKey };
-  }
   if (['progress', 'events', 'output'].includes(action)) {
     const follow = flag(args, '--follow');
     const recipient = action === 'output' ? take(args, '--to') : null;
@@ -4629,10 +4579,6 @@ export function parseBatonCli(rawArgs) {
       if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) throw cliError('action inputs must be an object', 'cli_action_inputs_invalid');
     }
     return { kind: 'command', name: 'run.act', args: { runId, actionId, inputs }, idempotencyKey };
-  }
-  if (action === 'recover') {
-    noRemainder(args);
-    return { kind: 'command', name: 'run.recover', args: { runId }, idempotencyKey };
   }
   if (action === 'status') {
     const wait = take(args, '--wait');
@@ -4759,47 +4705,6 @@ export function parseBatonCli(rawArgs) {
       kind: 'semantic-action', actionKind: 'revise_candidate', runId,
       inputs: { reason }, idempotencyKey,
     };
-  }
-  if (action === 'stop-member') {
-    const role = id(args.shift(), 'Workflow role');
-    const rawGeneration = take(args, '--generation');
-    const reason = take(args, '--reason'); noRemainder(args);
-    const generation = rawGeneration === null ? null : Number(rawGeneration);
-    if (generation !== null && (!Number.isSafeInteger(generation) || generation < 1)) {
-      throw cliError('workstream generation is invalid');
-    }
-    return {
-      kind: 'command', name: 'run.workstream.stop',
-      args: {
-        runId, role, ...(generation === null ? {} : { generation }),
-        ...(reason === null ? {} : { reason }),
-      }, idempotencyKey,
-    };
-  }
-  if (action === 'retry') {
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    return { kind: 'command', name: 'run.retry_verification', args: { runId, reason }, idempotencyKey };
-  }
-  if (action === 'resume') {
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    return { kind: 'command', name: 'run.resume_work', args: { runId, reason }, idempotencyKey };
-  }
-  if (action === 'review') {
-    const exact = route(take(args, '--exact', { required: true }));
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    return { kind: 'command', name: 'run.review', args: { runId, route: exact, reason }, idempotencyKey };
-  }
-  if (action === 'integrate') {
-    const strategy = take(args, '--strategy', { required: true });
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    if (!['ff-only', 'structured'].includes(strategy)) throw cliError('integration strategy must be ff-only or structured');
-    return { kind: 'integrate', runId, strategy, reason, idempotencyKey };
-  }
-  if (action === 'export') {
-    const destination = args.shift();
-    if (!nonempty(destination) || destination.includes('\0')) throw cliError('export destination is required');
-    noRemainder(args);
-    return { kind: 'export', runId, destination, idempotencyKey };
   }
   throw cliError(`unknown run action ${action ?? ''}`);
 }
@@ -5851,16 +5756,6 @@ export async function runBatonCli(parsed, client, options = {}) {
       throw error;
     }
   }
-  if (parsed.kind === 'adopt') {
-    const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);
-    if (!evidence?.result?.nodeKey || !evidence?.result?.sha || !evidence?.manifestDigest) {
-      throw cliError('Run has no preserved result available for adoption', 'application_result_unavailable');
-    }
-    return client.command('run.adopt', {
-      runId: parsed.runId, nodeKey: evidence.result.nodeKey, resultSha: evidence.result.sha,
-      evidenceDigest: evidence.manifestDigest, reason: parsed.reason,
-    }, `${parsed.idempotencyKey}:adopt`);
-  }
   if (parsed.kind === 'semantic-action') {
     const view = await client.command('run.inspect', {
       runId: parsed.runId, depth: 'outline',
@@ -5872,27 +5767,6 @@ export async function runBatonCli(parsed, client, options = {}) {
     return client.command('run.act', {
       runId: parsed.runId, actionId: matching[0].actionId, inputs: parsed.inputs,
     }, `${parsed.idempotencyKey}:act`);
-  }
-  if (parsed.kind === 'integrate') {
-    const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);
-    if (!evidence?.manifestDigest) throw cliError('Run has no terminal evidence available for integration', 'application_run_not_terminal');
-    return client.command('run.integrate', {
-      runId: parsed.runId, evidenceDigest: evidence.manifestDigest,
-      strategy: parsed.strategy, reason: parsed.reason,
-    }, `${parsed.idempotencyKey}:integrate`);
-  }
-  if (parsed.kind === 'export') {
-    const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);
-    if (!evidence?.manifestDigest) throw cliError('Run has no terminal evidence available for export', 'application_run_not_terminal');
-    const view = await client.command('run.export', {
-      runId: parsed.runId, evidenceDigest: evidence.manifestDigest,
-    }, `${parsed.idempotencyKey}:export`);
-    if (!view?.export || view.export.state !== 'completed') {
-      throw cliError('Run export did not produce a completed receipt', 'application_export_incomplete');
-    }
-    return client.downloadExport({
-      runId: parsed.runId, receipt: view.export, destination: parsed.destination,
-    });
   }
   throw cliError('unsupported CLI operation');
 }

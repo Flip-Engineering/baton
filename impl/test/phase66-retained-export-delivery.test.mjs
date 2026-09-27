@@ -473,38 +473,6 @@ test('RD3 RED: client extractor preflights hostile tar-v1 and atomically publish
   assert.deepEqual(readdirSync(occupied), []);
 });
 
-test('RD3 RED: runBatonCli continues from strict run.export receipt into local authenticated delivery', async () => {
-  const exportReceipt = {
-    schemaVersion: 1, state: 'completed', format: 'directory-v1', runId: 'run-cli-delivery',
-    exportId: '6'.repeat(64), manifestDigest: '7'.repeat(64), receiptDigest: '8'.repeat(64),
-  };
-  const calls = [];
-  const client = {
-    async command(name, args, key) {
-      calls.push({ op: 'command', name, args, key });
-      if (name === 'run.evidence') return { manifestDigest: '9'.repeat(64) };
-      return { runId: 'run-cli-delivery', export: exportReceipt };
-    },
-    async downloadExport(input) {
-      calls.push({ op: 'downloadExport', input });
-      return { schemaVersion: 1, state: 'delivered', runId: input.runId,
-        exportId: input.receipt.exportId, destination: input.destination };
-    },
-  };
-  const result = await cliModule.runBatonCli({
-    kind: 'export', runId: 'run-cli-delivery', destination: '/clean/client/result', idempotencyKey: 'cli-delivery',
-  }, client);
-  assert.equal(result.state, 'delivered');
-  assert.deepEqual(calls, [
-    { op: 'command', name: 'run.evidence', args: { runId: 'run-cli-delivery' }, key: 'cli-delivery:evidence' },
-    { op: 'command', name: 'run.export', args: { runId: 'run-cli-delivery', evidenceDigest: '9'.repeat(64) }, key: 'cli-delivery:export' },
-    { op: 'downloadExport', input: {
-      runId: 'run-cli-delivery', receipt: exportReceipt, destination: '/clean/client/result',
-    } },
-  ]);
-  assert.equal(JSON.stringify(calls.filter((call) => call.op === 'command')).includes('/clean/client/result'), false);
-});
-
 test('RD3 RED: BatonWebClient uses bearer issue/download endpoints and keeps destination client-local', async (t) => {
   assert.equal(typeof cliModule.BatonWebClient.prototype.downloadExport, 'function',
     'retained red: authenticated client archive delivery is not implemented');

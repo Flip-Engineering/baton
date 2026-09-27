@@ -40,7 +40,7 @@ function fixture(t, holdMs) {
   const sessions = new WebSessionStore(join(directory, 'sessions'));
   const issued = sessions.issue({
     userId: 'local-owner', authMethod: 'bearer',
-    capabilities: ['observe', 'control', 'approve', 'emergency_stop', 'export_result'],
+    capabilities: ['observe', 'control', 'approve', 'emergency_stop'],
     repoIds: [REPO], ttlMs: 60_000,
   }, { actor: 'deployment:resident' });
   const commands = Object.entries(APPLICATION_COMMAND_DEFINITIONS)

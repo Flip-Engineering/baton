@@ -16,14 +16,13 @@ import assert from 'node:assert/strict';
 const WIRE_CARD = [
   'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.stop', 'application.help', 'runs.list',
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
-  'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
-  'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
-  'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
+  'run.follow', 'run.wait', 'run.approve', 'run.answer',
+  'run.evidence',
+  'run.episode', 'run.workstreams',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.board.post', 'run.board.read', 'run.knowledge.seed',
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
+  'waves.start', 'waves.list', 'waves.progress', 'waves.send',
   'waves.stop', 'waves.run', 'waves.compile',
 ];
 
@@ -116,15 +115,6 @@ test('FACADE: waves.progress / waves.list / runs.list all pass — the registry 
     await facade.command(name, {}, passable, CONTEXT);
     assert.equal(fake.calls.length, before + 1, `${name} passed the facade`);
   }
-});
-
-test('FACADE: application.shutdown NEVER passes — host lifecycle is not proxied', async () => {
-  const { facade, passable } = await makeFacade();
-  await assert.rejects(
-    () => facade.command('application.shutdown', {}, passable, CONTEXT),
-    /authority|shutdown|not/i,
-    'shutdown refuses at the facade',
-  );
 });
 
 // ---------------------------------------------------------------------------

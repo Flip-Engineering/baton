@@ -625,13 +625,10 @@ test('F3: the coordinator exposes still-unconsumed pause records for the `turn_c
   assert.deepEqual(kit.coordinator.pausedTurns({ taskId: kit.task.id }), []);
 });
 
-test('F4: all FOUR pre-existing `nudge` literals stay the BARE prompt lane — the new act adds no '
+test('F4: the pre-existing `nudge` literals stay the BARE prompt lane — the new act adds no '
   + 'MCP tool, no enum member, and redefines none of them (rule 16 / Part H)', () => {
   const mcp = readFileSync(join(SRC, 'mcp-northbound.mjs'), 'utf8');
   const occurrences = (haystack, needle) => haystack.split(needle).length - 1;
-  // fleet_run_steer.mode was deleted at the M5 alias sunset; the two remaining delivery modes
-  // (fleet_run_workstream_notify, baton_workstream_notify) stay the bare prompt lane.
-  assert.equal(occurrences(mcp, "['nudge', 'now', 'turn']"), 2);
   // fleet_send.mode plus its own validation echo
   assert.equal(occurrences(mcp, "['turn', 'steer', 'nudge']"), 2);
   // No new act verb was smuggled into the MCP surface.

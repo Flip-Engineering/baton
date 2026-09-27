@@ -21,16 +21,9 @@
 //               corrective; a forged verdict still cannot mint hub fields). [DG-1b harness]
 //   P5  GREEN-5b push constancy — the #79 `gate_verdict` push item carries NO `derived`; the D6
 //               contract section and the push red-suite literal both stay derived-free (B6). [source scan]
-//   P6  GREEN-3  Coaching feedback is authored and rendered exactly as today (summary + findings),
-//               read back intact through the feedback section. [workflow harness]
 //   P7          The refusal vocabulary (`application_workflow_feedback_invalid`,
-//               `application_workflow_feedback_anchor_invalid`, `application_workflow_feedback_unavailable`,
-//               `application_workflow_integrity`) is typed and surface-constant in application.mjs.
-//               [source scan]
-//   P8  S2       Coaching-branch SECRET_SHAPED_TEXT guard — a secret-shaped coaching `summary` or
-//               finding `message` through `workflow.sendFeedback` refuses
-//               `application_workflow_feedback_invalid` and appends nothing. (GREEN at HEAD: the
-//               guard already exists at application.mjs:1665/:1675.) [workflow harness]
+//               `application_workflow_feedback_anchor_invalid`, `application_workflow_integrity`)
+//               is typed and surface-constant in application.mjs. [source scan]
 //   R1  RED-1    Forged verdict — caller-authored {gate, detail} with NO gate event on the Candidate
 //               task stream refuses `application_workflow_feedback_gate_unbound` and appends nothing.
 //               (RED at HEAD: the forge accepts and records it.) [workflow harness]
@@ -503,29 +496,6 @@ function readWorkflowFeedbackFieldsLiteral() {
 // PIN rows — green at HEAD.
 // ---------------------------------------------------------------------------
 
-test('P1 (PIN): G2 shape boundary — gate-shaped input passes normalization, refuses at the WORKFLOW gate', async (t) => {
-  const { application, baton, adapter } = dg1Harness(t);
-  const { workerId, runId } = await startRun(baton);
-
-  emitScopeGateEvent(adapter, workerId);
-  const debug = await application.debug({ runId }, principal('observer'));
-  const failure = debug.members[0]?.failure;
-  assert.equal(failure?.gate, 'scope', 'precondition: the debug failure leg projects the scope gate');
-
-  // Gate-shaped {gate, detail} must be accepted by input normalization (never the shape code) and
-  // refuse only at the workflow gate on a non-workflow run (GREEN-1 / G2 discriminator).
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: { gate: failure.gate, detail: failure.detail },
-  }, principal('observer')).then(() => null, (error) => error);
-  assert.ok(err, 'run.feedback must not silently no-op on a non-workflow run');
-  assert.equal(
-    err.code,
-    'application_workflow_feedback_unavailable',
-    `gate-shaped input dispatches to the workflow gate, not a shape reject; got ${err.code}: ${err.message}`,
-  );
-});
 
 test('P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys', async (t) => {
   const { workflow } = await openWorkflow(t);
@@ -548,22 +518,6 @@ test('P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq 
   assert.ok(member, 'P2: evidence.verification.worker resolves to a real worker stream member');
 });
 
-test('P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid', async (t) => {
-  const { application, baton } = dg1Harness(t);
-  const { runId } = await startRun(baton);
-
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: { ...scopeGatePayload(), derived: true },
-  }, principal('observer')).then(() => null, (error) => error);
-  assert.ok(err, 'a caller-supplied derived flag must be refused');
-  assert.equal(
-    err.code,
-    'application_workflow_feedback_invalid',
-    `derived is hub-set only — the closed {gate, detail} schema refuses a caller derived key; got ${err.code}`,
-  );
-});
 
 test('P4 (PIN): GREEN-5a run.debug failure shape — the honest referent a forged verdict spoofs', async (t) => {
   const { application, baton, adapter } = dg1Harness(t);
@@ -610,27 +564,6 @@ test('P5 (PIN): GREEN-5b push constancy — the #79 gate_verdict push item stays
   assert.ok(!itemLine.includes('derived'), 'P5: the gate_verdict item literal carries no derived key (B6)');
 });
 
-test('P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today', async (t) => {
-  const { workflow } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder, 'precondition: verified candidate');
-
-  const coaching = {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable delta.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  };
-  await workflow.sendFeedback('builder', coaching);
-  const fb = await workflow.feedback();
-  const item = fb.section?.items?.find((it) => it.value?.target?.role === 'builder');
-  assert.ok(item, 'P6: the coaching packet read back');
-  assert.equal(item.summary, coaching.summary, 'P6: the feedback section renders the coaching summary');
-  assert.equal(item.value.feedback?.summary, coaching.summary, 'P6: the packet carries the authored summary');
-  assert.deepEqual(item.value.feedback?.findings, coaching.findings, 'P6: the packet carries the authored findings');
-});
 
 test('P7 (PIN): the contract refusal vocabulary is typed and surface-constant across the application seam', () => {
   // slice 15: the feedback projections (and their refusal literals) moved to
@@ -640,58 +573,12 @@ test('P7 (PIN): the contract refusal vocabulary is typed and surface-constant ac
   for (const code of [
     'application_workflow_feedback_invalid',
     'application_workflow_feedback_anchor_invalid',
-    'application_workflow_feedback_unavailable',
     'application_workflow_integrity',
   ]) {
     assert.ok(source.includes(code), `refusal code ${code} is typed across the application seam`);
   }
 });
 
-test('P8 (PIN): S2 — the coaching branch refuses secret-shaped summary/message (application_workflow_feedback_invalid)', async (t) => {
-  const { workflow } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder, 'precondition: verified candidate');
-
-  // The SECRET_SHAPED_TEXT guard (application.mjs:1665 summary / :1675 message) already refuses
-  // secret-looking coaching content at HEAD — GREEN, so this row is a PIN.
-  const secret = 'sk-proj-' + 'A'.repeat(16);
-
-  // Arm 1 — secret-shaped SUMMARY.
-  const summaryOutcome = await workflow.sendFeedback('builder', {
-    summary: `Keep the candidate, key=${secret}`,
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable delta.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  }).then((value) => ({ ok: true }), (error) => ({ ok: false, code: error?.code }));
-  assert.equal(
-    summaryOutcome.ok,
-    false,
-    'P8: a secret-shaped coaching summary must refuse at application_workflow_feedback_invalid',
-  );
-  assert.equal(summaryOutcome.code, 'application_workflow_feedback_invalid', 'P8: summary arm refuses invalid');
-
-  // Arm 2 — secret-shaped finding MESSAGE.
-  const messageOutcome = await workflow.sendFeedback('builder', {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: `Use the token ${secret} when resuming.`,
-      path: 'candidate-a.txt', line: 1,
-    }],
-  }).then((value) => ({ ok: true }), (error) => ({ ok: false, code: error?.code }));
-  assert.equal(
-    messageOutcome.ok,
-    false,
-    'P8: a secret-shaped finding message must refuse at application_workflow_feedback_invalid',
-  );
-  assert.equal(messageOutcome.code, 'application_workflow_feedback_invalid', 'P8: message arm refuses invalid');
-
-  // Neither refusal appends a record.
-  const fb = await workflow.feedback();
-  assert.equal(fb.section?.itemCount ?? 0, 0, 'P8: the refusals append no record');
-});
 
 // ---------------------------------------------------------------------------
 // RED rows — fail at NAMED stages at HEAD.

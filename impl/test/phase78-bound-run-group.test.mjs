@@ -142,7 +142,6 @@ function concurrentApplication() {
 test('RD0: a bound Run exposes one-step drive and loop-until-pause complete', () => {
   assert.equal(typeof BatonRun.prototype.drive, 'function');
   assert.equal(typeof BatonRun.prototype.complete, 'function');
-  assert.equal(typeof BatonRun.prototype.apply, 'function');
 });
 
 test('RD1: drive follows an advertised input-free action; complete follows continuations and pauses on attention', {
@@ -176,7 +175,7 @@ test('RD1: drive follows an advertised input-free action; complete follows conti
   ]);
 });
 
-test('RD2: complete adopts but never applies implicitly; apply selects the advertised safe default', async () => {
+test('RD2: complete does not apply implicitly', async () => {
   const calls = [];
   const integrate = Object.freeze({
     kind: 'integrate', actionId: 'apply-adopted-result', priority: 'recommended',
@@ -211,53 +210,6 @@ test('RD2: complete adopts but never applies implicitly; apply selects the adver
   assert.deepEqual(calls.map(({ name }) => name), ['run.start'],
     'complete must not cross the explicit caller-repository edit boundary');
 
-  const applied = await run.apply();
-  assert.equal(applied.outline.phase, 'completed');
-  assert.deepEqual(calls[1], {
-    name: 'run.act',
-    args: {
-      runId: 'run-apply', actionId: integrate.actionId,
-      inputs: { strategy: 'ff-only', reason: 'Apply the adopted verified result.' },
-    },
-  });
-});
-
-test('RD3: apply accepts progressive strategy detail and rejects unadvertised authority locally', async () => {
-  const calls = [];
-  const integrate = Object.freeze({
-    kind: 'integrate', actionId: 'apply-structured', priority: 'recommended',
-    destructive: true, irreversible: false, choices: ['ff-only', 'structured'],
-    inputSchema: {
-      type: 'object', additionalProperties: false, required: ['strategy', 'reason'],
-      properties: {
-        strategy: { type: 'string', enum: ['ff-only', 'structured'], default: 'ff-only' },
-        reason: { type: 'string', default: 'Apply the adopted verified result.' },
-      },
-    },
-  });
-  const application = {
-    async command(name, args) {
-      calls.push({ name, args });
-      if (name === 'run.start') return view('run-apply-detail', 'a', 'work_completed', { actions: [integrate] });
-      if (name === 'run.act') return view('run-apply-detail', 'b', 'completed', { terminal: true });
-      throw new Error(`unexpected ${name}`);
-    },
-  };
-  const baton = bindBaton(application, principal);
-  const rejected = await baton.runs.start('Reject unadvertised apply detail');
-  await assert.rejects(
-    rejected.apply({ strategy: 'octopus' }),
-    (error) => error?.code === 'application_action_input_invalid',
-  );
-  assert.deepEqual(calls.map(({ name }) => name), ['run.start']);
-
-  const applied = await rejected.apply({
-    strategy: 'structured', reason: 'Use the explicitly selected structured merge.',
-  });
-  assert.equal(applied.outline.phase, 'completed');
-  assert.deepEqual(calls[1].args.inputs, {
-    strategy: 'structured', reason: 'Use the explicitly selected structured merge.',
-  });
 });
 
 test('RG0: startMany returns one public BatonRunGroup of ordinary bound Runs', () => {
