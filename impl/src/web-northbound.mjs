@@ -51,33 +51,11 @@ const CANONICAL_WEB_ENTRIES = Object.entries(applicationOperationAliasMap())
     && APPLICATION_COMMAND_DEFINITIONS[legacy].web)
   .map(([canonical, legacy]) => [canonical.replaceAll('.', '_'), legacy, APPLICATION_COMMAND_DEFINITIONS[legacy]]);
 
-// D1 (wave-observability-2026-08-06/contract.md §D1): the wave lane's web reflex slice — the
-// web-surface analogue of the MCP reflex table (mcp-northbound.mjs:97-100). The five wave verbs
-// stay direct ports (the byte-stable command-table key set pinned by grammar-m3-red must not
-// change), so they are admitted WITHOUT touching APPLICATION_COMMAND_DEFINITIONS. Each entry is
-// [transport, dot-spelled name, capability classes]; the third element is the capability array
-// directly (not a definition object), so COMMAND_CAPABILITY/APPLICATION_COMMAND spreads read it
-// like the entry-set spreads below. Per-verb capability classes are pinned in the contract.
-const WAVE_WEB_ENTRIES = Object.freeze([
-  ['waves_start', 'waves.start', Object.freeze(['control', 'observe'])],
-  ['waves_progress', 'waves.progress', Object.freeze(['observe'])],
-  ['waves_send', 'waves.send', Object.freeze(['control', 'observe'])],
-  ['waves_stop', 'waves.stop', Object.freeze(['emergency_stop', 'observe'])],
-  ['waves_list', 'waves.list', Object.freeze(['observe'])],
-  // #153 repair (dogfood launch, 2026-08-13): the #114 interpreter verb rides the
-  // same direct-port admission — runWorkflow's own closed validation (spec|specPath,
-  // workflow_* refusals) is the argument authority, exactly like the five sibling verbs.
-  ['waves_run', 'waves.run', Object.freeze(['control', 'observe'])],
-  ['waves_compile', 'waves.compile', Object.freeze(['observe'])],
-  // #158 (scratchpad-write-2026-08-13/contract-fold.md H2.1): the folded scratchpad WRITE direct
-  // port. WEB_DIRECT_PORT_COMMANDS is derived from THIS array, so validateEnvelope skips
-  // validateApplicationCommandArgs and the append's own closed normalizer (the kernel fold,
-  // coordination-store.mjs appendScratchpad) is the argument authority — the same direct-port
-  // admission the five wave verbs ride. Capability classes match the MCP capability map.
+const SCRATCHPAD_WRITE_WEB_ENTRIES = Object.freeze([
   ['run_scratchpad_append', 'run.scratchpad.append', Object.freeze(['control', 'observe'])],
 ]);
 // #227/#233 (2026-08-15, the wire-card coverage regression): the workflow-surface verbs ride
-// direct ports beside the wave verbs — the MCP web-bridge facade (mcp-web-bridge.mjs
+// direct ports — the MCP web-bridge facade (mcp-web-bridge.mjs
 // ORDINARY_COMMANDS) requires them on the resident's advertised card, and the application
 // dispatch already exists (application.mjs's messageSend/attentionWatch/scratchpadRead/
 // boardPost/knowledgeSeed seam). Without these rows ANY real resident's card fails the facade
@@ -96,40 +74,23 @@ const WORKFLOW_WEB_ENTRIES = Object.freeze([
   // Issue #566: the registry rows claim 'web' beside this admission — the CLI dispatch
   // projection derives from it, so the pair is served-cli AND web-admitted by one claim.
   ['run_resultpin', 'run.resultpin', Object.freeze(['observe'])],
-  ['waves_harvest', 'waves.harvest', Object.freeze(['control', 'observe'])],
 ]);
-// D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
-// validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
-// authority is the port's own closed normalizer (_normalizeWaveStart/_normalizeWaveProgress/
-// _normalizeWaveMemberAction, application.mjs:11692-11774) which the dispatch already runs.
-// ARG_FIELDS per transport is that closed accepted-field set; waves_stop → {reason, runId} is the
-// pinned narrowing (F2) — the web surface never admits the send-lane fields on the stop lane.
-const WAVE_ARG_FIELDS = Object.freeze({
-  waves_start: new Set(['idempotencyKey', 'members']),
-  waves_progress: new Set(['cursor', 'waveId']),
-  waves_send: new Set(['claimGrant', 'delivery', 'message', 'runId']),
-  waves_stop: new Set(['reason', 'runId']),
-  waves_list: new Set(['cursor', 'waveId']),
-  // #232: detach (boolean, default true) is admitted on the run lane so the synchronous settle
-  // path — the seven-key receipt carrying each member's typed startError — is client-reachable.
-  waves_run: new Set(['detach', 'idempotencyKey', 'spec', 'specPath', 'specDsl']),
-  waves_compile: new Set(['idempotencyKey', 'spec', 'specPath', 'specDsl']),
-});
+
 // Issue #233: each pinned direct-port row admits BOTH spellings — the row's canonical dot-name
 // beside its byte-stable underscore transport (the pinned key set above is untouched; the dot
 // rows are additions beside it, the same alias pattern CANONICAL_WEB_ENTRIES demonstrates).
 // ARG_FIELDS follow the rows: the dot spelling accepts exactly its transport's closed set.
-const WAVE_DOT_WEB_ENTRIES = Object.freeze(WAVE_WEB_ENTRIES
+const SCRATCHPAD_WRITE_DOT_WEB_ENTRIES = Object.freeze(SCRATCHPAD_WRITE_WEB_ENTRIES
   .map(([transport, name, capabilities]) => [name, name, capabilities]));
 // #158 (H2.1): the closed {runId, scope, kind, body, idempotencyKey} accepted set — the D2.1
 // verb closure, exactly the fields the folded append verb admits on every surface. Declared once
-// here because the append rides WAVE_WEB_ENTRIES as a direct port, so its dot spelling derives
-// through the same map as the wave verbs (before the 2026-09-14 audit, U-E4, the dot spelling
+// here because the append rides SCRATCHPAD_WRITE_WEB_ENTRIES as a direct port, so its dot spelling derives
+// through the same map (before the 2026-09-14 audit, U-E4, the dot spelling
 // mapped to `undefined` and the validator crashed on `.has`).
 const SCRATCHPAD_APPEND_ARG_FIELDS = new Set(['runId', 'scope', 'kind', 'body', 'idempotencyKey']);
-const DIRECT_PORT_ARG_FIELDS = Object.freeze({ ...WAVE_ARG_FIELDS, run_scratchpad_append: SCRATCHPAD_APPEND_ARG_FIELDS });
-const WAVE_DOT_ARG_FIELDS = Object.freeze(Object.fromEntries(
-  WAVE_WEB_ENTRIES.map(([transport, name]) => [name, DIRECT_PORT_ARG_FIELDS[transport]]),
+const DIRECT_PORT_ARG_FIELDS = Object.freeze({ run_scratchpad_append: SCRATCHPAD_APPEND_ARG_FIELDS });
+const SCRATCHPAD_WRITE_DOT_ARG_FIELDS = Object.freeze(Object.fromEntries(
+  SCRATCHPAD_WRITE_WEB_ENTRIES.map(([transport, name]) => [name, DIRECT_PORT_ARG_FIELDS[transport]]),
 ));
 // Issue #233: deployment.doctor on the web lane — the measured surface split (MCP admitted it
 // as baton_deployment_doctor; the web wire 404'd). Both spellings derive through the ONE seam
@@ -231,7 +192,7 @@ function normalizeContextPackageRequest(raw) {
   return Object.freeze({ name: raw.name, branches: Object.freeze(branches) });
 }
 const WEB_DIRECT_PORT_COMMANDS = new Set([
-  ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
+  ...SCRATCHPAD_WRITE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...WORKFLOW_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
   ...CONTEXT_PACKAGE_COMMANDS,
@@ -270,8 +231,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   run_scratchpad_append: ['control', 'observe'],
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
-  ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
-  ...Object.fromEntries(WAVE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(SCRATCHPAD_WRITE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(SCRATCHPAD_WRITE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
@@ -290,7 +251,7 @@ const READ_ONLY_COMMANDS = new Set([
     .map(([transport]) => transport),
   // Issue #344: the workflow direct-port reads ride no definition row (their argument authority
   // is the port normalizer), so the mcpStateful derivation above cannot see them — the four
-  // read-only lanes are named beside it, both spellings, exactly like WAVE_DOT_WEB_ENTRIES.
+  // read-only lanes are named beside it, both spellings, exactly like SCRATCHPAD_WRITE_DOT_WEB_ENTRIES.
   'run_message_receipt', 'run.message.receipt',
   'run_attention_watch', 'run.attention.watch',
   'run_scratchpad_read', 'run.scratchpad.read',
@@ -329,8 +290,7 @@ const ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, name, definition]) => [
     transport, advertisedArgs(definition, name),
   ])),
-  ...Object.fromEntries(Object.entries(WAVE_ARG_FIELDS)),
-  ...Object.fromEntries(Object.entries(WAVE_DOT_ARG_FIELDS)),
+  ...Object.fromEntries(Object.entries(SCRATCHPAD_WRITE_DOT_ARG_FIELDS)),
   // #233: the deployment rows carry their own closed argument authority (DEPLOYMENT_ARG_FIELDS):
   // doctor's is the closed empty set, reincarnate's is exactly {target}. It was declared and never
   // spread, so a doctor envelope carrying any arg crashed the validator on `undefined.has` and the
@@ -363,12 +323,12 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
 }
 const APPLICATION_COMMAND = Object.freeze({
   ...Object.fromEntries(
-    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES,
+    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...SCRATCHPAD_WRITE_WEB_ENTRIES,
       ...WORKFLOW_WEB_ENTRIES, ...WORKFLOW_DOT_WEB_ENTRIES,
-      ...WAVE_DOT_WEB_ENTRIES, ...DEPLOYMENT_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
+      ...SCRATCHPAD_WRITE_DOT_WEB_ENTRIES, ...DEPLOYMENT_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
   ),
   // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
-  // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
+  // SCRATCHPAD_WRITE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
   run_scratchpad_append: 'run.scratchpad.append',
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
@@ -2856,7 +2816,7 @@ export class WebNorthbound {
         // D1.4/F1 — the card advertises the admitted lane BY DERIVATION from the same transport
         // tables that admit the web verbs (the `([, name]) => name` map over the entry sets), so a
         // dishonest impl cannot special-case the card. The card lists the DOT-spelled names
-        // (waves.start, ...) beside the existing WEB_APPLICATION_ENTRIES names — never the
+        // (run.scratchpad.append, ...) beside the existing WEB_APPLICATION_ENTRIES names — never the
         // underscore transports.
         application: { ...card, readiness, commands: webCardCommandNames() },
       }));
@@ -3550,13 +3510,13 @@ export function createLocalAuthenticatedWebServer(northbound) {
 
 
 /** The commands the RESIDENT serves on its wire card (`/v1/application-card`, doctor): the
- * application table the web lane admits plus the wave and workflow direct ports, dot-spelled.
+ * application table the web lane admits plus the scratchpad and workflow direct ports, dot-spelled.
  * This is the projection every resident-routed client gates on (the MCP web bridge's facade and
  * the CLI's own web client), so it is exported as the ONE production admission a surface check
  * may compare against — 2026-09-14 audit, U-N4: the gate's facade admitted the web bus's wider
  * ADMITTED-name table (kernel rows included) where production admits exactly these. */
 export function webCardCommandNames() {
-  return [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES,
+  return [...WEB_APPLICATION_ENTRIES, ...SCRATCHPAD_WRITE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES,
     ...DEPLOYMENT_WEB_ENTRIES, ...CONTEXT_PACKAGE_WEB_ENTRIES]
     .map(([, name]) => name);
 }

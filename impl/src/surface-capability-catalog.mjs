@@ -235,7 +235,6 @@ function nativeOwner(name) {
   if (name.startsWith('baton_knowledge_')) return 'knowledge-kernel';
   if (name.startsWith('baton_repl_')) return 'repl-kernel';
   if (name.startsWith('baton_scratchpad_')) return 'scratchpad-kernel';
-  if (name.startsWith('baton_waves_')) return 'wave-kernel';
   return 'mcp-native';
 }
 

@@ -25,7 +25,7 @@ import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 // run.inspect, run.do ← run.act; the others are already one spelling. The registry owns these as
 // aliases (retiring the mcp.web-bridge ledger rows); the bridge forwards the legacy spelling.
 // #227 (operator-ordered direct landing, 2026-08-15): the facade carries the WIRE's registry —
-// the resident admits every verb below (WAVE_WEB_ENTRIES + the application table); the old
+// the resident admits every verb below (the direct ports and application table); the old
 // five-verb allowlist forced every harness to hand-roll a BatonWebClient proxy. The wire card
 // (doctor.application.commands) is the authority: every listed command EXCEPT shutdown
 // (never proxied — host-side lifecycle only).
@@ -42,8 +42,6 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.board.post', 'run.board.read', 'run.knowledge.seed',
   'runs.list',
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
-  'waves.stop', 'waves.run', 'waves.compile',
 ]);
 // SA4 (#227): the CONSTRUCTOR floor is the REGISTRY's own remote_bridge projection — the closed
 // operation set (docs/36 §8.3 L8 / D8, R-OP-15b) the registry itself says a remote bridge
@@ -59,7 +57,6 @@ const MUTATIONS = new Set([
   'run.export', 'run.recover', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.board.post', 'run.knowledge.seed',
-  'waves.start', 'waves.send', 'waves.stop', 'waves.run',
 ]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
