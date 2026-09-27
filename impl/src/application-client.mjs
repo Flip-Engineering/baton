@@ -805,28 +805,11 @@ export class BatonWorkstream {
     });
   }
 
-  notify(message, options = {}) {
-    exactOptions(options, new Set(['delivery']), 'workstream notify');
-    return this.#run._command('run.workstream.notify', {
-      runId: this.#run.id, role: this.role, message,
-      ...(this.generation === null ? {} : { generation: this.generation }),
-      ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
-    });
-  }
 
   result() { return this.episode().result(); }
 
   episode() { return new BatonEpisode(this.#run, this.role, this.generation); }
 
-  stop(reason = this.role === 'work'
-    ? 'Operator requested Run stop.'
-    : `Stop and reap the ${this.role} workstream.`) {
-    if (!nonempty(reason)) throw clientError('Workstream stop reason is invalid');
-    return this.#run._command('run.workstream.stop', {
-      runId: this.#run.id, role: this.role, reason,
-      ...(this.generation === null ? {} : { generation: this.generation }),
-    });
-  }
 
   help(depth = 'outline') { return this.#run.help('run.workstreams', depth); }
 }
@@ -1196,40 +1179,6 @@ export class BatonRun {
     return this.#last;
   }
 
-  async sendFeedback(role, feedback) {
-    if (!nonempty(role) || (typeof feedback !== 'string'
-      && (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)))) {
-      throw clientError('Workflow feedback is invalid');
-    }
-    this.#last = await this.#application.command('run.feedback', {
-      runId: this.id, role, feedback,
-    });
-    return this.#last;
-  }
-
-  async apply(options = {}) {
-    exactOptions(options, new Set(['strategy', 'reason']), 'apply');
-    let descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
-    if (!descriptor) {
-      await this.inspect();
-      descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
-    }
-    if (!descriptor) {
-      throw clientError('Run has no adopted result available to apply', 'application_action_unavailable');
-    }
-    const advertised = Array.isArray(descriptor.choices) ? descriptor.choices : [];
-    const strategy = options.strategy
-      ?? descriptor.inputSchema?.properties?.strategy?.default
-      ?? (advertised.includes('ff-only') ? 'ff-only' : advertised[0]);
-    const reason = options.reason
-      ?? descriptor.inputSchema?.properties?.reason?.default
-      ?? 'Apply the adopted verified result.';
-    if (!advertised.includes(strategy) || !nonempty(reason)) {
-      throw clientError('Run apply options are outside the advertised integration authority',
-        'application_action_input_invalid');
-    }
-    return this.act(descriptor.actionId, { strategy, reason });
-  }
 
   async answer(requestId, answer) {
     if (!nonempty(requestId) || !answer || typeof answer !== 'object' || Array.isArray(answer)) {
