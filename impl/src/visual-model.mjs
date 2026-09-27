@@ -25,10 +25,10 @@
 import { createHash } from 'node:crypto';
 import { MAX_FAMILY_ATTENTION, MAX_FAMILY_PARTICIPANTS, MAX_FAMILY_SWARMS } from './swarm-family.mjs';
 
-export const VISUAL_MODEL_KIND = 'baton.visual_model';
-export const VISUAL_MODEL_VERSION = 1;
-export const MAX_FLEET_MEMBERS = 64;
-export const MAX_TIMELINE_ITEMS = 64;
+const VISUAL_MODEL_KIND = 'baton.visual_model';
+const VISUAL_MODEL_VERSION = 1;
+const MAX_FLEET_MEMBERS = 64;
+const MAX_TIMELINE_ITEMS = 64;
 
 // ANSI CSI sequences: ESC '[' params? final-byte (0x40-0x7E). Also strip any stray ESC
 // and every remaining C0 control except tab/newline/CR (those survive as JSON escapes).
@@ -36,7 +36,7 @@ const ANSI_CSI_RE = /\u001b\[[0-9;:<=>?]*[ -/]*[@-~]/g;
 const STRAY_ESC_RE = /\u001b/g;
 const C0_CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
-export function stripControlBytes(value) {
+function stripControlBytes(value) {
   return String(value)
     .replace(ANSI_CSI_RE, '')
     .replace(STRAY_ESC_RE, '')

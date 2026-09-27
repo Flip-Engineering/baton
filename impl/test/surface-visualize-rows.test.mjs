@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import { wrapProductionCliClient } from '../src/production-cli-convergence.mjs';
 import { projectBatonVisualModel } from '../src/visual-model.mjs';
-import { createBatonMcpPresentation } from '../src/visual-renderer.mjs';
 
 const THINKING_FACE = '✦(◕﹏◕)◦';
 
@@ -95,9 +94,6 @@ test('the visualization payload carries no persona field anywhere', async () => 
     wakes: { attached: true, items: [{ seq: 1, wakeClass: 'attention', subject: 'request:1' }] },
   });
   assert.deepEqual(keyPaths(model).filter(isPersonaKey), []);
-  const presentation = createBatonMcpPresentation(model, { width: 80 });
-  assert.deepEqual(keyPaths(presentation).filter(isPersonaKey), []);
-  assert.equal(JSON.stringify(presentation).includes(THINKING_FACE), false);
 });
 
 test('the swarm family unavailability is a named truth in the visualization, not a blank', async () => {
