@@ -10,7 +10,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
-import { assertCardProviderRefusals, providerRefusalsForHarness } from './adapter.mjs';
+import { assertCardProviderRefusals, providerRefusalsForHarness } from './provider-refusals.mjs';
 import { renderPrompt } from './cli-adapters.mjs';
 import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
@@ -520,7 +520,7 @@ function claudeResultFailureCode(obj) {
 const CLAUDE_EXPIRED_TOKEN_TEXT = /oauth access token has expired/iu;
 
 /** The provider class this death lands as — the closed code the route card's refusal table
- * publishes (adapter.mjs PROVIDER_REFUSAL_CODES.authentication). */
+ * publishes (provider-refusals.mjs PROVIDER_REFUSAL_CODES.authentication). */
 const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
 
 function claudeExpiredCredentialResult(obj) {

@@ -23,7 +23,7 @@ import {
 } from './provider-services.mjs';
 import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
-import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
+import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './provider-refusals.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
@@ -747,7 +747,7 @@ export function claudeAuthenticationSummary(code) {
 // refused pre-effect, and the deployment's refreshed credential reaches a RUNNING seat.
 
 /** The provider-fault class a refused authentication lands as — the same closed code the route
- * card's refusal table publishes (adapter.mjs PROVIDER_REFUSAL_CODES.authentication), so the
+ * card's refusal table publishes (provider-refusals.mjs PROVIDER_REFUSAL_CODES.authentication), so the
  * crash row, the readiness block and the route refusal all name one class. */
 export const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
 

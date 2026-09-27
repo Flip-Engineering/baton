@@ -1,6 +1,6 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,17 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
+
+/** Every fixture directory this file mints, reaped once the file's tests finish (#613). */
+const fixtureRoots = [];
+const fixtureRoot = (label) => {
+  const root = mkdtempSync(join(tmpdir(), label));
+  fixtureRoots.push(root);
+  return root;
+};
+after(() => {
+  for (const root of fixtureRoots) rmSync(root, { recursive: true, force: true });
+});
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (fn, timeoutMs = 2_000) => {
@@ -69,7 +80,7 @@ function adapter() {
   return value;
 }
 
-function system(ad, { log = new Log(mkdtempSync(join(tmpdir(), 'baton-pg57-callback-'))) } = {}) {
+function system(ad, { log = new Log(fixtureRoot('baton-pg57-callback-')) } = {}) {
   const coordination = coordinationForLog(log);
   const coordinator = new Coordinator({
     log,

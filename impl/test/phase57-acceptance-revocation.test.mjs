@@ -1,13 +1,23 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CoordinationIntegrityError, CoordinationRefusal, CoordinationStore } from '../src/coordination-store.mjs';
 
-const dir = () => mkdtempSync(join(tmpdir(), 'baton-acceptance-revocation-'));
+/** Every fixture directory this file mints, reaped once the file's tests finish (#613). */
+const fixtureRoots = [];
+const dir = () => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-acceptance-revocation-'));
+  fixtureRoots.push(root);
+  return root;
+};
+after(() => {
+  for (const root of fixtureRoots) rmSync(root, { recursive: true, force: true });
+});
+
 const canonical = (value) => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
