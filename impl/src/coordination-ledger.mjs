@@ -203,13 +203,17 @@ const PROJECTION_INPUT_NONKG_EVENTS = new Set([
   'board.claim_requested', 'board.claim_expired', 'board.report_submitted',
 ]);
 
-const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
+// Issue #530: the six Cairn knowledge policies carried caller-declared size and count ceilings,
+// each capped against an implementation number and each refusing otherwise-valid work. The fields
+// are gone, with every read and refusal below; what a policy names is the repository it answers for
+// and the one floor a promotion needs.
+const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId'];
 
-const KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS = ['repoId'];
 
-const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders'];
 
-const KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS = ['repoId', 'minScratchReaders'];
 
 const ACCEPTANCE_REVOCATION_EVIDENCE_KINDS = new Set(['resource.provider_telemetry_invalid', 'resource.provider_governance_exceeded']);
 
@@ -223,20 +227,16 @@ export function normalizedRecallText(value) { return value.normalize('NFKC').toL
 
 export function recallTerms(value) { return [...new Set(normalizedRecallText(value).match(/[\p{L}\p{N}]+/gu) ?? [])]; }
 
-function utf8Snippet(value, maxBytes) {
-  let result = ''; let bytes = 0;
-  for (const character of recallBody(value)) { const size = Buffer.byteLength(character); if (bytes + size > maxBytes) break; result += character; bytes += size; }
-  return result;
+/** The snippet a knowledge row carries for one node's body: the body itself. Issue #530: it was
+ * cut at the policy's own `maxSnippetBytes`, a width a caller declared; with that field gone the
+ * projection carries the body whole. */
+function utf8Snippet(value) {
+  return recallBody(value);
 }
 
 export function validKnowledgeRecallPolicy(policy) {
-  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_RECALL_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_RECALL_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.maxQueryBytes <= 64 * 1024 && policy.maxQueryTerms <= 1_024 && policy.maxCandidates <= 100_000
-    && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxResults <= 1_000 && policy.maxGraphDepth <= 64
-    && policy.maxGraphRows <= 1_000_000 && policy.maxSnippetBytes <= 64 * 1024
-    && policy.maxReceiptBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return !!policy && Object.keys(policy).sort().join(',') === [...KNOWLEDGE_RECALL_POLICY_FIELDS].sort().join(',')
+    && typeof policy.repoId === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId);
 }
 
 // KG-3/KG-4 (v2-P1-3, P2-7). The preview policy is a two-level split so `policy.recall` stays
@@ -266,28 +266,20 @@ export function validKnowledgePreviewPolicy(policy) {
 }
 
 export function validKnowledgeRecallAssessmentPolicy(policy) {
-  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.maxScanEvents <= 1_000_000 && policy.maxReceipts <= 100_000 && policy.maxNodeRefs <= 1_000_000
-    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return !!policy && Object.keys(policy).sort().join(',') === [...KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS].sort().join(',')
+    && typeof policy.repoId === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId);
 }
 
 export function validKnowledgePromotionPolicy(policy) {
-  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_PROMOTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_PROMOTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxCandidates <= 100_000
-    && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxEvidenceRefs <= 1_000_000
-    && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return !!policy && Object.keys(policy).sort().join(',') === [...KNOWLEDGE_PROMOTION_POLICY_FIELDS].sort().join(',')
+    && typeof policy.repoId === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)
+    && Number.isSafeInteger(policy.minScratchReaders) && policy.minScratchReaders > 0;
 }
 
 export function validKnowledgeScratchCorrectionPolicy(policy) {
-  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
-    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return !!policy && Object.keys(policy).sort().join(',') === [...KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS].sort().join(',')
+    && typeof policy.repoId === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)
+    && Number.isSafeInteger(policy.minScratchReaders) && policy.minScratchReaders > 0;
 }
 
 export function providerAttemptDelay(policy, windowAttempt) {
@@ -7264,10 +7256,10 @@ export function promoteKnowledgeBatch(store, repoId, observedSeq, policy, auth, 
   if (derived.candidates.length === 0) return freeze({ event: null, projection: { repoId, observedSeq, observedAt, policyDigest, projectionDigest: derived.projectionDigest, receiptDigest: null, eventSeq: null, summaries: [] }, replayed: false, noOp: true });
   const core = { schemaVersion: 1, repoId, observedSeq, observedAt, policy: clone(policy), policyDigest, candidates: clone(derived.candidates), nodes: clone(derived.nodes), edges: clone(derived.edges), requestDigest: canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, observedSeq, policyDigest }), projectionDigest: derived.projectionDigest };
   const payload = { ...core, receiptDigest: canonicalDigest(core) };
-  if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('knowledge promotion batch exceeded deployment ceiling', 'causal_promotion_oversize');
+  
   const prospective = { schemaVersion: 1, seq: store._events.length + 1, kind: 'knowledge.promotion_batch', actor: auth.actor, idempotencyKey: auth.key, payload };
   const projection = store._promotionProjection(payload, prospective);
-  if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('knowledge promotion result exceeded deployment ceiling', 'causal_promotion_oversize');
+  
   if (beforeAppend) { const before = store._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (store._events.length !== before) throw new CoordinationRefusal('knowledge promotion preflight changed coordination state', 'causal_promotion_integrity'); }
   const fixedTs = store._clock(); const predicted = { ...prospective, ts: fixedTs }; store._validateKnowledgePromotionPayload(payload, predicted, false);
   const event = store._append('knowledge.promotion_batch', payload, auth, fixedTs); return freeze({ event: clone(event), projection: store._promotionProjection(payload, event), replayed: false, noOp: false });
@@ -7283,8 +7275,8 @@ export function correctScratchKnowledge(store, repoId, observedSeq, policy, requ
   const normalized = store._scratchCorrectionRequest(request); const policyDigest = canonicalDigest(policy); const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, observedSeq, policyDigest, request: normalized }); const prior = store._byKey.get(auth.key);
   if (prior) { if (prior.kind !== 'knowledge.scratch_corrected' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('Scratch correction idempotency conflict', 'causal_correction_conflict'); store._validateScratchCorrectionPayload(prior.payload, prior, false); return freeze({ event: clone(prior), projection: store._scratchCorrectionProjection(prior.payload, prior), replayed: true }); }
   const derived = store._deriveScratchCorrection(repoId, observedSeq, policy, normalized); const core = { schemaVersion: 1, action: normalized.action, repoId, observedSeq, observedAt: store.observationTime(observedSeq), policy: clone(policy), policyDigest, request: normalized, requestDigest, target: clone(derived.target), nodes: clone(derived.nodes), edges: clone(derived.edges), affectedReadEvents: clone(derived.affectedReadEvents), evidenceDigest: derived.evidenceDigest, projectionDigest: derived.projectionDigest }; const payload = { ...core, receiptDigest: canonicalDigest(core) };
-  if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('Scratch correction batch exceeded deployment ceiling', 'causal_correction_oversize'); const prospective = { schemaVersion: 1, seq: store._events.length + 1, kind: 'knowledge.scratch_corrected', actor: auth.actor, idempotencyKey: auth.key, payload }; const projection = store._scratchCorrectionProjection(payload, prospective);
-  if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('Scratch correction result exceeded deployment ceiling', 'causal_correction_oversize'); if (beforeAppend) { const before = store._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (store._events.length !== before) throw new CoordinationRefusal('Scratch correction preflight changed coordination state', 'causal_correction_integrity'); }
+   const prospective = { schemaVersion: 1, seq: store._events.length + 1, kind: 'knowledge.scratch_corrected', actor: auth.actor, idempotencyKey: auth.key, payload }; const projection = store._scratchCorrectionProjection(payload, prospective);
+   if (beforeAppend) { const before = store._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (store._events.length !== before) throw new CoordinationRefusal('Scratch correction preflight changed coordination state', 'causal_correction_integrity'); }
   const fixedTs = store._clock(); const predicted = { ...prospective, ts: fixedTs }; store._validateScratchCorrectionPayload(payload, predicted, false); const event = store._append('knowledge.scratch_corrected', payload, auth, fixedTs, beforeAppend ? () => beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })) : null); return freeze({ event: clone(event), projection: store._scratchCorrectionProjection(payload, event), replayed: false });
 }
 
@@ -7338,7 +7330,7 @@ export function addKnowledgeEdge(store, fields, auth) {
 export function listKnowledgeContradictions(store, repoId, rawRequest, policy) {
   if (!validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId) throw new CoordinationRefusal('knowledge contradiction list policy is invalid', 'causal_contradiction_invalid');
   const request = store._contradictionListRequest(rawRequest, policy); const nodes = store.queryKnowledge({ observedSeq: request.observedSeq }); const edges = store.queryKnowledgeEdges({ observedSeq: request.observedSeq });
-  if (edges.length > policy.maxScanEdges) throw new CoordinationRefusal('knowledge contradiction edge scan exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   const nodeMap = new Map(nodes.map((node) => [node.id, node])); const contradictions = edges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => compareCanonicalStrings(a.id, b.id));
   const rows = contradictions.map((edge) => {
     const endpoints = [nodeMap.get(edge.from), nodeMap.get(edge.to)].sort((a, b) => compareCanonicalStrings(a?.id ?? '', b?.id ?? ''));
@@ -7346,7 +7338,7 @@ export function listKnowledgeContradictions(store, repoId, rawRequest, policy) {
     const safeEndpoints = endpoints.map((node) => ({
       id: node.id, type: node.type, grounding: node.grounding, contentDigest: node.contentDigest,
       validityVersion: node.validityVersion, observedSeq: node.observedSeq, observedAt: node.observedAt,
-      eventTimeSeq: node.eventTimeSeq, eventTime: node.eventTime, snippet: utf8Snippet(node.body, policy.maxSnippetBytes),
+      eventTimeSeq: node.eventTimeSeq, eventTime: node.eventTime, snippet: utf8Snippet(node.body),
       evidenceCount: (node.evidence ?? []).length, evidenceDigest: canonicalDigest(node.evidence ?? []),
     }));
     return {
@@ -7358,7 +7350,7 @@ export function listKnowledgeContradictions(store, repoId, rawRequest, policy) {
   let offset = 0;
   if (request.afterEdgeId !== null) { const index = rows.findIndex((row) => row.edgeId === request.afterEdgeId); if (index === -1) throw new CoordinationRefusal('knowledge contradiction continuation is invalid', 'causal_contradiction_invalid'); offset = index + 1; }
   const items = rows.slice(offset, offset + request.limit); const evidenceRefs = items.reduce((sum, row) => sum + row.evidenceCount + row.endpoints.reduce((inner, endpoint) => inner + endpoint.evidenceCount, 0), 0);
-  if (evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge contradiction evidence exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   const policyDigest = canonicalDigest(policy); const requestDigest = canonicalDigest({ repoId, request, policyDigest }); const nextAfterEdgeId = offset + items.length < rows.length ? items.at(-1)?.edgeId ?? null : null;
   const core = {
     schemaVersion: 1, repoId, observedSeq: request.observedSeq, observedAt: store.observationTime(request.observedSeq), policyDigest, requestDigest,
@@ -7366,7 +7358,7 @@ export function listKnowledgeContradictions(store, repoId, rawRequest, policy) {
     frame: 'UNTRUSTED_CONTRADICTED_KNOWLEDGE — compare both claims and verify evidence before choosing a winner',
   };
   const projection = freeze({ ...core, projectionDigest: canonicalDigest(core) });
-  if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('knowledge contradiction list result exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   return projection;
 }
 
@@ -7392,9 +7384,9 @@ export function resolveKnowledgeContradictionBounded(store, repoId, observedSeq,
     schemaVersion: 2, repoId, observedSeq, observedAt: store.observationTime(observedSeq), policy: clone(policy), policyDigest, request, requestDigest,
     edgeId: request.edgeId, winnerId: request.winnerId, loserId: request.loserId, affectedReadEvents: clone(derived.affectedReadEvents), projectionDigest: derived.projectionDigest,
   }; const payload = { ...core, receiptDigest: canonicalDigest(core) };
-  if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('knowledge contradiction resolution batch exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   const prospective = { schemaVersion: 1, seq: store._events.length + 1, kind: 'knowledge.contradiction_resolved', actor: auth.actor, idempotencyKey: auth.key, payload }; const projection = store._boundedContradictionResolutionProjection(payload, prospective);
-  if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('knowledge contradiction resolution result exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   const gate = beforeAppend === null ? null : () => { const before = store._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (store._events.length !== before) throw new CoordinationRefusal('knowledge contradiction resolution preflight changed coordination state', 'causal_contradiction_integrity'); };
   if (gate) gate(); const fixedTs = store._clock(); const predicted = { ...prospective, ts: fixedTs }; store._validateBoundedContradictionResolutionPayload(payload, predicted, false); const event = store._append('knowledge.contradiction_resolved', payload, auth, fixedTs, gate);
   return freeze({ event: clone(event), projection: store._boundedContradictionResolutionProjection(payload, event), replayed: false });
@@ -7484,12 +7476,10 @@ export function _prepareKnowledgeRecall(store, request, policy, actor) {
   if (!validKnowledgeRecallPolicy(policy)) throw new CoordinationRefusal('knowledge recall policy is invalid', 'causal_recall_invalid');
   if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !allowed.has(key))
     || typeof request.text !== 'string' || request.text.trim().length === 0 || request.text.includes('\0') || !validUnicodeScalarString(request.text) || typeof actor !== 'string' || actor.length === 0
-    || !Number.isSafeInteger(request.limit) || request.limit <= 0 || request.limit > policy.maxResults
+    || !Number.isSafeInteger(request.limit) || request.limit <= 0
     || !Number.isSafeInteger(request.observedSeq) || request.observedSeq < 0 || request.observedSeq > store._events.length
     || !request.reader || typeof request.reader !== 'object' || Array.isArray(request.reader)) throw new CoordinationRefusal('knowledge recall request is invalid', 'causal_recall_invalid');
-  if (Buffer.byteLength(request.text) > policy.maxQueryBytes) throw new CoordinationRefusal('knowledge recall query exceeded deployment ceiling', 'causal_recall_oversize');
   const terms = recallTerms(request.text); if (terms.length === 0) throw new CoordinationRefusal('knowledge recall query has no searchable terms', 'causal_recall_invalid');
-  if (terms.length > policy.maxQueryTerms) throw new CoordinationRefusal('knowledge recall query exceeded deployment ceiling', 'causal_recall_oversize');
   const readerKeys = Object.keys(request.reader); if (readerKeys.some((key) => !['taskId', 'runId'].includes(key)) || readerKeys.length > 1) throw new CoordinationRefusal('knowledge recall reader is invalid', 'causal_recall_invalid');
   const taskId = request.reader.taskId ?? null; const runId = request.reader.runId ?? null;
   if ((taskId !== null && (!boundedText(taskId, 256) || !store._tasks.has(taskId))) || (runId !== null && (!validRunId(runId) || !store._runs.has(runId) || !store._knowledgeNodes.has(`run:${runId}`)))) throw new CoordinationRefusal('knowledge recall reader target is invalid', 'causal_recall_invalid');
@@ -7512,8 +7502,8 @@ export function _prepareKnowledgeRecall(store, request, policy, actor) {
 
 export function _buildKnowledgeRecall(store, query, policy, opts = {}) {
   if (!validKnowledgeRecallPolicy(policy) || query?.schemaVersion !== 1 || Object.keys(query).sort().join(',') !== ['schemaVersion', 'normalizedTextDigest', 'termDigests', 'types', 'grounding', 'seedNodeIds', 'limit', 'observedSeq', 'asOf'].sort().join(',')
-    || !/^[a-f0-9]{64}$/.test(query.normalizedTextDigest ?? '') || !Array.isArray(query.termDigests) || query.termDigests.length === 0 || query.termDigests.length > policy.maxQueryTerms || query.termDigests.some((value) => !/^[a-f0-9]{64}$/.test(value)) || new Set(query.termDigests).size !== query.termDigests.length
-    || !Number.isSafeInteger(query.limit) || query.limit <= 0 || query.limit > policy.maxResults || !Number.isSafeInteger(query.observedSeq) || query.observedSeq < 0 || query.observedSeq > store._events.length
+    || !/^[a-f0-9]{64}$/.test(query.normalizedTextDigest ?? '') || !Array.isArray(query.termDigests) || query.termDigests.length === 0 || query.termDigests.some((value) => !/^[a-f0-9]{64}$/.test(value)) || new Set(query.termDigests).size !== query.termDigests.length
+    || !Number.isSafeInteger(query.limit) || query.limit <= 0 || !Number.isSafeInteger(query.observedSeq) || query.observedSeq < 0 || query.observedSeq > store._events.length
     || typeof query.asOf !== 'string' || !Number.isFinite(Date.parse(query.asOf)) || new Date(Date.parse(query.asOf)).toISOString() !== query.asOf
     || !Array.isArray(query.types) || query.types.some((type) => !KNOWLEDGE_NODE_TYPES.has(type)) || new Set(query.types).size !== query.types.length
     || !Array.isArray(query.grounding) || query.grounding.some((value) => !KNOWLEDGE_GROUNDINGS.has(value)) || new Set(query.grounding).size !== query.grounding.length
@@ -7521,9 +7511,9 @@ export function _buildKnowledgeRecall(store, query, policy, opts = {}) {
     || canonicalDigest(query.termDigests) !== canonicalDigest([...query.termDigests].sort()) || canonicalDigest(query.types) !== canonicalDigest([...query.types].sort())
     || canonicalDigest(query.grounding) !== canonicalDigest([...query.grounding].sort()) || canonicalDigest(query.seedNodeIds) !== canonicalDigest([...query.seedNodeIds].sort())) throw new CoordinationRefusal('knowledge recall projection is invalid', 'causal_recall_invalid');
   const allNodes = store.queryKnowledge({ observedSeq: query.observedSeq, asOf: query.asOf });
-  if (allNodes.length > policy.maxCandidates) throw new CoordinationRefusal('knowledge recall candidates exceeded deployment ceiling', 'causal_recall_oversize');
+  
   const candidateBytes = allNodes.reduce((sum, node) => sum + Buffer.byteLength(recallBody(node.body)), 0);
-  if (candidateBytes > policy.maxCandidateBytes) throw new CoordinationRefusal('knowledge recall candidate bytes exceeded deployment ceiling', 'causal_recall_oversize');
+  
   const nodeMap = new Map(allNodes.map((node) => [node.id, node]));
   const eligible = allNodes.filter((node) => (query.types.length === 0 || query.types.includes(node.type)) && (query.grounding.length === 0 || query.grounding.includes(node.grounding)));
   const eligibleIds = new Set(eligible.map((node) => node.id));
@@ -7540,16 +7530,13 @@ export function _buildKnowledgeRecall(store, query, policy, opts = {}) {
   const incident = new Map(); for (const edge of allEdges) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
   for (const rows of incident.values()) rows.sort((a, b) => compareCanonicalStrings(a.id, b.id));
   const sources = [...new Set([...query.seedNodeIds, ...eligible.filter((node) => (lexical.get(node.id)?.score ?? 0) > 0).map((node) => node.id)])].sort();
-  const distances = new Map(sources.map((id) => [id, 0])); const queue = sources.map((id) => ({ id, depth: 0 })); const seenNodes = new Set(); const seenEdges = new Set(); let graphRows = 0;
+  const distances = new Map(sources.map((id) => [id, 0])); const queue = sources.map((id) => ({ id, depth: 0 })); const seenNodes = new Set(); const seenEdges = new Set();
   while (queue.length > 0) {
     const current = queue.shift(); if (seenNodes.has(current.id)) continue; seenNodes.add(current.id);
-    graphRows += 1; if (graphRows > policy.maxGraphRows) throw new CoordinationRefusal('knowledge recall graph exceeded deployment ceiling', 'causal_recall_oversize');
     for (const edge of incident.get(current.id) ?? []) {
       const next = edge.from === current.id ? edge.to : edge.from;
-      if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); graphRows += 1; if (graphRows > policy.maxGraphRows) throw new CoordinationRefusal('knowledge recall graph exceeded deployment ceiling', 'causal_recall_oversize'); }
-      if (current.depth >= policy.maxGraphDepth) {
-        if (!distances.has(next)) throw new CoordinationRefusal('knowledge recall graph depth exceeded deployment ceiling', 'causal_recall_oversize');
-      } else if (!distances.has(next)) { distances.set(next, current.depth + 1); queue.push({ id: next, depth: current.depth + 1 }); }
+      if (!seenEdges.has(edge.id)) seenEdges.add(edge.id);
+      if (!distances.has(next)) { distances.set(next, current.depth + 1); queue.push({ id: next, depth: current.depth + 1 }); }
     }
   }
   const rank = (node) => {
@@ -7558,16 +7545,16 @@ export function _buildKnowledgeRecall(store, query, policy, opts = {}) {
   };
   const ranked = eligible.map(rank).filter((row) => row.score > 0).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.node.id, b.node.id));
   // KG-3 rule 11a: contradiction-peel decouples the SELECTION cap (opts.selectionLimit, default
-  // query.limit) from the bundle ceiling (query.limit/maxResults). Reducing selectionLimit shrinks
+  // query.limit) from the bundle ceiling (query.limit). Reducing selectionLimit shrinks
   // the seed set the Contradicts bundle expands from, preserving the top node + its live peers.
   const selectionLimit = Number.isSafeInteger(opts.selectionLimit) ? opts.selectionLimit : query.limit;
   const selected = ranked.slice(0, selectionLimit); const selectedIds = new Set(selected.map((row) => row.node.id)); const finalIds = new Set(selectedIds); const contradictionEdges = allEdges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => compareCanonicalStrings(a.id, b.id));
   let changed = true; while (changed) { changed = false; for (const edge of contradictionEdges) if (finalIds.has(edge.from) || finalIds.has(edge.to)) for (const id of [edge.from, edge.to]) if (!finalIds.has(id)) { finalIds.add(id); changed = true; } }
-  if (finalIds.size > query.limit || finalIds.size > policy.maxResults) throw new CoordinationRefusal('knowledge recall contradiction bundle exceeded deployment ceiling', 'causal_recall_oversize');
+  if (finalIds.size > query.limit) throw new CoordinationRefusal('knowledge recall contradiction bundle exceeded deployment ceiling', 'causal_recall_oversize');
   const rows = [...finalIds].map((id) => rank(nodeMap.get(id))).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.node.id, b.node.id)).map(({ node, score, reason }) => {
     const fullReason = { ...reason, selected: selectedIds.has(node.id), contradictionPeer: !selectedIds.has(node.id) }; const reasonDigest = canonicalDigest(fullReason);
     const safe = Object.fromEntries(['id', 'type', 'grounding', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion'].filter((key) => Object.hasOwn(node, key)).map((key) => [key, clone(node[key])]));
-    return { ...safe, score, reason: fullReason, reasonDigest, snippet: utf8Snippet(node.body, policy.maxSnippetBytes) };
+    return { ...safe, score, reason: fullReason, reasonDigest, snippet: utf8Snippet(node.body) };
   });
   const contradictions = contradictionEdges.filter((edge) => finalIds.has(edge.from) && finalIds.has(edge.to)).map((edge) => ({ edgeId: edge.id, from: edge.from, to: edge.to, status: 'unresolved' }));
   const core = { schemaVersion: 1, observedSeq: query.observedSeq, observedAt: store.observationTime(query.observedSeq), asOf: query.asOf, queryDigest: canonicalDigest(query), nodes: rows, contradictions };
@@ -7582,7 +7569,7 @@ export function _newKnowledgeRecallReceipt(store, prepared) {
     scores: projection.nodes.map((node) => ({ id: node.id, score: node.score, reasonDigest: node.reasonDigest })), contradictionEdgeIds: projection.contradictions.map((edge) => edge.edgeId),
     requestDigest: prepared.requestDigest, resultProjectionDigest: projection.projectionDigest,
   };
-  const payload = { ...core, receiptDigest: canonicalDigest(core) }; if (canonicalBytes(payload) > prepared.policy.maxReceiptBytes) throw new CoordinationRefusal('knowledge recall receipt exceeded deployment ceiling', 'causal_recall_oversize');
+  const payload = { ...core, receiptDigest: canonicalDigest(core) }; 
   return { projection, payload, receiptBytes: canonicalBytes(payload) };
 }
 
@@ -7625,7 +7612,7 @@ export function reverifyKnowledgeRecall(store, request, policy, actor, eventSeq)
 }
 
 export function _buildKnowledgeRecallAssessment(store, repoId, observedSeq, policy, actor, assessmentEventSeq = store._events.length + 1) {
-  if (!validKnowledgeRecallAssessmentPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > store._events.length || observedSeq > policy.maxScanEvents || typeof actor !== 'string' || actor.length === 0) throw new CoordinationRefusal('knowledge recall assessment request is invalid or oversized', observedSeq > policy?.maxScanEvents ? 'causal_assessment_oversize' : 'causal_assessment_invalid');
+  if (!validKnowledgeRecallAssessmentPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > store._events.length || typeof actor !== 'string' || actor.length === 0) throw new CoordinationRefusal('knowledge recall assessment request is invalid', 'causal_assessment_invalid');
   const assessedBefore = new Set(store._events.slice(0, Math.max(0, assessmentEventSeq - 1)).filter((event) => event.kind === 'knowledge.recall_assessment_batch').flatMap((event) => event.payload.assessments.map((row) => row.recallEventSeq)));
   const assessments = [];
   for (const receipt of store._events.slice(0, observedSeq)) {
@@ -7634,7 +7621,6 @@ export function _buildKnowledgeRecallAssessment(store, repoId, observedSeq, poli
   }
   assessments.sort((a, b) => a.recallEventSeq - b.recallEventSeq);
   const nodeRefs = assessments.reduce((sum, row) => sum + row.nodeIds.length, 0); const evidenceRefs = assessments.length * 3;
-  if (assessments.length > policy.maxReceipts || nodeRefs > policy.maxNodeRefs || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge recall assessment exceeded deployment ceiling', 'causal_assessment_oversize');
   const policyDigest = canonicalDigest(policy); const requestDigest = canonicalDigest({ repoId, observedSeq, policyDigest, actor });
   const projectionCore = { schemaVersion: 1, repoId, observedSeq, observedAt: store.observationTime(observedSeq), policyDigest, requestDigest, assessments: clone(assessments), causationClaimed: false };
   return freeze({ ...projectionCore, projectionDigest: canonicalDigest(projectionCore), nodeRefs, evidenceRefs });
@@ -7645,7 +7631,6 @@ export function _newKnowledgeRecallAssessment(store, repoId, observedSeq, policy
   if (projection.assessments.length === 0) return freeze({ projection: { ...clone(projection), eventSeq: null, receiptDigest: null }, noOp: true, event: null, batchBytes: 0 });
   const core = { schemaVersion: 1, repoId, observedSeq, observedAt: projection.observedAt, policy: clone(policy), policyDigest: projection.policyDigest, requestDigest: projection.requestDigest, assessments: clone(projection.assessments), causationClaimed: false, projectionDigest: projection.projectionDigest };
   const payload = { ...core, receiptDigest: canonicalDigest(core) }; const batchBytes = canonicalBytes(payload);
-  if (batchBytes > policy.maxBatchBytes) throw new CoordinationRefusal('knowledge recall assessment batch exceeded deployment ceiling', 'causal_assessment_oversize');
   return freeze({ projection: { ...clone(projection), eventSeq: store._events.length + 1, receiptDigest: payload.receiptDigest }, noOp: false, event: { schemaVersion: 1, seq: store._events.length + 1, kind: 'knowledge.recall_assessment_batch', actor: auth.actor, idempotencyKey: auth.key, payload }, batchBytes });
 }
 
@@ -7762,11 +7747,8 @@ export function invalidateKnowledge(store, nodeId, expectedValidityVersion, reas
 export function auditKnowledge(store, options = {}) {
   const observedSeq = options.observedSeq ?? store._events.length; const observedAt = options.observedAt ?? null;
   if (!Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > store._events.length || (observedAt !== null && !Number.isFinite(Date.parse(observedAt)))) throw new CoordinationRefusal('causal audit boundary is invalid', 'causal_audit_invalid');
-  const limitNames = ['maxStateRows', 'maxNodes', 'maxEdges', 'maxEvidenceRefs', 'maxAuditSamples']; const bounded = limitNames.some((name) => Object.hasOwn(options, name));
-  if (bounded && limitNames.some((name) => !Number.isSafeInteger(options[name]) || options[name] <= 0)) throw new CoordinationRefusal('causal audit policy is invalid', 'causal_audit_invalid');
   const nodes = store._knowledgeVersionsAt(store._knowledgeNodeHistory, observedSeq, observedAt); const edges = store._knowledgeVersionsAt(store._knowledgeEdgeHistory, observedSeq, observedAt);
   const reads = store._knowledgeReads.filter((row) => row.eventSeq <= observedSeq); const assessments = [...store._knowledgeRecallAssessments.values()].filter((row) => row.eventSeq <= observedSeq); const contamination = store._contamination.filter((row) => row.eventSeq <= observedSeq); const evidenceCount = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0) + assessments.length * 3; const stateRows = nodes.length + edges.length + reads.length + assessments.length + contamination.length;
-  if (bounded && (stateRows > options.maxStateRows || nodes.length > options.maxNodes || edges.length > options.maxEdges || evidenceCount > options.maxEvidenceRefs)) throw new CoordinationRefusal('causal audit exceeded deployment ceiling', 'causal_audit_oversize');
   const effectiveAt = Date.parse(observedAt ?? store.observationTime(observedSeq) ?? store._clock()); const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const liveNodes = nodes.filter((node) => store._knowledgeLiveAt(node, effectiveAt)); const liveNodeIds = new Set(liveNodes.map((node) => node.id));
   const liveEdges = edges.filter((edge) => store._knowledgeLiveAt(edge, effectiveAt) && liveNodeIds.has(edge.from) && liveNodeIds.has(edge.to)); const connected = new Set(liveEdges.flatMap((edge) => [edge.from, edge.to]));
@@ -7801,7 +7783,7 @@ export function auditKnowledge(store, options = {}) {
   const eligibleRecallRows = taskScopedRecalls.filter((row) => store._recallAssessmentCandidate(store._events[row.eventSeq - 1], observedSeq) !== null); const eligibleRecallSeqs = new Set(eligibleRecallRows.map((row) => row.eventSeq)); const assessedEligible = assessments.filter((row) => eligibleRecallSeqs.has(row.recallEventSeq));
   const verifiedPassAfterRecall = assessedEligible.filter((row) => row.outcome === 'verified_pass_after_recall').length; const verifiedFailAfterRecall = assessedEligible.filter((row) => row.outcome === 'verified_fail_after_recall').length;
   const contaminatedAssessmentCount = assessedEligible.filter((row) => contamination.some((record) => record.affectedReadEvents.includes(row.recallEventSeq))).length;
-  const sampleLimit = bounded ? options.maxAuditSamples : violations.length;
+  const sampleLimit = violations.length;
   return freeze({
     coordinationUpperBound: observedSeq, stateRows, evidenceRefs: evidenceCount,
     causalCompleteness: { complete: completeDecisions.length, total: decisions.length, decisions: { complete: completeDecisions.length, total: decisions.length } },

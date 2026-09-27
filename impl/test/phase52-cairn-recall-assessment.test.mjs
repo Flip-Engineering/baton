@@ -12,9 +12,9 @@ import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
 reapFixtureDirectories();
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase52-${name}-`));
-const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 2048, maxNodes: 256, maxEdges: 1024, maxEvidenceRefs: 4096, maxAuditSamples: 128, maxTraceDepth: 8, maxTraceRows: 1024, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxQueryBytes: 4096, maxQueryTerms: 64, maxCandidates: 256, maxCandidateBytes: 512 * 1024, maxResults: 32, maxGraphDepth: 8, maxGraphRows: 1024, maxSnippetBytes: 128, maxReceiptBytes: 128 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const assessmentPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxScanEvents: 4096, maxReceipts: 256, maxNodeRefs: 4096, maxEvidenceRefs: 1024, maxBatchBytes: 512 * 1024, maxResultBytes: 256 * 1024, ...overrides });
+const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const assessmentPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const context = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase52:assess', budgetTokens: 32_000, ...overrides });
 const route = Object.freeze({ harnessRequested: 'mock', harnessResolved: 'mock@1.0.0', modelRequested: 'mock-model', modelResolved: 'mock-model', effortRequested: 'low', effortResolved: 'low', routeKey: '["mock","1.0.0","mock-model","low","mock-family","test"]' });
 
@@ -129,17 +129,7 @@ test('RA2/RA5/RA9: audit failure and cancellation after the audit gate leave no 
   await assert.rejects(cancelled.cairn.invoke('causal.assess_recall', { observedSeq: before }, context({ idempotencyKey: 'cancel:after-audit', signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal((cancelled.store.snapshot().knowledge.assessments ?? []).length, 0); assert.equal(cancelled.store.snapshot().lastSeq, before);
 });
 
-test('RA5/RA6/RA9: every independent ceiling, cancellation, preflight, and append failure leaves no assessment', async () => {
-  for (const [field, value] of [['maxScanEvents', 1], ['maxEvidenceRefs', 1], ['maxBatchBytes', 1], ['maxResultBytes', 1]]) {
-    const overrides = { [field]: value };
-    const f = await fixture({ id: `limit-${field}`, policy: overrides }); const before = f.store.snapshot().lastSeq;
-    await assert.rejects(f.cairn.invoke('causal.assess_recall', { observedSeq: before }, context({ idempotencyKey: `limit:${field}` })), (error) => ['causal_assessment_oversize', 'capability_result_oversize'].includes(error.code));
-    assert.equal((f.store.snapshot().knowledge.assessments ?? []).length, 0); assert.equal(f.store.snapshot().lastSeq, before);
-  }
-  for (const field of ['maxReceipts', 'maxNodeRefs']) {
-    const f = await fixture({ id: `limit-${field}`, recallCount: 2, policy: { [field]: 1 } }); const before = f.store.snapshot().lastSeq;
-    await assert.rejects(f.cairn.invoke('causal.assess_recall', { observedSeq: before }, context({ idempotencyKey: `limit:${field}` })), (error) => error.code === 'causal_assessment_oversize'); assert.equal((f.store.snapshot().knowledge.assessments ?? []).length, 0); assert.equal(f.store.snapshot().lastSeq, before);
-  }
+test('RA5/RA6/RA9: cancellation, preflight, and append failure leave no assessment', async () => {
   const cancelled = await fixture({ id: 'cancel' }); const abort = new AbortController(); abort.abort(); const cancelBefore = cancelled.store.snapshot().lastSeq;
   await assert.rejects(cancelled.cairn.invoke('causal.assess_recall', { observedSeq: cancelBefore }, context({ idempotencyKey: 'cancelled', signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal(cancelled.store.snapshot().lastSeq, cancelBefore);
   const failed = await fixture({ id: 'disk' }); const failedBefore = failed.store.snapshot().lastSeq; failed.store._appendFile = () => { throw new Error('disk full'); };
