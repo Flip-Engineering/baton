@@ -87,12 +87,16 @@ counted as done. A clean `lifecycle.exited` counts as done regardless of unrelat
 `lastVerdict` belongs to one turn and MUST be cleared by the next `lifecycle.turn_started`.
 A working worker cannot be counted simultaneously as active and done from a stale verdict.
 
-## SC18 — session wall-time budgets are enforced
+## SC18 — session wall-time budgets are inert for fate
 
-When `spawn(..., {timeoutMs})` receives a positive timeout, every session adapter MUST arm a timer
-for that worker. Expiry emits one observable `lifecycle.crashed{phase:'timeout'}` and reaps the
-child. Natural exit, explicit interrupt/kill, spawn refusal, and replacement MUST clear the timer.
-No timer is invented when `timeoutMs` is absent.
+`spawn(..., {timeoutMs})` accepts a positive budget and arms no clock for that worker. A wall timer
+does not terminalize a session: the member stays live until evidence closes it (process exit, an
+explicit interrupt or kill). This is the adapter-level form of operator ruling #163 (2026-09-14),
+the retirement of the wall-time fate clock, exercised by `impl/test/phase51-process-lifecycle.test.mjs`
+(PL7, PL10/LIF-004) and `impl/test/kimi-acp.test.mjs`.
+
+A timeout a transport classifies before the close keeps its precedence in the session's terminal
+cause. The classification is never minted by a timer.
 
 This closes the phase-10 regression only. Token/USD threshold policy and the governance watchdog
 remain phase-11 work; SC18 does not broaden into that backlog.

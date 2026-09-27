@@ -11,7 +11,7 @@
 // correct implementation, but fails a plausible WRONG one (the pin list below names the wrong
 // implementation each pin kills). Harness idiom mirrors test/claim-preflight-red.test.mjs
 // (ScriptableAdapter coordinator harness, the deterministic fake-wave facade) and
-// test/issue10-blocked-interaction-red.test.mjs (the application harness). Hermetic: mock
+// test/issue10-blocked-interaction.test.mjs (the application harness). Hermetic: mock
 // adapters, tmp dirs, test.after cleanup, no network, no keychain.
 //
 // ===========================================================================

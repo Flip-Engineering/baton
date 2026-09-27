@@ -375,26 +375,38 @@ test('SC17: a later process crash cannot inherit done from an earlier accepted v
   assert.match(renderNarrative(state), /crashed/);
 });
 
-test('SC18: timeoutMs is enforced by every session adapter', async (t) => {
+// SC18 as restated under #163 (operator ruling, 2026-09-14): a session wall-time budget no
+// longer feeds a member's fate. spawn(..., {timeoutMs}) still accepts the budget and arms no
+// clock for that worker; the member is held until evidence (process exit, an explicit
+// interrupt or kill) closes it. phase51 PL7/PL10 pin the law for the wider adapter set; this
+// row keeps phase 10.1's own SC18 obligation for its three session adapters.
+test('SC18: a positive timeoutMs arms no wall clock — every session adapter holds the member alive', async (t) => {
   for (const [name, make, marker] of makeAdapters()) {
     const cli = make();
     const events = collect(cli);
     t.after(() => killPids(events));
     try {
-      // The bare suite starts many fixture processes in parallel. Keep this above ordinary host
-      // scheduler latency so the assertion measures an active-session timeout, not setup jitter.
-      const ack = await cli.spawn(`${name}-timeout`, brief(marker), { worktree: tmpdir(), timeoutMs: 600 });
+      const worker = `${name}-timeout-inert`;
+      const ack = await cli.spawn(worker, brief(marker), { worktree: tmpdir(), timeoutMs: 600 });
       assert.equal(ack.ok, true);
-      for (let i = 0; i < 160 && !events.some((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'); i += 1) await sleep(5);
-      assert.equal(events.filter((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout').length, 1, `${name}: timeout must be observable exactly once`);
+      // Past the window the retired timer fired in: elapsed time is not evidence, so nothing
+      // terminalizes and the child stays open.
+      await sleep(900);
+      assert.equal(events.filter((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout').length, 0,
+        `${name}: no timeout crash exists at the retired wall window`);
+      assert.equal(events.some((e) => e.kind === 'lifecycle.process_closed'), false,
+        `${name}: the member is held open past the retired wall window`);
     } finally {
-      await cli.kill(`${name}-timeout`).catch(() => {});
+      await cli.kill(`${name}-timeout-inert`).catch(() => {});
       await sleep(20);
     }
   }
 });
 
-test('SC18: confirmed interrupt clears each session wall timer', async (t) => {
+// SC18's surviving half: a timeout a TRANSPORT classifies before the close keeps its precedence
+// in the session's terminal cause. It is never minted by a timer, so an explicit stop confirms
+// once and no timeout crash follows.
+test('SC18: a confirmed interrupt closes the member and no timeout crash follows', async (t) => {
   for (const [name, make, marker] of makeAdapters()) {
     const cli = make();
     const events = collect(cli);
