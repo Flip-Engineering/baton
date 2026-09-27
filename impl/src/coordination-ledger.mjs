@@ -622,8 +622,8 @@ export function _readCanonicalLedger(store) {
 
 export function _canonicalPrefixEventDigest(store, events) {
   let ordered;
-  try { ordered = canonicalJson(events, { maxDepth: 256, maxNodes: 1_000_000 }); }
-  catch (error) { store._canonicalOrderFail(`coordination prefix cannot be canonically bounded: ${error?.message ?? error}`); }
+  try { ordered = canonicalJson(events); }
+  catch (error) { store._canonicalOrderFail(`coordination prefix is not canonically serializable: ${error?.message ?? error}`); }
   return sha256Bytes(Buffer.from(JSON.stringify(ordered), 'utf8'));
 }
 
@@ -646,7 +646,7 @@ export function _canonicalReceiptCore(store, mode, ledger, createdAt, cutPolicy 
 }
 
 export function _receiptBytes(receipt) {
-  return Buffer.from(`${JSON.stringify(canonicalJson(receipt, { maxDepth: 16, maxNodes: 128 }))}\n`, 'utf8');
+  return Buffer.from(`${JSON.stringify(canonicalJson(receipt))}\n`, 'utf8');
 }
 
 export function canonicalOrderReceipt(state) { return clone(state); }

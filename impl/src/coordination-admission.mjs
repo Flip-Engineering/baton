@@ -170,7 +170,7 @@ export function _validateCanonicalReceipt(store, receipt, bytes, ledger) {
   if (canonicalDigest(receiptPolicy) !== canonicalDigest(store._canonicalOrderPolicy)) store._canonicalOrderFail('canonical-order receipt policy differs from deployment authority');
   if (Object.keys(cutPolicy).some((key) => cutPolicy[key] > receiptPolicy[key])) store._canonicalOrderFail('canonical-order receipt cut exceeds deployment authority');
   const core = Object.fromEntries(Object.entries(receipt).filter(([key]) => key !== 'receiptDigest'));
-  if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core, { maxDepth: 16, maxNodes: 128 })), 'utf8'))) {
+  if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core)), 'utf8'))) {
     store._canonicalOrderFail('canonical-order receipt digest is invalid');
   }
   const canonicalBytesValue = store._receiptBytes(receipt);
