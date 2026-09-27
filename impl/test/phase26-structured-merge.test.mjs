@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createBrief, createDriver, MockAdapter, MergirafResolver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 const write = (root, path, body) => { const file = join(root, path); execFileSync('mkdir', ['-p', join(file, '..')]); writeFileSync(file, body); };
 const commit = (root, message) => { git(['add', '-A'], root); git(['commit', '-q', '-m', message], root); return git(['rev-parse', 'HEAD'], root); };

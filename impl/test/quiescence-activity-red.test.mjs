@@ -8,6 +8,10 @@ import { createDriver } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #236 follow-on red pin — quiescence must treat in-flight tool execution as ACTIVITY.
 // Measured 2026-08-19 (wave-e fleet): nine members deep in real work (2079 content events,
 // w-649 mid-tool-call at 00:26:12) when the interpreter's quiescence classifier declared

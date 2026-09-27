@@ -26,6 +26,10 @@ import {
   validateApplicationCommandArgs,
 } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const REPO_ID = 'repo-phase89-resident';
 const EXACT_ROUTE = Object.freeze({ harness: 'mock', model: 'resident-model', effort: 'high' });
 const principal = (id) => ({

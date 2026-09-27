@@ -730,10 +730,13 @@ test('DC1/#277 G-1: maxInteractions is a deployment field, or a fleet derivation
   // from the fleet.
   const coordinationFixture = (drainPolicy) => {
     const dir = root(`policy-${drainPolicy.maxWorkers}-${drainPolicy.timeoutMs}-${drainPolicy.maxInteractions ?? 'derived'}`);
+    // Reap the minted root before anything can throw: the maxInteractions: 0 case below refuses
+    // in the Coordinator constructor, and a reap registered after it never runs for that call.
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
     const coordination = new CoordinationStore(dir);
     const log = new Log(join(dir, 'worker-log'));
     const coordinator = new Coordinator({ log, coordination, adapters: {}, drainPolicy });
-    t.after(() => { try { coordination.releaseWriterLease(); } catch {} rmSync(dir, { recursive: true, force: true }); });
+    t.after(() => { try { coordination.releaseWriterLease(); } catch {} });
     return coordinator._drainPolicy;
   };
   assert.equal(coordinationFixture({ maxWorkers: 3, timeoutMs: 1_000, pollMs: 5, maxInteractions: 7 }).maxInteractions, 7,

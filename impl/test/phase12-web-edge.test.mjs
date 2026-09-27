@@ -7,6 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CoordinationStore, FixedWindowQuota, WebEdgePolicy, WebNorthbound, WebReadinessAuthority, WebSessionStore, createAuthenticatedWebServer, resolveEdgeRequest } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const ORIGIN = 'https://control.test';
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-edge-'));
 class Response { writeHead(status, headers) { this.status = status; this.headers = headers; } end(body = '') { this.body = body ? JSON.parse(body) : null; } }

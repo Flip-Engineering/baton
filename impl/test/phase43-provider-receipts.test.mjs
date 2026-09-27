@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { AdvisoryFeedRegistry, CoordinationStore, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const sha = (value) => createHash('sha256').update(Buffer.isBuffer(value) ? value : JSON.stringify(canonical(value))).digest('hex');

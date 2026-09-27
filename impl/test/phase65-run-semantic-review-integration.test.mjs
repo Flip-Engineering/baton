@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase65-${name}-`));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });

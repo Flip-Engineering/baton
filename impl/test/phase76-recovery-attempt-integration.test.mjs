@@ -15,6 +15,10 @@ import {
   createRecoveryAttemptCompletion,
 } from '../src/recovery-attempt.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const repoId = 'repo-phase76-recovery-integration';
 const runId = 'run-phase76-recovery-integration';
 

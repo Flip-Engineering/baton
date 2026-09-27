@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { CoordinationStore, WebNorthbound, WebSessionStore, operatorAsset } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = Date.parse('2026-07-11T19:00:00.000Z');
 const ORIGIN = 'https://control.test';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));

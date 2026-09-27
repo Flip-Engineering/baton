@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { CairnRunScorecard, CoordinationStore, MockAdapter, createBrief, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-cairn-${name}-`));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(fn, label, timeoutMs = 5000) {

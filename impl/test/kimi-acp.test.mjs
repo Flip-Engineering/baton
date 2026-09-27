@@ -8,6 +8,10 @@ import { assertIsAdapter } from '../src/adapter.mjs';
 import { buildKimiAcpArgs, KimiAcpCli } from '../src/kimi-acp.mjs';
 import { DEFAULT_WORKER_POLICY_REQUEST, resolveWorkerPolicy } from '../src/worker-policy.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const fixture = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
 const brief = {
   goal: 'tiny task', constraints: [], pathScope: ['impl/**'], definitionOfDone: 'done',

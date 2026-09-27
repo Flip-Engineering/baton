@@ -9,6 +9,10 @@ import test from 'node:test';
 
 import * as batonModule from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const { DEFAULT_WORKER_POLICY_REQUEST, MockAdapter } = batonModule;
 const factoryAvailable = typeof batonModule.openBaton === 'function';
 

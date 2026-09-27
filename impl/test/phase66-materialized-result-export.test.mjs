@@ -14,6 +14,10 @@ import {
   validateApplicationCommandArgs,
 } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const REPO_ID = 'repo-phase66-export';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase66-export-${name}-`));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });

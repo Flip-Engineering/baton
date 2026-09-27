@@ -32,6 +32,10 @@ import { createDriver } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const REPO = 'repo-coordinator-plan-effects-240';
 const WAVE_ID = 'wave:0123456789abcdef0123456789abcdef';
 

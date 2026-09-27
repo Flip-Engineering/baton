@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectCredentialTree } from '../src/credential-projection.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'baton-credential-source-'));
   chmodSync(root, 0o700);

@@ -9,6 +9,10 @@ import {
   CoordinationIntegrityError, CoordinationRefusal, CoordinationStore,
 } from '../src/coordination-store.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-finalization-${name}-`));
 const canonical = (value) => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object'

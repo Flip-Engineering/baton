@@ -16,6 +16,10 @@ import { commandForTool } from '../src/mcp-northbound.mjs';
 import { ORDINARY_COMMANDS } from '../src/mcp-web-bridge.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
 // The card's commands derive from the command table (surface-truth.mjs).
 const commands = mockApplicationCard('repo-kimi-orchestrator').commands;

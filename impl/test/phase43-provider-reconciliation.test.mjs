@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { McpFleetServer, SessionRecoverySupervisor, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const sha = (value) => createHash('sha256').update(Buffer.isBuffer(value) ? value : JSON.stringify(canonical(value))).digest('hex');
 const coordinate = Object.freeze({ ecosystem: 'npm', package: '@scope/provider-green', version: '1.2.3' }); const fingerprint = sha(Buffer.from('provider-green-key')); const fingerprintTwo = sha(Buffer.from('provider-green-key-two')); const indexEpoch = 'a'.repeat(64); const atlasCardDigest = 'b'.repeat(64);

@@ -11,6 +11,10 @@ import { KimiAcpCli } from '../src/kimi-acp.mjs';
 import { Log } from '../src/log.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
 const BASE = '1'.repeat(40);
 const PROGRESS = '2'.repeat(40);

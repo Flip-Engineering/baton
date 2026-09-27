@@ -23,6 +23,10 @@ import { coordinationReplayFailure, quarantineCoordinationLedgerEvent } from '..
 import { normalizeGoalPlanPolicy } from '../src/goal-plan.mjs';
 import { findTokenShaped, fixtureCeilingBytes } from '../scripts/ledger-extract.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const CORPUS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ledgers-goal-plan');
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-issue325-${name}-`));

@@ -27,6 +27,10 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { createDriver } from '../src/index.mjs';
 import { WebNorthbound } from '../src/web-northbound.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // ---------------------------------------------------------------------------
 // Web-lane fixture (the phase12-web-northbound pattern: WebNorthbound over a fake application
 // that records the forwarded args — the server-side analogue of the fake client).

@@ -7,6 +7,10 @@ import { dirname, join } from 'node:path';
 
 import { AtlasCodeIndex } from '../src/atlas-index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase61-scip-${name}-`));
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 function stable(value) {

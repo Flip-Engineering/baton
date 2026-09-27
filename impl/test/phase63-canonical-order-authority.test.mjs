@@ -13,6 +13,10 @@ import {
 import { CoordinationIntegrityError, CoordinationRefusal, CoordinationStore, migrateCanonicalOrderLedger } from '../src/coordination-store.mjs';
 import { createDriver, MockAdapter } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..', 'src');
 

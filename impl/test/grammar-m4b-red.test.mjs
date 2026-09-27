@@ -20,6 +20,10 @@ import {
   serializationOrderViolations,
 } from '../scripts/surface-conformance.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // docs/36 §9 M4 second slice (M4b — the transport flip). These are the M4b acceptance contracts:
 // the last breaking-surface phase renders the Web and MCP transports from registry v2,
 // admits canonical names beside the retained legacy names (both reaching one operation, the

@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { AtlasRepresentationReview, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..'); const HEAD = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(); const root = (name) => mkdtempSync(join(tmpdir(), `baton-representation-review-${name}-`)); const limits = { maxArtifactBytes: 128 * 1024, maxFileBytes: 512 * 1024, maxFiles: 27, maxRows: 7 }; const make = (overrides = {}) => new AtlasRepresentationReview({ repoRoot: REPO, artifactRoot: root('artifacts'), limits, ...overrides }); const ctx = { actor: 'orchestrator', budgetTokens: 20_000 };
 
 test('RP1-RP3: fixed packet attests every representation rung with honest closed status', async () => {

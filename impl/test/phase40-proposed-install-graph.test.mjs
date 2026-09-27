@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { AtlasCodeIndex, CartographerQuartermaster, McpFleetServer, NpmProposalResolver, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-proposal-${name}-`));
 const write = (base, path, content) => { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), content); };
 const stable = (value) => Array.isArray(value) ? `[${value.map(stable).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value);

@@ -18,6 +18,10 @@ import {
 import { batonCliHelp } from '../src/application-cli.mjs';
 import { listWorktrees } from '../src/worktree.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase69-retry-${name}-`));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });

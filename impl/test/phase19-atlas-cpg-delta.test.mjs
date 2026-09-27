@@ -6,6 +6,10 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { AtlasCpgDelta } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function write(root, path, content) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), content); }
 function fixture(before, after, opts = {}) {

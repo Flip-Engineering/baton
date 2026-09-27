@@ -8,6 +8,10 @@ import test from 'node:test';
 import { AtlasStructuralDelta } from '../src/atlas-structural.mjs';
 import { AtlasCpgDelta } from '../src/atlas-cpg-delta.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase61-${name}-`));
 const write = (base, path, source) => { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), source); };
 const stable = (value) => {

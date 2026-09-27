@@ -18,6 +18,10 @@ import { join } from 'node:path';
 
 import { assertIsAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
 async function importGlm() {

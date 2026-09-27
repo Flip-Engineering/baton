@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasEGraphEvaluation } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const artifactRoot = () => mkdtempSync(join(tmpdir(), 'baton-egraph-evaluation-'));
 const make = (opts = {}) => new AtlasEGraphEvaluation({ artifactRoot: artifactRoot(), maxArtifactBytes: 64 * 1024, ...opts });
 const ctx = { budgetTokens: 2000 };

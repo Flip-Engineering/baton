@@ -10,6 +10,10 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const CHILD_RELATIONS = Object.freeze([
   'follow_up', 'oracle', 'preserved_resume', 'recovery', 'review', 'revision',
 ]);

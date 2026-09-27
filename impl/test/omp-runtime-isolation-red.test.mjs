@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 import { OmpRpcCli } from '../src/omp-rpc.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #230 red pin — omp runtime isolation. Measured 2026-08-15 (live resident dogfood): the omp
 // member spawned with a live `omp --mode rpc` process and a started turn, then sat with ZERO
 // established sockets for 25+ minutes — no provider call ever fired. Cause: runtimeIdentity

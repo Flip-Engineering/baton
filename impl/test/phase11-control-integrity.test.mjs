@@ -19,6 +19,10 @@ import { initialState, foldEvent } from '../src/story.mjs';
 import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { CoordinationStore, MockAdapter, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const ORIGIN = 'https://control.example.test';
 const REPO = 'repo-a';
 const RUN = 'run-a';

@@ -11,6 +11,10 @@ import {
 import { bindBaton } from '../src/application-client.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const route = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'low' });
 
 function resolver(routes = [route], defaults = undefined) {

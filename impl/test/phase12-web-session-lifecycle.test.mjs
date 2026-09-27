@@ -7,6 +7,10 @@ import { join } from 'node:path';
 
 import { CoordinationStore, WebNorthbound, WebSessionStore } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const now = Date.parse('2026-07-11T12:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-session-lifecycle-'));
 const bearer = (value) => ({ headers: { authorization: `Bearer ${value}` } });

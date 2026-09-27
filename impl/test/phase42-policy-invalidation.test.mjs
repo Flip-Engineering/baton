@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { AtlasCodeIndex, CartographerQuartermaster, CoordinationStore, McpFleetServer, PublicSupplyChainOracle, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-policy-${name}-`));
 const write = (base, path, content) => { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), content); };
 const response = (value) => { const raw = Buffer.from(JSON.stringify(value)); return { ok: true, headers: { get: () => null }, arrayBuffer: async () => raw }; };

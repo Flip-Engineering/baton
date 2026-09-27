@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { CairnRunScorecard, CoordinationIntegrityError, CoordinationStore, McpFleetServer, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase53-${name}-`));
 const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 2048, maxNodes: 512, maxEdges: 1024, maxEvidenceRefs: 4096, maxAuditSamples: 128, maxTraceDepth: 8, maxTraceRows: 1024, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
 const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxQueryBytes: 4096, maxQueryTerms: 64, maxCandidates: 256, maxCandidateBytes: 512 * 1024, maxResults: 32, maxGraphDepth: 8, maxGraphRows: 1024, maxSnippetBytes: 128, maxReceiptBytes: 128 * 1024, maxResultBytes: 256 * 1024, ...overrides });

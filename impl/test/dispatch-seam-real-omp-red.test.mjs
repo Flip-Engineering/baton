@@ -8,6 +8,10 @@ import { createDriver } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { OmpRpcCli } from '../src/omp-rpc.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #230 red pin — the REAL-adapter dispatch repro. The mock-shaped pin (dispatch-seam-omp-red)
 // proves the application chain green on the omp route COORDINATES; this pin swaps in the REAL
 // OmpRpcCli (the exact class the resident's deployment constructs, adapter key 'omp:omp') to

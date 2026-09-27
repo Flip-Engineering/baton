@@ -11,6 +11,10 @@ import { OmpRpcCli } from '../src/omp-rpc.mjs';
 import { RouteLiveness } from '../src/route-liveness.mjs';
 import { createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #230 follow-on — the omp false-stall murder, root-caused from the wave-d fleet's durable
 // logs (.git/baton/application-v3/state/w-636.jsonl, 2026-08-15):
 //

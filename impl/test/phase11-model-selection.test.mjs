@@ -18,6 +18,10 @@ import { captureCommit, createFromBase, reap } from '../src/worktree.mjs';
 import { foldEvent, initialState } from '../src/story.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
 const FAKE_GROK = fileURLToPath(new URL('./fixtures/fake-grok-acp.mjs', import.meta.url));

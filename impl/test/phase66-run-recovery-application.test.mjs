@@ -17,6 +17,10 @@ import {
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;

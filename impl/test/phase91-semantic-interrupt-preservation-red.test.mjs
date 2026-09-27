@@ -12,6 +12,10 @@ import { Log } from '../src/log.mjs';
 import { projectRunTimelinePage } from '../src/run-timeline.mjs';
 import { StoryCompiler } from '../src/story.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const controlId = (suffix) => `control:${suffix.padEnd(64, '0')}`;
 const unavailableSeal = Object.freeze({
   tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null,

@@ -12,6 +12,10 @@ import test from 'node:test';
 
 import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-f14-${name}-`));
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-f14', mandatory: true, approvalTtlMs: 3_600_000,

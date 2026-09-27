@@ -10,10 +10,16 @@
 //   terminate itself once its parent disappears.
 
 import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 const RECEIPT_NAME = 'suite-owner.json';
 const FIXTURE_DIRECTORY = /^(?:baton-|bt).+-[A-Za-z0-9]{6}$/u;
+
+/** Is `name` a fixture-shaped directory — the name pattern the suite's leak check looks for? */
+export function isFixtureDirectoryName(name) {
+  return FIXTURE_DIRECTORY.test(name);
+}
 
 /**
  * List fixture-shaped directories directly below a test file's private temp directory.
@@ -28,7 +34,7 @@ export function snapshotFixtureDirectories(tempRoot, suiteRoot) {
   }
   try {
     return new Set(readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && FIXTURE_DIRECTORY.test(entry.name))
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && isFixtureDirectoryName(entry.name))
       .map((entry) => entry.name));
   } catch {
     return new Set();
@@ -81,4 +87,28 @@ export function sweepStaleSuiteRoots(parentDir) {
     } catch { /* a busy or vanishing root is retried by a later suite start */ }
   }
   return swept;
+}
+
+/**
+ * Remove every fixture-shaped directory directly below `tempRoot` — a test file's own private
+ * temp directory (run-suite.mjs points TMPDIR at it). Issue #571: the runner fails a file that
+ * leaves one behind, and a file that mints its roots through an ad-hoc factory has no single
+ * site at which to reap them, so it registers this reap once at file scope.
+ */
+export function reapFixtureDirectories(tempRoot = tmpdir()) {
+  const root = resolve(`${tempRoot}`);
+  process.on('exit', () => {
+    let entries;
+    try {
+      entries = readdirSync(root, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink() || !FIXTURE_DIRECTORY.test(entry.name)) continue;
+      try {
+        rmSync(join(root, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+      } catch { /* a busy or vanishing directory is no reason to fail the file's own exit */ }
+    }
+  });
 }

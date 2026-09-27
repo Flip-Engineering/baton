@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasCpgTaint } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('taint-root'); const artifacts = dir('taint-artifacts'); mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);

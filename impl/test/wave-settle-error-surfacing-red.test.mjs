@@ -8,6 +8,10 @@ import { createDriver, createWave } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #230 follow-on red pin — the SWALLOWED approve-phase startError. Measured 2026-08-15: when a
 // member's runs.start succeeds but approve() throws (the worker_policy_invalid dispatch refusal),
 // createWave records entry.startError AND keeps entry.run; the settle outcome then builds purely

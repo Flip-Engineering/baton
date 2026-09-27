@@ -12,6 +12,10 @@ import {
 } from '../src/index.mjs';
 import { normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest } from '../src/goal-plan.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase62-red-${name}-`));
 const canonical = (value) => {
   if (Array.isArray(value)) return value.map(canonical);

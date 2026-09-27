@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer, MockAdapter, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = Date.parse('2026-07-13T18:00:00.000Z');
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase62-mcp-${name}-`));
 const policy = Object.freeze({

@@ -9,6 +9,10 @@ import test from 'node:test';
 import { CoordinationStore, McpFleetServer, serveMcpStdio } from '../src/index.mjs';
 import { combinedMcpToolNames, mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = Date.parse('2026-07-11T21:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
 const principal = (overrides = {}) => ({

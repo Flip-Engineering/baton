@@ -12,6 +12,10 @@ import {
 } from '../src/index.mjs';
 import { applicationCardCommands } from '../scripts/surface-truth.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
 const canonical = (value) => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object'

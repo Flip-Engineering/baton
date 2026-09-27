@@ -8,6 +8,10 @@ import { Readable } from 'node:stream';
 
 import { APPLICATION_COMMAND_DEFINITIONS, CoordinationStore, MockAdapter, WebNorthbound, createAuthenticatedWebServer, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-'));
 const envelope = (overrides = {}) => ({
   schemaVersion: 1,

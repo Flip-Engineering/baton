@@ -6,6 +6,10 @@ import test from 'node:test';
 
 import { AtlasCodeIndex, CartographerQuartermaster } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-sbom-${name}-`));
 const write = (base, path, content) => { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), content); };
 async function fixture(lock = null, policy = { maxLockfileBytes: 64 * 1024, maxComponents: 32 }) {

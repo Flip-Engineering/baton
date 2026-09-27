@@ -28,6 +28,10 @@ import { CoordinationStore } from '../src/index.mjs';
 import { coordinationReplayFailure } from '../src/coordination-store.mjs';
 import { findTokenShaped, fixtureCeilingBytes } from '../scripts/ledger-extract.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const CORPUS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ledgers-goal-plan');
 const FIXTURE = 'deployment-recorded-settlement.jsonl';
 

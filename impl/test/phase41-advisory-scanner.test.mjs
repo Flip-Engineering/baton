@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { PublicSupplyChainOracle } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase41-${name}-`));
 const response = (value, status = 200) => {
   const raw = Buffer.from(JSON.stringify(value));

@@ -8,6 +8,10 @@ import test from 'node:test';
 import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // Issue #500 — the shipped deployment profile's followPolicy.maxResponseBytes was a
 // bare 512 * 1024 literal: exactly the view.run.bytes value class that broke run show
 // on a roughly 45-seat swarm before #489's fix. Post-#489 that registry row is the ONE

@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasCpgSlice, AtlasCpgTaint } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('path-cpg-root'); const artifacts = dir('path-cpg-artifacts');

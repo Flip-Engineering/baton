@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { MockAdapter, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase62-${name}-`));
 const policy = Object.freeze({
   schemaVersion: 1,

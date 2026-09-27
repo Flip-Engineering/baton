@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openBaton } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #230 red pin — the DEPLOYMENT-level approval→dispatch seam on omp seats. Measured 2026-08-15:
 // every wave fired at the migrated resident (six wave-b packs + probes) minted goal→plan→approval
 // and then NEVER plan.node_dispatched/task.created; the interpreter quiescence-stopped the

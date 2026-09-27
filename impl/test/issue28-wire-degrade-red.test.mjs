@@ -18,6 +18,10 @@ import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { openBaton } from '../src/index.mjs';
 import { MockAdapter } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const DEFAULT_CEILING = 1024 * 1024;
 const SECRET = 'SUPER_SECRET_PROBE_TOKEN';

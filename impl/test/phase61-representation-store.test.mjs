@@ -7,6 +7,10 @@ import { join } from 'node:path';
 
 import { CoordinationIntegrityError, CoordinationStore } from '../src/coordination-store.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;

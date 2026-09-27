@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AtlasStructuralDelta } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const dir = () => mkdtempSync(join(tmpdir(), 'baton-atlas-'));
 function fixture(before, after, ext = 'mjs', opts = {}) {
   const root = dir(); const left = join(root, 'left'); const right = join(root, 'right'); const artifacts = join(root, 'artifacts');

@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { AdvisoryFeedRegistry, HmacAdvisoryWebhookSource, createDriver, signHmacAdvisoryWebhookForTest } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const objectSha = (value) => sha(Buffer.from(JSON.stringify(canonical(value))));

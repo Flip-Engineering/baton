@@ -14,6 +14,10 @@ import {
   createDriver,
 } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase67-signal-${name}-`));
 const principal = (id) => ({ actor: `signal:${id}`, principalId: id, sessionId: `${id}-session` });

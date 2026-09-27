@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { AtlasCodeIndex, CartographerQuartermaster, CapabilityRegistry, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-orientation-${name}-`));
 function write(base, path, content) { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), content); }
 async function fixture() {

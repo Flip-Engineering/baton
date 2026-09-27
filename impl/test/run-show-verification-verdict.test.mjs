@@ -36,6 +36,10 @@ import {
 } from '../src/index.mjs';
 import * as applicationNs from '../src/application.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 

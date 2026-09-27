@@ -6,6 +6,10 @@ import { join } from 'node:path';
 
 import { RuntimeIsolation, isSecretEnvName } from '../src/runtime-isolation.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 test('GV6: runtime scope strips ambient secrets and creates private vendor homes', () => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-'));
   const isolation = new RuntimeIsolation({

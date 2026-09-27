@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasRepresentationCeiling } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const artifactRoot = () => mkdtempSync(join(tmpdir(), 'baton-representation-ceiling-'));
 const make = (opts = {}) => new AtlasRepresentationCeiling({ artifactRoot: artifactRoot(), maxArtifactBytes: 64 * 1024, ...opts });
 const ctx = { budgetTokens: 1000 };

@@ -14,6 +14,10 @@ import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const MODEL = 'kimi-k3[1m]';
 const brief = (goal) => ({ goal, constraints: [], pathScope: ['src/**'], definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } });

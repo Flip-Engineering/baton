@@ -9,6 +9,10 @@ import { join } from 'node:path';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { WebEventStream } from '../src/web-stream.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 let clock = Date.parse('2026-07-11T12:00:00.000Z');
 const principal = (overrides = {}) => ({ userId: 'u', sessionId: 's', credentialId: 'c', expiresAt: '2099-01-01T00:00:00.000Z', capabilities: ['observe'], repoIds: ['repo-a'], ...overrides });
 const fixture = (opts = {}) => {

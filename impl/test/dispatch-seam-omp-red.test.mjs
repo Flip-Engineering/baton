@@ -8,6 +8,10 @@ import { createDriver } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // #230 red pin — the approval→dispatch seam on the MIGRATED fleet shape. The six wave-b packs
 // (2026-08-15 03:16 UTC) plus the dispatch-seam probe all minted goal→plan→approval and then
 // NEVER minted plan.node_dispatched / task.created — the interpreter drive polls an

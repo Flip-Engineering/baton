@@ -17,6 +17,10 @@ import { RuntimeIsolation, WORKTREE_STASH_BRIEF_SENTENCE } from '../src/runtime-
 import { renderBrief } from '../src/adapter.mjs';
 import { createBrief } from '../src/messages.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const HAVE_GIT = (() => {
   try {
     execFileSync('git', ['--version'], { stdio: 'ignore' });

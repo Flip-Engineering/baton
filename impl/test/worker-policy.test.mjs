@@ -21,6 +21,10 @@ import {
 import { Log } from '../src/log.mjs';
 import { processClosedPayload, processStartedPayload } from '../src/process-lifecycle.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const card = (overrides = {}) => ({
   schemaVersion: 1,
   autonomy: {

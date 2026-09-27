@@ -9,6 +9,10 @@ import { dirname, join } from 'node:path';
 import { createDriver, IntegrationError, PublicationError } from '../src/index.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 const receiptDigest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function repo() {

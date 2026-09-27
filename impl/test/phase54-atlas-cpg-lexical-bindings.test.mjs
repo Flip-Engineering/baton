@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { AtlasCpgDelta, AtlasCpgSlice, AtlasCpgTaint, CapabilityRegistry } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const MODEL = 'atlas-js-lexical-bindings-v1';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase54-${name}-`));
 const limits = Object.freeze({

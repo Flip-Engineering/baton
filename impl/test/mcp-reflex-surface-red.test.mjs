@@ -22,6 +22,10 @@ import test from 'node:test';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = Date.parse('2026-07-22T00:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-reflex-'));
 const REPO_ID = 'repo-reflex';

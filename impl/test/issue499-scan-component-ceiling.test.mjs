@@ -6,6 +6,10 @@ import test from 'node:test';
 
 import { PublicSupplyChainOracle } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // Issue #499 — the oracle's default maxScanComponents of 256 refused an ordinary
 // lockfile: a single-package npm package-lock commonly carries 1,000+ components, so
 // the default admission bound refused real, common input before any provider call.

@@ -8,6 +8,10 @@ import test from 'node:test';
 import { CairnRunScorecard, CoordinationIntegrityError, McpFleetServer, ReviewSelectionError, WebNorthbound, createDriver } from '../src/index.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase50-${name}-`));
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 function repo() {

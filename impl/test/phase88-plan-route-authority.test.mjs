@@ -11,6 +11,10 @@ import {
   planRouteAuthorityState, planRouteMatches, planSingleExactRoute,
 } from '../src/goal-plan.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const REPO_ID = 'repo-phase88-routes';
 const NOW = '2026-07-19T12:00:00.000Z';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase88-route-${name}-`));

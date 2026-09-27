@@ -12,6 +12,10 @@ import {
 } from '../src/goal-plan.mjs';
 import { projectTypedTerminalCause } from '../src/application-semantics.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase73-${name}-`));
 const policy = normalizeGoalPlanPolicy({
   schemaVersion: 1,

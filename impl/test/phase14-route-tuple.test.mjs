@@ -14,6 +14,10 @@ import { withGrokModelArgs } from '../src/grok-acp.mjs';
 import { WebNorthbound, validateWebCommandEnvelope } from '../src/web-northbound.mjs';
 import { createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const card = (efforts = ['low', 'high']) => ({
   harness: 'codex', version: '2',
   concurrencyCeiling: 4,

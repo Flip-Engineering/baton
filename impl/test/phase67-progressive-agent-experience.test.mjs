@@ -16,6 +16,10 @@ import {
 } from '../src/index.mjs';
 import { northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase67-${name}-`));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 

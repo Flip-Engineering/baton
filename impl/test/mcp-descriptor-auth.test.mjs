@@ -23,6 +23,10 @@ import { createMcpServerFromDescriptor } from '../src/mcp-descriptor.mjs';
 import { McpFleetServer } from '../src/index.mjs';
 import { wrapProductionMcpServer } from '../src/production-mcp-complete.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const REPO = mkdtempSync(join(tmpdir(), 'baton-mcp-descriptor-auth-'));
 const DESCRIPTOR_PATH = join(REPO, 'descriptor.json');
 const ROUTE = { harness: 'mock', model: 'model-a', effort: 'low' };

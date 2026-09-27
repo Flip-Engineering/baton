@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { CairnRunScorecard, CoordinationIntegrityError, CoordinationStore, McpFleetServer, WebNorthbound, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-phase47-${name}-`));
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-audit', reservedWorkerId: `w-${id}` });

@@ -9,6 +9,10 @@ import { PassThrough } from 'node:stream';
 import { OmpRpcCli } from '../src/omp-rpc.mjs';
 import { createDriver, createWave } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 // Issue #235 (cross-ref #208, evidence in #230 + the 2026-08-15 dogfood) — the
 // transport-liveness attention class. An auth-less omp member sat 25+ min as
 // `phase: running, progressClass: {class: 'silent'}` while ground truth was ZERO established

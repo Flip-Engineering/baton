@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { CoordinationStore, OidcBrowserFlow, WebNorthbound, WebSessionStore } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = Date.parse('2026-07-11T17:00:00.000Z');
 const ORIGIN = 'https://control.test';
 const CALLBACK = `${ORIGIN}/v1/auth/oidc/callback`;

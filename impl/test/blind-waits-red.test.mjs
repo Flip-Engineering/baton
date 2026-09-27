@@ -160,6 +160,10 @@ import {
   CoordinationStore, createDriver, McpFleetServer, WebNorthbound,
 } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const NOW = '2026-08-13T08:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
 const ORIGIN = 'https://blind-waits.test';

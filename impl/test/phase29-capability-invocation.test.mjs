@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { AtlasStructuralDelta, CapabilityRegistry, createDriver } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-capability-${name}-`));
 const envelope = (op, value = 1, overrides = {}) => ({
   op,

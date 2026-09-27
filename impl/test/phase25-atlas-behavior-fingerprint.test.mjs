@@ -5,6 +5,10 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { AtlasBehaviorFingerprint } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 const write = (root, path, source) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), source); };
 function make(opts = {}) {

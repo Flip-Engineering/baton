@@ -12,6 +12,10 @@ import test from 'node:test';
 
 import { CoordinationStore } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-kg4-${name}-`));
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-recall', reservedWorkerId: `w-${id}` });
 function clock(start = '2026-07-22T00:00:00.000Z') { let now = Date.parse(start); return () => new Date(now++).toISOString(); }

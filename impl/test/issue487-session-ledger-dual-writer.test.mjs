@@ -37,6 +37,10 @@ import { join } from 'node:path';
 
 import { WebSessionIntegrityError, WebSessionStore } from '../src/index.mjs';
 
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
+
 const now = Date.parse('2026-09-18T12:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-session-487-'));
 const bearer = (value) => ({ headers: { authorization: `Bearer ${value}` } });

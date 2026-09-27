@@ -14,6 +14,9 @@ import test from 'node:test';
 import { CoordinationStore } from '../src/index.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { boundedAttentionText, createBrief, renderBriefing } from '../src/messages.mjs';
+import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
+
+reapFixtureDirectories();
 
 const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-kg3-${name}-`));
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-recall', reservedWorkerId: `w-${id}` });
