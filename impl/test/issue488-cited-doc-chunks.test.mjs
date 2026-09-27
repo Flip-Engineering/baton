@@ -51,7 +51,7 @@ import { normalizeContextSource } from '../src/context-program.mjs';
 const DRIVER = fileURLToPath(new URL('./issue480-citation-driver.mjs', import.meta.url));
 const WAIT_BOUND_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 const WAIT_UNSETTLED = 'fixture_wait_unsettled';
-const CHUNK_BYTES = contextSourceChunkBytes(DEFAULT_CONTEXT_PROGRAM_POLICY);
+const CHUNK_BYTES = contextSourceChunkBytes();
 
 // The two documents the fixture's issue cites: the long one the leg must chunk, and the one whose
 // fifth line carries a keyed secret. Their markers are what a row asserts the seat read.
@@ -247,26 +247,6 @@ test('488-b: a cited doc a keyed-secret line keeps out is a named gap, and the r
 });
 
 // ── 488-c: the two facts answer two typed codes with their own details (#488 item 2) ────────────
-
-test('488-c1: an oversized source string answers context_source_oversize with its measured bound', () => {
-  const text = 'x'.repeat(DEFAULT_CONTEXT_PROGRAM_POLICY.maxTextBytes + 1);
-  assert.throws(() => normalizeContextSource(text, DEFAULT_CONTEXT_PROGRAM_POLICY), (error) => {
-    assert.equal(error.code, 'context_source_oversize', 'oversize is its own code, never sensitive');
-    assert.deepEqual(error.detail, {
-      bytes: Buffer.byteLength(text, 'utf8'),
-      bound: DEFAULT_CONTEXT_PROGRAM_POLICY.maxTextBytes,
-      limit: 'maxTextBytes',
-    }, 'the refusal measures the document and names the policy field that bounded it');
-    return true;
-  });
-  // The same text at the bound is admitted: the code judges bytes over the bound, not bytes near it.
-  assert.equal(
-    typeof normalizeContextSource('y'.repeat(DEFAULT_CONTEXT_PROGRAM_POLICY.maxTextBytes),
-      DEFAULT_CONTEXT_PROGRAM_POLICY),
-    'string',
-    'a document AT the bound is admitted',
-  );
-});
 
 test('488-c2: a secret-shaped source string answers context_source_sensitive naming shape and line', () => {
   const line = 'ghp_' + 'A'.repeat(24);

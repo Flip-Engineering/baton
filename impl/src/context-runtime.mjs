@@ -234,7 +234,7 @@ function retainedResultSource(repoRoot, gitAuthority, entries, changedPaths, pol
   const byPath = new Map(entries.map((entry) => [entry.path, entry]));
   const items = [];
   let artifactBytes = 0;
-  const chunkBytes = contextSourceChunkBytes(policy);
+  const chunkBytes = contextSourceChunkBytes();
   for (const path of changedPaths) {
     const entry = byPath.get(path);
     if (!entry || !['100644', '100755'].includes(entry.mode)
@@ -419,7 +419,7 @@ export function produceRepositoryContextSource(repoRoot, treeSha, scopes, policy
     complete: true,
   };
   let bytes = 0;
-  const chunkBytes = contextSourceChunkBytes(policy);
+  const chunkBytes = contextSourceChunkBytes();
   for (const { path, oid, mode: gitMode } of listed) {
     if (!pathInScopes(path, scopes)) {
       coverage.outsideScopeEntries += 1;

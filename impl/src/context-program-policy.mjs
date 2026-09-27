@@ -3,8 +3,7 @@ import { createHash } from 'node:crypto';
 const POLICY_FIELDS = Object.freeze([
   'language', 'maxArtifactBytes', 'maxCellsPerSession', 'maxEvidenceCoordinates',
   'maxJoinComparisons', 'maxManifestBranches', 'maxProgramBytes', 'maxProgramDepth',
-  'maxProgramNodes', 'maxResultItems', 'maxTextBytes', 'recursionDepth', 'schemaVersion',
-  'stateMode',
+  'maxProgramNodes', 'maxResultItems', 'recursionDepth', 'schemaVersion', 'stateMode',
 ]);
 const NORMALIZED_FIELDS = Object.freeze([...POLICY_FIELDS, 'policyDigest']);
 
@@ -20,7 +19,6 @@ const DEFAULT_INPUT = Object.freeze({
   maxResultItems: 10_000,
   maxJoinComparisons: 1_000_000,
   maxCellsPerSession: 1_024,
-  maxTextBytes: 16 * 1_024,
   maxArtifactBytes: 64 * 1_024 * 1_024,
   maxEvidenceCoordinates: 100_000,
 });
@@ -36,7 +34,6 @@ export const NORMALIZER_CEILING = Object.freeze({
   maxResultItems: 100_000,
   maxJoinComparisons: 100_000_000,
   maxCellsPerSession: 16_384,
-  maxTextBytes: 1024 * 1_024,
   maxArtifactBytes: 1024 * 1_024 * 1_024,
   maxEvidenceCoordinates: 1_000_000,
 });
@@ -83,7 +80,6 @@ export function normalizeContextProgramPolicy(value = DEFAULT_INPUT) {
     || value.maxResultItems > NORMALIZER_CEILING.maxResultItems
     || value.maxJoinComparisons > NORMALIZER_CEILING.maxJoinComparisons
     || value.maxCellsPerSession > NORMALIZER_CEILING.maxCellsPerSession
-    || value.maxTextBytes > NORMALIZER_CEILING.maxTextBytes
     || value.maxArtifactBytes > NORMALIZER_CEILING.maxArtifactBytes
     || value.maxEvidenceCoordinates > NORMALIZER_CEILING.maxEvidenceCoordinates
     || value.maxEvidenceCoordinates < value.maxResultItems) {
@@ -97,21 +93,16 @@ export function normalizeContextProgramPolicy(value = DEFAULT_INPUT) {
   return deepFreeze({ ...body, policyDigest });
 }
 
-/** The width ONE context source string is projected at, before the deployment policy's own text
- * bound has its say: the ceiling every chunk of a document was always cut at. */
+/** The width ONE context source string is projected at: every chunk of a document is cut at this
+ * width. Issue #530: the deployment policy's own `maxTextBytes` used to narrow it; that field is
+ * gone, so the projection width is the whole answer. */
 export const CONTEXT_SOURCE_CHUNK_CEILING_BYTES = 12 * 1024;
 
 /** The ONE chunk-size derivation for a context source string — a repository doc, a retained
- * result, or a document the root's reading leg hands over (#488): never wider than the projection
- * ceiling above, and never wider than the deployment policy's own `maxTextBytes`, so a chunk is a
- * string the deployment's source scan admits by construction. `context-runtime.mjs`'s two chunk
+ * result, or a document the root's reading leg hands over (#488). `context-runtime.mjs`'s two chunk
  * loops and `application-cli.mjs`'s reading leg all read THIS function, never a second constant. */
-export function contextSourceChunkBytes(policy = DEFAULT_CONTEXT_PROGRAM_POLICY) {
-  const bound = policy?.maxTextBytes;
-  if (!Number.isSafeInteger(bound) || bound <= 0) {
-    throw policyError('Context Program policy maxTextBytes is invalid');
-  }
-  return Math.min(CONTEXT_SOURCE_CHUNK_CEILING_BYTES, bound);
+export function contextSourceChunkBytes() {
+  return CONTEXT_SOURCE_CHUNK_CEILING_BYTES;
 }
 
 export const DEFAULT_CONTEXT_PROGRAM_POLICY = normalizeContextProgramPolicy();

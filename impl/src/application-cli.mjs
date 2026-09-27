@@ -2656,10 +2656,7 @@ function composeRecruitContextPackage(issue, request, repoRoot) {
   const gaps = [];
   // #488: the width ONE branch may carry, from the runtime's OWN derivation (never a literal
   // here): a chunk is a source string the deployment's scan admits by construction, which is what
-  // a document longer than that width used to fail on. The policy is the deployment's shipped one
-  // (`defaultRepositoryContextPolicy`), the only policy a resident this CLI can reach is built
-  // with; a deployment that narrowed `maxTextBytes` narrows the source scan's own bound, and the
-  // leg's chunks are that much narrower with it.
+  // a document longer than that width used to fail on.
   const chunkBytes = contextSourceChunkBytes();
   // The citation set: the `docs/…` paths the issue body names plus every `--doc` — ONE set, sorted,
   // so two spellings of one document can never become two branches.

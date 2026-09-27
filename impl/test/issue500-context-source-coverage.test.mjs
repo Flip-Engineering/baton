@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy,
 } from '../src/context-program.mjs';
+import { CONTEXT_SOURCE_CHUNK_CEILING_BYTES } from '../src/context-program-policy.mjs';
 import { produceRepositoryContextSource } from '../src/context-runtime.mjs';
 
 // Issue #500 — the repository Context source dropped files while reporting the index
@@ -74,33 +75,20 @@ test('500-b: a file over the policy artifact ceiling refuses typed, naming the f
   });
 });
 
-test('500-c: a multi-byte character that cannot fit in a 1-byte chunk refuses typed', (t) => {
-  const { policyDigest, ...defaults } = DEFAULT_CONTEXT_PROGRAM_POLICY;
-  void policyDigest;
-  const policy = normalizeContextProgramPolicy({ ...defaults, maxTextBytes: 1 });
-  const { root, treeSha } = repository(t, 'multibyte-chunk', {
-    'src/emoji.txt': 'a\u{1F600}b\n',
-  });
-  assert.throws(() => produceRepositoryContextSource(root, treeSha, ['**'], policy), (error) => {
-    assert.equal(error.code, 'context_source_oversize',
-      'a chunk that cannot project a multi-byte character refuses typed');
-    return true;
-  });
-});
-
+// Issue #530: the 1-byte and 4-byte chunk widths these rows used came from the policy's own
+// `maxTextBytes`, which is gone. The boundary invariant they were about is still reachable at the
+// projection's own width, so that is what the surviving row drives.
 test('500-d: a chunk boundary does not split a surrogate pair', (t) => {
-  const { policyDigest, ...defaults } = DEFAULT_CONTEXT_PROGRAM_POLICY;
-  void policyDigest;
-  const policy = normalizeContextProgramPolicy({ ...defaults, maxTextBytes: 4 });
+  const doc = `${'a'.repeat(CONTEXT_SOURCE_CHUNK_CEILING_BYTES - 1)}\u{1F600}${'b'.repeat(16)}\n`;
   const { root, treeSha } = repository(t, 'surrogate-boundary', {
-    'src/emoji.txt': 'a\u{1F600}b\n',
+    'src/emoji.txt': doc,
   });
-  const produced = produceRepositoryContextSource(root, treeSha, ['**'], policy);
+  const produced = produceRepositoryContextSource(root, treeSha, ['**'], DEFAULT_CONTEXT_PROGRAM_POLICY);
   const chunks = produced.items.filter((item) => item.path === 'src/emoji.txt')
     .sort((a, b) => a.chunk - b.chunk);
+  assert.ok(chunks.length > 1, 'the document is projected as more than one chunk');
   const reassembled = chunks.map((c) => c.text).join('');
-  assert.equal(reassembled, 'a\u{1F600}b\n',
-    'the projected text reassembles with no surrogate-pair corruption');
+  assert.equal(reassembled, doc, 'the projected text reassembles with no surrogate-pair corruption');
   for (const chunk of chunks) {
     assert.ok(!/[\uD800-\uDBFF]$/u.test(chunk.text),
       `chunk ${chunk.chunk} must not end with a lone high surrogate`);

@@ -1276,7 +1276,7 @@ export function createDriver(opts) {
       contextBriefMaterializer: (brief) => materializeContextCallBrief(
         brief,
         contextProgram.referenceRead,
-        Math.min(contextProgram.policy.maxArtifactBytes, contextProgram.policy.maxTextBytes * 2),
+        contextProgram.policy.maxArtifactBytes,
       ),
     } : {}),
   });
