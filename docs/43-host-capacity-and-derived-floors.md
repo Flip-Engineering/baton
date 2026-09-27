@@ -113,25 +113,18 @@ queue poll. Catchable signals release through the verdict path's `finally`; a SI
 death between acquire and release holds the lease until the authority's dead-holder sweep
 reclaims it — the designed recovery for a crashed resident, not a second release path.
 
-## 3c. The worker's verify on the participant row (#333; #332 wires the row)
+## 3c. The worker's verify in the deployment summary (#333)
 
 A worker's suite is a `verify` lease held under the seat's holder name
 (`participant:<swarmId>:<participantId>`, the same template the worker holder set mints),
 and the deployment summary's `hostCapacity.used.leases.verify` counts it — verify leases
 are counted by kind, so worker suites read beside verdict leases with no special case.
-`impl/src/host-capacity.mjs` exports the ONE derivation the swarm view's participant row
-projects through: `projectParticipantVerify(queue, verifyHolders, holder)` (pure — a queue
-entry under the name reads `{state: 'queued', position, ahead}`, a live verify lease
-under it reads `{state: 'admitted', position: null, ahead: null}`, anything else reads
-null) and the authority method `observeParticipantVerify(holder)` (the same non-mutating
-live-pid read `observeNow()` performs, folded through the derivation).
 
-Coordination note for the #332 lane, which owns `impl/src/swarm-runtime.mjs`: wire the
-row by calling `this.hostCapacity.observeParticipantVerify(
-`participant:${swarmId}:${participantId}`)` per participant (guarded by `typeof ... ===
-'function'`, so an unwired runtime keeps the row absent) and attaching the result as
-`verify` — null when the seat holds and waits on nothing. This lane does not touch
-swarm-runtime.mjs.
+The participant-row projection (`projectParticipantVerify`, and the authority's
+`observeParticipantVerify`) is removed: no caller in the runtime reached it, so the row it
+promised never appeared, and the #598 sweep took both functions with the tests that pinned them.
+A seat's place in the admission queue is the deployment summary's `queue`, whose every entry
+carries `{position, ahead, kind, holder, holderAlive}` from `observeNow()`.
 
 ## 3d. Post-admission shedding (#495)
 
