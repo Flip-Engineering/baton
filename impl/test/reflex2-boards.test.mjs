@@ -133,13 +133,14 @@ test('createBoardClaimRequest refuses a missing/negative expectedBoardFence and 
   assert.doesNotThrow(() => createBoardClaimRequest({ itemId: 'board-item:abc', expectedBoardFence: 0 }));
 });
 
-test('createBoardReport requires itemId, a positive itemVersion, a 64-hex itemDigest, and a bounded body', () => {
+test('createBoardReport requires itemId, a positive itemVersion, a 64-hex itemDigest, and a non-empty body', () => {
   const ok = { itemId: 'board-item:abc', itemVersion: 1, itemDigest: 'a'.repeat(64), body: 'done' };
   assert.doesNotThrow(() => createBoardReport(ok));
   assert.throws(() => createBoardReport({ ...ok, itemVersion: 0 }), ValidationError);
   assert.throws(() => createBoardReport({ ...ok, itemDigest: 'nothex' }), ValidationError);
   assert.throws(() => createBoardReport({ ...ok, body: '' }), ValidationError);
-  assert.throws(() => createBoardReport({ ...ok, body: 'x'.repeat(4097) }), ValidationError);
+  // #530: the body carries no byte ceiling — a long report is admitted whole.
+  assert.doesNotThrow(() => createBoardReport({ ...ok, body: 'x'.repeat(4097) }));
   assert.throws(() => createBoardReport({ ...ok, bogus: 1 }), ValidationError);
 });
 
