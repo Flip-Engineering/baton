@@ -51,3 +51,31 @@ against the live database, and no live trial file or process was modified.
 Tests and builds ran only in the assigned Bend2 checkout. The fix applies to new
 turn supervisors after the updated kit is built; it does not rewrite the old
 stored report or change a supervisor that is already running.
+
+## Observation after the kit rebuild
+
+At the architect15 recovery inspection on 2026-09-27, `git ls-remote origin
+refs/heads/bend2-rewrite` returned `831d25b8e2b6ad5d7fab7c56b124aebb5cef6bd1`.
+That revision includes the report fallback and OMP log frame selection. The
+trial executable at `state/trial.db.trial/baton2` had a modification time of
+08:10:05 UTC, and the kit source contained the frame-selection change.
+
+The subsequent `issue-370-seed-help-native.jsonl` contained 6,570,937 bytes,
+324 `message_end` frames and zero `message_update` frames. Its terminal
+`agent_end` had `isTerminal: true`, `messageCount: 324` and an empty message
+list. The coordinator message `issue-370-seed-help-turn-1` contained 3,697 bytes
+of report text, exactly equal to the text extracted from the final assistant
+`message_end`. The message had a root review receipt naming worker commit
+`757471287001d4d1cbdcaff94a0a607de3af0e13`.
+
+The operator message `issue-370-landed-026a7017` recorded the checked landing
+and publication at `026a70171c54ce8ba82ce03b27012b6ac8cef5ca`, with matching
+remote read-back. That publication statement is the root's stored report;
+this inspection compared the native frames and coordinator report directly.
+It used file reads and SQLite `mode=ro` against the same live trial directory
+named above. It changed no trial files or processes.
+
+The recovered source rebuilt successfully with the existing Bend 2.0.25
+compiler, and `python3 -m unittest bend2.test.turn` passed all 12 tests.
+The generic deployment verification command was not run in this recovery
+check; these results cover the Bend2 turn behavior described here.

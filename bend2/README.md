@@ -121,6 +121,9 @@ session. The worker's recorded harness selects the adapter. Claude uses stream J
 OMP uses `--mode rpc`, retains sessions beside the database and keeps stdin open
 for guidance until its terminal event. Its `get_state` response supplies the
 native session ID and observed model.
+The supervisor keeps the latest completed assistant message in memory. If OMP's
+terminal envelope has an empty or missing message list, that completed message
+supplies the parent report.
 Codex uses `exec --json` and `exec resume SESSION`, with the task on stdin.
 Its thread event records the native session. After process exit, the supervisor
 reads the final assistant message and terminal event from the retained output
@@ -138,6 +141,11 @@ A later turn resumes the recorded
 native session. The logical worker and its workspace remain available.
 
 The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
+For OMP, stdout logging omits cumulative `message_update` frames and retains
+every other frame, including complete `message_end` messages, tool output and
+terminal events. Log size grows with the retained output. New supervisors use
+the executable built by the trial launcher; rebuilding applies this behavior to
+subsequent turns. Existing logs remain available at their original paths.
 Native result events create pending parent reports. Process-start failures and
 exits without a result also create reports. Repeating a completed turn ID returns
 its retained report. To retry after a failure report, use a new turn ID. Read
