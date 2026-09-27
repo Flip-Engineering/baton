@@ -47,6 +47,7 @@ function fixture(t, { story = null } = {}) {
     async kill() { return { ok: true }; },
   };
   const log = new Log(join(directory, 'log'));
+  const coordination = coordinationForLog(log);
   const worktrees = {
     async create(id) { return { path: `/owned/${id}`, baseSha: SHA, branch: `baton/${id}` }; },
     async capture() { return { sha: SHA, baseSha: SHA, changedPaths: [] }; },
@@ -57,7 +58,7 @@ function fixture(t, { story = null } = {}) {
   };
   const coordinator = new Coordinator({
     log,
-    coordination: coordinationForLog(log),
+    coordination,
     fences: new FenceTable(),
     adapters: { mock: adapter },
     worktrees,
@@ -66,7 +67,7 @@ function fixture(t, { story = null } = {}) {
     now: () => 0,
     ...(story ? { story } : {}),
   });
-  return { coordinator, log, prompts, adapter, emit: (event) => emit(event) };
+  return { coordinator, coordination, log, prompts, adapter, emit: (event) => emit(event) };
 }
 
 function spawnBrief() {
@@ -77,6 +78,62 @@ function spawnBrief() {
     budget: { tokens: 100000, usd: 5, wallMin: 30 },
   };
 }
+
+test('#402: a failed context-read audit records its cause and preserves the read result', async (t) => {
+  const f = fixture(t);
+  const handle = await f.coordinator.spawn('mock', spawnBrief());
+  const answered = { rendered: { items: ['answer'] }, deliverable: 'answer text' };
+  f.coordinator._answerContextRead = () => answered;
+  f.coordination.recordContextRead = () => {
+    throw Object.assign(new Error('context audit refused'), { code: 'context_audit_refused' });
+  };
+  const result = f.coordinator.contextRead(handle.id, {
+    expectedFence: 'current', idempotencyKey: 'read-402', query: { kind: 'knowledge', text: 'answer' },
+  });
+  assert.deepEqual(result, {
+    ok: true, kind: 'knowledge', result: answered.rendered, renderedText: answered.deliverable,
+    idempotencyKey: 'read-402',
+  });
+  assert.deepEqual(f.coordinator.recordedFailures().find(row => row.reason === 'context_read_audit'), {
+    reason: 'context_read_audit', count: 1, lastCode: 'context_audit_refused', lastMessage: 'context audit refused',
+  });
+});
+
+test('#402: a failed generation binding writes an operational receipt with its cause and coordinates', async (t) => {
+  const f = fixture(t);
+  const spawned = await f.coordinator.spawn('mock', spawnBrief());
+  const handle = f.coordinator._getWorker(spawned.id);
+  const task = f.coordinator._tasks.get(handle.taskId);
+  const afterSeq = f.log.read(handle.id).at(-1)?.seq ?? 0;
+  const message = `generation store refused: ${'detail '.repeat(60)}`;
+  f.coordination.recordWorkerGeneration = () => {
+    throw Object.assign(new Error(message), { code: 'generation_refused' });
+  };
+  assert.equal(f.coordinator.recordWorkerGeneration(handle), null);
+  const receipts = f.log.read(handle.id).filter(event => event.seq > afterSeq
+    && event.payload?.reason === 'worker_generation_bind_failed');
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].kind, 'error');
+  assert.equal(receipts[0].payload.code, 'generation_refused');
+  assert.equal(receipts[0].payload.message, message);
+  assert.equal(receipts[0].payload.workerId, handle.id);
+  assert.equal(receipts[0].payload.processGeneration, handle.processGeneration);
+  assert.equal(receipts[0].payload.taskId, task.id);
+  assert.equal(receipts[0].payload.runId, task.runId ?? null);
+  assert.equal(f.coordinator.recordedFailures().some(row => row.reason === 'worker_generation_bind_failed'), false);
+});
+
+test('#402: a successful generation binding returns the store receipt', async (t) => {
+  const f = fixture(t);
+  const spawned = await f.coordinator.spawn('mock', spawnBrief());
+  const handle = f.coordinator._getWorker(spawned.id);
+  const afterSeq = f.log.read(handle.id).at(-1)?.seq ?? 0;
+  const receipt = { result: 'recorded', seq: 402 };
+  f.coordination.recordWorkerGeneration = () => receipt;
+  assert.equal(f.coordinator.recordWorkerGeneration(handle), receipt);
+  assert.equal(f.log.read(handle.id).some(event => event.seq > afterSeq
+    && event.payload?.reason === 'worker_generation_bind_failed'), false);
+});
 
 // ===========================================================================
 // E07 (#598): the two source-scanning rows are gone — the `.catch(noop)` census and the
