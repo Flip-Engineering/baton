@@ -34,6 +34,77 @@ class OmpRootAdapter(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
 
+    def test_worker_report_wakes_lead_and_lead_report_wakes_root(self):
+        temp = pathlib.Path(self.temp.name)
+        root_calls = temp / 'root.jsonl'
+        root_endpoint = temp / 'root.py'
+        root_endpoint.write_text(
+            'import sys,json,subprocess,pathlib\n'
+            f'cmd={ [str(EXE), str(self.db)]!r}\n'
+            'row=json.loads(subprocess.check_output(cmd+["delivery",sys.argv[-1]],text=True))\n'
+            f'with pathlib.Path({str(root_calls)!r}).open("a") as f: f.write(json.dumps(row)+"\\n")\n'
+            'subprocess.run(cmd+["ack",row["id"],"root","root reviewed lead"],check=True)\n')
+        self.coord('attach', 'root', 'codex', 'native-root',
+                   json.dumps(['python3', str(root_endpoint)]))
+        self.coord('worker', 'lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
+        self.coord('worker', 'child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
+        native = temp / 'lead.py'
+        calls = temp / 'lead.jsonl'
+        native.write_text(
+            '#!/usr/bin/env python3\nimport json,sys,pathlib,subprocess,os\n'
+            f'cmd={ [str(EXE), str(self.db)]!r}\n'
+            'ident="first" if "[id: first]" in sys.argv[-1] else "second"\n'
+            f'with pathlib.Path({str(calls)!r}).open("a") as f: f.write(json.dumps({{"args":sys.argv[1:],"cwd":os.getcwd()}})+"\\n")\n'
+            'print(json.dumps({"type":"session","id":"native-lead"}),flush=True)\n'
+            'subprocess.run(cmd+["ack",ident,"lead","lead reviewed child"],check=True,stdout=subprocess.DEVNULL)\n'
+            'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed and landed "+ident}]}}),flush=True)\n'
+            'print(json.dumps({"type":"agent_end","messages":[],"isTerminal":True}),flush=True)\n')
+        native.chmod(0o700)
+        args = ['node', str(OMP_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--session', 'lead', '--attach']
+        for ident in ['first', 'second']:
+            attached = subprocess.run(args, text=True, capture_output=True)
+            self.assertEqual(attached.returncode, 0, attached.stderr)
+            self.coord('report', ident, 'child', 'Child completed ' + ident)
+            self.assertEqual(json.loads(self.coord('delivery', ident))['receipt'], 'lead reviewed child')
+        lead = json.loads(self.coord('session', 'lead'))
+        root = json.loads(self.coord('session', 'root'))
+        self.assertEqual((lead['parent'], lead['branch'], lead['base'], lead['workspace']),
+                         ('root', 'lead-branch', 'base', str(temp)))
+        self.assertEqual(lead['native'], 'native-lead')
+        self.assertEqual(root['native'], 'native-root')
+        native_calls = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(len(native_calls), 2)
+        self.assertEqual(native_calls[0]['cwd'], str(temp))
+        prompt = native_calls[0]['args'][native_calls[0]['args'].index('--system-prompt') + 1]
+        self.assertIn('inbox lead', prompt)
+        self.assertIn('ack ID lead', prompt)
+        self.assertEqual(native_calls[1]['args'][native_calls[1]['args'].index('--resume') + 1], 'native-lead')
+        reports = [json.loads(line) for line in root_calls.read_text().splitlines()]
+        self.assertEqual([r['body'] for r in reports], ['Reviewed and landed first', 'Reviewed and landed second'])
+        self.assertTrue(all(r['sender'] == 'lead' and r['recipient'] == 'root' for r in reports))
+        self.coord('report', 'second', 'child', 'Child completed second')
+        self.assertEqual(len(root_calls.read_text().splitlines()), 2)
+
+    def test_failed_lead_turn_reports_to_parent_and_keeps_child_report(self):
+        temp = pathlib.Path(self.temp.name)
+        self.coord('attach', 'root', 'codex', 'native-root', '')
+        self.coord('worker', 'lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
+        self.coord('worker', 'child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
+        native = temp / 'failure.sh'
+        native.write_text('#!/bin/sh\nexit 23\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(OMP_ROOT_SCRIPT), str(self.db), str(EXE), str(native),
+                                  '--session', 'lead', '--attach'], text=True, capture_output=True)
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        failed = subprocess.run([str(EXE), str(self.db), 'report', 'child-done', 'child', 'Work retained'],
+                                text=True, capture_output=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIsNone(json.loads(self.coord('delivery', 'child-done'))['receipt'])
+        reports = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]['sender'], 'lead')
+        self.assertIn('23', reports[0]['body'])
+
     def test_report_file_starts_attached_omp_root(self):
         temp = pathlib.Path(self.temp.name)
         received = temp / 'received.txt'

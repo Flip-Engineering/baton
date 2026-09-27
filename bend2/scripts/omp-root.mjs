@@ -27,10 +27,15 @@ const ROOT = resolve(__dirname, '../..');
 const positional = [];
 let attach = false;
 let messageId = null;
+let sessionId = 'root';
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (arg === '--attach') attach = true;
   else if (arg === '--once') continue;
+  else if (arg === '--session') {
+    sessionId = process.argv[++i];
+    if (!sessionId) throw new Error('--session requires a registered session ID');
+  }
   else if (arg === '--message') {
     messageId = process.argv[++i];
     if (!messageId) throw new Error('--message requires a committed message ID');
@@ -40,12 +45,12 @@ for (let i = 2; i < process.argv.length; i++) {
 const dbPath = positional[0];
 const coordinatorExe = positional[1] || resolve(ROOT, '.scratch/bend2/baton2');
 const ompExe = positional[2] || '/opt/homebrew/bin/omp';
-const ompModel = process.env.OMP_ROOT_MODEL || 'zai/glm-5.3-flash';
-const ompThinking = process.env.OMP_ROOT_THINKING || 'high';
+let ompModel = process.env.OMP_ROOT_MODEL;
+let ompThinking = process.env.OMP_ROOT_THINKING;
 
 if (!dbPath) {
   process.stderr.write(
-    'usage: omp-root.mjs <database-path> [coordinator-executable] [omp-executable] [--attach | --once]\n' +
+    'usage: omp-root.mjs <database-path> [coordinator-executable] [omp-executable] [--session ID] [--attach | --once]\n' +
     '\nEnvironment:\n' +
     '  OMP_ROOT_MODEL    Model for the OMP root (default: zai/glm-5.3-flash)\n' +
     '  OMP_ROOT_THINKING Thinking level (default: high)\n' +
@@ -59,16 +64,19 @@ const DB = resolve(dbPath);
 
 function systemPrompt() {
   return [
-    'You are the root operator of a Bend2 coordinator. Workers report to you and you direct their work.',
+    `You are session ${sessionId} in a Bend2 coordinator. Workers report to you and you direct their work.`,
+    'Start worker turns in the background so you can finish your turn and receive their reports.',
+    'Keep one foreground native turn per session. Finish review before starting the next worker turn.',
     '',
     'Coordinator CLI — run these with bash:',
     `  ${COORD} ${DB} status          — show all sessions`,
     `  ${COORD} ${DB} workers         — list workers with latest report`,
+    `  ${COORD} ${DB} recruit WORKER ${sessionId} HARNESS MODEL EFFORT REPO BRANCH PATH BASE — recruit a child`,
     `  ${COORD} ${DB} turns WORKER    — show a worker's turn history`,
-    `  ${COORD} ${DB} inbox root      — show pending messages for the root`,
+    `  ${COORD} ${DB} inbox ${sessionId}      — show your pending messages`,
     `  ${COORD} ${DB} pending         — list all undelivered messages`,
-    `  ${COORD} ${DB} ack ID root RECEIPT — acknowledge a message`,
-    `  ${COORD} ${DB} message ID root WORKER guidance BODY — send guidance to a worker`,
+    `  ${COORD} ${DB} ack ID ${sessionId} RECEIPT — acknowledge a message`,
+    `  ${COORD} ${DB} message ID ${sessionId} WORKER guidance BODY — send guidance to a worker`,
     `  ${COORD} ${DB} land WORKER REPO TARGET — fast-forward land a worker's branch`,
     `  ${COORD} ${DB} land-checked WORKER REPO TARGET CHECK FILES — gated landing`,
     `  ${COORD} ${DB} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
@@ -94,13 +102,18 @@ function closeDb() {
   if (db) { try { db.close(); } catch {} db = null; }
 }
 
-function rootSession() {
-  if (!db) return '';
+function selectedSession() {
+  if (!db) return null;
   try {
-    return db.prepare("SELECT native FROM sessions WHERE id='root' AND harness=?").get('omp')?.native || '';
+    return db.prepare("SELECT * FROM sessions WHERE id=? AND harness=?").get(sessionId, 'omp') || null;
   } catch {
-    return '';
+    return null;
   }
+}
+
+function selectRoute(session) {
+  ompModel ||= session?.model || 'zai/glm-5.3-flash';
+  ompThinking ||= session?.effort || 'high';
 }
 
 function pendingRootMessages() {
@@ -110,10 +123,10 @@ function pendingRootMessages() {
       `SELECT m.seq, m.id, m.sender, m.kind, m.body
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
-       WHERE s.id = 'root' AND s.parent IS NULL AND m.receipt IS NULL
+       WHERE s.id = ? AND m.receipt IS NULL
          AND (? IS NULL OR m.id = ?)
        ORDER BY m.seq`,
-    ).all(messageId, messageId);
+    ).all(sessionId, messageId, messageId);
   } catch {
     return [];
   }
@@ -128,7 +141,7 @@ function formatMessages(messages) {
 
 // Run one OMP turn in --print --mode json. Returns a promise that resolves
 // with the JSON events array when the process exits.
-function runOmpTurn(prompt, sessionDir, sessionId) {
+function runOmpTurn(prompt, sessionDir, nativeSession, workspace) {
   return new Promise((resolve, reject) => {
     const args = [
       '--print',
@@ -140,12 +153,12 @@ function runOmpTurn(prompt, sessionDir, sessionId) {
     ];
 
     args.push('--session-dir', sessionDir);
-    if (sessionId) args.push('--resume', sessionId);
+    if (nativeSession) args.push('--resume', nativeSession);
 
     args.push(prompt);
 
     const child = spawn(ompExe, args, {
-      cwd: ROOT,
+      cwd: workspace || ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
     });
@@ -165,7 +178,7 @@ function runOmpTurn(prompt, sessionDir, sessionId) {
       process.stderr.write(`omp-root: ${event.type}\n`);
       const native = event.type === 'session' ? event.id : null;
       if (native) {
-        execFileSync(COORD, [DB, 'bind', 'root', native, 'omp', '', '']);
+        execFileSync(COORD, [DB, 'bind', sessionId, native, 'omp', '', '']);
       }
     });
 
@@ -226,29 +239,54 @@ async function runOnce() {
   const prompt = formatMessages(messages);
   process.stderr.write(`omp-root: ${messages.length} pending message(s), starting OMP turn\n`);
 
+  const session = selectedSession();
+  selectRoute(session);
+  let text;
+  let model;
+  let code;
   try {
-    const result = await runOmpTurn(prompt, DB + '.root-sessions', rootSession());
-    const text = extractResult(result.events);
-    if (text) {
-      process.stdout.write(text + '\n');
-    }
-    process.stderr.write(`omp-root: turn completed (exit ${result.code})\n`);
-    process.exitCode = result.code;
+    const storage = sessionId === 'root' ? DB + '.root-sessions'
+      : DB + '.session-' + Buffer.from(sessionId).toString('hex');
+    const result = await runOmpTurn(prompt, storage, session?.native, session?.workspace);
+    text = extractResult(result.events);
+    const observed = result.events.findLast(e => e.message?.provider && e.message?.model)?.message;
+    model = observed ? `${observed.provider}/${observed.model}` : undefined;
+    code = result.code ?? 1;
+    if (text) process.stdout.write(text + '\n');
+    process.stderr.write(`omp-root: turn completed (exit ${code})\n`);
   } catch (e) {
-    process.stderr.write(`omp-root: turn failed: ${e.message}\n`);
-    process.exitCode = 1;
+    text = `OMP turn failed: ${e.message}`;
+    code = 1;
+    process.stderr.write(`omp-root: ${text}\n`);
   }
+
+  // A recruited parent has its own parent. Submit the native outcome through
+  // the coordinator's existing observation and delivery path after OMP exits.
+  if (session?.parent) {
+    const event = { type: 'result', is_error: code !== 0, model,
+      result: text || `OMP process ended without assistant text (exit ${code})` };
+    execFileSync(COORD, [DB, 'observe-file',
+      `omp:${sessionId}:${messages.at(-1).seq}`, sessionId, '-'],
+      { input: JSON.stringify(event), stdio: ['pipe', 'inherit', 'inherit'] });
+  }
+  process.exitCode = code;
 
   closeDb();
 }
 
 if (attach) {
   await openDb();
-  const native = rootSession();
+  const session = selectedSession();
+  selectRoute(session);
+  const native = session?.native || '';
+  if (sessionId !== 'root' && !session) throw new Error(`OMP session ${sessionId} is not registered`);
   const endpoint = JSON.stringify([
     '/usr/bin/env', `OMP_ROOT_MODEL=${ompModel}`, `OMP_ROOT_THINKING=${ompThinking}`,
-    process.execPath, fileURLToPath(import.meta.url), DB, COORD, ompExe, '--message',
+    process.execPath, fileURLToPath(import.meta.url), DB, COORD, ompExe, '--session', sessionId, '--message',
   ]);
-  execFileSync(COORD, [DB, 'attach', 'root', 'omp', native, endpoint], { stdio: 'inherit' });
+  const command = session?.parent
+    ? [DB, 'connect', sessionId, native, endpoint]
+    : [DB, 'attach', sessionId, 'omp', native, endpoint];
+  execFileSync(COORD, command, { stdio: 'inherit' });
 }
 await runOnce();
