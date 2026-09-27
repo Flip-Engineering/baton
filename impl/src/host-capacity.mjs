@@ -60,7 +60,6 @@ const RECORD_BYTE_CEILING = FRAME_LIMITS['stream.omp.flush'].value;
 const LEASE_FIELDS = ['acquiredAt', 'holder', 'kind', 'nonce', 'pid', 'residentId', 'schemaVersion'];
 const QUEUE_FIELDS = ['enqueuedAt', 'holder', 'kind', 'nonce', 'pid', 'residentId', 'schemaVersion'];
 const LOCK_POLL_MS = 5;
-const LOCK_WAIT_MS = 5_000;
 const LOCK_LABEL = 'host capacity lease lock';
 const REAPER_LABEL = 'host capacity lease reaper gate';
 const DEFAULT_POLL_MS = 250;
@@ -699,11 +698,11 @@ export class HostCapacityAuthority {
   }
 
   /** Run `fn` holding the host lease directory's mutex. Waiting YIELDS the event loop (the
-   * callers are async command handlers; the resident's other deadlines must keep firing), and
-   * every non-progress turn ends in `_waitSlice`, so no observed state can loop unbounded. */
-  async _mutex(fn, waitMs = LOCK_WAIT_MS) {
+   * callers are async command handlers; the resident's other deadlines must keep firing), and each
+   * turn ends in a LOCK_POLL_MS sleep. The lock is taken on the turn its holder released it; a
+   * holder that died is reaped by the liveness check below, so the wait ends with the lock held. */
+  async _mutex(fn) {
     this.#ensureRoot();
-    const deadline = performance.now() + waitMs;
     for (;;) {
       const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
       if (!(gate !== null && this.liveness(gate.pid))) {
@@ -714,14 +713,10 @@ export class HostCapacityAuthority {
         this._removeOwner(this.lockPath, LOCK_LABEL, generation); // no-op unless we published it
         const observed = this._observeOwner(this.lockPath, LOCK_LABEL);
         if (observed !== null && !this.liveness(observed.pid) && gate === null && !this._reap(observed)) {
-          // A dead holder this turn could not reclaim; fall through to the bounded wait.
+          // A dead holder this turn could not reclaim; the next turn re-observes it.
         }
       }
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) {
-        throw typed(`host capacity lease lock is busy at the ${LOCK_WAIT_MS}ms wait deadline`, 'host_capacity_unavailable');
-      }
-      await new Promise((resolve) => { setTimeout(resolve, Math.min(LOCK_POLL_MS, remaining)); });
+      await new Promise((resolve) => { setTimeout(resolve, LOCK_POLL_MS); });
     }
   }
 
