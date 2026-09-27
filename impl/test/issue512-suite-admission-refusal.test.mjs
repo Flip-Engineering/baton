@@ -62,13 +62,12 @@ function blockVerifyBudget(root, t) {
 /** The environment a staged runner needs. Ambient suite markers are dropped: the bypass
  * (BATON_HOST_CAPACITY_DISABLED) would admit the child without touching the authority at all,
  * its parent's token digest (BATON_SUITE_VERIFY_LEASE) would nest it unwired (#424), and an
- * inherited wait/poll pin would replace the one this test stages. */
+ * inherited poll pin would replace the one this test stages. */
 function stagedEnv(root, extra = {}) {
   const env = { ...process.env };
   delete env.BATON_HOST_CAPACITY_DISABLED;
   delete env.BATON_TEST_SUITE_ROOT;
   delete env[suiteLease.SUITE_VERIFY_LEASE_ENV];
-  delete env.BATON_HOST_CAPACITY_WAIT_MS;
   delete env.BATON_HOST_CAPACITY_POLL_MS;
   return { ...env, BATON_HOST_CAPACITY_ROOT: root, ...extra };
 }

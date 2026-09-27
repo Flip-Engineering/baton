@@ -26,7 +26,8 @@
 //
 // The lease directory is a concurrency substrate, so it uses the ONE published-owner protocol: an
 // owner record published by atomic link, counted only after re-observation, a dead holder
-// reclaimed only under an exclusive reaper gate, every wait turn bounded by a monotonic deadline.
+// reclaimed only under an exclusive reaper gate, and the lock taken on the turn its holder
+// releases it — a live holder is waited for, a dead one is reaped by the liveness check (#618).
 // Here the protocol guards the host's lease namespace.
 
 import { execFileSync } from 'node:child_process';
