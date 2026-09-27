@@ -170,17 +170,8 @@ function extractThreadId(events) {
 function extractResult(events) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.type === 'item.completed' && e.item?.type === 'message') {
-      const textParts = (e.item.content || [])
-        .filter((c) => c.type === 'output_text' || c.type === 'text')
-        .map((c) => c.text);
-      if (textParts.length > 0) return textParts.join('\n');
-    }
-    if (e.type === 'turn.completed' && e.last_message) {
-      const textParts = (e.last_message.content || [])
-        .filter((c) => c.type === 'output_text' || c.type === 'text')
-        .map((c) => c.text);
-      if (textParts.length > 0) return textParts.join('\n');
+    if (e.type === 'item.completed' && e.item?.type === 'agent_message') {
+      return e.item.text;
     }
   }
   return null;

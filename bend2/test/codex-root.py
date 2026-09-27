@@ -55,7 +55,7 @@ class CodexRootAdapter(unittest.TestCase):
             f'cat > {stdin_file}\n'
             'echo \'{"type":"thread.started","thread_id":"mock-thread"}\'\n'
             'echo \'{"type":"turn.started"}\'\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"message","content":[{"type":"output_text","text":"Acknowledged"}]}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Acknowledged"}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)
@@ -87,7 +87,7 @@ class CodexRootAdapter(unittest.TestCase):
             '#!/bin/sh\n'
             f'cat > {stdin_file}\n'
             'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"message","content":[{"type":"output_text","text":"ok"}]}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)
@@ -115,7 +115,7 @@ class CodexRootAdapter(unittest.TestCase):
             '#!/bin/sh\n'
             f'cat > {stdin_file}\n'
             'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"message","content":[{"type":"output_text","text":"ok"}]}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)
@@ -145,7 +145,7 @@ class CodexRootAdapter(unittest.TestCase):
             f'echo "$@" > {args_file}\n'
             'cat > /dev/null\n'
             'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"message","content":[{"type":"output_text","text":"ok"}]}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)
@@ -171,7 +171,9 @@ class CodexRootAdapter(unittest.TestCase):
             '#!/bin/sh\n'
             'cat > /dev/null\n'
             'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"message","content":[{"type":"output_text","text":"I have acknowledged the report."}]}}\'\n'
+            'echo \'{"type":"item.completed","item":{"type":"agent_message","text":"Reviewing the report."}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I have acknowledged the report."}}\'\n'
+            'echo \'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"Tool output"}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)
@@ -181,7 +183,7 @@ class CodexRootAdapter(unittest.TestCase):
             text=True, capture_output=True, timeout=15,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
-        self.assertIn('I have acknowledged the report', p.stdout)
+        self.assertEqual(p.stdout, 'I have acknowledged the report.\n')
 
 
 class CodexRootEndToEnd(unittest.TestCase):
@@ -244,7 +246,7 @@ class CodexRootEndToEnd(unittest.TestCase):
             'echo \'{"type":"turn.started"}\'\n'
             f'{EXE} {self.db} ack turn-1 root codex-root-ack\n'
             f'{EXE} {self.db} land w1 {self.repo} main\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"message","content":[{"type":"output_text","text":"Acknowledged and landed."}]}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Acknowledged and landed."}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)

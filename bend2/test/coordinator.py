@@ -108,6 +108,19 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('pending'), [])
         self.assertEqual(self.call('delivery', 'turn-1')['receipt'], 'accepted')
 
+    def test_codex_thread_event_records_resume_identity_before_report(self):
+        self.call('worker', 'codex', 'root', 'codex', 'gpt-6-astra', 'low',
+                  '/retained/codex', 'codex-branch', 'base')
+        event = {'type': 'thread.started',
+                 'thread_id': '01a0e0cd-18e6-72a1-a46f-88790278891a'}
+        observed = self.call('observe', 'codex-turn', 'codex', json.dumps(event))
+        self.assertIsNone(observed['reportId'])
+        session = self.call('session', 'codex')
+        self.assertEqual(session['native'], event['thread_id'])
+        self.assertEqual(session['model'], 'gpt-6-astra')
+        self.assertEqual(session['observedModel'], '')
+        self.assertEqual(self.call('inbox', 'root'), [])
+
     def test_muse_session_envelope_supplies_native_resume_identity(self):
         # Live muse-review-2 emitted this envelope before any terminal result.
         event = {

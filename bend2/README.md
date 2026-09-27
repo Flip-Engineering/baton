@@ -19,7 +19,7 @@ executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 ## Coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude
-Code, OMP and Muse turns. Recruitment creates a Git worktree and records its resolved base. Native parent
+Code, Codex, OMP and Muse turns. Recruitment creates a Git worktree and records its resolved base. Native parent
 delivery through Claude Code Channels MCP is connected to this interface. Git
 landing advances a target branch to include a worker's committed tip, and the
 checked landing (bend2/src/git/land_checked in bend2/src/git/land.bend)
@@ -53,12 +53,6 @@ extracted result text and records the turn. Non-terminal events are recorded
 without creating a report. `observe-file` reads the JSON from a file; `observe`
 accepts it as a command-line argument. A repeated observe with the same ID
 and matching content returns the original result.
-
-`observe-file ID WORKER PATH` consumes one native JSON event. An initialization
-event updates the observed session/model; a Claude result or terminal OMP
-`agent_end` event saves a
-parent report automatically and retains the complete source event. Native failure
-results reach the parent as well. `observe` accepts the JSON as an argument.
 
 Requested and observed routes are stored separately. Reading status reports the
 stored session binding; it does not establish that a process is alive.
@@ -114,6 +108,11 @@ After registering the worker, run:
 The last argument is the native session to resume; an empty string starts a new
 session. The worker's recorded harness selects the adapter. Claude uses stream JSON; OMP
 uses `--print --mode json` and retains sessions beside the database.
+Codex uses `exec --json` and `exec resume SESSION`, with the task on stdin.
+Its thread event records the native session. After process exit, the supervisor
+reads the final assistant message and terminal event from the retained output
+log to produce the parent report. Codex events do not name the observed model;
+that field stays empty.
 Muse uses `exec --json --prompt-file` and resumes with `--session-id`.
 Its session envelopes record the native session and observed model, and its
 terminal envelope supplies the parent report. `workers` includes the native
@@ -127,7 +126,16 @@ native session. The logical worker and its workspace remain available.
 The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
 Native result events create pending parent reports. Process-start failures and
 exits without a result also create reports. Repeating a completed turn ID returns
-its retained report. `pending` shows reports awaiting native acceptance; delivery
+its retained report. To retry after a failure report, use a new turn ID. Read
+`session WORKER` for its native session ID and pass that ID as the last `turn`
+argument to continue the same conversation. For example:
+
+```sh
+.scratch/bend2/baton2 state.db session worker1
+.scratch/bend2/baton2 state.db turn worker1 turn2 HARNESS_COMMAND MODEL EFFORT WORKTREE NEXT_TASK_FILE NEXT_OUTPUT_LOG NATIVE_SESSION
+```
+
+`pending` shows reports awaiting native acceptance; delivery
 is still being connected. Run one foreground turn at a time for a worker.
 
 The check command builds the coordinator, process and Git test executables, then

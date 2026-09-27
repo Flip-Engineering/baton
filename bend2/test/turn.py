@@ -134,4 +134,51 @@ print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.t
         self.assertEqual(reports[-1]['body'],self.task.read_text())
         self.assertEqual(json.loads(self.call('session','muse-worker'))['native'],native)
 
+    def test_codex_terminal_report_uses_final_message_and_resumes_native_thread(self):
+        self.call('worker','codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+args=sys.argv
+assert args[1]=='exec'
+assert '--ephemeral' not in args
+pathlib.Path('argv.json').write_text(json.dumps(args))
+prompt=sys.stdin.read()
+pathlib.Path('received.txt').write_text(prompt)
+print(json.dumps({'type':'thread.started','thread_id':'native-codex'}))
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Working on it.'}}))
+print(json.dumps({'type':'item.completed','item':{'type':'command_execution','aggregated_output':'tool output'}}))
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':prompt}}))
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tokens':7}}))
+''')
+        self.call('turn','codex-worker','codex-1',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
+        session=json.loads(self.call('session','codex-worker'))
+        self.assertEqual(session['native'],'native-codex')
+        self.assertEqual(session['observedModel'],'')
+        self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],self.task.read_text())
+        self.task.write_text('Next instruction with trailing newline.\n')
+        self.call('turn','codex-worker','codex-2',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
+        args=json.loads((self.cwd/'argv.json').read_text())
+        self.assertEqual(args[1:4],['exec','resume','native-codex'])
+        self.assertEqual(args[args.index('-c')+1],'model_reasoning_effort="low"')
+        self.assertEqual(args[-1],'-')
+        self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],self.task.read_text())
+        self.worker.unlink()
+        self.call('turn','codex-worker','codex-2',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
+        self.assertEqual(len(json.loads(self.call('turns','codex-worker'))),2)
+
+    def test_codex_failed_turn_retains_native_failure_for_parent(self):
+        self.call('worker','codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys
+sys.stdin.read()
+print(json.dumps({'type':'thread.started','thread_id':'failed-codex'}))
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Unfinished work.'}}))
+print(json.dumps({'type':'turn.failed','error':{'message':'Provider refused request'}}))
+sys.exit(1)
+''')
+        self.call('turn','codex-worker','codex-failed',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
+        report=json.loads(self.call('delivery','codex-failed'))
+        event=json.loads(report['body'])
+        self.assertEqual(event['nativeEvent']['type'],'turn.failed')
+        self.assertEqual(event['result'],'Provider refused request')
+        self.assertEqual(event['is_error'],1)
+
 if __name__=='__main__': unittest.main()

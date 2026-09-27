@@ -7,6 +7,7 @@ import ../host/process.bend as P
 import ../harness/claude-worker.bend as Claude
 import ../harness/omp-worker.bend as Omp
 import ../harness/muse-worker.bend as Muse
+import ../harness/codex-worker.bend as Codex
 
 def error_text(error: U32 & String) -> String:
   (code,text)=error
@@ -66,7 +67,9 @@ def input(+handle: U32, +prompt: String, +harness: String) -> IO(Result<&1,&1,U3
     Omp.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"muse\n"),
     Muse.input(handle,prompt),
-    Claude.input(handle,prompt)))
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"codex\n"),
+    Codex.input(handle,prompt),
+    Claude.input(handle,prompt))))
 
 def send_prompt(+handle: U32,prompt: String,harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -74,8 +77,28 @@ def send_prompt(+handle: U32,prompt: String,harness: String) -> IO(Result<&1,&1,
     closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
+def codex_report(db: String, worker: String, id: String, event: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: do IO<Unit>:
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,worker,event}))
+      IO.pure(Unit,Unit{})
+
+def codex_result_sql(source: String) -> String:
+  +events = "'[' || replace(trim(" ++ C.q(source) ++ ",char(10)),char(10),',') || ']'"
+  "SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(" ++ events ++ ") m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM json_each(" ++ events ++ ") e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
+
+# Codex emits assistant text before the terminal event. Read both from its log.
+def codex_finished(+db: String, worker: String, id: String, log: String, codex: Bool) -> IO(Unit):
+  match codex:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      source : String <- IO.try(String,T.Text.read(log))
+      +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(source)))
+      codex_report(db,worker,id,event,String.is_empty(event))
+
 @unsafe
-def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match result:
     case Fail{error}:
       report(db,worker,id ++ ":read","Native output read failed: " ++ error_text(error) ++ "; output retained at " ++ log)
@@ -83,22 +106,23 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
       do IO<Unit>:
         sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
         status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+        codex : Unit <- codex_finished(db,worker,id,log,String.eq(harness,"codex\n"))
         waited(db,worker,id,log,remember_write(first_error,sent),status)
     case Done{Some{+line}}:
       do IO<Unit>:
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,line ++ "\n")
         observed : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,worker,line})
         next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,remember(remember_write(first_error,written),observed),sender,next)
+        consume(db,worker,id,log,handle,harness,remember(remember_write(first_error,written),observed),sender,next)
 
-def started(+db: String, +worker: String, +id: String, +log: String, prompt: String, harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+def started(+db: String, +worker: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
     case Fail{error}: report(db,worker,id,"Worker process could not start: " ++ error_text(error))
     case Done{+handle}:
       do IO<Unit>:
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,"",sender,first)
+        consume(db,worker,id,log,handle,harness,"",sender,first)
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
@@ -115,7 +139,9 @@ def launch(+db: String, +cmd: String, +model: String, +effort: String, +cwd: Str
     Omp.start_worker(cmd,model,effort,cwd,log,db ++ ".sessions",session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
     muse_launch(cmd,model,effort,cwd,log ++ ".stderr",session,task,String.is_empty(session)),
-    claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session))))
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
+    Codex.start_worker(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
+    claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
 
 def prompt_read(+db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, +log: String, +session: String, +harness: String, task: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
@@ -153,7 +179,7 @@ def worker_checked(+db: String, +worker: String, +id: String, cmd: String, model
     case True{}: IO.die(Unit,2,"Worker has no recorded parent and workspace; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
-        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n"))))
+        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
         foreign : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');"))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         found : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"))
