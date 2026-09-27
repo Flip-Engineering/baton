@@ -2236,22 +2236,6 @@ export async function recheckReuseDecision(coordinator, recorder, request, ctx =
 
 
 
-export function admitWorkflowFinding(coordinator, recorder, runId, candidateFindingId, policy, lease, session = null) {
-    coordinator.tick();
-    return recorder.coordination.admitWorkflowFinding(
-      coordinator._repoId, runId, candidateFindingId, policy,
-      {
-        actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`,
-        // XB: the admission auth carries the acquiring session so the store's full lease gate
-        // binds admission to the actor that acquired the lease (never a bearer of the digest).
-        ...(session ? {
-          principalId: session.principalId, sessionId: session.sessionId,
-          sessionAuthorityDigest: session.authorityDigest,
-        } : {}),
-      },
-      lease,
-    );
-  }
 
 export function list(coordinator, recorder) {
     coordinator._assertReadable();

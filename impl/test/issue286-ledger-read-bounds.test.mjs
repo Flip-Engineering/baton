@@ -170,7 +170,7 @@ test('G45-R1: one peer exchange copies the ledger zero times', async () => {
   fx.store.appendWaveClosed({
     waveId: 'wave:ours', receiptDigest: 'a'.repeat(64), rings: [], lanes: [], parked: [], blockedOn: [],
     settlementErrors: [],
-    knowledge: { candidates: 0, admittedThisRun: 0, candidatesAwaitingAdmission: 0, settlementRunId: null },
+    knowledge: { candidates: 0, candidatesAwaitingAdmission: 0, settlementRunId: null },
   }, { actor: 'orchestrator', key: 'wave.close:ours' });
   emitMessage(fx, a, { to: { workerId: b.id }, body: 'The wave has closed.' });
   await flush();

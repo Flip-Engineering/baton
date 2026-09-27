@@ -187,7 +187,6 @@ const CAPABILITY = Object.freeze({
   baton_wakes_since: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
-  baton_knowledge_promote: ['control', 'observe'],
   baton_knowledge_settlement_lease: ['settlement'],
   // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
   baton_run_resultpin: ['observe'],
@@ -222,7 +221,7 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
   // through the observe-path gate like the read-only tools.
   'baton_waves_start',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
@@ -230,7 +229,7 @@ const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_
     .map((operation) => operation.names.mcp),
   // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
   'baton_waves_start',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -866,9 +865,9 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // MCP-W2 (mcp-packaging-decisions v1.0): the four settlement ops become MCP tools behind the
+  // MCP-W2 (mcp-packaging-decisions v1.0): the settlement ops become MCP tools behind the
   // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
-  // caller field); knowledge.promote refuses without it, and knowledge.settlement_lease requires
+  // caller field); knowledge.settlement_lease requires
   // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
   {
     name: 'baton_scratchpad_elevate',
@@ -890,14 +889,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'baton_knowledge_promote',
-    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated through the S-2 lease proof.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
-    }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
+
     name: 'baton_knowledge_settlement_lease',
     description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
     inputSchema: schema({
@@ -1434,7 +1426,7 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
   'baton_deployment_doctor',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle',
   'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
@@ -1449,7 +1441,7 @@ const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_waves_start: 'waves.start', baton_waves_progress: 'waves.progress', baton_waves_send: 'waves.send',
   baton_waves_stop: 'waves.stop', baton_waves_list: 'waves.list', baton_waves_run: 'waves.run', baton_waves_compile: 'waves.compile',
   baton_scratchpad_elevate: 'scratchpad.elevate', baton_scratchpad_settle: 'scratchpad.settle',
-  baton_knowledge_promote: 'knowledge.promote', baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
+  baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
   baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
   baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
@@ -1855,10 +1847,6 @@ function validateArguments(name, args, maxWaitMs = null) {
     || !Number.isSafeInteger(args.expectedScratchpadFence) || args.expectedScratchpadFence < 0
     || (Object.hasOwn(args, 'skips') && !Array.isArray(args.skips)))) {
     return 'invalid_scratchpad_settle';
-  }
-  if (name === 'baton_knowledge_promote' && (!nonempty(args.runId) || !nonempty(args.candidateFindingId)
-    || !record(args.policy) || !record(args.lease))) {
-    return 'invalid_knowledge_promote';
   }
   if (name === 'baton_knowledge_settlement_lease' && !nonempty(args.waveId)) {
     return 'invalid_settlement_lease';
@@ -2772,10 +2760,9 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
-    // MCP-W2: the four settlement tools via the S-2 sessionAuthority envelope. The envelope is
-    // the authenticated connection's proof — never a caller field. knowledge.promote REQUIRES it
-    // (validated through the S-2 lease proof); the settlement lease requires the
-    // settlement capability class (already enforced by _authority).
+    // MCP-W2: the settlement tools via the S-2 sessionAuthority envelope. The envelope is
+    // the authenticated connection's proof — never a caller field. The settlement lease requires
+    // the settlement capability class (already enforced by _authority).
     else if (name === 'baton_scratchpad_elevate') {
       value = await this.application.command('scratchpad.elevate', {
         runId: args.runId, taskId: args.taskId, workerId: args.workerId,
@@ -2796,20 +2783,7 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
-    else if (name === 'baton_knowledge_promote') {
-      const { sessionAuthority } = this._sessionAuthorityContext(principal);
-      if (sessionAuthority == null) {
-        throw Object.assign(new Error('an active settlement lease is required'), { code: 'settlement_lease_required' });
-      }
-      value = await this.application.command('knowledge.promote', {
-        runId: args.runId, candidateFindingId: args.candidateFindingId,
-        policy: clone(args.policy), lease: clone(args.lease),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
+
     else if (name === 'baton_knowledge_settlement_lease') {
       value = await this.application.command('knowledge.settlement_lease', {
         waveId: args.waveId, ...(Object.hasOwn(args, 'members') ? { members: clone(args.members) } : {}),

@@ -1019,8 +1019,8 @@ const sessionAuthoritySchema = objectSchema({
 
 // S-3 is a registry delta, not a second inventory. Consumers use this ordered key projection to
 // select exactly the rows whose live shared-layer methods are surfaced by the matrix.
-// MCP-W2 (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
-// knowledge.promote leave the REFLEX matrix — they are the ordinary-surface settlement tools
+// MCP-W2 (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle
+// leave the REFLEX matrix — they are the ordinary-surface settlement tools
 // (their MCP tools live in the ordinary table), so the matrix projection no longer derives them.
 export const SURFACING_MATRIX_KEYS = Object.freeze([
   'run.scratchpad', 'decision.list',
@@ -1032,16 +1032,9 @@ const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'scratchpad.elevate': 'orchestrator-admit; candidate Finding mint is unchanged',
   'scratchpad.settle': 'orchestrator-admit',
 
-  'knowledge.promote': 'run-orchestrator lease gates workflow Finding admission',
   'knowledge.recall': 'deployment-bounded recall policy',
   'knowledge.horizon': 'viewer-scoped; non-orchestrators must be owned workers',
 });
-
-// KG settlement D2: knowledge.promote's liveMethod names the store admission gate (KS3). It is
-// assembled rather than written as one literal so kg-activation's A5 source-scan — which asserts
-// no src surface OUTSIDE the store/coordinator textually references the gate as a live call — reads
-// this registry label as the pure metadata it is, never a call site.
-const KNOWLEDGE_PROMOTE_LIVE_METHOD = `admitWorkflow${'Finding'}`;
 
 // Every §6 canonical operation: an authority `source` (an `operations` name or an `actions` kind
 // the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
@@ -1281,14 +1274,6 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['runId', 'expectedScratchpadFence', 'skips']),
     authorityFields: ['runId', 'expectedScratchpadFence'], serverDerived: ['actor'],
     liveMethod: 'settleWorkflowScratchpad',
-  }],
-  ['knowledge.promote', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, candidateFindingId: id, policy: { type: 'object' }, lease: { type: 'object' },
-    }, ['runId', 'candidateFindingId', 'policy', 'lease']),
-    authorityFields: ['runId', 'lease'], serverDerived: ['repoId', 'actor'],
-    liveMethod: KNOWLEDGE_PROMOTE_LIVE_METHOD,
   }],
   // KG settlement D2 embedded kernel: materialize the wave settlement run + parent task + lease,
   // sweep prior expired leases, and candidate each elevated note. The session is server-derived

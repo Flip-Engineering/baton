@@ -30,9 +30,6 @@ import { validProcessClosedPayload, validProcessStartedPayload, validRecoveryPro
 
 
 
-// KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
-// knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
-const KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS = ['repoId', 'maxBatchBytes', 'maxResultBytes'];
 
 const SCRATCH_CORRECTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
 
@@ -55,13 +52,6 @@ const REPRESENTATION_AUTHORITY = Object.freeze({
   policyAuthoring: false, proof: false, publication: false, route: false,
   verification: false, workerControl: false,
 });
-
-function validKnowledgeWorkflowAdmissionPolicy(policy) {
-  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
-}
 
 function validResultSha(value) { return typeof value === 'string' && /^[a-f0-9]{40,64}$/u.test(value); }
 
@@ -2953,7 +2943,7 @@ export function _validateWaveClosedPayload(fields) {
     throw new CoordinationRefusal('wave.closed blockedOn block is invalid', 'wave_closed_invalid');
   }
   if (!fields.knowledge || typeof fields.knowledge !== 'object' || Array.isArray(fields.knowledge)
-    || !['candidates', 'admittedThisRun', 'candidatesAwaitingAdmission', 'settlementRunId']
+    || !['candidates', 'candidatesAwaitingAdmission', 'settlementRunId']
       .every((key) => Object.hasOwn(fields.knowledge, key))) {
     throw new CoordinationRefusal('wave.closed knowledge block is invalid', 'wave_closed_invalid');
   }
@@ -3267,131 +3257,6 @@ export function reverifyScratchCorrection(store, repoId, observedSeq, policy, ac
   if (!event || event.kind !== 'knowledge.scratch_corrected' || event.actor !== actor || event.payload?.repoId !== repoId || event.payload?.observedSeq !== observedSeq || event.payload?.policyDigest !== policyDigest || event.payload?.requestDigest !== requestDigest || canonicalDigest(event.payload?.request) !== canonicalDigest(normalized)) throw new CoordinationRefusal('Scratch correction receipt does not match authority', 'causal_correction_conflict'); store._validateScratchCorrectionPayload(event.payload, event, false); return freeze({ event: clone(event), projection: store._scratchCorrectionProjection(event.payload, event), replayed: true });
 }
 
-export function _deriveWorkflowAdmission(store, repoId, runId, candidateFindingId, policy, beforeEventSeq = store._events.length + 1) {
-  if (!validKnowledgeWorkflowAdmissionPolicy(policy) || policy.repoId !== repoId || !validRunId(runId)
-    || typeof candidateFindingId !== 'string' || candidateFindingId.length === 0) {
-    throw new CoordinationRefusal('workflow admission request is invalid', 'workflow_admit_invalid');
-  }
-  const boundary = beforeEventSeq - 1;
-  const nodesAtBoundary = store.queryKnowledge({ observedSeq: boundary });
-  const edgesAtBoundary = store.queryKnowledgeEdges({ observedSeq: boundary });
-  const nodeMap = new Map(nodesAtBoundary.map((node) => [node.id, node]));
-  const candidate = nodeMap.get(candidateFindingId);
-  const alreadyPromoted = edgesAtBoundary.some((edge) => edge.type === 'DerivedFrom' && edge.to === candidateFindingId
-    && nodeMap.get(edge.from)?.promotion?.trigger === 'workflow.admitted');
-  if (!candidate || candidate.type !== 'Finding' || candidate.grounding !== 'observed'
-    || alreadyPromoted) {
-    throw new CoordinationRefusal('workflow admission candidate is ineligible', 'workflow_admit_ineligible');
-  }
-  const admittedId = `finding:workflow-admitted:${candidateFindingId}`;
-  const evidence = [...(candidate.evidence ?? []), { coordinationSeq: candidate.observedSeq }];
-  const finding = store._knowledgePayload({
-    id: admittedId, type: 'Finding', grounding: 'verified', evidence,
-    promotion: { kind: 'Finding', trigger: 'workflow.admitted' }, repoId, runId,
-  });
-  const edgeId = `knowledge-edge:derivedfrom:${admittedId}:${candidateFindingId}`;
-  const edge = store._knowledgePayload({
-    id: edgeId, type: 'DerivedFrom', from: admittedId, to: candidateFindingId,
-    evidence: [{ coordinationSeq: candidate.observedSeq }],
-  });
-  const projectionDigest = canonicalDigest({ candidateFindingId, nodes: [finding], edges: [edge] });
-  return freeze({ candidateFindingId, nodes: [finding], edges: [edge], projectionDigest });
-}
-
-export function _validateWorkflowAdmissionPayload(store, payload, event, integrity = false) {
-  const fail = (message, code = 'workflow_admit_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
-  const fields = ['schemaVersion', 'repoId', 'runId', 'policy', 'policyDigest', 'candidateFindingId', 'requestDigest', 'nodes', 'edges', 'projectionDigest', 'receiptDigest'];
-  if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1
-    || !promotionActor(event.actor) || !validKnowledgeWorkflowAdmissionPolicy(payload.policy)
-    || payload.repoId !== payload.policy.repoId || !validRunId(payload.runId)
-    || payload.policyDigest !== canonicalDigest(payload.policy)) fail('workflow admission receipt shape is invalid');
-  const requestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: payload.repoId, runId: payload.runId, policyDigest: payload.policyDigest, candidateFindingId: payload.candidateFindingId });
-  if (payload.requestDigest !== requestDigest) fail('workflow admission request binding is invalid');
-  let derived;
-  try { derived = store._deriveWorkflowAdmission(payload.repoId, payload.runId, payload.candidateFindingId, payload.policy, event.seq); }
-  catch (error) { fail(error.message, error.code ?? 'workflow_admit_integrity'); }
-  if (canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges)
-    || payload.projectionDigest !== derived.projectionDigest) fail('workflow admission projection diverged');
-  const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
-  if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('workflow admission receipt is invalid or oversized');
-  return derived;
-}
-
-export function admitWorkflowFinding(store, repoId, runId, candidateFindingId, policy, auth, lease) {
-  if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || auth.key.length === 0
-    || !validKnowledgeWorkflowAdmissionPolicy(policy) || policy.repoId !== repoId) {
-    throw new CoordinationRefusal('workflow admission authority is invalid', 'workflow_admit_invalid');
-  }
-  const policyDigest = canonicalDigest(policy);
-  const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, runId, policyDigest, candidateFindingId });
-  const prior = store._byKey.get(auth.key);
-  // XB (lifecycle keystone): when the admission auth carries session fields (the settlement
-  // command derives them from the calling principal), admission binds to the session that
-  // ACQUIRED the lease — never a bearer of the digest. Codex #2b: the SESSION GATE precedes the
-  // idempotent-replay path, so a replayed admit with a foreign/expired session refuses with the
-  // typed session code, never a replay shortcut. The full _activeRunOrchestratorLease gate
-  // (not_found / revoked / expired / session_mismatch / parent_inactive / parent_stale /
-  // run_stopping) applies to first-time admits; a replay re-validates only the session binding,
-  // so a crash after the admit's own revoke step (rule 16b / KS7) still replays idempotently.
-  // Absent session fields, the original structural binding check applies (the shipped
-  // primitive's contract is unchanged for callers that do not present a session).
-  const carriesSession = auth?.principalId !== undefined || auth?.sessionId !== undefined
-    || auth?.sessionAuthorityDigest !== undefined;
-  if (carriesSession) {
-    const leaseRecord = store._runOrchestratorLeases.get(lease?.id);
-    if (!leaseRecord) store._runLineageFailure('run orchestrator lease was not found', 'run_orchestrator_lease_not_found');
-    if (auth?.principalId !== leaseRecord.session.principalId
-      || auth?.sessionId !== leaseRecord.session.sessionId
-      || auth?.sessionAuthorityDigest !== leaseRecord.session.authorityDigest) {
-      store._runLineageFailure('run orchestrator session does not match the lease', 'run_orchestrator_session_mismatch');
-    }
-    if (prior) {
-      // Replay path: the binding already passed; refuse only a now-expired session. The lease's
-      // own post-admit revocation is the normal KS7 resume state and must not refuse the retry.
-      if (Date.parse(store._clock()) >= Date.parse(leaseRecord.session.expiresAt)) {
-        store._runLineageFailure('run orchestrator session is expired', 'run_orchestrator_session_mismatch');
-      }
-    } else {
-      const activeLease = store._activeRunOrchestratorLease({
-        orchestratorLeaseId: lease?.id,
-        principalId: auth?.principalId, sessionId: auth?.sessionId,
-        sessionAuthorityDigest: auth?.sessionAuthorityDigest,
-      });
-      if (activeLease.leaseDigest !== lease?.digest || activeLease.issuedEvent !== lease?.issuedEvent
-        || activeLease.parent?.runId !== runId) {
-        throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
-      }
-    }
-  } else if (!prior) {
-    const leaseRecord = store._runOrchestratorLeases.get(lease?.id);
-    if (!leaseRecord || leaseRecord.status !== 'active' || leaseRecord.leaseDigest !== lease?.digest
-      || leaseRecord.issuedEvent !== lease?.issuedEvent || leaseRecord.parent?.runId !== runId) {
-      throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
-    }
-  }
-  if (prior) {
-    // Replay-exactness is still validated after the session gate (codex #2b): the prior event
-    // must be the exact same admission.
-    if (prior.kind !== 'knowledge.workflow_admitted' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) {
-      throw new CoordinationRefusal('workflow admission idempotency conflict', 'workflow_admit_conflict');
-    }
-    store._validateWorkflowAdmissionPayload(prior.payload, prior, false);
-    return freeze({ event: clone(prior), finding: clone(store._knowledgeNodes.get(prior.payload.nodes[0].id)), replayed: true });
-  }
-  const derived = store._deriveWorkflowAdmission(repoId, runId, candidateFindingId, policy);
-  const core = {
-    schemaVersion: 1, repoId, runId, policy: clone(policy), policyDigest,
-    candidateFindingId, requestDigest, nodes: clone(derived.nodes), edges: clone(derived.edges),
-    projectionDigest: derived.projectionDigest,
-  };
-  const payload = { ...core, receiptDigest: canonicalDigest(core) };
-  if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('workflow admission batch exceeded deployment ceiling', 'workflow_admit_oversize');
-  const fixedTs = store._clock();
-  const prospective = { schemaVersion: 1, seq: store._events.length + 1, ts: fixedTs, kind: 'knowledge.workflow_admitted', actor: auth.actor, idempotencyKey: auth.key, payload };
-  store._validateWorkflowAdmissionPayload(payload, prospective, false);
-  const event = store._append('knowledge.workflow_admitted', payload, auth, fixedTs);
-  return freeze({ event: clone(event), finding: clone(store._knowledgeNodes.get(derived.nodes[0].id)), replayed: false });
-}
 
 export function _prepareKnowledgeNode(store, fields, promotion = null, validate = true) {
   const evidence = clone(fields.evidence ?? []);

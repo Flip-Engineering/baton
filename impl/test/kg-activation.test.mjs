@@ -97,7 +97,6 @@ function valueRefBranch(name, store, seed = name) {
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });
-const workflowAdmissionPolicy = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
 
 // A context-package admission mints the `observed` package Finding the admit gate consumes — the
 // candidate path both fixtures below mint from.
@@ -294,7 +293,7 @@ test('KG-A1: a spawn brief carries the bounded knowledge slice with provenance w
 // KG-A2: the candidacy queue — first-class projection over candidate records
 // ============================================================
 
-test('KG-A2: candidates from each source kind appear with type/source/age/grounding; admit removes exactly that candidate; the queue is capped and ordered; no duplicates across views', () => {
+test('KG-A2: candidates from each source kind appear with type/source/age/grounding; the queue is capped and ordered; no duplicates across views', () => {
   const s = freshStore('queue', { clock: clockMs() });
   // A task node grounds the verification-class candidate (verified_task_outcome binds its task).
   s.addKnowledgeNode({ id: 'task:t-ver', type: 'Task', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-task' });
@@ -321,15 +320,7 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   const qAgain = s.knowledgeCandidateQueue({ now });
   assert.deepEqual(qAgain.candidates.map((c) => c.id), [...new Set(q.candidates.map((c) => c.id))], 'no candidate appears twice');
 
-  // Admitting one candidate removes EXACTLY that candidate; the rest remain.
-  const f = candidateFixture('admit-remove');
-  const before = f.store.knowledgeCandidateQueue({ now });
-  assert.ok(before.candidates.some((c) => c.id === f.candidateFindingId), 'the package-admit candidate is queued before admit');
-  f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('admit-a2'), f.lease);
-  const after = f.store.knowledgeCandidateQueue({ now });
-  assert.equal(after.candidates.some((c) => c.id === f.candidateFindingId), false, 'admit removes exactly that candidate');
-  assert.equal(after.admittedIds.includes(f.candidateFindingId), true, 'the admitted id is recorded, never double-counted');
-  f.store.releaseWriterLease();
+
 
   // The queue is capped (<= 16) and ordered even when many candidates are pending.
   const s2 = freshStore('cap');
@@ -346,34 +337,25 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
 // KG-A3: ritual hooks — candidacy counts at the natural review moments
 // ============================================================
 
-test('KG-A3: the ritual projection carries candidacy counts; a zero-candidate run carries 0 (not a missing field); mint/admit move them; the wave close receipt inherits the block', () => {
-  // Zero candidates + zero admits → { candidates: 0, admittedThisRun: 0 } (0, never missing).
-  const empty = freshStore('ritual-empty').knowledgeRitual('run-none', { now });
-  assert.deepEqual(empty, { candidates: 0, admittedThisRun: 0 });
+test('KG-A3: the ritual projection carries the candidacy count; a zero-candidate run carries 0 (not a missing field); minting moves it; the wave close receipt inherits the block', () => {
+  // Zero candidates → { candidates: 0 } (0, never missing).
+  const empty = freshStore('ritual-empty').knowledgeRitual({ now });
+  assert.deepEqual(empty, { candidates: 0 });
 
-  // Minting candidates moves the count; admitting moves admittedThisRun up and candidates down.
+  // Minting a candidate moves the count.
   const f = candidateFixture('ritual');
-  const r0 = f.store.knowledgeRitual(f.runId, { now });
-  assert.equal(r0.candidates, 1, 'the pending package-admit candidate is counted');
-  assert.equal(r0.admittedThisRun, 0);
-  f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('admit-a3'), f.lease);
-  const r1 = f.store.knowledgeRitual(f.runId, { now });
-  assert.equal(r1.admittedThisRun, 1, 'the admit is counted for this run');
-  assert.equal(r1.candidates, 0, 'the admitted candidate leaves the pending queue');
+  const r0 = f.store.knowledgeRitual({ now });
+  assert.equal(r0.candidates, 1, 'the pending board-close candidate is counted');
+  assert.equal(freshStore('ritual-empty').knowledgeRitual({ now }).candidates, 0,
+    'a different store reports its own queue only');
   f.store.releaseWriterLease();
-
-  // admittedThisRun is run-scoped: a second run's admit does not leak into the first.
-  const g = candidateFixture('ritual-other');
-  g.store.admitWorkflowFinding(repoId, g.runId, g.candidateFindingId, workflowAdmissionPolicy, auth('admit-a3b'), g.lease);
-  assert.equal(freshStore('ritual-empty').knowledgeRitual(f.runId, { now }).admittedThisRun, 0, 'a different store reports its own run only');
-  g.store.releaseWriterLease();
 });
 
 // ============================================================
 // KG-A4: horizon digests in the wave surface — cache-correct
 // ============================================================
 
-test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on admit and holds on unrelated state (cache-correct)', () => {
+test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on a knowledge write and holds on unrelated state (cache-correct)', () => {
   const { coordinator, coordination, setup } = coordinatorFixture('digest', { withCandidate: true });
   const runId = setup.runId;
 
@@ -387,24 +369,13 @@ test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on admit and hold
   const d1 = coordinator.workflowHorizon(runId).knowledgeDigest;
   assert.equal(d1, d0, 'an unrelated state move leaves the knowledge digest unchanged');
 
-  // A scratchpad write is also unrelated knowledge state — the digest holds.
-  coordination._events; // touch (no-op guard); the next assertion is the real property
-  const d1b = coordinator.workflowHorizon(runId).knowledgeDigest;
-  assert.equal(d1b, d0, 'a repeated read with no knowledge change is stable');
-
-  // Admitting a finding mints a new verified Finding + DerivedFrom edge → the digest moves. The
-  // admit goes through the real gate on the store (the coordinator wrapper ticks startup recovery,
-  // unnecessary for this pure cache property — kg12 Part D admits store-direct for the same reason).
-  coordination.admitWorkflowFinding(repoId, runId, setup.candidateFindingId, workflowAdmissionPolicy, auth('admit-a4'), setup.lease);
+  // A knowledge write mints a node → the digest moves.
+  coordination.addKnowledgeNode({ id: 'finding:digest-probe', type: 'Finding', grounding: 'observed', evidence: [] },
+    { actor: 'policy', key: 'kn-a4' });
   const d2 = coordinator.workflowHorizon(runId).knowledgeDigest;
-  assert.notEqual(d2, d0, 'admitting a finding changes the knowledge digest');
+  assert.notEqual(d2, d0, 'a knowledge write changes the knowledge digest');
   coordination.releaseWriterLease();
 });
-
-// ============================================================
-// KG-A5: gate honesty — the admit gate is the ONLY promotion path
-// ============================================================
-
 
 // ============================================================
 // KG-A3/KG-A4 wave surfacing: the wave close receipt + progress rows carry the knowledge block
@@ -429,7 +400,6 @@ test('KG-A3/A4 wave surfacing: the wave close receipt carries knowledge counts a
   const stop = await wave.close({ reason: 'KG-activation surfacing.' });
   assert.ok(Object.hasOwn(stop, 'knowledge'), 'the wave close receipt carries the knowledge block');
   assert.equal(stop.knowledge.candidates, 0, 'a zero-candidate wave surfaces 0, never a missing field');
-  assert.equal(stop.knowledge.admittedThisRun, 0);
 });
 
 // ---------------------------------------------------------------------------
