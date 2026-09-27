@@ -4,7 +4,6 @@
 // `projectBatonVisualModel`) into:
 //   - `batonVisualWidth`: terminal display width (wide/combining-aware, ANSI-blind);
 //   - `renderBatonVisual`: one responsive text frame for a view, width-bounded;
-//   - `createBatonMcpPresentation`: the MCP `baton.visual_presentation` envelope.
 //
 // Presentation laws (docs/38-flip-visual-surfaces.md):
 //   P1  The renderer only ever reads the model — it never invents worker state.
@@ -39,7 +38,7 @@ const WIDE_PATTERN =
  * columns, combining marks are zero-width, wide (CJK/emoji) code points
  * count two, everything else one.
  */
-export function batonVisualWidth(input) {
+function batonVisualWidth(input) {
   const text = String(input ?? '').replace(ANSI_PATTERN, '');
   let width = 0;
   for (const ch of text) {
@@ -521,62 +520,3 @@ export function renderBatonVisual(model, options = {}) {
     .concat('\n');
 }
 
-// ---------------------------------------------------------------------------
-// MCP presentation (P3/P4: static text always present, animation optional,
-// ANSI never)
-// ---------------------------------------------------------------------------
-
-const FLIP_SPARKLE_FRAMES = [
-  { glyph: '✦', x: 0, y: 0, opacity: 0.2 },
-  { glyph: '✦', x: 1, y: -1, opacity: 0.45 },
-  { glyph: '✦', x: -1, y: -1, opacity: 0.7 },
-  { glyph: '✦', x: 0, y: 0, opacity: 1 },
-];
-
-/**
- * Build the MCP `baton.visual_presentation` envelope: a static ANSI-free text
- * rendering, an accessible summary from the run narrative, four low-amplitude
- * Flip sparkle frames (P4), and exact refresh arguments that lower through
- * `baton_surface_visualize` (P5).
- */
-export function createBatonMcpPresentation(model, options = {}) {
-  const width = options.width ?? model?.width ?? 96;
-  const text = renderBatonVisual(model, { width, color: false, motion: false, seat: 'baton' });
-  const run = model?.run ?? {};
-  const controls = model?.controls ?? {};
-
-  const refreshArguments = {
-    runId: run.runId ?? null,
-    follow: true,
-    afterCursor: model?.cursors?.after ?? 0,
-    attentionCursor: model?.cursors?.attention ?? model?.cursors?.attentionCursor ?? 0,
-  };
-
-  const approvals = Array.isArray(controls.approvals) ? controls.approvals : [];
-  const actionSuggestions = approvals.map((approval) => {
-    const requestId = approval?.requestId ?? approval?.id;
-    return {
-      requestId,
-      kind: approval?.kind ?? 'approval',
-      command: approval?.allow?.command ?? 'run.answer',
-      arguments: { requestId },
-    };
-  });
-
-  return {
-    kind: 'baton.visual_presentation',
-    text,
-    accessibleSummary: run.narrative ?? model?.story?.narrative ?? '',
-    animation: {
-      kind: 'flip_sparkle',
-      loop: true,
-      msPerFrame: 350,
-      frames: FLIP_SPARKLE_FRAMES,
-    },
-    refresh: {
-      tool: 'baton_surface_visualize',
-      arguments: refreshArguments,
-    },
-    actionSuggestions,
-  };
-}

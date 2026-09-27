@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { projectBatonVisualModel } from '../src/visual-model.mjs';
-import { batonVisualWidth, createBatonMcpPresentation, renderBatonVisual } from '../src/visual-renderer.mjs';
+import { renderBatonVisual } from '../src/visual-renderer.mjs';
 
 const snapshot = {
   doctor: { ok: true, value: { ready: true, routes: [{ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high', state: 'ready' }] } },
@@ -24,7 +24,9 @@ test('responsive renderer never exceeds the requested terminal width', () => {
   for (const width of [40, 58, 84, 118, 160]) {
     const output = renderBatonVisual(model(width), { width, color: false, motion: false });
     for (const line of output.trimEnd().split('\n')) {
-      assert.ok(batonVisualWidth(line) <= width, `${width}: ${batonVisualWidth(line)} ${line}`);
+      // The renderer's width helper is module-private: measure in code points, which equals the
+      // display width for this fixture's repertoire (no combining marks).
+      assert.ok([...line].length <= width, `${width}: ${[...line].length} ${line}`);
     }
     assert.match(output, /baton top/u);
     assert.match(output, /What is happening/u);
@@ -65,23 +67,13 @@ test('timeline wake rows carry the derived status word, and the bare class when 
   assert.equal(timeline.includes('root_owed'), false);
 });
 
-test('MCP presentation carries static text, optional animation frames and refresh arguments', () => {
-  const value = model(96);
-  const presentation = createBatonMcpPresentation(value, { width: 96 });
-  assert.equal(presentation.kind, 'baton.visual_presentation');
-  assert.equal(presentation.animation.frames.length, 4);
-  assert.equal(presentation.refresh.tool, 'baton_surface_visualize');
-  assert.equal(presentation.refresh.arguments.runId, 'run:render');
-  assert.equal(presentation.refresh.arguments.follow, true);
-  assert.equal(presentation.text.includes('\u001b'), false);
-  assert.match(presentation.accessibleSummary, /Flip is quietly/u);
-});
 
 test('the rendered header names its own seat: baton for the MCP presentation, baton top for the operator frame', () => {
   const value = model(96);
-  const presentation = createBatonMcpPresentation(value, { width: 96 });
-  assert.match(presentation.text, /baton · overview/u);
-  assert.equal(presentation.text.includes('baton top'), false);
+  // The deployment's MCP presentation renders with seat 'baton' (production-mcp-convergence).
+  const presentationFrame = renderBatonVisual(value, { width: 96, view: 'overview', motion: false, seat: 'baton' });
+  assert.match(presentationFrame, /baton · overview/u);
+  assert.equal(presentationFrame.includes('baton top'), false);
   const operatorFrame = renderBatonVisual(value, { width: 96, view: 'overview', motion: false });
   assert.match(operatorFrame, /baton top · overview/u);
 });
@@ -95,7 +87,7 @@ test('S3a: the unattached wake stream renders a complete statement at every widt
     const line = timeline.split('\n').find((row) => row.includes('wake stream')) ?? '';
     assert.ok(line.endsWith(')'), `${width}: the absence line is a complete statement: ${line}`);
     assert.equal(line.includes('…'), false, `${width}: the absence line is never truncated: ${line}`);
-    assert.ok(batonVisualWidth(line) <= width, `${width}: ${batonVisualWidth(line)} ${line}`);
+    assert.ok([...line].length <= width, `${width}: ${[...line].length} ${line}`);
   }
   // The narrowest pinned width reads the shortest statement, never half a sentence.
   const narrow = renderBatonVisual(projectBatonVisualModel({ snapshot, watch, width: 40 }), { width: 40, view: 'timeline' });

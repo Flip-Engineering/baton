@@ -51,10 +51,6 @@ export function flipLine(text, { color = false } = {}) {
 // from the projections it does not exist — `flipStatus` answers null for a class outside the
 // derivation instead of inventing state, and the line renders without a status prefix.
 
-export const FLIP_STATUS_SET = Object.freeze([
-  'ready', 'working', 'needs you', 'refused', 'stalled', 'idle', 'draining', 'done',
-]);
-
 const STATUS_ROWS = Object.freeze({
   ready: Object.freeze({ status: 'ready', glyph: '●', word: 'ready' }),
   working: Object.freeze({ status: 'working', glyph: '◐', word: 'working' }),
