@@ -165,9 +165,8 @@ test('a participant seeds a fact through its bridge and a peer finds it with no 
 test('every surviving knowledge verb dispatches from the bridge, and its permission is named on swarm.view updates', async (t) => {
   const { swarm, alphaSend, betaSend } = await swarmFixture(t);
 
-  // The bridge proves dispatch for every write verb (the surface gate proves the MCP rows).
-  assert.equal((await alphaSend('run.board.post', { board: 'alpha-board', title: 'running state: part A bound to artifact:iface' })).result, 'posted');
-  assert.equal((await alphaSend('run.board.read', { board: 'alpha-board' })).board, 'alpha-board');
+  // The bridge proves dispatch for the scratchpad write/read verbs (the surface gate proves the
+  // MCP rows).
   const appended = await alphaSend('run.scratchpad.append', { kind: 'note', body: 'half of A compiles' });
   assert.ok(appended.entry ?? appended.entryId ?? appended, 'scratchpad append answers with its entry');
   const read = await betaSend('run.scratchpad.read', { scope: 'shared' });
@@ -193,16 +192,15 @@ test('every surviving knowledge verb dispatches from the bridge, and its permiss
   // Issue #311 item 3 (the closed-set half): every knowledge-family canonical operation is
   // EITHER a taught participant verb (dispatched above, brief-taught below) or refused by the
   // participant bridge outright. The set is DERIVED from the one canonical registry, never
-  // re-spelled, so a new knowledge/scratchpad/board/context/package verb lands red here until
+  // re-spelled, so a new knowledge/scratchpad/context/package verb lands red here until
   // it is classified — taught to participants or kept off their bridge. The refused members
-  // keep their own surfaces (the wave-settlement lane and the S-2 orchestrator board/package
-  // tools on MCP, the worker board claim/report frames on the managed-worker wire, the
-  // context engine on the CLI/MCP/web); a participant reaches none of them.
+  // keep their own surfaces (the wave-settlement lane and the S-2 orchestrator package
+  // tools on MCP, the context engine on the CLI/MCP/web); a participant reaches none of them.
   const taught = new Set([...SWARM_KNOWLEDGE_COMMAND_NAMES, ...SWARM_SEAT_READ_COMMAND_NAMES]);
   const family = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
     .map((operation) => operation.key)
-    .filter((key) => /^(?:knowledge|scratchpad|board|context|package)\./u.test(key)
-      || /^run\.(?:knowledge|board|scratchpad)(?:\.|$)/u.test(key));
+    .filter((key) => /^(?:knowledge|scratchpad|context|package)\./u.test(key)
+      || /^run\.(?:knowledge|scratchpad)(?:\.|$)/u.test(key));
   const retired = family.filter((key) => !taught.has(key));
   assert.ok(retired.length > 0, 'the derivation found the non-participant family rows');
   for (const retiredName of retired) {

@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_STORE_BOARD_EVIDENCE, REPL_DIGEST, SAFE_BOARD_ID, SAFE_BOARD_OWNER, SAFE_REPL_NAME, SAFE_REPL_SCOPE, assertWaveStartedRoster, boardNonEmpty, boardReportRequestDigest, contextChildAccepted, contextReadAttemptKey, providerAttemptDelay, replBindingContentDigest, replBindingKey, resourceOverlap, validBoardEvidenceRef, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
+import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, REPL_DIGEST, SAFE_REPL_NAME, SAFE_REPL_SCOPE, assertWaveStartedRoster, contextChildAccepted, contextReadAttemptKey, providerAttemptDelay, replBindingContentDigest, replBindingKey, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef, normalizeContextAuthority } from './context-authority.mjs';
@@ -37,9 +37,8 @@ import { validProcessClosedPayload, validProcessStartedPayload, validRecoveryPro
 // ── relocated primitives ─────────────────────────────────────────────────────────────────────────
 
 
-// The non-knowledge half of the projection-input fence (see _apply's closing note): board
-// claim/report traffic (deliberately non-board-fence-bumping) and package admission/attach —
-// the only non-knowledge inputs the horizons read, closed by design.
+// The non-knowledge half of the projection-input fence (see _apply's closing note): package
+// admission/attach — the only non-knowledge inputs the horizons read, closed by design.
 
 // KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
 // knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
@@ -85,20 +84,6 @@ function officialCoordinateMatches(identity, coordinate) { const fields = Object
 // projection (the family's existing posture); the durable fact is never rewritten. Facts
 // without the handle pass through byte-identical so the projection is scoped to web-sourced
 // bodies only.
-// REFLEX-2 board bounds. A board item's identity (itemId/itemVersion/itemDigest/ordinal)
-// is hub-minted; the content core that the itemDigest content-addresses is exactly these
-// nine fields, in the delete-and-recompute discipline (never accepted from a submitter).
-// Live board bounds imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the
-// store is a first-class registry consumer, never a second door for a cataloged lane.
-// Epic #78 Decision 5: the L1 worker read page is at most 16 items and 28 KiB serialized (the
-// receipt wrapper carries the ok/kind/renderedText/idempotencyKey overhead, so the page budget
-// is deliberately below the 32 KiB wire ceiling to leave room for it).
-/** Epic #78 Decision 6 rule 3: the kernel-level request digest for worker board mutations. It
- * covers ONLY the content the caller submitted (the derived owner/claim/grant coordinates are
- * authority, not content — a replay after a close must not re-judge the original request). The
- * seam additionally namespaces the effective replay key with the grant digest so cross-worker
- * key-string collisions cannot occur. */
-/** itemDigest = H(the nine content-core fields), recomputed by the hub, never trusted from input. */
 
 // REPL-2/REPL-3 (docs/reference/evidence/repl-kg-wave-2026-07-22/repl23-decisions.md, issues
 // #22/#23). Binding identity/fences/history/citations are (runId, scope, name)-tupled via
@@ -4930,13 +4915,13 @@ export function admitPackageCommand(store, envelope) {
   const mutationFields = kind === 'admit' ? ['kind'] : ['kind', 'scope'];
   if (!['admit', 'attach'].includes(kind)
     || Object.keys(envelope.mutation).sort().join(',') !== mutationFields.sort().join(',')
-    || (kind === 'attach' && !/^(run|worker:[A-Za-z0-9._:-]{1,256}|board:[A-Za-z0-9._:-]{1,256})$/u.test(envelope.mutation.scope ?? ''))
+    || (kind === 'attach' && !/^(run|worker:[A-Za-z0-9._:-]{1,256})$/u.test(envelope.mutation.scope ?? ''))
     || (kind === 'admit' && (!envelope.package || typeof envelope.package !== 'object' || Array.isArray(envelope.package)))
     || (kind === 'attach' && !/^[a-f0-9]{64}$/.test(envelope.package ?? ''))) {
     fail('package authority mutation is invalid');
   }
   // Package normalization is part of closed-envelope shape. It intentionally precedes proof
-  // lookup, matching the board contract's shape -> authority refusal order.
+  // lookup, matching the package command's shape -> authority refusal order.
   const normalizedPackage = kind === 'admit'
     ? store._normalizeContextPackage(envelope.package, false) : null;
   const proof = envelope.sessionAuthority;
@@ -6111,11 +6096,7 @@ export function admitRunStop(store, fields, auth) {
   }
   const known = store._goalHeads.has(store._goalScopeKey(fields.repoId, fields.runId))
     || lineage?.repoId === fields.repoId
-    || [...store._tasks.values()].some((task) => task.runId === fields.runId)
-    // A run that owns a board (the facade/epic #87+#48 orchestrator posture records a
-    // boardAdmission binding) is a real run for the stop lane too — a board-bound run must be
-    // closable so the facade's board run-open check can observe the closed state.
-    || [...store._boardRunBindings.values()].some((binding) => binding.runId === fields.runId);
+    || [...store._tasks.values()].some((task) => task.runId === fields.runId);
   if (!known) throw new CoordinationRefusal(`unknown run ${fields.runId}`, 'not_found');
   const targets = store._runStopTargets(fields.runId);
   const schemaVersion = targets.targetContextCallIds?.length > 0 ? 3
@@ -6359,334 +6340,6 @@ export function checkScratch(store, resource, envRef) {
   return freeze({ clear: claims.length === 0, claims, facts });
 }
 
-export function _boardAdmissionFailure(message, code) {
-  throw new CoordinationRefusal(message, code);
-}
-
-export function admitBoardCommand(store, envelope) {
-  const fail = (message, code = 'board_admission_invalid') => store._boardAdmissionFailure(message, code);
-  const topFields = [
-    'board', 'expectedBoardFence', 'idempotencyKey', 'item', 'mutation', 'runId',
-    'sessionAuthority',
-  ];
-  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
-    || Object.keys(envelope).sort().join(',') !== topFields.sort().join(',')
-    || !validRunId(envelope.runId) || typeof envelope.board !== 'string'
-    || !SAFE_BOARD_ID.test(envelope.board) || !boundedText(envelope.idempotencyKey, 512)) {
-    fail('board admission envelope is invalid');
-  }
-
-  const mutation = envelope.mutation;
-  const kind = mutation?.kind;
-  const exactMutation = (fields) => mutation && typeof mutation === 'object'
-    && !Array.isArray(mutation)
-    && Object.keys(mutation).sort().join(',') === fields.sort().join(',');
-  if (kind === 'post') {
-    if (!exactMutation(['detail', 'evidence', 'kind', 'owner', 'title'])
-      || envelope.item !== null || !Number.isSafeInteger(envelope.expectedBoardFence)
-      || envelope.expectedBoardFence < 0
-      || !boardNonEmpty(mutation.title)
-      || (mutation.detail !== null && !boardNonEmpty(mutation.detail))
-      || (mutation.owner !== null && (typeof mutation.owner !== 'string' || !SAFE_BOARD_OWNER.test(mutation.owner)))
-      || !Array.isArray(mutation.evidence) || mutation.evidence.length > MAX_STORE_BOARD_EVIDENCE
-      || !mutation.evidence.every(validBoardEvidenceRef)) fail('board post admission is invalid');
-  } else if (kind === 'retitle') {
-    if (!exactMutation(['detail', 'kind', 'title'])
-      || !boardNonEmpty(mutation.title)
-      || (mutation.detail !== null && !boardNonEmpty(mutation.detail))) {
-      fail('board retitle admission is invalid');
-    }
-  } else if (kind === 'reorder') {
-    if (!exactMutation(['kind', 'ordinal']) || !Number.isSafeInteger(mutation.ordinal)
-      || mutation.ordinal <= 0) fail('board reorder admission is invalid');
-  } else if (kind === 'close' || kind === 'drop') {
-    if (!exactMutation(['kind'])) fail('board successor admission is invalid');
-  } else if (kind === 'read') {
-    if (!exactMutation(['kind']) || envelope.item !== null
-      || envelope.expectedBoardFence !== null) fail('board read admission is invalid');
-  } else fail('board mutation kind is invalid');
-
-  if (!['post', 'read'].includes(kind)) {
-    if (!envelope.item || typeof envelope.item !== 'object' || Array.isArray(envelope.item)
-      || Object.keys(envelope.item).sort().join(',') !== 'itemId,itemVersion'
-      || !boundedText(envelope.item.itemId, 512)
-      || !Number.isSafeInteger(envelope.item.itemVersion) || envelope.item.itemVersion <= 0
-      || !Number.isSafeInteger(envelope.expectedBoardFence) || envelope.expectedBoardFence < 0) {
-      fail('board item coordinates are invalid');
-    }
-  }
-
-  // Proof is an authority concern, not a caller-named principal. Null/absent proof therefore
-  // receives the lease code rather than being allowed to fall through to item existence.
-  const proof = envelope.sessionAuthority;
-  if (proof == null) fail('an active board lease is required', 'board_lease_required');
-  const proofFields = ['authorityDigest', 'expiresAt', 'orchestratorLeaseId', 'schemaVersion'];
-  if (typeof proof !== 'object' || Array.isArray(proof)
-    || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',')
-    || proof.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(proof.authorityDigest ?? '')
-    || !boundedText(proof.orchestratorLeaseId, 512)
-    || !Number.isFinite(Date.parse(proof.expiresAt ?? ''))
-    || new Date(Date.parse(proof.expiresAt)).toISOString() !== proof.expiresAt) {
-    fail('board authority proof is invalid');
-  }
-  const lease = store._runOrchestratorLeases.get(proof.orchestratorLeaseId);
-  if (!lease || lease.status !== 'active' || Date.parse(store._clock()) >= Date.parse(lease.expiresAt)) {
-    fail('an active board lease is required', 'board_lease_required');
-  }
-  if (proof.authorityDigest !== lease.session.authorityDigest
-    || proof.expiresAt !== lease.session.expiresAt) {
-    fail('board session authority does not match its lease', 'board_session_mismatch');
-  }
-  const parent = store._tasks.get(lease.parent.taskId);
-  if (!parent || parent.version !== lease.parent.taskVersion
-    || parent.assignee !== lease.parent.workerId || parent.status !== 'working') {
-    fail('an active board lease is required', 'board_lease_required');
-  }
-  if (lease.parent.runId !== envelope.runId) {
-    fail('board command Run does not match its lease', 'board_session_mismatch');
-  }
-  const binding = store._boardRunBindings.get(envelope.board) ?? null;
-  if (binding && binding.runId !== envelope.runId) {
-    fail('board is bound to a different Run', 'board_session_mismatch');
-  }
-  if (store._runStopByTarget.has(envelope.runId) || store._runStops.has(envelope.runId)
-    || store._runs.get(envelope.runId)?.status === 'sealed') {
-    fail('board Run is closed', 'board_run_closed');
-  }
-
-  let item = null;
-  if (!['post', 'read'].includes(kind)) {
-    item = store._boardItems.get(envelope.item.itemId) ?? null;
-    if (!item || item.board !== envelope.board) fail('board item was not found', 'board_item_not_found');
-  }
-
-  const normalized = freeze(clone(envelope));
-  const requestDigest = canonicalDigest(normalized);
-  const prior = store._byKey.get(envelope.idempotencyKey) ?? null;
-  const priorDigest = prior?.payload?.boardAdmission?.requestDigest ?? null;
-
-  const gate = () => {
-    if (store.boardFence(envelope.board) !== envelope.expectedBoardFence) {
-      fail('board fence is stale', 'stale_board_fence');
-    }
-    if (item) {
-      const current = store._boardItems.get(item.itemId);
-      if (current?.itemVersion !== envelope.item.itemVersion) {
-        fail('board item parent is stale', 'board_parent_stale');
-      }
-      if (current?.state !== 'open') fail('board item is not open', 'board_parent_stale');
-    }
-  };
-
-  // Reads are non-evented but pass through the identical proof/run/binding posture.
-  if (kind === 'read') {
-    return freeze({ ok: true, result: 'read', snapshot: store.boardSnapshot(envelope.board) });
-  }
-
-  if (!prior) gate(); // refusal precedence before request construction.
-  if (prior) {
-    const priorAdmission = prior.payload?.boardAdmission;
-    if (priorDigest !== requestDigest) {
-      if (priorAdmission?.expectedBoardFence !== envelope.expectedBoardFence) {
-        fail('board fence differs from the replay parent', 'stale_board_fence');
-      }
-      if (item && priorAdmission?.itemVersion !== envelope.item.itemVersion) {
-        fail('board item replay parent is stale', 'board_parent_stale');
-      }
-      fail('board idempotency content changed', 'board_replay_conflict');
-    }
-    const replayItem = store._boardItems.get(prior.payload.itemId) ?? null;
-    return freeze({
-      ok: true, result: 'idempotent', event: clone(prior), item: clone(replayItem),
-      boardRunBinding: {
-        runId: envelope.runId, result: prior.payload.boardAdmission?.adopted ? 'adopted' : 'bound',
-      },
-    });
-  }
-
-  const adopting = !binding && (store._boardItemsByBoard.get(envelope.board)?.length ?? 0) > 0;
-  const boardAdmission = freeze({
-    schemaVersion: 1, runId: envelope.runId, requestDigest, adopted: adopting,
-    leaseId: lease.leaseId, expectedBoardFence: envelope.expectedBoardFence,
-    itemVersion: envelope.item?.itemVersion ?? null,
-  });
-  const auth = { actor: lease.session.principalId, key: envelope.idempotencyKey };
-  const appendGate = () => {
-    // Test-only instrumentation shares the actual before-write callback. A mutation injected
-    // here changes the replay-derived fence before the compare below and therefore loses CAS.
-    if (typeof store._boardAdmissionInterleave === 'function') store._boardAdmissionInterleave();
-    gate();
-  };
-  let receipt;
-  if (kind === 'post') {
-    receipt = store.postBoardItem({
-      board: envelope.board, title: mutation.title, detail: mutation.detail,
-      owner: mutation.owner, evidence: mutation.evidence,
-    }, auth, appendGate, boardAdmission);
-  } else if (kind === 'retitle') {
-    receipt = store.retitleBoardItem(item.itemId, {
-      title: mutation.title, detail: mutation.detail,
-    }, auth, appendGate, boardAdmission);
-  } else if (kind === 'reorder') {
-    receipt = store.reorderBoardItem(item.itemId, mutation.ordinal, auth, appendGate, boardAdmission);
-  } else if (kind === 'close') {
-    receipt = store.closeBoardItem(item.itemId, auth, appendGate, boardAdmission);
-  } else {
-    receipt = store.dropBoardItem(item.itemId, auth, appendGate, boardAdmission);
-  }
-  return freeze({
-    ...receipt,
-    boardRunBinding: { runId: envelope.runId, result: adopting ? 'adopted' : 'bound' },
-  });
-}
-
-export function admitWorkerBoardCommand(store, { kind, grantId, payload, workerId, taskId, taskVersion, processGeneration, idempotencyKey }) {
-  const fail = (message, code = 'board_worker_scope_refused') => store._boardAdmissionFailure(message, code);
-  if (kind !== 'claim' && kind !== 'report') fail('worker board command kind is invalid', 'board_worker_command_invalid');
-  if (typeof grantId !== 'string' || grantId.length === 0
-    || typeof workerId !== 'string' || workerId.length === 0
-    || typeof taskId !== 'string' || taskId.length === 0
-    || !Number.isSafeInteger(taskVersion) || taskVersion <= 0
-    || !Number.isSafeInteger(processGeneration) || processGeneration <= 0
-    || typeof idempotencyKey !== 'string'
-    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(idempotencyKey)) {
-    fail('worker board command envelope is invalid', 'board_worker_command_invalid');
-  }
-  if (kind === 'claim') {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-      || Object.keys(payload).sort().join(',') !== 'expectedBoardFence,grantId,idempotencyKey,itemId'
-      || typeof payload.itemId !== 'string' || payload.itemId.length === 0
-      || !Number.isSafeInteger(payload.expectedBoardFence) || payload.expectedBoardFence < 0) {
-      fail('worker board claim frame is invalid', 'board_claim_invalid');
-    }
-  } else if (kind === 'report') {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-      || Object.keys(payload).sort().join(',') !== 'body,expectedClaimVersion,grantId,idempotencyKey,itemDigest,itemId,itemVersion'
-      || typeof payload.itemId !== 'string' || payload.itemId.length === 0
-      || !Number.isSafeInteger(payload.itemVersion) || payload.itemVersion <= 0
-      || typeof payload.itemDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.itemDigest)
-      || !Number.isSafeInteger(payload.expectedClaimVersion) || payload.expectedClaimVersion <= 0
-      || typeof payload.body !== 'string' || payload.body.length === 0) {
-      fail('worker board report frame is invalid', 'board_report_invalid');
-    }
-  }
-
-  // Step 2 — resolve + prove the grant. Possession of a grant id is never authority. The
-  // member identity predicate is workerId + taskId + processGeneration (Decision 2/8): a
-  // non-terminal status transition (e.g. working→paused) bumps the task's coordination version
-  // but is NOT a reassignment or generation replacement — the grant survives it (Decision 1:
-  // paused is a live task status for the gate).
-  const grant = store._boardGrants.get(grantId) ?? null;
-  if (!grant || grant.state !== 'active' || !grant.active
-    || grant.workerId !== workerId || grant.taskId !== taskId
-    || grant.processGeneration !== processGeneration) {
-    fail('worker board scope is refused', 'board_worker_scope_refused');
-  }
-  // Step 3/4 — derive scope from the grant; verify binding, permission, and live state before
-  // any item existence.
-  const board = grant.board;
-  const binding = store._boardRunBindings.get(board) ?? null;
-  if (!binding || binding.runId !== grant.boardRunId) {
-    fail('worker board scope is refused', 'board_worker_scope_refused');
-  }
-  const permission = kind === 'claim' ? 'claim' : 'report';
-  if (!Array.isArray(grant.permissions) || !grant.permissions.includes(permission)) {
-    fail('worker board scope is refused', 'board_worker_scope_refused');
-  }
-  if (store._runStopByTarget.has(grant.boardRunId) || store._runStops.has(grant.boardRunId)
-    || store._runs.get(grant.boardRunId)?.status === 'sealed') {
-    fail('worker board scope is refused', 'board_worker_scope_refused');
-  }
-  const effectiveKey = `${kind === 'claim' ? 'board.claim' : 'board.report'}:${grant.grantDigest}:${idempotencyKey}`;
-  const opKind = kind === 'claim' ? 'claim' : 'report';
-
-  if (opKind === 'claim') {
-    const itemId = payload.itemId;
-    const expectedBoardFence = payload.expectedBoardFence;
-    // The grant scopes exactly one board (Decision 5). A frame naming an item on any other
-    // board — or no item at all — draws the SAME constant scope refusal before item lookup, so
-    // the caller learns nothing about a foreign board's existence (Decision 3/4).
-    const scopedItem = store._boardItems.get(itemId);
-    if (!scopedItem || scopedItem.board !== board) {
-      fail('worker board scope is refused', 'board_worker_scope_refused');
-    }
-    const gate = () => {
-      if (typeof store._boardAdmissionInterleave === 'function') store._boardAdmissionInterleave();
-      if (store.boardFence(board) !== expectedBoardFence) {
-        store._boardAdmissionFailure('board fence is stale', 'stale_board_fence');
-      }
-      const current = store._boardItems.get(itemId);
-      if (!current || current.board !== board || current.state !== 'open') {
-        store._boardAdmissionFailure(`board item ${itemId} is not open`, 'board_item_not_open');
-      }
-      const existing = store._boardClaims.get(itemId);
-      if (existing && existing.active) throw new CoordinationRefusal(`board item ${itemId} is already claimed`, 'conflict');
-    };
-    return store.requestBoardClaim({
-      itemId, owner: workerId, ownerTask: taskId, expectedBoardFence,
-      grantDigest: grant.grantDigest,
-    }, { actor: workerId, key: effectiveKey }, gate);
-  }
-  // report
-  const itemId = payload.itemId;
-  const reportRequestDigest = boardReportRequestDigest({
-    itemId, itemVersion: payload.itemVersion, itemDigest: payload.itemDigest,
-    owner: workerId, body: payload.body,
-  });
-  // The grant scopes exactly one board (Decision 5) — a frame naming an item on any other
-  // board draws the same constant scope refusal before item lookup.
-  const scopedItem = store._boardItems.get(itemId);
-  if (!scopedItem || scopedItem.board !== board) {
-    fail('worker board scope is refused', 'board_worker_scope_refused');
-  }
-  // Decision 6 rule 4: after authorization, an EXACT prior replay returns the original success
-  // WITHOUT re-judging later live-state changes (a lost successful receipt is recovered even
-  // after the orchestrator closes the item). The kernel's own prior lookup adjudicates store.
-  const priorReport = store._byKey.get(effectiveKey) ?? null;
-  if (priorReport) {
-    if (priorReport.kind !== 'board.report_submitted'
-      || priorReport.payload?.requestDigest !== reportRequestDigest) {
-      fail('board report idempotency content changed', 'board_replay_conflict');
-    }
-    return store.submitBoardReport({
-      itemId, itemVersion: payload.itemVersion, itemDigest: payload.itemDigest,
-      owner: workerId, ownerTask: taskId, body: payload.body,
-    }, { actor: workerId, key: effectiveKey }, null);
-  }
-  // Decision 4: report admission requires an active owned claim, the exact claim version, and
-  // an open item — checked BEFORE the kernel (authority-before-replay) and re-checked by the
-  // in-append gate.
-  const activeClaim = store._boardClaims.get(itemId);
-  if (!activeClaim || !activeClaim.active || activeClaim.owner !== workerId
-    || activeClaim.ownerTask !== taskId) {
-    fail('worker board report has no active owned claim', 'board_report_no_active_claim');
-  }
-  if (activeClaim.version !== payload.expectedClaimVersion) {
-    fail('worker board report claim version is stale', 'board_report_stale_claim_version');
-  }
-  if (scopedItem.state !== 'open') {
-    fail(`board item ${itemId} is not open`, 'board_item_not_open');
-  }
-  const gate = () => {
-    if (typeof store._boardAdmissionInterleave === 'function') store._boardAdmissionInterleave();
-    const current = store._boardItems.get(itemId);
-    if (!current || current.board !== board || current.state !== 'open') {
-      store._boardAdmissionFailure(`board item ${itemId} is not open`, 'board_item_not_open');
-    }
-    const claim = store._boardClaims.get(itemId);
-    if (!claim || !claim.active || claim.owner !== workerId || claim.ownerTask !== taskId) {
-      store._boardAdmissionFailure('worker board report has no active owned claim', 'board_report_no_active_claim');
-    }
-    if (claim.version !== payload.expectedClaimVersion) {
-      store._boardAdmissionFailure('worker board report claim version is stale', 'board_report_stale_claim_version');
-    }
-  };
-  return store.submitBoardReport({
-    itemId, itemVersion: payload.itemVersion, itemDigest: payload.itemDigest,
-    owner: workerId, ownerTask: taskId, body: payload.body,
-  }, { actor: workerId, key: effectiveKey }, gate);
-}
-
 export function _resolveReplManifestBranch(store, branch) {
   if (!branch || typeof branch !== 'object' || Array.isArray(branch)
     || typeof branch.name !== 'string' || !SAFE_REPL_NAME.test(branch.name)) {
@@ -6761,7 +6414,7 @@ export function admitReplBinding(store, fields, auth) {
       'invalid_repl_binding');
   }
   // Idempotency (Part B rule 6, P1-4): an explicit payload-comparison block, never the bare
-  // `_append` blind-key-return discipline board writes fall back to.
+  // `_append` blind-key-return discipline.
   const prior = store._byKey.get(auth?.key);
   if (prior) {
     const runId = store._replManifestAdmissions.get(prior.payload?.manifestDigest)?.runId ?? null;
@@ -7139,7 +6792,7 @@ export function _deriveWorkflowAdmission(store, repoId, runId, candidateFindingI
   const alreadyPromoted = edgesAtBoundary.some((edge) => edge.type === 'DerivedFrom' && edge.to === candidateFindingId
     && nodeMap.get(edge.from)?.promotion?.trigger === 'workflow.admitted');
   if (!candidate || candidate.type !== 'Finding' || candidate.grounding !== 'observed'
-    || !['board.item_closed', 'package.admitted', 'orientation.leaf_proposed'].includes(candidate.promotion?.trigger) || alreadyPromoted) {
+    || !['package.admitted', 'orientation.leaf_proposed'].includes(candidate.promotion?.trigger) || alreadyPromoted) {
     throw new CoordinationRefusal('workflow admission candidate is ineligible', 'workflow_admit_ineligible');
   }
   const admittedId = `finding:workflow-admitted:${candidateFindingId}`;

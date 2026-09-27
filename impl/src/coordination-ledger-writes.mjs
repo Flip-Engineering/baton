@@ -811,7 +811,7 @@ export function attachContextPackage(store, fields, auth) {
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)
       || Object.keys(fields).sort().join(',') !== ['packageDigest', 'runId', 'scope'].sort().join(',')
       || !/^[a-f0-9]{64}$/.test(fields.packageDigest ?? '') || !validRunId(fields.runId)
-      || !/^(run|worker:[A-Za-z0-9._:-]{1,256}|board:[A-Za-z0-9._:-]{1,256})$/u.test(fields.scope ?? '')) {
+      || !/^(run|worker:[A-Za-z0-9._:-]{1,256})$/u.test(fields.scope ?? '')) {
       throw new CoordinationRefusal('context package attach request is invalid', 'context_package_attach_invalid');
     }
     if (auth?.key !== `package.attach:${fields.packageDigest}:${fields.runId}:${fields.scope}`) {
@@ -935,28 +935,5 @@ export function orientationReadHead(store, workerId, packDigest) {
 export function _orientationCandidate(store, leafDigest, freshnessDigest) {
     return store.queryKnowledge({ types: ['Finding'] }).find((node) => node.promotion?.trigger === 'orientation.overlay_proposed'
       && node.leafDigest === leafDigest && node.freshnessDigest === freshnessDigest) ?? null;
-  }
-
-export function revokeBoardGrants(store, { workerId = null, taskId = null, cause = null, reason = null }, auth) {
-    if (auth == null || typeof auth?.key !== 'string' || typeof auth?.actor !== 'string') {
-      throw new TypeError('grant revocation requires explicit actor and idempotencyKey');
-    }
-    const causeText = reason ?? cause ?? 'lifecycle';
-    const revoked = [];
-    for (const grant of store.activeBoardGrants({ workerId, taskId })) {
-      if (grant.state !== 'active') continue;
-      const payload = { grantId: grant.grantId, board: grant.board, workerId: grant.workerId, taskId: grant.taskId, cause: causeText };
-      const revokeKey = `${auth.key}:${grant.grantId}`;
-      const prior = store._byKey.get(revokeKey) ?? null;
-      if (prior && prior.kind === 'board.grant_revoked' && prior.payload?.grantId === grant.grantId) {
-        revoked.push({ grantId: grant.grantId, result: 'idempotent', event: clone(prior) });
-        continue;
-      }
-      const event = store._append('board.grant_revoked', payload, {
-        actor: auth.actor, key: revokeKey,
-      });
-      revoked.push({ grantId: grant.grantId, result: 'revoked', event: clone(event) });
-    }
-    return { ok: true, revoked };
   }
 

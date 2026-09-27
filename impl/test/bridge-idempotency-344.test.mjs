@@ -1,6 +1,6 @@
 // Issue #344 — bridge idempotency keys: reads carry none, keyed verbs derive over every axis.
 //
-// (1) Read-only bridge verbs (swarm.view, swarm.watch, evidence.search, board/scratchpad
+// (1) Read-only bridge verbs (swarm.view, swarm.watch, evidence.search, scratchpad
 // reads) carry and send NO idempotencyKey: the advertised read schemas never name the field,
 // and the resident admits a keyless read envelope.
 // (2) Every keyed (effectful) verb derives its idempotency key over EVERY argument axis: a
@@ -154,7 +154,7 @@ function readingApplication() {
   };
 }
 
-test('344: board and scratchpad reads are resident reads', async (t) => {
+test('344: scratchpad reads are resident reads', async (t) => {
   const { application, commands } = readingApplication();
   const { web, directory } = webFixture({ application });
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -163,15 +163,14 @@ test('344: board and scratchpad reads are resident reads', async (t) => {
     delete envelope.idempotencyKey;
     return web.execute(webContext(), envelope);
   };
-  for (const command of ['run_board_read', 'run_scratchpad_read']) {
-    const first = await read(`cmd-344-${command}-1`, command);
-    assert.equal(first.status, 200, `keyless ${command} admits: ${JSON.stringify(first.body)}`);
-    const repeat = await read(`cmd-344-${command}-2`, command);
-    assert.equal(repeat.status, 200);
-    assert.equal(repeat.body.replayed, true, `the identical keyless ${command} replays`);
-  }
-  assert.deepEqual(commands.map((row) => row.name), ['run.board.read', 'run.scratchpad.read'],
-    'each read dispatched exactly once — the repeat replayed');
+  const command = 'run_scratchpad_read';
+  const first = await read(`cmd-344-${command}-1`, command);
+  assert.equal(first.status, 200, `keyless ${command} admits: ${JSON.stringify(first.body)}`);
+  const repeat = await read(`cmd-344-${command}-2`, command);
+  assert.equal(repeat.status, 200);
+  assert.equal(repeat.body.replayed, true, `the identical keyless ${command} replays`);
+  assert.deepEqual(commands.map((row) => row.name), ['run.scratchpad.read'],
+    'the read dispatched exactly once — the repeat replayed');
 });
 
 // ---------------------------------------------------------------------------
@@ -259,8 +258,7 @@ test('344: read tools carry no idempotencyKey', async (t) => {
   await boundReady(mcp);
   const listed = await mcpRequest(mcp, 'l1', 'tools/list', {});
   const byName = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
-  // Board reads ride the web resident and the swarm knowledge verbs (no baton_run_board_read
-  // MCP tool exists); every MCP read tool below is on this surface.
+  // Every MCP read tool below is on this surface.
   for (const name of [
     'baton_swarm_view',
     'baton_swarm_watch',

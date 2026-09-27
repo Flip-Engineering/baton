@@ -6,12 +6,12 @@
 // + suite-fold.md, same directory — the two set-closure blockers folded as T18m/T18n and
 // T18a/T18v below).
 //
-// Thirty rows over the folded decisions: CP1's insertion ordering (preflight BEFORE the
+// Twenty-nine rows over the folded decisions: CP1's insertion ordering (preflight BEFORE the
 // steering-timer clear; rollback-on-throw with `resolving` always released; the swallowed-
 // expiry `expiryPending` re-check); CP2's exact gate mirror (fresh capture with gate-identical
 // kwargs, sessionContext baseSha derivation, in-scope filter); CP3's CLOSED counted-liveness
 // set (ok:true hub receipts, governance/watchdog-observed worker content, resolved
-// interactions — failed receipts, pending interactions, board.claim_result and lifecycle
+// interactions — failed receipts, pending interactions and lifecycle
 // markers never count); CP4's pause-epoch window (epoch AND seq bounds); CP6's typed
 // rollback-clean claimable-later refusal; CP9's honest-registry flip; CP8's wave-driver
 // composition (per-pauseId claim attempts, a COUNTED corrective-nudge budget
@@ -70,10 +70,6 @@
 //         emulated up-channel carries the worker's own epoch — seq > mintedEvent) never
 //         counts (kills the epoch-only reader; a paused worker's stream CAN still grow
 //         same-epoch hub receipts, so the bound is load-bearing, not decorative)
-//   T18x  PIN — CP7 exclusion: a board.claim_result buys nothing (kills broadening the
-//         closed set to post-memo receipt classes; the planted receipt is the ok:false
-//         variant — an ok:true fixture needs the #78 grant machinery, noted in the header
-//         handoff)
 //   T18y  PIN — failed receipts (write stale_fence ok:false, read invalid ok:false) never
 //         count (kills the ok-blind receipt counter)
 //   T18z  PIN — a PENDING interaction buys nothing (kills counting unresolved interactions)
@@ -337,14 +333,6 @@ function emitProviderCall(adapter, handle, key, turnEpoch = 1) {
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch, kind: 'resource.provider_call', actor: 'worker',
     payload: { callId: key, phase: 'completed', tokens: { input: 10, output: 5 } },
-  });
-}
-function emitBoardClaimInvalid(adapter, handle, turnEpoch = 1) {
-  // A board.claim whose closed frame is incomplete → board.claim_result {ok:false,
-  // result:'board_claim_invalid'} — a post-memo receipt class that CP7 excludes.
-  adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch, kind: 'board.claim', actor: 'worker',
-    payload: { itemId: 'board-item-incomplete' },
   });
 }
 function emitQuestion(adapter, handle, requestId, turnEpoch = 1) {
@@ -742,17 +730,6 @@ test('T18s (PIN, the seq bound): a scratchpad receipt minted AFTER the pause —
   assert.ok(receipt.seq > record.mintedEvent, 'fixture check: OUTSIDE the seq bound');
   const outcome = await claimOutcome(coordinator, pauseId);
   assertGateKill(coordinator, adapter, handle, task, outcome, 'the seq bound');
-});
-
-test('T18x (PIN, CP7): a board.claim_result buys nothing at claim time (post-memo receipt classes excluded)', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator, handle, task, pauseId } = await driveredPause({
-    adapter, stage: (a, h) => emitBoardClaimInvalid(a, h),
-  });
-  const receipt = coordinator._log.read(handle.id).find((event) => event.kind === 'board.claim_result');
-  assert.equal(receipt?.payload?.ok ?? null, false, 'fixture check: the board receipt landed (ok:false variant)');
-  const outcome = await claimOutcome(coordinator, pauseId);
-  assertGateKill(coordinator, adapter, handle, task, outcome, 'the CP7 exclusion');
 });
 
 test('T18y (PIN): FAILED receipts never count — an ok:false write and an ok:false read buy nothing', async () => {
@@ -1220,7 +1197,7 @@ test('X3 (PIN, the already_resolved class): a nudge-resolved record refuses alre
 //     (stage[claim-preflight-missing]); CP9a, CP9b (stage[registry-flag-lie]); WD2, WD3
 //     (wave_driver_policy_invalid: policy field "refusalNudgeBudget" is unknown); WD4
 //     (per-pauseId claim attempts: 1 !== 4).
-//   GREEN pins (byte-identical before and after): T18b, T18n, T18d, T18s, T18x, T18y, T18z,
+//   GREEN pins (byte-identical before and after): T18b, T18n, T18d, T18s, T18y, T18z,
 //     WD1, X1, X2, X3.
 //   Blue-team fold (suite-blueteam.md, 2026-08-04): BLOCKER 1 (content.message planted but
 //   never load-bearing) → T18m (messages-only sole liveness, RED) + T18n (removal control,

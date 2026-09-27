@@ -42,7 +42,7 @@ const RECLASSIFIED = Object.freeze([
   ['_attentionPage', 'admission'], ['_send', 'surface'], ['readProviderStatus', 'admission'],
   ['claimScratch', 'admission'], ['postScratchFact', 'admission'], ['writeScratchpad', 'admission'],
   ['_answerContextRead', 'admission'], ['_recordOrientationRating', 'admission'],
-  ['boardFence', 'admission'], ['boardSnapshot', 'admission'], ['bindingFence', 'admission'],
+  ['bindingFence', 'admission'],
   ['replBindingSnapshot', 'admission'], ['resolveReplCitation', 'admission'],
 ]);
 

@@ -22,7 +22,7 @@ const WIRE_CARD = [
   'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
-  'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'run.knowledge.seed',
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
   'waves.stop', 'waves.run', 'waves.compile',
 ];

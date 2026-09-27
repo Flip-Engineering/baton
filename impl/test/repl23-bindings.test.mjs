@@ -586,10 +586,10 @@ test('B11: two different runs each bind shared:x independently — no collision 
 
 // ---------------------------------------------------------------------------
 // Fence divergence (Part C): EVERY write to (runId, scope) bumps the binding fence — worker
-// writes included — the opposite of the board fence's orchestrator-authority-only carve-out.
+// writes included.
 // ---------------------------------------------------------------------------
 
-test('B12: a worker-scope write DOES advance that (runId, scope) bindingFence, unlike a board worker report; the fence replays to the same value by re-counting', (t) => {
+test('B12: a worker-scope write DOES advance that (runId, scope) bindingFence; the fence replays to the same value by re-counting', (t) => {
   const f = fixture(t, 'b12');
   const session = admitSession(f);
   const cellW1 = completedCell(f, session, 'authority-w1');
@@ -598,7 +598,7 @@ test('B12: a worker-scope write DOES advance that (runId, scope) bindingFence, u
   f.store.admitReplBinding({
     scope: 'worker:w1', name: 'result', cellId: cellW1.cellId, manifestDigest: w1Manifest.manifestDigest,
   }, replAuth('w1', 'b12:bind'));
-  assert.equal(f.store.bindingFence(runId, 'worker:w1'), 1, 'worker traffic advances the binding fence — no board-style carve-out');
+  assert.equal(f.store.bindingFence(runId, 'worker:w1'), 1, 'worker traffic advances the binding fence');
   f.store.dropReplBinding({
     scope: 'worker:w1', name: 'result', manifestDigest: w1Manifest.manifestDigest, expectedBindingVersion: 1,
   }, replAuth('w1', 'b12:drop'));
