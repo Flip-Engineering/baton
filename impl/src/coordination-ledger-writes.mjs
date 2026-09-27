@@ -761,12 +761,13 @@ export function revokeRunOrchestratorLease(store, fields, auth) {
   }
 
 export function waitAfter(store, afterSeq, timeoutMs, options = {}) {
+    const unbounded = timeoutMs === null;
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0 || afterSeq > store._events.length
-      || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0
+      || (!unbounded && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0))
       || !options || typeof options !== 'object' || Array.isArray(options)
       || Object.keys(options).some((key) => key !== 'signal')
       || (options.signal !== undefined && !(options.signal instanceof AbortSignal))) {
-      throw new TypeError('coordination wait requires a current cursor, positive timeout, and optional AbortSignal');
+      throw new TypeError('coordination wait requires a current cursor, a positive timeout or null, and optional AbortSignal');
     }
     if (store._events.length > afterSeq) {
       return Promise.resolve(freeze({ advanced: true, upperBound: store._events.length }));
@@ -789,7 +790,7 @@ export function waitAfter(store, afterSeq, timeoutMs, options = {}) {
       };
       store._appendWaiters.add(waiter);
       options.signal?.addEventListener('abort', onAbort, { once: true });
-      timer = setTimeout(() => finish(freeze({ advanced: false, upperBound: store._events.length })), timeoutMs);
+      if (!unbounded) timer = setTimeout(() => finish(freeze({ advanced: false, upperBound: store._events.length })), timeoutMs);
       if (store._events.length > afterSeq) waiter.finish(true);
     });
   }

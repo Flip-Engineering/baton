@@ -1258,12 +1258,14 @@ export function validateApplicationCommandArgs(name, args) {
   if (name === 'run.wait') {
     // docs/36 §4.1 read row / R-OP-9 — `until` is an optional condition selector, so run.wait
     // validates as a subset (like run.inspect) rather than an exact-args command; without it the
-    // historical settle-block semantics are preserved.
+    // historical settle-block semantics are preserved. #541: `timeoutMs` is the caller's own
+    // bound or none — an absent bound waits until the condition holds.
     const allowed = new Set(definition.args);
     if (!args || typeof args !== 'object' || Array.isArray(args)
       || Object.keys(args).some((key) => !allowed.has(key)) || !validId(args.runId)
-      || !Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0
-      || args.timeoutMs > 24 * 60 * 60 * 1000
+      || (args.timeoutMs !== undefined
+        && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0
+          || args.timeoutMs > 24 * 60 * 60 * 1000))
       || (args.until !== undefined && !['settled', 'terminal'].includes(args.until))) {
       throw applicationError('wait target or timeout is invalid', 'application_wait_invalid');
     }
@@ -5948,23 +5950,26 @@ export class BatonApplication {
     const context = normalizeCommandContext(rawContext);
     // `until` is an optional condition selector (docs/36 §4.1 read row); validate the options as a
     // subset so historical callers that pass only { timeoutMs } keep the settle-block semantics.
+    // #541: `timeoutMs` is the caller's own bound or none — an absent bound waits until the
+    // condition holds, with no deadline of the deployment's own.
     if (!options || typeof options !== 'object' || Array.isArray(options)
       || Object.keys(options).some((key) => !['timeoutMs', 'until'].includes(key))
-      || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0
-      || options.timeoutMs > 24 * 60 * 60 * 1000
+      || (options.timeoutMs !== undefined
+        && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0
+          || options.timeoutMs > 24 * 60 * 60 * 1000))
       || (options.until !== undefined && !['settled', 'terminal'].includes(options.until))) {
       throw applicationError('wait timeout is invalid', 'application_wait_invalid');
     }
     const observer = normalizePrincipal(rawObserver, 'run observer');
-    const deadline = Date.now() + options.timeoutMs;
+    const deadline = options.timeoutMs === undefined ? null : Date.now() + options.timeoutMs;
+    const expired = () => deadline !== null && Date.now() >= deadline;
     let view = await this.status(runId, observer, {}, context);
     // Issue #409 (audit C36, principle P11): one contract, one wait discipline. run.wait parks
     // on the SAME event-driven primitive run.follow and run.inspect park on — the coordination
     // change signal (waitAfter over the viewed cursor, bounded by the caller's remaining
     // budget) — never a fixed sleep cadence. Every wake re-reads the view through status()
-    // and returns it directly (the blind-waits B1 loop-exit shape); the loop exits at the
-    // caller's deadline, which stays bounded by the admitted validation above. The
-    // zero-budget coordinator read opening each cycle is the pacing seam the blind-waits A1
+    // and returns it directly (the blind-waits B1 loop-exit shape); a caller-named deadline ends
+    // the loop at that bound and an absent one ends it when the condition holds. The
     // rows double (issue #164 owns that file): it yields one macrotask turn without sleeping,
     // so those rows keep observing the loop entry while the wait itself stays event-driven.
     // Narrow doubles pre-dating the change signal (the Phase-89 double precedent) wire no
@@ -5974,25 +5979,25 @@ export class BatonApplication {
       if (typeof this.driver.coordination?.waitAfter === 'function') {
         await this.driver.coordination.waitAfter(cursor, remaining);
       } else {
-        await this.driver.coordinator.wait(remaining);
+        await this.driver.coordinator.wait(remaining === null ? 0 : remaining);
       }
     };
     // docs/36 §4.1 read row / R-OP-9 — `--until terminal` blocks until the application Run itself is
     // terminal; the default (settled) preserves run.wait's historical provider-settlement block.
     if (options.until === 'terminal') {
-      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && Date.now() < deadline) {
+      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && !expired()) {
         await this.driver.coordinator.wait(0);
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
+        const remaining = deadline === null ? null : deadline - Date.now();
+        if (remaining !== null && remaining <= 0) break;
         await park(view.cursor, remaining);
         view = await this.status(runId, observer, {}, context);
       }
       return view;
     }
-    while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
+    while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && !expired()) {
       await this.driver.coordinator.wait(0);
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
+      const remaining = deadline === null ? null : deadline - Date.now();
+      if (remaining !== null && remaining <= 0) break;
       await park(view.cursor, remaining);
       view = await this.status(runId, observer, {}, context);
     }

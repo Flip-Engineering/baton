@@ -1,6 +1,6 @@
-// Issue #530 / #258: budget validation accepts budgets that exceed the policy ceiling.
-// The ceiling is for runtime notifications, not fatal normalisation refusals.
-// Type validation (positive integers, valid USD) still refuses invalid budgets.
+// Issue #530 / #258: no policy ceiling exists for a budget to exceed, so goal, plan and node
+// budgets are type-validated only (positive integers, valid USD) and are admitted at their own
+// size. Anything a reader measures is a notification, never a fatal normalisation refusal.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -17,12 +17,6 @@ const policy = normalizeGoalPlanPolicy({
   riskClasses: ['low', 'high'],
   effectClasses: ['repository_edit'],
   capabilityClasses: ['code'],
-  limits: {
-    maxGoalVersions: 8, maxPlanVersions: 8, maxNodes: 8, maxDepsPerNode: 8,
-    maxTextBytes: 4_096, maxItems: 32, maxScopePaths: 32, maxRouteValues: 16,
-    maxGoalBytes: 64 * 1_024, maxPlanBytes: 256 * 1_024, maxStatusBytes: 256 * 1_024,
-    maxTokens: 500, maxUsd: 1, maxWallMin: 10, maxProviderTurns: 5,
-  },
 });
 
 const verification = {
@@ -31,14 +25,9 @@ const verification = {
   requiredPredecessorEvidence: [],
 };
 
-test('Issue #530: goal budget above the policy ceiling is accepted', () => {
-  // Every budget field exceeds the corresponding policy limit.
-  const aboveCeiling = {
-    tokens: 100_000,       // policy.limits.maxTokens = 500
-    usd: 50,               // policy.limits.maxUsd = 1
-    wallMin: 120,           // policy.limits.maxWallMin = 10
-    providerTurns: 200,     // policy.limits.maxProviderTurns = 5
-  };
+test('Issue #530: goal budget above the old policy ceiling is accepted', () => {
+  // A budget far beyond the old fixture ceiling (tokens 500, usd 1, wallMin 10, turns 5).
+  const aboveCeiling = { tokens: 100_000, usd: 50, wallMin: 120, providerTurns: 200 };
   const goal = normalizeGoalRequest({
     objective: 'Accept a budget above every policy ceiling',
     definitionOfDone: ['passes'],

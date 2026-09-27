@@ -16,8 +16,8 @@
 //       application's own runs.list readsite walking those pages end to end;
 //   (c) exactly ONE page derivation exists across the live sources — the store accessors and the
 //       application readsites share it, so no second page implementation can drift;
-//   (d) the application readsites no longer reference the count refusal, and the store's only
-//       remaining occurrence is the per-row BYTE ceiling, named as such;
+//   (d) no `goal_plan_status_oversize` site survives in the store or the application: the #530
+//       limits removal took the single-row BYTE ceiling with the row-count refusal;
 //   (e) a store that pages its summary is walked to the whole bounded set by runs.list.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -332,23 +332,18 @@ test('(c) the store and the application share ONE page derivation', () => {
     'coordination-store.mjs cuts no pages of its own');
 });
 
-test('(d) no count refusal survives, and the byte ceiling is named as one', () => {
-  // Comments NARRATE the refusal this issue removed, so the scan reads code lines only — the same
-  // rule the #430 refusal-code gate applies to source it audits.
+test('(d) no goal_plan_status_oversize site survives, in the application or the store', () => {
+  // Comments NARRATE the refusals this issue and the #530 limits removal took out, so the scan
+  // reads code lines only — the same rule the #430 refusal-code gate applies to source it audits.
   const codeLinesWith = (source, needle) => source.split('\n')
     .filter((line) => line.includes(needle))
     .filter((line) => {
       const trimmed = line.trim();
       return !trimmed.startsWith('*') && !trimmed.startsWith('//') && !trimmed.startsWith('/*');
     });
-  const application = readSource('application.mjs');
-  assert.deepEqual(codeLinesWith(application, 'goal_plan_status_oversize'), [],
-    'no application readsite raises or catches the count refusal any more');
-  const storeLines = ['coordination-store.mjs', 'coordination-ledger.mjs']
-    .flatMap((name) => codeLinesWith(readSource(name), 'goal_plan_status_oversize'));
-  assert.equal(storeLines.length, 1, 'the store keeps exactly one goal_plan_status_oversize site');
-  assert.match(storeLines[0], /maxStatusBytes/u,
-    'and it is the single-row BYTE ceiling the policy keeps, not a row count');
-  assert.deepEqual(codeLinesWith(readSource('coordination-internals.mjs'), 'goal_plan_status_oversize'),
-    [], 'the run-index accessor raises no count refusal');
+  for (const name of ['application.mjs', 'coordination-store.mjs', 'coordination-ledger.mjs',
+    'coordination-internals.mjs']) {
+    assert.deepEqual(codeLinesWith(readSource(name), 'goal_plan_status_oversize'), [],
+      `${name}: no readsite raises or catches the status refusal any more`);
+  }
 });

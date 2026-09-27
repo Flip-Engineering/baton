@@ -2757,8 +2757,7 @@ export function _validateContextMapCallAdmissionPayload(store, payload, event, i
     || normalizedPlan.predecessor?.version !== predecessor.version
     || normalizedPlan.predecessor?.digest !== predecessor.digest
     || normalizedPlan.nodes.length !== call.partitions.length
-    || normalizedPlan.nodes.length < 2
-    || normalizedPlan.nodes.length > store._goalPlanPolicy.limits.maxNodes) {
+    || normalizedPlan.nodes.length < 2) {
     store._contextFailure('Context map successor Plan identity changed',
       integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
   }
@@ -3135,8 +3134,7 @@ export function _validateContextEffectCallAdmissionPayload(store, payload, event
     || normalizedPlan.predecessor?.version !== predecessor.version
     || normalizedPlan.predecessor?.digest !== predecessor.digest
     || normalizedPlan.nodes.length !== call.executionUnitIds.length
-    || normalizedPlan.nodes.length === 0
-    || normalizedPlan.nodes.length > store._goalPlanPolicy.limits.maxNodes) {
+    || normalizedPlan.nodes.length === 0) {
     return fail('Context effect-call successor Plan identity changed',
       'context_call_plan_invalid');
   }
@@ -4313,12 +4311,6 @@ export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
   const mappedExact = mapped !== null && Boolean(source) && digest(source) === mapped.payload.digest && source.kind === mapped.payload.kind;
   let rows = null;
   if (mappedExact && store._operationalRangeRead) {
-    // Issue #504: the evidence ceiling is the live authority's; a store that carries no
-    // goal/plan authority (the probes) has no ceiling to apply and must not read one off a
-    // policy it does not have.
-    const ceiling = store._goalPlanPolicy === null ? null
-      : Math.min(1_000_000, Math.max(1_024, store._goalPlanPolicy.limits.maxProviderTurns * 1_024));
-    if (ceiling !== null && mapped.payload.workerSeq > ceiling) store._planBudgetFailure('plan node operational settlement evidence exceeds its ceiling', 'plan_budget_evidence_oversize', integrity);
     rows = store._operationalRangeRead(mapped.payload.worker, mapped.payload.workerSeq);
     if (!Array.isArray(rows) || rows.length !== mapped.payload.workerSeq
       || rows.some((row, index) => row?.worker !== mapped.payload.worker || row.seq !== index + 1 || row.seq > mapped.payload.workerSeq)) {
