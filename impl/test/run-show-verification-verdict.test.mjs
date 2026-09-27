@@ -1,6 +1,6 @@
 // Run-show verification verdict (issue #334): `baton run show RUN_ID` at the default
-// (outline) depth carries the worker-verdict-surface projection beside retry_verification
-// for a failed or inconclusive verification, with the bounded sanitized failure tail.
+// (outline) depth carries the worker-verdict-surface projection for a failed or inconclusive
+// verification, with the bounded sanitized failure tail.
 //
 // Motivating case: a run whose referee recorded outcome inconclusive / failureOwnership
 // baseline_or_environment / diagnosticCode verification_exit_mismatch read only "failed"
@@ -14,7 +14,7 @@
 //   V3  pure bounded tail (over-bound capsule text stays within the capsule bound)
 //   V4  pure honest absence (passed/pending states and missing verdict project null;
 //       an unmappable code escalates check/corrective to null)
-//   V5  e2e inconclusive run: outline.verification rides beside retry_verification
+//   V5  e2e inconclusive run: outline.verification rides, and the retired retry action is gone
 //   V6  e2e outline.verification never leaks paths or the checkpoint ref
 //   V7  e2e failed candidate run still carries its own corrective (failing_check_fix)
 //
@@ -265,7 +265,7 @@ async function driveToFailed(context, runId) {
   return outline;
 }
 
-test('V5: an inconclusive run outline carries the verdict projection beside retry_verification', async (t) => {
+test('V5: an inconclusive run outline carries the verdict projection and advertises no retry action', async (t) => {
   const f = fixture('inconclusive', brokenRuntimePolicy());
   t.after(async () => {
     try { await f.application.shutdown(principal('cleanup')); }
@@ -284,7 +284,8 @@ test('V5: an inconclusive run outline carries the verdict projection beside retr
     'the shared {gate, code, check, detail, corrective} projection rides run show');
 
   const kinds = outline.outline.actions.map((action) => action.kind);
-  assert.ok(kinds.includes('retry_verification'), `the verdict rides BESIDE retry_verification (actions: ${kinds.join(',')})`);
+  assert.equal(kinds.includes('retry_verification'), false,
+    `the retired retry action is not advertised (actions: ${kinds.join(',')})`);
 });
 
 test('V6: the outline verdict never leaks paths or the checkpoint ref', async (t) => {
