@@ -1913,7 +1913,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   // evaluator, hand-rolled validation stays the authority). These tools are explicit `_dispatch`
   // branches, so their args never pass through validateApplicationCommandArgs.
   if (name === 'baton_waves_start') {
-    if (!Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64) return 'invalid_wave_start';
+    if (!Array.isArray(args.members) || args.members.length === 0) return 'invalid_wave_start';
     const roles = new Set();
     for (let index = 0; index < args.members.length; index += 1) {
       const member = args.members[index];

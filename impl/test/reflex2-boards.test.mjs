@@ -109,12 +109,14 @@ test('createBoardItem refuses an unknown field, a bad board id, and an empty tit
   assert.throws(() => createBoardItem({ board: 'shared', title: '' }), ValidationError);
 });
 
-test('createBoardItem refuses an empty detail, too many/invalid evidence, and a bad owner', () => {
+test('createBoardItem refuses an empty detail, an invalid evidence ref, and a bad owner', () => {
   assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', detail: '' }), ValidationError);
-  const nine = Array.from({ length: 9 }, (_, i) => ({ coordinationSeq: i + 1 }));
-  assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', evidence: nine }), ValidationError);
   assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', evidence: [{ nope: 1 }] }), ValidationError);
   assert.throws(() => createBoardItem({ board: 'shared', title: 'ok', owner: 'bad owner' }), ValidationError);
+  // #530: the evidence count ceiling left — a caller's ref list is admitted for its length, and
+  // only the shape of each ref is judged.
+  const many = Array.from({ length: 9 }, (_, i) => ({ coordinationSeq: i + 1 }));
+  assert.deepEqual(createBoardItem({ board: 'shared', title: 'ok', evidence: many }).evidence, many);
 });
 
 test('createBoardItem accepts a valid item and normalizes detail:null/owner:null/evidence:[]', () => {
