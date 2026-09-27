@@ -29,13 +29,12 @@
 // but-missing capability fails at a NAMED stage. Harness pattern mirrors
 // test/bidirectional-v3-red.test.mjs (ScriptableAdapter + Coordinator + fake worktrees for
 // coordinator rows, pure CoordinationStore for store rows), test/phase64-integrated-run-
-// application.test.mjs (BatonApplication fixture for run/doctor rows), test/phase89-resident-
-// application-red.test.mjs (connectBaton fixture for the handshake row), and the dynamic-
-// import module-missing stage of test/browser-use-red.test.mjs:96-99.
+// application.test.mjs (BatonApplication fixture for run/doctor rows) and test/phase89-resident-
+// application-red.test.mjs (connectBaton fixture for the handshake row).
 //
 // NAMED STAGES (the honest failure a row gives today):
 //   registry-missing            impl/src/limits.mjs does not exist (ERR_MODULE_NOT_FOUND via
-//                               dynamic import — the browser-use suite's precedent)
+//                               dynamic import)
 //   composer-missing            limits.mjs exports no composeFrameLimitRefusal
 //   refusal-coaching-missing    the seam refuses today but with no {cap, actual, unit,
 //                               gracefulPath} payload and no both-numbers message
@@ -149,7 +148,7 @@
 //     with innocent literals tree-wide.
 //   * The `baton doctor --check` outline/evidence PRINT cascade has no exported seam (the CLI
 //     returns doctor payloads verbatim); E pins the projection itself. The print layer is a
-//     suite-oracle gap, same class as browser-use's assembly-site note.
+//     suite-oracle gap.
 //   * The run-intent record's head+citation storage is internal; C7 pins the observable
 //     contract (admitted, byte-identical spill artifact, transparent reader resolution).
 //   * RESOLVED (contract v1.2, blue-team blocker 1 — the headline): the v1.1 fold believed the
@@ -215,7 +214,7 @@ const canonical = (value) => (Array.isArray(value) ? value.map(canonical)
     : value);
 const canonicalDigestOf = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
-/** The red stage for every registry row: limits.mjs does not exist yet (browser-use:96-99). */
+/** The red stage for every registry row: limits.mjs does not exist yet. */
 async function limitsOrError() {
   return import('../src/limits.mjs').then((module) => module, (error) => error);
 }

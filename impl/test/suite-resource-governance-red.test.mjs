@@ -23,14 +23,14 @@
 //
 // Red-first: written against the v1.1 contract BEFORE implementation; every contract-mandated-but-
 // missing capability fails at a NAMED stage. Harness pattern mirrors the dynamic-import module-
-// missing stage of impl/test/browser-use-red.test.mjs:96-99 and impl/test/frame-economics-red.test.mjs:222-
-// 241 (limitsOrError / assertLimitsModule).
+// missing stage of impl/test/frame-economics-red.test.mjs:222-241 (limitsOrError /
+// assertLimitsModule).
 //
 // NAMED STAGES (the honest failure a row gives today):
 //   calibration-module-missing   impl/scripts/suite-calibration.mjs does not exist
-//                               (ERR_MODULE_NOT_FOUND via dynamic import — the browser-use
-//                               precedent); every A/C/D/E/F/G/H row reports this until the
-//                               shared helper ships, then fails at its own stage
+//                               (ERR_MODULE_NOT_FOUND via dynamic import); every A/C/D/E/F/G/H row
+//                               reports this until the shared helper ships, then fails at its own
+//                               stage
 //   gate-calibration-line-missing  run-suite.mjs emits no 'baton suite calibration:' stderr line
 //   gate-calibration-env-missing   the spawned test child receives no BATON_SUITE_CALIBRATION
 //   gate-concurrency-missing       run-suite.mjs passes no derived --test-concurrency flag
