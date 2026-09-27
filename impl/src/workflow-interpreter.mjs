@@ -49,10 +49,6 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // ADMISSION bound enforced at compile/admit: the interpreter does NOT split, so a rendered
 // objective over the run cap refuses workflow_spec_invalid naming both byte counts — fail-loud at
 // the seam, never a per-member phantom start failure.
-// Issue #499: the member/scope ceilings are the registry's COUNTS rows — a structural admission
-// bound on ONE wave payload (admission audit §4 F7), never a fleet size.
-const MAX_MEMBERS = FRAME_LIMITS['wave.members'].value;
-const MAX_SCOPE = FRAME_LIMITS['wave.member.scope'].value;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const MESSAGE_KINDS = new Set(['inform', 'query', 'steer', 'brief', 'result']); // coordinator.mjs:6795 + #74 D4 (brief/result).
@@ -155,7 +151,6 @@ export function admitSpec(raw, repoRoot) {
     throw specInvalid('the workflow spec "idempotencyKey" must be a non-empty identifier string');
   }
   if (!Array.isArray(raw.members) || raw.members.length === 0) throw specInvalid('the workflow spec "members" must be a non-empty array');
-  if (raw.members.length > MAX_MEMBERS) throw specInvalid(`the workflow spec "members" exceeds the ${MAX_MEMBERS}-member ceiling`);
   const steering = raw.steering === undefined ? {} : assertObject(raw.steering, specInvalid, 'steering');
   const harvest = raw.harvest === undefined ? { paths: [] } : assertObject(raw.harvest, specInvalid, 'harvest');
 
@@ -198,7 +193,7 @@ function admitMember(raw, index) {
   }
   // scope — the UNION of wave.mjs's laws and the path-scope class (F12).
   const scope = raw.scope;
-  if (!Array.isArray(scope) || scope.length === 0 || scope.length > MAX_SCOPE) throw memberInvalid(`workflow member "${named}" "scope" must be a non-empty bounded array`);
+  if (!Array.isArray(scope) || scope.length === 0) throw memberInvalid(`workflow member "${named}" "scope" must be a non-empty array`);
   if (new Set(scope).size !== scope.length) throw memberInvalid(`workflow member "${named}" "scope" entries must be unique`);
   for (const entry of scope) {
     if (typeof entry !== 'string' || entry.trim().length === 0) throw memberInvalid(`workflow member "${named}" "scope" entries must be non-empty strings`);

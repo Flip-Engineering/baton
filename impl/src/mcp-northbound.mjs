@@ -789,8 +789,8 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
           // the shape guard's own law below (the schema() idiom carries no XOR).
           group: schema({
             seat: applicationRouteSchema,
-            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
-            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            size: { type: 'integer', minimum: 2 },
+            quorum: { type: 'integer', minimum: 1 },
             strict: { type: 'boolean' },
             editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),
@@ -1931,10 +1931,9 @@ function validateArguments(name, args, maxWaitMs = null) {
         || (hasGroup && (!record(member.group) || !record(member.group.seat)
           || !nonempty(member.group.seat.harness) || !nonempty(member.group.seat.model)
           || !nonempty(member.group.seat.effort)
-          || !Number.isSafeInteger(member.group.size) || member.group.size < 2
-          || member.group.size > FRAME_LIMITS['wave.members'].value))
+          || !Number.isSafeInteger(member.group.size) || member.group.size < 2))
         || (Object.hasOwn(member, 'scope')
-          && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
+          && (!Array.isArray(member.scope) || member.scope.length === 0
             || member.scope.some((item) => !nonempty(item))))) {
         // #160 M3 (error-actionability-2026-08-13/contract-fold.md §2 D4 M3): the refusal names the
         // offending member by POSITION so the caller can fix exactly the bad wave member.

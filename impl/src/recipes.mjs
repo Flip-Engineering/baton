@@ -31,11 +31,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 const DESCRIPTOR_MAX_BYTES = 8 * 1024;
 const TASK_MAX_BYTES = 2 * 1024;
 const CONSTRAINT_MAX_BYTES = 240;
-// Issue #499: the recipe count ceilings are the registry's COUNTS rows — structural admission
-// bounds on one recipe payload (admission audit §4 F7), never a fleet size.
-const MAX_CONSTRAINTS = FRAME_LIMITS['recipe.constraints'].value;
-const MAX_MEMBERS = FRAME_LIMITS['recipe.members'].value;
-const MAX_SCOPE = FRAME_LIMITS['recipe.scope'].value;
 const ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 const RECIPE_TOP_FIELDS = Object.freeze(['name', 'version', 'members', 'policy']);
@@ -162,7 +157,7 @@ function admitExact(raw, index) {
 }
 
 function admitScope(raw, index) {
-  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SCOPE) {
+  if (!Array.isArray(raw) || raw.length === 0) {
     throw recipeError(`recipe member[${index}] "scope" must be a non-empty array of glob strings`, 'recipe_schema_invalid');
   }
   if (raw.some((entry) => typeof entry !== 'string' || entry.trim().length === 0)) {
@@ -189,9 +184,9 @@ function admitTemplate(raw, index) {
       'recipe_oversize',
     );
   }
-  if (!Array.isArray(raw.constraints) || raw.constraints.length > MAX_CONSTRAINTS) {
+  if (!Array.isArray(raw.constraints)) {
     throw recipeError(
-      `recipe member[${index}] objectiveTemplate "constraints" must be an array of at most ${MAX_CONSTRAINTS} strings`,
+      `recipe member[${index}] objectiveTemplate "constraints" must be an array of strings`,
       'recipe_schema_invalid',
     );
   }
@@ -265,9 +260,6 @@ export function admitRecipe(raw) {
   const policy = admitPolicy(raw.policy);
   if (!Array.isArray(raw.members) || raw.members.length === 0) {
     throw recipeError('recipe "members" must be a non-empty array', 'recipe_schema_invalid');
-  }
-  if (raw.members.length > MAX_MEMBERS) {
-    throw recipeError(`recipe "members" exceeds ${MAX_MEMBERS} member cards`, 'recipe_schema_invalid');
   }
   const members = raw.members.map((member, index) => admitMember(member, index));
   const roles = members.map((member) => member.role);

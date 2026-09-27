@@ -1741,8 +1741,8 @@ const CANONICAL_OPERATION_SPECS = [
           // second enforcement copy.
           group: objectSchema({
             seat: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
-            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
-            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            size: { type: 'integer', minimum: 2 },
+            quorum: { type: 'integer', minimum: 1 },
             strict: { type: 'boolean' },
             editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),

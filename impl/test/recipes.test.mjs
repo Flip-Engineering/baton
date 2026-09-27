@@ -191,7 +191,8 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
   // EXACT routes only in v2 — a manual route (harness/model/effort) is non-exact AND unknown.
   refused((r) => { r.members[0] = { role: 'alpha', harness: 'mock', model: 'mock-model', effort: 'low', scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }; return r; }, 'exact');
 
-  // Oversize: descriptor > 8KiB, task > 2KiB, constraint > 240B, > 8 constraints, > 8 cards.
+  // Oversize: descriptor > 8KiB, task > 2KiB, constraint > 240B. The count ceilings are gone
+  // (#530): nine constraints and nine member cards are admitted.
   assert.throws(
     () => admitRecipe(structuredClone(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 'x'.repeat(2_049), constraints: [] } }] }))),
     (error) => error?.code === 'recipe_oversize' && /task/u.test(error.message),
@@ -202,15 +203,17 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
     (error) => error?.code === 'recipe_oversize' && /constraint/u.test(error.message),
     'oversize constraint refuses with the cap',
   );
-  assert.throws(
-    () => admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: Array.from({ length: 9 }, (_, i) => `c${i}`) } }] })),
-    (error) => error?.code === 'recipe_schema_invalid' && /constraint/u.test(error.message),
-    'more than 8 constraints refuses',
+  assert.equal(
+    admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: Array.from({ length: 9 }, (_, i) => `c${i}`) } }] }))
+      .members[0].objectiveTemplate.constraints.length,
+    9,
+    'nine constraints are admitted — no count ceiling refuses them',
   );
-  assert.throws(
-    () => admitRecipe({ name: 'big', version: '1', members: Array.from({ length: 9 }, (_, i) => ({ role: `m${i}`, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } })), policy: {} }),
-    (error) => error?.code === 'recipe_schema_invalid' && /member/u.test(error.message),
-    'more than 8 cards refuses',
+  assert.equal(
+    admitRecipe({ name: 'big', version: '1', members: Array.from({ length: 9 }, (_, i) => ({ role: `m${i}`, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } })), policy: {} })
+      .members.length,
+    9,
+    'nine member cards are admitted — no count ceiling refuses them',
   );
   // The descriptor cap (8KiB) fires when every per-field cap holds but the whole exceeds it —
   // reachable via many cards (8 × a sub-2KiB task), never via one oversize field (that trips the
