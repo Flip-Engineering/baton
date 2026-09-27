@@ -86,6 +86,16 @@ const contractBody = ({ sha, observedHead, rebasedOnto }) => ({
  * wires one — the deployment's own supervised pool and a STAGED host-capacity authority with room
  * for one verdict, so the gate run's lease admission is the row's own fact, never the machine's. */
 async function world(t, { gateSleepMs = 30_000 } = {}) {
+  // A suite runner hands every test file two ambient lease bypasses — the operator pin
+  // (BATON_HOST_CAPACITY_DISABLED=1) and the digest of the parent's own verdict lease
+  // (BATON_SUITE_VERIFY_LEASE, #424) — and acquireSuiteVerifyLease answers `disabled` on either.
+  // Under them the fixture's landing acquires nothing, so the queue row 576-d is about never
+  // forms: the 2026-09-27 landing gate of this lane ran 576-d red for exactly that (withdrawing
+  // only the operator pin leaves the digest). This fixture pins the STAGED authority's admission,
+  // so neither ambient bypass may win here; both are withdrawn for the row and restored after it.
+  const ambientLeases = ['BATON_HOST_CAPACITY_DISABLED', 'BATON_SUITE_VERIFY_LEASE']
+    .map((name) => [name, process.env[name]]);
+  for (const [name] of ambientLeases) delete process.env[name];
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue576-'));
   const repo = join(directory, 'repo');
   const markerPath = join(directory, 'gate-run-finished.marker');
@@ -146,6 +156,7 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
     runtime.close();
     pool.killAll();
     rmSync(directory, { recursive: true, force: true });
+    for (const [name, value] of ambientLeases) { if (value !== undefined) process.env[name] = value; }
   });
 
   await runtime.command('swarm.create', { swarmId: 's1', purpose: 'stop under a landing (#576)', idempotencyKey: 'i576:create' }, principal);
@@ -297,9 +308,20 @@ test('576-d: a gate run still queued for the host verify lease aborts and withdr
   assert.ok(held.token, 'the one verdict slot is held');
 
   const landing = w.integration({ idempotencyKey: 'i576:integrate-queued' });
-  const queued = await observe(() => w.hostCapacity.observeNow().queue
-    .find((entry) => entry.holder === 'integrate:s1:contribution:1') ?? null);
-  assert.ok(queued, 'the gate run is queued for the verify lease when the stop lands');
+  // Wait on the landing's OWN progress — the queue row, or the landing settling without one —
+  // never on a wall bound: the 2026-09-27 landing gate ran this file on a host saturated by its
+  // own wide selection, and a fixed bound fails the row for the host's load rather than for the
+  // behavior it pins (#459f waits for this same queue row with no bound at all).
+  let landingError = null;
+  landing.catch((error) => { landingError = error; });
+  let queued = null;
+  while (queued === null && landingError === null) {
+    queued = w.hostCapacity.observeNow().queue
+      .find((entry) => entry.holder === 'integrate:s1:contribution:1') ?? null;
+    if (queued === null) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(queued,
+    `the gate run is queued for the verify lease when the stop lands: ${landingError?.code ?? landingError?.message ?? 'no queue row and no settlement'}`);
 
   w.runtime.close();
   const settled = w.runtime.settleLandings();
