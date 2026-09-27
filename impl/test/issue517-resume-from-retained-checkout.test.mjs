@@ -24,7 +24,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -212,6 +212,137 @@ test('517-a: a resume-from successor of a dead predecessor binds its retained ch
   assert.equal(carried[0].payload.predecessor, 'alpha');
   assert.equal(carried[0].payload.workspaceId, alphaWorkspaceId);
 
+});
+
+// Issue #616: the other half of a `resume-from` across a restart. Once a startup reclaims a dead
+// predecessor's checkout, the successor cannot bind a checkout that is gone — it must receive what
+// the capture recorded instead. The reclamation writes the removal's backing revision under the
+// `worktree.snapshotted` kind the carry derivation reads (#453), so the successor gets its own
+// checkout with the predecessor's content applied. Observed 2026-09-27: the resident held 105
+// registered worktrees (23 GiB) of ended seats, and the deployment's own attention rows name
+// `swarm.recruit --resume-from` for a seat whose runtime was lost.
+test('517-c: a resume-from successor receives the content of a predecessor checkout the startup reclaimed', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue517-c-'));
+  const repo = join(directory, 'repo');
+  initRepo(repo);
+  const logDir = join(directory, 'log');
+  mkdirSync(logDir, { recursive: true });
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+
+  // First incarnation: alpha works in a real owned checkout and leaves uncommitted work in it.
+  const first = await incarnation(t, { repo, logDir, label: 'c1' });
+  t.after(() => first.close());
+  await first.command('swarm.create', {
+    purpose: 'Carry a reclaimed checkout', swarmId: 'reclaimed', idempotencyKey: 'create:reclaimed',
+  });
+  const alpha = await first.command('swarm.recruit', {
+    swarmId: 'reclaimed', participantId: 'alpha', objective: 'Build alpha',
+    options: selection, idempotencyKey: 'recruit:reclaimed:alpha',
+  });
+  const alphaWorker = await working(first.driver, alpha.runId);
+  const alphaWorkspaceId = alphaWorker.sessionContext.ownerTaskId;
+  const alphaWorktree = alphaWorker.worktree;
+  writeFileSync(join(alphaWorktree, 'carried.txt'), 'alpha work that must survive\n');
+  first.driver.coordination.releaseWriterLease();
+
+  // The first startup after the loss ends alpha (its session is not reattached) and keeps the
+  // checkout: that seat is the predecessor a `resume-from` successor binds (#517-a).
+  const second = await incarnation(t, { repo, logDir, label: 'c2' });
+  t.after(() => second.close());
+  assert.equal(existsSync(alphaWorktree), true,
+    'the startup that ended alpha keeps its checkout for the successor that may bind it');
+  const alphaTask = second.driver.coordination.snapshot().tasks.find((row) => row.runId === alpha.runId);
+  assert.equal(alphaTask.status, 'failed', 'alpha\'s seat ended in that startup');
+  second.driver.coordination.releaseWriterLease();
+
+  // The startup that begins from alpha's own end reclaims the checkout, capturing its content into
+  // the lane branch first.
+  const third = await incarnation(t, { repo, logDir, label: 'c3' });
+  t.after(() => third.close());
+  assert.equal(existsSync(alphaWorktree), false,
+    'the startup that begins from alpha\'s end reclaims its checkout');
+
+  const bravo = await third.command('swarm.recruit', {
+    swarmId: 'reclaimed', participantId: 'bravo', objective: 'Continue from alpha',
+    options: selection, resumeFrom: 'alpha', idempotencyKey: 'recruit:reclaimed:bravo',
+  });
+  assert.equal(typeof bravo.runId, 'string', 'the successor of a reclaimed predecessor is admitted');
+  const bravoWorker = await working(third.driver, bravo.runId);
+
+  assert.notEqual(bravoWorker.sessionContext.ownerTaskId, alphaWorkspaceId,
+    'the successor works in its own checkout: the predecessor\'s checkout is gone');
+  assert.equal(
+    readFileSync(join(bravoWorker.worktree, 'carried.txt'), 'utf8'),
+    'alpha work that must survive\n',
+    'the successor receives the content the reclamation captured',
+  );
+  const carried = third.driver.coordination.eventsView()
+    .filter((row) => (row.kind === 'driver.recorded' ? row.payload?.kind : row.kind) === 'workspace.carried_from')
+    .filter((row) => row.payload?.participantId === 'bravo');
+  assert.equal(carried.length, 1, 'one workspace.carried_from row for the successor');
+  assert.equal(carried[0].payload.predecessor, 'alpha');
+  assert.equal(carried[0].payload.workspaceId, bravoWorker.sessionContext.ownerTaskId,
+    'the carry names the successor\'s own checkout, because the predecessor\'s is gone');
+  assert.match(carried[0].payload.snapshotSha ?? '', /^[a-f0-9]{40,64}$/u,
+    'the content came from the recorded capture\'s revision');
+  assert.deepEqual(carried[0].payload.paths, ['carried.txt'],
+    'the row names the path the capture carried');
+  assert.equal(carried[0].payload.how, 'applied',
+    'the carry is the recorded snapshot applied into the successor\'s own checkout');
+});
+
+// The guard on the same rule: a checkout a successor has adopted is never the predecessor's to
+// reclaim. Here the predecessor's task had already ended before the startup, and the successor
+// bound to its checkout is still working — the workspace must survive the sweep that would
+// otherwise reclaim it, because the live successor owns the checkout now.
+test('517-d: a successor bound to the predecessor\'s checkout keeps it while its own task is open', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue517-d-'));
+  const repo = join(directory, 'repo');
+  initRepo(repo);
+  const logDir = join(directory, 'log');
+  mkdirSync(logDir, { recursive: true });
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+
+  const first = await incarnation(t, { repo, logDir, label: 'd1' });
+  t.after(() => first.close());
+  await first.command('swarm.create', {
+    purpose: 'Adopt a predecessor checkout', swarmId: 'adopted', idempotencyKey: 'create:adopted',
+  });
+  const alpha = await first.command('swarm.recruit', {
+    swarmId: 'adopted', participantId: 'alpha', objective: 'Build alpha',
+    options: selection, idempotencyKey: 'recruit:adopted:alpha',
+  });
+  const alphaWorker = await working(first.driver, alpha.runId);
+  const alphaWorkspaceId = alphaWorker.sessionContext.ownerTaskId;
+  const alphaWorktree = alphaWorker.worktree;
+  writeFileSync(join(alphaWorktree, 'carried.txt'), 'alpha work that must survive\n');
+  first.driver.coordination.releaseWriterLease();
+
+  // Second incarnation: alpha's session is not reattached, so its seat has ended here; the
+  // successor binds that dead predecessor's retained checkout and keeps working in it.
+  const second = await incarnation(t, { repo, logDir, label: 'd2' });
+  t.after(() => second.close());
+  const bravo = await second.command('swarm.recruit', {
+    swarmId: 'adopted', participantId: 'bravo', objective: 'Continue from alpha',
+    options: selection, resumeFrom: 'alpha', idempotencyKey: 'recruit:adopted:bravo',
+  });
+  await second.command('swarm.guide', {
+    swarmId: 'adopted', participantId: 'bravo', message: 'Continue alpha\'s lane',
+    idempotencyKey: 'guide:adopted:bravo',
+  });
+  const bravoWorker = await working(second.driver, bravo.runId);
+  assert.equal(bravoWorker.sessionContext.ownerTaskId, alphaWorkspaceId,
+    'bravo works in the checkout alpha left behind');
+  second.driver.coordination.releaseWriterLease();
+
+  // Third incarnation: alpha's task was already terminal when this startup began, and bravo's was
+  // not. The checkout belongs to bravo now, so it must survive this sweep.
+  const third = await incarnation(t, { repo, logDir, label: 'd3' });
+  t.after(() => third.close());
+  assert.equal(existsSync(alphaWorktree), true,
+    'the live successor\'s checkout survives the sweep that reclaims ended predecessors');
+  assert.equal(existsSync(join(alphaWorktree, 'carried.txt')), true,
+    'and it still holds the predecessor\'s work');
 });
 
 test('517-b: a malformed attachment still refuses, naming the field and the shape it observed', async (t) => {

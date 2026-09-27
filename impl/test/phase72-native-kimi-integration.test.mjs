@@ -106,7 +106,9 @@ test('KC1/KC4/KC5: public native route uses private subscription state, redacts 
   assert.deepEqual(runtime.credential, { mechanism: 'file', state: 'materialized', count: 4 });
 
   assert.deepEqual(await coordinator.kill(handle.id, 'operator:test'), { ok: true, result: 'confirmed', emulated: false });
-  assert.deepEqual(calls, ['create', 'capture', 'retain', 'resolve', 'remove']);
+  // Issue #616: the ended seat's reap reads the checkout back through the same capture (the recorded
+  // content returns the pinned checkpoint and mints nothing) before removing it.
+  assert.deepEqual(calls, ['create', 'capture', 'retain', 'resolve', 'capture', 'resolve', 'remove']);
   const kinds = log.read(handle.id).map((event) => event.kind);
   assert.ok(kinds.indexOf('lifecycle.process_started') < kinds.indexOf('lifecycle.process_closed'));
   assert.ok(kinds.indexOf('lifecycle.process_closed') < kinds.indexOf('kill.confirmed'));

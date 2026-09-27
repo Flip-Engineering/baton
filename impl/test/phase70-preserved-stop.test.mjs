@@ -186,7 +186,11 @@ test('PS1-PS4: an already-closed failed transport preserves progress before shut
 
   await coordinator._cleanupClosedTransport(handle, task, { seq: 700 });
 
-  assert.deepEqual(f.calls.map(([kind]) => kind), ['create', 'capture', 'retain', 'resolve', 'remove']);
+  // Issue #616: the ended seat's reap reads the checkout back through the same capture before
+  // removing it. The content is the one the checkpoint already pinned, so the read-back returns
+  // that record and mints no second checkpoint (asserted below).
+  assert.deepEqual(f.calls.map(([kind]) => kind),
+    ['create', 'capture', 'retain', 'resolve', 'capture', 'resolve', 'remove']);
   assert.deepEqual(task.checkpoint, { state: 'pinned', sha: PROGRESS, ref: CHECKPOINT_REF });
   assert.equal(f.log.read(handle.id).filter((event) => event.kind === 'worktree.progress_checkpointed').length, 1);
   assert.equal(handle.localAuthority, false);

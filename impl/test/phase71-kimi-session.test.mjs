@@ -335,7 +335,9 @@ test('KK4/KK5/KK7/KK8: coordinator derives isolation from the adapter card and k
 
   const stopped = await coordinator.kill(handle.id, 'operator:test');
   assert.deepEqual(stopped, { ok: true, result: 'confirmed', emulated: false });
-  assert.deepEqual(worktreeCalls, ['create', 'capture', 'retain', 'resolve', 'remove']);
+  // Issue #616: the ended seat's reap reads the checkout back through the same capture (the recorded
+  // content returns the pinned checkpoint and mints nothing) before removing it.
+  assert.deepEqual(worktreeCalls, ['create', 'capture', 'retain', 'resolve', 'capture', 'resolve', 'remove']);
   assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_started'), true,
     log.read(handle.id).map((event) => event.kind).join(','));
   assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_closed'), true);
