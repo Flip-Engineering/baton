@@ -130,7 +130,7 @@ export async function checkMcpDispatchResolvability() {
         userId: 'gate', sessionId: 'gate-session',
         // Every capability any advertised tool can require (application table + kernel rows).
         capabilities: [
-          'control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'export_result',
+          'control', 'observe', 'approve', 'emergency_stop', 'adopt_result',
           'integrate_result', 'resume_work', 'retry_verification', 'review', 'settlement', 'host',
           'goal:define', 'plan:propose', 'plan:approve', 'goal:observe',
         ],

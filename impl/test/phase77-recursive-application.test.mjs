@@ -472,7 +472,6 @@ function stopPerformer({ stop, outcome }) {
   const application = Object.create(BatonApplication.prototype);
   application._runStopPromises = new Map();
   application._runRetryControllers = new Map();
-  application._abortResultExportDeliveries = async () => {};
   application.driver = {
     coordination: {
       runStop: () => stop,

@@ -1107,20 +1107,6 @@ function dependencyProjection(repoRoot, repoId) {
   }
 }
 
-function trackedTreeBounds(repoRoot, treeish) {
-  const rows = git(['ls-tree', '-r', '-l', '-z', treeish], repoRoot).toString('utf8').split('\0').filter(Boolean);
-  let bytes = 0;
-  for (const row of rows) {
-    const match = /^\d+ (?:blob|commit) [a-f0-9]+\s+(\d+|-)\t/u.exec(row);
-    if (!match) throw deploymentError('repository tree inventory is invalid');
-    if (match[1] !== '-') bytes += Number(match[1]);
-  }
-  return Object.freeze({
-    maxFiles: Math.max(256, Math.ceil(rows.length * 1.5) + 64),
-    maxBytes: Math.max(64 * 1024 * 1024, Math.ceil(bytes * 2) + (64 * 1024 * 1024)),
-  });
-}
-
 function defaultCredentialProjection(repoRoot, {
   projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
   museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
@@ -1825,7 +1811,7 @@ function goalPlanPolicy(repoId) {
   });
 }
 
-function applicationProfile(repoId, routes, verification, exportBounds) {
+function applicationProfile(repoId, routes, verification) {
   return Object.freeze({
     schemaVersion: 2,
     repoId,
@@ -1866,11 +1852,6 @@ function applicationProfile(repoId, routes, verification, exportBounds) {
       // (application.mjs normalizeFollowPolicy), so the shipped default reads the row.
       mode: 'enabled', maxWaitMs: 30_000, maxChanges: 128,
       maxResponseBytes: FRAME_LIMITS['view.run.bytes'].value, maxScanEvents: 1024,
-    },
-    exportPolicy: {
-      mode: 'manual', format: 'directory-v1',
-      maxFiles: exportBounds.maxFiles, maxBytes: exportBounds.maxBytes,
-      requireAdoptedResult: true, requireSemanticReview: false, requireIntegration: true,
     },
   });
 }
@@ -2969,7 +2950,7 @@ export function processIsAlive(pid) {
  * this list and a renewal that has to issue instead of rotate (`#renewOwnerSession`) issues the
  * same one, so a renewed owner carries exactly the powers the open gave it. */
 const OWNER_SESSION_CAPABILITIES = Object.freeze([
-  'observe', 'control', 'approve', 'emergency_stop', 'export_result',
+  'observe', 'control', 'approve', 'emergency_stop',
   'retry_verification',
   'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
 ]);
@@ -4747,7 +4728,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     ?? join(repository.common, 'baton', 'application-v3'));
   const stateRoot = privateDirectory(join(deploymentRoot, 'state'));
   const runtimeRoot = privateDirectory(join(deploymentRoot, 'runtime'));
-  const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
   const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
   // #328: root-side credential materialisations live OUTSIDE runtimeRoot, whose owner
   // (the worker RuntimeIsolation) reconciles away every entry that is not a live worker.
@@ -5196,13 +5176,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       repoId: repository.repoId,
       deploymentId,
       profiles: {
-        default: applicationProfile(
-          repository.repoId, routes, verification,
-          trackedTreeBounds(repository.root, snapshot.sha),
-        ),
+        default: applicationProfile(repository.repoId, routes, verification),
       },
       defaults: { profile: 'default', route: publicRoutes.length === 1 ? publicRoutes[0] : null },
-      exportRoot: evidenceRoot,
       principals: { planner: service('planner'), dispatcher: service('dispatcher'), observer: service('observer') },
       context: {
         principal: service('context'),

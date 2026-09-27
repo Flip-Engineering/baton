@@ -62,7 +62,6 @@ export class DependencyCycleError extends Error {
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
   'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
-  'admitRunResultExport', 'completeRunResultExport',
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
@@ -1632,10 +1631,6 @@ export function _normalizeResumeRequest(coordinator, recorder, opts) {
 
 export function retryVerification(coordinator, recorder, workerId, opts) {
     return coordinator._withAuthorityOp(() => coordinator._retryVerification(workerId, opts));
-  }
-
-export function materializeAcceptedResult(coordinator, recorder, workerId, expectedSha, request) {
-    return coordinator._withAuthorityOp(() => coordinator._materializeAcceptedResult(workerId, expectedSha, request));
   }
 
 export function _assertNoCycle(coordinator, recorder, taskId, deps) {
