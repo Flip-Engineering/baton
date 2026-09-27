@@ -375,7 +375,6 @@ const CHECKPOINT = Object.freeze({
   'checkpoint.projection_bytes': { lane: 'checkpoint.projection_bytes', class: 'substrate', value: CHECKPOINT_PROJECTION_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mjs _boundedCheckpointWrite (the release and deferred housewriting gates)' },
 });
 
-
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT });

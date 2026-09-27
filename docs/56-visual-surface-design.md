@@ -20,7 +20,7 @@ Design:
    no others. The additions are exactly: `capacity_pressure` → needs you (the operator must free
    space), `reroute_proposed` → needs you,
    `root_owed` → needs you, `contribution_integrated` → done, `resident_lifecycle` → ready,
-   `incarnation_changed` → ready, `queued` → idle, `stalled` (already present),
+   `queued` → idle, `stalled` (already present),
    `draining` (already present). Event classes that report activity without a subject state
    (`recruited`, `assigned`, `work_updated`, `coupling_updated`, `context_updated`,
    `contribution_recorded`, `reviewed`, `note`, `knowledge`, `guidance_delivered`, `checkpoint`,
@@ -231,8 +231,8 @@ Nothing else spells the mark.
 
 `flipStatus` (brand.mjs) gains the wake classes that name a lifecycle state of their subject:
 `capacity_pressure`, `reroute_proposed` and `root_owed` derive
-`needs you`; `contribution_integrated` derives `done`; `resident_lifecycle` and
-`incarnation_changed` derive `ready`; `queued` derives `idle`. `open` (a live swarm) derives
+`needs you`; `contribution_integrated` derives `done`; `resident_lifecycle` derives `ready`;
+`queued` derives `idle`. `open` (a live swarm) derives
 `ready`. Event-shaped classes
 (`contribution_recorded`, `reviewed`, `work_updated`, `knowledge`, …) gain nothing: an event is
 not a status, and the honesty law applies to events as much as to states.

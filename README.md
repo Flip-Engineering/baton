@@ -128,7 +128,7 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 - **[impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md)** — generated from the executable command registry.
 - **[impl/src/limits.mjs](impl/src/limits.mjs)** — the frame-limits registry, the one place a bound is declared.
 
-**Design documents (`docs/32`–`docs/48`)**
+**Design documents (`docs/32`–`docs/47` and later)**
 
 | doc | what it settles |
 |---|---|
@@ -147,7 +147,6 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 | [45](docs/45-open-coordination.md) | Open coordination: joint couplings, claims, peers-now |
 | [46](docs/46-swarm-visibility.md) | Swarm visibility: one liveness derivation, the contributions ledger, the cost of a view |
 | [47](docs/47-the-reading-half.md) | The reading half: a recruited seat reads its issue, its docs, its peers, and the landed work |
-| [48](docs/48-reincarnation-in-place.md) | Resident reincarnation in place: the incarnation model, the handoff protocol, what survives and what drains |
 
 The earlier corpus (problem framing through the representation ladder, docs 00–31) and the campaign-era working papers are indexed in the [superseded README](docs/reference/README-superseded-2026-08-13.md) and under `docs/reference/evidence/`; nothing was discarded. Dated campaign reports live in [`reviews/`](reviews/).
 

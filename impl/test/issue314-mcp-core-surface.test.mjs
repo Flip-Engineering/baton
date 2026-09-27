@@ -18,14 +18,6 @@
 //          baton_swarm_watch retire to the #294 wake plane.
 //   314-d2 a mutation answers the #302 receipt plus a wake subscription id — never the whole
 //          view (today run.start/run.stop answer the full outline, mcp-web-bridge.mjs:638-665).
-//   314-e1 a bridge session survives a resident reincarnation: one rediscovery, ONE typed
-//          notification, the wake plane resumed from its cursor — today the plane reconnects to
-//          the withdrawn socket of the old incarnation forever (mcp-web-bridge.mjs
-//          _scheduleReconnect), because the connection is discovered once
-//          (connectBatonWebApplication, mcp-web-bridge.mjs:695).
-//   314-e2 an in-flight call that meets the incarnation boundary is retried ONCE against the
-//          successor under the same derived idempotency key (the ledger is shared), never
-//          surfaced as a session-fatal error.
 //   314-f  the migration table (docs/49 §7) covers every tool impl/MCP.md documents, and the
 //          served surface reflects it (no retired/behind-surface spelling advertised).
 //   314-g  a retired flat spelling refuses unknown_tool with a movedTo pointer into the core —
@@ -501,89 +493,7 @@ test('314-d2 RED: a mutation answers a receipt plus a wake subscription, never t
   assert.ok(wakeOpens.length >= 1, 'the session\'s one wake plane carries the subscription');
 });
 
-test('314-e1 RED: a bridge session survives reincarnation — rediscovery, ONE typed notification, wake resume (docs/49 §6)', async (t) => {
-  const frames = [];
-  const openCalls = [];
-  const rediscoverCalls = [];
-  let current = attachmentStub();
-  const card = { repoId: REPO_ID, commands: [...WIRE_CARD], agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
-  const clientV1 = {
-    repoId: REPO_ID,
-    pollMs: 5,
-    async session() { return SESSION; },
-    async doctor() { return { ready: true, application: card }; },
-    async command() { return { ok: true }; },
-    wakes(options) { openCalls.push(options); return current.attachment; },
-  };
-  const successorSession = { ...SESSION, identity: { ...SESSION.identity, sessionId: 'bridge-session-incarnation-2' } };
-  const rediscover = async () => {
-    rediscoverCalls.push(1);
-    return { client: clientV1, card, session: successorSession };
-  };
-  // The fourth constructor argument is the rebind authority docs/49 §6 mints; the landed
-  // constructor (mcp-web-bridge.mjs:412) ignores it — that is what makes this row red.
-  const facade = new BatonWebApplicationFacade(clientV1, card, SESSION, { rediscover });
-  t.after(() => facade.closeWakes());
-  const receipt = await facade.wakeSubscribe({ kinds: ['contribution_recorded'] }, (frame) => { frames.push(frame); });
-  assert.equal(typeof receipt.subscriptionId, 'string', 'the subscription receipt is the landed shape');
-  // The old incarnation's attachment ends typed (resident_stopping, #316 b) — the reincarnation.
-  const first = current;
-  first.end({ status: 'error', error: Object.assign(new Error('the resident named its stopping'), { code: 'resident_stopping' }) });
-  await until(() => openCalls.length >= 2, { label: 'the wake plane re-attach' });
-  assert.equal(rediscoverCalls.length, 1,
-    'LAW (docs/49 §6): the typed end of the old incarnation\'s attachment triggers ONE connection '
-    + 'rediscovery — today the plane reconnects to the withdrawn socket of the dead incarnation forever');
-  const reincarnated = frames.filter((frame) => frame?.kind === 'baton.resident_reincarnated');
-  assert.equal(reincarnated.length, 1,
-    'LAW (docs/49 §6): the client gets ONE typed baton.resident_reincarnated notification '
-    + '{from, to, cursor} — independent of any subscription filter, exactly once per handoff');
-  assert.equal(reincarnated[0]?.cursor, receipt.cursor ?? reincarnated[0]?.cursor,
-    'the notification names the cursor the resumed attachment starts from');
-});
 
-test('314-e2 RED: an in-flight call at the incarnation boundary is retried once against the successor under the same idempotency key (docs/49 §6)', async (t) => {
-  const predecessorKeys = [];
-  const successorKeys = [];
-  const rediscoverCalls = [];
-  const card = { repoId: REPO_ID, commands: [...WIRE_CARD], agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
-  const clientV1 = {
-    repoId: REPO_ID,
-    pollMs: 5,
-    async session() { return SESSION; },
-    async doctor() { return { ready: true, application: card }; },
-    async command(name, args, key) {
-      predecessorKeys.push(key);
-      throw Object.assign(new Error('the resident that answered is a different incarnation than the connection names'),
-        { code: 'resident_incarnation_mismatch', wireSafe: true });
-    },
-  };
-  const successorSession = { ...SESSION, identity: { ...SESSION.identity, sessionId: 'bridge-session-incarnation-2' } };
-  const clientV2 = {
-    repoId: REPO_ID,
-    pollMs: 5,
-    async session() { return successorSession; },
-    async doctor() { return { ready: true, application: card }; },
-    async command(name, args, key) {
-      successorKeys.push(key);
-      return { schemaVersion: 1, command: name, via: 'successor' };
-    },
-  };
-  const rediscover = async () => {
-    rediscoverCalls.push(1);
-    return { client: clientV2, card, session: successorSession };
-  };
-  const facade = new BatonWebApplicationFacade(clientV1, card, SESSION, { rediscover });
-  t.after(() => facade.closeWakes());
-  const outcome = await facade.command('run.inspect', { runId: 'run:1' }, PRINCIPAL, CONTEXT)
-    .then((value) => ({ value }), (error) => ({ error }));
-  assert.equal(outcome.error, undefined,
-    'LAW (docs/49 §6): an in-flight call refused resident_incarnation_mismatch is retried ONCE '
-    + 'against the successor after rebind — today it kills the call (and the session follows)');
-  assert.deepEqual(outcome.value, { schemaVersion: 1, command: 'run.inspect', via: 'successor' });
-  assert.equal(rediscoverCalls.length, 1, 'exactly one rebind per handoff');
-  assert.deepEqual(successorKeys, predecessorKeys.slice(0, 1),
-    'the retry carries the SAME derived idempotency key — the shared ledger replays the first attempt');
-});
 
 test('314-f RED: the migration table covers every tool MCP.md documents and the served surface reflects it (docs/49 §7)', async (t) => {
   const doc = readFileSync(new URL('../MCP.md', import.meta.url), 'utf8');

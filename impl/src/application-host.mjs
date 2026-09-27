@@ -55,11 +55,6 @@ export const STOP_STAGES = Object.freeze({
   stopRecord: 'stop_record',
   hostClosed: 'host_closed',
   publicationWithdrawal: 'publication_withdrawal',
-  // #461: the last stage of a REINCARNATION's stop — the incarnation's own exit, which is what the
-  // successor's `host.reincarnated` observation waits on. It is entered only by a stop that is
-  // finishing a handoff (an ordinary stop ends at the release the row is minted from), and the
-  // deployment narrates it in the tail the same way it narrates the withdrawal.
-  incarnationExit: 'incarnation_exit',
 });
 
 /** Issue #450: the first second of a stop. Every wait this host takes past it is named durably
@@ -374,7 +369,6 @@ export class BatonWebHost {
     this._start = null;
     this._shutdown = null;
     this._announced = null;
-    this._handoffWithdrawal = null;
     // #461: this host is WITHDRAWN once its own shutdown has completed — the state the signal path
     // reads first, so a SIGTERM arriving after the stop narrates no second drain and re-enters
     // nothing (`withdrawn` below feeds SignalLifecycleOwner).
@@ -432,9 +426,9 @@ export class BatonWebHost {
       // that connection and narrates once; a malformed request (`clientError`) is answered by
       // closing that socket. Neither ever reaches `process`.
       this._guardClientSockets(this.server, 'web');
-      // Issue #468: the resident's own sinks are the LAST streams a predecessor's exit can orphan
-      // (#461 tees a successor's stderr into the predecessor's serve log; the pipe has no reader
-      // once the predecessor is gone) — guarded before the first line any signal narration writes.
+      // Issue #468: the resident's own sinks are the last streams a stop can orphan (a pipe whose
+      // reader is gone raises EPIPE on the next narration line) — guarded before the first line
+      // any signal narration writes.
       this._guardProcessSinks();
       try {
         if (this.listenOptions.path) this.server.listen(this.listenOptions.path);
@@ -481,10 +475,10 @@ export class BatonWebHost {
     server.on('clientError', (error, socket) => ended(socket, error));
   }
 
-  /** Issue #468: the resident's OWN sinks — a successor's stderr pipe has no reader once its
-   * predecessor exits, and the next narration line then raises EPIPE on it. Guarded here so the
-   * line is lost, never the resident: an unhandled stream 'error' is an uncaught exception that
-   * takes the resident — and every worker under it — down (the 13:36Z EPIPE of 2026-09-18). */
+  /** Issue #468: the resident's OWN sinks — a pipe whose reader is gone raises EPIPE on the next
+   * narration line. Guarded here so the line is lost, never the resident: an unhandled stream
+   * 'error' is an uncaught exception that takes the resident — and every worker under it — down
+   * (the 13:36Z EPIPE of 2026-09-18). */
   _guardProcessSinks() {
     this._guardStream(process.stdout, 'stdout');
     this._guardStream(process.stderr, 'stderr');
@@ -755,85 +749,6 @@ export class BatonWebHost {
       () => { this.withdrawn = true; },
     );
     return shuttingDown;
-  }
-
-  /** Issue #478: the INVERSE of the work-admission close above — the re-publish's half of the same
-   * pair. A deployment whose handoff window failed goes on serving over the very transport that
-   * never stopped listening, and the work admission its own stop closed is reopened here, on the
-   * SAME server, before the failure is narrated. A transport that publishes no split (a bare
-   * fixture server) has nothing to reopen and says so; one already closed for good refuses typed. */
-  async reopenAdmission() {
-    if (typeof this.server.batonOpenWorkAdmission !== 'function') {
-      return Object.freeze({ ok: true, result: 'work_admission_unsplit' });
-    }
-    try { return await this.server.batonOpenWorkAdmission(); }
-    catch (error) {
-      return Object.freeze({ ok: false, result: 'reopen_failed', code: errorCode(error) });
-    }
-  }
-
-  /** #306r: the handoff's own tail — the listeners close, and nothing else does. The deployment
-   * handed its application authority over at the handoff's window (the successor owns the writer
-   * lease, and the fleet drain the window ran is the one this host would otherwise run), so a
-   * second `application.shutdown()` here would refuse `driver_closed` and report a degraded stop
-   * for the one act the handoff had already performed. What this host still owns is exactly what it
-   * closes: its wake binding, its Web admission, its listener. The stage marks are taken for the
-   * same reason the ordinary shutdown takes them — the serve log's tail reads them; the durable
-   * `host.stopped` row was already minted by the window's release. */
-  withdrawForHandoff() {
-    if (this._handoffWithdrawal) return this._handoffWithdrawal;
-    const withdrawing = (async () => {
-      const requested = await this._recordStop('requested', {
-        trigger: this._trigger?.kind ?? admittedStopTriggerKind() ?? 'operation_completed',
-      });
-      if (requested?.line) this._say(requested.line);
-      let wakes = null;
-      if (this.wakeBinding !== null) {
-        this._stopStage(STOP_STAGES.wakeBindingClose);
-        try {
-          this.wakeBinding.close();
-          await new Promise((resolve) => {
-            let settled = false;
-            const done = () => { if (!settled) { settled = true; resolve(); } };
-            try { this.wakeBinding.server.close(done); } catch { done(); }
-            this.wakeBinding.server.closeAllConnections?.();
-          });
-          wakes = { state: 'closed', host: this.wakesOptions.host, port: this.wakesOptions.port };
-        } catch (error) {
-          wakes = { state: 'closed_degraded', code: error?.code ?? error?.name ?? 'wake_binding_close_failed' };
-        }
-        this.wakeBinding = null;
-      }
-      this._stopStage(STOP_STAGES.webAdmissionClose);
-      let web;
-      try { web = await this.server.batonShutdown({ drainMs: this.webDrainMs }); }
-      catch (error) {
-        web = { ok: false, result: 'shutdown_failed', code: error?.code ?? error?.name ?? 'web_shutdown_failed' };
-      }
-      this._say(`baton serve: web admission closed (${web?.result ?? web?.code ?? 'unknown'}); `
-        + 'the handoff\'s authority is the successor\'s');
-      this._stopStage(STOP_STAGES.stopRecord);
-      // The server closed ⇔ the admission closed. The result's DEGRADED legs are the audits and
-      // the stream/export shutdowns that ride the coordination ledger — the writer authority this
-      // incarnation handed over with the handoff, so a handoff tail can never record them. That is
-      // named here (`audit`) instead of reading as an unexplained degraded admission close.
-      const listenersClosed = web?.result === 'closed' || web?.result === 'closed_degraded';
-      return Object.freeze({
-        schemaVersion: 1,
-        state: listenersClosed && wakes?.state !== 'closed_degraded' ? 'closed' : 'closed_degraded',
-        wakes,
-        web,
-        application: null,
-        audit: web?.result === 'closed' ? 'recorded' : 'unavailable_without_writer_authority',
-      });
-    })();
-    this._handoffWithdrawal = withdrawing;
-    withdrawing.catch(() => { if (this._handoffWithdrawal === withdrawing) this._handoffWithdrawal = null; });
-    withdrawing.then(
-      () => { this.withdrawn = true; },
-      () => { this.withdrawn = true; },
-    );
-    return withdrawing;
   }
 
   async serve(signalEmitter = process, onListening = () => {}) {

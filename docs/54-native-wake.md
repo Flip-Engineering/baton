@@ -36,8 +36,8 @@ The complete set of wake classes at HEAD:
 `context_updated`, `contribution_recorded`, `contribution_integrated`, `reviewed`, `note`,
 `knowledge`, `closed`, `refused`, `queued`, `dead`, `reroute_proposed`.
 
-**Deployment-scoped:** `incarnation_changed`, `paused`, `attention`, `guidance_delivered`,
-`integrated`, `checkpoint`, `capacity_pressure`, `resident_lifecycle`.
+**Deployment-scoped:** `paused`, `attention`, `guidance_delivered`, `integrated`, `checkpoint`,
+`capacity_pressure`, `resident_lifecycle`.
 
 Each class carries a `subject` (the entity it concerns), a `terminal` flag (whether the consumer
 is expected to act), and a `next` field (the command that acts on a terminal wake).
