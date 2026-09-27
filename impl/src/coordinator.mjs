@@ -1014,10 +1014,6 @@ export class Coordinator {
     return runtimeAdmission.observedNativeSubagents(this, this._recorder, workerId);
   }
 
-  /** A retained revision can be checked while its author continues, or after its session stops. */
-    checkContribution(workerId, { contributionId, checkId, signal } = {}) {
-    return runtimeAdmission.checkContribution(this, this._recorder, workerId, { contributionId, checkId, signal });
-  }
 
   /** #235: the transport-liveness attention projection — EVIDENCE CLASSIFICATION ONLY (the
    * #163 law: no clock, counter, or liveness receipt ever decides a member's fate; this

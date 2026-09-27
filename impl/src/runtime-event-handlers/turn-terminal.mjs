@@ -132,6 +132,11 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...ctx.payload, usageSeal: sealVerdict.seal } : ctx.payload,
         });
+        // D2 blk-5 / C4: the crash arm is a turn-terminal seam like turn_completed and exited, and
+        // it clears the same liveness marker. A marker left true on a terminal turn keeps rung-3
+        // reap and the deployment's in-flight handoff waiting on a turn that already ended.
+        ctx.handle.turnInFlight = false;
+        coordinator._clearWatchdog(ctx.handle);
         // #295: the crash cert is a provider-shaped payload — the adapter types the same fault and
         // the same bounded detail (route, reset instant) it typed on the turn, so a rate-limited
         // death that arrives as a dead transport still reads with its class, its route and its

@@ -1,12 +1,13 @@
-// Issue #537 — the swarm capture/check leg's refusal codes crossed POST /v1/commands as the
-// narrated 503 `temporarily_unavailable` fallthrough. The leg mints its codes outside the
+// Issue #537 — the swarm capture leg's refusal codes crossed POST /v1/commands as the narrated
+// 503 `temporarily_unavailable` fallthrough. The leg mints its codes outside the
 // `refuse()`/`integrity()` helpers the #430 owner-set scan reads — runtime-admission.mjs
 // `captureContribution` (the capture window: workspace state, pause reservation) and
-// contribution-service.mjs (`capture`/`check`: revision identity, retention, identifier shape) —
-// so the #430 closure could not see them. The fix: the codes get owner rows in SWARM_REFUSAL_CODES
+// contribution-service.mjs (`capture`: revision identity, retention, identifier shape) — so the
+// #430 closure could not see them. The fix: the codes get owner rows in SWARM_REFUSAL_CODES
 // (raisedBy 'coordinator' — the coordinator leg the swarm verbs surface), and this file keeps the
 // leg's closed set honest in both directions: every code the leg mints has a row, and the observed
-// refusals cross the served transport typed.
+// refusals cross the served transport typed. The check half's two codes left the table with the
+// #598 removal of the swarm.check verb.
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,8 +56,6 @@ const CAPTURE_LEG_CODES = Object.freeze({
   contribution_retention_unavailable: 503,
   checkpoint_failed: 503,
   contribution_invalid: 400,
-  contribution_unknown: 404,
-  contribution_changed: 409,
 });
 
 test('#537 (a): the capture leg mints exactly the codes this issue owns, and each has an owner row', () => {

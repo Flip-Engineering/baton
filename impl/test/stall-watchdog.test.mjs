@@ -182,7 +182,7 @@
 //
 // ===========================================================================
 // VERIFIED SPLIT — recorded against the PRE-implementation tree on 2026-08-07
-// (node --test impl/test/stall-watchdog-red.test.mjs, repo root):
+// (node --test impl/test/stall-watchdog.test.mjs, repo root):
 //
 //   27 tests — 20 RED rows FAIL, 7 PINs PASS.
 //   RED rows: each fails at its NAMED stage (the inventory above); none fails at a PIN

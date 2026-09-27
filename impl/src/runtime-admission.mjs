@@ -1063,14 +1063,6 @@ export function observedNativeSubagents(coordinator, recorder, workerId) {
     return nativeSubagentView(coordinator._log.read(workerId));
   }
 
-export function checkContribution(coordinator, recorder, workerId, { contributionId, checkId, signal } = {}) {
-    return coordinator._withAuthorityOp(async () => {
-      const handle = coordinator._getWorker(workerId);
-      const task = coordinator._tasks.get(handle.taskId);
-      return coordinator._contributionOperations().check({ handle, task, contributionId, checkId, signal });
-    });
-  }
-
 export async function _reservePauseRecord(coordinator, recorder, pauseId) {
     const record = coordinator._pausedTurns.get(pauseId);
     if (!record) return { ok: false, result: 'not_found' };

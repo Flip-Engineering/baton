@@ -121,8 +121,6 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   contribution_retention_unavailable: row(503, ['coordinator'], 'this deployment\'s worktree manager carries no contribution retention ports — a deployment defect to repair, never a retry'),
   checkpoint_failed: row(503, ['coordinator'], 'the retained checkpoint ref does not resolve back to the captured sha — a retention defect; inspect the resident'),
   contribution_invalid: row(400, ['coordinator'], 'the contribution operation requires a non-empty identifier without a NUL'),
-  contribution_unknown: row(404, ['coordinator'], 'the check names a contributionId this seat has never captured'),
-  contribution_changed: row(409, ['coordinator'], 'the retained contribution no longer resolves to its revision'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
   // Issue #531: every route the recruit's selection names is ineligible (quota exhausted, blocked,
   // or a mix), so the recruit refuses before the host-capacity queue rather than waiting 120s to
