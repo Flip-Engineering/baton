@@ -434,9 +434,9 @@ export function gateRunnerFile(layout, file) {
  * The lease is taken HERE, by the resident, through the runner's own seam
  * (`acquireSuiteVerifyLease`): the child then proves its parent's admission with the token digest
  * the runner publishes to its children (`BATON_SUITE_VERIFY_LEASE`, #424), so it can never queue
- * behind the process that spawned it. A lease that cannot be taken within the runner's own bound
- * refuses typed — `integrate_gates_busy` naming the holder it waited behind — BEFORE any child is
- * spawned: it never blocks, and it never half-runs a gate set.
+ * behind the process that spawned it. The wait for the lease has no bound: the run starts on the
+ * turn the verdicts ahead of it release, so no child is spawned before the lease is held and no
+ * gate set is ever half-run.
  *
  * Issue #463: the child's working directory and its file arguments are BOTH read off the runner's
  * own path (`gateRunnerLayout`). A landing handed this seam bare test basenames while the checkout
@@ -462,22 +462,6 @@ export async function runSupervisedGateRun({
       { code: 'integrate_withdrawn' });
   }
   const authority = leaseAuthority ?? createSuiteLeaseAuthority(process.env);
-  // The request ahead of this one, when the admission queue shows one: the holder the wait was
-  // behind is the fact an `integrate_gates_busy` refusal is actionable on. Read without the mutex
-  // (the same non-mutating read the participant projection uses) — evidence, never admission.
-  let ahead = null;
-  // The queue row the seam reported once, when this request waited: its position/ahead/shortfall
-  // are what a refusal names. Absent when the request was admitted (or bypassed) at once.
-  let queued = null;
-  const observeAhead = () => {
-    try {
-      const row = (authority.observeNow?.()?.queue ?? [])
-        .find((entry) => entry?.kind === 'verify' && entry.holder !== holder);
-      if (row) ahead = row.holder ?? null;
-    } catch { /* evidence only */ }
-  };
-  const poll = setInterval(observeAhead, 25);
-  if (typeof poll.unref === 'function') poll.unref();
   let lease = null;
   let degraded = null;
   // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of it
@@ -493,12 +477,7 @@ export async function runSupervisedGateRun({
     // #576: the fence signal — a stopping resident ends this wait instead of hanging behind a
     // queue it can no longer answer for.
     signal,
-    onQueued: (row) => {
-      queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
-        shortfall: row?.shortfall ?? null });
-    },
   });
-  clearInterval(poll);
   if (lease.degraded) {
     degraded = Object.freeze({ reason: lease.degraded.dimension ?? 'memory', shortfall: lease.degraded });
   }

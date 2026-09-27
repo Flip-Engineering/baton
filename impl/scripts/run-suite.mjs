@@ -198,8 +198,8 @@ const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)
 // progress deadline, so a hang costs exactly that file. The parallel lane runs the host-capacity
 // derivation's lane count (one core's share per lane, #297); the process-heavy files of
 // suite-lanes.json run one
-// at a time afterwards. Explicit file arguments run through the same scheduler; any other
-// node --test option (--watch, --test-name-pattern, …) keeps the legacy passthrough.
+// at a time afterwards. Explicit file arguments run through the same scheduler; the runner's own
+// flags are --test-concurrency, --all and --changed, and any other argument refuses.
 const runnerFlags = new Set(['--test-concurrency', '--all']);
 // #300: `--changed <paths…>` selects the affected test files through the import graph
 // (verification-selection.mjs) instead of naming files by hand. The paths are the capture's
@@ -215,13 +215,17 @@ if (changedFlagIndex !== -1) {
     changedPaths.push(process.argv[index]);
   }
 }
-const passthroughArgs = process.argv.slice(2).filter((arg, index, argv) => (
+const optionArgs = process.argv.slice(2).filter((arg, index, argv) => (
   !runnerFlags.has(arg)
   && !(index > 0 && argv[index - 1] === '--test-concurrency')
   && !changedFlagArgs.has(index + 2)
 ));
-const explicitFiles = passthroughArgs.filter((arg) => !arg.startsWith('-'));
-const legacyPassthrough = passthroughArgs.some((arg) => arg.startsWith('-'));
+const explicitFiles = optionArgs.filter((arg) => !arg.startsWith('-'));
+const unsupportedOptions = optionArgs.filter((arg) => arg.startsWith('-'));
+if (unsupportedOptions.length > 0) {
+  process.stderr.write(`baton test runner: cannot run ${unsupportedOptions.join(', ')} — this runner takes file names, --all, --changed <paths…> and --test-concurrency <n>\n`);
+  process.exit(1);
+}
 // #300 refusals: a selection is a partial run, so it obeys the same contracts an explicit file
 // list does — and it cannot be combined with one, because two subset selectors in one run would
 // make "what was and was not run" ambiguous.
@@ -230,8 +234,8 @@ if (changedRequested && changedPaths.length === 0) {
   process.stderr.write('baton test runner: --changed names the changed paths to select through — it refuses to run with no paths (--changed impl/src/a.mjs docs/x.md), because an unnamed selection would silently mean the whole suite\n');
   process.exit(1);
 }
-if (changedPaths.length > 0 && (explicitFiles.length > 0 || legacyPassthrough)) {
-  process.stderr.write('baton test runner: --changed selects the affected files itself — it does not combine with explicit file arguments or node --test passthrough options, because two subset selectors in one run cannot say what was and was not run; use one or the other\n');
+if (changedPaths.length > 0 && explicitFiles.length > 0) {
+  process.stderr.write('baton test runner: --changed selects the affected files itself — it does not combine with explicit file arguments, because two subset selectors in one run cannot say what was and was not run; use one or the other\n');
   process.exit(1);
 }
 const implRoot = new URL('../', import.meta.url);
@@ -632,113 +636,96 @@ function finish(code, signal, spawnError = null, groupReaped = true) {
   process.exitCode = terminalSignal ? (signalStatus[terminalSignal] ?? 1) : (code ?? 1);
 }
 
-if (legacyPassthrough) {
-  // Legacy passthrough (node --test options such as --watch or --test-name-pattern): node's own
-  // orchestration, its own output, no verdict.
-  const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', '--test-force-exit', ...passthroughArgs, '--test-concurrency', String(suiteConcurrency)], {
-    detached, stdio: 'inherit', env: childEnv(null),
+let changedSelection = null;
+if (changedPaths.length > 0) {
+  changedSelection = selectFromRepository({
+    root: fileURLToPath(repositoryRoot),
+    changedPaths,
   });
-  const job = { file: '(legacy)', child, trackedGroup: new Map() };
-  running.add(job);
-  const terminal = await new Promise((resolveTerminal) => {
-    child.once('error', (error) => resolveTerminal({ code: null, signal: null, error }));
-    child.once('close', (code, signal) => resolveTerminal({ code, signal, error: null }));
-  });
-  const groupReaped = terminal.error ? true : await reapProcessGroup(job);
-  running.delete(job);
-  finish(terminal.code, terminal.signal, terminal.error, groupReaped);
-} else {
-  let changedSelection = null;
-  if (changedPaths.length > 0) {
-    changedSelection = selectFromRepository({
-      root: fileURLToPath(repositoryRoot),
-      changedPaths,
-    });
-    process.stderr.write(`baton test runner: --changed selected ${changedSelection.files.length} test file(s) from ${changedPaths.length} changed path(s) — ${changedSelection.reason}\n`);
-    for (const provenance of changedSelection.provenance) {
-      process.stderr.write(`  ${provenance.path} (${provenance.reason}${provenance.via ? `: ${provenance.via}` : ''})\n`);
-    }
+  process.stderr.write(`baton test runner: --changed selected ${changedSelection.files.length} test file(s) from ${changedPaths.length} changed path(s) — ${changedSelection.reason}\n`);
+  for (const provenance of changedSelection.provenance) {
+    process.stderr.write(`  ${provenance.path} (${provenance.reason}${provenance.via ? `: ${provenance.via}` : ''})\n`);
   }
-  const files = laneFiles(changedSelection);
-  for (const row of files.skipped) {
-    process.stderr.write(`baton test runner: skipped (${row.reason}): ${row.file}\n`);
-  }
-  // Issue #606: a name the runner cannot resolve is reported, never silently dropped. The landing
-  // gate is the one caller whose names are derived from the resident's own tree, so a name it
-  // cannot open may be a file the change deleted (#582) and stays a skip; every other caller
-  // refuses, because judging the files that remain would report a green over a name the caller
-  // believed it had verified.
-  const unresolved = files.skipped
-    .filter((row) => row.reason === ABSENT_NAMED_FILE).map((row) => row.file);
-  if (unresolved.length > 0 && !landingGateRun) {
-    process.stderr.write(`baton test runner: ${unresolved.length} named path(s) do not resolve to a file in this checkout: ${unresolved.join(', ')}`
-      + ' — name test/<file> paths the checkout carries, or --all for the whole canonical suite\n');
-    process.exit(1);
-  }
-  // Issue #424: the plan — what this run expanded and the lane width it resolved (the derivation
-  // reads the host's load, so a saturated host resolves one lane) — prints BEFORE admission and
-  // before any lane. A reader sees the size of the run even when the host queues the verdict,
-  // degrades it to no lease, or refuses it.
-  process.stderr.write(`${formatSuitePlan({
-    expanded: files.parallel.length + files.serial.length,
-    changedPaths: changedPaths.length,
-    parallel: files.parallel.length,
-    serial: files.serial.length,
-    parallelism,
-    idleMs,
-  })}\n`);
-  // Issue #333: the runner holds one host-wide verify lease for the whole verdict — a full
-  // suite costs every core but the hub's, so two residents each running a suite would repeat
-  // the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row until
-  // the verdicts ahead release (#541: the wait is not bounded, never refused for waiting); a host
-  // that cannot fund a suite at all answers degraded at once and the run proceeds without a
-  // lease, with a warning. The lease releases at the verdict whichever way it ends. A bypassed
-  // run acquires nothing.
-  // Issue #512: an admission that fails for a real reason is terminal and names itself.
-  let suiteLease = null;
+}
+const files = laneFiles(changedSelection);
+for (const row of files.skipped) {
+  process.stderr.write(`baton test runner: skipped (${row.reason}): ${row.file}\n`);
+}
+// Issue #606: a name the runner cannot resolve is reported, never silently dropped. The landing
+// gate is the one caller whose names are derived from the resident's own tree, so a name it
+// cannot open may be a file the change deleted (#582) and stays a skip; every other caller
+// refuses, because judging the files that remain would report a green over a name the caller
+// believed it had verified.
+const unresolved = files.skipped
+  .filter((row) => row.reason === ABSENT_NAMED_FILE).map((row) => row.file);
+if (unresolved.length > 0 && !landingGateRun) {
+  process.stderr.write(`baton test runner: ${unresolved.length} named path(s) do not resolve to a file in this checkout: ${unresolved.join(', ')}`
+    + ' — name test/<file> paths the checkout carries, or --all for the whole canonical suite\n');
+  process.exit(1);
+}
+// Issue #424: the plan — what this run expanded and the lane width it resolved (the derivation
+// reads the host's load, so a saturated host resolves one lane) — prints BEFORE admission and
+// before any lane. A reader sees the size of the run even when the host queues the verdict,
+// degrades it to no lease, or refuses it.
+process.stderr.write(`${formatSuitePlan({
+  expanded: files.parallel.length + files.serial.length,
+  changedPaths: changedPaths.length,
+  parallel: files.parallel.length,
+  serial: files.serial.length,
+  parallelism,
+  idleMs,
+})}\n`);
+// Issue #333: the runner holds one host-wide verify lease for the whole verdict — a full
+// suite costs every core but the hub's, so two residents each running a suite would repeat
+// the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row until
+// the verdicts ahead release (#541: the wait is not bounded, never refused for waiting); a host
+// that cannot fund a suite at all answers degraded at once and the run proceeds without a
+// lease, with a warning. The lease releases at the verdict whichever way it ends. A bypassed
+// run acquires nothing.
+// Issue #512: an admission that fails for a real reason is terminal and names itself.
+let suiteLease = null;
+try {
+  suiteLease = await acquireSuiteVerifyLease();
+  if (suiteLease.degraded) process.stderr.write(`${formatSuiteDegradedWarning(suiteLease.degraded)}\n`);
+} catch (error) {
+  process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
+  process.stderr.write(`${formatSuiteAdmissionRefusal(error)}\n`);
+  finish(1, null, null, true);
+}
+if (suiteLease !== null) {
+  suiteLeaseDigest = suiteLease.token ? suiteLeaseTokenDigest(suiteLease.token) : null;
   try {
-    suiteLease = await acquireSuiteVerifyLease();
-    if (suiteLease.degraded) process.stderr.write(`${formatSuiteDegradedWarning(suiteLease.degraded)}\n`);
-  } catch (error) {
-    process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
-    process.stderr.write(`${formatSuiteAdmissionRefusal(error)}\n`);
-    finish(1, null, null, true);
-  }
-  if (suiteLease !== null) {
-    suiteLeaseDigest = suiteLease.token ? suiteLeaseTokenDigest(suiteLease.token) : null;
-    try {
-      const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
-      const spawnError = results.find((result) => result.error)?.error ?? null;
-      if (requestedSignal || spawnError) {
-        finish(1, requestedSignal, spawnError);
-      } else {
-        // Every lane summary carries the rows its files reported. A file that stops reporting is
-        // named by its own progress deadline (runFile above) as a hung row, which the verdict
-        // reads as the hang dimension (#521).
-        const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), skipped: files.skipped }];
-        {
-          const judged = computeVerdict(summaries, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
-          // Issue #399: ONE coverage value from what the runner already knows — `full`
-          // when the file set is the canonical selection, `subset` when files were named
-          // or --changed narrowed them. The subset headline and the consumer's subset
-          // sentence both read the verdict document, never a second file list.
-          const coverage = deriveSuiteCoverage({
-            subset: explicitFiles.length > 0 || changedPaths.length > 0,
-            files: files.parallel.length + files.serial.length,
-            canonical: files.canonical,
-          });
-          const document = { ...verdictDocument(judged), coverage: { ...coverage } };
-          process.stderr.write(`${renderSuiteVerdictHeadline(formatVerdict(judged), coverage)}\n`);
-          const coverageNote = renderSuiteCoverageNote(document);
-          if (coverageNote !== null) process.stderr.write(`${coverageNote}\n`);
-          if (process.env.BATON_SUITE_VERDICT_FILE) {
-            writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(document, null, 2)}\n`);
-          }
-          finish(judged.green ? 0 : 1, null, null, true);
+    const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
+    const spawnError = results.find((result) => result.error)?.error ?? null;
+    if (requestedSignal || spawnError) {
+      finish(1, requestedSignal, spawnError);
+    } else {
+      // Every lane summary carries the rows its files reported. A file that stops reporting is
+      // named by its own progress deadline (runFile above) as a hung row, which the verdict
+      // reads as the hang dimension (#521).
+      const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), skipped: files.skipped }];
+      {
+        const judged = computeVerdict(summaries, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
+        // Issue #399: ONE coverage value from what the runner already knows — `full`
+        // when the file set is the canonical selection, `subset` when files were named
+        // or --changed narrowed them. The subset headline and the consumer's subset
+        // sentence both read the verdict document, never a second file list.
+        const coverage = deriveSuiteCoverage({
+          subset: explicitFiles.length > 0 || changedPaths.length > 0,
+          files: files.parallel.length + files.serial.length,
+          canonical: files.canonical,
+        });
+        const document = { ...verdictDocument(judged), coverage: { ...coverage } };
+        process.stderr.write(`${renderSuiteVerdictHeadline(formatVerdict(judged), coverage)}\n`);
+        const coverageNote = renderSuiteCoverageNote(document);
+        if (coverageNote !== null) process.stderr.write(`${coverageNote}\n`);
+        if (process.env.BATON_SUITE_VERDICT_FILE) {
+          writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(document, null, 2)}\n`);
         }
+        finish(judged.green ? 0 : 1, null, null, true);
       }
-    } finally {
-      await suiteLease.release();
     }
+  } finally {
+    await suiteLease.release();
   }
 }

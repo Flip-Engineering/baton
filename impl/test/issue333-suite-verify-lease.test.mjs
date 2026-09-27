@@ -4,13 +4,11 @@
 // lanes and releases it at the verdict, printing the queued row (position, ahead, shortfall —
 // the #329 shape) while it waits. BATON_HOST_CAPACITY_DISABLED=1 stays the bypass, a runner
 // nested under a lease-holding parent (#424: proven by the parent's token digest in
-// BATON_SUITE_VERIFY_LEASE) stays unwired, the worker's verify projects onto the swarm view
-// participant row as verify {state, position, ahead} from the lease holder name
-// participant:<swarm>:<seat>, and the deployment summary's hostCapacity.used.leases.verify
-// counts worker suites.
+// BATON_SUITE_VERIFY_LEASE) stays unwired, and the deployment summary's
+// hostCapacity.used.leases.verify counts worker suites.
 //
-// Red-before: written before the implementation; rows S333-1..S333-5 fail at HEAD (the helper
-// module and the derivation do not exist, and run-suite.mjs acquires nothing).
+// Red-before: written before the implementation; these rows fail at HEAD (the helper module and
+// the derivation do not exist, and run-suite.mjs acquires nothing).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -20,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
-  deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority, projectParticipantVerify,
+  deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority,
 } from '../src/host-capacity.mjs';
 import {
   acquireSuiteVerifyLease, formatSuiteDegradedWarning, formatSuiteQueueRow, suiteLeaseDisabled,
@@ -122,40 +120,6 @@ test('S333-2: the bypass never touches the lease directory', async (t) => {
   assert.equal(nested.disabled, true);
   assert.equal(nested.nested, true);
   assert.equal(existsSync(untouched), false, 'a nested run touches no lease directory either');
-});
-
-test('S333-3: the participant-row derivation reads verify {state, position, ahead, holderAlive} from the holder name', async (t) => {
-  const root = leaseRoot(t);
-  const authority = new HostCapacityAuthority({
-    root, residentId: 's333-deploy', observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
-    pollMs: 10,
-  });
-  const holder = 'participant:baton:seat1';
-  assert.equal(await authority.observeParticipantVerify(holder), null,
-    'a seat with no verify lease and no queue entry carries no verify row — absence, never a guess');
-  assert.equal(projectParticipantVerify([], new Set(), holder), null);
-  assert.equal(projectParticipantVerify([], new Set(), null), null);
-  const held = await authority.acquire('verify', { holder });
-  assert.deepEqual(await authority.observeParticipantVerify(holder),
-    { state: 'admitted', position: null, ahead: null });
-  assert.deepEqual(projectParticipantVerify([], new Set([holder]), holder),
-    { state: 'admitted', position: null, ahead: null });
-  assert.equal(await authority.observeParticipantVerify('participant:baton:other'), null,
-    'one seat\'s lease never projects onto another seat\'s row');
-  // A second verify does not fit beside the first (one verdict lane on four cores), so the
-  // other seat queues behind it with a visible place.
-  const waiter = new HostCapacityAuthority({
-    root, residentId: 's333-worker', observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
-    pollMs: 10,
-  });
-  const pending = waiter.acquire('verify', { holder: 'participant:baton:seat2' });
-  await new Promise((resolve) => { setTimeout(resolve, 120); });
-  assert.deepEqual(await authority.observeParticipantVerify('participant:baton:seat2'),
-    { state: 'queued', position: 1, ahead: 0, holderAlive: true });
-  await authority.release(held.token);
-  await pending.then((outcome) => waiter.release(outcome.token));
-  assert.equal(await authority.observeParticipantVerify('participant:baton:seat2'), null,
-    'a drained queue returns the row to absence');
 });
 
 function blockVerifyBudget(root, t) {

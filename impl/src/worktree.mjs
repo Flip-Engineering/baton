@@ -1516,7 +1516,7 @@ export function normalizeSparseCheckoutIdentity(value) {
   return expected;
 }
 
-export function sparseCheckoutCoversPath(identity, path) {
+function sparseCheckoutCoversPath(identity, path) {
   const normalized = normalizeSparseCheckoutIdentity(identity);
   if (normalized.mode === 'full') return true;
   return normalized.paths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
@@ -2665,7 +2665,7 @@ function commitEnv(author, committer) {
 /** The lane scaffolding that is never repository content: the brief the seat was handed, and the
  * deployment's own `.baton/` custody tree. A squash that carried either would land one lane's
  * private scaffolding into every other lane's checkout. */
-export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
+const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
 
 /** Issue #562: the identity the deployment's own effective-tree snapshot commits under. That
  * snapshot is a lane worktree's BASE (application-deployment.mjs `repositorySnapshot`), so its tree

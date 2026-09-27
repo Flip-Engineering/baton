@@ -7381,10 +7381,6 @@ export class SwarmRuntime {
         refuse(message, 'integrate_conflict', detail); break;
       case 'integrate_gates_red':
         refuse(message, 'integrate_gates_red', detail); break;
-      // Issue #459: the gate run could not take the host verify lease within its bound. The landing
-      // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
-      case 'integrate_gates_busy':
-        refuse(message, 'integrate_gates_busy', detail); break;
       // Issue #558: the landing cannot publish — the deployment declares no shared remote, or
       // the declared remote was unreachable or refused the push (the local move is rolled back,
       // so the target holds no unpublished squash). A landing that cannot publish never reports

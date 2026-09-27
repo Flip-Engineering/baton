@@ -3770,8 +3770,8 @@ export function swarmIntegrationOutcome(view, contributionId, since) {
  * ASYNCHRONOUS by design: its receipt is the start row, and what settles the caller is
  * `swarm.contribution_integrated` or `swarm.integration_failed` on the contribution row. So a
  * landing that outlives the CLI's request bound is still observable instead of lost to a
- * transport refusal — and a refusal the command itself raised (a pre-effect one, or the gate
- * run's `integrate_gates_busy`) prints with its code, exactly as the recruit leg prints one. */
+ * transport refusal — and a refusal the command itself raised (a pre-effect one) prints with its
+ * code, exactly as the recruit leg prints one. */
 export async function followSwarmIntegrate(parsed, client, options = {}) {
   let integrate = null;
   let refusal = null;

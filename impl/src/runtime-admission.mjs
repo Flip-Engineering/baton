@@ -45,12 +45,12 @@ import { resolveWorkerPolicy } from './worker-policy.mjs';
 
 export const PHYSICAL_LOG_APPENDS = new WeakMap();
 
-export const ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS = new Set([
+const ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS = new Set([
   'answer_decision', 'candidate_selection', 'workflow_revision', 'workflow_recovery',
   'session_preservation', 'turn_checkpoint',
 ]);
 
-export const ATTENTION_PUSH_INBOX_KINDS = new Set(['approval', 'question', 'blocked', 'stalled', 'budget_alarm']);
+const ATTENTION_PUSH_INBOX_KINDS = new Set(['approval', 'question', 'blocked', 'stalled', 'budget_alarm']);
 
 export class DependencyCycleError extends Error {
   constructor(message) {
@@ -59,7 +59,7 @@ export class DependencyCycleError extends Error {
   }
 }
 
-export const COORDINATION_MUTATORS = new Set([
+const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
   'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
   'admitRunResultExport', 'completeRunResultExport',
@@ -81,7 +81,7 @@ export const COORDINATION_MUTATORS = new Set([
   'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
 ]);
 
-export const DEFAULT_DRAIN_POLICY = Object.freeze({ pollMs: 10 });
+const DEFAULT_DRAIN_POLICY = Object.freeze({ pollMs: 10 });
 
 export function normalizeDrainPolicy(value) {
   const policy = value ?? DEFAULT_DRAIN_POLICY;
@@ -113,11 +113,11 @@ export function guidanceSender(actor) {
     label: root ? 'the root orchestrator' : named ? actor : 'an unnamed sender' });
 }
 
-export function guidanceSenderLabel(actor) {
+function guidanceSenderLabel(actor) {
   return guidanceSender(actor).label;
 }
 
-export function normalizedDecisionText(value, field, maxBytes) {
+function normalizedDecisionText(value, field, maxBytes) {
   if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value) > maxBytes || value.includes('\0')) {
     const error = new TypeError(`reuse decision ${field} is invalid`); error.code = 'invalid_reuse_decision'; throw error;
   }
@@ -131,7 +131,7 @@ export function bestEffort(promise, reason, record) {
   });
 }
 
-export function bestEffortSync(run, reason, record) {
+function bestEffortSync(run, reason, record) {
   try {
     return run();
   } catch (error) {
@@ -140,7 +140,7 @@ export function bestEffortSync(run, reason, record) {
   }
 }
 
-export function cardAcceptsExactModel(card, model) {
+function cardAcceptsExactModel(card, model) {
   const selection = card?.modelSelection;
   if (!selection || selection.mode !== 'exact') return false;
   if (Array.isArray(selection.available)) return selection.available.includes(model);
@@ -182,11 +182,11 @@ export function resolveCardModel(card, requested, policy, { explicit = false } =
   return { ok: false, reason: 'model_policy_unmatched' };
 }
 
-export function defaultAccept(verdict, acceptOpts) {
+function defaultAccept(verdict, acceptOpts) {
   return !!(verdict && verdict.reverified === true && verdict.observedExit === acceptOpts.expectExit);
 }
 
-export const SUPERVISED_STREAM_TAIL_BYTES = MAX_STDERR_TAIL_BYTES;
+const SUPERVISED_STREAM_TAIL_BYTES = MAX_STDERR_TAIL_BYTES;
 
 export class SupervisedProcesses {
   constructor() {

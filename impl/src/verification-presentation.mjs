@@ -37,13 +37,6 @@ export function renderSuiteVerdictHeadline(formatted, coverage) {
   );
 }
 
-/** A verdict document is the acceptance only when it is not a subset run. A document
- * that predates the marker (no coverage field) keeps its old meaning: only an
- * explicit `subset` disqualifies. */
-export function isSuiteAcceptanceVerdict(document) {
-  return document?.coverage?.kind !== 'subset';
-}
-
 /** The consumer's own rendered line for a subset verdict document: one sentence naming
  * the subset. A full (acceptance) verdict renders nothing. */
 export function renderSuiteCoverageNote(document) {
