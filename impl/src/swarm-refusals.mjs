@@ -162,6 +162,9 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // landing never blocked on it (the resident answers throughout) and never half-ran a gate set:
   // it refuses typed, naming the holder the request waited behind, and the scratch checkout goes.
   integrate_gates_busy: row(409, ['runtime'], 'the host verify lease could not be taken within its bound, so the gate run never started'),
+  // Issue #576: the resident stopped while the landing was in flight — the drain cancelled and
+  // reaped its gate runners, and the abandoned attempt is recorded so the lead can retry it.
+  integrate_landing_abandoned: row(409, ['runtime'], 'the resident stopped while this landing was in flight, so its gate run was cancelled and the attempt abandoned'),
   // Issue #558: the landing publishes the landed ref to the deployment's DECLARED shared remote
   // after the fast-forward. A landing that cannot publish refuses instead of reporting a local
   // success: no declaration (`advanced.integration.publishRemote` absent), or the declared
