@@ -24,13 +24,11 @@ import {
 
 const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'latin1');
 
-// docs/36 §4.1 — the banned surface verbs (synonyms), with token normalization (R-CX-13):
-// `stop_member` and `stop-member` are ONE token. The canonical tree must not contain any.
+// docs/36 §4.1 — the banned surface verbs (synonyms). The canonical tree must not contain any.
 const BANNED_VERB_FIXTURES = [
   'run.show', 'run.status', 'run.inspect', 'run.act', 'run.notify', 'run.follow',
   'run.wait', 'run.progress', 'run.events', 'run.output', 'run.episode', 'run.steer',
-  'baton_run_steer', 'run_steer', 'fleet_run_steer', 'baton run steer', 'run.stop-member',
-  'run.stop_member', 'stop-member', 'stop_member',
+  'baton_run_steer', 'run_steer', 'fleet_run_steer', 'baton run steer',
 ];
 
 test('M5-1: the per-deployment MCP schema mutation is fixed — no behavior divergence remains', () => {
@@ -43,10 +41,7 @@ test('M5-2: the C4 banned-token lint rejects legacy synonym verbs and passes the
   for (const fixture of BANNED_VERB_FIXTURES) {
     assert.equal(checkBannedTokens([fixture]).length, 1, `${fixture} carries a banned verb token`);
   }
-  // Token normalization (R-CX-13): stop_member and stop-member are the same banned token.
-  assert.equal(checkBannedTokens(['run.stop-member'])[0]?.verb, checkBannedTokens(['run.stop_member'])[0]?.verb);
-  assert.equal(checkBannedTokens(['run.stop-member'])[0]?.verb, 'stop-member');
-  // Canonical verbs that merely CONTAIN banned-letter runs are clean (stop ≠ stop-member).
+  // Canonical verbs that merely CONTAIN banned-letter runs are clean.
   assert.deepEqual(checkBannedTokens(['run.member.stop', 'run.send', 'run.view', 'run.watch']), []);
   // The canonical tree — every operation key and its mechanically derived surface names, minus the
   // names the lint records as DELIBERATE exceptions (MCP-W1's `waves.progress`, and issue #311's

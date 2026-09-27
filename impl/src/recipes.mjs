@@ -446,25 +446,6 @@ async function startRun(baton, manifest, opts, merged) {
   return { ...receipt, manifest };
 }
 
-// Loaded manifest → attach path: bind the prior wave's EXACT rendered members (the live
-// waves.attach rediscovery contract) and harvest. Zero runs.start — attach binds existing runs.
-async function attachRun(baton, manifest) {
-  const wave = await baton.waves.attach(manifest.waveId, manifest.renderedMembers);
-  const outcomes = await wave.settle({ timeoutMs: ATTACH_SETTLE_TIMEOUT_MS });
-  const stop = await wave.close({ reason: 'Recipes invocation manifest attached.' });
-  const evidence = wave.evidence();
-  return {
-    ...evidence,
-    remainingCount: stop?.remainingCount ?? evidence.stops.length,
-    residueUnknown: stop?.residueUnknown ?? false,
-    basis: 'attached',
-    nudges: [],
-    claims: [],
-    salt: manifest.salt,
-    pumpDrained: evidence.pumpDrained === true,
-    manifest,
-  };
-}
 
 // baton.recipes.run(recipe, {task, options}) — the generic runner. The recipe is data admitted once;
 // the manifest is the identity boundary; the driver is the shipped createWaveDriver.
@@ -473,11 +454,6 @@ async function runRecipe(baton, rawRecipe, invocation) {
   const opts = validateRunOptions(invocation);
   const digest = recipeDigest(baseRecipe);
 
-  // Same-key retry: load the durable manifest and attach — never re-start.
-  const existing = opts.manifestPath && existsSync(opts.manifestPath) ? loadManifest(opts.manifestPath) : null;
-  if (existing && existing.idempotencyKey === opts.idempotencyKey) {
-    return attachRun(baton, existing);
-  }
 
   // Fresh mint: merge overrides + re-validate (a post-merge breach refuses before any side effect),
   // then render with ONE salt. The digest is the BASE recipe's — overrides never enter it.

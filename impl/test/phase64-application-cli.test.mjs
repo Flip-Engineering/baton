@@ -67,15 +67,7 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
   assert.deepEqual(interrupt.inputs, { recipient: 'work', reason: 'Review now' });
   assert.equal(parseBatonCli(['run', 'stop', 'run-a', '--reason', 'Cancelled']).name, 'run.stop');
   assert.equal(parseBatonCli(['run', 'evidence', 'run-a']).name, 'run.evidence');
-  assert.equal(parseBatonCli(['run', 'adopt', 'run-a', '--reason', 'Select result']).kind, 'adopt');
-  assert.deepEqual(parseBatonCli(['run', 'review', 'run-a', '--exact', 'grok/grok-4.5@low', '--reason', 'Independent review']).args, {
-    runId: 'run-a', route: { harness: 'grok', model: 'grok-4.5', effort: 'low' }, reason: 'Independent review',
-  });
-  assert.equal(parseBatonCli(['run', 'integrate', 'run-a', '--strategy', 'ff-only', '--reason', 'Reviewed']).kind, 'integrate');
   assert.deepEqual(parseBatonCli(['serve', './deployment.mjs']), { kind: 'serve', configPath: './deployment.mjs' });
-  assert.deepEqual(parseBatonCli(['run', 'recover', 'run-a', '--idempotency-key', 'recover-a']), {
-    kind: 'command', name: 'run.recover', args: { runId: 'run-a' }, idempotencyKey: 'recover-a',
-  });
   assert.throws(() => parseBatonCli(['run', 'follow', 'run-a']), (error) => error.code === 'cli_command_unavailable');
   assert.throws(() => parseBatonCli(['run', 'start', 'x', '--profile', 'p', '--exact', 'gpt-5.6-sol']), /HARNESS\/MODEL@EFFORT/);
 });
@@ -218,39 +210,7 @@ test('UC2b: a named server wait is not raced by a client cut; a command naming n
   assert.equal(client._requestTimeoutForCommand('swarm.watch', { swarmId: 'swarm-a', timeoutMs: 120_000 }), null);
 });
 
-test('UC3: adopt reads terminal evidence then binds its displayed digest without caller-side Git inspection', async () => {
-  const calls = [];
-  const client = {
-    async command(name, args, key) {
-      calls.push({ name, args, key });
-      if (name === 'run.evidence') return { runId: 'run-a', manifestDigest: D, result: { nodeKey: 'work', sha: 'b'.repeat(40) } };
-      return { runId: 'run-a', phase: 'work_completed', result: { state: 'adopted' } };
-    },
-  };
-  const parsed = parseBatonCli(['run', 'adopt', 'run-a', '--reason', 'Independent result selected', '--idempotency-key', 'adopt-a']);
-  const result = await runBatonCli(parsed, client);
-  assert.equal(result.result.state, 'adopted');
-  assert.deepEqual(calls, [
-    { name: 'run.evidence', args: { runId: 'run-a' }, key: 'adopt-a:evidence' },
-    { name: 'run.adopt', args: { runId: 'run-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: D, reason: 'Independent result selected' }, key: 'adopt-a:adopt' },
-  ]);
-});
 
-test('UC3b: integrate reads fresh terminal evidence and binds its displayed digest', async () => {
-  const calls = [];
-  const client = { command: async (name, args, key) => {
-    calls.push({ name, args, key });
-    if (name === 'run.evidence') return { manifestDigest: D };
-    return { runId: 'run-a', phase: 'completed', integration: { state: 'integrated' } };
-  } };
-  const parsed = parseBatonCli(['run', 'integrate', 'run-a', '--strategy', 'ff-only', '--reason', 'Reviewed result', '--idempotency-key', 'integrate-a']);
-  const result = await runBatonCli(parsed, client);
-  assert.equal(result.phase, 'completed');
-  assert.deepEqual(calls, [
-    { name: 'run.evidence', args: { runId: 'run-a' }, key: 'integrate-a:evidence' },
-    { name: 'run.integrate', args: { runId: 'run-a', evidenceDigest: D, strategy: 'ff-only', reason: 'Reviewed result' }, key: 'integrate-a:integrate' },
-  ]);
-});
 
 test('UC3c: follow derives its wait from the admitted profile and streams bounded cursor pages until attention is required', async () => {
   const calls = [];

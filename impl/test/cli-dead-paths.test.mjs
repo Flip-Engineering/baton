@@ -1,6 +1,6 @@
 // Control-surface contract v2 CS-2 — dead-path resolution (red suite).
 // Authority: docs/reference/evidence/control-surface-2026-07-31/control-surface-decisions.md (v2).
-// (a) run resume → run.resume_work; (b) five web-admitted verbs through whitelist;
+// (b) three web-admitted verbs through whitelist;
 // (c) context eval parse-time typed refusal OR host dispatch (pinned); (d) baton_runs
 // advertised or removed from dispatch (pinned); (e) prior verbs still dispatch.
 
@@ -28,28 +28,7 @@ function mockWebClient(calls) {
   };
 }
 
-// ── (a) run resume reaches run.resume_work ──────────────────────────────────
-
-test('CS2-a: parseBatonCli(run resume) reaches run.resume_work and dispatches via mock client', async () => {
-  const parsed = parseBatonCli([
-    'run', 'resume', 'run-a', '--reason', 'Continue preserved work',
-    '--idempotency-key', 'resume-a',
-  ]);
-  assert.equal(parsed.kind, 'command');
-  assert.equal(parsed.name, 'run.resume_work');
-  assert.deepEqual(parsed.args, {
-    runId: 'run-a', reason: 'Continue preserved work',
-  });
-  assert.equal(parsed.idempotencyKey, 'resume-a');
-
-  const calls = [];
-  const result = await runBatonCli(parsed, mockWebClient(calls));
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].name, 'run.resume_work');
-  assert.equal(result.name, 'run.resume_work');
-});
-
-// ── (b) five web-admitted verbs through the CLI web-client whitelist ────────
+// ── (b) three web-admitted verbs through the CLI web-client whitelist ───────
 
 const WEB_ADMITTED = [
   {
@@ -66,16 +45,6 @@ const WEB_ADMITTED = [
     label: 'run workstreams',
     argv: ['run', 'workstreams', 'run-a', '--idempotency-key', 'ws-a'],
     name: 'run.workstreams',
-  },
-  {
-    label: 'run notify → run.workstream.notify',
-    argv: ['run', 'notify', 'run-a', 'work', 'nudge text', '--idempotency-key', 'nt-a'],
-    name: 'run.workstream.notify',
-  },
-  {
-    label: 'run stop-member → run.workstream.stop',
-    argv: ['run', 'stop-member', 'run-a', 'work', '--idempotency-key', 'sm-a'],
-    name: 'run.workstream.stop',
   },
 ];
 

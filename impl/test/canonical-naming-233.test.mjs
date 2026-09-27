@@ -75,18 +75,14 @@ const RETAINED_MCP_LEGACY_TOOLS = Object.freeze([
   ['baton_run_inspect', 'run.inspect'],
   ['baton_run_episode', 'run.episode'],
   ['baton_run_workstreams', 'run.workstreams'],
-  ['baton_workstream_notify', 'run.workstream.notify'],
-  ['baton_workstream_stop', 'run.workstream.stop'],
   ['baton_run_act', 'run.act'],
   ['baton_run_stop', 'run.stop'],
-  ['baton_waves_attach', 'waves.attach'],
 ]);
 
 // The M4b canonical-grammar sibling keys (docs/36 §9 M4b): each renders beside its legacy
 // baton_* sibling under the ONE shared deriveSurfaceNames. Key set pinned; names derived.
 const M4B_SIBLING_KEYS = Object.freeze([
-  'run.do', 'run.view', 'run.member.view', 'run.member.send', 'run.member.stop',
-  'application.help',
+  'run.do', 'run.view', 'run.member.view', 'application.help',
 ]);
 
 function envelopeFor(command, args = {}) {

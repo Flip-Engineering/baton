@@ -153,7 +153,7 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.match(value.digest, /^[a-f0-9]{64}$/u);
   assert.deepEqual(Object.keys(value.operations).sort(), [
     'application.help', 'run.act', 'run.episode', 'run.inspect', 'run.start', 'run.stop',
-    'run.workstream.notify', 'run.workstream.stop', 'run.workstreams', 'runs.list',
+    'run.workstreams', 'runs.list',
   ]);
   assert.deepEqual(value.depths, [
     'outline', 'index', 'section', 'item', 'content', 'evidence',
@@ -564,62 +564,6 @@ test('AX4c: a provider wire failure has one safe actionable cause across outline
   }
 });
 
-test('AX5: result adoption and export are application-owned action cascades with no caller coordinates', async (t) => {
-  const f = fixture('result-actions', {
-    delayMs: 0,
-    files: { 'impl/recursive-proof.txt': 'Baton improved Baton through run.act.\n' },
-  });
-  cleanup(t, f.application);
-  const runId = 'run-phase67-result-actions';
-  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
-  let outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
-  const approve = outline.outline.actions.find((action) => action.kind === 'approve_plan');
-  outline = await f.application.command('run.act', {
-    runId, actionId: approve.actionId, inputs: {},
-  }, principal('owner'));
-
-  let adopt = null;
-  for (let attempt = 0; attempt < 200 && !adopt; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
-    adopt = outline.outline.actions.find((action) => action.kind === 'adopt_result');
-  }
-  assert.ok(adopt, 'adoption becomes available only after Baton can reverify the preserved result');
-  assert.equal(outline.outline.phase, 'work_completed');
-  assert.equal(outline.outline.progress.current, 'result');
-  assert.deepEqual(outline.outline.progress.stages.find((stage) => stage.key === 'semantic_review'), {
-    key: 'semantic_review', label: 'Independent semantic review', state: 'complete',
-    detail: 'Review not required by selected profile',
-  });
-  assert.equal(outline.outline.progress.stages.find((stage) => stage.key === 'result').state, 'active');
-  assert.deepEqual(Object.keys(adopt.inputSchema.properties), ['reason']);
-  assert.deepEqual([...adopt.serverDerived].sort(), ['evidenceDigest', 'nodeKey', 'resultSha']);
-
-  outline = await f.application.command('run.act', {
-    runId,
-    actionId: adopt.actionId,
-    inputs: { reason: 'Adopt the exact mechanically verified recursive result.' },
-  }, principal('owner'));
-  const exportResult = outline.outline.actions.find((action) => action.kind === 'export_result');
-  assert.ok(exportResult);
-  assert.deepEqual(Object.keys(exportResult.inputSchema.properties), []);
-  assert.deepEqual([...exportResult.serverDerived].sort(), ['evidenceDigest', 'exportId', 'nodeKey', 'resultSha']);
-
-  outline = await f.application.command('run.act', {
-    runId, actionId: exportResult.actionId, inputs: {},
-  }, principal('owner'));
-  assert.equal(outline.outline.phase, 'completed');
-  assert.equal(outline.terminal, true);
-  const result = await f.application.command('run.inspect', {
-    runId, depth: 'section', section: 'result',
-  }, principal('owner'));
-  const delivery = await f.application.command('run.inspect', {
-    runId, depth: 'section', section: 'delivery',
-  }, principal('owner'));
-  assert.equal(result.section.items[0].value.state, 'adopted');
-  assert.equal(delivery.section.items[0].value.state, 'completed');
-  assert.match(delivery.section.items[0].value.exportId, /^[a-f0-9]{64}$/u);
-});
 
 test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inventory is compact and advanced tools are opt-in', async (t) => {
   const f = fixture('projection');

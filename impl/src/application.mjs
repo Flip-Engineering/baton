@@ -56,7 +56,6 @@ import {
   APPLICATION_PROFILE_RECORD_KIND,
   APPLICATION_RUN_TERMINAL_PHASES,
   APPLICATION_STEERING_REGISTERED_KIND,
-  APPLICATION_WAVE_DRIVER_DETACHED_KIND,
   APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND,
   APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND,
   APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND,
@@ -88,7 +87,6 @@ import {
   adoptionState,
   applicationError,
   assertResultIntentCoherence,
-  assertWorkflowFeedbackAnchors,
   authority,
   boundedAttentionText,
   boundedBlockedInteractionSummary,
@@ -117,7 +115,6 @@ import {
   normalizeProfileRegistryEvent,
   normalizeRoute,
   normalizeSemanticAuthority,
-  normalizeWorkflowFeedback,
   objectiveFirstLine,
   objectiveReach,
   objectiveResultPolicy,
@@ -265,45 +262,21 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'application.help': Object.freeze({ args: Object.freeze(['topic', 'depth', 'runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'runs.list': Object.freeze({ args: Object.freeze(['continuationCursor']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.start': Object.freeze({ args: Object.freeze(['intent']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
-  // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
-  // byte-stable in application-semantics.mjs.
-  // mintWaveDetached + waveId are declared-hidden (S-1 v2 transportHidden): present in the
-  // in-process validator, excluded from advertised MCP/web schemas via transportHidden.
-  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached', 'waveId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true, transportHidden: Object.freeze(['mintWaveDetached', 'waveId']) }),
+  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
-  'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.workstream.stop': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.act': Object.freeze({ args: Object.freeze(['runId', 'actionId', 'inputs']), capabilities: Object.freeze([]), semanticCapabilities: true, web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.status': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.follow': Object.freeze({ args: Object.freeze(['runId', 'afterCursor', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.approve': Object.freeze({ args: Object.freeze(['runId', 'planDigest']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs', 'until']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'evidence.search': Object.freeze({ args: Object.freeze(['swarmId', 'query', 'participantId', 'kind', 'path', 'afterSeq']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   // #317 (docs/50): the provider-services read — the configured services, their models and the
   // routes derived from them, with subscription-window usage where declared or observed.
   'services.list': Object.freeze({ args: Object.freeze(['provider']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
-  'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.recover': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  // S-1 v2: portable atomic attach-and-harvest. Observe-class; no emergency_stop; returns a
-  // closed {outcomes, waveDriverDetached} payload (no live handle over MCP/web/CLI).
-  'waves.attach': Object.freeze({
-    args: Object.freeze(['waveId', 'members', 'timeoutMs', 'repoRoot', 'mintWaveDetached']),
-    capabilities: Object.freeze(['observe']),
-    web: true, mcp: true, mcpStateful: false, reconcilable: true,
-    transportHidden: Object.freeze(['mintWaveDetached']),
-  }),
-  'application.shutdown': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['emergency_stop']), web: false, mcp: false, mcpStateful: false, reconcilable: false }),
 });
 
 // 2026-09-14 audit (U-N5/U-E3): the command table's argument lists and the canonical operation
@@ -847,60 +820,6 @@ function normalizeStop(value) {
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
 
-function normalizeAdopt(value) {
-  exactObject(value, ['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason'], 'application_adopt_invalid', 'Run adoption');
-  if (!validId(value.runId) || !validId(value.nodeKey)
-    || !/^[a-f0-9]{40,64}$/u.test(value.resultSha ?? '')
-    || !/^[a-f0-9]{64}$/u.test(value.evidenceDigest ?? '')
-    || !validText(value.reason)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run adoption request is invalid', 'application_adopt_invalid');
-  }
-  return deepFreeze({ ...clone(value), reason: value.reason.normalize('NFKC').trim() });
-}
-
-function normalizeRetryVerification(value) {
-  exactObject(value, ['runId', 'reason'], 'application_retry_invalid', 'Run verification retry');
-  if (!validId(value.runId) || !validText(value.reason)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run verification retry request is invalid', 'application_retry_invalid');
-  }
-  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
-}
-
-// PS5: resume_work is coordinate-free. The caller supplies only a bounded audit reason — never a
-// Git ref, SHA, worktree path, harness command, provider credential, budget, or storage ceiling.
-function normalizeResumeWork(value) {
-  exactObject(value, ['runId', 'reason'], 'application_resume_invalid', 'Run resume');
-  if (!validId(value.runId) || !validText(value.reason)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run resume request is invalid', 'application_resume_invalid');
-  }
-  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
-}
-
-function normalizeReviewRequest(value) {
-  exactObject(value, ['runId', 'route', 'reason'], 'application_review_invalid', 'Run review');
-  if (!validId(value.runId) || !validText(value.reason)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run review request is invalid', 'application_review_invalid');
-  }
-  return deepFreeze({
-    runId: value.runId,
-    route: normalizeRoute(value.route, 'application_review_invalid'),
-    reason: value.reason.normalize('NFKC').trim(),
-  });
-}
-
-function normalizeIntegrationRequest(value) {
-  exactObject(value, ['runId', 'evidenceDigest', 'strategy', 'reason'], 'application_integration_invalid', 'Run integration');
-  if (!validId(value.runId) || !/^[a-f0-9]{64}$/u.test(value.evidenceDigest ?? '')
-    || !['ff-only', 'structured'].includes(value.strategy) || !validText(value.reason)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run integration request is invalid', 'application_integration_invalid');
-  }
-  return deepFreeze({ ...clone(value), reason: value.reason.normalize('NFKC').trim() });
-}
 
 
 
@@ -1176,12 +1095,7 @@ export function validateApplicationCommandArgs(name, args) {
         || !/^[A-Za-z0-9_-]+$/u.test(args.pageCursor)))
       || (args.recipient !== undefined && !validId(args.recipient))
       || (args.cursor !== undefined && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))
-      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))
-      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)
-      // 93B (W93-4): waveId rides ONLY with the attach side-channel — it asserts the wave the
-      // caller is attaching, so the mint site can refuse a binding mismatch with a typed code.
-      || (args.waveId !== undefined && (!validId(args.waveId) || args.mintWaveDetached !== true))
-      || (args.mintWaveDetached === true && args.waveId === undefined)) {
+      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))) {
       throw applicationError('Run inspection request is invalid', 'application_inspect_invalid');
     }
     if (args.waitMs !== undefined && args.cursor === undefined) {
@@ -1241,33 +1155,6 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
-  if (name === 'run.workstream.notify') {
-    const allowed = new Set(definition.args);
-    if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some((key) => !allowed.has(key))
-      || !validId(args.runId) || !validId(args.role) || args.role === 'work'
-      || (args.generation !== undefined
-        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
-      || (args.delivery !== undefined && !['nudge', 'now', 'turn'].includes(args.delivery))) {
-      throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
-    }
-    if (typeof args.message !== 'string' || args.message.length === 0 || args.message.includes('\0')) {
-      throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
-    }
-    return true;
-  }
-  if (name === 'run.workstream.stop') {
-    const allowed = new Set(definition.args);
-    if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some((key) => !allowed.has(key))
-      || !validId(args.runId) || !validId(args.role) || args.role === 'work'
-      || (args.generation !== undefined
-        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
-      || (args.reason !== undefined && !validText(args.reason))) {
-      throw applicationError('Workstream stop is invalid', 'application_workstream_stop_invalid');
-    }
-    return true;
-  }
   if (name === 'run.wait') {
     // docs/36 §4.1 read row / R-OP-9 — `until` is an optional condition selector, so run.wait
     // validates as a subset (like run.inspect) rather than an exact-args command; without it the
@@ -1289,38 +1176,6 @@ export function validateApplicationCommandArgs(name, args) {
     if (!validId(args.runId) || !validId(args.actionId) || !args.inputs
       || typeof args.inputs !== 'object' || Array.isArray(args.inputs)) {
       throw applicationError('Run action request is invalid', 'application_action_invalid');
-    }
-    return true;
-  }
-  if (name === 'waves.attach') {
-    const allowed = new Set(definition.args);
-    if (!args || typeof args !== 'object' || Array.isArray(args)
-      || Object.keys(args).some((key) => !allowed.has(key))
-      || typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
-      || !Array.isArray(args.members) || args.members.length === 0
-      || (args.timeoutMs !== undefined
-        && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0))
-      || (args.repoRoot !== undefined
-        && (typeof args.repoRoot !== 'string' || args.repoRoot.length < 1 || args.repoRoot.length > 4096))
-      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)) {
-      throw applicationError('Wave attach request is invalid', 'application_wave_attach_invalid');
-    }
-    const roles = new Set();
-    for (const member of args.members) {
-      // The member objective is SHAPE-checked only (non-empty string): the wave.member.objective
-      // byte law admits oversize with spill at the wave-start admission (Decision 2 / OQ5) — the
-      // char wall must never survive behind the driver advisory (v1.2 blue-team blocker 4).
-      if (!member || typeof member !== 'object' || Array.isArray(member)
-        || typeof member.role !== 'string' || !validId(member.role)
-        || typeof member.objective !== 'string' || member.objective.length < 1
-        || Object.keys(member).some((key) => !['role', 'objective'].includes(key))) {
-        throw applicationError('Wave attach member is invalid', 'application_wave_attach_invalid');
-      }
-      if (roles.has(member.role)) {
-        throw applicationError('Wave attach member roles contain duplicates',
-          'application_wave_attach_invalid');
-      }
-      roles.add(member.role);
     }
     return true;
   }
@@ -1369,28 +1224,10 @@ export function validateApplicationCommandArgs(name, args) {
     }
     normalizeAnswer(args.answer);
   }
-  if (name === 'run.feedback') {
-    if (!validId(args.runId) || !validId(args.role)) {
-      throw applicationError('Workflow feedback target is invalid',
-        'application_workflow_feedback_invalid');
-    }
-    normalizeWorkflowFeedback(args.feedback);
-  }
   if (name === 'run.steer') normalizeSteer(args);
   if (name === 'run.stop') normalizeStop(args);
   if (name === 'run.evidence' && !validId(args.runId)) {
     throw applicationError('Run evidence target is invalid', 'application_evidence_invalid');
-  }
-  if (name === 'run.adopt') normalizeAdopt(args);
-  if (name === 'run.retry_verification') normalizeRetryVerification(args);
-  if (name === 'run.resume_work') normalizeResumeWork(args);
-  if (name === 'run.review') normalizeReviewRequest(args);
-  if (name === 'run.integrate') normalizeIntegrationRequest(args);
-  if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
-    throw applicationError('Run export target is invalid', 'application_export_invalid');
-  }
-  if (name === 'run.recover' && !validId(args.runId)) {
-    throw applicationError('Run recovery target is invalid', 'application_recovery_invalid');
   }
   return true;
 }
@@ -2973,46 +2810,6 @@ export class BatonApplication {
       await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
       return true;
     }
-    if (name === 'run.adopt') {
-      const request = normalizeAdopt(args);
-      await this._authorize(name, principal, request.runId, {
-        nodeKey: request.nodeKey, resultSha: request.resultSha,
-        evidenceDigest: request.evidenceDigest, reasonDigest: digest(request.reason),
-      });
-      return true;
-    }
-    if (name === 'run.retry_verification') {
-      const request = normalizeRetryVerification(args);
-      await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
-      return true;
-    }
-    if (name === 'run.resume_work') {
-      const request = normalizeResumeWork(args);
-      await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
-      return true;
-    }
-    if (name === 'run.review') {
-      const request = normalizeReviewRequest(args);
-      await this._authorize(name, principal, request.runId, {
-        route: request.route, reasonDigest: digest(request.reason),
-      });
-      return true;
-    }
-    if (name === 'run.integrate') {
-      const request = normalizeIntegrationRequest(args);
-      await this._authorize(name, principal, request.runId, {
-        evidenceDigest: request.evidenceDigest, strategy: request.strategy, reasonDigest: digest(request.reason),
-      });
-      return true;
-    }
-    if (name === 'run.export') {
-      await this._authorize(name, principal, args.runId, { evidenceDigest: args.evidenceDigest });
-      return true;
-    }
-    if (name === 'run.recover') {
-      await this._authorize(name, principal, args.runId, {});
-      return true;
-    }
     await this._authorize(name === 'run.wait' ? 'run.status' : name, principal, args.runId, {});
     return true;
   }
@@ -4112,187 +3909,6 @@ export class BatonApplication {
     return this._buildView(current, observer, options);
   }
 
-  async recover(runId, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    if (!validId(runId)) throw applicationError('Run recovery target is invalid', 'application_recovery_invalid');
-    const principal = normalizePrincipal(rawPrincipal, 'recovery principal');
-    await this._authorize('run.recover', principal, runId, {});
-    const current = this._findRun(runId);
-    this._assertRunMutable(runId);
-    if (!current.plan || current.approval?.disposition !== 'approved') {
-      throw applicationError('Run recovery requires an approved current Plan', 'application_recovery_unavailable');
-    }
-    const policy = current.profile.recoveryPolicy;
-
-    // A closed preservation receipt is already bound to the approved Plan task, exact route,
-    // worktree, native session, and Run generation. Restart recovery therefore discovers its
-    // target from durable Run state; accepting any of those coordinates from the caller would
-    // weaken the receipt. Reattachment is attach-only and does not admit a provider turn.
-    const preservedHandles = this.driver.coordinator.list().filter((handle) => (
-      handle.runId === runId
-      && handle.status === 'orphaned'
-      && handle.sessionPreservation?.state === 'preserved'
-      && handle.sessionPreservation?.transport === 'attached'
-      && handle.sessionRef?.persistence === 'native'
-      && validText(handle.sessionRef?.id, 4_096)
-      && handle.sessionContext && typeof handle.sessionContext === 'object'
-    ));
-    if (preservedHandles.length > 1) {
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.recover', result: 'operator_required' },
-        recovery: {
-          state: 'operator_required', reason: 'multiple_preserved_members', attempt: 0,
-          targetCount: preservedHandles.length, target: null, dispatchDisposition: null,
-        },
-      });
-    }
-    if (preservedHandles.length === 1) {
-      const outcome = await this.driver.coordinator.recover(preservedHandles[0].id, {
-        actor: principal.actor,
-        ...(Number.isSafeInteger(policy.timeoutMs) && policy.timeoutMs > 0
-          ? { timeoutMs: policy.timeoutMs } : {}),
-      });
-      const result = outcome?.result ?? 'recovery_failed';
-      const recovery = outcome?.ok === true ? {
-        state: 'interrupted', reattachment: 'confirmed', attempt: 1,
-        targetCount: 1, target: null, dispatchDisposition: 'attach_only',
-        cleanup: { state: 'owned' },
-      } : {
-        state: outcome?.reap === 'unconfirmed' ? 'attention' : 'failed',
-        reason: result, attempt: 1, targetCount: 1, target: null,
-        dispatchDisposition: 'attach_only', reap: outcome?.reap ?? 'unconfirmed',
-      };
-      return this._buildView(this._findRun(runId), this.principals.observer, {
-        action: { command: 'run.recover', result }, recovery,
-      });
-    }
-
-    if (policy.mode !== 'manual' || !policy.eligibleSessionModes.includes('resume')) {
-      throw applicationError('Run recovery is unavailable for this deployment profile', 'application_recovery_unavailable');
-    }
-
-    const projection = await this._goalPlanStatus(current, this.principals.observer);
-    const projectedByKey = new Map(projection.nodes.map((node) => [node.key, node]));
-    const recoveryNodes = current.plan.nodes.filter((node) => {
-      const projected = projectedByKey.get(node.key);
-      return projected?.state === 'ready'
-        && node.capabilities.includes('native_session_recovery')
-        && node.effects.includes('provider_call')
-        && node.deps.length > 0;
-    });
-    if (recoveryNodes.length > 1) {
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.recover', result: 'operator_required' },
-        recovery: {
-          state: 'operator_required', reason: 'multiple_eligible_plan_nodes', attempt: 0,
-          targetCount: 0, target: null, dispatchDisposition: null,
-        },
-      });
-    }
-    const recoveryNode = recoveryNodes[0] ?? null;
-    const predecessorTaskIds = new Set((recoveryNode?.deps ?? [])
-      .map((key) => projectedByKey.get(key))
-      .filter((node) => node?.state === 'accepted' && validText(node.taskId, 4_096))
-      .map((node) => node.taskId));
-    const handles = recoveryNode ? this.driver.coordinator.list().filter((handle) => (
-      handle.runId === runId
-      && predecessorTaskIds.has(handle.taskId)
-      && handle.status === 'orphaned'
-      && handle.sessionRef?.persistence === 'native'
-      && validText(handle.sessionRef?.id, 4_096)
-      && handle.sessionContext && typeof handle.sessionContext === 'object'
-      && planRouteMatches(recoveryNode.routes, {
-        vendor: handle.vendor, model: handle.modelResolved, effort: handle.effortResolved,
-      })
-    )) : [];
-    if (handles.length === 0) {
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.recover', result: 'unavailable' },
-        recovery: {
-          state: 'unavailable', reason: 'no_eligible_target', attempt: 0,
-          targetCount: 0, target: null, dispatchDisposition: null,
-        },
-      });
-    }
-    if (handles.length > 1) {
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.recover', result: 'operator_required' },
-        recovery: {
-          state: 'operator_required', reason: 'multiple_eligible_targets', attempt: 0,
-          targetCount: handles.length, target: null, dispatchDisposition: null,
-        },
-      });
-    }
-    const selected = handles[0];
-
-    const gate = {
-      goalId: current.goal.goalId,
-      goalVersion: current.goal.version,
-      goalDigest: current.goal.digest,
-      planId: current.plan.planId,
-      planVersion: current.plan.version,
-      planDigest: current.plan.digest,
-      nodeKey: recoveryNode.key,
-      expectedDispatchVersion: 0,
-      capabilities: clone(recoveryNode.capabilities),
-      effects: clone(recoveryNode.effects),
-      ...(Object.hasOwn(recoveryNode, 'requiredEffects') ? { requiredEffects: clone(recoveryNode.requiredEffects) } : {}),
-    };
-    if (typeof this.driver.coordinator.recoverPlanBound !== 'function') {
-      throw applicationError('application driver lacks Plan recovery authority', 'application_recovery_unavailable');
-    }
-    const outcome = await this.driver.coordinator.recoverPlanBound(selected.id, {
-      actor: principal.actor,
-      gate,
-      maxAttempts: policy.maxAttempts,
-      profileDigest: current.profile.digest,
-      recoveryPolicyDigest: digest(policy),
-      runId,
-      timeoutMs: policy.timeoutMs,
-    });
-    const result = outcome?.result ?? 'recovery_failed';
-    const recoveredHandle = outcome?.handle ?? null;
-    const routeRequested = {
-      harness: selected.vendor,
-      model: selected.modelResolved,
-      effort: selected.effortResolved,
-    };
-    const route = outcome?.route ?? {
-      requested: routeRequested,
-      resolved: recoveredHandle ? {
-        harness: recoveredHandle.harnessResolved,
-        model: recoveredHandle.modelResolved,
-        effort: recoveredHandle.effortResolved,
-      } : null,
-      observed: recoveredHandle ? {
-        harness: recoveredHandle.harnessResolved,
-        model: recoveredHandle.modelObserved,
-        effort: recoveredHandle.effortObserved,
-      } : null,
-    };
-    const recovery = outcome?.ok === true ? {
-      state: 'working',
-      attempt: outcome.attempt ?? 0,
-      target: { workerId: selected.id, taskId: outcome.taskId ?? recoveredHandle?.taskId ?? null },
-      dispatchDisposition: outcome.dispatchDisposition
-        ?? this.driver.coordination.recoveryDispatchState?.(selected.id)?.status ?? null,
-      processGeneration: outcome.processGeneration ?? null,
-      route: clone(route),
-      cleanup: clone(outcome.cleanup ?? { state: 'owned' }),
-    } : {
-      state: result === 'dispatch_unknown' ? 'operator_required' : 'failed',
-      reason: result,
-      attempt: outcome?.attempt ?? 0,
-      targetCount: 1,
-      target: null,
-      dispatchDisposition: result === 'dispatch_unknown' ? 'dispatch_unknown' : null,
-    };
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.recover', result },
-      recovery,
-    });
-  }
 
   async evidence(runId, rawObserver) {
     this._assertOpen();
@@ -4380,62 +3996,6 @@ export class BatonApplication {
     return applicationObservation._buildWorkflowEvidence(this, current, view);
   }
 
-  async adopt(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = normalizeAdopt(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'adoption principal');
-    await this._authorize('run.adopt', principal, request.runId, {
-      nodeKey: request.nodeKey, resultSha: request.resultSha,
-      evidenceDigest: request.evidenceDigest, reasonDigest: digest(request.reason),
-    });
-    const current = this._findRun(request.runId);
-    const planNode = current.plan?.nodes.find((node) => node.key === request.nodeKey) ?? null;
-    if (!current.plan || !planNode) {
-      throw applicationError('Run adoption node is unavailable', 'application_adopt_invalid');
-    }
-    if (this._isWorkflowRun(current)) {
-      const workflowView = await this._buildWorkflowView(current, this.principals.observer);
-      if (!workflowView.selection || workflowView.result?.nodeKey !== request.nodeKey
-        || workflowView.result?.sha !== request.resultSha) {
-        throw applicationError('Workflow adoption requires its exact selected Candidate',
-          'application_adopt_invalid');
-      }
-    }
-    if (current.profile.resultPolicy.mode !== 'manual' || current.profile.resultPolicy.maxAdoptedResults !== 1) {
-      throw applicationError('Run profile does not permit result adoption', 'application_adopt_forbidden');
-    }
-    const existing = this.driver.coordination.runResultAdoption(request.runId, request.nodeKey);
-    if (existing) {
-      if (existing.resultSha !== request.resultSha || existing.evidenceDigest !== request.evidenceDigest
-        || existing.reasonDigest !== digest(request.reason)) {
-        throw applicationError('Run adoption request differs from its durable admission', 'application_adopt_conflict');
-      }
-      const receipt = await this._performResultAdoption(existing);
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.adopt', result: 'adopted', receiptDigest: receipt.receiptDigest },
-      });
-    }
-    const manifest = await this._buildEvidence(current);
-    if (manifest.manifestDigest !== request.evidenceDigest || manifest.result?.sha !== request.resultSha
-      || manifest.result?.nodeKey !== request.nodeKey || manifest.result?.preservation?.state !== 'pinned') {
-      throw applicationError('Run adoption target differs from the displayed evidence', 'application_evidence_stale');
-    }
-    const taskId = manifest.node?.taskId ?? manifest.result?.taskId;
-    if (!validText(taskId, 4_096)) throw applicationError('Run has no accepted task result', 'application_result_unavailable');
-    const reasonDigest = digest(request.reason);
-    const requestCore = {
-      repoId: this.repoId, runId: request.runId, nodeKey: request.nodeKey, taskId,
-      resultSha: request.resultSha, evidenceDigest: request.evidenceDigest, reasonDigest,
-    };
-    const admitted = this.driver.coordination.admitRunResultAdoption({
-      schemaVersion: 1, ...requestCore, requestDigest: digest(requestCore),
-    }, { actor: principal.actor, key: `run.result_adoption:${request.runId}:${request.nodeKey}` });
-    const receipt = await this._performResultAdoption(admitted.adoption);
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.adopt', result: 'adopted', receiptDigest: receipt.receiptDigest },
-    });
-  }
 
   _performRunVerificationRetry(admission) {
     return applicationObservation._performRunVerificationRetry(this, admission);
@@ -4471,422 +4031,10 @@ export class BatonApplication {
     }
   }
 
-  async retryVerification(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = normalizeRetryVerification(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'verification retry principal');
-    await this._authorize('run.retry_verification', principal, request.runId, { reasonDigest: digest(request.reason) });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    if (!current.plan || current.plan.nodes.length !== 1 || current.approval?.disposition !== 'approved') {
-      throw applicationError('Run verification retry requires one approved Plan node', 'application_retry_unavailable');
-    }
-    const nodeKey = current.plan.nodes[0].key;
-    const existing = this.driver.coordination.runVerificationRetry?.(request.runId, nodeKey) ?? null;
-    if (existing?.status === 'pending') {
-      const receipt = await this._performRunVerificationRetry(existing);
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.retry_verification', result: receipt.state, receiptDigest: receipt.receiptDigest },
-      });
-    }
-    if (existing?.originOutcome === 'candidate_failed' && existing.receipt) {
-      return this._buildView(current, this.principals.observer, {
-        action: {
-          command: 'run.retry_verification', result: 'replayed',
-          state: existing.receipt.state, receiptDigest: existing.receipt.receiptDigest,
-        },
-      });
-    }
-    const view = await this._buildView(current, this.principals.observer);
-    const retry = view.verification?.retry;
-    if (!retry) throw applicationError('Run has no retryable verification', 'application_retry_unavailable');
-    if (!retry.available || !retry.candidatePreserved) {
-      throw applicationError('Run verification retry authority is stale or unavailable', 'application_retry_stale');
-    }
-    const node = view.nodes[0];
-    const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
-    if (!task?.assignee) throw applicationError('Run verification retry worker authority is unavailable', 'application_retry_unavailable');
-    const terminalResult = await this.driver.coordinator.result(task.assignee);
-    const diagnosticCheckpoint = terminalResult?.checkpoint;
-    if (diagnosticCheckpoint?.state !== 'pinned'
-      || diagnosticCheckpoint.sha !== retry.checkpointSha
-      || !['inconclusive', 'candidate_failed'].includes(diagnosticCheckpoint.originOutcome)) {
-      throw applicationError('Run verification retry diagnostic checkpoint is unavailable', 'application_retry_unavailable');
-    }
-    const artifacts = (task.artifactIds ?? []).map((id) => this.driver.coordination.artifact(id)).filter(Boolean);
-    const priorArtifact = artifacts.filter((artifact) => artifact.kind === 'verification')
-      .sort((left, right) => (left.createdEvent ?? 0) - (right.createdEvent ?? 0)).at(-1);
-    const priorSeq = priorArtifact?.provenance
-      ?.find((ref) => Number.isSafeInteger(ref?.coordinationSeq))?.coordinationSeq;
-    if (!Number.isSafeInteger(priorSeq)) {
-      throw applicationError('Run verification retry evidence is unavailable', 'application_retry_unavailable');
-    }
-    const runtimePolicyDigest = this.driver.coordinator.verificationRuntimeDigest?.();
-    if (!/^[a-f0-9]{64}$/u.test(runtimePolicyDigest ?? '')) {
-      throw applicationError('Run verification retry requires a deployment verifier runtime identity', 'application_retry_unavailable');
-    }
-    const requestCore = {
-      attempt: retry.attempt,
-      baseSha: terminalResult.sessionContext?.baseSha ?? null,
-      checkpointRef: diagnosticCheckpoint.ref,
-      checkpointSha: retry.checkpointSha,
-      nodeKey,
-      originOutcome: diagnosticCheckpoint.originOutcome,
-      planDigest: current.plan.digest,
-      priorEvidence: { coordinationSeq: priorSeq },
-      reasonDigest: digest(request.reason),
-      repoId: this.repoId,
-      runId: request.runId,
-      runtimePolicyDigest,
-      schemaVersion: 1,
-      taskId: task.id,
-      toolchainDigest: digest(terminalResult.sessionContext?.toolchainProjection ?? null),
-      verificationDigest: digest(current.plan.nodes[0].verification),
-    };
-    const admitted = this.driver.coordination.admitRunVerificationRetry({
-      ...requestCore, requestDigest: digest(requestCore),
-    }, { actor: principal.actor, key: `run.verification_retry:${request.runId}:${nodeKey}:${retry.attempt}` });
-    const receipt = await this._performRunVerificationRetry(admitted.retry);
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.retry_verification', result: receipt.state, receiptDigest: receipt.receiptDigest },
-    });
-  }
 
-  // PS5: the preserved-work branch of the recovery cascade. Where run.recover reattaches an
-  // attachable native session, resume_work restores a terminal preserved checkpoint into a fresh
-  // owned task. The caller supplies only a bounded reason; every coordinate is server-derived
-  // from the approved Plan, the pinned checkpoint, and the orchestrator-selected route policy.
-  async resumeWork(rawRequest, rawPrincipal, internal = {}) {
-    this._assertOpen();
-    await this.ready;
-    const request = normalizeResumeWork(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'resume principal');
-    await this._authorize('run.resume_work', principal, request.runId, { reasonDigest: digest(request.reason) });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    if (!current.plan || current.approval?.disposition !== 'approved') {
-      throw applicationError('Run resume requires an approved current Plan', 'application_resume_unavailable');
-    }
-    const view = await this._buildView(current, this.principals.observer);
-    if (view.phase !== 'cancelled') {
-      throw applicationError('Run resume requires a cancelled Run with preserved progress', 'application_resume_unavailable');
-    }
-    const node = view.nodes[0];
-    const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
-    if (!task?.assignee) {
-      throw applicationError('Run resume preserved worker is unavailable', 'application_resume_unavailable');
-    }
-    const workerId = task.assignee;
-    let preservedResult;
-    try { preservedResult = await this.driver.coordinator.result(workerId); }
-    catch (error) { if (error?.code !== 'not_found') throw error; }
-    const checkpoint = preservedResult?.checkpoint?.state === 'pinned' ? preservedResult.checkpoint : null;
-    if (!checkpoint || !/^[a-f0-9]{40,64}$/u.test(checkpoint.sha ?? '') || typeof checkpoint.ref !== 'string') {
-      throw applicationError('Run resume preserved checkpoint is unavailable', 'application_resume_unavailable');
-    }
-    if (typeof this.driver.coordinator.resumePreservedWork !== 'function') {
-      throw applicationError('application driver lacks preserved resume authority', 'application_resume_unavailable');
-    }
-    // Resume the exact route durably selected for the cancelled dispatch. A singleton Plan route
-    // is only the pre-dispatch fallback; Baton never invents a tuple from multi-route authority.
-    const planNode = current.plan.nodes[0];
-    const requestedRoute = requestedPlanNodeRoute(planNode, current.dispatch, 'Resume Plan node');
-    const route = {
-      vendor: requestedRoute.harness,
-      model: requestedRoute.model,
-      effort: requestedRoute.effort,
-    };
-    const gate = {
-      goalId: current.goal.goalId, goalVersion: current.goal.version, goalDigest: current.goal.digest,
-      planId: current.plan.planId, planVersion: current.plan.version, planDigest: current.plan.digest,
-      nodeKey: planNode.key, expectedDispatchVersion: 0,
-      capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
-      ...(Object.hasOwn(planNode, 'requiredEffects') ? { requiredEffects: clone(planNode.requiredEffects) } : {}),
-    };
-    const resumeTaskId = `baton-${digest({
-      repoId: this.repoId, runId: request.runId, planDigest: current.plan.digest,
-      nodeKey: planNode.key, checkpointSha: checkpoint.sha, resume: true,
-    }).slice(0, 24)}-resume`;
-    const outcome = await this.driver.coordinator.resumePreservedWork(workerId, {
-      actor: this.principals.dispatcher.actor,
-      principalId: this.principals.dispatcher.principalId,
-      sessionId: this.principals.dispatcher.sessionId,
-      powers: ['plan:dispatch'],
-      runId: request.runId,
-      taskId: resumeTaskId,
-      idempotencyKey: `application:${request.runId}:resume:${planNode.key}:${checkpoint.sha}`,
-      reasonDigest: digest(request.reason),
-      gate, route,
-      checkpointSha: checkpoint.sha,
-      checkpointRef: checkpoint.ref,
-      semanticActionId: internal.actionId,
-      semanticPrincipalScopeDigest: internal.principalScopeDigest,
-    });
-    const resume = outcome?.ok === true ? {
-      state: 'working',
-      preservedTaskId: outcome.preservedTaskId ?? null,
-      target: { workerId: outcome.workerId ?? null, taskId: outcome.taskId ?? null },
-      checkpoint: { state: 'pinned', sha: checkpoint.sha },
-      route: clone(outcome.route ?? null),
-      cleanup: clone(outcome.cleanup ?? { state: 'owned' }),
-    } : {
-      state: 'failed', reason: outcome?.result ?? 'resume_failed', target: null,
-    };
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.resume_work', result: outcome?.ok === true ? 'resumed' : (outcome?.result ?? 'resume_failed') },
-      resume,
-    });
-  }
 
-  async review(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = normalizeReviewRequest(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'review principal');
-    await this._authorize('run.review', principal, request.runId, {
-      route: request.route, reasonDigest: digest(request.reason),
-    });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    if (current.profile.reviewPolicy.mode !== 'required') {
-      throw applicationError('Run profile does not permit semantic review', 'application_review_forbidden');
-    }
-    if (!current.profile.reviewPolicy.routes.some((route) => routeEqual(route, request.route))) {
-      throw applicationError('semantic review route is outside deployment policy', 'application_review_route_forbidden');
-    }
-    const view = await this._buildView(current, this.principals.observer);
-    if (!['work_completed', 'reviewing'].includes(view.phase) || !view.result?.sha) {
-      throw applicationError('Run has no reviewable accepted result', 'application_review_unavailable');
-    }
-    const implementerRoute = selectExactRouteCard(this._routeCards, view.route.requested);
-    const reviewerRoute = selectExactRouteCard(this._routeCards, request.route);
-    if (!implementerRoute || !reviewerRoute || implementerRoute.name === reviewerRoute.name
-      || implementerRoute.card.modelSelection?.family === reviewerRoute.card.modelSelection?.family) {
-      throw applicationError('semantic review route is not independent from the implementer', 'application_review_not_independent');
-    }
-    const target = this._semanticTarget(current, view);
-    if (!target) throw applicationError('semantic review target is unavailable', 'application_review_unavailable');
-    const taskId = this._semanticTaskId(target);
-    const existing = this.driver.coordination.task(taskId);
-    if (existing) {
-      const structured = existing.review?.structured;
-      if (structured?.targetDigest !== target.targetDigest || structured.reportPath !== current.profile.reviewPolicy.reportPath
-        || existing.vendorRequested !== request.route.harness || existing.modelRequested !== request.route.model
-        || existing.effortRequested !== request.route.effort) {
-        throw applicationError('semantic review durable identity conflicts with this request', 'application_review_conflict');
-      }
-      const handle = this.driver.coordinator.list().find((candidate) => candidate.taskId === taskId);
-      if (handle) this._performSemanticReviewLifecycle(handle.id, target.targetDigest).catch(() => {});
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.review', result: 'replayed', taskId },
-      });
-    }
-    const parentTask = this.driver.coordination.task(target.taskId);
-    if (!parentTask?.assignee) throw applicationError('semantic review parent worker is unavailable', 'application_review_unavailable');
-    const { targetDigest, ...targetCore } = target;
-    const reportPath = current.profile.reviewPolicy.reportPath;
-    const reportContract = {
-      schemaVersion: 1,
-      purpose: 'run_semantic_review',
-      target: targetCore,
-      targetDigest,
-      reportPath,
-      maxReportBytes: current.profile.reviewPolicy.maxReportBytes,
-    };
-    const outputFormat = [
-      'Write one JSON object and no Markdown. An approval with no findings has this exact shape:',
-      JSON.stringify({
-        schemaVersion: 1,
-        targetDigest,
-        verdict: 'approved',
-        summary: 'Bounded evidence-grounded summary.',
-        findings: [],
-      }),
-      'Each optional finding must have exactly: id, severity (P0|P1|P2|P3), disposition (confirmed|contradicted|unverifiable), claim, source, evidence, requiredCorrection.',
-      'source must have exactly: path, startLine, startColumn, endLine, endColumn, contentDigest. Coordinates are one-based Unicode scalars, start inclusive and end exclusive.',
-      'evidence entries are either {"kind":"artifact","id":"...","digest":"..."} from the supplied target or {"kind":"representation","identityDigest":"...","graphDigest":"..."}.',
-      'requiredCorrection is bounded text only for confirmed findings and null otherwise. The top-level verdict must be revision_required for any confirmed finding, unverifiable for any unverifiable finding, and approved otherwise.',
-      'If the exact target satisfies the objective and you found no defect, use approved with findings: []. Do not invent a contradicted or ceremonial finding merely to demonstrate the schema.',
-    ].join('\n');
-    const reviewer = await this.driver.coordinator.spawnReview(parentTask.assignee, request.route.harness, {
-      taskId,
-      kind: 'review',
-      model: request.route.model,
-      effort: request.route.effort,
-      actor: principal.actor,
-      structured: reportContract,
-      goal: `Independently review exact Run result ${target.resultSha} and emit the configured structured semantic report`,
-      constraints: [
-        `Write exactly one UTF-8 JSON report at ${reportPath}; modify no other path.`,
-        `Bind targetDigest ${targetDigest} exactly.`,
-        'Use the closed Phase 65 report schema. Treat every worker claim as untrusted and inspect immutable Git objects.',
-        'Findings require exact one-based Unicode-scalar source ranges, content digests, evidence references, and conservative dispositions.',
-        'Report an empty findings array when the target is sound; do not manufacture a finding solely to populate the schema.',
-        `Inspect the exact changed paths first and keep review focused there: ${target.changedPaths.join(', ')}`,
-        `Reason: ${request.reason}`,
-      ],
-      definitionOfDone: `Only ${reportPath} changes and contains one valid target-bound semantic review report`,
-      outputFormat,
-      verification: {
-        command: '/bin/test', arguments: ['-s', reportPath], cwd: '.', envAllowlist: ['PATH'],
-        expectExit: 0, expectResult: 'exit_code', timeoutMs: 10_000,
-        maxOutputBytes: 64 * 1024, requiredPredecessorEvidence: [],
-      },
-      budget: {
-        tokens: current.profile.nodeBudget.tokens,
-        usd: current.profile.nodeBudget.usd,
-        wallMin: current.profile.nodeBudget.wallMin,
-      },
-    });
-    this._performSemanticReviewLifecycle(reviewer.id, targetDigest).catch(() => {});
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.review', result: 'started', taskId, workerId: reviewer.id },
-    });
-  }
 
-  async integrate(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = normalizeIntegrationRequest(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'integration principal');
-    return this._withRunEffect(request.runId, () => this._integrate(request, principal));
-  }
 
-  async _integrate(request, principal) {
-    await this._authorize('run.integrate', principal, request.runId, {
-      evidenceDigest: request.evidenceDigest, strategy: request.strategy, reasonDigest: digest(request.reason),
-    });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    const policy = current.profile.integrationPolicy;
-    if (policy.mode !== 'manual' || !policy.strategies.includes(request.strategy)) {
-      throw applicationError('Run profile does not permit this integration strategy', 'application_integration_forbidden');
-    }
-    const before = await this._buildView(current, this.principals.observer);
-    if (before.integration) {
-      if (before.integration.strategy !== request.strategy) {
-        throw applicationError('Run is already integrated with a different strategy', 'application_integration_conflict');
-      }
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.integrate', result: 'replayed', strategy: request.strategy },
-      });
-    }
-    if (policy.requireSemanticReview && before.semanticReview.state !== 'semantic_reviewed') {
-      throw applicationError('Run integration requires a successful independent semantic review', 'application_semantic_review_required');
-    }
-    if (policy.requireAdoptedResult && before.result?.state !== 'adopted') {
-      throw applicationError('Run integration requires explicit result adoption', 'application_result_adoption_required');
-    }
-    const manifest = await this._buildEvidence(current);
-    if (manifest.manifestDigest !== request.evidenceDigest || manifest.result?.sha !== before.result?.sha
-      || manifest.semanticReview?.receiptDigest !== before.semanticReview?.receiptDigest) {
-      throw applicationError('Run integration target differs from the displayed evidence', 'application_evidence_stale');
-    }
-    const integrationTaskId = manifest.node?.taskId ?? manifest.result?.taskId;
-    const task = validText(integrationTaskId, 4_096)
-      ? this.driver.coordination.task(integrationTaskId) : null;
-    if (!task?.assignee) throw applicationError('Run integration worker authority is unavailable', 'application_integration_unavailable');
-    const outcome = await this.driver.coordinator.integrate(task.assignee, {
-      strategy: request.strategy, actor: principal.actor,
-    });
-    if (outcome?.ok !== true || outcome?.result !== 'integrated') {
-      throw applicationError('Run integration did not complete', 'application_integration_incomplete');
-    }
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.integrate', result: 'integrated', strategy: request.strategy, reason: request.reason },
-    });
-  }
-
-  async export(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    validateApplicationCommandArgs('run.export', rawRequest);
-    const request = deepFreeze(clone(rawRequest));
-    const principal = normalizePrincipal(rawPrincipal, 'export principal');
-    return this._withRunEffect(request.runId, () => this._export(request, principal));
-  }
-
-  async _export(request, principal) {
-    await this._authorize('run.export', principal, request.runId, { evidenceDigest: request.evidenceDigest });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    const policy = current.profile.exportPolicy;
-    if (policy.mode !== 'manual' || !this.exportRoot) {
-      throw applicationError('Run profile does not permit result export', 'application_export_forbidden');
-    }
-    const before = await this._buildView(current, this.principals.observer);
-    if (policy.requireAdoptedResult && before.result?.state !== 'adopted') {
-      throw applicationError('Run export requires explicit result adoption', 'application_result_adoption_required');
-    }
-    if (policy.requireSemanticReview && before.semanticReview?.state !== 'semantic_reviewed') {
-      throw applicationError('Run export requires a successful independent semantic review', 'application_semantic_review_required');
-    }
-    if (policy.requireIntegration && before.integration?.state !== 'integrated') {
-      throw applicationError('Run export requires an integrated result', 'application_integration_required');
-    }
-    const evidence = await this._buildEvidence(current);
-    if (evidence.manifestDigest !== request.evidenceDigest
-      || !evidence.result?.sha || evidence.result.sha !== before.result?.sha
-      || evidence.result.nodeKey !== current.plan?.nodes[0]?.key) {
-      throw applicationError('Run export target differs from the displayed evidence', 'application_evidence_stale');
-    }
-    const taskId = evidence.node?.taskId;
-    const task = validText(taskId, 4_096) ? this.driver.coordination.task(taskId) : null;
-    if (!task?.assignee) throw applicationError('Run export worker authority is unavailable', 'application_export_unavailable');
-    const exportIdentity = {
-      repoId: this.repoId,
-      runId: request.runId,
-      nodeKey: evidence.result.nodeKey,
-      taskId,
-      resultSha: evidence.result.sha,
-      evidenceDigest: request.evidenceDigest,
-      profileDigest: current.profile.digest,
-      exportPolicyDigest: digest(policy),
-      exportRootDigest: this.exportRootDigest,
-      adoptionReceiptDigest: evidence.result.adoption?.receiptDigest ?? null,
-      semanticReviewTaskId: evidence.semanticReview?.taskId ?? null,
-      semanticReviewReceiptDigest: evidence.semanticReview?.receiptDigest ?? null,
-      integrationAfterSha: evidence.integration?.afterSha ?? null,
-      format: policy.format,
-      maxFiles: policy.maxFiles,
-      maxBytes: policy.maxBytes,
-    };
-    exportIdentity.stagingNonce = uuidFromDigest(digest({
-      schemaVersion: 1, purpose: 'result_export_stage', exportIdentity,
-    }));
-    const exportId = digest(exportIdentity);
-    let admitted;
-    try {
-      admitted = this.driver.coordination.admitRunResultExport({
-        schemaVersion: 1,
-        ...clone(exportIdentity),
-        exportId,
-        requestDigest: exportId,
-      }, { actor: principal.actor, key: `run.result_export:${request.runId}:${evidence.result.nodeKey}` });
-    } catch (cause) {
-      const codes = {
-        run_result_export_conflict: 'application_export_conflict',
-        run_result_export_invalid: 'application_export_invalid',
-        run_result_export_unavailable: 'application_export_unavailable',
-        run_stopping: 'application_run_stopping',
-      };
-      throw Object.assign(applicationError('Run result export admission failed', codes[cause?.code] ?? 'application_export_incomplete'), { cause });
-    }
-    const receipt = await this._performResultExport(admitted.export);
-    const delivery = this.resultExportLifecycle.deriveArchive({
-      receipt,
-      maxArchiveBytes: resultExportArchiveCeiling(policy),
-    }).descriptor;
-    const view = await this._buildView(current, this.principals.observer, {
-      action: { command: 'run.export', result: admitted.result === 'replay' ? 'replayed' : 'completed', exportId },
-    });
-    const response = deepFreeze({ ...clone(view), export: receipt, delivery });
-    if (Buffer.byteLength(JSON.stringify(response)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run export response exceeds its deployment byte ceiling', 'application_export_oversize');
-    }
-    return response;
-  }
 
   _finalizeRunView(current, view, options = {}) {
     return applicationObservation._finalizeRunView(this, current, view, options);
@@ -5132,77 +4280,6 @@ export class BatonApplication {
     });
   }
 
-  async sendWorkflowFeedback(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
-      || Object.keys(rawRequest).sort().join(',') !== ['feedback', 'role', 'runId'].sort().join(',')
-      || !validId(rawRequest.runId) || !validId(rawRequest.role)) {
-      throw applicationError('Workflow feedback target is invalid',
-        'application_workflow_feedback_invalid');
-    }
-    const feedback = normalizeWorkflowFeedback(rawRequest.feedback);
-    const principal = normalizePrincipal(rawPrincipal, 'Workflow feedback author');
-    await this._authorize('run.feedback', principal, rawRequest.runId, {
-      role: rawRequest.role, feedbackDigest: digest(feedback),
-    });
-    const current = this._findRun(rawRequest.runId);
-    this._assertRunMutable(rawRequest.runId);
-    if (!this._isWorkflowRun(current)) {
-      throw applicationError('Run is not a feedback-capable Workflow',
-        'application_workflow_feedback_unavailable');
-    }
-    const definition = this._workflowDefinition(current);
-    const projection = await this._goalPlanStatus(current, this.principals.observer);
-    const candidates = this._workflowCandidates(current, projection, definition);
-    const candidate = candidates.find((entry) => entry.role === rawRequest.role);
-    if (!candidate) {
-      throw applicationError('Workflow feedback requires a verified Candidate',
-        'application_workflow_feedback_unavailable');
-    }
-    assertWorkflowFeedbackAnchors(feedback, candidate);
-    const source = {
-      kind: 'authenticated_user', actor: principal.actor,
-      principalId: principal.principalId, sessionId: principal.sessionId,
-    };
-    const target = {
-      kind: 'candidate', role: candidate.role, candidateId: candidate.candidateId,
-      candidateDigest: candidate.candidateDigest, nodeKey: candidate.nodeKey,
-      taskId: candidate.taskId, resultSha: candidate.resultSha,
-      changedPaths: clone(candidate.changedPaths),
-      changedPathsDigest: digest(candidate.changedPaths),
-      retainedResultRef: candidate.retainedResultRef,
-      treeIdentityDigest: digest({
-        resultSha: candidate.resultSha, retainedResultRef: candidate.retainedResultRef,
-      }),
-    };
-    const feedbackId = `feedback:${digest({
-      repoId: this.repoId, runId: current.goal.runId, planDigest: current.plan.digest,
-      definitionDigest: definition.definitionDigest, source, target, feedback,
-    })}`;
-    const existing = this._workflowFeedback(current, definition, candidates)
-      .find((packet) => packet.feedbackId === feedbackId);
-    if (existing) return this._buildView(current, this.principals.observer);
-    const core = {
-      schemaVersion: 1, repoId: this.repoId, runId: current.goal.runId,
-      planDigest: current.plan.digest, definitionDigest: definition.definitionDigest,
-      feedbackId, source, target, feedback: clone(feedback),
-      prefix: {
-        throughSeq: this.driver.coordination.eventCursor(),
-        goalDigest: current.goal.digest, planDigest: current.plan.digest,
-        definitionDigest: definition.definitionDigest,
-      },
-    };
-    this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND, {
-      ...core, feedbackDigest: digest(core),
-    }, {
-      actor: principal.actor,
-      key: `${APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND}:${feedbackId}`,
-    });
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.feedback', result: 'recorded', feedbackId },
-    });
-  }
 
   _workflowRevisionFeedbackRows(feedback, candidate) {
     return applicationObservation._workflowRevisionFeedbackRows(this, feedback, candidate);
@@ -6918,26 +5995,6 @@ export class BatonApplication {
     this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
     await this._authorize('run.status', principal, request.runId, authorizationSubject);
     const current = this._findRun(request.runId, { allowUnavailableProfile: true });
-    // 93B rule 4: `waves.attach` mints `wave.driver_detached` at attach-time (never at close) —
-    // this is a pure side effect on the coordination log, never on the returned outline/view, and
-    // only fires when the request explicitly asks for it (ordinary run.inspect/runs.attach never
-    // sets this flag) and the run is actually a wave member.
-    if (request.mintWaveDetached === true
-      && typeof this.driver.coordination.recordDriver === 'function') {
-      // 93B rule 2 fold (W93-4): attach must BIND, never guess — the caller asserts the waveId
-      // it is attaching, and the run's own steering.registered binding must match exactly. A
-      // mismatch (or an unbound run) refuses with a typed code and NOTHING mints.
-      const boundWaveId = this._runWaveId(request.runId);
-      if (boundWaveId === null || boundWaveId !== request.waveId) {
-        throw applicationError('Run is not a member of the asserted wave',
-          'application_wave_member_mismatch');
-      }
-      this.driver.coordination.recordDriver(APPLICATION_WAVE_DRIVER_DETACHED_KIND,
-        { waveId: boundWaveId }, {
-          actor: principal.actor,
-          key: `wave.driver_detached:${boundWaveId}`,
-        });
-    }
     // Issue #489: an inspection IS a narrowed read — the depth ladder (outline → index → section →
     // item → content) is the narrowing — so the view is composed shed-first and the answer is
     // finalized against the deployment's own response bound below, never refused before the depth
@@ -7361,159 +6418,7 @@ export class BatonApplication {
     });
   }
 
-  async _activeWorkstream(rawRequest, principal) {
-    return applicationObservation._activeWorkstream(this, rawRequest, principal);
-  }
 
-  async notifyWorkstream(rawRequest, rawPrincipal, rawContext = null) {
-    validateApplicationCommandArgs('run.workstream.notify', rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'workstream notification principal');
-    const { current, view, binding } = await this._activeWorkstream(rawRequest, principal);
-    const action = this._semanticActions(current, view, principal)
-      .find((candidate) => candidate.kind === 'send');
-    if (!action) throw applicationError('Workstream is not accepting guidance',
-      'application_action_unavailable');
-    return this.act({
-      runId: rawRequest.runId, actionId: action.actionId,
-      inputs: {
-        message: rawRequest.message, recipient: binding.role,
-        delivery: rawRequest.delivery ?? 'nudge',
-      },
-    }, principal, rawContext);
-  }
-
-  async stopWorkstream(rawRequest, rawPrincipal) {
-    validateApplicationCommandArgs('run.workstream.stop', rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'workstream stop principal');
-    const { current, binding } = await this._activeWorkstream(rawRequest, principal);
-    const reason = rawRequest.reason ?? (binding.role === 'work'
-      ? 'Operator requested Run stop.'
-      : `Stop and reap the ${binding.role} workstream generation ${binding.generation}.`);
-    if (this._isWorkflowRun(current)) {
-      return this.stopWorkflowMember({
-        runId: rawRequest.runId, role: binding.role, reason,
-      }, principal);
-    }
-    if (binding.role !== 'work') {
-      throw applicationError('Workstream stop is unavailable for this Run',
-        'application_workflow_member_stop_unavailable');
-    }
-    return this.stop(rawRequest.runId, reason, principal);
-  }
-
-  // S-1 v2: portable atomic attach-and-harvest. Server-side binding proof is unconditional
-  // (no client mint-callback). Returns a closed {outcomes, waveDriverDetached} payload — never
-  // a live handle, never emergency_stop authority.
-  async attachWave(rawRequest, rawPrincipal, rawContext = null) {
-    this._assertOpen();
-    await this.ready;
-    const context = normalizeCommandContext(rawContext);
-    validateApplicationCommandArgs('waves.attach', rawRequest);
-    const request = deepFreeze(clone(rawRequest));
-    const principal = normalizePrincipal(rawPrincipal, 'wave attach principal');
-    const waveId = request.waveId;
-    const timeoutMs = request.timeoutMs ?? 5_000;
-    const hadDetached = this._waveDriverDetached(waveId);
-    // Discover candidate runs under the deployment observer, then authorize the CALLER on each
-    // matched member (per-run observe). Never inherit a privileged deployment principal.
-    const listed = await this.listRuns(this.principals.observer, context);
-    const wanted = new Map(request.members.map((member) => [member.objective, member]));
-    const matched = [];
-    for (const item of listed?.items ?? []) {
-      if (typeof item?.objective === 'string' && wanted.has(item.objective)
-        && typeof item?.id === 'string'
-        && !matched.some((entry) => entry.objective === item.objective)) {
-        matched.push({ member: wanted.get(item.objective), runId: item.id, objective: item.objective });
-      }
-    }
-    if (matched.length === 0) {
-      throw applicationError('wave attach bound no members of the asserted wave',
-        'wave_attach_unknown_wave');
-    }
-    let boundCount = 0;
-    let mismatchCount = 0;
-    const bindings = [];
-    for (const entry of matched) {
-      await this._authorize('run.status', principal, entry.runId, {
-        operation: 'waves.attach', waveId,
-      });
-      const boundWaveId = this._runWaveId(entry.runId);
-      if (boundWaveId === null || boundWaveId !== waveId) {
-        mismatchCount += 1;
-        continue;
-      }
-      boundCount += 1;
-      // Exactly-once driver_detached mint rides the same side-channel as the embedded path.
-      if (typeof this.driver.coordination.recordDriver === 'function') {
-        this.driver.coordination.recordDriver(APPLICATION_WAVE_DRIVER_DETACHED_KIND,
-          { waveId }, {
-            actor: principal.actor,
-            key: `wave.driver_detached:${waveId}`,
-          });
-      }
-      bindings.push(entry);
-    }
-    if (boundCount === 0) {
-      if (mismatchCount > 0) {
-        throw applicationError('Run is not a member of the asserted wave',
-          'application_wave_member_mismatch');
-      }
-      throw applicationError('wave attach bound no members of the asserted wave',
-        'wave_attach_unknown_wave');
-    }
-    const deadline = Date.now() + timeoutMs;
-    const outcomes = [];
-    for (const entry of bindings) {
-      let view = null;
-      while (Date.now() < deadline) {
-        view = await this.inspect({ runId: entry.runId }, principal, context);
-        const phase = view?.phase ?? view?.outline?.phase ?? null;
-        if (APPLICATION_RUN_TERMINAL_PHASES.has(phase)
-          || PROVIDER_EXECUTION_SETTLED_PHASES.has(phase)
-          || phase === 'result_ready' || phase === 'work_completed') {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (view === null) {
-        view = await this.inspect({ runId: entry.runId }, principal, context);
-      }
-      const phase = view?.phase ?? view?.outline?.phase ?? null;
-      let resultSha = null;
-      try {
-        const section = await this.inspect({
-          runId: entry.runId, depth: 'section', section: 'result',
-        }, principal, context);
-        const value = section?.section?.items?.[0]?.value;
-        if (typeof value?.sha === 'string' && /^[a-f0-9]{40}$/u.test(value.sha)) {
-          resultSha = value.sha;
-        }
-      } catch { /* result section may be empty for mid-flight deaths */ }
-      outcomes.push(deepFreeze({
-        role: entry.member.role,
-        phase,
-        terminal: APPLICATION_RUN_TERMINAL_PHASES.has(phase) || phase === 'result_ready'
-          || phase === 'work_completed',
-        resultSha,
-      }));
-    }
-    const waveDriverDetached = !hadDetached && this._waveDriverDetached(waveId);
-    // glm #4 (mcp-packaging-decisions v1.0): harvestReplayed marks a re-attach over an already
-    // settled wave (the detached record predates this call). Callers key outcome accounting on
-    // resultSha, never outcomes.length — the store never double-admits, so the flag kills
-    // caller-side double-counting.
-    return deepFreeze({
-      schemaVersion: 1,
-      waveId,
-      outcomes,
-      waveDriverDetached,
-      harvestReplayed: hadDetached,
-    });
-  }
-
-  _waveDriverDetached(waveId) {
-    return applicationObservation._waveDriverDetached(this, waveId);
-  }
 
   _runWaveIndex() {
     return applicationObservation._runWaveIndex(this);
@@ -8449,86 +7354,6 @@ export class BatonApplication {
       await this.selectWorkflowCandidate({
         runId: request.runId, role: request.inputs.role, reason: request.inputs.reason,
       }, principal, SEMANTIC_ACTION_DISPATCH);
-    } else if (action.kind === 'send_feedback') {
-      if (!action.choices.includes(request.inputs.role)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.sendWorkflowFeedback({
-        runId: request.runId, role: request.inputs.role, feedback: request.inputs.feedback,
-      }, principal);
-    } else if (action.kind === 'revise_candidate') {
-      if (!validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.reviseWorkflowCandidate({
-        runId: request.runId, reason: request.inputs.reason,
-        actionId: action.actionId,
-        principalScopeDigest: digest({
-          principalId: principal.principalId, sessionId: principal.sessionId,
-        }),
-      }, principal, SEMANTIC_ACTION_DISPATCH);
-    } else if (action.kind === 'stop_member') {
-      if (!action.choices.includes(request.inputs.role)
-        || !validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.stopWorkflowMember({
-        runId: request.runId, role: request.inputs.role, reason: request.inputs.reason,
-      }, principal, SEMANTIC_ACTION_DISPATCH);
-    } else if (action.kind === 'adopt_result') {
-      if (!validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const evidence = await this._buildEvidence(current);
-      await this._recheckSemanticAction(current, semanticAuthority, principal);
-      await this.adopt({
-        runId: request.runId,
-        nodeKey: evidence.result?.nodeKey,
-        resultSha: evidence.result?.sha,
-        evidenceDigest: evidence.manifestDigest,
-        reason: request.inputs.reason,
-      }, principal);
-    } else if (action.kind === 'retry_verification') {
-      if (!validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
-    } else if (action.kind === 'resume_work') {
-      if (!validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.resumeWork(
-        { runId: request.runId, reason: request.inputs.reason },
-        principal,
-        {
-          actionId: action.actionId,
-          principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
-        },
-      );
-    } else if (action.kind === 'semantic_review') {
-      if (!Number.isSafeInteger(request.inputs.routeIndex) || request.inputs.routeIndex < 0
-        || !validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const route = action.choices[request.inputs.routeIndex];
-      if (!route) throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      await this.review({ runId: request.runId, route, reason: request.inputs.reason }, principal);
-    } else if (action.kind === 'integrate') {
-      if (!action.choices.includes(request.inputs.strategy) || !validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const evidence = await this._buildEvidence(current);
-      await this._recheckSemanticAction(current, semanticAuthority, principal);
-      await this.integrate({
-        runId: request.runId,
-        evidenceDigest: evidence.manifestDigest,
-        strategy: request.inputs.strategy,
-        reason: request.inputs.reason,
-      }, principal);
-    } else if (action.kind === 'export_result') {
-      const evidence = await this._buildEvidence(current);
-      await this._recheckSemanticAction(current, semanticAuthority, principal);
-      await this.export({ runId: request.runId, evidenceDigest: evidence.manifestDigest }, principal);
     } else if (action.kind === 'stop') {
       normalizeStop({ runId: request.runId, reason: request.inputs.reason });
       await this.stop(request.runId, request.inputs.reason, principal);
@@ -8821,12 +7646,6 @@ export class BatonApplication {
     if (name === 'run.workstreams') {
       return this.workstreams(args, principal, context);
     }
-    if (name === 'run.workstream.notify') {
-      return this.notifyWorkstream(args, principal, context);
-    }
-    if (name === 'run.workstream.stop') {
-      return this.stopWorkstream(args, principal);
-    }
     if (name === 'run.act') {
       return this.act(args, principal, context);
     }
@@ -8847,9 +7666,6 @@ export class BatonApplication {
     if (name === 'run.answer') {
       return this.answer(args.runId, args.requestId, args.answer, principal);
     }
-    if (name === 'run.feedback') {
-      return this.sendWorkflowFeedback(args, principal);
-    }
     if (name === 'run.steer') {
       return this.steer(args, principal);
     }
@@ -8858,33 +7674,6 @@ export class BatonApplication {
     }
     if (name === 'run.evidence') {
       return this.evidence(args.runId, principal);
-    }
-    if (name === 'run.adopt') {
-      return this.adopt(args, principal);
-    }
-    if (name === 'run.retry_verification') {
-      return this.retryVerification(args, principal);
-    }
-    if (name === 'run.resume_work') {
-      return this.resumeWork(args, principal);
-    }
-    if (name === 'run.review') {
-      return this.review(args, principal);
-    }
-    if (name === 'run.integrate') {
-      return this.integrate(args, principal);
-    }
-    if (name === 'run.export') {
-      return this.export(args, principal);
-    }
-    if (name === 'run.recover') {
-      return this.recover(args.runId, principal);
-    }
-    if (name === 'waves.attach') {
-      return this.attachWave(args, principal, context);
-    }
-    if (name === 'application.shutdown') {
-      return this.shutdown(principal);
     }
     throw applicationError(`unsupported application command ${name}`, 'application_command_unavailable');
   }
