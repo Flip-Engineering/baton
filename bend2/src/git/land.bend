@@ -10,8 +10,11 @@
 # and lands on the check result it already has; a rebase conflict returns the
 # paths and keeps the candidate worktree for the requester. A landing whose
 # worker commit the target already contains answers LAlready without
-# preparing anything. LAlready names the worker commit on the fast-forward
-# and the checked path alike.
+# preparing anything. LAlready names the worker commit on the fast-forward and
+# the checked path alike.
+#
+# The candidate carries the worker commit's own message, whose body names the
+# worker branch the landing came from and any added path the landing dropped.
 #
 # Publication is the last step: push_git pushes the landed target to the
 # remote the deployment declares and answers the push's own exit and output,
@@ -680,19 +683,42 @@ def ld_commit_next(g: T.GitOut, scratch: String, worker: String, sha: String, ti
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
 # Stage 5 drops the added paths this repository's own ignore rules exclude,
-# names them on the candidate's message, then commits the candidate and reads
-# its commit.
-def ld_message(worker: String, paths: String) -> String:
-  "land " ++ worker ++ Deb.debris_note(paths)
+# reads the worker commit's own message, and commits the candidate under it
+# with the worker branch and the dropped paths named in its body.
+def ld_message(workerMessage: String, worker: String, paths: String) -> String:
+  Tx.trim_nl(workerMessage) ++ "\n\nlanded from " ++ worker ++ Deb.debris_note(paths)
+
+def ld_commit_now(text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  +t2 = text
+  +w2 = worker
+  +p2 = paths
+  +sc = scratch
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["commit", "-q", "-m", ld_message(t2, w2, p2)])
+    ld_commit_next(g, sc, w2, sha, tip)
+
+def ld_msg_ok(ok: Bool, text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match ok:
+    case True{}: ld_commit_now(text, worker, sha, tip, scratch, paths)
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker commit message could not be read"}})
+
+def ld_msg_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_msg_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_msg_read(worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  +w2 = worker
+  +s2 = sha
+  +sc = scratch
+  +p2 = paths
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["log", "-1", "--format=%B", s2])
+    ld_msg_pick(g, w2, s2, tip, sc, p2)
 
 def ld_debris_go(d: Deb.Debris, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
   match d:
-    case Deb.DFine{paths}:
-      +w2 = worker
-      +sc = scratch
-      do IO<Ld>:
-        g : T.GitOut <- Git.runGit(sc, ["commit", "-q", "-m", ld_message(w2, paths)])
-        ld_commit_next(g, sc, w2, sha, tip)
+    case Deb.DFine{paths}: ld_msg_read(worker, sha, tip, scratch, paths)
     case Deb.DFail{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", "debris judgment failed: " ++ detail}})
 
 def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
