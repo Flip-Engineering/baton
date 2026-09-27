@@ -180,16 +180,16 @@ const applicationIntent = objectSchema({
   profile: id,
   route: applicationRoute,
   scope: {
-    // Issue #499: the intent scope is the same 64-path wave/scope payload class the wavefile
-    // grammar bounds with one ceiling (the wave scope IS the member default scope there).
-    type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true,
+    // The intent scope is an array of repository-relative path strings; the array carries
+    // whatever number of paths the caller has.
+    type: 'array', minItems: 1, uniqueItems: true,
     items: { type: 'string', minLength: 1, maxLength: 4096 },
   },
   composition: objectSchema({
     strategy: { const: 'parallel_attempts' }, workspace: { const: 'isolated' },
     join: { const: 'operator_selected' },
     team: {
-      type: 'array', minItems: 2, maxItems: FRAME_LIMITS['workflow.team.members'].value,
+      type: 'array', minItems: 2,
       items: objectSchema({ role: id, route: objectSchema({
         harness: id, model: id, effort: id,
       }) }),
@@ -215,7 +215,7 @@ const contextProgramSchema = {
     selector: { oneOf: [
       objectSchema({
         kind: { const: 'indices' },
-        values: { type: 'array', minItems: 1, maxItems: 10000, uniqueItems: true,
+        values: { type: 'array', minItems: 1, uniqueItems: true,
           items: { type: 'integer', minimum: 0 } },
       }),
       objectSchema({ kind: { const: 'field_equals' }, field: contextField,
@@ -244,21 +244,21 @@ const contextProgramSchema = {
       objectSchema({ op: { const: 'filter' }, input: { $ref: '#/properties/program/$defs/expression' },
         predicate: { $ref: '#/properties/program/$defs/predicate' } }),
       objectSchema({ op: { const: 'project' }, input: { $ref: '#/properties/program/$defs/expression' },
-        fields: { type: 'array', minItems: 1, maxItems: 128, uniqueItems: true,
+        fields: { type: 'array', minItems: 1, uniqueItems: true,
           items: contextField } }),
       ...['sort', 'unique'].map((op) => objectSchema({
         op: { const: op }, input: { $ref: '#/properties/program/$defs/expression' },
-        keys: { type: 'array', minItems: 1, maxItems: 128, uniqueItems: true,
+        keys: { type: 'array', minItems: 1, uniqueItems: true,
           items: contextField },
       })),
       objectSchema({ op: { const: 'join' },
         left: { $ref: '#/properties/program/$defs/expression' }, right: { $ref: '#/properties/program/$defs/expression' },
         on: objectSchema({ left: contextField, right: contextField }) }),
       objectSchema({ op: { const: 'collect' },
-        inputs: { type: 'array', minItems: 1, maxItems: 128,
+        inputs: { type: 'array', minItems: 1,
           items: { $ref: '#/properties/program/$defs/expression' } } }),
       objectSchema({ op: { const: 'finish' }, value: { $ref: '#/properties/program/$defs/expression' },
-        evidence: { type: 'array', minItems: 1, maxItems: 128,
+        evidence: { type: 'array', minItems: 1,
           items: { $ref: '#/properties/program/$defs/expression' } } }),
     ] },
   },
@@ -598,7 +598,7 @@ const actions = {
             properties: {
               summary: { type: 'string', minLength: 1, maxLength: 4096 },
               findings: {
-                type: 'array', minItems: 1, maxItems: 32,
+                type: 'array', minItems: 1,
                 items: {
                   type: 'object', additionalProperties: false,
                   required: ['kind', 'severity', 'message', 'path', 'line'],
@@ -1491,7 +1491,7 @@ const CANONICAL_OPERATION_SPECS = [
       title: { type: 'string', minLength: 1 },
       detail: { type: ['string', 'null'], minLength: 1 },
       owner: { type: ['string', 'null'], minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' },
-      evidence: { type: 'array', maxItems: 8, items: evidenceRef },
+      evidence: { type: 'array', items: evidenceRef },
       expectedBoardFence: { type: 'integer', minimum: 0 },
     }, ['sessionAuthority', 'runId', 'board', 'title', 'expectedBoardFence']),
     authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
@@ -1595,7 +1595,7 @@ const CANONICAL_OPERATION_SPECS = [
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, taskId: id, workerId: id,
       expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      entryIds: { type: 'array', maxItems: 64, uniqueItems: true,
+      entryIds: { type: 'array', uniqueItems: true,
         items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
     }, ['runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
     authorityFields: ['runId', 'taskId', 'workerId', 'expectedScratchpadFence'],
@@ -1605,7 +1605,7 @@ const CANONICAL_OPERATION_SPECS = [
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
+      skips: { type: 'array', items: { type: 'object' } },
     }, ['runId', 'expectedScratchpadFence', 'skips']),
     authorityFields: ['runId', 'expectedScratchpadFence'], serverDerived: ['actor'],
     liveMethod: 'settleWorkflowScratchpad',
@@ -1648,7 +1648,7 @@ const CANONICAL_OPERATION_SPECS = [
   ['knowledge.settlement_lease', {
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      waveId: id, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: id },
+      waveId: id, members: { type: 'array', items: id },
     }, ['waveId']),
     authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
     liveMethod: 'settlementLease',
@@ -1706,7 +1706,7 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       waveId: id,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: objectSchema({
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -1730,7 +1730,7 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       idempotencyKey: id,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: objectSchema({
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -1744,9 +1744,9 @@ const CANONICAL_OPERATION_SPECS = [
             size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
             quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
             strict: { type: 'boolean' },
-            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+            editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective']),
       },
     }, ['idempotencyKey', 'members']),
@@ -1907,7 +1907,7 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON',
     inputSchema: objectSchema({
       runId: id, taskId: id,
-      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
     }, ['runId', 'taskId', 'entryIds']),
   }],
   // #158 (H2.1) / 2026-09-14 audit U-E3: ONE row. The duplicate declaration (the first was
@@ -1934,7 +1934,7 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton run board post RUN_ID --board BOARD --title TEXT',
     inputSchema: objectSchema({
       runId: id, board: safeBoardId, title: { type: 'string', minLength: 1 },
-      detail: { type: 'string', minLength: 1 }, owner: safeBoardId, evidence: { type: 'array', maxItems: 8, items: evidenceRef },
+      detail: { type: 'string', minLength: 1 }, owner: safeBoardId, evidence: { type: 'array', items: evidenceRef },
     }, ['runId', 'board', 'title']),
   }],
   ['run.board.read', {

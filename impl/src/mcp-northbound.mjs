@@ -628,7 +628,7 @@ const applicationIntentSchema = schema({
   route: applicationRouteSchema,
   // Issue #499: the intent scope is the same 64-path wave/scope payload class the wavefile
   // grammar bounds with one ceiling (the wave scope IS the member default scope there).
-  scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
+  scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
 }, ['objective']);
 const applicationAnswerSchema = {
   oneOf: [
@@ -652,7 +652,7 @@ const applicationFeedbackSchema = {
     { type: 'string', minLength: 1, maxLength: 4_096 },
     schema({
       summary: { type: 'string', minLength: 1, maxLength: 4_096 },
-      findings: { type: 'array', minItems: 1, maxItems: 32, items: applicationFeedbackFindingSchema },
+      findings: { type: 'array', minItems: 1, items: applicationFeedbackFindingSchema },
     }, ['summary', 'findings']),
   ],
 };
@@ -760,7 +760,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       ...repo,
       waveId: runId,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: schema({
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -780,7 +780,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, ...idem,
       members: {
-        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
+        type: 'array', minItems: 1,
         items: schema({
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -792,9 +792,9 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
             size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
             quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
             strict: { type: 'boolean' },
-            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+            editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective']),
       },
     }, ['repoId', 'idempotencyKey', 'members']),
@@ -891,7 +891,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, ...idem, runId, taskId: runId, workerId: runId,
       expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      entryIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
     }, ['repoId', 'idempotencyKey', 'runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -900,7 +900,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
     inputSchema: schema({
       ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
+      skips: { type: 'array', items: { type: 'object' } },
     }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -916,7 +916,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     name: 'baton_knowledge_settlement_lease',
     description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
     inputSchema: schema({
-      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: runId },
+      ...repo, ...idem, waveId: runId, members: { type: 'array', items: runId },
     }, ['repoId', 'idempotencyKey', 'waveId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -962,7 +962,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     description: "Settle one terminal task's scratchpad partition through the coordinator's fence-bound elevation wrapper (ordinary end-of-task path). Returns the store receipt verbatim; an exact retry returns the empty successor.",
     inputSchema: schema({
       ...repo, runId, taskId: runId,
-      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
     }, ['repoId', 'runId', 'taskId', 'entryIds']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -988,7 +988,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
       grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
       body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
-      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+      evidence: { type: 'array', items: { type: 'object' } },
     }, ['repoId', 'runId', 'type', 'grounding', 'body']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
