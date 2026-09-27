@@ -40,6 +40,8 @@ function validCard(card) {
     || new Set(Object.values(card.auth.headers)).size !== 4 || !exactKeys(card.webhook, ['method', 'path', 'contentType', 'contentEncoding']) || card.webhook.method !== 'POST'
     || typeof card.webhook.path !== 'string' || !card.webhook.path.startsWith('/') || card.webhook.contentType !== 'application/json' || card.webhook.contentEncoding !== 'identity'
     || !exactKeys(card.privateCas, ['storeId', 'digestAlgorithm']) || !bounded(card.privateCas.storeId, 128) || card.privateCas.digestAlgorithm !== 'sha256')) return false;
+  // #530: the poll ceiling's implementation bounds left — a deployment declares its own page, item,
+  // byte and window maxima, and the poll runtime judges the run against those declarations.
   const ceilingKeys = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes', ...(nativeWebhook ? ['maxHeaderCount', 'maxHeaderBytes', 'maxClockSkewMs'] : [])];
   let pollValid = true;
   if (hasPoll) {
@@ -48,8 +50,7 @@ function validCard(card) {
     const numeric = ['maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'];
     pollValid = exactKeys(p, ['origin', 'operation', 'cursorKind', 'initialSequence', 'redirects', 'maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'])
       && origin.protocol === 'https:' && origin.href === `${origin.origin}/` && operation.origin === origin.origin && operation.pathname === p.operation && operation.search === '' && operation.hash === '' && typeof p.operation === 'string' && /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,2048}$/.test(p.operation)
-      && !p.operation.includes('//') && !p.operation.split('/').some((segment) => ['.', '..'].includes(segment)) && p.cursorKind === 'sequence' && p.redirects === 'deny' && Number.isSafeInteger(p.initialSequence) && p.initialSequence >= 0 && numeric.every((key) => Number.isSafeInteger(p[key]) && p[key] > 0)
-      && p.maxPages <= 10_000 && p.maxItems <= 100_000 && p.maxPageBytes <= 16 * 1024 * 1024 && p.maxTotalBytes <= 64 * 1024 * 1024 && p.maxWallMs <= 60 * 60 * 1_000 && p.maxBackoffMs <= 60 * 60 * 1_000 && p.maxClockSkewMs <= 24 * 60 * 60 * 1_000;
+      && !p.operation.includes('//') && !p.operation.split('/').some((segment) => ['.', '..'].includes(segment)) && p.cursorKind === 'sequence' && p.redirects === 'deny' && Number.isSafeInteger(p.initialSequence) && p.initialSequence >= 0 && numeric.every((key) => Number.isSafeInteger(p[key]) && p[key] > 0);
   }
   return pollValid && exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
     && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096
