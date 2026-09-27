@@ -794,23 +794,6 @@ function dispatchFailure(cause, command = null) {
     } } };
   }
   if (['worktree_capacity_exceeded', 'worktree_capacity_unavailable'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'workspace capacity refused this dispatch; free repository volume space or raise the deployment capacity floors, then retry' } } };
-  // #329: the host-wide authority's queue timeout names the dimension it waited on (load,
-  // memory, budget) with the observed and required numbers and the operator bypass, instead of
-  // the transient fallthrough — a recruit that can never be admitted on this host must say so.
-  if (cause?.code === 'host_capacity_queue_timeout') {
-    const shortfall = isRecord(cause.shortfall) ? cause.shortfall : null;
-    return { httpStatus: 503, body: { ok: false, error: {
-      code: cause.code,
-      message: `host capacity queued this ${cause.leaseKind ?? 'lease'} request at position ${cause.queuePosition ?? '?'} (${cause.queueAhead ?? '?'} ahead) and the ${cause.waitMs ?? '?'}ms admission wait is spent`
-        + (shortfall ? `; waiting on ${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required` : '')
-        + `; no capacity effect was applied (operator bypass: ${cause.bypass ?? 'BATON_HOST_CAPACITY_DISABLED=1'})`,
-      retryable: true,
-      detail: {
-        queuePosition: cause.queuePosition ?? null, queueAhead: cause.queueAhead ?? null,
-        leaseKind: cause.leaseKind ?? null, waitMs: cause.waitMs ?? null, shortfall, bypass: cause.bypass ?? null,
-      },
-    } } };
-  }
   // #336, extended by #430: the swarm family's typed refusals cross AS THEMSELVES. This arm is
   // the wave lane's W6/F4 precedent applied to the swarm family: every code in the ONE closed
   // refusal set (impl/src/swarm-refusals.mjs — the fold's `validateSwarmEvent` + `foldSwarmEvent`
