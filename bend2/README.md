@@ -270,3 +270,33 @@ A failure exits with its cause and retains the evidence; `--stage workers`,
 `guidance`, `native-roots`, `claude-channel` or `git` runs that stage in a new
 output directory during diagnosis. A full acceptance result requires the whole
 sequence.
+
+## Cutover trial
+
+Start a trial from the operator's terminal with the native logins and repository
+push credentials available there:
+
+```sh
+BEND=/path/to/bend sh /path/to/bend2-checkout/bend2/scripts/trial-start.sh \
+  /path/to/repository /path/to/bend2-checkout /path/to/trial.db
+```
+
+The launcher builds the coordinator beside the database, creates `bend2-trial`
+from the repository's `HEAD` if that branch is absent, and attaches a Codex
+`gpt-6-astra` root using the existing ChatGPT subscription login. `BATON_CODEX`,
+`BATON_OMP` and `BATON_MUSE` can name native executables or local launch wrappers;
+the defaults are `codex`, `omp` and `muse` on `PATH`. Node, Python 3, Git and the
+native build prerequisites must be available. The repository's test dependencies
+must be available when its selected JS tests run.
+
+The launcher prints one command to seed the first task. Edit the printed task
+file to select an issue before running that command. The root follows
+[the trial instructions](trial/root-instructions.md), starts a worker in the
+background, and resumes when its report arrives. It reviews and lands through
+`check-node-test.sh`, pushes `bend2-trial` to `origin`, and records an operator
+report with the issue and advertised commit. Keep `bend2-trial` unchecked-out
+while landing. The launcher prints the operator inbox command and root log path.
+
+Run the launcher again with the same paths to reattach the saved native session
+and deliver pending messages. It preserves the database and first task file.
+The trial's target is separate from the branch the existing JS swarms use.
