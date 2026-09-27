@@ -7,10 +7,11 @@ reconnection are implemented. Their contracts are covered by
 
 The production application surface exposes eight core tools: `baton_deployment`, `baton_run`,
 `baton_swarm`, `baton_waves`, `baton_knowledge`, `baton_wakes`, `baton_services`, and
-`baton_surface`. The raw `McpFleetServer` application table contains 57 tools after the #566
-restoration; the production wrapper projects that table into the core families. The startup
-gate in `impl/test/mcp-web-startup-gate.test.mjs` checks the composed entry point and its gate
-selection for application entry-point and bridge changes.
+`baton_surface`. The raw `McpFleetServer` application table contains 56 tools
+(`impl/test/mcp-profile-parity-red.test.mjs` pins the count); the production wrapper projects
+that table into the core families. The startup gate in
+`impl/test/mcp-web-startup-gate.test.mjs` checks the composed entry point and its gate selection
+for application entry-point and bridge changes.
 
 The original issue measured 52 flat `baton_*` tools on the ordinary surface (the generated
 inventory, impl/MCP.md §Tool inventory) plus six `baton_surface_*` meta tools the production
