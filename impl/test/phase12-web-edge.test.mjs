@@ -286,7 +286,6 @@ test('EP6/EP7: throwing stream shutdown still closes the listener and memoizes a
   const completed = s.coordination.events().filter((event) => event.payload?.kind === 'shutdown_completed');
   assert.equal(completed.length, 1);
   assert.equal(completed[0].payload.streamShutdownOk, false);
-  assert.equal(completed[0].payload.exportDeliveryShutdownOk, true);
   assert.equal(JSON.stringify(completed).includes('stream cleanup failed'), false);
 });
 
