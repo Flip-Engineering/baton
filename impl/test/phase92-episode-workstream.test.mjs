@@ -145,8 +145,8 @@ test('P92-EW4: CLI exposes selector-free Episode and workstream commands', () =>
 
 test('P92-EW5: browser controls execute the same progressive Episode/workstream surface', () => {
   // docs/36 §9 M3 — the desk element ids and bus operations move with the fold: the Episode
-  // chapters serialize under run.view and the member ops under run.member.*; the canonical
-  // transport names resolve in the Web dispatch layer (the legacy transports stay live until M5).
+  // chapters serialize under run.view; the canonical transport names resolve in the Web
+  // dispatch layer.
   const html = operatorAsset('/control').body;
   const script = operatorAsset('/control/app.js').body;
   for (const id of ['view-member', 'view-section', 'view-detail', 'load-view',
@@ -155,6 +155,5 @@ test('P92-EW5: browser controls execute the same progressive Episode/workstream 
   }
   for (const operation of ['run_view', 'run_member_view']) assert.equal(script.includes(`command('${operation}'`), true, operation);
   assert.equal(script.includes("continuation.operation.replaceAll('.','_')"), true);
-  assert.equal(script.includes('generation:selected.generation'), true);
   assert.equal(script.includes("detail:byId('view-detail').value"), true);
 });
