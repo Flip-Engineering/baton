@@ -39,16 +39,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   participant_not_found: row(404, ['fold'], 'the request names a seat this swarm does not hold'),
   swarm_participant_not_found: row(404, ['runtime'], 'the request names a seat this swarm does not hold'),
   work_not_found: row(404, ['fold', 'runtime'], 'the request names a work item this swarm does not hold'),
-  group_not_found: row(404, ['fold'], 'the request names a group this swarm does not hold'),
-  coupling_not_found: row(404, ['fold'], 'the request names a coupling record this swarm does not hold'),
   // #296: the landing verb names a contribution the swarm does not hold the same way the fold does,
   // so this row carries both raisers.
   contribution_not_found: row(404, ['fold', 'runtime'], 'the request names a contribution this swarm does not hold'),
-  // Issues #422/#423: the claim and proposal families name their rows the way every other family
-  // does — the design's §2/§3 tables name the conflict codes; these two are the family's own
-  // not-found spelling, minted here so a handoff or an arrival names a row that does not exist.
+  // Issue #423: the claim family names its rows the way every other family does — the design's
+  // §2 table names the conflict code; this one is the family's own not-found spelling, minted
+  // here so a handoff or a release names a row that does not exist.
   swarm_claim_not_found: row(404, ['fold'], 'the request names a claim this swarm does not hold'),
-  swarm_proposal_not_found: row(404, ['fold'], 'the request names a work proposal this swarm does not hold'),
   // #452: the rule now names what a settled predecessor keeps: a root-settled seat is a resumable
   // predecessor while its workspace is carriable (retained checkout or snapshot), and the refusal
   // names that state and the closed set instead of a bare "no longer active".
@@ -74,21 +71,9 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_participant_exists: row(409, ['runtime'], 'the seat already exists in this swarm'),
   participant_not_active: row(409, ['fold'], 'the named seat exists but is not active, so it cannot take this role'),
   version_conflict: row(409, ['fold'], 'the request states an expectedVersion the current row does not carry'),
-  swarm_already_arrived: row(409, ['fold'], 'the seat has already arrived at this synchronization point, or already consented to this proposal'),
   swarm_already_closed: row(409, ['fold'], 'the swarm is already closed, so it cannot close again'),
   swarm_closed: row(409, ['runtime'], 'the swarm is no longer open, so it admits no recruitment'),
-  swarm_coupling_released: row(409, ['fold'], 'the coupling record is already released, so it cannot release again'),
-  swarm_coupling_conflict: row(409, ['fold'], 'the group already carries an unreleased failure policy'),
-  swarm_writer_conflict: row(409, ['fold'], 'the checkout already names an exclusive writer'),
-  swarm_writer_workspace_unrecorded: row(409, ['fold'], 'the claimed writer has no recorded checkout, so exclusivity could not be enforced'),
-  swarm_not_a_member: row(409, ['fold'], 'the seat is not a member of the group the coupling names'),
-  // Issues #422/#423: the joint-coupling and claim folds' own state conflicts. `swarm_writer_conflict`
-  // stays the declare-time exclusivity conflict; the lease rows below are the take/yield state.
-  swarm_writer_lease_held: row(409, ['fold'], 'the rotating writer lease is held by another seat, which must yield or be taken over after it departs'),
-  swarm_writer_lease_unheld: row(409, ['fold'], 'the rotating writer lease holds no live hold, so there is nothing to yield'),
   swarm_claim_conflict: row(409, ['fold'], 'the claimed paths overlap another active claim on the same recorded checkout'),
-  swarm_proposal_released: row(409, ['fold'], 'the work proposal is withdrawn, so it accepts no consent and never expands'),
-  swarm_work_exists: row(409, ['fold'], 'the accepted plan names work this swarm already holds'),
   contribution_duplicate: row(409, ['fold'], 'the event records a contribution identity the swarm already holds'),
   contribution_author_mismatch: row(409, ['fold'], 'the revision names an author other than the contribution author'),
   swarm_author_mismatch: row(409, ['runtime'], 'the update names an author other than the caller'),

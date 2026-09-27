@@ -54,12 +54,6 @@ const AUTO = (autoFilled) => Object.freeze({ autoFilled: Object.freeze(autoFille
  * required fields a caller may omit because the runtime derives them from the request identity.
  */
 export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
-  'swarm.group_updated': KIND('create or replace one named group of participants', {
-    groupId: STRING('the group identity to create or replace', { required: true, example: 'group-reviewers' }),
-    members: STRING_ARRAY('the participant identities in the group; distinct', { required: true, example: ['ada', 'grace'] }),
-    purpose: STRING('what this group is for', { example: 'independent review of the discovery lane' }),
-    expectedVersion: VERSION,
-  }),
   'swarm.work_updated': KIND('open or evolve one unit of work', {
     workId: STRING('the work identity', { required: true, example: 'work-discovery' }),
     objective: STRING('what the work is trying to achieve (required when the work is new; a status-only update keeps the recorded objective)', { required: true, optionalWhenExisting: 'the recorded objective of existing work is kept', example: 'map the native discovery lane' }),
@@ -87,28 +81,6 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       description: 'the assignment lifecycle state', expectation: 'one of active, released', example: 'active' },
     expectedVersion: VERSION,
   }),
-  'swarm.coupling_updated': KIND('declare, propose, take, yield, arrive at, or release one declared coupling: a synchronization point a group arrives at and is released from (optionally at a quorum), a rotating writer lease over a group\'s shared checkouts, an exclusive writer over one checkout, or a group failure policy', {
-    couplingId: STRING('the coupling record identity', { required: true, example: 'sync-interface-freeze' }),
-    coupling: { type: 'string', enum: ['synchronization', 'writer', 'failure'], required: true,
-      description: 'which coupling this record carries: a synchronization point on a group (declare with groupId and name, optionally with quorum), a rotating writer lease over a group\'s checkouts (declare with groupId) or an exclusive writer over one seat\'s checkout (declare with participantId), or a group failure policy (declare with groupId and policy)',
-      expectation: 'one of synchronization, writer, failure', example: 'synchronization' },
-    action: { type: 'string', enum: ['declare', 'propose', 'arrive', 'take', 'yield', 'release'], required: true,
-      description: 'declare creates or replaces the record; propose puts it to a consent set whose arrivals declare it; arrive records an arrival at a synchronization point (or, on a proposed record, a seat\'s consent); take and yield move a writer lease\'s write turn between its members; release ends the coupling (who released and why are recorded)',
-      expectation: 'one of declare, propose, arrive, take, yield, release', example: 'declare' },
-    groupId: STRING('the group the synchronization point, writer lease or failure policy belongs to', { example: 'group-reviewers' }),
-    name: STRING('the synchronization point name', { example: 'interface-freeze' }),
-    policy: { type: 'string', enum: ['independent'], required: false,
-      description: 'the declared group failure policy: independent peers continue when a member dies or leaves, and dependents are told',
-      expectation: 'independent', example: 'independent' },
-    quorum: { type: 'integer', minimum: 1, required: false,
-      description: 'a synchronization point\'s release threshold: the arrival that reaches it releases the point in the same fold, attributed to that seat. Absent means the point releases explicitly, exactly as before. A roster shrunk below the quorum by departures is released by its last arrival.',
-      expectation: 'a positive integer', example: 2 },
-    members: STRING_ARRAY('the consent set a coupling PROPOSE puts its parameters to (required when proposing): distinct active seats; the proposer consents by proposing and the last arrival declares the record', { example: ['ada', 'grace'] }),
-    participantId: STRING('the participant the record names: the seat arriving or consenting, the writer (an exclusive declare), the seat taking or yielding a lease\'s write turn, or (on a release) the seat being released — who RELEASED is always releasedBy, which the runtime writes from the actor', { required: false, ...AUTO('defaults to your own participant identity') }),
-    releasedBy: STRING('the acting identity that released the record — the releasing member\'s participant name, or the acting orchestrator\'s principal label; the runtime derives it, and a caller-named value that is not the actor is refused', { ...AUTO('derived from the actor when you release') }),
-    reason: STRING('why the coupling is released, or why a hold is yielded', { example: 'every active member arrived' }),
-    expectedVersion: VERSION,
-  }, { couplingId: 'sync-interface-freeze', coupling: 'synchronization', action: 'declare', groupId: 'group-reviewers', name: 'interface-freeze' }),
   'swarm.claim_updated': KIND('claim a work item or a path set as your own hold — a durable, conflict-checked record of what you are working on (a claim is visibility for your peers, never a fence)', {
     claimId: STRING('the claim identity', { required: true, example: 'claim-ada-discovery' }),
     participantId: STRING('the seat holding the claim; a handoff moves the hold to the seat it names', { required: true, ...AUTO('your own participant identity; naming another seat is an organizing act') }),
@@ -120,25 +92,13 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     reason: STRING('why the claim is released', { example: 'handing the search lane to grace' }),
     expectedVersion: VERSION,
   }, { claimId: 'claim-ada-discovery', workId: 'work-discovery' }),
-  'swarm.proposal_updated': KIND('propose a work split your peers accept by arriving at it — the arrival that completes the consent set expands the plan into the work items and claims it names', {
-    proposalId: STRING('the proposal identity', { required: true, example: 'split-discovery' }),
-    action: { type: 'string', enum: ['propose', 'arrive', 'release'], required: true,
-      description: 'propose writes or amends the split and its consent set; arrive is a named member\'s consent; release withdraws the proposal (which then never expands)',
-      expectation: 'one of propose, arrive, release', example: 'propose' },
-    participantId: STRING('the seat proposing, consenting or withdrawing; the proposer consents by proposing', { required: true, ...AUTO('your own participant identity; naming another seat is an organizing act') }),
-    members: STRING_ARRAY('the consent set the plan is put to (required when proposing): distinct active seats, the proposer among them', { example: ['ada', 'grace'] }),
-    plan: JSON_VALUE('the split itself (required when proposing): { work: [{ workId, objective }], claims: [{ participantId, workId | paths }] } — the exact rows an accepted proposal writes, one claim id per entry', { expectation: 'an object with work and claims arrays', example: { work: [{ workId: 'work-discovery-search', objective: 'map the search lane' }], claims: [{ participantId: 'grace', workId: 'work-discovery-search' }] } }),
-    reason: STRING('why the proposal is withdrawn', { example: 'the split is no longer needed' }),
-    expectedVersion: VERSION,
-  }, { proposalId: 'split-discovery', action: 'propose', members: ['ada', 'grace'], plan: { work: [{ workId: 'work-discovery-search', objective: 'map the search lane' }], claims: [{ participantId: 'grace', workId: 'work-discovery-search' }] } }),
   'swarm.holder_released': KIND('release a gone holder\'s seats in one batch (refuses while the participant is live active)', {
-    participantId: STRING('the participant whose active assignments and group seats are released', { required: true, example: 'builder-a' }),
+    participantId: STRING('the participant whose active assignments are released', { required: true, example: 'builder-a' }),
     reason: STRING('why the seats are released', { example: 'the runtime is gone; seats released so the delegation can complete' }),
   }),
   'swarm.context_updated': KIND('write one shared-context entry the whole swarm can read', {
     key: STRING('the shared-context key', { required: true, example: 'notes:discovery' }),
     body: JSON_VALUE('the entry — arbitrary JSON', { required: true, example: { finding: 'the discovery lane is cheapest at the contract' } }),
-    groupId: STRING('scope the entry to one group instead of the whole swarm', { example: 'group-reviewers' }),
     expectedVersion: VERSION,
   }),
   'swarm.contribution_recorded': KIND('publish a finding or work product attributed to its author', {

@@ -343,7 +343,7 @@ export function renderSwarmFamily() {
     '',
     ...attention.map((kind) => `- \`${kind}\``),
     '',
-    'Semantics, responses and the coupling records behind these rows: [docs/39](39-swarm-runtime.md)',
+    'Semantics and responses behind these rows: [docs/39](39-swarm-runtime.md)',
     'and the swarm section of `impl/MCP.md`. This block is generated — do not hand-edit it.',
   ].join('\n');
 }

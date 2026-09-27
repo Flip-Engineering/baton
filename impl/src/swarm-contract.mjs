@@ -8,14 +8,10 @@ import { FRAME_LIMITS } from './limits.mjs';
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
  * worker binding stay on their own explicit lanes. */
 export const SWARM_EVENT_KINDS = Object.freeze([
-  'swarm.group_updated',
   'swarm.work_updated',
   'swarm.assignment_updated',
-  'swarm.coupling_updated',
-  // Issues #422/#423 (docs/45-open-coordination.md): the joint coupling actions extend
-  // `swarm.coupling_updated`; a claim and a work proposal are their own kinds.
+  // Issue #423 (docs/45-open-coordination.md): a claim is its own kind.
   'swarm.claim_updated',
-  'swarm.proposal_updated',
   'swarm.holder_released',
   'swarm.context_updated',
   'swarm.contribution_recorded',
@@ -71,10 +67,10 @@ export const SWARM_VIEW_DEFAULT_PROJECTION = 'full';
 // and every mutation echo (2026-09-14 audit S-F2) — so they ride the whole record, while `updates`
 // (the kinds this caller may send, with the permission admitting each) rides the frame.
 const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
-  'participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'couplings', 'context',
+  'participants', 'work', 'assignments', 'contributions', 'reviews', 'context',
   'knowledge', 'attention', 'updatePayloads',
-  // Issue #423 (lane 2 hand-back): the two new collections are view fields, sliced like the rest.
-  'claims', 'proposals',
+  // Issue #423 (lane 2 hand-back): the claim collection is a view field, sliced like the rest.
+  'claims',
   // Issue #311: the deployment-level situation block — one derived object, sliced like the rest.
   'situation',
   // Issues #552/#554: the landing pipeline — the one derived block a reader acts on, sliced like
@@ -106,7 +102,7 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
   knowledge: Object.freeze({ rows: Object.freeze(['knowledge']), participant: null }),
   // The shared-context notes a swarm writes with `swarm.context_updated` — the whiteboard docs/39
   // §Communication intends (a peer reads the note, not the whole record): the rows the fold keeps,
-  // in ledger order, each carrying its key, body, groupId, version, actor, seq and ts (#427).
+  // in ledger order, each carrying its key, body, version, actor, seq and ts (#427).
   context: Object.freeze({ rows: Object.freeze(['context']), participant: null }),
   // The deployment-level situation (#311): the one block the recruit brief's situation section
   // and this projection both derive — this swarm's peers with their scopes, the can-act seats of
@@ -426,18 +422,12 @@ export function swarmChangedRow(kind, payload = {}) {
     case 'swarm.participant_bound':
     case 'swarm.participant_left':
       return row('participants', payload.participantId ?? null);
-    case 'swarm.group_updated':
-      return row('groups', payload.groupId ?? null);
     case 'swarm.work_updated':
       return row('work', payload.workId ?? null);
     case 'swarm.assignment_updated':
       return row('assignments', payload.assignmentId ?? null);
-    case 'swarm.coupling_updated':
-      return row('couplings', payload.couplingId ?? null);
     case 'swarm.claim_updated':
       return row('claims', payload.claimId ?? null);
-    case 'swarm.proposal_updated':
-      return row('proposals', payload.proposalId ?? null);
     case 'swarm.context_updated':
       return row('context', payload.key ?? null);
     case 'swarm.contribution_recorded':
@@ -1043,7 +1033,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.update',
-    description: 'Apply one swarm domain update — group, work (including declared dependencies), assignment, coupling record, holder release, shared context, contribution, review, participant leave, or close. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
+    description: 'Apply one swarm domain update — work (including declared dependencies), assignment, claim, holder release, shared context, contribution, review, participant leave, or close. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA, view: VIEW_SCHEMA,
       payload: Object.freeze({ ...BODY_SCHEMA, description: swarmUpdatePayloadSummary() }) }),

@@ -78,7 +78,7 @@ export class Swarm {
   }
 
   /** Read the authoritative swarm view: purpose, status, participants with their runtime state,
-   * groups, work (with its derived completion `evidence`), assignments, context, contributions,
+   * work (with its derived completion `evidence`), assignments, claims, context, contributions,
    * reviews, `caller` authority, `availableActions`, recent `updates`, and `cursor`.
    * `options.participantId` scopes the read to that participant's delegation: its subtree, the
    * work assigned within, their contributions and reviews, and the delegation completion.
@@ -228,15 +228,9 @@ export class Swarm {
     });
   }
 
-  group(payload, options) { return this.update('swarm.group_updated', payload, options); }
-
   work(payload, options) { return this.update('swarm.work_updated', payload, options); }
   assign(payload, options) { return this.update('swarm.assignment_updated', payload, options); }
 
-  /** Declare, arrive at, or release one coupling record: a synchronization point a group arrives
-   * at and is released from, an exclusive writer over a shared checkout, or a group failure
-   * policy. Declared coupling is informed, never imposed — nothing here stops a worker. */
-  couple(payload, options) { return this.update('swarm.coupling_updated', payload, options); }
   context(payload, options) { return this.update('swarm.context_updated', payload, options); }
 
   contribute(payload, options) { return this.update('swarm.contribution_recorded', payload, options); }
@@ -246,8 +240,8 @@ export class Swarm {
   leave(payload, options) { return this.update('swarm.participant_left', payload, options); }
 
   /** Release one gone holder's seats in one durable batch: every active assignment it holds is
-   * released and it leaves every group, recorded as the individual durable events. Refuses for a
-   * live active participant (`swarm_holder_live`); stopping it stays the explicit separate act. */
+   * released, recorded as the individual durable events. Refuses for a live active participant
+   * (`swarm_holder_live`); stopping it stays the explicit separate act. */
   holderRelease(participantId, reason, options = {}) {
     return this.update('swarm.holder_released',
       { participantId, ...(reason === undefined ? {} : { reason }) }, options);

@@ -1373,7 +1373,7 @@ export function narrowSwarmViewForBridge(view, requestedProjection = null, maxBy
 // deliberately absent: the payload SHAPES are fixed discovery data that ride the frame of every
 // page (the same fixed tax the projection table in swarm-contract names), never rows.
 const SWARM_VIEW_PAGE_ROW_FAMILIES = Object.freeze([
-  'participants', 'contributions', 'reviews', 'attention', 'knowledge', 'work', 'assignments', 'groups', 'couplings', 'context',
+  'participants', 'contributions', 'reviews', 'attention', 'knowledge', 'work', 'assignments', 'context',
 ]);
 
 // The heavy per-row fields a PAGE leaves out: the per-seat diagnostic records — lastToolRows and

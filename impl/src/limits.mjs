@@ -353,13 +353,6 @@ const CONTEXT_PACKAGE = Object.freeze({
   'context_package.brief_bytes': { lane: 'context_package.brief_bytes', class: 'view', value: CONTEXT_PACKAGE_BRIEF_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the rendered slice per branch)' },
 });
 
-// Issue #423 (docs/45 §6/§8): the bounds a recruited seat's two new situation sections draw.
-// The peers-now section IS the seat read's own page (`view.seat_read.items` above, the row
-// `_peersRead` already pages with), so it declares no second bound; the couplings block is the
-// one NEW bound, and it draws the SAME item ceiling for the same reason — the couplings a brief
-// names are the couplings the seat could have read from the view in one page, and a longer list
-// is counted out loud rather than silently truncated.
-
 // Issue #489: the situation's AGE-SCALING blocks — the contracts published so far and the
 // commits the deployment landed since the swarm's base. Every SEAT the section renders is
 // already bounded (#464's row budget: `view.role.head` per role line, the participant row's
@@ -371,7 +364,6 @@ const CONTEXT_PACKAGE = Object.freeze({
 // situation block is exactly that: a slice of the swarm's record rendered into a brief, with the
 // remainder COUNTED and the read that reaches it named — never a silently short list.
 const BRIEF_SITUATION_BYTES = CONTEXT_PACKAGE_BRIEF_BYTES;
-const BRIEF_COUPLINGS_ITEMS = VIEW['view.seat_read.items'].value;
 // Issue #529 (docs/54 §6.1): the wake-events block is a THIRD age-scaling block beside the
 // contracts and the commits, so it declares its own ceiling the way they do. A count, not a byte
 // budget: the block's lines are the events a seat acts on at its own boundary, and whenever the
@@ -380,7 +372,6 @@ const BRIEF_COUPLINGS_ITEMS = VIEW['view.seat_read.items'].value;
 // situation section stays bounded by its three blocks rather than by the age of the swarm.
 const BRIEF_WAKE_EVENTS_ITEMS = 12;
 const BRIEF = Object.freeze({
-  'brief.couplings.items': { lane: 'brief.couplings.items', class: 'view', value: BRIEF_COUPLINGS_ITEMS, unit: 'items', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the couplings situation block)' },
   'brief.wake_events.items': { lane: 'brief.wake_events.items', class: 'view', value: BRIEF_WAKE_EVENTS_ITEMS, unit: 'items', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the Recent wake events situation block)' },
   'brief.situation.bytes': { lane: 'brief.situation.bytes', class: 'view', value: BRIEF_SITUATION_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the age-scaling situation blocks: the published contracts, the commits since the base, and the recent wake events)' },
 });

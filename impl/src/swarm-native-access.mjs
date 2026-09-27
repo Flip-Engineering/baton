@@ -4,7 +4,7 @@ import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_VIEW_PRO
 import { knowledgeSeedPayloadLines } from './application-semantics.mjs';
 import { SWARM_SEAT_READ_COMMANDS, SWARM_SEAT_READ_COMMAND_NAMES } from './swarm-runtime.mjs';
 import { EVIDENCE_SEARCH_FILTERS } from './evidence-search.mjs';
-import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from './runtime-isolation.mjs';
+import { WORKTREE_STASH_BRIEF_SENTENCE } from './runtime-isolation.mjs';
 
 /** Connect native participant tools to the live deployment without copying owner authority.
  * Credentials belong to a participant, independently of its current transport incarnation. */
@@ -124,7 +124,7 @@ export const SWARM_NATIVE_GUIDANCE = [
   // Issue #357: the worktrees of one repository share a single stash stack, so the seat's git
   // wrapper refuses stash and the brief names the safe baseline comparison in ONE sentence,
   // derived from the runtime that enforces it.
-  `Your checkout is a private git worktree. ${WORKTREE_STASH_BRIEF_SENTENCE} ${WORKTREE_WRITER_BRIEF_SENTENCE}`,
+  `Your checkout is a private git worktree. ${WORKTREE_STASH_BRIEF_SENTENCE}`,
   'The client fills your swarm identity and a per-call idempotency key. Naming that key again replays an operation that already completed; a NEW attempt needs a NEW key (only swarm.recruit and swarm.holder_released may be re-attempted under theirs). Keep the bridge credential private; never print environment variables containing tokens.',
   'A refusal is never silent: an answer that begins "Nothing was recorded:" says what to change, and every refusal is recorded in the swarm, so your orchestrator sees it and your own participant row shows it as lastRefusal until a later operation of the same command succeeds.',
 ].join('\n\n');
