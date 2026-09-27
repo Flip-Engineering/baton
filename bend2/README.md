@@ -150,13 +150,51 @@ argument to continue the same conversation. For example:
 .scratch/bend2/baton2 state.db turn worker1 turn2 HARNESS_COMMAND MODEL EFFORT WORKTREE NEXT_TASK_FILE NEXT_OUTPUT_LOG NATIVE_SESSION
 ```
 
-`pending` shows reports awaiting native acceptance; delivery
-is still being connected. Run one foreground turn at a time for a worker.
+`pending` shows reports awaiting native acceptance. The root adapters in the
+next section read messages addressed to a root session directly from the
+database. Run one foreground turn at a time for a worker.
 
 The check command builds the coordinator, process and Git test executables, then
 runs persistence, recruitment, Git, OS-process and controlled-protocol tests. A controlled
 process fixture verifies supervision; a real subscription worker and a native
 root acceptance receipt are required for the live-slice result.
+
+## Root adapters
+
+A Codex or OMP root session reviews worker reports and directs their work. Each
+adapter reads the messages addressed to a root session that have no receipt,
+starts one native turn containing them, prints the final assistant text to
+standard output, and writes progress to standard error. Each batch runs as a
+new root turn.
+
+```sh
+node bend2/scripts/codex-root.mjs DB [COORDINATOR_EXE] [CODEX_EXE] --once
+node bend2/scripts/codex-root.mjs DB [COORDINATOR_EXE] [CODEX_EXE] --poll [INTERVAL_MS]
+node bend2/scripts/omp-root.mjs DB [COORDINATOR_EXE] [OMP_EXE] --once
+node bend2/scripts/omp-root.mjs DB [COORDINATOR_EXE] [OMP_EXE] --poll [INTERVAL_MS]
+```
+
+The database path is required and comes first. `COORDINATOR_EXE` defaults to
+`.scratch/bend2/baton2`, `CODEX_EXE` to `codex`, and `OMP_EXE` to
+`/opt/homebrew/bin/omp`. The mode flag follows the positional arguments, and an
+empty string keeps the default for an executable. `--once` processes one batch
+and exits; it is the default. `--poll` re-reads the database every
+`INTERVAL_MS` (default 3000) and starts one turn per new batch until it receives
+SIGINT or SIGTERM.
+
+The root model comes from the environment. The Codex root reads
+`CODEX_ROOT_MODEL` (default `o4-mini`). The OMP root reads `OMP_ROOT_MODEL`
+(default `zai/glm-5.3-flash`) and `OMP_ROOT_THINKING` (default `high`). `HOME`
+must point to the user home so each harness finds its stored credentials.
+
+Each harness uses its existing login. A launch wrapper can set the harness's
+documented home or config environment before executing its binary.
+
+The root turn runs the coordinator CLI through its shell tool. It acknowledges a
+reviewed report with `ack ID root RECEIPT`, sends guidance with `message`, and
+inspects Git state with `worktree`. It lands and publishes reviewed work with
+the `land`, `land-checked` and `push` commands described under Coordinator
+storage.
 
 ## Source layout
 
