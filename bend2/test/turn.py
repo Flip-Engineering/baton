@@ -118,6 +118,39 @@ assert sys.stdin.read()==''
         self.assertEqual(resumed[resumed.index('--resume')+1],'omp-native')
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
 
+    def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
+        # Actual issue-608-reclaim native output, 2026-09-27 cutover trial.
+        events = (ROOT / 'bend2/test/fixtures/issue608-omp-report.jsonl').read_text()
+        final, terminal = [json.loads(line) for line in events.splitlines()]
+        expected = '\n'.join(c['text'] for c in final['message']['content'] if c['type'] == 'text')
+        self.assertEqual(terminal['messages'], [])
+        self.call('worker','omp-worker','root','omp','deepseek/deepseek-flash','low',str(self.cwd),'omp-branch','base')
+        (self.cwd / 'events.jsonl').write_text(events)
+        receiver = self.cwd / 'root-receiver.py'
+        receiver.write_text('import json,pathlib,sqlite3,sys\n'
+                            'db, output, report = sys.argv[1:]\n'
+                            'with sqlite3.connect(db) as connection:\n'
+                            ' body = connection.execute("SELECT body FROM messages WHERE id=?", (report,)).fetchone()[0]\n'
+                            'with pathlib.Path(output).open("a") as stream: stream.write(json.dumps(body)+"\\n")\n')
+        received = self.cwd / 'root-reports.jsonl'
+        endpoint = json.dumps([sys.executable, str(receiver), str(self.db), str(received)])
+        self.call('attach','root','native-fixture','root-session',endpoint)
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+sys.stdin.readline()
+sys.stdin.readline()
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+assert sys.stdin.read()==''
+''')
+        self.call('turn','omp-worker','trial-report',str(self.worker),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.assertEqual(json.loads(self.call('delivery','trial-report'))['body'], expected)
+        self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'], expected)
+        self.assertEqual(self.log.read_text(),events)
+        self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
+        self.worker.unlink()
+        self.call('turn','omp-worker','trial-report',str(self.worker),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.assertEqual(len(json.loads(self.call('turns','omp-worker'))),1)
+        self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
+
     def test_omp_guidance_receipt_follows_native_steer_acceptance(self):
         self.call('worker','omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         body='Change focus now: report the guidance label indigo λ.'

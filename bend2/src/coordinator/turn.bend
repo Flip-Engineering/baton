@@ -5,6 +5,7 @@ import ./guidance.bend as Guidance
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ../git/text.bend as Tx
 import ../harness/claude-worker.bend as Claude
 import ../harness/omp-worker.bend as Omp
 import ../harness/muse-worker.bend as Muse
@@ -103,13 +104,31 @@ def codex_finished(+db: String, worker: String, id: String, log: String, codex: 
       +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(source)))
       codex_report(db,worker,id,event,String.is_empty(event))
 
+# The live issue-608-reclaim turn emitted its report in message_end, then an
+# agent_end with messages=[] and messageCount=352. Keep the latest assistant
+# message in this reader and use it when the terminal envelope omits messages.
+# The native log keeps both original frames.
+def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> IO(String):
+  match enabled:
+    case False{}: IO.pure(String,previous)
+    case True{}: do IO<String>:
+      message : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='message_end' AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_extract(" ++ C.q(event) ++ ",'$.message') ELSE " ++ C.q(previous) ++ " END;"))
+      IO.pure(String,Tx.trim_nl(message))
+
+def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
+  match enabled:
+    case False{}: IO.pure(String,event)
+    case True{}: do IO<String>:
+      normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
+      IO.pure(String,Tx.trim_nl(normalized))
+
 def observe_event(db: String, worker: String, id: String, line: String, relevant: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: Store.apply(db,C.Observe{id,worker,line})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 @unsafe
-def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match result:
     case Fail{error}:
       report(db,worker,id ++ ":read","Native output read failed: " ++ error_text(error) ++ "; output retained at " ++ log)
@@ -124,9 +143,11 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,line ++ "\n")
         +relevant : Bool <- Guidance.relevant(db,line,String.eq(harness,"omp\n"))
         next_cursor : String <- Guidance.observe(db,worker,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
-        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,line,relevant)
+        +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
+        event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
+        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,event,relevant)
         next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,harness,next_cursor,remember(remember_write(first_error,written),observed),sender,next)
+        consume(db,worker,id,log,handle,harness,next_cursor,message,remember(remember_write(first_error,written),observed),sender,next)
 
 def started(+db: String, +worker: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
@@ -135,7 +156,7 @@ def started(+db: String, +worker: String, +id: String, +log: String, prompt: Str
       do IO<Unit>:
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,harness,"0\n","",sender,first)
+        consume(db,worker,id,log,handle,harness,"0\n","","",sender,first)
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
