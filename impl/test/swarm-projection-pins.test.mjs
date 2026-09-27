@@ -101,7 +101,6 @@ async function builders(t, options = {}) {
   const betaWorker = await paused(beta.runId);
   await delegated.work({ workId: 'W-A', objective: 'Part A', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
-  await delegated.group({ groupId: 'impl', members: ['alpha', 'beta'], purpose: 'builders' });
   return { ...fixtureHandle, swarm, delegated, lead, leadWorker, alpha, alphaWorker, beta, betaWorker };
 }
 
@@ -181,7 +180,6 @@ test('every projected row family pins its seq and ts', async (t) => {
   await delegated.work({ workId: 'W-B', objective: 'Part B', status: 'open', dependsOn: [{ workId: 'W-A' }] });
   await delegated.assign({ assignmentId: 'as-beta', participantId: 'beta', workId: 'W-B', status: 'active' });
   await delegated.context({ key: 'interface', body: 'the interface is frozen' });
-  await delegated.couple({ couplingId: 'sync-rows', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'rows' });
   await asWorker(alphaWorker).swarms.open(swarm.id).contribute({
     contributionId: 'contribution-alpha-1', participantId: 'alpha', workId: 'W-A', body: 'Part A built',
   });
@@ -200,11 +198,9 @@ test('every projected row family pins its seq and ts', async (t) => {
   for (const [contributionId, reviews] of Object.entries(view.reviews)) {
     for (const [index, review] of reviews.entries()) stamped(review, `review ${contributionId}[${index}]`);
   }
-  for (const [couplingId, row] of Object.entries(view.couplings)) stamped(row, `coupling ${couplingId}`);
   assert.equal(Object.keys(view.assignments).length >= 2, true);
   assert.equal(Object.keys(view.contributions).length >= 1, true);
   assert.equal(Object.keys(view.reviews).length >= 1, true);
-  assert.equal(Object.keys(view.couplings).length >= 1, true);
   // The declared wait is projected with its evidence: the accepted contribution on W-A settles it.
   assert.deepEqual(view.work['W-B'].waitsOn, [{ workId: 'W-A', settled: true, evidence: ['contribution-alpha-1'] }]);
 });

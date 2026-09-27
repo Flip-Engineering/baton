@@ -100,7 +100,7 @@ async function until(predicate, frames, label, timeoutMs = 30_000, errors = []) 
 
 test('the wake-class table derives every class from its own ledger row, and admits nothing else', () => {
   assert.ok(WAKE_CLASSES.length >= 12, 'the table carries the documented classes');
-  for (const required of ['contribution_recorded', 'checkpoint', 'paused', 'dead', 'refused', 'closed',
+  for (const required of ['contribution_recorded', 'checkpoint', 'paused', 'dead', 'refused', 'left',
     'attention', 'guidance_delivered', 'recruited', 'integrated', 'capacity_pressure', 'resident_lifecycle']) {
     assert.ok(WAKE_CLASSES.includes(required), `the closed set carries ${required}`);
   }
@@ -120,18 +120,18 @@ test('the wake-class table derives every class from its own ledger row, and admi
   assert.equal(wakeClassFor({ kind: 'web.audit', payload: { kind: 'readiness_probe' } }), null,
     'a row no class owns wakes nobody');
   // A consumer acts on a terminal wake with a command that exists.
-  const closed = deriveWakeFrame({ seq: 4, ts: 'T', kind: 'swarm.closed', actor: 'root', payload: { swarmId: 'swarm-1' } });
+  const closed = deriveWakeFrame({ seq: 4, ts: 'T', kind: 'swarm.participant_left', actor: 'root', payload: { swarmId: 'swarm-1' } });
   assert.equal(closed.next, 'baton_swarm_view / baton swarm view swarm-1');
   assert.deepEqual(closed.subject, { kind: 'swarm', id: 'swarm-1' });
   assert.ok(wakeClassHelpLines().every((line) => typeof line === 'string' && line.length > 0));
 });
 
 test('the filter admits only the closed class set, and refuses an unknown class by naming the set', () => {
-  const filter = parseWakeFilter({ kinds: 'closed,dead', swarms: 'swarm-1', participants: 'worker', since: '7' });
-  assert.deepEqual([...filter.kinds], ['closed', 'dead']);
+  const filter = parseWakeFilter({ kinds: 'left,dead', swarms: 'swarm-1', participants: 'worker', since: '7' });
+  assert.deepEqual([...filter.kinds], ['left', 'dead']);
   assert.deepEqual([...filter.swarms], ['swarm-1']);
   assert.equal(filter.since, 7);
-  assert.throws(() => parseWakeFilter({ kinds: 'closed,not_a_class' }), (error) => (
+  assert.throws(() => parseWakeFilter({ kinds: 'left,not_a_class' }), (error) => (
     error.code === 'invalid_wake_filter' && error.detail.unknown.includes('not_a_class')
     && error.detail.classes.includes('capacity_pressure') && error.detail.classes.includes('resident_lifecycle')
   ));
@@ -180,8 +180,8 @@ test('one attachment receives the rows of every swarm the resident hosts, includ
   await until(() => frames.some((frame) => frame.wakeClass === 'contribution_recorded' && frame.swarmId === second.id), frames,
     'a swarm created after the attachment wakes the same attachment');
 
-  await second.close({ reason: 'proof complete' });
-  await until(() => frames.some((frame) => frame.wakeClass === 'closed' && frame.swarmId === second.id), frames,
+  await second.leave({ participantId: 'worker', reason: 'proof complete' });
+  await until(() => frames.some((frame) => frame.wakeClass === 'left' && frame.swarmId === second.id), frames,
     'the second swarm closes on the same attachment');
 
   const recruitments = frames.filter((frame) => frame.wakeClass === 'recruited' && frame.swarmId === second.id);
@@ -354,8 +354,6 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
       payload: { assignmentId: 'a1', swarmId: 's1' } }, null],
     [{ seq: 4, ts: 'T', kind: 'swarm.work_updated', actor: 'root',
       payload: { workId: 'w1', swarmId: 's1' } }, null],
-    [{ seq: 5, ts: 'T', kind: 'swarm.coupling_updated', actor: 'root',
-      payload: { couplingId: 'c1', swarmId: 's1' } }, null],
     [{ seq: 6, ts: 'T', kind: 'swarm.context_updated', actor: 'root',
       payload: { key: 'k', body: {}, swarmId: 's1' } }, null],
     [{ seq: 7, ts: 'T', kind: 'swarm.contribution_recorded', actor: 'p1',
@@ -364,7 +362,7 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
       payload: { contributionId: 'c1', swarmId: 's1' } }, null],
     [{ seq: 9, ts: 'T', kind: 'knowledge.node_added', actor: 'p1',
       payload: { id: 'k1', runId: 'r1' } }, null],
-    [{ seq: 10, ts: 'T', kind: 'swarm.closed', actor: 'root', payload: { swarmId: 's1' } }, 'baton_swarm_view / baton swarm view s1'],
+    [{ seq: 10, ts: 'T', kind: 'swarm.participant_left', actor: 'root', payload: { swarmId: 's1' } }, 'baton_swarm_view / baton swarm view s1'],
     [{ seq: 11, ts: 'T', kind: 'driver.recorded', actor: 'root',
       payload: { kind: 'swarm.operation_refused', swarmId: 's1', command: 'swarm.update' } },
       'baton_swarm_view / baton swarm view s1'],

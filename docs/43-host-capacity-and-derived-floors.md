@@ -221,12 +221,9 @@ default posture; a declared `manual` stops at the proposal and pages an orchestr
 operator may also declare `advanced.routing.excludeHarnesses` — harnesses no seat may be routed
 onto; the recruit selection, the `recruitable` flag and the re-route candidate derivation honour
 it through the one eligibility predicate, and a re-route names an excluded route in its excluded
-rows with the reason `excluded_by_operator` (#574). The policy is declared when the swarm is
-OPENED — `baton swarm create <purpose> --policy '{"rerouteOnProviderFault":"manual"}'` — or
-later by one caller-submittable `swarm.policy_updated` row through `swarm.update`: both
-spellings write the same row and read the same fold (the create validates its policy
-against the fold's closed sets BEFORE the `swarm.created` row lands, so a refused policy
-leaves no swarm behind). A swarm whose provider killed a seat reads its candidates from the
+rows with the reason `excluded_by_operator` (#574). The initial policy is declared through
+`baton swarm create <purpose> --policy '{"rerouteOnProviderFault":"manual"}'` and recorded on
+`swarm.created`. The runtime validates the policy before creating the swarm. A swarm whose provider killed a seat reads its candidates from the
 same deployment route rows the `routeUsage` rows below describe.
 
 Both the doctor and the view's `deployment` summary carry `routeUsage` (#341):
@@ -357,4 +354,3 @@ the one that caches (issue #465 item 4/5).
 - A restarted resident reconciles every participant's runtime row against the worker fleet it actually recovered (`coordinator.startupWorkerFleet()`: owned = spawned by this incarnation, recovered = a kernel-start-bound process the replay proved alive; everything else is lost). For each lost seat the swarm runtime folds ONE durable `swarm.participant_runtime_lost {swarmId, participantId, workerId, incarnation, at}` (runtime-recorded, never caller-submittable), so `swarm.view` reads `live: false, state: dead` with a `worker_lost_on_restart` attention row whose `next` names resume (`swarm.recruit --resume-from`) or stop. The brief's Peers section and scopeOverlap read the settled liveness; a lost seat holds no capacity reservation.
 - A start the owned-resource reconciliation refuses names its cause: `coordinator_cleanup_incomplete` carries `{reconciler, record, observed, next}` for the reconciler that failed (workspace owners, worker processes, capacity leases, publication lease), a transient observation says `retry after N ms` with the fact it waits on (N from the reconciler's own grace row), and `baton serve` records `host.startup_refused {code, reconciler, record, observed}` through the deployment's writer before exiting, so the doctor and the wake stream see it.
 - A runtime scope the start cannot remove yet is a pending removal. `RuntimeIsolation.reconcile` reports every scope it could not remove on the `runtime_cleanup_failed` error's `pending` list, the coordinator records one durable `host.cleanup_pending {code, reconciler, record, observed}` row per scope, keeps the set on `coordinator.startupCleanupDeferred()`, and reconciles exactly those scopes again — never the whole sweep, so a scope a worker admitted since the pass is untouched — on the reap grace until each is absent, which lands one `host.cleanup_completed {reconciler, record, attempts}` row. The retry count is unbounded and the loop's timer is unref'd, so a start proceeds while a killed worker's child is still releasing its scratch (`ENOTEMPTY` for one filesystem turn) and nothing waits on the loop at drain or close.
-

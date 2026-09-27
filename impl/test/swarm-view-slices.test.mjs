@@ -24,7 +24,7 @@ import { SWARM_CLI_COMMANDS, SWARM_MCP_TOOL_DEFINITIONS } from '../src/swarm-sur
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
 const workerPrincipal = (workerId) => ({ actor: `worker:${workerId}`, principalId: `worker:${workerId}`, sessionId: workerId });
 const SHA = 'b'.repeat(40);
-const FAMILIES = ['participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'couplings', 'context', 'attention'];
+const FAMILIES = ['participants', 'work', 'assignments', 'contributions', 'reviews', 'context', 'attention'];
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-view-slices-'));
@@ -80,10 +80,8 @@ async function built(t) {
   await f.call('recruit', { participantId: 'alpha', objective: 'Build A', permissions: ['read', 'communicate', 'contribute', 'recruit'] }, lead);
   await f.call('recruit', { participantId: 'beta', objective: 'Build B' }, lead);
   await f.call('recruit', { participantId: 'leaf', objective: 'Detail work under A' }, f.asParticipant('alpha'));
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'impl', members: ['alpha', 'beta'] } });
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'others', members: ['beta'] } });
   await f.call('update', { event: 'swarm.context_updated', payload: { key: 'notes:all', body: 'shared with everyone' } });
-  await f.call('update', { event: 'swarm.context_updated', payload: { key: 'notes:impl', body: 'for the implementers', groupId: 'impl' } });
+  await f.call('update', { event: 'swarm.context_updated', payload: { key: 'notes:impl', body: 'for the implementers' } });
   await f.call('update', { event: 'swarm.work_updated', payload: { workId: 'W-A', objective: 'Part A', status: 'open' } });
   await f.call('update', { event: 'swarm.assignment_updated', payload: { assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' } });
   await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c-alpha', participantId: 'alpha', workId: 'W-A', body: 'Part A built' } });
@@ -177,7 +175,6 @@ test('updates names the kinds this caller may send with the permission that admi
     // seat may take its own claim, and any seat's own consent (its arrival at a proposal) is
     // sendable at read authority, so both are advertised with the permission that admits them.
     { event: 'swarm.claim_updated', permission: 'contribute' },
-    { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.context_updated', permission: 'communicate' },
     { event: 'swarm.contribution_recorded', permission: 'contribute' },
     { event: 'swarm.participant_left', permission: 'read' },
@@ -191,25 +188,21 @@ test('updates names the kinds this caller may send with the permission that admi
     { command: 'run.scratchpad.elevate', permission: 'contribute' },
     { command: 'evidence.search', permission: 'read' },
   ]);
-  assert.equal(advertised.includes('swarm.group_updated'), false, 'organizing is not advertised to a builder');
-  assert.equal(advertised.includes('swarm.closed'), false);
+  assert.equal(advertised.includes('swarm.work_updated'), false, 'organizing is not advertised to a builder');
   assert.ok(view.availableActions.includes('swarm.update'), 'there is something to send, so the command is offered');
   for (const row of view.updates) assert.ok(view.caller.permissions.includes(row.permission), `${row.event} names a permission the caller holds`);
 
   // Every advertised kind really is admitted, and the kind that is not advertised really is refused.
   await f.call('update', { event: 'swarm.context_updated', payload: { key: 'notes:a', body: 'from alpha' } }, alpha);
   await f.call('update', { event: 'swarm.contribution_recorded', payload: 'alpha published a finding' }, alpha);
-  await assert.rejects(f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'g', members: ['alpha'] } }, alpha),
-    (error) => error.code === 'swarm_permission_required' && error.detail.permission === 'organize',
+  await assert.rejects(f.call('update', { event: 'swarm.work_updated', payload: { workId: 'g', objective: 'implement' } }, alpha),
+    (error) => error.code === 'swarm_permission_required' && error.detail.rule === 'work-holder-or-organize',
     'a kind the view does not advertise is refused by exactly the permission it would have needed');
 
   // A read-only seat may send its own leave and nothing else; the view says so.
   await f.call('recruit', { participantId: 'reader', objective: 'Watch only', permissions: ['read'] }, f.lead);
   const readOnly = await f.call('view', {}, f.asParticipant('reader'));
   assert.deepEqual(readOnly.updates, [
-    // A read-only seat may consent by arriving at a proposal naming it (docs/45 §3/§4.6): its
-    // arrival is an honest self-report, so `swarm.proposal_updated` is advertised at read.
-    { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.participant_left', permission: 'read' },
     { command: 'run.board.read', permission: 'read' },
     { command: 'run.scratchpad.read', permission: 'read' },
@@ -244,8 +237,6 @@ test('a participant-scoped view carries its own brief and no other, by roster in
 
   // Records by roster intersection: the group alpha is on is in scope (with its real roster), the
   // group it is not on is not; couplings follow the same rule (already pinned elsewhere).
-  assert.deepEqual(alphaScope.groups.find((row) => row.groupId === 'impl').members, ['alpha', 'beta']);
-  assert.equal(alphaScope.groups.some((row) => row.groupId === 'others'), false, 'a group the seat is not on is out of scope');
 
   // Shared context: every entry the swarm publishes swarm-wide is the participant's own reading
   // (it is recruited WITH that context), and an entry written for ONE group follows that group's
@@ -253,7 +244,7 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   const contextKeys = (view) => Object.values(view.context).map((entry) => entry.key).sort();
   assert.deepEqual(contextKeys(alphaScope), ['notes:all', 'notes:impl'], 'alpha is on impl');
   assert.deepEqual(contextKeys(await f.call('view', { participantId: 'beta' })), ['notes:all', 'notes:impl']);
-  assert.deepEqual(contextKeys(await f.call('view', { participantId: 'leaf' })), ['notes:all'],
+  assert.deepEqual(contextKeys(await f.call('view', { participantId: 'leaf' })), ['notes:all', 'notes:impl'],
     'a member of no group reads the swarm-wide entry and nothing else');
 
   // An in-flight operation is attention; its REQUEST BODY never is (2026-09-14 audit S-E6).

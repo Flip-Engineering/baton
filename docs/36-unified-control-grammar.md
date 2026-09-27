@@ -490,19 +490,14 @@ fields each kind requires of the caller are read from the payload schemas
 
 | Kind | Where it lands | Caller-required payload fields |
 |---|---|---|
-| `swarm.group_updated` | recorded by the coordination store and replayed by the fold | `groupId`, `members` |
 | `swarm.work_updated` | recorded by the coordination store and replayed by the fold | `workId` |
 | `swarm.assignment_updated` | recorded by the coordination store and replayed by the fold | `assignmentId`, `participantId`, `workId`, `status` |
-| `swarm.coupling_updated` | recorded by the coordination store and replayed by the fold | `couplingId`, `coupling`, `action` |
 | `swarm.claim_updated` | recorded by the coordination store and replayed by the fold | `claimId` |
-| `swarm.proposal_updated` | recorded by the coordination store and replayed by the fold | `proposalId`, `action` |
 | `swarm.holder_released` | expanded by the runtime into the events it names | `participantId` |
 | `swarm.context_updated` | recorded by the coordination store and replayed by the fold | `key`, `body` |
 | `swarm.contribution_recorded` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.contribution_reviewed` | recorded by the coordination store and replayed by the fold | `contributionId`, `decision` |
-| `swarm.policy_updated` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
-| `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
 **Runtime-owned driver kinds (never caller-submittable, 16).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
@@ -539,10 +534,6 @@ runtime from durable state — never asserted by a caller:
 - `delegation_orphaned`
 - `assignment_holder_gone`
 - `claim_holder_gone`
-- `group_member_gone`
-- `coupling_writer_gone`
-- `coupling_writer_bypassed`
-- `closed_with_live_participants`
 - `recruit_queued`
 - `unreviewed_contribution`
 - `root_attention_owed`

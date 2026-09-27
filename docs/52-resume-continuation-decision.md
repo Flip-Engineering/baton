@@ -30,9 +30,7 @@ stops it. A recovered seat is work the runtime can perform, so it performs it.
 - A `--resume-from` recruit performs the whole recovery in that one command: the brief, the host
   admission, the run start, the binding, the scope claim, the package attach and the workspace
   carry. The successor is working when the command returns.
-- Nothing records a continuation question, and no seat waits on one. The `resumeContinuation`
-  policy field is gone: `swarm.policy_updated` carries only `rerouteOnProviderFault` and
-  `reroutePreferApi`.
+- `swarm.create` accepts an initial policy with `rerouteOnProviderFault` and `reroutePreferApi`.
 - A recovery that cannot complete — a snapshot that will not apply, a route that cannot serve —
   refuses the recruit itself with the typed refusal it already named, and the #308 rollback
   withdraws the seat so no half-joined member remains.

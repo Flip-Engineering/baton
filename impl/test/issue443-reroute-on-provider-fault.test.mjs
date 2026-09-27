@@ -170,12 +170,8 @@ function world(t, { rows, label: tag = 'w', routingExcludedHarnesses = [] }) {
  * physical workspace), and alpha's provider then kills its worker. */
 async function faultedSwarm(t, { rows, policy = null, tag = 'w', routingExcludedHarnesses } = {}) {
   const w = world(t, { rows, label: tag, routingExcludedHarnesses });
-  await w.call('create', { swarmId: SWARM, purpose: 'Re-route after a provider fault' });
-  // The policy is declared the ONE way a swarm-level policy is declared (#443): a policy row on
-  // the swarm, before any death.
-  if (policy !== null) {
-    await w.call('update', { swarmId: SWARM, event: 'swarm.policy_updated', payload: { ...policy } });
-  }
+  await w.call('create', { swarmId: SWARM, purpose: 'Re-route after a provider fault',
+    ...(policy === null ? {} : { policy }) });
   await w.call('recruit', { swarmId: SWARM, participantId: 'base', objective: 'hold the checkout' });
   await w.call('recruit', {
     swarmId: SWARM, participantId: 'alpha', objective: 'work alpha', shareWorkspaceWith: 'base',
@@ -271,30 +267,7 @@ test('443-a2: the proposal wakes the new closed wake class, and a declared manua
   assert.deepEqual(view.policy, { rerouteOnProviderFault: 'manual', reroutePreferApi: false },
     'the view renders the declared policy with its defaults resolved');
 
-  // The policy is a closed vocabulary, enforced in the lane that knows best: the contract refuses
-  // an unknown payload FIELD before any effect (naming the fields the kind has), and the fold
-  // refuses a value outside the closed set. Neither lands in the durable record.
-  await assert.rejects(
-    w.call('update', {
-      swarmId: SWARM, event: 'swarm.policy_updated', payload: { rerouteOnFault: 'auto' },
-    }),
-    (error) => {
-      assert.equal(error.code, 'swarm_command_invalid');
-      assert.ok(String(error.message).includes('rerouteOnFault'), 'the refusal names the field');
-      assert.ok(String(error.message).includes('rerouteOnProviderFault'), 'and the fields it has');
-      return true;
-    },
-    'an unknown policy field never reaches the fold',
-  );
-  for (const payload of [{ rerouteOnProviderFault: 'sometimes' }, { reroutePreferApi: 'yes' }, {}]) {
-    await assert.rejects(
-      w.call('update', { swarmId: SWARM, event: 'swarm.policy_updated', payload }),
-      (error) => error.code === 'invalid_payload',
-      `a policy row refuses: ${JSON.stringify(payload)}`,
-    );
-  }
-  assert.equal(rowsOf(w.store, 'swarm.policy_updated').length, 1,
-    'a refused policy leaves the declared row exactly as it was');
+
 });
 
 test('443-a3: with no declared policy the default is auto — a fault death performs the resume itself (#574)', async (t) => {
@@ -307,8 +280,7 @@ test('443-a3: with no declared policy the default is auto — a fault death perf
   const view = await w.call('view', { swarmId: SWARM });
   assert.deepEqual(view.policy, { rerouteOnProviderFault: 'auto', reroutePreferApi: false },
     'the undeclared policy resolves to the auto recovery posture');
-  assert.equal(rowsOf(w.store, 'swarm.policy_updated').length, 0,
-    'no policy row was declared — the default lives in the derivation');
+  assert.equal(rowsOf(w.store, 'swarm.created')[0].payload.policy, undefined);
 
   const rerouted = rowsOf(w.store, 'swarm.rerouted');
   assert.equal(rerouted.length, 1, 'the runtime performed the resume onto the first candidate');
@@ -381,9 +353,9 @@ test('443-b1: `auto` performs the resume onto the first candidate, carrying the 
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
     policy: { rerouteOnProviderFault: 'auto' }, tag: 'b1',
   });
-  const policies = rowsOf(w.store, 'swarm.policy_updated');
+  const policies = rowsOf(w.store, 'swarm.created');
   assert.equal(policies.length, 1, 'the swarm-level policy is one recorded row');
-  assert.equal(policies[0].payload.rerouteOnProviderFault, 'auto');
+  assert.equal(policies[0].payload.policy.rerouteOnProviderFault, 'auto');
 
   const view = await w.call('view', { swarmId: SWARM });
 

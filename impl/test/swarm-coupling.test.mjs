@@ -16,7 +16,6 @@ import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { foldSwarmEvent } from '../src/swarm-state.mjs';
 
 // The view's coupling collection is an ARRAY of rows (issue #302, one collection shape).
-const couplingRow = (view, couplingId) => (view?.couplings ?? []).find((row) => row.couplingId === couplingId) ?? null;
 
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-swarm-coupling', mandatory: true, approvalTtlMs: 60 * 60 * 1000,
@@ -112,7 +111,6 @@ async function coupling(t, options = {}) {
   await delegated.work({ workId: 'W-B', objective: 'Part B', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
   await delegated.assign({ assignmentId: 'as-beta', participantId: 'beta', workId: 'W-B', status: 'active' });
-  await delegated.group({ groupId: 'impl', members: ['alpha', 'beta'], purpose: 'builders' });
   return { ...fixtureHandle, swarm, delegated, alpha, beta, leadWorker, alphaWorker, betaWorker, driver };
 }
 
@@ -178,155 +176,6 @@ test('dependency declarations refuse what no evidence could ever settle', async 
     (error) => error.code === 'invalid_payload' && /exactly one/u.test(error.message));
 });
 
-test('a synchronization point shows who has arrived, releases with who and why, and refuses dishonest arrivals', async (t) => {
-  const { swarm, delegated, alphaWorker, asWorker } = await coupling(t);
-
-  // The lead declares the point on the builders' group.
-  await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'interface-freeze' });
-  let view = await swarm.view();
-  let point = couplingRow(view, 'sync-freeze');
-  assert.equal(point.name, 'interface-freeze');
-  assert.deepEqual(point.awaiting, ['alpha', 'beta'], 'both live members are awaited');
-  assert.deepEqual(point.arrivals, []);
-  assert.equal(point.arrived, false);
-  assert.equal(point.released, false);
-
-  // A member arrives as its own honest report (read authority suffices); the wake fires.
-  const parked = await swarm.view();
-  const watching = swarm.watch({ afterSeq: parked.cursor, timeoutMs: 2000 });
-  await asWorker(alphaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'arrive' });
-  const woke = await watching;
-  assert.equal(woke.watch.reason, 'event');
-  assert.equal(woke.watch.event.kind, 'swarm.coupling_updated');
-  point = couplingRow(woke, 'sync-freeze');
-  // An arrival is a row, not a bare name: it names the seat, the actor that reported it, and WHEN
-  // it arrived — "who arrived and when" is answered by the artifact itself.
-  assert.deepEqual(point.arrivals.map(({ participantId }) => participantId), ['alpha'],
-    'the arrival records its participant in order');
-  assert.equal(typeof point.arrivals[0].ts, 'string', 'the arrival carries the timestamp it was made');
-  assert.match(point.arrivals[0].actor ?? '', /^worker:/u, 'and the acting identity that made the report');
-  assert.deepEqual(point.awaiting, ['beta']);
-  assert.equal(point.arrived, false);
-
-  // Nobody arrives twice; an outsider is named.
-  await assert.rejects(asWorker(alphaWorker).swarms.open(swarm.id)
-    .couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'arrive' }),
-  { code: 'swarm_already_arrived' });
-  await assert.rejects(swarm.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'arrive', participantId: 'root-nobody' }),
-    { code: 'participant_not_found' }, 'an unknown arrival names the missing participant');
-
-  // The release names who released and why — the explicit release half of the point.
-  await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'release', reason: 'the interface is frozen' });
-  view = await swarm.view();
-  point = couplingRow(view, 'sync-freeze');
-  assert.equal(point.released, true);
-  assert.equal(point.releasedBy, 'lead');
-  assert.equal(point.releaseReason, 'the interface is frozen');
-  await assert.rejects(swarm.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'arrive', participantId: 'beta' }),
-    { code: 'swarm_coupling_released' }, 'a released point takes no more arrivals');
-});
-
-test('a released seat never holds a synchronization point open', async (t) => {
-  const { swarm, delegated } = await coupling(t);
-  await delegated.couple({ couplingId: 'sync-handoff', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'handoff' });
-  // beta stops (runtime gone) and its seats are released: the point must not await that seat —
-  // a barrier that counts a released seat would wait forever precisely where the release is the
-  // remedy (delegated-completion audit).
-  await swarm.stop('beta', 'part B delivered');
-  await swarm.holderRelease('beta', 'runtime is gone; seats released');
-  const view = await swarm.view();
-  const point = couplingRow(view, 'sync-handoff');
-  assert.deepEqual(point.awaiting, ['alpha'], 'the released seat is not awaited');
-  assert.deepEqual(point.departed, ['beta'], 'the departed member is named, not counted');
-});
-
-test('an exclusive writer over a shared checkout is one claim at a time, and a gone writer names its release', async (t) => {
-  const { swarm, delegated, root, driver, leadWorker, paused } = await coupling(t, { sharedCheckout: true });
-  // Two holders deliberately adopt the lead's live checkout.
-  const adopted = await delegated.recruit('sharer', 'Share the checkout', { ...selection, shareWorkspaceWith: 'lead' });
-  await paused(adopted.runId);
-  const joiner = await delegated.recruit('joiner', 'Share the checkout too', { ...selection, shareWorkspaceWith: 'lead' });
-  await paused(joiner.runId);
-  const view0 = await swarm.view();
-  const checkout = view0.participants.find((row) => row.participantId === 'sharer').workspaceId;
-  assert.ok(checkout, 'the adopted participants are recorded in the shared checkout');
-  assert.equal(view0.participants.find((row) => row.participantId === 'joiner').workspaceId, checkout,
-    'both adopters name one physical checkout');
-  assert.equal(checkout, driver.coordinator.workspaceAttachment(leadWorker.id).workspaceId,
-    'the adopters\' recorded checkout is the lead\'s live one');
-
-  // The lead claims the checkout for the sharer: one record names the exclusive writer.
-  await delegated.couple({ couplingId: 'writer-main', coupling: 'writer', action: 'declare', participantId: 'sharer' });
-  let view = await swarm.view();
-  const claim = couplingRow(view, 'writer-main');
-  assert.equal(claim.writer, 'sharer');
-  assert.equal(claim.workspaceId, checkout, 'the claim records which checkout is held');
-
-  // A second writer over the SAME checkout refuses, naming the current writer; a claim without
-  // an identifiable writer (no caller to default to) names what is missing.
-  await assert.rejects(delegated.couple({ couplingId: 'writer-second', coupling: 'writer', action: 'declare', participantId: 'joiner' }),
-    (error) => error.code === 'swarm_writer_conflict' && /sharer/u.test(error.message));
-  await assert.rejects(root.swarms.open(swarm.id).couple({ couplingId: 'writer-anon', coupling: 'writer', action: 'declare' }),
-    (error) => error.code === 'invalid_payload' && /exactly one of participantId/u.test(error.message));
-
-  // Release frees the checkout; a new claim then lands.
-  await delegated.couple({ couplingId: 'writer-main', coupling: 'writer', action: 'release', reason: 'sharer turn done' });
-  view = await swarm.view();
-  assert.equal(couplingRow(view, 'writer-main').released, true);
-  assert.equal(couplingRow(view, 'writer-main').releasedBy, 'lead');
-  await delegated.couple({ couplingId: 'writer-turn-2', coupling: 'writer', action: 'declare', participantId: 'joiner' });
-  view = await swarm.view();
-  assert.equal(couplingRow(view, 'writer-turn-2').writer, 'joiner');
-
-  // A writer whose runtime dies does not hold the checkout invisibly: attention names the
-  // release that frees it.
-  await swarm.stop('joiner', 'joiner runtime lost');
-  view = await swarm.view();
-  const gone = view.attention.find((row) => row.kind === 'coupling_writer_gone');
-  assert.deepEqual(gone, { kind: 'coupling_writer_gone', couplingId: 'writer-turn-2', participantId: 'joiner',
-    workspaceId: couplingRow(view, 'writer-turn-2').workspaceId,
-    next: { event: 'swarm.coupling_updated', couplingId: 'writer-turn-2', action: 'release' } });
-  await swarm.couple({ couplingId: 'writer-turn-2', coupling: 'writer', action: 'release', reason: 'writer is gone' });
-  view = await swarm.view();
-});
-
-test('a declared failure policy tells the dependents when a member is gone; independence is the undeclared default', async (t) => {
-  const { swarm, delegated, alphaWorker, asWorker } = await coupling(t);
-
-  // Without a declared policy, a member's death is the existing organization truth only: no
-  // coupling row appears — independent activities inherit nothing by sharing a swarm.
-  await asWorker(alphaWorker).swarms.open(swarm.id).contribute({
-    contributionId: 'contribution-alpha-1', participantId: 'alpha', workId: 'W-A', body: 'Part A implemented',
-  });
-  let view = await swarm.view();
-  assert.equal(view.attention.some((row) => row.kind === 'group_member_gone'), false);
-
-  // The lead declares the policy on the builders' group and W-B declares its dependency on W-A.
-  await swarm.work({ workId: 'W-B', objective: 'Part B', dependsOn: [{ workId: 'W-A' }] });
-  await delegated.couple({ couplingId: 'policy-impl', coupling: 'failure', action: 'declare', groupId: 'impl', policy: 'independent' });
-  view = await swarm.view();
-  assert.equal(couplingRow(view, 'policy-impl').policy, 'independent');
-  await assert.rejects(delegated.couple({ couplingId: 'policy-impl-2', coupling: 'failure', action: 'declare', groupId: 'impl', policy: 'independent' }),
-    { code: 'swarm_coupling_conflict' }, 'one declared policy per group until released');
-  await assert.rejects(delegated.couple({ couplingId: 'policy-gone', coupling: 'failure', action: 'declare', groupId: 'impl', policy: 'quorum' }),
-    (error) => error.code === 'invalid_payload' && /independent/u.test(error.message), 'an unknown policy is named');
-
-  // alpha's runtime dies: the policy row tells the group — the member is named, and the
-  // dependent work (W-B, declared on alpha's W-A) is told. Independent peers continue.
-  await swarm.stop('alpha', 'runtime lost');
-  view = await swarm.view();
-  const row = view.attention.find((row) => row.kind === 'group_member_gone');
-  assert.deepEqual(row, { kind: 'group_member_gone', couplingId: 'policy-impl', groupId: 'impl',
-    participantId: 'alpha', policy: 'independent', dependentWork: ['W-B'] });
-  assert.equal(view.participants.find((row) => row.participantId === 'beta').status, 'active',
-    'the independent peer continues');
-
-  // Releasing the policy ends the coupling truth: the row belongs to the coupling, so it goes.
-  await delegated.couple({ couplingId: 'policy-impl', coupling: 'failure', action: 'release', reason: 'integration window over' });
-  view = await swarm.view();
-  assert.equal(couplingRow(view, 'policy-impl').released, true);
-  assert.equal(view.attention.some((row) => row.kind === 'group_member_gone'), false);
-});
 
 test('a member that leaves hands its live session to its recruiter, then to the creator, and the row names the reclaim', async (t) => {
   const { swarm, delegated } = await coupling(t);
@@ -353,54 +202,4 @@ test('a member that leaves hands its live session to its recruiter, then to the 
   view = await swarm.view();
   assert.equal(view.attention.some((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta'), false,
     'the reclaim cleared the row');
-});
-
-test('a member whose roster intersects a synchronization point sees it; an unrelated participant does not', async (t) => {
-  const { swarm, delegated, alphaWorker, asWorker, paused } = await coupling(t);
-  await delegated.couple({ couplingId: 'sync-view', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'view-check' });
-  await delegated.couple({ couplingId: 'policy-view', coupling: 'failure', action: 'declare', groupId: 'impl', policy: 'independent' });
-
-  // The lead's subtree fully owns the group: both records are in scope.
-  const leadScope = await swarm.view({ participantId: 'lead' });
-  assert.deepEqual(leadScope.couplings.map((row) => row.couplingId).sort(), ['policy-view', 'sync-view']);
-  // alpha IS the roster the point names — a seat listed in `awaiting` must be able to read the
-  // barrier it is asked to arrive at, even though its own subtree does not own the whole group.
-  const alphaScope = await swarm.view({ participantId: 'alpha' });
-  assert.deepEqual(alphaScope.couplings.map((row) => row.couplingId).sort(), ['policy-view', 'sync-view'],
-    'a member whose roster intersects the point sees it');
-  // A participant outside the roster sees nothing of it: the record is scoped by intersection,
-  // never broadcast.
-  const scout = await delegated.recruit('scout', 'Outside the coupled group', selection);
-  await paused(scout.runId);
-  const scoutScope = await swarm.view({ participantId: 'scout' });
-  assert.deepEqual(scoutScope.couplings.map((row) => row.couplingId), []);
-
-  // An arrival wakes a watcher; the wake carries the coupling truth.
-  const parked = await swarm.view();
-  const watching = swarm.watch({ afterSeq: parked.cursor, timeoutMs: 2000 });
-  await asWorker(alphaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-view', coupling: 'synchronization', action: 'arrive' });
-  const woke = await watching;
-  assert.equal(woke.watch.reason, 'event');
-  assert.equal(couplingRow(woke, 'sync-view').arrivals.length, 1);
-});
-
-test('the coordination log replays to the byte-identical swarm with couplings and dependencies', async (t) => {
-  const { swarm, driver, delegated, alphaWorker, betaWorker, asWorker } = await coupling(t);
-  await delegated.work({ workId: 'W-B', objective: 'Part B', dependsOn: [{ workId: 'W-A' }, { artifact: 'artifact:iface' }] });
-  await delegated.couple({ couplingId: 'sync-replay', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'replay-check' });
-  await asWorker(alphaWorker).swarms.open(swarm.id).contribute({
-    contributionId: 'contribution-alpha-1', participantId: 'alpha', workId: 'W-A', refs: ['artifact:iface'], body: 'Part A',
-  });
-  await delegated.review({ contributionId: 'contribution-alpha-1', decision: 'accept' });
-  await asWorker(betaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-replay', coupling: 'synchronization', action: 'arrive' });
-  await delegated.couple({ couplingId: 'writer-replay', coupling: 'writer', action: 'declare', participantId: 'lead' });
-  await delegated.couple({ couplingId: 'policy-replay', coupling: 'failure', action: 'declare', groupId: 'impl', policy: 'independent' });
-
-  const replayed = new Map();
-  for (const event of driver.coordination.eventsView().filter((event) => event.kind.startsWith('swarm.'))) {
-    foldSwarmEvent(replayed, event);
-  }
-  const live = driver.coordination.swarm(swarm.id);
-  assert.equal(JSON.stringify(replayed.get(swarm.id)), JSON.stringify(live),
-    'the replayed fold is byte-identical to the live fold, couplings and dependencies included');
 });
