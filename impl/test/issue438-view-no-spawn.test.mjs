@@ -13,7 +13,7 @@
 // inspect. On a fleet with checkouts on disk that is O(seats) synchronous spawns per read, on
 // the resident's request loop, for every caller (each seat's brief refresh, the root's watch).
 //
-// The contract this file pins (issue #438):
+// The contract this file pins (issue #438, extended by issue #379):
 //   C1 the participants and outline projections spawn NOTHING: the workspace row derives from
 //      the durable rows (#428 custody rows, #425 commit rows, the binding's own session
 //      context) plus the runtime's change-driven `workspaceObservations` cache, and the row
@@ -23,7 +23,11 @@
 //   C3 a commit the seat's projected wrapper reports lands in the cache with source `wrapper`
 //      and the next view shows the new headSha without spawning;
 //   C4 the participants view over N=40 seats with checkouts answers inside the transport's
-//      request bound (the #394 `web.wait_ceiling_ms` registry row, never a literal).
+//      request bound (the #394 `web.wait_ceiling_ms` registry row, never a literal);
+//   C5 (#379) a view that reads a checkout reads it ONCE: the WHOLE record's #301 base derives
+//      over the head the same view's observation took, so a cold read spends one worktree read
+//      per seat and not two, and the base stays a READ-TIME derivation (the drift is read
+//      against the deployment target on every whole-record read).
 //
 // Hermetic: a real git repository with real lane worktrees, a real CoordinationStore, the real
 // RuntimeIsolation commit spool (#425), and a PATH shim that counts (and can slow) every git
@@ -78,11 +82,12 @@ function fixture(t) {
   git(['add', 'base.txt']);
   git(['commit', '-qm', 'base']);
 
-  // The counting (and optionally slowing) shim: every runtime spawn is one line, then the real
-  // git runs with argv and env intact — the read path sees no difference but the count.
+  // The counting (and optionally slowing) shim: every runtime spawn is one line carrying what
+  // was asked and where, then the real git runs with argv and env intact — the read path sees
+  // no difference but the count, and a test can name WHICH read a view spent.
   const shim = join(bin, 'git');
   writeFileSync(shim, `#!/bin/sh
-printf 'spawn\\n' >> ${JSON.stringify(spool)}
+printf 'spawn %s\\t%s\\n' "$*" "$PWD" >> ${JSON.stringify(spool)}
 if [ -n "$${GIT_SPAWN_DELAY_ENV}" ]; then sleep "$${GIT_SPAWN_DELAY_ENV}"; fi
 exec ${JSON.stringify(REAL_GIT)} "$@"
 `);
@@ -150,7 +155,9 @@ exec ${JSON.stringify(REAL_GIT)} "$@"
     return worker;
   };
   const spawns = () => readFileSync(spool, 'utf8').split('\n').filter((line) => line.length > 0).length;
-  return { world, repo, git, store, workers, scopes, runtime, call, recruit, spawns };
+  const spawnsMatching = (pattern) => readFileSync(spool, 'utf8').split('\n')
+    .filter((line) => pattern.test(line)).length;
+  return { world, repo, git, store, workers, scopes, runtime, call, recruit, spawns, spawnsMatching };
 }
 
 test('438a: the participants and outline projections spawn NOTHING, and the row still tells its truth', needsGit, async (t) => {
@@ -291,4 +298,52 @@ test('438e: the seat\'s turn seam re-observes the checkout once — source turn 
   assert.equal(f.spawns() - beforeRoster, 0, 'the roster spends nothing on the turn seam');
   assert.equal(roster.participants[0].workspace.source, 'turn',
     'the roster carries the last observation, never a read of its own');
+});
+
+test('438f: a whole-record view reads each checkout ONCE, and its base stays a read-time derivation', needsGit, async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'one worktree read per view', idempotencyKey: 'i438:create:f' });
+  for (let index = 0; index < 3; index += 1) await f.recruit(index);
+  const target = f.git(['symbolic-ref', '--short', 'HEAD'], f.repo);
+  const seatHead = f.git(['rev-parse', 'HEAD'], join(f.repo, '.baton', 'wt', wsId(0)));
+  const HEAD_READ = /rev-parse HEAD/u;
+
+  // The first read of this state observes each seat once (branch, HEAD, status) and derives the
+  // #301 base over the head that SAME observation took: one worktree read per seat, never two,
+  // plus one deployment-target read for the repository.
+  const headsBefore = f.spawnsMatching(HEAD_READ);
+  const beforeCold = f.spawns();
+  const cold = await f.call('view', {});
+  assert.equal(f.spawns() - beforeCold, (3 * 4) + 2,
+    'branch + HEAD + status + drift per seat, plus the target facts read once (#379)');
+  assert.equal(f.spawnsMatching(HEAD_READ) - headsBefore, 3,
+    'the head this view observed answers the base, so each seat costs one head read (#379)');
+  for (const row of cold.participants) {
+    assert.equal(row.base.observedHead, seatHead);
+    assert.equal(row.base.target, target);
+    assert.equal(row.base.behind, 0);
+  }
+
+  // The base is still derived at READ TIME (issue #301): the target moves on with no runtime
+  // call and no seat-side signal, and the very next view shows the drift. What a whole-record
+  // view costs per seat is that derivation — one head and one drift query — and no more.
+  writeFileSync(join(f.repo, 'landed.txt'), 'landed\n');
+  f.git(['add', 'landed.txt']);
+  f.git(['commit', '-qm', 'target moves']);
+  const beforeDrift = f.spawns();
+  const drifted = await f.call('view', {});
+  assert.equal(f.spawns() - beforeDrift, (3 * 2) + 2,
+    'the read-time head and drift of each checkout, plus the target facts read once');
+  assert.equal(drifted.participants[0].base.behind, 1, 'the drift follows the target at read time');
+
+  // A read that NAMES a seat observes that seat live and reads its base over the head that same
+  // observation took: the named seat's worktree is read once by the view.
+  const namedHeads = f.spawnsMatching(HEAD_READ);
+  const scoped = await f.call('view', { participantId: seatName(0) });
+  const row = scoped.participants.find((candidate) => candidate.participantId === seatName(0));
+  assert.equal(row.workspace.source, 'live', 'the named seat is observed live');
+  assert.equal(row.base.observedHead, row.workspace.headSha,
+    'and its base reads the head that observation took');
+  assert.equal(f.spawnsMatching(HEAD_READ) - namedHeads, 3,
+    'one head read per seat: the named seat\'s live read replaces the base\'s own (#379)');
 });

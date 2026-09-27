@@ -1111,11 +1111,17 @@ const landingTargetOf = (repoRoot) => {
  * commits the checkout lacks — so drift is visible BEFORE a capture, not discovered after one.
  * Unobservable seats (unbound, no checkout recorded) carry `base: null`. `memo` is the #438
  * per-view repository memo above; the live read itself stays the WHOLE record's derivation and
- * the seat's own scoped read, never the roster slice's (see inspect's read-path policy). */
-const participantBase = (worker, memo = null) => {
+ * the seat's own scoped read, never the roster slice's (see inspect's read-path policy).
+ *
+ * Issue #379: `viewHead` is the head a live observation THIS VIEW already took of the same
+ * worktree (the cold fill's, or the one the scoped read just took), or null when this view has
+ * taken none. A second `git rev-parse HEAD` in the same view would answer the same checkout, so
+ * the derivation reads the drift over the head the row already holds and spawns one query
+ * instead of two. A head no observation in this view took is still read here. */
+const participantBase = (worker, memo = null, viewHead = null) => {
   const checkout = checkoutOf(worker);
   if (!checkout) return null;
-  const observedHead = gitRead(['rev-parse', 'HEAD'], checkout.worktree);
+  const observedHead = viewHead ?? gitRead(['rev-parse', 'HEAD'], checkout.worktree);
   if (!observedHead || !GIT_SHA.test(observedHead)) return null;
   const { targetRef, targetCommit } = targetFactsOf(checkout.repoRoot, memo);
   if (!targetCommit || !GIT_SHA.test(targetCommit)) return null;
@@ -4142,14 +4148,18 @@ export class SwarmRuntime {
   }
 
   /** The observation one seat's workspace row stands on. `live` is the caller's explicit
-   * `--participant-id` read of THIS seat — the one place the read path may spawn (#438). */
-  _workspaceObservationFor(worker, workspaceId, { live = false } = {}) {
+   * `--participant-id` read of THIS seat — the one place the read path may spawn (#438).
+   * `readHere` is the set of workspace keys THIS view read live (#379): the key is added when
+   * this call takes the observation, so the base derivation reuses that head instead of reading
+   * the same worktree a second time in the same view. */
+  _workspaceObservationFor(worker, workspaceId, { live = false, readHere = null } = {}) {
     const key = this._workspaceObservationKey(workspaceId, worker?.id ?? null);
     if (key === null) return null;
     const cached = this.workspaceObservations.get(key) ?? null;
     if (!live) return cached;
     const checkout = checkoutOf(worker);
     if (!checkout) return cached;
+    readHere?.add(key);
     return this._noteWorkspaceObservation(key,
       this._readWorkspaceLive(checkout, 'live', this._turnEpochOf(worker)));
   }
@@ -4171,8 +4181,11 @@ export class SwarmRuntime {
    * — one observation, reviewed, never a spawn per view. The live `git status` is the COLD fill
    * and the TURN-SEAM refresh, paid only where the projection actually carries the attention
    * rows the change set feeds (the roster and the outline never do) and only until that
-   * workspace is observed again: an unchanged workspace answers every later view for free. */
-  _workspaceChangeSetFor(worker, workspaceId, { live = false } = {}) {
+   * workspace is observed again: an unchanged workspace answers every later view for free.
+   * Issue #379: a live observation adds its key to the caller's `readHere` set, so a base
+   * derivation later in the SAME view reads the head this observation took instead of spawning
+   * a second `git rev-parse HEAD` for the same worktree. */
+  _workspaceChangeSetFor(worker, workspaceId, { live = false, readHere = null } = {}) {
     const key = this._workspaceObservationKey(workspaceId, worker?.id ?? null);
     if (key === null) return null;
     const cached = this.workspaceObservations.get(key) ?? null;
@@ -4185,6 +4198,7 @@ export class SwarmRuntime {
     if (!live) return null;
     const checkout = checkoutOf(worker);
     if (!checkout) return null;
+    readHere?.add(key);
     const observed = this._noteWorkspaceObservation(key,
       this._readWorkspaceLive(checkout, crossed ? 'turn' : 'live', epoch));
     return observed.paths === null ? null : { worktree: checkout.worktree, paths: observed.paths };
@@ -4262,6 +4276,10 @@ export class SwarmRuntime {
     // observation cache — never a fold of #305 rows, which this ledger does not carry.
     // One repository memo per view: the deployment target facts every live base read needs.
     const repoFacts = new Map();
+    // Issue #379: the workspaces THIS view has read live — the cold fill and the scoped read
+    // add their keys as they take an observation, and the base derivation then reads the drift
+    // over the head that observation took. One read of a worktree per view, never two.
+    const readHere = new Set();
     // The workspace identity of each seat's worker, recorded by the participants composer below
     // and read by the attention derivation (the #357 change set is per checkout, and the
     // checkout is the one the workspace row already resolved).
@@ -4430,7 +4448,7 @@ export class SwarmRuntime {
         if (!worker) continue;
         const workspaceId = this._workspaceIdOf(participant, worker, workspaceIdByParticipant);
         workspaceIdByWorker.set(worker.id, workspaceId);
-        this._workspaceChangeSetFor(worker, workspaceId, { live: true });
+        this._workspaceChangeSetFor(worker, workspaceId, { live: true, readHere });
       }
     }
     // Issue #464: the caller-side facts the brief reach's exposure class reads — gathered ONCE
@@ -4479,12 +4497,16 @@ export class SwarmRuntime {
       const workerId = worker?.id ?? null;
       if (workerId !== null) workspaceIdByWorker.set(workerId, workspaceId);
       // The one place a read may spawn: the caller named THIS seat (issue #438, trigger c).
+      // Issue #379: a workspace this view has already read live hands its head to the base
+      // derivation, which reads the drift over it instead of the same worktree a second time.
       const scopedHere = scopeId !== null && scopeId === participant.participantId;
-      const observation = this._workspaceObservationFor(worker, workspaceId, { live: scopedHere });
-      const liveBase = wholeRecord || scopedHere ? participantBase(worker, repoFacts) : null;
+      const observationKey = this._workspaceObservationKey(workspaceId, workerId);
+      const observation = this._workspaceObservationFor(worker, workspaceId,
+        { live: scopedHere, readHere });
+      const viewHead = readHere.has(observationKey) ? observation?.headSha ?? null : null;
+      const liveBase = wholeRecord || scopedHere ? participantBase(worker, repoFacts, viewHead) : null;
       if (liveBase !== null && scopedHere) {
-        this._noteWorkspaceObservation(this._workspaceObservationKey(workspaceId, workerId),
-          { target: liveBase.target, behind: liveBase.behind });
+        this._noteWorkspaceObservation(observationKey, { target: liveBase.target, behind: liveBase.behind });
       }
       // Issue #464: the seat's whole attributed history, read ONCE — the roster row carries its
       // bounded tail, and a read that NAMES this seat carries it whole (the #343/#349 ladder).
