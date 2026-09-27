@@ -360,8 +360,10 @@ test('DF7: worker worktrees materialize the effective caller tree without import
   t.after(async () => { try { await deployment.close(); } catch {} });
   const run = await deployment.run('Add one worker-owned output while preserving the effective caller tree.', route);
   const prepared = await run.complete();
-  assert.equal(prepared.outline.phase, 'work_completed');
-  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), true);
+  assert.equal(prepared.outline.phase, 'work_completed',
+    'a manual-result Run ends at work_completed — the caller owns the result');
+  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), false,
+    'the Run ends at work_completed: no apply action is advertised');
 
   const callerAfter = {
     status: gitBytes(['status', '--porcelain=v1', '-z']),
@@ -529,7 +531,8 @@ test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi ro
   assert.equal(kimi.every((route) => route.code === 'authentication_refresh_required'), true);
 });
 
-test('DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it', {
+
+test('DF11: concise complete prepares an adopted result and stops at work_completed', {
   skip: !factoryAvailable,
 }, async (t) => {
   const repo = repository('apply');
@@ -549,21 +552,13 @@ test('DF11: concise complete prepares an adopted result and one explicit apply f
   });
   assert.equal(deployment.card().profiles[0].exportPolicy.requireIntegration, true);
   const beforeSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  const run = await deployment.run('Create one result and apply it through the concise Baton surface.', route);
+  const run = await deployment.run('Create one result and hand it to the caller through the concise Baton surface.', route);
   const prepared = await run.complete();
 
   assert.equal(prepared.outline.phase, 'work_completed', JSON.stringify(prepared));
   assert.equal(existsSync(join(repo, 'applied-result.txt')), false,
     'complete must not implicitly edit the caller repository');
   assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), beforeSha);
-  const applyAction = prepared.outline.actions.find((action) => action.kind === 'integrate');
-  assert.equal(applyAction.label, 'Apply adopted result');
-  assert.equal(applyAction.destructive, true);
-  assert.equal(applyAction.inputSchema.properties.strategy.default, 'ff-only');
-
-  const applied = await run.apply();
-  assert.equal(applied.outline.phase, 'completed');
-  assert.equal(existsSync(join(repo, 'applied-result.txt')), true);
-  assert.equal(readFileSync(join(repo, 'applied-result.txt'), 'utf8'), 'applied through Baton\n');
-  assert.notEqual(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), beforeSha);
+  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), false,
+    'the Run ends at work_completed and advertises no apply action');
 });

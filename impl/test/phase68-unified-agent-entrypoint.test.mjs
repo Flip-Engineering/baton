@@ -326,8 +326,6 @@ test('local CLI help topics, default operations, actions, and selectors cannot d
   assert.match(registry.cli.selectorRules.routingDetail.description, /fixed route is never a manual-selector tie-breaker/u);
   assert.match(batonCliHelp('run'), new RegExp(registry.cli.selectorRules.manualRoute.description, 'u'));
   assert.match(batonCliHelp('routing'), new RegExp(registry.cli.selectorRules.routingDetail.description, 'u'));
-  assert.ok(registry.cli.commands.some((command) => command.action === 'export_result'
-    && command.usage === 'baton run export RUN_ID DIR'));
 });
 
 test('bound Pythonic facade cascades start, inspect, semantic action, continuation, and stop', async () => {

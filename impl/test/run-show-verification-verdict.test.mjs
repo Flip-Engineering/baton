@@ -14,7 +14,7 @@
 //   V3  pure bounded tail (over-bound capsule text stays within the capsule bound)
 //   V4  pure honest absence (passed/pending states and missing verdict project null;
 //       an unmappable code escalates check/corrective to null)
-//   V5  e2e inconclusive run: outline.verification rides beside retry_verification
+//   V5  e2e inconclusive run: outline.verification rides on run show
 //   V6  e2e outline.verification never leaks paths or the checkpoint ref
 //   V7  e2e failed candidate run still carries its own corrective (failing_check_fix)
 //
@@ -265,7 +265,7 @@ async function driveToFailed(context, runId) {
   return outline;
 }
 
-test('V5: an inconclusive run outline carries the verdict projection beside retry_verification', async (t) => {
+test('V5: an inconclusive run outline carries the verdict projection', async (t) => {
   const f = fixture('inconclusive', brokenRuntimePolicy());
   t.after(async () => {
     try { await f.application.shutdown(principal('cleanup')); }
@@ -282,9 +282,6 @@ test('V5: an inconclusive run outline carries the verdict projection beside retr
   assert.ok('corrective' in verification, 'the corrective class rides the outline (honest null where the table has none)');
   assert.ok('gate' in verification && 'code' in verification && 'detail' in verification,
     'the shared {gate, code, check, detail, corrective} projection rides run show');
-
-  const kinds = outline.outline.actions.map((action) => action.kind);
-  assert.ok(kinds.includes('retry_verification'), `the verdict rides BESIDE retry_verification (actions: ${kinds.join(',')})`);
 });
 
 test('V6: the outline verdict never leaks paths or the checkpoint ref', async (t) => {

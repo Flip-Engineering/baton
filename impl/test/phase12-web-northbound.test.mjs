@@ -32,7 +32,7 @@ const envelope = (overrides = {}) => ({
 const principal = (overrides = {}) => ({
   userId: 'user-1', sessionId: 'session-1', credentialId: 'cred-1', authMethod: 'cookie',
   csrfToken: 'csrf-1', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,
-  capabilities: ['observe', 'control', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'], repoIds: ['repo-a'],
+  capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: ['repo-a'],
   ...overrides,
 });
 const context = (overrides = {}) => ({
@@ -132,9 +132,6 @@ test('UA5/WN: authenticated Run commands are thin mappings to one application co
     ['run_answer', { runId: 'run-web-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
     ['run_stop', { runId: 'run-web-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
     ['run_evidence', { runId: 'run-web-a' }, 'run.evidence'],
-    ['run_adopt', { runId: 'run-web-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
-    ['run_review', { runId: 'run-web-a', route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Independent semantic review.' }, 'run.review'],
-    ['run_integrate', { runId: 'run-web-a', evidenceDigest: 'd'.repeat(64), strategy: 'ff-only', reason: 'Integrate the reviewed result.' }, 'run.integrate'],
   ];
   for (const [index, [command, args, expectedName]] of commands.entries()) {
     const response = await web.execute(context(), envelope({
@@ -143,14 +140,13 @@ test('UA5/WN: authenticated Run commands are thin mappings to one application co
     assert.equal(response.status, 200);
     assert.equal(applicationCalls.at(-1).name, expectedName);
   }
-  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(11).fill({
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(8).fill({
     actor: 'web:user-1:session-1', principalId: 'user-1', sessionId: 'session-1',
   }));
   assert.equal(applicationCalls[2].args.timeoutMs, 30_000, 'Web forwards the exact journaled follow timeout');
   assert.equal(applicationCalls[4].args.timeoutMs, 30_000, 'Web forwards the exact journaled wait timeout');
   const mutations = new Set([
-    'run_start', 'run_approve', 'run_answer', 'run_stop', 'run_adopt',
-    'run_review', 'run_integrate',
+    'run_start', 'run_approve', 'run_answer', 'run_stop',
   ]);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted')
     .map((event) => [event.payload.command, event.payload.runId]), commands

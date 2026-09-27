@@ -271,7 +271,7 @@ function residentFetch(fixture, {
           repoId: cardRepoId,
           commands: [
             'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-            'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop',
+            'run.workstreams', 'run.act', 'run.stop',
           ],
           agentExperience: { registryDigest },
         },

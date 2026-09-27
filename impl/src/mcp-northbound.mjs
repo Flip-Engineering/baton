@@ -48,8 +48,6 @@ const CANONICAL_ORDINARY_SIBLINGS = Object.freeze([
   ['run.do', 'baton_run_act', 'run.act'],
   ['run.view', 'baton_run_inspect', 'run.inspect'],
   ['run.member.view', 'baton_run_workstreams', 'run.workstreams'],
-  ['run.member.send', 'baton_workstream_notify', 'run.workstream.notify'],
-  ['run.member.stop', 'baton_workstream_stop', 'run.workstream.stop'],
   ['application.help', 'baton_help', 'application.help'],
 ].map(([key, legacyTool, command]) => Object.freeze({
   key, legacyTool, command, tool: deriveSurfaceNames(key).mcp,
@@ -63,12 +61,8 @@ const LEGACY_ORDINARY_APPLICATION_ROWS = Object.freeze([
   ['baton_run_inspect', 'run.inspect'],
   ['baton_run_episode', 'run.episode'],
   ['baton_run_workstreams', 'run.workstreams'],
-  ['baton_workstream_notify', 'run.workstream.notify'],
-  ['baton_workstream_stop', 'run.workstream.stop'],
   ['baton_run_act', 'run.act'],
   ['baton_run_stop', 'run.stop'],
-  // S-1 v2: portable atomic attach-and-harvest (canonical baton_waves_attach).
-  ['baton_waves_attach', 'waves.attach'],
 ]);
 // ── D1 step 2 (issue #156): the pre-spread gap snapshot and the lifecycle sibling table ────────
 //
@@ -113,11 +107,8 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_inspect', 'run.inspect'],
     ['baton_run_episode', 'run.episode'],
     ['baton_run_workstreams', 'run.workstreams'],
-    ['baton_workstream_notify', 'run.workstream.notify'],
-    ['baton_workstream_stop', 'run.workstream.stop'],
     ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
-    ['baton_waves_attach', 'waves.attach'],
     ['baton_evidence_search', 'evidence.search'],
     ['evidence.search', 'evidence.search'],
     ['baton_services_list', 'services.list'],
@@ -660,28 +651,13 @@ const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, explicit change or read-only evidence result intent, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_status', description: 'Read the fresh bounded authoritative RunView for one Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_follow', description: 'Resume one Run-specific bounded at-least-once change page after an acknowledged coordination cursor (omit afterCursor to resume from the stream start).', inputSchema: schema({ ...repo, runId, afterCursor: { type: 'integer', minimum: 0 }, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_recover', description: 'Recover the one server-selected eligible orphan for a Run under its deployment-owned recovery policy and approved Plan authority.', inputSchema: schema({ ...repo, ...idem, runId }, ['repoId', 'idempotencyKey', 'runId']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_approve', description: 'Approve the exact displayed Plan digest and let the resident Baton application dispatch it once.', inputSchema: schema({ ...repo, ...idem, runId, planDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'planDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_wait', description: 'Wait a bounded deployment-approved interval and return a fresh authoritative RunView.', inputSchema: schema({ ...repo, runId, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_answer', description: 'Answer one Run-owned pending question or approval exactly once.', inputSchema: schema({ ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1 }, answer: applicationAnswerSchema }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_feedback', description: 'Attach typed operator feedback to one immutable verified Workflow candidate selected by role.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, feedback: applicationFeedbackSchema }, ['repoId', 'idempotencyKey', 'runId', 'role', 'feedback']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_stop', description: 'Durably close one Run to new effects, then kill and reap only its exact workers and return its stop receipt.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_evidence', description: 'Return one bounded content-addressed terminal evidence manifest for a Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_episode', description: 'Read one progressively addressed Episode chapter without inspect selectors.', inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_workstreams', description: 'List or open durable semantic workstream generations.', inputSchema: schema({ ...repo, runId, role: runId, generation: { type: 'integer', minimum: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_workstream_notify', description: 'Notify one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_workstream_stop', description: 'Stop and reap one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'role']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_adopt', description: 'Designate one exact preserved and verified Run result without merging, checking out, or publishing it.', inputSchema: schema({ ...repo, ...idem, runId, nodeKey: runId, resultSha: commitSha, evidenceDigest: digest, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_review', description: 'Start one exact independently-routed structured semantic review over the immutable accepted Run result.', inputSchema: schema({ ...repo, ...idem, runId, route: applicationRouteSchema, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'route', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_integrate', description: 'Integrate the exact adopted and semantically reviewed result under fresh evidence and deployment policy; never pushes.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest, strategy: { type: 'string', enum: ['ff-only', 'structured'] }, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest', 'strategy', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_export', description: 'Materialize the exact evidence-bound accepted Git tree under deployment-owned authority and return its immutable opaque export receipt.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  // Issue #156 D2: the two hard-missing fleet tools. Their admission already exists
-  // (MCP_APPLICATION_ENTRIES / APPLICATION_TOOL / STATEFUL / RECONCILABLE — both commands are
-  // mcp:true + mcpStateful + reconcilable), so only the definition row was missing. The schemas
-  // mirror the bus verbs exactly: the command takes {runId, reason} (reason bounded at 1_024);
-  // the MCP envelope adds repoId and the stateful idempotencyKey.
-  { name: 'fleet_run_resume_work', description: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_retry_verification', description: 'Re-run the pinned verification of the exact preserved candidate without another provider turn; candidate-failure confirmation is one-shot and instability-preserving.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
 const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   {
@@ -729,18 +705,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'baton_workstream_notify',
-    description: 'Notify one exact current workstream generation while Baton resolves worker and fence authority.',
-    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_workstream_stop',
-    description: 'Stop and reap one exact current workstream generation.',
-    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'role']),
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  },
-  {
     name: 'baton_run_act',
     description: 'Perform one currently offered Run-bound action while Baton derives authoritative coordinates.',
     inputSchema: schema({ ...repo, ...idem, runId, actionId: runId, inputs: { type: 'object' } }, ['repoId', 'idempotencyKey', 'runId', 'actionId', 'inputs']),
@@ -751,25 +715,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     description: 'Immediately stop and reap one exact Run without enumerating workers.',
     inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  },
-  // S-1 v2: atomic attach-and-harvest. Advertised schema excludes transportHidden mintWaveDetached.
-  {
-    name: 'baton_waves_attach',
-    description: 'Attach to a prior wave by waveId and member objectives, validate bindings server-side, settle, and return closed outcomes (no live handle).',
-    inputSchema: schema({
-      ...repo,
-      waveId: runId,
-      members: {
-        type: 'array', minItems: 1,
-        items: schema({
-          role: runId,
-          objective: { type: 'string', minLength: 1 },
-        }, ['role', 'objective']),
-      },
-      timeoutMs: { type: 'integer', minimum: 1 },
-      repoRoot: { type: 'string', minLength: 1 },
-    }, ['repoId', 'waveId', 'members']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Start is
   // detached — {waveId, members:[{role, runId}]}, live handles never cross transport; quota
@@ -1641,7 +1586,6 @@ function transportHiddenFields(commandName) {
     .filter((operation) => (
       operation.key === commandName
       || (commandName === 'run.inspect' && operation.key === 'run.view')
-      || (commandName === 'waves.attach' && operation.key === 'waves.attach')
     ))
     .flatMap((operation) => operation.transportHidden ?? []);
   return new Set([...fromDefinition, ...fromRegistry]);
@@ -2203,7 +2147,7 @@ export class McpFleetServer {
       if (this.application === null || !this.applicationOwned) {
         return Object.freeze({ schemaVersion: 1, state: 'transport_closed', applicationOwned: false });
       }
-      return this.application.command('application.shutdown', {}, this.shutdownPrincipal);
+      return this.application.shutdown(this.shutdownPrincipal);
     });
     this._closePromise = closing;
     try {

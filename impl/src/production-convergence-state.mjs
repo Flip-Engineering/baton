@@ -54,7 +54,7 @@ export function readConvergenceState(stateRoot) {
   if (value === null) return null;
   if (!record(value) || value.schemaVersion !== 1 || !Array.isArray(value.events)
     || !record(value.projection) || !Array.isArray(value.subscriptions)
-    || !Array.isArray(value.members) || !record(value.recovery)
+    || !Array.isArray(value.members)
     || !Array.isArray(value.terminalPins) || !record(value.evaluation)) {
     throw new BatonControlError(
       'convergence_state_invalid',
@@ -252,136 +252,7 @@ function terminalCause(value) {
     ?? value.cancelCause ?? value.outline?.cancelCause ?? null;
 }
 
-function collectRunViews(value, fallbackRunId = null, output = [], depth = 0) {
-  if (depth > 8 || output.length >= 128 || value == null) return output;
-  if (Array.isArray(value)) {
-    for (const item of value) collectRunViews(item, fallbackRunId, output, depth + 1);
-    return output;
-  }
-  if (!record(value)) return output;
-  const runId = typeof value.runId === 'string' ? value.runId : fallbackRunId;
-  const cause = terminalCause(value);
-  if (runId && record(cause)) {
-    const kind = cause.kind ?? cause.code ?? cause.classification ?? null;
-    const retryable = cause.retryable === true || RETRYABLE_KINDS.has(kind);
-    if (retryable && !NON_RETRYABLE_KINDS.has(kind)) {
-      output.push({ runId, cause: clone(cause), kind });
-    }
-  }
-  for (const child of Object.values(value)) {
-    if (child !== cause) collectRunViews(child, runId, output, depth + 1);
-  }
-  return output;
-}
 
-export class AutomaticRecoveryController {
-  #records = new Map();
-  #retryBudget;
-  constructor({ records = {}, retryBudget = 2 } = {}) {
-    this.#retryBudget = retryBudget;
-    for (const [runId, value] of Object.entries(records)) {
-      this.#records.set(runId, clone(value));
-    }
-  }
-  snapshot() {
-    return freeze(Object.fromEntries([...this.#records.entries()].sort(([left], [right]) => compareCanonicalStrings(left, right))
-      .map(([runId, value]) => [runId, clone(value)])));
-  }
-  consider({ name, args, result, application, principal, context, runtime }) {
-    if (name === 'run.recover' || !application || typeof application.command !== 'function') return 0;
-    const views = collectRunViews(result, args?.runId ?? null);
-    let scheduled = 0;
-    for (const view of views) {
-      const causeDigest = digestValue({ runId: view.runId, cause: view.cause });
-      const prior = this.#records.get(view.runId) ?? null;
-      if (prior?.causeDigest === causeDigest
-        && ['scheduled', 'recovering', 'recovered', 'attention'].includes(prior.state)) continue;
-      const attempts = prior?.causeDigest === causeDigest ? prior.attempts ?? 0 : 0;
-      if (attempts >= this.#retryBudget) {
-        const exhausted = {
-          causeDigest, attempts, state: 'attention', kind: view.kind,
-          result: 'retry_budget_exhausted',
-        };
-        this.#records.set(view.runId, exhausted);
-        runtime.notifications.publishAttention({
-          runId: view.runId,
-          kind: 'automatic_recovery_exhausted',
-          detail: { cause: view.cause, attempts },
-        });
-        runtime.persist();
-        continue;
-      }
-      this.#records.set(view.runId, {
-        causeDigest,
-        attempts: attempts + 1,
-        state: 'scheduled',
-        kind: view.kind,
-        result: null,
-      });
-      runtime.persist();
-      scheduled += 1;
-      void runtime.scheduler.enqueue('lifecycle_effects', async () => {
-        const current = this.#records.get(view.runId);
-        this.#records.set(view.runId, { ...current, state: 'recovering' });
-        runtime.journal.append('member.recovery.requested', {
-          recoveryId: `recovery:${randomUUID()}`,
-          runId: view.runId,
-          cause: view.cause,
-          causeDigest,
-          attempt: current.attempts,
-        });
-        try {
-          const recoveryView = await application.command(
-            'run.recover', { runId: view.runId }, principal, context,
-          );
-          const recovery = recoveryView?.recovery ?? null;
-          const actionResult = recoveryView?.action?.result ?? recovery?.state ?? 'unknown';
-          const recovered = ['attached', 'reattached', 'resumed', 'recovered', 'retried', 'working']
-            .some((token) => String(actionResult).includes(token));
-          const next = {
-            ...this.#records.get(view.runId),
-            state: recovered ? 'recovered' : 'attention',
-            result: actionResult,
-            recovery: clone(recovery),
-          };
-          this.#records.set(view.runId, next);
-          runtime.journal.append(recovered ? 'member.recovery.succeeded' : 'member.recovery.attention', {
-            runId: view.runId,
-            causeDigest,
-            result: actionResult,
-            recovery: clone(recovery),
-          });
-          if (!recovered) {
-            runtime.notifications.publishAttention({
-              runId: view.runId,
-              kind: 'automatic_recovery_attention',
-              detail: { cause: view.cause, recovery: clone(recovery), result: actionResult },
-            });
-          }
-        } catch (error) {
-          const typed = BatonControlError.from(error).envelope().error;
-          this.#records.set(view.runId, {
-            ...this.#records.get(view.runId),
-            state: 'attention',
-            result: typed.code,
-            error: typed,
-          });
-          runtime.journal.append('member.recovery.failed', {
-            runId: view.runId, causeDigest, error: typed,
-          });
-          runtime.notifications.publishAttention({
-            runId: view.runId,
-            kind: 'automatic_recovery_failed',
-            detail: { cause: view.cause, error: typed },
-          });
-        } finally {
-          runtime.persist();
-        }
-      }, { runId: view.runId, causeDigest, kind: view.kind });
-    }
-    return scheduled;
-  }
-}
 
 export function writeConvergenceState(stateRoot, state) {
   const path = convergenceStatePath(stateRoot);

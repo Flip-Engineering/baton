@@ -66,7 +66,7 @@ function application() {
 test('CA83-1: Context extends the unified action registry without adding a command or tool family', () => {
   assert.deepEqual(APPLICATION_SEMANTIC_REGISTRY.defaultOperations, [
     'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-    'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop',
+    'run.workstreams', 'run.act', 'run.stop',
   ]);
   assert.ok(APPLICATION_SEMANTIC_REGISTRY.sections.some(({ id }) => id === 'context'));
   assert.deepEqual(Object.keys(APPLICATION_SEMANTIC_REGISTRY.actions)
