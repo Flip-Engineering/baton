@@ -264,14 +264,14 @@ test('#41 leak 3a (boundary): the CLI prefix adds no coordinate, and #231 keeps 
   });
 });
 
-test('#41 leak 3b (boundary): the run-stop block names the worker it holds (#473 c) and no fence or task coordinate', () => {
+test('#41 leak 3b (boundary): the run-stop block names the worker it holds (#473 c), names no deadline, and no fence or task coordinate', () => {
   const error = Object.assign(
     new Error('Baton Web request was refused (POST /v1/commands, HTTP 409)'),
     {
       code: 'coordinator_run_stop_incomplete',
       detail: {
         detail: {
-          runId: 'run-7', timeoutMs: 30_000,
+          runId: 'run-7',
           waitingOn: [{
             workerId: 'w-78', taskId: 'task-3', status: 'running', disposition: 'reaping', fence: 12,
             waiting: [{ resource: 'process', reaper: 'runner', since: STARTED_AT }],
@@ -283,7 +283,8 @@ test('#41 leak 3b (boundary): the run-stop block names the worker it holds (#473
   const block = swarmStopRefusalBlock(error, { swarmId: 'swarm-1', participantId: 'seat-1' });
   assert.ok(block !== null, 'positive control: the run-stop refusal renders its own block');
   assert.match(block, /named run run-7/u, 'positive control: the run the stop named is named');
-  assert.match(block, /did not converge inside 30000ms/u, 'positive control: the deadline it held is named');
+  assertAbsent({ message: block, detail: null }, ['deadline', 'did not converge inside', '30000ms'],
+    'the run-stop refusal block pins no deadline: the stop no longer ends on one');
   assert.match(block, /process since 2026-09-22T00:00:00.000Z/u,
     'positive control: the held resource is named');
   assert.match(block, /^next: /mu, 'positive control: the one step that converges the seat is named');

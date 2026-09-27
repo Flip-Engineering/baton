@@ -48,15 +48,12 @@ import { HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
 const ROUTE = Object.freeze({ harness: 'mock', model: 'model-a', effort: 'low' });
 // The three bounds this fixture works between, all shrunk to the test's own scale.
 //
-// The fleet drain a handoff runs is bounded by the DEPLOYMENT's drain window (`DRAIN_MS`), and the
-// stop path bounds one worker's kill by `STOP_DEADLINE_MS`. The fixture's worker whose process the
-// kill can never settle spends its bounded attempts at that deadline, so the handoff's drain — which
-// gets `DRAIN_MS` and no more — runs out of window before the worker is abandoned (the incident's
-// own non-convergence), while the operator's later stop still reaches the abandonment and converges
-// the way any stop does (the #467/#472 machinery: a worker the stop stopped waiting on is named
-// abandoned and the stop proceeds). `DRIVER_CLOSE_MS` is the room the deployment's declared policy
-// keeps for the whole driver close — it is deliberately NOT the shrunk drain window, or a close that
-// is merely slow under a loaded suite would read as a drain that did not converge.
+// The handoff's fleet drain is what this fixture fails: its worker keeps a hold the drain cannot
+// settle, so the window records `host.reincarnation_failed {step: 'fleet_drain'}` — the incident's
+// own refusal — and the old incarnation re-publishes and keeps serving. `DRIVER_CLOSE_MS` is the
+// room the deployment's declared policy keeps for the whole driver close; it is deliberately NOT
+// the shrunk drain scale, or a close that is merely slow under a loaded suite would read as a
+// delegation that did not converge.
 const WAIT_MS = 900;
 const DRAIN_MS = 1_200;
 const STOP_DEADLINE_MS = 700;
