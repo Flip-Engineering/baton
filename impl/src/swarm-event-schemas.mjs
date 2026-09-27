@@ -273,27 +273,6 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       at: '2026-09-23T04:00:00.000Z',
     }),
   }),
-  'wake.root_undelivered': Object.freeze({
-    summary: Object.freeze('one durable attempt in which a declared operator-session channel could not deliver a root-addressed wake'),
-    fields: Object.freeze({
-      seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
-      wakeClass: STRING('the wake class carried by the frame'),
-      swarmId: STRING('the swarm the wake belongs to — null for a deployment-scoped run wake', { type: 'string|null' }),
-      runId: STRING('the run a deployment-scoped wake belongs to — null or absent when the worker has no run', { type: 'string|null', required: false }),
-      workerId: STRING('the direct coordinator worker a runless deployment wake belongs to — null or absent when another coordinate identifies it', { type: 'string|null', required: false }),
-      attempt: Object.freeze({ type: 'integer', description: 'the durable delivery attempt ordinal for this wake identity' }),
-      harness: STRING('the operator session harness'),
-      mechanism: STRING('the declared delivery mechanism, or none when the harness has no turn-starting channel'),
-      code: STRING('the typed refusal code'),
-      at: STRING('the refusal instant, ISO 8601'),
-    }),
-    example: Object.freeze({
-      seq: 43, wakeClass: 'root_owed', swarmId: null, runId: null, workerId: 'worker-root-1',
-      attempt: 1,
-      harness: 'codex', mechanism: 'none', code: 'wake_delivery_unavailable',
-      at: '2026-09-23T04:00:01.000Z',
-    }),
-  }),
   'swarm.integration_started': Object.freeze({
     summary: Object.freeze('a landing opened its scratch checkout — recorded by the runtime before the squash or any gate runs'),
     fields: Object.freeze({

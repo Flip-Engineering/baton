@@ -105,12 +105,10 @@ export function rootAttentionObligations(swarm, events, { legacyAsk = (text) => 
     const payload = event.kind === 'driver.recorded' ? event.payload : null;
     if (payload?.swarmId !== swarm.swarmId) continue;
     if (payload.kind === 'swarm.root_attention_owed') legacyOwed.push(event);
-    if (['wake.root_delivered', 'wake.root_undelivered'].includes(payload.kind)
+    if (payload.kind === 'wake.root_delivered'
       && payload.wakeClass === 'root_owed' && Number.isSafeInteger(payload.seq)) {
       legacyReceipts.set(payload.seq, {
-        state: payload.kind === 'wake.root_delivered' ? 'transport_reported' : 'failed',
-        code: payload.kind === 'wake.root_undelivered' ? payload.code ?? null : null,
-        receiptSeq: event.seq,
+        state: 'transport_reported', code: null, receiptSeq: event.seq,
       });
     }
   }
