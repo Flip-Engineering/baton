@@ -375,18 +375,29 @@ test('SC17: a later process crash cannot inherit done from an earlier accepted v
   assert.match(renderNarrative(state), /crashed/);
 });
 
-test('SC18: timeoutMs is enforced by every session adapter', async (t) => {
+// #163 (2026-09-14 audit, swarm-b/lead.md finding 10): the wall-time fate clock is retired in every
+// session adapter with no replacement — `opts.timeoutMs` is accepted and deliberately ignored for
+// fate (claude-session.mjs:1826-1833, codex-appserver.mjs:1190). `session.timeoutFailure` stays
+// only as the pre-close classification a TRANSPORT may set; no timer mints one. So a session the
+// fixture holds open outlives its timeoutMs, and no adapter fabricates a timeout crash for it.
+test('SC18: timeoutMs never fabricates a crash — every session rests on evidence', async (t) => {
   for (const [name, make, marker] of makeAdapters()) {
     const cli = make();
     const events = collect(cli);
     t.after(() => killPids(events));
     try {
-      // The bare suite starts many fixture processes in parallel. Keep this above ordinary host
-      // scheduler latency so the assertion measures an active-session timeout, not setup jitter.
+      // The bare suite starts many fixture processes in parallel; the wait below is the same
+      // window the retired wall clock would have used, so a fabricated crash would surface here.
       const ack = await cli.spawn(`${name}-timeout`, brief(marker), { worktree: tmpdir(), timeoutMs: 600 });
       assert.equal(ack.ok, true);
-      for (let i = 0; i < 160 && !events.some((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'); i += 1) await sleep(5);
-      assert.equal(events.filter((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout').length, 1, `${name}: timeout must be observable exactly once`);
+      for (let i = 0; i < 160 && !events.some((e) => e.kind === 'lifecycle.crashed'); i += 1) await sleep(5);
+      assert.deepEqual(
+        events.filter((e) => e.kind === 'lifecycle.crashed').map((e) => e.payload?.phase),
+        [],
+        `${name}: a held session must outlive timeoutMs — no crash, timeout or otherwise`,
+      );
+      assert.equal(events.some((event) => event.kind === 'lifecycle.process_started'), true,
+        `${name}: the ended session is recorded by process evidence, and the fixture still holds it`);
     } finally {
       await cli.kill(`${name}-timeout`).catch(() => {});
       await sleep(20);

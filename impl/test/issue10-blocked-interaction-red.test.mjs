@@ -250,9 +250,9 @@ test('AX1-E: runs.list items and the CLI run-status outline render blockedIntera
   assert.deepEqual(approvedOutline.blockedInteraction, approved.blockedInteraction);
 });
 
-test('AX1-F: a burst of provider tool-call/message telemetry does not advance lastProgress while a run is otherwise idle', async (t) => {
+test('AX1-F: a burst of provider tool-call/message telemetry re-arms the liveness clock and leaves semantic progress alone', async (t) => {
   const { application, driver } = harness(t, {
-    default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 600 }] },
+    default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 3_000 }] },
   });
   const owner = principal('owner');
   const started = await application.start({
@@ -267,14 +267,18 @@ test('AX1-F: a burst of provider tool-call/message telemetry does not advance la
   assert.equal(early.phase, 'running');
 
   // Real richer adapters (kimi-acp, grok-acp, claude-session) stream `content.tool_call`
-  // (COMMAND_EXEC) and `content.message` chunks continuously while a turn is in flight; every
-  // one of them is durably evidence-mapped into the coordination ledger by the coordinator's
-  // Run-timeline plumbing (impl/src/coordinator.mjs RUN_TIMELINE_OPERATIONAL_KINDS), same as a
-  // real committed `content.file_edit`. Drive that same durable path directly (as
-  // impl/test/phase31-cairn-scorecard.test.mjs and others already do) to pin that this noise
-  // is nonetheless excluded from `lastProgress`.
+  // (COMMAND_EXEC) and `content.message` chunks continuously while a turn is in flight; every one
+  // of them is durably evidence-mapped into the coordination ledger by the coordinator's
+  // Run-timeline plumbing (impl/src/coordinator.mjs RUN_TIMELINE_OPERATIONAL_KINDS). Issue #236
+  // (2026-08-19, quiescence murder) makes that noise LIVENESS and not semantics: the timing
+  // projection takes the semantic stream UNION the run's content-liveness evidence
+  // (application-observation.mjs:4154-4206), so the burst DOES re-arm `lastProgress.at` — a member
+  // in a 7-minute tool call must never read as silent — while `stage` and `summary`, the semantic
+  // projection, stay put. Read the same durable path directly, as
+  // impl/test/phase31-cairn-scorecard.test.mjs and others already do.
+  let lastAppended = null;
   for (let i = 0; i < 20; i += 1) {
-    driver.log.append({
+    lastAppended = driver.log.append({
       worker: worker.id, harness: 'mock@1.0.0', turnEpoch: 0, actor: 'worker',
       kind: i % 2 === 0 ? 'content.tool_call' : 'content.message',
       payload: { tool: 'noop', index: i, text: `thinking about step ${i}` },
@@ -283,12 +287,17 @@ test('AX1-F: a burst of provider tool-call/message telemetry does not advance la
 
   const mid = (await application.listRuns(owner)).items.find((item) => item.id === started.runId);
   assert.equal(mid.phase, 'running', 'still working, not yet accepted');
-  assert.equal(mid.lastProgress.at, early.lastProgress.at,
-    'content.tool_call/content.message telemetry is evidence-mapped but must not count as meaningful progress');
+  assert.equal(mid.lastProgress.at, lastAppended.ts,
+    'content telemetry is liveness: the last burst row is the stamp the timing projection serves');
+  assert.deepEqual(
+    { stage: mid.lastProgress.stage, summary: mid.lastProgress.summary },
+    { stage: early.lastProgress.stage, summary: early.lastProgress.summary },
+    'content telemetry is never semantic progress: stage and summary are unchanged',
+  );
 
   const settled = await application.wait(started.runId, owner, { timeoutMs: 20_000 });
   assert.equal(settled.phase, 'work_completed');
   const done = (await application.listRuns(owner)).items.find((item) => item.id === started.runId);
   assert.notEqual(done.lastProgress.at, early.lastProgress.at,
-    'genuine settlement (a real committed edit and task acceptance) does advance lastProgress');
+    'genuine settlement (a real committed edit and task acceptance) also advances lastProgress');
 });
