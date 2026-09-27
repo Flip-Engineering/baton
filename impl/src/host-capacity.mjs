@@ -732,6 +732,26 @@ export class HostCapacityAuthority {
     } catch { /* the row or its directory may already be gone */ }
   }
 
+  /** #619: remove the queue rows a NAMED request left behind. A holder string is composed by the
+   * requester itself and carries what identifies it (an integrate holder names its contribution,
+   * a participant holder its seat), so a caller can only ever name its own request — which is why
+   * a landing that has ENDED, however it ended, can take its row out of the lane it queued in
+   * even when the wait itself left no exit to run (#619's own case: a request whose task is gone
+   * still holds a row, and the lane admits by queue order). Returns how many rows it removed. */
+  async withdrawQueuedHolder(holder) {
+    if (typeof holder !== 'string' || holder.length === 0) throw new TypeError('host capacity queue withdrawal requires a holder');
+    return this._mutex(() => {
+      let removed = 0;
+      for (const record of listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS)) {
+        if (record.holder !== holder) continue;
+        rmSync(join(this.queueDir, record.name), { force: true });
+        removed += 1;
+      }
+      if (removed > 0) fsyncDirectory(this.queueDir);
+      return removed;
+    });
+  }
+
   // ── observation ─────────────────────────────────────────────────────────────────────────────────
 
   /** Sweep proved-dead holders (crashed residents) so their leases and queue entries return to
