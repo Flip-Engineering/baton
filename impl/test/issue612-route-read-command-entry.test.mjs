@@ -55,6 +55,7 @@ function usageRow(route, { intelligence = 40, ceiling = 4, inUse = 0 } = {}) {
 const deathRow = (workerId, seq) => Object.freeze({
   workerId, taskId: 't-1', runId: 'run-alpha', seq, at: '2026-09-26T21:00:00.000Z',
   code: PROVIDER_FAULT_CODES.quota, route: Object.freeze({ ...FAULTED }),
+  providerFault: true,
   resetAt: null, resetAtText: null, snapshotSha: null, retainedWorktree: null,
 });
 

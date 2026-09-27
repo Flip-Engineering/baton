@@ -293,6 +293,7 @@ test('455-b: --resume-from a provider-fault-settled seat reuses the package and 
     workerId: binding.workerId, taskId: binding.taskId, runId: predecessor.runId, seq: 7,
     at: '2026-09-18T12:00:00.000Z', code: 'provider_quota', route, resetAt: null,
     resetAtText: null, snapshotSha: null, retainedWorktree: null,
+    providerFault: true,
   });
 
   const [firstAttachment] = f.coordination.contextPackageAttachments(predecessor.runId);

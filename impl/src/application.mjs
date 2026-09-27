@@ -2363,6 +2363,11 @@ export class BatonApplication {
             this._assertOpen();
             return this._swarmRuntime().command(command, args, caller, authority);
           },
+          // Issue #611: a seat's turn end is reported to its orchestrator as a durable
+          // `swarm.turn_reported` row, so a provider failure that ends a turn reaches the
+          // orchestrator instead of ending the seat in silence. The attention spine resolves
+          // the recipient (the nearest live ancestor, else the root) from the row's parentId.
+          onTurnCompleted: (report) => this._swarmRuntime().reportTurnEnd(report),
         });
         const { prepareRunStart } = await import('./application-client.mjs');
         // Issue #309: the Baton surface is no longer buried in the goal text — it rides the

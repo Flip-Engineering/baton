@@ -8,9 +8,10 @@ import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from '.
 /** Connect native participant tools to the live deployment without copying owner authority.
  * Credentials belong to a participant, independently of its current transport incarnation. */
 export class SwarmNativeAccess {
-  constructor({ coordinator, dispatch }) {
+  constructor({ coordinator, dispatch, onTurnCompleted = null }) {
     this.coordinator = coordinator;
     this.bridge = createSwarmNativeBridge({ dispatch });
+    this.onTurnCompleted = onTurnCompleted;
     this.participants = new Map();
     this.clientPath = fileURLToPath(new URL('./swarm-native-bridge.mjs', import.meta.url));
   }
@@ -34,6 +35,10 @@ export class SwarmNativeAccess {
           env: Object.freeze({ ...issued.env, BATON_SWARM_CLIENT: this.clientPath }),
           redactProviderFrame: (frame) => JSON.parse(JSON.stringify(frame,
             (_key, value) => typeof value === 'string' ? value.replaceAll(issued.token, '[REDACTED]') : value)),
+          // Issue #611: the seat's turn end is reported under the identity this credential was
+          // issued for — the swarm and the seat come from the registration, never a caller frame.
+          ...(typeof this.onTurnCompleted === 'function'
+            ? { onTurnCompleted: (report) => this.onTurnCompleted({ ...report, swarmId, participantId }) } : {}),
           briefSurface: Object.freeze({ swarm: SWARM_BRIEF_SECTION, tools: Object.freeze([SWARM_BRIDGE_TOOL]) }),
         });
         this.coordinator.registerParticipantRuntime(runId, extension);

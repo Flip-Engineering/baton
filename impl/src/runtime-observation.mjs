@@ -3584,6 +3584,10 @@ export function _recordUnclassifiedDeath(coordinator, recorder, handle, task) {
     handle.unclassifiedDeathSeq = seq;
     coordinator._providerFaultDeaths ??= new Map();
     coordinator._providerFaultDeaths.set(handle.id, Object.freeze({
+      // #614: the deployment could not name this death as a provider fault (a resident stop, a
+      // transport timeout, a restart-ended worker). It is a death and is recorded as one, but it
+      // is NOT a provider fault, so a seat that ends this way is never re-routed.
+      providerFault: false,
       workerId: handle.id,
       taskId: task?.id ?? handle.taskId ?? null,
       runId: task?.runId ?? handle.runId ?? null,
@@ -3694,6 +3698,8 @@ export function _mintProviderFaultDeath(coordinator, recorder, handle, task, { p
     // exactly-once; this record is the observation, never a second ledger.
     coordinator._providerFaultDeaths ??= new Map();
     coordinator._providerFaultDeaths.set(handle.id, Object.freeze({
+      // #614: the ONE death class a seat re-route follows.
+      providerFault: true,
       workerId: handle.id,
       taskId: task?.id ?? handle.taskId ?? null,
       runId: task?.runId ?? handle.runId ?? null,

@@ -304,6 +304,30 @@ test('EH5: one driven instance per family records through the port', async (t) =
     const workerRows = coordinator._log.read(handle.id);
     assert.deepEqual(appends.map((e) => e.seq), workerRows.map((e) => e.seq),
       'every log row this worker produced rode the recorder, in order');
+    // Issue #611: a swarm seat's turn end is handed to the participant runtime registered for
+    // its Run — the seam the swarm report producer rides — carrying the provider's own summary.
+    const seat = await coordinator.spawn('mock', {
+      goal: 'eh5-report', constraints: [], pathScope: ['.'],
+      definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 },
+      budget: { tokens: 1000, usd: 1, wallMin: 5 },
+    }, { runId: 'run:eh5-report' });
+    const reported = [];
+    coordinator.registerParticipantRuntime('run:eh5-report', {
+      env: Object.freeze({}), redactProviderFrame: (frame) => frame,
+      onTurnCompleted: (report) => { reported.push(report); return null; },
+    });
+    adapter.emit({
+      worker: seat.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.turn_completed', actor: 'worker',
+      payload: { result: {
+        status: 'completed', summary: 'the seat finished its turn', artifacts: { commits: [], files: [] },
+        verification: { command: null, claimedExit: null }, openQuestions: [],
+        budgetUsed: { tokens: 0, usd: 0 },
+      } },
+    });
+    assert.equal(reported.length, 1, 'the seat turn end is handed to its participant runtime (issue #611)');
+    assert.equal(reported[0].workerId, seat.id, 'the report names the worker that ran the turn');
+    assert.equal(reported[0].report?.summary, 'the seat finished its turn', "with the provider's own summary");
+    assert.equal(typeof reported[0].turnSeq, 'number', 'and the terminal event seq it answers');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

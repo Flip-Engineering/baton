@@ -87,7 +87,12 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   await paused(beta.runId);
   await delegated.work({ workId: 'W-A', objective: 'Part A', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
-  assert.deepEqual(kinds(await swarm.view()), [], 'a healthy delegation raises no attention');
+  // Issue #611 (the report half): a seat's turn end is a fact owed to its orchestrator — the
+  // nearest live ancestor, else the root — so the LEAD's own turn end is owed to the root. That
+  // is the wake this deployment exists to make, never archaeology; the organizational rows below
+  // are what this row is about.
+  assert.deepEqual(kinds(await swarm.view()).sort(), ['root_attention_owed'],
+    'a healthy delegation raises no organizational attention; the lead turn report is owed to the root');
 
   // Stopping alpha settles its membership (issue #350): the row reads left/stopped, so its dead
   // runtime is no longer attention — the stop was the organization's own act — while its
@@ -100,7 +105,9 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   assert.equal(alphaRow.runtime.state, 'dead');
   assert.equal(alphaRow.runtime.turn, null, 'a dead worker has no paused turn to guide');
   assert.equal(driver.coordinator.pausedTurns({ workerId: alphaWorker.id }).length >= 0, true);
-  assert.deepEqual(kinds(view).sort(), ['assignment_holder_gone']);
+  // The lead's turn report owed to the root stays on the list (issue #611); the stop's own fact
+  // is the assignment row.
+  assert.deepEqual(kinds(view).sort(), ['assignment_holder_gone', 'root_attention_owed']);
   assert.deepEqual(view.attention.find((row) => row.kind === 'assignment_holder_gone'),
     { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A',
       next: { event: 'swarm.holder_released', participantId: 'alpha' } });
