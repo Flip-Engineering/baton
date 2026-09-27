@@ -240,7 +240,8 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 56, 'application tools/list count 56 (stage: application-tools-count-49)'); // composition (#566 restore): the #317-pin ordinary 55 + the #99/#179 harvest pair; the 14 minted baton_run_* lifecycle siblings left with the d1288fd9 regression restore, and baton_swarm_check left with the #598 removal of the check verb
+  assert.equal(names.length, 55, 'application tools/list count 55 (stage: application-tools-count-49)'); // composition (#566 restore): the #317-pin ordinary 55 + the #99/#179 harvest pair; the 14 minted baton_run_* lifecycle siblings left with the d1288fd9 regression restore, and baton_swarm_check left with the #598 removal of the check verb
+  // One fewer with the #598 removal of the workflow-admit lane: baton_knowledge_promote left.
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the count ties to the restored composition, so a
   // bare count of arbitrary self-consistent names cannot pass: the #233 canonical dot twins of the
   // retained legacy tools are advertised (the twin closure), and the registry-operation direct
