@@ -105,8 +105,11 @@ semantic code. The `blocked` answer names every candidate failure line the
 target run does not show, and an unjudged check run blocks the landing. The
 answer is JSON with a `status` field: `landed` with the new target commit
 (the squash candidate), `already` naming the worker commit the target
-contains, `conflict` naming the unmerged paths and the retained scratch
-worktree, or `blocked` with a reason.
+contains, `conflict` naming the unmerged paths and the scratch worktree it
+keeps, or `blocked` with a reason. A landing that answers `landed` or
+`already` removes the candidate and target scratch worktrees as it answers. A
+refused or conflicted landing keeps them for the requester, and that worker's
+next landing request drops them before preparing its own.
 
 The squash message describes the worker history above its merge-base with the
 target. A single commit retains its full message. Several commits use the tip

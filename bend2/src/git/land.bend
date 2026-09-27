@@ -33,8 +33,10 @@
 # line makes the run unjudged, and an unjudged run blocks the landing and
 # names the line that made it unjudged.
 #
-# Both scratch worktrees (the candidate and the target tree named by
-# appending "-target") are retained for inspection; cleanup is explicit.
+# The scratch worktrees one attempt prepares, the candidate and the target tree
+# named by appending "-target", are removed when the landing answers landed or
+# already. A refused or conflicted attempt keeps them for the requester, and
+# that worker's next attempt drops them.
 
 import Base
 import ./types.bend as T
@@ -866,10 +868,114 @@ def ld_go6(r: Ld, repo: String, target: String, scratch: String) -> IO(Ld):
     case LdCand{tip, cand}: ld_unreach()
     case LdRe{cand, basis}: ld_advance2(repo, target, cand, basis, scratch)
 
+# The scratch trees one attempt prepared live under the repository's scratch
+# root, the candidate and its "-target" sibling. PREFIX is the part of their
+# name that belongs to the worker rather than to the attempt.
+def scratch_prefix(repo: String, worker: String) -> String:
+  T.str_cat3(repo, "/.scratch/bend2-land-", Tx.str_cat(worker, "-"))
+
+# The path one worktree-list line names: the line with its label matched off,
+# or the empty string for a line that does not carry the label.
+def wt_path_go(line: String, label: String) -> String:
+  match line label:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lc, lr}: ""
+    case SCon{c, rest} SNil{}: line
+    case SCon{c, rest} SCon{lc, lr}:
+      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+
+def wt_path(line: String) -> String:
+  wt_path_go(line, "worktree ")
+
+def scratch_remove1(repo: String, dir: String) -> IO(Unit):
+  +r2 = repo
+  +d2 = dir
+  do IO<Unit>:
+    _g : T.GitOut <- Git.runGit(r2, ["worktree", "remove", "--force", d2])
+    IO.pure(Unit, Unit{})
+
+# One attempt's two trees, removed together.
+def drop_scratch(repo: String, scratch: String) -> IO(Unit):
+  +r2 = repo
+  +s2 = scratch
+  do IO<Unit>:
+    _a : Unit <- scratch_remove1(r2, s2)
+    _b : Unit <- scratch_remove1(r2, Tx.str_cat(s2, "-target"))
+    _p : T.GitOut <- Git.runGit(r2, ["worktree", "prune"])
+    IO.pure(Unit, Unit{})
+
+# One worktree-list line: a registered tree under the worker's prefix belongs
+# to an earlier attempt the worker has now replaced.
+def sweep_one(prefix: String, repo: String, line: String) -> IO(Unit):
+  +p2 = prefix
+  +r2 = repo
+  +path = wt_path(line)
+  Bool.pick(IO(Unit), Tx.starts_with(path, p2), scratch_remove1(r2, path), IO.pure(Unit, Unit{}))
+
+def sweep_lines(prefix: String, repo: String, lines: List<String>) -> IO(Unit):
+  match lines:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case Con{h, rest}:
+      +p2 = prefix
+      +r2 = repo
+      do IO<Unit>:
+        _s : Unit <- sweep_one(p2, r2, h)
+        sweep_lines(p2, r2, rest)
+
+def sweep_out(g: T.GitOut, prefix: String, repo: String) -> IO(Unit):
+  match g:
+    case T.GRun{code, out}: sweep_lines(prefix, repo, Tx.split_lines(out))
+    case T.GBroken{detail}: IO.pure(Unit, Unit{})
+
+# The trees a refused or conflicted attempt of this worker kept: a landed
+# attempt's are already gone, so every registered tree under PREFIX is one the
+# worker's next attempt supersedes.
+def sweep_scratch(repo: String, prefix: String) -> IO(Unit):
+  +r2 = repo
+  +p2 = prefix
+  do IO<Unit>:
+    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+    sweep_out(gl, p2, r2)
+
+# The scratch path one attempt prepares: the trees the worker's earlier attempt
+# kept are dropped first, so a refused or conflicted attempt's trees live only
+# until the worker tries again.
+def open_scratch(repo: String, worker: String, ts: String) -> IO(String):
+  +r2 = repo
+  +w2 = worker
+  +p2 = scratch_prefix(r2, w2)
+  do IO<String>:
+    _sweep : Unit <- sweep_scratch(r2, p2)
+    IO.pure(String, Tx.str_cat(p2, ts))
+
+# The landing's own trees settle with its answer: a landed or already-merged
+# attempt needs them no longer, and a refused, conflicted or failed attempt
+# keeps them.
+def ld_settle(r: Ld, repo: String, scratch: String) -> IO(Ld):
+  match r:
+    case LdDone{T.LLanded{target, commit}}:
+      +r2 = repo
+      +s2 = scratch
+      do IO<Ld>:
+        _d : Unit <- drop_scratch(r2, s2)
+        IO.pure(Ld, LdDone{T.LLanded{target, commit}})
+    case LdDone{T.LAlready{commit}}:
+      +r2 = repo
+      +s2 = scratch
+      do IO<Ld>:
+        _d : Unit <- drop_scratch(r2, s2)
+        IO.pure(Ld, LdDone{T.LAlready{commit}})
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: IO.pure(Ld, LdWk{worker, sha})
+    case LdTip{worker, sha, tip}: IO.pure(Ld, LdTip{worker, sha, tip})
+    case LdCand{tip, cand}: IO.pure(Ld, LdCand{tip, cand})
+    case LdRe{cand, basis}: IO.pure(Ld, LdRe{cand, basis})
+
 # land prepares the candidate, judges it against the target and advances the
-# target branch. The scratch path must not exist; both scratch worktrees stay
-# on disk for inspection. An LConflict keeps the prepared tree with its
-# unmerged paths; a retry after a repair answers from the same call shape.
+# target branch. The scratch path must not exist. A landed answer removes the
+# trees it prepared; a refused or conflicted answer keeps them for the
+# requester until that worker's next attempt.
 def land_checked(repo: String, target: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
   +r2 = repo
   +t2 = target
@@ -884,7 +990,8 @@ def land_checked(repo: String, target: String, worker: String, script: String, f
     e : Ld <- ld_go4(d, r2, s2)
     f : Ld <- ld_go5(e, r2, t2, k2, files, s2)
     g : Ld <- ld_go6(f, r2, t2, s2)
-    ld_answer(g)
+    settled : Ld <- ld_settle(g, r2, s2)
+    ld_answer(settled)
 
 # The coordinator's current entry point: the fast-forward landing.
 def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):

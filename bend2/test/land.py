@@ -128,6 +128,42 @@ class Land(unittest.TestCase):
         self.assertEqual(second['commit'], commit)
         self.assertEqual(self.git('rev-parse', 'main').strip(), first['commit'])
 
+    def scratch_trees(self, worker):
+        """The scratch trees an attempt by WORKER left under the repository."""
+        return sorted(p.name for p in (self.repo / '.scratch').glob(f'bend2-land-{worker}-*'))
+
+    def test_landed_attempt_removes_its_scratch_trees(self):
+        (self.repo / 'check-pass.sh').write_text('exit 0\n')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit()
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(self.scratch_trees('w1'), [])
+
+    def test_refused_attempt_keeps_its_scratch_trees_until_the_next_attempt(self):
+        (self.repo / 'check-blocked.sh').write_text(
+            'test -f "$1" && { echo 6161 6161 6161 2d; exit 1; }\n'
+            'exit 0\n')
+        (self.repo / 'check-pass.sh').write_text('exit 0\n')
+        self.git('add', 'check-blocked.sh')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixtures')
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit()
+        refused = self.call('land-checked', 'w1', self.repo, 'main',
+                            'check-blocked.sh', 'file.txt')
+        self.assertEqual(refused['status'], 'blocked')
+        kept = self.scratch_trees('w1')
+        self.assertEqual(len(kept), 2)
+        self.assertIn(f'{kept[0]}-target', kept)
+        landed = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt')
+        self.assertEqual(landed['status'], 'landed')
+        self.assertEqual(self.scratch_trees('w1'), [])
+
     def test_fast_forward_repeated_landing_keeps_one_result(self):
         commit = self.recruit_and_commit()
         first = self.call('land', 'w1', self.repo, 'main')
@@ -282,6 +318,7 @@ class Land(unittest.TestCase):
         self.assertEqual(under['files'], 'file.txt')
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
+        self.assertEqual(len(self.scratch_trees('w4')), 2)
 
     def test_conflicted_worker_relands_after_its_branch_is_rebased(self):
         self.waiting_checks()
@@ -303,6 +340,7 @@ class Land(unittest.TestCase):
                           'check-plain.sh', 'file.txt')
         self.assertEqual(again['status'], 'landed')
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w5 and w6')
+        self.assertEqual(self.scratch_trees('w6'), [])
 
 if __name__ == '__main__':
     unittest.main()

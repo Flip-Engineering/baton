@@ -177,7 +177,10 @@ the check, the candidate is rebased onto the new target and the existing verdict
 is used. The current implementation makes one rebase attempt and returns a
 blocked result if the target moves again. That second-move branch is verified
 by code inspection; the recorded live scenarios move the target once. Conflicts
-name the paths and retained scratch checkout. A target held by a checked-out worktree produces the current
+name the paths and the scratch checkout they keep. A landing that answers
+`landed` or `already` removes the candidate and target worktrees it prepared; a
+refused or conflicted landing keeps them for the requester, and that worker's
+next landing request drops them before preparing its own. A target held by a checked-out worktree produces the current
 `target busy` command failure. Worker guidance can resolve the branch against
 the moved target, after which a new landing request judges the revised work.
 

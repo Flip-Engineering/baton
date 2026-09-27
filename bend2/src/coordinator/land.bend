@@ -53,11 +53,13 @@ def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Un
     case Fail{error}: IO.die(Unit,1,G.fail_text(error))
     case Done{outcome}: show_outcome(outcome)
 
+# One attempt's scratch path comes from the Git landing module, which drops the
+# trees the worker's earlier attempt kept before this attempt prepares its own.
 def run_checked(+db: String, +worker: String, +repo: String, +target: String, +check: String, +files: String, +branch: String) -> IO(Unit):
   do IO<Unit>:
     ts_raw : String <- IO.try(String, DB.Sql.query(db, "" ++ "SELECT hex(randomblob(8));"))
     ts : String <- IO.pure(String, line(ts_raw))
-    scratch : String <- IO.pure(String, Tx.str_cat(repo, Tx.str_cat("/.scratch/bend2-land-", Tx.str_cat(worker, Tx.str_cat("-", ts)))))
+    scratch : String <- GitLand.open_scratch(repo, worker, ts)
     result : Result<&1,&1,G.GitFail,G.LandOutcome> <- GitLand.land_checked(repo, target, branch, check, Tx.split_spaces(files), scratch)
     show_checked_outcome(result)
 
