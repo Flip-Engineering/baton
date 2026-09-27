@@ -775,7 +775,7 @@ function dispatchFailure(cause, command = null) {
   if (cause?.code === 'provider_read_oversize') return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'provider read exceeded deployment ceiling' } } };
   if (cause?.code === 'provider_read_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'provider read unavailable' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
-  if (['coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'coordinator lifecycle conflict' } } };
+  if (['coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'coordinator lifecycle conflict' } } };
   // #329: the host-wide authority's queue timeout names the dimension it waited on (load,
   // memory, budget) with the observed and required numbers and the operator bypass, instead of
   // the transient fallthrough — a recruit that can never be admitted on this host must say so.

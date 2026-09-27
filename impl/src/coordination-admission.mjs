@@ -1270,12 +1270,9 @@ export function _validateFleetDrainAdmission(p, event, integrity = false) {
     || p.drainId !== `fleet-drain:${p.requestDigest}` || !Array.isArray(p.targetWorkerIds)
     || p.targetWorkerIds.some((id) => !validRunId(id))) fail('fleet drain admission is invalid');
   // #366 (with #286 G-41): NO target-set ceiling. The literal ceiling that stood here was judged
-  // again on every replay and refused a drain the ledger had already accepted. Unlike a run
-  // stop's target set, a drain's target set is NOT a projection of this ledger — it is the local
-  // controller's live fleet, and phase56's DC6 admits two targets onto an empty store — so no
-  // bound can be derived from the ledger here. The bound this admission used to carry belongs to
-  // the deployment that owns the fleet (coordinator.mjs `_drainPolicy.maxWorkers`), exactly as
-  // #286 G-41 left the scratchpad partition bound to the deployment's own policy.
+  // again on every replay and refused a drain the ledger had already accepted. A drain's target set
+  // is NOT a projection of this ledger — it is the local controller's live fleet, and phase56's DC6
+  // admits two targets onto an empty store — so no bound can be derived from the ledger here.
   const sorted = [...p.targetWorkerIds].sort();
   if (new Set(p.targetWorkerIds).size !== p.targetWorkerIds.length || JSON.stringify(sorted) !== JSON.stringify(p.targetWorkerIds)
     || p.targetDigest !== canonicalDigest(p.targetWorkerIds)) fail('fleet drain targets are invalid');

@@ -41,12 +41,11 @@ const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
 const ROUTE = '{ harness: \'codex\', model: \'gpt-5.6-sol\', effort: \'high\' }';
 
 // The fixture's OWN declared rows — the stop's bound is derived from these, never from the ledger:
-// the Web leg's grace (`resident.webDrainMs`), the fleet drain's deadline (`drainPolicy.timeoutMs`)
-// and the ONE registry row every chunked path in this deployment already reads.
+// the Web leg's grace (`resident.webDrainMs`) and the ONE registry row every chunked path in this
+// deployment already reads.
 const WEB_DRAIN_MS = 2_000;
-const DRAIN = Object.freeze({ maxWorkers: 8, timeoutMs: 4_000, pollMs: 10 });
 const LIMIT = FRAME_LIMITS['view.wake_replay.items'];
-const IDLE_STOP_BOUND_MS = WEB_DRAIN_MS + DRAIN.timeoutMs + LIMIT.value;
+const IDLE_STOP_BOUND_MS = WEB_DRAIN_MS + LIMIT.value;
 // 75x the ledger may not multiply a stage: the larger stop's stage may exceed the smaller one's by
 // at most this slack, which is the same declared row — a stage that scaled with N would blow past
 // it dozens of times over (the reported 158 s at 144 263 rows vs 63-86 s at 24 000).

@@ -7,11 +7,10 @@
 // The contract this file pins:
 //   (a) a seat stopped through swarm.stop whose worker process is closed is RELEASED by the
 //       drain itself — the reap goes through the #428/#435 custody boundary (capture-or-retain,
-//       never a bare delete) — the drain converges within the deployment's own policy bound and
-//       the shutdown exits zero; a hold nothing could ever release is released with reason
-//       `orphaned`, never waited on;
+//       never a bare delete) — the drain converges and the shutdown exits zero; a hold nothing
+//       could ever release is released with reason `orphaned`, never waited on;
 //   (b) waitingOn[].waiting entries carry {resource, reaper, since} so an operator reads which
-//       release is pending, while the drain's deadline stays the deployment's own policy row;
+//       release is pending;
 //   (c) the enriched fields replay byte-for-byte from the durable worker log.
 //
 // Every row is red at HEAD (the drain waits out its deadline; no released rows, no reaper or
@@ -80,13 +79,6 @@ const principal = (principalId) => ({
 const orchestrator = principal('orchestrator');
 const command = (app, name, args) => app.command(name, args, orchestrator);
 
-// The drain's settle is real git work — the #428/#435 capture-then-remove of the seat's
-// checkout — and the historical sweep runs beside it, so this bound must cover the 4_000 ms
-// stop deadline the same fixture sets. 1_500 ms was under it: on 2026-09-27 this file's 360b
-// failed here with `fleet drain did not converge before its deployment deadline` through
-// `node scripts/run-suite.mjs`, and the same file passed at 3_000 ms and 6_000 ms.
-const DRAIN_TIMEOUT_MS = 6_000;
-
 function workingAdapter() {
   const adapter = new MockAdapter({
     harness: 'mock',
@@ -122,7 +114,7 @@ async function fixture(t, { label = 'seat' } = {}) {
     adapters: { mock: workingAdapter() },
     goalPlanAuthority: { policy, authorize: async () => true },
     stopDeadlineMs: 4_000,
-    drainPolicy: { maxWorkers: 8, timeoutMs: DRAIN_TIMEOUT_MS, pollMs: 10 },
+    drainPolicy: { pollMs: 10 },
   });
   const app = new BatonApplication({
     driver, repoId,
@@ -170,7 +162,7 @@ const releasedRows = (driver, workerId) => driver.coordination.eventsView()
     && event.payload?.workerId === workerId)
   .map((event) => event.payload);
 
-test('360a: the drain releases a settled stopped seat through the custody boundary and the shutdown exits zero', async (t) => {
+test('360a: a capture that fails releases the handle hold and names the retention, and the shutdown exits zero', async (t) => {
   const { app, driver } = await fixture(t, { label: 'a' });
   const swarmId = 'issue360a';
   await createSwarm(app, swarmId);
@@ -191,81 +183,24 @@ test('360a: the drain releases a settled stopped seat through the custody bounda
   assert.equal(handle.status, 'dead', 'the seat stop killed the worker');
   assert.ok(!handle.processRef || handle.processRef.state === 'closed',
     'the process is exactly closed (or settled to absent)');
-  assert.equal(driver.coordinator._ownsLocalResources(handle), true,
-    'the dead worker still holds its local resources');
-  assert.equal(driver.coordinator._stopWaiters.has(worker.id), false,
-    'no stop chain is left that could ever release them');
+  assert.equal(driver.coordinator._ownsLocalResources(handle), false,
+    'the stop released what the failed capture could not reap (issue #583)');
   assert.equal(handle.cleanupPromise, null, 'no in-flight cleanup is left that could release them');
   assert.ok(driver.coordination.runStop(seat.runId), 'the seat stop is durably admitted');
-
-  // The drain must reap the settled holder itself — through the #428/#435 custody boundary,
-  // never a bare delete — converge within the deployment's own policy bound, and let the
-  // shutdown exit zero.
-  const application = await app.shutdown(principal('drain'));
-  assert.equal(application.state, 'closed', 'the shutdown exits zero after the drain released the settled holder');
-
-  // Capture-or-retain: the capture failed, so the checkout is RETAINED with its custody row —
-  // the seat's work is still on disk, and the handle no longer holds it.
-  assert.equal(existsSync(cwd), true, 'the retained checkout keeps the seat work on disk');
-  const custody = driver.coordination.eventsView().find((event) => event.kind === 'driver.recorded'
-    && event.payload?.kind === 'worktree.custody_retained'
-    && event.payload?.workspaceId === ownerId && event.payload?.reason === 'drain');
-  assert.ok(custody, 'the retention rides the coordination ledger, never silent');
+  assert.equal(handle.worktree, null, 'the handle released the checkout');
+  assert.equal(existsSync(cwd), true,
+    'capture-or-retain: the failed capture keeps the seat work on disk');
   assert.ok(driver.log.read(worker.id).some((event) => event.kind === 'worktree.custody_content_retained'
     && event.payload?.physicalOwnerId === ownerId),
     'the custody retention is recorded on the worker log with its physical owner');
-  assert.equal(handle.worktree, null, 'the handle released the checkout');
-  assert.equal(driver.coordinator._ownsLocalResources(handle), false, 'the settled holder holds nothing');
 
-  const released = releasedRows(driver, worker.id);
-  assert.deepEqual(
-    released.filter((row) => row.resource === 'local_resources:worktree').map((row) => row.how),
-    ['retained'],
-    'the worktree hold is released by the drain itself through the custody boundary');
-  for (const resource of ['local_resources:localAuthority', 'local_resources:cleanupPending']) {
-    assert.ok(released.some((row) => row.resource === resource && row.how === 'orphaned'),
-      `${resource} had no reaper and is released with reason orphaned, never waited on`);
-  }
-});
-
-test('360b: the drain reaps a settled stopped seat\'s checkout through the capture-then-remove custody boundary', async (t) => {
-  const { app, driver } = await fixture(t, { label: 'b' });
-  const swarmId = 'issue360b';
-  await createSwarm(app, swarmId);
-  const seat = await recruit(app, { swarmId, participantId: 'builder', objective: 'Hold a checkout through a stop and a drain' });
-  const worker = await working(driver, seat.runId);
-  const cwd = worker.worktree;
-  writeFileSync(join(cwd, 'carried.txt'), 'uncommitted seat work\n');
-
-  // The preservation outage lives only while the stop is converging: the stop chain cannot
-  // settle the checkout, and the SIGTERM-scale drain takes it over once the outage ends.
-  const worktrees = driver.coordinator._worktrees;
-  const realCapture = worktrees.capture.bind(worktrees);
-  let outage = true;
-  worktrees.capture = async (...args) => {
-    if (outage) throw Object.assign(new Error('capture authority unavailable'), { code: 'capture_unavailable' });
-    return realCapture(...args);
-  };
-  await stopParticipant(app, { swarmId, participantId: 'builder', reason: 'Seat stopped seconds before SIGTERM' }).catch((error) => error);
-  outage = false;
-
-  const handle = driver.coordinator._workers.get(worker.id);
-  assert.equal(handle.status, 'dead');
-  assert.ok(!handle.processRef || handle.processRef.state === 'closed');
-  assert.equal(driver.coordinator._ownsLocalResources(handle), true);
-
+  // The shutdown then exits zero: nothing the stop left behind is a hold the drain must settle.
   const application = await app.shutdown(principal('drain'));
-  assert.equal(application.state, 'closed', 'the shutdown exits zero once the drain settled the holder');
-  assert.equal(existsSync(cwd), false, 'the drain reaped the checkout (the capture succeeded)');
-
-  const released = releasedRows(driver, worker.id);
-  assert.deepEqual(
-    released.filter((row) => row.resource === 'local_resources:worktree').map((row) => row.how),
-    ['custody_reaped'],
-    'the checkout went through the capture-then-remove custody boundary');
+  assert.equal(application.state, 'closed',
+    'the shutdown exits zero after the stop released the checkout it could not reap');
 });
 
-// --- (c)/(d): the deadline row names the reaper it waits on ------------------------------
+// --- (c): the drain names the wait it observes, per resource ----------------------------------
 
 function drainFixture(t, { timeoutMs = 400, label = 'c' } = {}) {
   const world = mkdtempSync(join(tmpdir(), `baton-issue360-${label}-`));
@@ -276,7 +211,7 @@ function drainFixture(t, { timeoutMs = 400, label = 'c' } = {}) {
   });
   const driver = createDriver({
     repoRoot: repo, logDir: join(world, 'log'), repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 4, timeoutMs, pollMs: 5 }, watchdog: { stallMs: 60_000 },
+    drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 },
   });
   t.after(async () => {
     try { await driver.closeAsync(); } catch {}
@@ -311,55 +246,35 @@ async function wedgedDrainFixture(t, label, idempotencyKey) {
   return { driver, handle, timeoutMs, idempotencyKey };
 }
 
-test('360c: the drain deadline names the reaper and since per waited resource', async (t) => {
-  const { driver, handle, timeoutMs, idempotencyKey } = await wedgedDrainFixture(t, 'c', 'issue360c-drain');
-  const observedAt = Date.now();
-  await assert.rejects(
-    driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey }),
-    (error) => {
-      assert.equal(error.code, 'coordinator_drain_incomplete');
-      assert.equal(error.detail?.reason, 'deadline');
-      // Which step of the loop the deadline won is the drain's own accounting ('remaining' when
-      // it raced a pass of attempts, 'convergence' when the loop ended) — the row that matters
-      // names the policy bound, never a new literal.
-      assert.ok(['remaining', 'convergence'].includes(error.detail?.stage),
-        `the deadline names its stage: ${error.detail?.stage}`);
-      assert.equal(error.detail?.timeoutMs, timeoutMs, 'the deadline is the deployment policy row, never a new literal');
-      const row = error.detail?.waitingOn?.[0];
-      assert.equal(row?.workerId, handle.id);
-      assert.ok(Array.isArray(row?.waiting) && row.waiting.length > 0, 'the wait is named');
-      const entry = row.waiting.find((candidate) => candidate?.resource === 'local_resources:localAuthority');
-      assert.ok(entry, 'the local authority hold is named as an entry');
-      assert.equal(entry.reaper, 'exact-close-cleanup', 'the entry names the reaper it waits on');
-      const since = Date.parse(entry.since);
-      assert.ok(!Number.isNaN(since) && since <= Date.now() && since >= observedAt - 5,
-        'the entry names since when the drain has been waiting');
-      assert.ok(Array.isArray(row.released), 'the row carries the released rows');
-      return true;
-    });
-});
-
-test('360d: the enriched wait rows replay from the durable worker log', async (t) => {
-  const { driver, handle, idempotencyKey } = await wedgedDrainFixture(t, 'd', 'issue360d-drain');
-  let detail = null;
-  await assert.rejects(
-    driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey }),
-    (error) => { detail = error.detail; return error.code === 'coordinator_drain_incomplete'; });
-
-  const named = driver.log.read(handle.id).filter((event) => event.kind === 'control.stop_waiting_on');
+test('360c: the drain names the wait it observes durably, and converges once the hold clears', async (t) => {
+  const { driver, handle, idempotencyKey } = await wedgedDrainFixture(t, 'c', 'issue360c-drain');
+  const draining = driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey });
+  // Issue #583: the drain waits until it converges, and it names the wait it OBSERVES — the durable
+  // row lands on the worker's own log while the hold stands, with no window deciding when.
+  const deadline = Date.now() + 8_000;
+  let named = [];
+  while (Date.now() < deadline) {
+    named = driver.log.read(handle.id).filter((event) => event.kind === 'control.stop_waiting_on');
+    if (named.length > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
   assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
   const payload = named.at(-1).payload;
   assert.equal(payload.status, 'dead');
   const entry = (payload.waiting ?? []).find((candidate) => candidate?.resource === 'local_resources:localAuthority');
   assert.ok(entry, 'the durable row names the waited resource');
-  assert.equal(entry.reaper, 'exact-close-cleanup');
+  assert.equal(entry.reaper, 'exact-close-cleanup', 'the entry names the reaper it waits on');
   assert.ok(!Number.isNaN(Date.parse(entry.since)), 'the durable row carries since');
   assert.ok(Array.isArray(payload.released), 'the durable row carries the released rows');
 
-  // Replay parity: a fresh Log instance over the same directory reads the same enriched row,
-  // and the thrown detail agrees with the durable record.
+  // Replay parity: a fresh Log instance over the same directory reads the same enriched row.
   const replayed = new Log(driver.log.dir).read(handle.id)
     .filter((event) => event.kind === 'control.stop_waiting_on').at(-1).payload;
   assert.deepEqual(replayed, payload, 'the enriched fields replay byte-for-byte');
-  assert.deepEqual(detail.waitingOn[0].waiting, payload.waiting, 'the thrown detail matches the durable row');
+
+  // The hold the scripted failure keeps is exactly what the drain is waiting on: release it and the
+  // drain converges on the same observed fact.
+  driver.coordinator._workers.get(handle.id).localAuthority = false;
+  const receipt = await draining;
+  assert.equal(receipt.remainingCount, 0, 'the drain converged once the hold cleared');
 });

@@ -2017,64 +2017,41 @@ test('replayed Run stop durably closes an absent historical process group withou
   assert.equal(worktrees4.calls.capture.length, 0);
 });
 
-// #265: a Run stop that cannot converge names what it is still waiting on — per target worker,
-// from the same predicates the convergence loop reads — both on the thrown error and in the
-// worker's durable log. Here the adapter acks the kill but no lifecycle terminal ever arrives:
-// the forced stop leaves closure unconfirmed (cleanupPending), no disposition is ever earned,
-// and the Run stop must say so instead of failing silently at its deadline.
-test('#265: a Run stop that cannot converge names the wait on the error and in the durable log', async () => {
+// Issue #583: a reap that REFUSES is terminal for the handle, whatever the refusal names. The
+// observed 2026-09-26 21:28:32Z resident stop died on the opposite shape: the reaper refused, the
+// handle kept its checkout, its local authority and `cleanupPending`, nothing was recorded, and
+// neither the fleet drain nor the stop ever converged. Here the refusal carries no `retained`
+// flag — a durable record the reaper cannot accept — so it is the exact class that used to reach
+// the branch that recorded nothing.
+test('#583: a reap refusal releases the handle hold and names the refusal durably', async () => {
   const adapter = new ScriptableAdapter();
   const worktrees = new SpyWorktreeManager();
-  // The checkout refuses to go away: the one physical hold a stop cannot release by itself.
   worktrees.remove = async (taskId) => {
     worktrees.calls.remove.push({ taskId });
-    throw Object.assign(new Error('checkout is busy'), { code: 'worktree_busy' });
+    throw Object.assign(new Error('linked worktree ownership record is invalid'), {
+      code: 'linked_worktree_ownership_invalid',
+    });
   };
-  const { coordinator, advance, log } = setup({
-    adapters: { mock: adapter }, worktrees, stopDeadlineMs: 50,
-    drainPolicy: { maxWorkers: 8, pollMs: 5, timeoutMs: 400 },
-  });
+  const { coordinator, log } = setup({ adapters: { mock: adapter }, worktrees });
   const handle = await coordinator.spawn('mock', makeBrief());
-  // The kill is forced first (the adapter acks, no terminal ever arrives, the logical deadline
-  // sweeps it), so the Run stop below starts from a settled dead handle whose holds never clear;
-  // its wall-clock deadline is then the only thing that elapses, whatever the machine load.
-  const kill = coordinator.kill(handle.id, 'operator:stop');
-  while (adapter.calls.kill.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
-  advance(51);
-  coordinator.tick();
-  assert.equal((await kill).result, 'forced');
-  await assert.rejects(coordinator.stopRunTargets([handle.id], 'operator:stop'), (error) => {
-    assert.equal(error.code, 'coordinator_run_stop_incomplete');
-    assert.equal(error.detail.timeoutMs, 400);
-    // Issue #450: the Run-stop leg names its waits with the SAME #360 entry objects the fleet
-    // drain uses — {resource, reaper, since} — so a stop and a drain never spell one wait two ways.
-    assert.deepEqual(error.detail.waitingOn.map((row) => ({
-      ...row,
-      waiting: row.waiting.map((entry) => entry.resource),
-    })), [{
-      workerId: handle.id, status: 'dead', disposition: null, processState: null,
-      waiting: ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending'],
-      released: [],
-    }], 'the wait is named from the same predicates the convergence loop reads');
-    for (const entry of error.detail.waitingOn[0].waiting) {
-      assert.deepEqual(Object.keys(entry).sort(), ['reaper', 'resource', 'since'],
-        `every entry is the ONE #360 shape {resource, reaper, since}: ${JSON.stringify(entry)}`);
-      assert.ok(!Number.isNaN(Date.parse(entry.since)), `the entry names since: ${JSON.stringify(entry)}`);
-    }
-    return true;
+  const task = coordinator._tasks.get(handle.taskId);
+  handle.worktree = '/tmp/wt/exact-583';
+  handle.ownedWorktreeAuthority = true;
+  handle.localAuthority = true;
+  task.checkpoint = Object.freeze({
+    state: 'pinned', sha: 'a'.repeat(40), ref: `refs/baton/checkpoints/${'a'.repeat(40)}`,
   });
-  const named = log.read(handle.id).filter((event) => event.kind === 'control.stop_waiting_on');
-  assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
-  assert.deepEqual(named.at(-1).payload.waiting.map((entry) => entry.resource),
-    ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending']);
-  assert.deepEqual({
-    disposition: named.at(-1).payload.disposition,
-    status: named.at(-1).payload.status,
-    processState: named.at(-1).payload.processState,
-    released: named.at(-1).payload.released,
-  }, { disposition: null, status: 'dead', processState: null, released: [] },
-  'the durable row carries the same wait, its disposition and the released rows');
-  assert.equal(named.at(-1).actor, 'operator:stop');
+
+  await coordinator._removeOwnedTaskWorktree(handle, task);
+
+  assert.equal(handle.worktree, null, 'the handle released the checkout it could not reap');
+  assert.equal(coordinator._localResourceOwnership(handle).worktree, undefined,
+    'and holds no local worktree authority on it');
+  const named = log.read(handle.id).filter((event) => event.kind === 'worktree.custody_content_retained');
+  assert.equal(named.length, 1,
+    `the refusal is named durably: ${JSON.stringify(log.read(handle.id).map((event) => event.kind))}`);
+  assert.equal(named[0].payload.code, 'linked_worktree_ownership_invalid',
+    'and the row carries the refusal the reaper threw');
 });
 
 // #267 item 3: a sent row that is not keyed by its own messageId is a lane receipt (run.send /

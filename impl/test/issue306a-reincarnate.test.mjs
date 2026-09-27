@@ -176,7 +176,6 @@ async function resident(t, f, { onSpawn } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs: WAIT_MS,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },
@@ -310,8 +309,9 @@ test('306a-d: a successor that dies before publishing is named with its tail, an
 test('306a-e: the four refusals are typed and drawn before any effect', async (t) => {
   const f = world('e');
   let stubs = 0;
+  let stub = null;
   const { deployment, driver } = await resident(t, f, {
-    onSpawn: (spec) => { stubs += 1; return new StubSuccessor(spec); },
+    onSpawn: (spec) => { stubs += 1; stub = new StubSuccessor(spec); return stub; },
   });
   await deployment.host();
   const refusalOf = async (thunk) => { try { await thunk(); return null; } catch (error) { return error; } };
@@ -343,6 +343,8 @@ test('306a-e: the four refusals are typed and drawn before any effect', async (t
   assert.equal(second.code, REINCARNATION_REFUSALS.inFlight);
   assert.ok(Number.isSafeInteger(second.detail.successorPid), JSON.stringify(second.detail));
   assert.ok(typeof second.detail.since === 'string');
+  // Issue #583: the handoff in flight ends on the successor's own exit — never on a bound.
+  stub.crash({ code: 7, tail: 'refusing: the successor could not open the state directory\n' });
   const failed = await pending;
   assert.equal(failed.code, 'reincarnation_failed', 'the abandoned handoff fails without a publication');
 });
@@ -392,8 +394,10 @@ test('306a-f: the reincarnation rows replay byte-identically through a reopened 
   const pending = first.deployment.reincarnate({ target: f.base });
   await until(() => stub !== null, { label: 'the spawn' });
   const receipt = await pending;
-  // The successor never publishes here (only the readiness marker exists), so the handoff FAILS at
-  // its publication step: the old incarnation names it and RE-PUBLISHES (docs/48 §11 item 7), which
+  // Issue #583: the successor never publishes, so the handoff ends on the successor's own exit —
+  // never on a bound.
+  stub.crash({ code: 7, tail: 'refusing: the successor could not open the state directory\n' });
+  // The old incarnation names the failed handoff and RE-PUBLISHES (docs/48 §11 item 7), which
   // means the publication is still ITS — the withdrawal happens on the operator's own stop, never
   // at the handoff's. The rows the old wrote must replay byte-identically afterwards either way.
   const before = hostRows(f.ledgerPath).filter((row) => row.payload.kind === 'host.reincarnation_requested')

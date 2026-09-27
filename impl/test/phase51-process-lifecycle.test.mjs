@@ -947,7 +947,7 @@ test('PL7: confirmed kill waits for owned cleanup and writer release', async () 
   assert.equal(coordinator.closeAuthority(), true);
 });
 
-test('PL7/PL10: cleanup failure is bounded, retains authority, and cannot report confirmed reap', async () => {
+test('PL7/PL10: a failed cleanup releases the handle hold, keeps the checkout, and names the refusal', async () => {
   let adapter;
   adapter = stubAdapter({
     async kill(worker) {
@@ -963,9 +963,20 @@ test('PL7/PL10: cleanup failure is bounded, retains authority, and cannot report
   const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(), adapters: { stub: adapter }, worktrees, referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'stub', stopDeadlineMs: 500 });
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-cleanup-fail', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'cleanup failure process');
-  assert.equal((await coordinator.kill(handle.id)).result, 'cleanup_failed');
-  assert.equal(coordinator._workers.get(handle.id).cleanupPending, true);
-  assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
+  // Issue #583: a cleanup that fails after the exact close is a reap refusal no retry settles, so
+  // the handle releases its hold and the refusal is named durably — the checkout stays on disk for
+  // the reconciliation authority. The stop converges; what it must never do is report the checkout
+  // as REAPED, and the custody row's own code is what says so.
+  await coordinator.kill(handle.id);
+  const worker = coordinator._workers.get(handle.id);
+  assert.equal(worker.cleanupPending, false, 'the released handle holds no cleanup');
+  assert.equal(worker.worktree, null, 'and no checkout');
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'worktree.removed'), false,
+    'the checkout is never reported reaped');
+  const named = log.read(handle.id).filter((event) => event.kind === 'worktree.custody_content_retained');
+  assert.equal(named.length, 1,
+    `the refusal is named durably: ${JSON.stringify(log.read(handle.id).map((event) => event.kind))}`);
+  assert.equal(named[0].payload.code, 'worktree_cleanup_failed', 'with the code the reap threw');
 });
 
 test('PL7: confirmed interrupt retains live process and writer authority until terminal kill', async () => {

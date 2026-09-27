@@ -294,7 +294,6 @@ function deploymentModule(fixture, extra = {}) {
     resident: {
       env: { XDG_CONFIG_HOME: ${JSON.stringify(fixture.configRoot)}, HOME: ${JSON.stringify(fixture.home)} },
       home: ${JSON.stringify(fixture.home)}, webDrainMs: 2_000, sessionTtlMs: 120_000,
-      reincarnationWaitMs: 60_000,
       ${extra.resident ?? ''}
     },
   `;

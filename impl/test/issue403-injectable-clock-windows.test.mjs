@@ -29,19 +29,18 @@ const RUN_ID = 'run-403-clock';
 // own clock can be closed while the host's clock has not reached it.
 const CLOCK_ISO = '2027-01-01T00:00:00.000Z';
 
-test('the coordinator reap window expires on the injected clock, not the host clock (#403)', async () => {
+test('a scratchpad reap that keeps advancing converges; one that stops advancing is named (#583)', async () => {
   let nowMs = 1_000_000;
   let calls = 0;
   const coordinator = {
-    _drainPolicy: { timeoutMs: 1_000, pollMs: 1, maxWorkers: 8, maxInteractions: 8 },
+    _drainPolicy: { pollMs: 1 },
     _now: () => nowMs,
     _sleep: async () => { nowMs += 400; },
     tick() {},
   };
   const recorder = {
     coordination: {
-      // A reap that keeps making progress for far longer than one window: only the deadline can
-      // end it, and the host clock cannot reach it inside this test's lifetime.
+      // A reap that keeps making progress runs to completion: no window ends it.
       reapRunScratchpads: () => {
         calls += 1;
         return calls >= 6 ? { result: 'complete' }
@@ -49,13 +48,21 @@ test('the coordinator reap window expires on the injected clock, not the host cl
       },
     },
   };
-  await assert.rejects(reapRunScratchpads(coordinator, recorder, RUN_ID), (error) => {
+  const receipt = await reapRunScratchpads(coordinator, recorder, RUN_ID);
+  assert.equal(receipt.result, 'complete', 'a reap that advances converges');
+  assert.equal(calls, 6, 'and it runs every pass it needs');
+
+  // A reap that stops advancing is a real defect, and it is named as one.
+  const stuck = {
+    coordination: {
+      reapRunScratchpads: () => ({ result: 'partial', remainingPartitions: 2, remainingEntries: 2 }),
+    },
+  };
+  await assert.rejects(reapRunScratchpads(coordinator, stuck, RUN_ID), (error) => {
     assert.equal(error.code, 'coordinator_scratchpad_reap_incomplete');
-    assert.match(error.message, /did not converge before its deadline/u);
+    assert.match(error.message, /stopped advancing/u);
     return true;
   });
-  assert.ok(nowMs >= 1_001_000, 'the window closed on the injected clock');
-  assert.ok(calls < 6, 'the host clock never let the stub run to completion');
 });
 
 test('the store reap window reads the store own clock when the caller supplies none (#403)', () => {
