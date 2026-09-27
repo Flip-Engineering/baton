@@ -19,7 +19,7 @@ import {
   questionCancelled, questionAsked, approvalRequested, decisionRequested, interactionSettled,
 } from './interaction.mjs';
 import {
-  resourceTokens, scratchpadWrite, contextRead, orientationRate,
+  resourceTokens, scratchpadWrite, contextRead,
   messageSend, nativeSubagentObserved,
 } from './observation-events.mjs';
 
@@ -364,9 +364,6 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
       }
       case 'context.read': {
         contextRead(coordinator, recorder, ctx); break;
-      }
-      case 'orientation.rate': {
-        orientationRate(coordinator, recorder, ctx); break;
       }
       case 'message.send': {
         messageSend(coordinator, recorder, ctx); break;

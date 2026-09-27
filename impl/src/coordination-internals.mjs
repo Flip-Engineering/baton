@@ -24,18 +24,6 @@ import { join } from 'node:path';
 
 // ── relocated primitives ─────────────────────────────────────────────────────────────────────────
 
-export const BRIEFING_SCHEMA_FIELD_SOURCES = Object.freeze({
-  blockedOn: 'the latest wave.closed record blockedOn block (D9)',
-  composedAtEventSeq: "the mint event's own seq (the pack record's observedSeq, G2)",
-  family: 'the orchestrator-briefing family constant (D1)',
-  landings: 'the wave.closed records derived landings (D9)',
-  lanes: 'the latest wave.closed record lanes block (D9)',
-  parked: 'the latest wave.closed record parked block (D9)',
-  rings: 'the latest wave.closed record rings block (D9)',
-  schemaVersion: 'the briefing schema revision (closed constant 1)',
-  sources: 'snapshot() digest + the standing-law list digest (D1)',
-  standingLaws: 'the pinned repoId-scoped standing-law deployment config (D8/OQ2)',
-});
 
 export class CoordinationIntegrityError extends Error {
   constructor(message, code = 'coordination_integrity') { super(message); this.name = 'CoordinationIntegrityError'; this.code = code; }
@@ -48,7 +36,6 @@ export class CoordinationRefusal extends Error {
   constructor(message, code, detail = null) { super(message); this.name = 'CoordinationRefusal'; this.code = code; this.detail = detail; }
 }
 
-export const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
 
 // Issue #530: the contradiction policy carried the same caller-declared size and count ceilings as
 // its five siblings; they are gone with every read of them. The identity is what a policy names.
@@ -65,7 +52,6 @@ export const MAD_UNIT_CANON = new Map([
   ['min', 'min'], ['minute', 'min'], ['minutes', 'min'],
 ]);
 
-export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
 
 /** Issue #465(4): the projection families the checkpoint CARRIES. `_events` (every parsed ledger
  * row) and `_byKey` (the same row objects indexed by idempotency key) are deliberately NOT among
@@ -93,13 +79,10 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
   '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
   '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
-  '_providerSequences', '_providerSourceHealth', '_contextSessions', '_contextCells',
-  '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
+  '_providerSequences', '_providerSourceHealth',
+  '_taskResourceReleases',
   // Epic #78: the per-worker generation records a replacement generation corrects (last write wins).
   '_workerGenerations',
-  '_contextPackages', '_contextPackageAttachments',
-  // BD3-B context packs (server-owned supersession chain per family) and BD3-A read audit.
-  '_contextPacks', '_contextPackHeads', '_contextReads',
   // Decision 4: digest-addressed spill artifacts (mint/materialize; durable, replay-derived).
   '_spills',
   // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId.
@@ -109,16 +92,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // #286 G-31: the CURRENT run -> wave binding (last write wins), folded from `steering.registered`.
   // It answers "which wave does this run sit in NOW" — the one reading `_waveIdOf`/`_waveRoleOf` share.
   '_waveBindings',
-  // #286 G-45: BD3-A orientation receipt heads — the first read per (workerId, packDigest) and the
-  // latest read per workerId. Folded so a rating and a freshness check are lookups.
-  '_contextReadHeads', '_contextReadLatest',
-  // #367: the O-2 per-attempt receipt counter ({count, bytes} per attempt key) the ceiling
-  // admission reads — folded beside the heads above, carried by the checkpoint like them.
-  '_contextReadAttemptCounters',
   '_swarms',
-  '_replManifestAdmissions',
-  // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
-  '_replBindings', '_replBindingHistory', '_replBindingFences',
   // Issue #33: task-ephemeral scratchpad entries, scope indexes/fences, live elevation
   // commitments, and bounded prose-free reap receipts are one ledger projection.
   '_scratchpadEntries', '_scratchpadEntriesByScope', '_scratchpadFences',
@@ -233,20 +207,8 @@ export function promotionActor(value) { return value === 'orchestrator' || (type
 
 export function recallBody(value) { return typeof value === 'string' ? value : JSON.stringify(canonical(value ?? '')); }
 
-export function replFenceKey(runId, scope) { return JSON.stringify([runId, scope]); }
 
-/** The citation grammar, declared ONCE (REPL-2/REPL-3, docs/reference/evidence/repl-kg-wave-
- * 2026-07-22/repl23-decisions.md Part A rule 2): `repl:<scope>:<name>@<version>`. The regex is
- * stateless (no `g` flag), so a `.exec` never carries an index between calls. */
-export const REPL_CITATION = /^repl:(shared|worker:[A-Za-z0-9._:-]{1,256}):([A-Za-z0-9._-]{1,128})@([1-9][0-9]*)$/u;
 
-/** A citation's own coordinates, or null when it is unparseable. A serving-path consumer uses
- * this to check WHERE a citation points (the D3 addressing law) BEFORE it resolves anything. */
-export function parseReplCitation(citation) {
-  const match = typeof citation === 'string' ? REPL_CITATION.exec(citation) : null;
-  if (!match) return null;
-  return freeze({ scope: match[1], name: match[2], bindingVersion: Number(match[3]) });
-}
 
 export function scratchpadScopeKey(runId, scope) { return JSON.stringify([runId, scope]); }
 
@@ -395,50 +357,6 @@ export function _setKnowledgeEdge(store, event, id, value) {
   store._knowledgeEdgeHistory.set(id, history);
 }
 
-/** Moved from `CoordinationStore._contextCallRunId` (issue #259 slice 1). Reads no store state. */
-export function _contextCallRunId(call) {
-  return call?.kind === 'baton.context_effect_call'
-    ? call.authority?.contextPrincipal?.runId ?? null : call?.source?.runId ?? null;
-}
-
-/** Moved from `CoordinationStore._contextArtifactVerification` (issue #259 slice 1). State: `this._contextArtifactVerificationStorage`, passed explicitly. */
-export function _contextArtifactVerification(state) {
-  return state.getStore()
-    ?? { calls: new Map(), references: new Map(), activeCalls: new Set() };
-}
-
-/** Moved from `CoordinationStore.withContextArtifactVerification` (issue #259 slice 1). State: `this._contextArtifactVerificationStorage`, passed explicitly. */
-export function withContextArtifactVerification(state, operation) {
-  if (typeof operation !== 'function') {
-    throw new TypeError('Context artifact verification operation is invalid');
-  }
-  if (state.getStore()) return operation();
-  return state.run({
-    calls: new Map(), references: new Map(), activeCalls: new Set(),
-  }, operation);
-}
-
-/** Moved from `CoordinationStore._contextArtifactRead` (issue #259 slice 1). State: the store, passed explicitly. */
-export function _contextArtifactRead(store, reference, verification) {
-  const key = canonicalDigest(reference);
-  if (verification.references.has(key)) return verification.references.get(key);
-  const value = store._contextReferenceRead(reference);
-  verification.references.set(key, value);
-  return value;
-}
-
-/** Moved from `CoordinationStore._contextEffectCallCore` (issue #259 slice 1). Reads no store state. */
-export function _contextEffectCallCore(call) {
-  return {
-    schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
-    requestId: call.requestId, requestDigest: call.requestDigest,
-    generation: call.generation, predecessorCall: clone(call.predecessorCall),
-    executionUnitIds: clone(call.executionUnitIds),
-    inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
-    source: clone(call.source), role: call.role, instruction: call.instruction,
-    units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
-  };
-}
 
 /** Moved from `CoordinationStore.events` (issue #259 slice 1). State: `this._events`, passed explicitly. */
 export function events(state, fromSeq = 1, limit = null) {
@@ -458,60 +376,6 @@ export function task(state, id) { return clone(state.get(id) ?? null); }
 
 /** Moved from `CoordinationStore.run` (issue #259 slice 1). State: `this._runs`, passed explicitly. */
 export function run(state, id) { return clone(state.get(id) ?? null); }
-
-/** Moved from `CoordinationStore.contextProgramAuthority` (issue #259 slice 1). State: the store, passed explicitly. */
-export function contextProgramAuthority(store) {
-  if (!store._contextProgramPolicy) return null;
-  return freeze({
-    schemaVersion: 1,
-    deploymentBaseSha: store._deploymentBaseSha,
-    environmentDigest: store._contextEnvironmentDigest,
-    policyDigest: store._contextProgramPolicy.policyDigest,
-    referenceIdentity: store._contextReferenceIdentity,
-  });
-}
-
-/** Moved from `CoordinationStore.contextSession` (issue #259 slice 1). State: `this._contextSessions`, passed explicitly. */
-export function contextSession(state, sessionId) { return clone(state.get(sessionId) ?? null); }
-
-/** Moved from `CoordinationStore.contextCell` (issue #259 slice 1). State: `this._contextCells`, passed explicitly. */
-export function contextCell(state, cellId) { return clone(state.get(cellId) ?? null); }
-
-/** Moved from `CoordinationStore.contextPackage` (issue #259 slice 1). State: the store, passed explicitly. */
-export function contextPackage(store, packageDigest) {
-  const record = store._contextPackages.get(packageDigest);
-  if (!record) return null;
-  const packageEvent = _contextPackageProvenance(store, record);
-  return freeze({
-    schemaVersion: record.schemaVersion, kind: record.kind,
-    packageId: `context-package:${record.packageDigest}`, packageDigest: record.packageDigest,
-    branches: clone(record.branches),
-    provenance: {
-      runId: record.provenance.runId, principalId: record.provenance.principalId, packageEvent,
-    },
-    policyDigest: record.policyDigest, admittedEvent: record.admittedEvent, admittedAt: record.admittedAt,
-  });
-}
-
-/** Moved from `CoordinationStore.contextPackageAttachments` (issue #259 slice 1). State: `this._contextPackageAttachments`, passed explicitly. */
-export function contextPackageAttachments(state, runId) {
-  return (state.get(runId) ?? []).map(clone);
-}
-
-/** Moved from `CoordinationStore._contextPackageProvenance` (issue #259 slice 1). State: the store, passed explicitly. */
-export function _contextPackageProvenance(store, record) {
-  const source = store._events[record.admittedEvent - 1];
-  const expectedPayload = {
-    schemaVersion: record.schemaVersion, kind: record.kind, branches: record.branches,
-    provenance: record.provenance, policyDigest: record.policyDigest, packageDigest: record.packageDigest,
-  };
-  if (!source || source.kind !== 'package.admitted' || source.seq !== record.admittedEvent
-    || canonicalDigest(source.payload) !== canonicalDigest(expectedPayload)) {
-    throw new CoordinationIntegrityError('Context package provenance source binding is invalid',
-      'package_provenance_integrity');
-  }
-  return freeze({ sourceEventSeq: source.seq, sourceEventDigest: canonicalDigest(source) });
-}
 
 /** Moved from `CoordinationStore.taskResourceRelease` (issue #259 slice 1). State: `this._taskResourceReleases`, passed explicitly. */
 export function taskResourceRelease(state, taskId) {
@@ -678,54 +542,6 @@ export function reuseSubjectHead(store, subjectDigest) { const id = store._reuse
 /** Moved from `CoordinationStore.reuseRiskGuard` (issue #259 slice 1). State: `this._reuseRiskGuards`, passed explicitly. */
 export function reuseRiskGuard(state, coordinate) { return clone(state.get(canonicalDigest(coordinate)) ?? null); }
 
-/** Moved from `CoordinationStore._prepareContextPackPayload` (issue #259 slice 1). State: the store, passed explicitly. */
-export function _prepareContextPackPayload(store, fields) {
-  const validity = fields?.validity ?? DEFAULT_CONTEXT_PACK_VALIDITY;
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-    || Object.keys(fields).some((key) => !['type', 'body', 'validity', 'predecessor'].includes(key))
-    || typeof fields.type !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/u.test(fields.type)
-    || typeof fields.body !== 'string' || fields.body.length === 0
-    || Buffer.byteLength(fields.body) > MAX_CONTEXT_PACK_BODY_BYTES
-    || typeof validity !== 'string' || !Number.isFinite(Date.parse(validity))
-    || new Date(Date.parse(validity)).toISOString() !== validity
-    || (fields.predecessor != null && (typeof fields.predecessor !== 'string'
-      || !store._contextPacks.has(fields.predecessor)))) {
-    throw new CoordinationRefusal('context pack mint is invalid', 'context_pack_invalid');
-  }
-  const headId = store._contextPackHeads.get(fields.type) ?? null;
-  const priorHead = headId ? (store._contextPacks.get(headId) ?? null) : null;
-  // The live head is the only legal predecessor. An explicit predecessor must BE the live head
-  // (D4, epic #103: the stale guard compares the explicit field against the live head, never
-  // against itself — a superseded packId refuses context_pack_stale even when the content
-  // matches).
-  const livePredecessor = priorHead?.packId ?? null;
-  if (fields.predecessor != null && fields.predecessor !== livePredecessor) {
-    throw new CoordinationRefusal('context pack predecessor is not the live head', 'context_pack_stale');
-  }
-  const predecessor = fields.predecessor ?? livePredecessor;
-  const validityVersion = (priorHead?.validityVersion ?? 0) + 1;
-  const packId = `context-pack:${canonicalDigest({
-      family: fields.type, body: fields.body, validity,
-      predecessor, validityVersion,
-    })}`;
-  return {
-    packId, family: fields.type, type: fields.type, body: fields.body,
-    validity, predecessor, validityVersion,
-  };
-}
-
-/** Moved from `CoordinationStore.contextPack` (issue #259 slice 1). State: `this._contextPacks`, passed explicitly. */
-export function contextPack(state, packId) {
-  return clone(state.get(packId) ?? null);
-}
-
-/** Moved from `CoordinationStore.contextPackHead` (issue #259 slice 1). State: the store, passed explicitly. */
-export function contextPackHead(store, family) {
-  if (typeof family !== 'string' || family.length === 0) return null;
-  const headId = store._contextPackHeads.get(family);
-  return headId ? contextPack(store._contextPacks, headId) : null;
-}
-
 /** Moved from `CoordinationStore.waveClosure` (issue #259 slice 1). State: `this._waveClosures`, passed explicitly. */
 export function waveClosure(state, waveId) {
   if (typeof waveId !== 'string' || waveId.length === 0) return null;
@@ -755,18 +571,6 @@ export function waveBinding(state, runId) {
   return clone(state.get(runId) ?? null);
 }
 
-/** The FIRST orientation receipt for one (worker, pack) — the read a rating cites. The fold is a
- * nested map (worker -> pack -> receipt), so no key format is shared between the fold and here. */
-export function orientationReadHead(state, workerId, packDigest) {
-  if (typeof workerId !== 'string' || typeof packDigest !== 'string') return null;
-  return clone(state.get(workerId)?.get(packDigest) ?? null);
-}
-
-/** The LATEST orientation receipt for one worker — its freshness digest and citation seq. */
-export function orientationReadLatest(state, workerId) {
-  if (typeof workerId !== 'string' || workerId.length === 0) return null;
-  return clone(state.get(workerId) ?? null);
-}
 
 /** Moved from `CoordinationStore.waveRegistry` (issue #259 slice 1). State: `this._waveRegistry`, passed explicitly. */
 export function waveRegistry(state) {
@@ -783,53 +587,6 @@ export function swarms(state) { return swarmSnapshot(state).swarms; }
 export function priorCoordinationEvent(state, key) {
   const event = state.get(key) ?? null;
   return event ? clone(event) : null;
-}
-
-/** Moved from `CoordinationStore.composeBriefingPack` (issue #259 slice 1). Reads no store state. */
-export function composeBriefingPack(rawInput) {
-  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
-    throw new CoordinationRefusal('briefing composition input must be an object', 'briefing_pack_invalid');
-  }
-  for (const key of Object.keys(rawInput)) {
-    if (!Object.hasOwn(BRIEFING_SCHEMA_FIELD_SOURCES, key)) {
-      throw new CoordinationRefusal(`briefing composition field "${key}" has no store source`, 'briefing_pack_invalid');
-    }
-  }
-  const landings = Array.isArray(rawInput.landings) ? [...rawInput.landings] : [];
-  let parked = Array.isArray(rawInput.parked) ? rawInput.parked.map((entry) => ({ ...entry })) : [];
-  let rings = Array.isArray(rawInput.rings) ? rawInput.rings.map((entry) => ({ ...entry })) : [];
-  const dropLedger = { droppedLandings: 0, droppedParkedReasonDetail: false, droppedRingsLaneSummaries: false };
-  const compose = () => JSON.stringify(canonical({
-    schemaVersion: rawInput.schemaVersion, family: rawInput.family,
-    composedAtEventSeq: rawInput.composedAtEventSeq,
-    rings, lanes: rawInput.lanes ?? [], landings, parked, blockedOn: rawInput.blockedOn ?? [],
-    standingLaws: rawInput.standingLaws ?? [], sources: rawInput.sources,
-  }));
-  let body = compose();
-  if (Buffer.byteLength(body, 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-    // Step 1: drop oldest landings first (minimum 1) — the newest landing survives.
-    while (landings.length > 1 && Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-      landings.shift(); dropLedger.droppedLandings += 1;
-    }
-  }
-  if (Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-    // Step 2: drop parked reason detail (kind + id remain).
-    parked = parked.map((entry) => { const { reasonDigest, ...rest } = entry; return rest; });
-    dropLedger.droppedParkedReasonDetail = true;
-  }
-  if (Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-    // Step 3: drop rings lane summaries (id + state remain).
-    rings = rings.map((entry) => { const { laneSummaryDigest, ...rest } = entry; return rest; });
-    dropLedger.droppedRingsLaneSummaries = true;
-  }
-  body = compose();
-  if (Buffer.byteLength(body, 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-    throw Object.assign(
-      new CoordinationRefusal('briefing composition overflows the body ceiling after the full degradation order', 'briefing_pack_overflow'),
-      { dropLedger },
-    );
-  }
-  return { ok: true, body };
 }
 
 /** Moved from `CoordinationStore.integrationAuthority` (issue #259 slice 1). State: the store, passed explicitly. */
@@ -939,10 +696,6 @@ export function _waveMembershipOf(state, runId) {
   return null;
 }
 
-/** Moved from `CoordinationStore.bindingFence` (issue #259 slice 1). State: `this._replBindingFences`, passed explicitly. */
-export function bindingFence(state, runId, scope) {
-  return state.get(replFenceKey(runId, scope)) ?? 0;
-}
 
 /** Moved from `CoordinationStore._knowledgePayload` (issue #259 slice 1). Reads no store state. */
 export function _knowledgePayload(fields, extras = {}) {
@@ -1053,7 +806,7 @@ export function recallAssessments(store, { nodeId = null, taskId = null, observe
 /** Moved from `CoordinationStore.KNOWLEDGE_CANDIDATE_TRIGGERS` (issue #259 slice 1). Reads no store state. */
 export function KNOWLEDGE_CANDIDATE_TRIGGERS() {
   return Object.freeze({
-    'package.admitted': 'package_admit',
+
     'scratch.cited_observed': 'scratchpad_settle',
     'verified_task_outcome': 'verification',
   });

@@ -409,7 +409,6 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   capabilities: 'consulted when a registered capability is invoked by a worker',
   capabilityContexts: 'consulted when a registered capability is invoked by a worker',
   capabilityFactories: 'read at assembly; the produced capability must still be invoked',
-  contextProgram: 'reached only by a contextCall brief',
   coordination: 'a caller-supplied store; every case uses the factory-built one',
   coordinationAsyncOpen: 'the deployment open path, not this file\'s construction',
   deploymentBaseSha: 'a pinned worktree base; no case supplies one',

@@ -79,25 +79,6 @@ function spawnBrief() {
   };
 }
 
-test('#402: a failed context-read audit records its cause and preserves the read result', async (t) => {
-  const f = fixture(t);
-  const handle = await f.coordinator.spawn('mock', spawnBrief());
-  const answered = { rendered: { items: ['answer'] }, deliverable: 'answer text' };
-  f.coordinator._answerContextRead = () => answered;
-  f.coordination.recordContextRead = () => {
-    throw Object.assign(new Error('context audit refused'), { code: 'context_audit_refused' });
-  };
-  const result = f.coordinator.contextRead(handle.id, {
-    expectedFence: 'current', idempotencyKey: 'read-402', query: { kind: 'knowledge', text: 'answer' },
-  });
-  assert.deepEqual(result, {
-    ok: true, kind: 'knowledge', result: answered.rendered, renderedText: answered.deliverable,
-    idempotencyKey: 'read-402',
-  });
-  assert.deepEqual(f.coordinator.recordedFailures().find(row => row.reason === 'context_read_audit'), {
-    reason: 'context_read_audit', count: 1, lastCode: 'context_audit_refused', lastMessage: 'context audit refused',
-  });
-});
 
 test('#402: a failed generation binding writes an operational receipt with its cause and coordinates', async (t) => {
   const f = fixture(t);

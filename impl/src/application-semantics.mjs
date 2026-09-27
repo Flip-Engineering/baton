@@ -197,70 +197,6 @@ const applicationIntent = objectSchema({
 const depth = {
   type: 'string', enum: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
 };
-const contextField = { type: 'string', minLength: 1 };
-const contextPrimitive = { oneOf: [
-  { type: 'null' }, { type: 'boolean' }, { type: 'number' },
-  { type: 'string' },
-] };
-const contextProgramSchema = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    schemaVersion: { const: 1 }, kind: { const: 'baton.context_program' },
-    expression: { $ref: '#/properties/program/$defs/expression' },
-  },
-  required: ['schemaVersion', 'kind', 'expression'],
-  $defs: {
-    selector: { oneOf: [
-      objectSchema({
-        kind: { const: 'indices' },
-        values: { type: 'array', minItems: 1, uniqueItems: true,
-          items: { type: 'integer', minimum: 0 } },
-      }),
-      objectSchema({ kind: { const: 'field_equals' }, field: contextField,
-        value: contextPrimitive }),
-    ] },
-    predicate: { oneOf: [
-      objectSchema({ field: contextField, operator: { const: 'exists' } }),
-      objectSchema({ field: contextField,
-        operator: { type: 'string', enum: ['eq', 'neq', 'contains'] },
-        value: contextPrimitive }),
-    ] },
-    expression: { oneOf: [
-      objectSchema({ op: { const: 'source' }, branch: contextField }),
-      ...['outline', 'coverage'].map((op) => objectSchema({
-        op: { const: op }, input: { $ref: '#/properties/program/$defs/expression' },
-      })),
-      objectSchema({ op: { const: 'index' }, input: { $ref: '#/properties/program/$defs/expression' },
-        after: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0 }] } }),
-      objectSchema({ op: { const: 'search' }, input: { $ref: '#/properties/program/$defs/expression' },
-        query: { type: 'string', minLength: 1 },
-        mode: { type: 'string', enum: ['literal', 'case_insensitive'] } }),
-      objectSchema({ op: { const: 'slice' }, input: { $ref: '#/properties/program/$defs/expression' },
-        selector: { $ref: '#/properties/program/$defs/selector' } }),
-      objectSchema({ op: { const: 'chunk' }, input: { $ref: '#/properties/program/$defs/expression' },
-        by: contextField }),
-      objectSchema({ op: { const: 'filter' }, input: { $ref: '#/properties/program/$defs/expression' },
-        predicate: { $ref: '#/properties/program/$defs/predicate' } }),
-      objectSchema({ op: { const: 'project' }, input: { $ref: '#/properties/program/$defs/expression' },
-        fields: { type: 'array', minItems: 1, uniqueItems: true,
-          items: contextField } }),
-      ...['sort', 'unique'].map((op) => objectSchema({
-        op: { const: op }, input: { $ref: '#/properties/program/$defs/expression' },
-        keys: { type: 'array', minItems: 1, uniqueItems: true,
-          items: contextField },
-      })),
-      objectSchema({ op: { const: 'join' },
-        left: { $ref: '#/properties/program/$defs/expression' }, right: { $ref: '#/properties/program/$defs/expression' },
-        on: objectSchema({ left: contextField, right: contextField }) }),
-      objectSchema({ op: { const: 'collect' },
-        inputs: { type: 'array', minItems: 1,
-          items: { $ref: '#/properties/program/$defs/expression' } } }),
-      objectSchema({ op: { const: 'finish' }, value: { $ref: '#/properties/program/$defs/expression' },
-        evidence: { type: 'array', minItems: 1,
-          items: { $ref: '#/properties/program/$defs/expression' } } }),
-    ] },
-  },
-};
 
 const operations = {
   'application.help': {
@@ -334,14 +270,6 @@ const operations = {
     helpTopic: 'run.stop', idempotent: true, destructive: true, emergency: true,
   },
 };
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval is `BatonApplication
-// .prototype.contextEval` in application.mjs — a public method, not a command-bus entry (not in
-// `operations` here, not in APPLICATION_COMMAND_DEFINITIONS). `operations` above is a closed,
-// exactly-asserted inventory (AX1, phase67-progressive-agent-experience.test.mjs) outside this
-// task's file scope, and APPLICATION_COMMAND_DEFINITIONS is asserted just as exactly elsewhere
-// (UA5, phase64-integrated-run-application.test.mjs) — see the note above that table in
-// application.mjs for the full reachability/gap account (direct method call works today; Web,
-// MCP, and generic `application.command('application.context_eval', ...)` dispatch do not yet).
 
 const sections = [
   ['episode', 'Evidence-backed Episode outline, output, sources, lineage, route, verification, result, and cleanup authority.'],
@@ -357,7 +285,6 @@ const sections = [
   ['candidates', 'Immutable mechanically verified Workflow candidates and their exact role bindings.'],
   ['feedback', 'Typed source-bound Workflow feedback packets and their candidate targets.'],
   ['rounds', 'Append-only Workflow Plan rounds, immutable Candidate lineage, and current round state.'],
-  ['context', 'Immutable Context sessions, pure cells, coverage, and source-grounded evidence.'],
   ['result', 'Accepted and adopted result state.'],
   ['delivery', 'Integration and export/delivery state.'],
   ['cleanup', 'Stop, process reaping, worktree, runtime, and export cleanup.'],
@@ -366,116 +293,6 @@ const sections = [
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));
 
 const actions = {
-  context_eval: {
-    label: 'Evaluate pure Context',
-    summary: 'Evaluate one closed immutable Context expression through a durable addressed cell.',
-    inputSchema: objectSchema({
-      program: contextProgramSchema,
-      role: { type: 'string', minLength: 1 },
-    }, ['program']),
-    serverDerived: ['session', 'manifest', 'cell', 'ordinal', 'predecessor'],
-    effect: 'context_pure_compute', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_eval',
-    expectedDepth: 'outline', genericCli: true,
-  },
-  context_retry: {
-    label: 'Retry failed Context generation',
-    summary: 'Propose one separately approved successor generation that executes only retryable nonaccepted units and inherits accepted results exactly.',
-    inputSchema: objectSchema({
-      callId: {
-        type: 'string', pattern: '^context-call:[a-f0-9]{64}$',
-      },
-    }, ['callId']),
-    serverDerived: [
-      'predecessorCall', 'retryUnits', 'inheritedChildren', 'predecessorPlan',
-      'successorPlan', 'workflowDefinition', 'routes', 'workerPolicy', 'budgets', 'call',
-    ],
-    effect: 'plan_proposal', destructive: false, irreversible: false,
-    idempotent: true, priority: 'recommended', helpTopic: 'run.act.context_retry',
-    expectedDepth: 'outline', genericCli: true,
-  },
-  context_reduce: {
-    label: 'Reduce completed Context',
-    summary: 'Propose one separately approved successor Plan that synthesizes every exact output of a completed Context call.',
-    inputSchema: objectSchema({
-      callId: {
-        type: 'string', pattern: '^context-call:[a-f0-9]{64}$',
-      },
-      role: { type: 'string', minLength: 1 },
-      instruction: { type: 'string', minLength: 1 },
-    }, ['callId', 'instruction']),
-    serverDerived: [
-      'session', 'sourceCall', 'outputRef', 'evidenceRef', 'inputLineage',
-      'predecessorPlan', 'successorPlan', 'workflowDefinition', 'route', 'workerPolicy',
-      'budget', 'call',
-    ],
-    effect: 'plan_proposal', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_reduce',
-    expectedDepth: 'outline', genericCli: true,
-  },
-  context_map: {
-    label: 'Map addressed Context',
-    summary: 'Propose one separately approved parallel successor Plan over an immutable completed Context cell.',
-    inputSchema: objectSchema({
-      cellId: {
-        type: 'string', pattern: '^cell:[a-f0-9]{64}$',
-      },
-      role: { type: 'string', minLength: 1 },
-      instruction: { type: 'string', minLength: 1 },
-    }, ['cellId', 'instruction']),
-    serverDerived: [
-      'session', 'manifest', 'sourceProgram', 'outputRef', 'evidenceRef', 'partitions',
-      'predecessorPlan', 'successorPlan', 'workflowDefinition', 'routes', 'workerPolicy',
-      'budgets', 'call', 'wave',
-    ],
-    effect: 'plan_proposal', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_map',
-    expectedDepth: 'outline', genericCli: true,
-  },
-  context_search: {
-    label: 'Search addressed Context',
-    summary: 'Run one pure deterministic search over an immutable Context branch.',
-    inputSchema: objectSchema({
-      query: { type: 'string', minLength: 1 },
-      branch: { type: 'string', minLength: 1, default: 'repository' },
-      mode: {
-        type: 'string', enum: ['literal', 'case_insensitive'], default: 'case_insensitive',
-      },
-      role: { type: 'string', minLength: 1 },
-    }, ['query']),
-    serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
-    effect: 'context_pure_compute', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_search',
-    expectedDepth: 'outline', genericCli: true, advertised: false,
-    legacyAliasFor: 'context_eval',
-  },
-  context_chunk: {
-    label: 'Chunk addressed Context',
-    summary: 'Partition one immutable Context branch by a deterministic field.',
-    inputSchema: objectSchema({
-      branch: { type: 'string', minLength: 1, default: 'repository' },
-      by: { type: 'string', minLength: 1, default: 'item' },
-      role: { type: 'string', minLength: 1 },
-    }, []),
-    serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
-    effect: 'context_pure_compute', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_chunk',
-    expectedDepth: 'outline', genericCli: true, advertised: false,
-    legacyAliasFor: 'context_eval',
-  },
-  context_coverage: {
-    label: 'Inspect Context coverage',
-    summary: 'Measure represented and selected coverage for one immutable Context branch.',
-    inputSchema: objectSchema({
-      branch: { type: 'string', minLength: 1, default: 'repository' },
-      role: { type: 'string', minLength: 1 },
-    }, []),
-    serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
-    effect: 'context_pure_compute', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_coverage',
-    expectedDepth: 'outline', genericCli: true, advertised: false,
-    legacyAliasFor: 'context_eval',
-  },
   approve_plan: {
     label: 'Approve exact Plan', summary: 'Approve the currently displayed Plan and let Baton dispatch it.',
     inputSchema: objectSchema({}, []), serverDerived: ['planDigest'], effect: 'provider_call',
@@ -704,13 +521,6 @@ const actions = {
 };
 
 const APPLICATION_ACTION_CAPABILITY_SOURCE = {
-  context_eval: ['control', 'observe'],
-  context_retry: ['control', 'observe'],
-  context_reduce: ['control', 'observe'],
-  context_map: ['control', 'observe'],
-  context_search: ['control', 'observe'],
-  context_chunk: ['control', 'observe'],
-  context_coverage: ['control', 'observe'],
   approve_plan: ['approve', 'observe'],
   answer_approval: ['approve', 'observe'],
   answer_question: ['control', 'observe'],
@@ -809,13 +619,6 @@ const OPERATION_CANONICAL_NAMES = {
 };
 
 const ACTION_OPERATIONS = {
-  context_eval: 'context.eval',
-  context_retry: 'context.retry',
-  context_reduce: 'context.reduce',
-  context_map: 'context.map',
-  context_search: 'context.eval',
-  context_chunk: 'context.eval',
-  context_coverage: 'context.eval',
   approve_plan: 'run.approve',
   answer_approval: 'run.answer',
   answer_question: 'run.answer',
@@ -1061,13 +864,13 @@ const cli = {
       commandIds: ['run.show', 'run.progress', 'run.events', 'run.output'],
       paragraphs: [
         'Shows the objective-first Run outline by default. Expand to index, section, item, content, or evidence only when that detail is needed; this is the preferred change-aware workflow.',
-        'Section depth requires --section. Item and evidence require --section plus --item. Context content accepts --offset. Execution progress, normalized events, and opt-in untrusted output have concise Run commands that manage pagination and waiting inside Baton.',
+        'Section depth requires --section. Item and evidence require --section plus --item. Execution progress, normalized events, and opt-in untrusted output have concise Run commands that manage pagination and waiting inside Baton.',
       ],
     },
     'run.inspect.episode': {
       commandIds: ['run.episode', 'run.result'],
       paragraphs: [
-        'Episode is a read-only evidence-backed projection over the current Run, Plan, Attempts, Context, structural knowledge, verification, result, and cleanup authorities.',
+        'Episode is a read-only evidence-backed projection over the current Run, Plan, Attempts, structural knowledge, verification, result, and cleanup authorities.',
         'Outline summaries are replaceable and non-authoritative. Exact routes, result capsules, source coordinates, immutable lineage edges, verification receipts, and cleanup receipts remain authoritative at the addressed item or evidence depth.',
       ],
     },
@@ -1221,20 +1024,14 @@ const sessionAuthoritySchema = objectSchema({
 // (their MCP tools live in the ordinary table), so the matrix projection no longer derives them.
 export const SURFACING_MATRIX_KEYS = Object.freeze([
   'run.scratchpad', 'decision.list',
-  'package.admit', 'package.attach', 'package.read', 'repl.manifest', 'repl.binding',
-  'repl.cite', 'knowledge.recall', 'knowledge.horizon',
+  'knowledge.recall', 'knowledge.horizon',
 ]);
 const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'run.scratchpad': 'viewer-scoped worker and shared slices',
   'decision.list': 'Run-scoped observe authorization; deadlineAt is projected',
   'scratchpad.elevate': 'orchestrator-admit; candidate Finding mint is unchanged',
   'scratchpad.settle': 'orchestrator-admit',
-  'package.admit': 'S-2 session authority and package-to-Run binding',
-  'package.attach': 'S-2 session authority; run/worker scope grammar',
-  'package.read': 'resolved content remains provenance-marked untrusted prose',
-  'repl.manifest': 'worker manifests remain restricted to the worker own layer',
-  'repl.binding': 'binding version CAS remains authoritative',
-  'repl.cite': 'role-scoped citation projection',
+
   'knowledge.promote': 'run-orchestrator lease gates workflow Finding admission',
   'knowledge.recall': 'deployment-bounded recall policy',
   'knowledge.horizon': 'viewer-scoped; non-orchestrators must be owned workers',
@@ -1465,38 +1262,6 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: runIdSchema, authorityFields: ['runId'], serverDerived: ['viewer'],
     liveMethod: 'application.decisionList',
   }],
-  // 2026-09-14 audit (U-G7): the Context actions are reached through the advertised run.do lane
-  // (embedded/mcp/web) — the CLI refuses `baton context eval` as host-local by design, so the
-  // cli surface claim was a ghost (surface-resolution.mjs probes it).
-  ['context.eval', { action: 'context_eval', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'], example: 'baton context eval --run RUN_ID --program FILE' }],
-  ['context.map', { action: 'context_map', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
-  ['context.reduce', { action: 'context_reduce', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
-  ['context.retry', { action: 'context_retry', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
-  ['package.admit', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'],
-    inputSchema: objectSchema({ sessionAuthority: sessionAuthoritySchema, runId: id, package: { type: 'object' } },
-      ['sessionAuthority', 'runId', 'package']),
-    authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['idempotencyKey'],
-    liveMethod: 'admitContextPackage',
-  }],
-  ['package.attach', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
-      sessionAuthority: sessionAuthoritySchema, runId: id, packageDigest: digest64,
-      scope: { type: 'string', minLength: 3, maxLength: 600,
-        pattern: '^(?:run|worker:[A-Za-z0-9_.:-]+)$' },
-    }, ['sessionAuthority', 'runId', 'packageDigest', 'scope']),
-    authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['idempotencyKey'],
-    liveMethod: 'attachContextPackage',
-  }],
-  ['package.read', {
-    effect: 'observe', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
-    surfaces: ['embedded', 'mcp'],
-    inputSchema: objectSchema({ packageDigest: digest64, branchName: id }, ['packageDigest']),
-    authorityFields: ['packageDigest'], serverDerived: ['viewer'],
-    liveMethod: 'contextPackageBranch + projectContextPackageBranch',
-  }],
   ['scratchpad.elevate', {
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
@@ -1516,30 +1281,6 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['runId', 'expectedScratchpadFence', 'skips']),
     authorityFields: ['runId', 'expectedScratchpadFence'], serverDerived: ['actor'],
     liveMethod: 'settleWorkflowScratchpad',
-  }],
-  ['repl.manifest', {
-    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      workerId: id, manifest: { type: 'object' }, idempotencyKey: id,
-    }, ['workerId', 'manifest', 'idempotencyKey']),
-    authorityFields: ['workerId'], serverDerived: ['principalId', 'repoId', 'runId'],
-    liveMethod: 'admitReplManifest',
-  }],
-  ['repl.binding', {
-    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      operation: { type: 'string', enum: ['admit', 'drop'] }, fields: { type: 'object' },
-      idempotencyKey: id,
-    }, ['operation', 'fields', 'idempotencyKey']),
-    authorityFields: ['fields'], serverDerived: ['actor', 'principalId'],
-    liveMethod: 'admitReplBinding + dropReplBinding',
-  }],
-  ['repl.cite', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
-    capabilities: ['observe'], outputView: 'item', helpTopic: 'run',
-    inputSchema: objectSchema({ runId: id, citation: { type: 'string', minLength: 1 } },
-      ['runId', 'citation']),
-    authorityFields: ['runId'], serverDerived: ['viewer'], liveMethod: 'resolveReplCitation',
   }],
   ['knowledge.promote', {
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
@@ -1882,48 +1623,6 @@ const CANONICAL_OPERATION_SPECS = [
 const SURFACE_ALIAS_ROWS = Object.freeze([
   ...SWARM_COMMAND_ROWS.map(({ command }) => [command, 'mcp.fleet', canonicalAndTransportNames(command).mcp]),
   ['application.help', 'embedded', 'BatonClient.help'],
-  ['context.eval', 'embedded', 'BatonContextCall.complete'],
-  ['context.eval', 'embedded', 'BatonContextCall.content'],
-  ['context.eval', 'embedded', 'BatonContextCall.contentPage'],
-  ['context.eval', 'embedded', 'BatonContextCall.evidence'],
-  ['context.eval', 'embedded', 'BatonContextCall.help'],
-  ['context.eval', 'embedded', 'BatonContextCall.outline'],
-  ['context.eval', 'embedded', 'BatonContextCall.output'],
-  ['context.eval', 'embedded', 'BatonContextCell.evidence'],
-  ['context.eval', 'embedded', 'BatonContextCell.help'],
-  ['context.eval', 'embedded', 'BatonContextCell.outline'],
-  ['context.eval', 'embedded', 'BatonContextCell.output'],
-  ['context.eval', 'embedded', 'BatonContextExpression.chunk'],
-  ['context.eval', 'embedded', 'BatonContextExpression.coverage'],
-  ['context.eval', 'embedded', 'BatonContextExpression.filter'],
-  ['context.eval', 'embedded', 'BatonContextExpression.index'],
-  ['context.eval', 'embedded', 'BatonContextExpression.join'],
-  ['context.eval', 'embedded', 'BatonContextExpression.outline'],
-  ['context.eval', 'embedded', 'BatonContextExpression.project'],
-  ['context.eval', 'embedded', 'BatonContextExpression.search'],
-  ['context.eval', 'embedded', 'BatonContextExpression.slice'],
-  ['context.eval', 'embedded', 'BatonContextExpression.sort'],
-  ['context.eval', 'embedded', 'BatonContextExpression.toJSON'],
-  ['context.eval', 'embedded', 'BatonContextExpression.unique'],
-  ['context.eval', 'embedded', 'BatonRunContext.call'],
-  ['context.eval', 'embedded', 'BatonRunContext.cell'],
-  ['context.eval', 'embedded', 'BatonRunContext.cells'],
-  ['context.eval', 'embedded', 'BatonRunContext.chunk'],
-  ['context.eval', 'embedded', 'BatonRunContext.collect'],
-  ['context.eval', 'embedded', 'BatonRunContext.coverage'],
-  ['context.eval', 'embedded', 'BatonRunContext.evaluate'],
-  ['context.eval', 'embedded', 'BatonRunContext.evidence'],
-  ['context.eval', 'embedded', 'BatonRunContext.finish'],
-  ['context.eval', 'embedded', 'BatonRunContext.help'],
-  ['context.eval', 'embedded', 'BatonRunContext.index'],
-  ['context.eval', 'embedded', 'BatonRunContext.outline'],
-  ['context.eval', 'embedded', 'BatonRunContext.search'],
-  ['context.eval', 'embedded', 'BatonRunContext.source'],
-  ['context.map', 'embedded', 'BatonRunContext.map'],
-  ['context.reduce', 'embedded', 'BatonContextCall.reduce'],
-  ['context.reduce', 'embedded', 'BatonRunContext.reduce'],
-  ['context.retry', 'embedded', 'BatonContextCall.retry'],
-  ['context.retry', 'embedded', 'BatonRunContext.retry'],
   ['deployment.shutdown', 'application.commands', 'application.shutdown'],
   ['deployment.view', 'cli', 'baton route exact'],
   ['deployment.view', 'cli', 'baton route usage'],
@@ -2008,7 +1707,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.view', 'embedded', 'BatonRun.candidates'],
   ['run.view', 'embedded', 'BatonRun.changes'],
   ['run.view', 'embedded', 'BatonRun.complete'],
-  ['run.view', 'embedded', 'BatonRun.context'],
   ['run.view', 'embedded', 'BatonRun.drive'],
   ['run.view', 'embedded', 'BatonRun.episode'],
   ['run.view', 'embedded', 'BatonRun.help'],

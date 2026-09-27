@@ -201,14 +201,7 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_permission_required: row(403, ['fold', 'runtime'], 'the swarm has not granted the caller the authority this operation needs'),
   // ── 503 transient: only where a restart genuinely repairs it ──
   swarm_runtime_closed: row(503, ['runtime'], 'the swarm runtime is shut down for this deployment; restart the resident to serve the swarm family again'),
-  // #441 lane B: the seat read verbs (run.package.read) raise these three; the store spells its own
-  // two context-package misses; the runtime re-raises them in the family spelling (the same
-  // runtime/fold split `swarm_participant_not_found` / `participant_not_found` carries).
-  package_not_attached_to_run: row(403, ['runtime'], 'the context package digest is not attached to the caller\'s run or its swarm'),
-  swarm_context_package_not_found: row(404, ['runtime'], 'the request names a context package this deployment does not hold'),
-  swarm_context_package_branch_not_found: row(404, ['runtime'], 'the request names a branch the context package does not carry'),
-  // #358: `run.spill.read` names a spill id nothing minted (or that a later reaping removed) —
-  // the same runtime/fold split the context-package rows above carry.
+  // #358: `run.spill.read` names a spill id nothing minted (or that a later reaping removed).
   swarm_spill_not_found: row(404, ['runtime'], 'the request names a spill this deployment does not hold'),
 });
 

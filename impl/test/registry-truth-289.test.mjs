@@ -181,7 +181,13 @@ test('U-E8/U-F15: unknown run verbs refuse with the canonical set, and a Run id 
 
 test('U-E5: the minted action.do envelope is accepted by act() for every action kind', () => {
   const kinds = Object.keys(APPLICATION_SEMANTIC_REGISTRY.actions);
-  assert.ok(kinds.length > 20, 'stage[action-kinds] the registry declares its action kinds');
+  for (const kind of ['approve_plan', 'answer_approval', 'answer_question', 'send', 'interrupt',
+    'integrate', 'stop']) {
+    assert.ok(kinds.includes(kind), `stage[action-kinds] the registry declares ${kind}`);
+  }
+  for (const kind of ['context_eval', 'context_map', 'context_reduce', 'context_retry']) {
+    assert.ok(!kinds.includes(kind), `stage[action-kinds] the removed Context kind ${kind} is gone`);
+  }
   const target = { requestId: 'req-1', pauseId: 'pause-1', planDigest: 'a'.repeat(64) };
   const failures = [];
   for (const kind of kinds) {

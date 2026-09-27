@@ -1,6 +1,6 @@
 // runtime-event-handlers/observation-events.mjs — issue #259, slice 14.
 // The _handleEvent switch's observation arms (resource.tokens, scratchpad.write, context.read,
-// orientation.rate, message.send, native.subagent_observed), verbatim
+// message.send, native.subagent_observed), verbatim
 // over the dispatcher's ctx record. capBytesToScalar relocates here (the message.send arm and the
 // coordinator's staying sendMessage both read it — the coordinator imports it back). Recording
 // through the port; receiver explicit; no sibling family imports.
@@ -54,16 +54,6 @@ export function contextRead(coordinator, recorder, ctx) {
         }
 }
 
-export function orientationRate(coordinator, recorder, ctx) {
-// Epic #81 (O-7): the closed rating event. The hub derives the attempt identity and a
-        // prior grant/read proof; an unknown/invisible pack draws the constant refusal. Never
-        // TG2/TG3 liveness, and a rating never vetoes serving (aggregates are advisory).
-        const receipt = coordinator._recordOrientationRating(ctx.workerId, ctx.payload);
-        ctx.appendAttributed({
-          worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: 'orientation.rate_result',
-          actor: 'hub', payload: receipt,
-        });
-}
 
 export function messageSend(coordinator, recorder, ctx) {
 if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload)

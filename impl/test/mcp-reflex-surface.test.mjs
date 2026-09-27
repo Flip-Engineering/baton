@@ -102,16 +102,10 @@ async function initialized(server) {
 // STATEFUL tools take the admitMcpCall path; read-only tools take the observe path.
 // ---------------------------------------------------------------------------------------------
 
-test('Registration: baton_context_eval and baton_decision_answer resolve real capability entries (an unregistered tool would refuse forbidden regardless of held capabilities)', async () => {
+test('Registration: baton_decision_list and baton_decision_answer resolve real capability entries (an unregistered tool would refuse forbidden regardless of held capabilities)', async () => {
   const { server } = setup({ principal: principal({ capabilities: ['observe'] }) });
   await initialized(server);
-  const evalResponse = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-1', runId: 'run-a', program: { schemaVersion: 1 } },
-  });
-  assert.equal(evalResponse.result.isError, false, 'observe alone must satisfy baton_context_eval\'s registered capability');
-
-  const listResponse = await request(server, 3, 'tools/call', {
+  const listResponse = await request(server, 2, 'tools/call', {
     name: 'baton_decision_list', arguments: { repoId: REPO_ID, runId: 'run-a' },
   });
   assert.equal(listResponse.result.isError, false, 'observe alone must satisfy baton_decision_list\'s registered capability');
@@ -119,7 +113,7 @@ test('Registration: baton_context_eval and baton_decision_answer resolve real ca
   // baton_decision_answer requires ['approve', 'observe'] per the Part A table: observe alone
   // is forbidden, proving the capability entry is the real two-element array, not undefined
   // (which would refuse every principal, including one holding both).
-  const forbidden = await request(server, 4, 'tools/call', {
+  const forbidden = await request(server, 3, 'tools/call', {
     name: 'baton_decision_answer',
     arguments: { repoId: REPO_ID, idempotencyKey: 'ans-1', runId: 'run-a', requestId: 'req-1', answer: { optionId: 'opt-a' } },
   });
@@ -135,18 +129,6 @@ test('Registration: baton_context_eval and baton_decision_answer resolve real ca
   assert.equal(answered.result.isError, false);
 });
 
-test('Registration: STATEFUL reflex tools admit through the ledger and replay the admitted outcome (R2)', async () => {
-  const { server, coordination, contextEvalCalls } = setup();
-  await initialized(server);
-  const args = { repoId: REPO_ID, idempotencyKey: 'ctx-replay', runId: 'run-a', program: { schemaVersion: 1 } };
-  const first = await request(server, 2, 'tools/call', { name: 'baton_context_eval', arguments: args });
-  assert.equal(first.result.isError, false);
-  const admitted = coordination.events().filter((event) => event.kind === 'mcp.call_admitted');
-  assert.deepEqual(admitted.map((event) => [event.payload.tool, event.payload.runId]), [['baton_context_eval', 'run-a']]);
-  const replay = await request(server, 3, 'tools/call', { name: 'baton_context_eval', arguments: args });
-  assert.deepEqual(replay.result, first.result);
-  assert.equal(contextEvalCalls.length, 1, 'replay must never re-dispatch to application.contextEval');
-});
 
 test('Registration: read-only baton_decision_list takes the observe path — no ledger admission event', async () => {
   const { server, coordination } = setup();
@@ -174,13 +156,12 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   // the reflex inventory, and the three settlement rows leave the S-3 matrix (ordinary tools).
   // E04: the enumeration's size is the registry's own derivation, never a pinned total.
   const reflexNames = [
-    'baton_context_eval', 'baton_decision_list',
-    'baton_package_admit', 'baton_package_attach', 'baton_package_read',
-    'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
+    'baton_decision_list',
+    'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
   for (const name of reflexNames) assert.ok(names.includes(name), `${name} must be listed`);
   const reflexTools = response.result.tools.filter((tool) => reflexNames.includes(tool.name));
-  assert.equal(reflexTools.length, 8);
+  assert.equal(reflexTools.length, 3);
   for (const tool of reflexTools) {
     assert.equal(tool.execution.taskSupport, 'forbidden', `${tool.name} taskSupport`);
     assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} additionalProperties`);
@@ -217,98 +198,6 @@ test('Inventory: the advanced-only surface (no application facade) is unaffected
   assert.equal(server.toolDefinitions.some((tool) => tool.name.startsWith('baton_')), false);
 });
 
-// ---------------------------------------------------------------------------------------------
-// Part B: baton_context_eval — strip repoId/idempotencyKey, exactly-one-of, pure refusal typed,
-// projection returned, cell citable cell:<digest>.
-// ---------------------------------------------------------------------------------------------
-
-test('context_eval: repoId and idempotencyKey never reach application.contextEval\'s request', async () => {
-  const { server, contextEvalCalls } = setup();
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-strip', runId: 'run-a', role: 'critic', program: { schemaVersion: 1 } },
-  });
-  assert.equal(response.result.isError, false);
-  assert.equal(contextEvalCalls.length, 1);
-  const { request: forwarded } = contextEvalCalls[0];
-  assert.deepEqual(Object.keys(forwarded).sort(), ['program', 'role', 'runId']);
-  assert.equal(Object.hasOwn(forwarded, 'repoId'), false);
-  assert.equal(Object.hasOwn(forwarded, 'idempotencyKey'), false);
-  assert.deepEqual(forwarded, { runId: 'run-a', role: 'critic', program: { schemaVersion: 1 } });
-});
-
-test('context_eval: manifestDigest alone is forwarded exactly as given, with no runId key at all', async () => {
-  const { server, contextEvalCalls } = setup();
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-manifest', manifestDigest: 'a'.repeat(64), program: { schemaVersion: 1 } },
-  });
-  assert.equal(response.result.isError, false);
-  const { request: forwarded } = contextEvalCalls[0];
-  assert.equal(Object.hasOwn(forwarded, 'runId'), false);
-  assert.deepEqual(forwarded, { manifestDigest: 'a'.repeat(64), program: { schemaVersion: 1 } });
-});
-
-test('context_eval: exactly-one-of runId/manifestDigest is enforced by the method and surfaces as the typed application_context_eval_invalid code (never command_outcome_unknown)', async () => {
-  const { server } = setup();
-  await initialized(server);
-  const neither = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-neither', program: { schemaVersion: 1 } },
-  });
-  assert.equal(neither.result.isError, true);
-  assert.match(neither.result.content[0].text, /application_context_eval_invalid/);
-  assert.equal(neither.result.content[0].text.includes('command_outcome_unknown'), false);
-});
-
-test('context_eval: a pure-refusal error (application_context_effect_forbidden) reaches the caller typed, never as command_outcome_unknown', async () => {
-  const { server } = setup({
-    applicationOverrides: {
-      contextEval() { throw Object.assign(new Error('effect forbidden'), { code: 'application_context_effect_forbidden' }); },
-    },
-  });
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-effect', runId: 'run-a', program: { schemaVersion: 1 } },
-  });
-  assert.equal(response.result.isError, true);
-  assert.match(response.result.content[0].text, /application_context_effect_forbidden/);
-});
-
-test('context_eval: the method\'s projection is returned unchanged and its cell is citable by cell:<digest>', async () => {
-  const cellId = `cell:${'b'.repeat(64)}`;
-  const { server } = setup({
-    applicationOverrides: {
-      contextEval() { return { item: { id: cellId, value: { kind: 'cell', output: { items: [] } } } }; },
-    },
-  });
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-cell', runId: 'run-a', program: { schemaVersion: 1 } },
-  });
-  assert.equal(response.result.isError, false);
-  assert.equal(response.result.structuredContent.item.id, cellId);
-  assert.match(response.result.structuredContent.item.id, /^cell:[a-f0-9]{64}$/u);
-});
-
-test('context_eval: unregistered tool identity would refuse forbidden even for a fully-capable principal — negative control proving the CAPABILITY table above is load-bearing', async () => {
-  const { server } = setup({ principal: principal({ capabilities: [] }) });
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_context_eval',
-    arguments: { repoId: REPO_ID, idempotencyKey: 'ctx-noauth', runId: 'run-a', program: { schemaVersion: 1 } },
-  });
-  assert.equal(response.result.isError, true);
-  assert.match(response.result.content[0].text, /forbidden/);
-});
-
-// ---------------------------------------------------------------------------------------------
-// Part C: baton_decision_list / baton_decision_answer.
-// ---------------------------------------------------------------------------------------------
 
 test('decision_list: a pending decision is returned sanitized and bounded; no runId match means empty, not an error', async () => {
   const decision = {
