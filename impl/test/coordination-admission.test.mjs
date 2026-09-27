@@ -335,14 +335,6 @@ test('CA5: the store keeps its exact decisions across the move, and a moved memb
 });
 
 test('CA6: the pins that read a moved member\'s text resolve it through the live seam map', () => {
-  const gate = memberSource('admitWorkflowFinding');
-  assert.ok(gate.includes('workflow_admit_lease_invalid'), 'the admit gate reads by member name');
-  const helper = memberSource('assertTargetSetAdmissible');
-  assert.ok(helper.includes("FRAME_LIMITS['target_set.per_ledger_event']"),
-    'a module-scope helper of the store\'s module scope reads by name too');
-  const gateFiles = memberSpans('admitWorkflowFinding').map((span) => span.file);
-  assert.ok(gateFiles.includes('coordination-admission.mjs') && gateFiles.includes('coordination-store.mjs'),
-    'the gate is a delegate on the class and a body in the module');
 
   // The file list the scans that read the store's module scope share, stated once. Slice 7 adds
   // the effect bucket's file (the writer-lease helpers' literals ride it — F1's exec-buffer

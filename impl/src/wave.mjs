@@ -876,15 +876,12 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
       }
     }));
     const stops = observed.filter(Boolean).map((item) => item.record);
-    // KG activation rule 3: aggregate the candidacy ritual counts from each member's stop outline.
-    // `candidates` is repo-scoped (shared across members — the max is the honest queue size);
-    // `admittedThisRun` sums each member run's admits. Zero is surfaced as 0, never a missing field.
+    // KG activation rule 3: aggregate the candidacy ritual count from each member's stop outline.
+    // `candidates` is repo-scoped (shared across members — the max is the honest queue size).
     let knowledgeCandidates = 0;
-    let knowledgeAdmitted = 0;
     for (const item of observed) {
       if (!item?.knowledge) continue;
       knowledgeCandidates = Math.max(knowledgeCandidates, item.knowledge.candidates ?? 0);
-      knowledgeAdmitted += item.knowledge.admittedThisRun ?? 0;
     }
     state.stops.push(...stops);
     const remainingCount = stops.reduce((total, stop) => total + (stop.ownedCount ?? 1), 0);
@@ -897,7 +894,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
       stops,
       remainingCount,
       residueUnknown,
-      knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted },
+      knowledge: { candidates: knowledgeCandidates },
       drivesCancelled: cancelled.length,
       pumpQuiescent: pumpQuiescent(),
     };

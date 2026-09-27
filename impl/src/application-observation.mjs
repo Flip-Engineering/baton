@@ -3817,21 +3817,19 @@ export function _eventBelongsToRun(application, event, current) {
 // across one long turn and the wave driver's stall clock (sha of the cursor-stripped view)
 // kills productive workers mid-turn. Counts + last-activity timestamp only, never
 // payloads: honest activity, zero prose.
-/** KG activation rules 3/4: the run view surfaces the candidacy ritual counts (knowledge) and the
+/** KG activation rules 3/4: the run view surfaces the candidacy count (knowledge) and the
    * workflow horizon's knowledge digest. Additive projection only — reads the store/coordinator, never
-   * mutates; the admit gate stays the only promotion path. Fails open to a zero block so a view is
-   * never blocked on a knowledge read, and the wave close receipt / progress rows inherit the block. */
+   * mutates. Fails open to a zero block so a view is never blocked on a knowledge read, and the wave
+   * close receipt / progress rows inherit the block. */
 export function _knowledgeProjection(application, runId) {
     try {
-      const ritual = application.driver.coordination.knowledgeRitual(runId, {});
+      const ritual = application.driver.coordination.knowledgeRitual({});
+
       let knowledgeDigest = null;
       try { knowledgeDigest = application.driver.coordinator.workflowHorizon(runId).knowledgeDigest ?? null; } catch { knowledgeDigest = null; }
-      return {
-        knowledge: { candidates: ritual.candidates ?? 0, admittedThisRun: ritual.admittedThisRun ?? 0 },
-        knowledgeDigest,
-      };
+      return { knowledge: { candidates: ritual.candidates ?? 0 }, knowledgeDigest };
     } catch {
-      return { knowledge: { candidates: 0, admittedThisRun: 0 }, knowledgeDigest: null };
+      return { knowledge: { candidates: 0 }, knowledgeDigest: null };
     }
   }
 export function _activityProjection(application, current, workers = []) {

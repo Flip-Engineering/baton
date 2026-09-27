@@ -6433,7 +6433,7 @@ export class BatonApplication {
     // allowlists below. The actor is server-derived 'orchestrator'; the settlement session is
     // derived from the calling principal.
     if (name === 'scratchpad.elevate' || name === 'scratchpad.settle'
-      || name === 'knowledge.promote' || name === 'knowledge.settlement_lease'
+      || name === 'knowledge.settlement_lease'
       || name === 'knowledge.promote_doubt' || name === 'knowledge.doubts') {
       return this._settlementCommand(name, args, principal);
     }
@@ -6594,9 +6594,6 @@ export class BatonApplication {
     if (name === 'scratchpad.settle') {
       return coordinator.settleWorkflowScratchpad(args.runId,
         { expectedScratchpadFence: args.expectedScratchpadFence, skips: args.skips });
-    }
-    if (name === 'knowledge.promote') {
-      return coordinator.promoteWorkflowFinding(args.runId, args.candidateFindingId, args.policy, args.lease, session);
     }
     if (name === 'knowledge.promote_doubt') {
       // Issue #66 (D4): the resolve act rides the coordinator's own gate; the seam's own

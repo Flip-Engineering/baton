@@ -943,13 +943,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // plus the additive driver fields.
     const evidence = wave.evidence();
     // KG activation rule 3: the recipe receipts inherit the candidacy ritual block. `candidates` is
-    // repo-scoped (the max across members is the honest queue size); `admittedThisRun` sums each
-    // member run's admits. Zero surfaces as 0, never a missing field.
+    // repo-scoped (the max across members is the honest queue size).
     let knowledgeCandidates = 0;
-    let knowledgeAdmitted = 0;
     for (const knowledge of memberKnowledge.values()) {
       knowledgeCandidates = Math.max(knowledgeCandidates, knowledge.candidates ?? 0);
-      knowledgeAdmitted += knowledge.admittedThisRun ?? 0;
     }
     const receipt = {
       ...evidence,
@@ -972,7 +969,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
       // KG settlement D3: the candidacy/settlement counts fold into the knowledge block (zero as 0,
       // never missing); the ritual's per-step refusals ride a bounded settlement.errors block.
       knowledge: {
-        candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted,
+        candidates: knowledgeCandidates,
         candidatesAwaitingAdmission: settlementResult?.candidatesAwaitingAdmission ?? 0,
         settlementRunId: settlementResult?.settlementRunId ?? null,
       },
@@ -1003,7 +1000,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
         rings: [], lanes: [], parked: [], blockedOn: [],
         knowledge: {
           candidates: receipt.knowledge?.candidates ?? 0,
-          admittedThisRun: receipt.knowledge?.admittedThisRun ?? 0,
           candidatesAwaitingAdmission: receipt.knowledge?.candidatesAwaitingAdmission ?? 0,
           settlementRunId: receipt.knowledge?.settlementRunId ?? null,
         },

@@ -132,8 +132,6 @@ export function coordinationReplayFailure(root) {
 
 
 
-// KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
-// knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
 // #286 G-41: the acceptance-revocation scan is bounded by the STATE ITSELF, and that state is a
 // projection of the ledger (`_artifacts`, `_knowledgeNodes` and `_knowledgeReads` each grow only by
 // an appended event, so none can exceed the ledger's event count) — the ledger is the physical
@@ -1653,23 +1651,6 @@ export class CoordinationStore {
   // scratch/verified-outcome scan policy and would reject a package Finding candidate).
   // -------------------------------------------------------------------------
 
-  /** Rule 15 eligibility, checked against the state strictly before beforeEventSeq (so a replay
-   * of this exact event reproduces the identical derivation regardless of what happened after
-   * it was first applied — the same discipline _deriveScratchCorrection uses). Rule 17: the
-   * admitted Finding's evidence carries the candidate's own evidence plus
-   * { coordinationSeq: candidate.observedSeq } — the candidate's own, necessarily-prior minting
-   * seq — never this event's own prospective seq (P1-2 fix). */
-  _deriveWorkflowAdmission(repoId, runId, candidateFindingId, policy, beforeEventSeq = this._events.length + 1) { return coordinationAdmission._deriveWorkflowAdmission(this, repoId, runId, candidateFindingId, policy, beforeEventSeq); }
-
-  _validateWorkflowAdmissionPayload(payload, event, integrity = false) { return coordinationAdmission._validateWorkflowAdmissionPayload(this, payload, event, integrity); }
-
-  /** Rule 16: two store-enforced checks, neither a free-string actor. (a) promotionActor — only
-   * 'orchestrator'/'operator:<id>', the same guard promoteKnowledgeBatch already enforces. (b) an
-   * active run-orchestrator lease bound into the request, validated exactly as
-   * _validateRunLineageAdmission already does for child-run admission — a consistency/ordering
-   * device layered on the single-writer trust model, not an independent authority proof. */
-  admitWorkflowFinding(repoId, runId, candidateFindingId, policy, auth, lease) { return coordinationAdmission.admitWorkflowFinding(this, repoId, runId, candidateFindingId, policy, auth, lease); }
-
   addKnowledgeNode(fields, auth) { return coordinationLedger.addKnowledgeNode(this, fields, auth); }
 
   _prepareKnowledgeNode(fields, promotion = null, validate = true) { return coordinationAdmission._prepareKnowledgeNode(this, fields, promotion, validate); }
@@ -1874,11 +1855,10 @@ export class CoordinationStore {
   readKnowledge(query, reader, auth) { return coordinationLedger.readKnowledge(this, query, reader, auth); }
 
   // KG activation rules 2/3/4/5 — additive projections over the existing knowledge records. They
-  // read nodes/edges/events and never mutate; the admit gate (admitWorkflowFinding) stays the only
-  // promotion path. The candidacy queue is derived from the store's candidate Findings (never stored
-  // twice); the ritual counts feed the wave receipt / terminal outline; the content digest feeds the
-  // workflow horizon's knowledgeDigest (cache-correct — content-addressed, recomputed only on a fence
-  // miss, byte-identical when the knowledge content is unchanged).
+  // read nodes/edges/events and never mutate. The candidacy queue is derived from the store's
+  // candidate Findings (never stored twice); the content digest feeds the workflow horizon's
+  // knowledgeDigest (cache-correct — content-addressed, recomputed only on a fence miss,
+  // byte-identical when the knowledge content is unchanged).
   static get KNOWLEDGE_CANDIDATE_TRIGGERS() {
     return coordinationInternals.KNOWLEDGE_CANDIDATE_TRIGGERS();
   }
@@ -1888,15 +1868,13 @@ export class CoordinationStore {
   knowledgeContentDigest() { return coordinationLedger.knowledgeContentDigest(this); }
 
   /** Rule 2: the candidacy queue — a first-class projection over the store's candidate Findings.
-   * A candidate is a live Finding minted by one of the four source kinds, not yet admitted (no
-   * DerivedFrom edge from a `workflow.admitted` finding to it). Bounded ≤ 16, stable minting order,
-   * derived live (never stored twice). Admitting removes exactly that candidate. */
+   * A candidate is a live Finding minted by one of the candidate source kinds. Bounded ≤ 16,
+   * stable minting order, derived live (never stored twice). */
   knowledgeCandidateQueue({ now } = {}) { return coordinationLedger.knowledgeCandidateQueue(this, { now }); }
 
-  /** Rule 3: the ritual counts — `candidates` (pending queue size, repo-scoped) and
-   * `admittedThisRun` (workflow admits bound to this run). Zero is surfaced as 0, never a missing
-   * field. Ergonomics only — the admit decision stays manual and gated. */
-  knowledgeRitual(runId, { now } = {}) { return coordinationLedger.knowledgeRitual(this, runId, { now }); }
+  /** Rule 3: the ritual count — `candidates`, the repo-scoped pending queue size. Zero is
+   * surfaced as 0, never a missing field. */
+  knowledgeRitual({ now } = {}) { return coordinationLedger.knowledgeRitual(this, { now }); }
 
   invalidateKnowledge(nodeId, expectedValidityVersion, reason, auth) { return coordinationLedger.invalidateKnowledge(this, nodeId, expectedValidityVersion, reason, auth); }
   affectedReaders(nodeId) {

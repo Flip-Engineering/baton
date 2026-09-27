@@ -282,23 +282,19 @@ Every wave tool takes the repository coordinate first (`repoId`).
 
 ## Admit knowledge
 
-The four settlement ops work through MCP behind the S-2 `sessionAuthority` envelope.
+The settlement ops work through MCP behind the S-2 `sessionAuthority` envelope.
 
 - `baton_scratchpad_elevate` elevates terminal scratchpad entries into candidate Findings.
 - `baton_scratchpad_settle` settles the shared scratchpad partition with explicit skips.
-- `baton_knowledge_promote` admits one candidate Finding (the envelope is REQUIRED).
 - `baton_knowledge_settlement_lease` mints the wave settlement lease (settlement capability).
 
-- `baton_knowledge_promote` REQUIRES the envelope bound to the settlement lease — presenter
-  authentication is the lease's session binding (XB), validated through the S-2 lease proof
-  The session gate precedes any idempotent replay: a replayed admit with a foreign/expired
-  session refuses with `run_orchestrator_session_mismatch`, never a replay shortcut.
+
 - `baton_knowledge_settlement_lease` derives the session from the host's FIXED principal and is
   enabled ONLY when the descriptor's principal carries an explicit `settlement` capability class
   (never defaulted). **Trust posture:** an MCP host IS one orchestrator authority; multi-principal
   MCP hosts must NOT enable this tool.
 
-**Where these run.** The four settlement tools are descriptor-deployment tools: they are served by
+**Where these run.** The settlement tools are descriptor-deployment tools: they are served by
 a descriptor-driven MCP server whose principal carries the `settlement` capability class. The
 resident bridge (`baton serve` + `baton-mcp-web`) does NOT admit them — they are host-local kernel
 operations — so a bridge-attached client never sees them in its `tools/list`, and calling one over

@@ -2699,28 +2699,6 @@ export function elevateTaskScratchpad(coordinator, recorder, taskId, entryIds) {
     return coordinator._settleTerminalScratchpad(taskId, { entryIds });
   }
 
-export function promoteWorkflowFinding(coordinator, recorder, runId, candidateFindingId, policy, lease, session) {
-    coordinator.tick();
-    // Step 1 admits through the ONE admit wrapper — the coordinator's own gate, read on the live
-    // coordinator so a spied coordinator is honoured (KS3). A delegation, never a second gate.
-    const admitted = coordinator.admitWorkflowFinding(runId, candidateFindingId, policy, lease, session);
-    const leaseRow = recorder.coordination.runOrchestratorLease(lease.id);
-    const parentTaskId = leaseRow?.parent?.taskId ?? null;
-    if (leaseRow && leaseRow.status === 'active') {
-      recorder.coordination.revokeRunOrchestratorLease(
-        { schemaVersion: 1, leaseId: lease.id, leaseDigest: lease.digest, reason: 'superseded' },
-        { actor: 'orchestrator', key: `run.orchestrator_lease_revoked:${lease.id}` },
-      );
-    }
-    if (parentTaskId) {
-      const task = recorder.coordination.task(parentTaskId);
-      if (task && task.status === 'working') {
-        recorder.coordination.transitionTask(task.id, 'completed', task.version,
-          { actor: 'orchestrator', key: `task.completed:settlement:${task.id}` });
-      }
-    }
-    return admitted;
-  }
 
 export function _settlementMemberTask(coordinator, recorder, runId) {
     return recorder.coordination.snapshot().tasks.find((task) => task.runId === runId
