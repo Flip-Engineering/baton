@@ -249,6 +249,9 @@ const bareBrief = (goal) => ({
 
 test('450d: the run-stop leg names its waits with the #360 entry objects', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue450-d-'));
+  // Registered before the Coordinator is constructed: a policy the constructor refuses must not
+  // leave the fixture root behind (the landing gate's leaked-fixture-directories row).
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const log = new Log(join(directory, 'log'));
   const worktrees = new RefusingWorktreeManager();
   let clock = 0;
@@ -261,27 +264,30 @@ test('450d: the run-stop leg names its waits with the #360 entry objects', async
     }),
     route: () => 'mock', now: () => clock,
     approvalTimeoutMs: 60_000, stopDeadlineMs: 50,
-    drainPolicy: { maxWorkers: 8, pollMs: 5, timeoutMs: 400 },
+    drainPolicy: { pollMs: 5 },
   });
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const handle = await coordinator.spawn('mock', bareBrief('hold a named wait'));
-  // The kill is forced first (the adapter acks, no terminal ever arrives, the logical deadline
-  // sweeps it), so the Run stop below starts from a settled dead handle whose holds never clear;
-  // its wall-clock deadline is then the only thing that elapses, whatever the machine load.
+  // The kill is forced first (the adapter acks, no terminal ever arrives, the kill-confirmation
+  // deadline sweeps it), so the Run stop below starts from a settled dead handle whose holds the
+  // refusing manager never clears.
   const kill = coordinator.kill(handle.id, 'operator:issue450');
   await until(() => coordinator._stopWaiters.has(handle.id), 'the stop waiter');
   clock += 51;
   coordinator.tick();
   await kill;
 
-  let detail = null;
-  await assert.rejects(
-    coordinator.stopRunTargets([handle.id], 'operator:issue450'),
-    (error) => { detail = error.detail; return error.code === 'coordinator_run_stop_incomplete'; });
+  // Issue #583: the refusing checkout no longer holds the stop open — the reap refusal releases
+  // the handle's hold and is named durably — so the Run stop converges on the worker it named
+  // instead of refusing at a deadline.
+  const receipt = await coordinator.stopRunTargets([handle.id], 'operator:issue450');
+  assert.equal(receipt.remainingCount, 0, 'the stop converged on the refused reap');
 
-  const row = detail?.waitingOn?.[0];
-  assert.equal(row?.workerId, handle.id, `the wait names the worker: ${JSON.stringify(detail)}`);
-  assert.ok(Array.isArray(row?.waiting) && row.waiting.length > 0, 'the wait is named');
+  const named = new Log(log.dir).read(handle.id)
+    .filter((event) => event.kind === 'control.stop_waiting_on');
+  assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
+  const row = named.at(-1).payload;
+  assert.ok(Array.isArray(row.waiting) && row.waiting.length > 0,
+    `the wait is named: ${JSON.stringify(row)}`);
   for (const entry of row.waiting) {
     assert.deepEqual(Object.keys(entry).sort(), ['reaper', 'resource', 'since'],
       `every entry is the ONE #360 shape {resource, reaper, since}: ${JSON.stringify(entry)}`);
@@ -290,10 +296,4 @@ test('450d: the run-stop leg names its waits with the #360 entry objects', async
   }
   assert.ok(row.waiting.some((entry) => entry.resource === 'local_resources:localAuthority'),
     `the local authority hold is named as an entry: ${JSON.stringify(row.waiting)}`);
-
-  const named = new Log(log.dir).read(handle.id)
-    .filter((event) => event.kind === 'control.stop_waiting_on');
-  assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
-  assert.deepEqual(named.at(-1).payload.waiting, row.waiting,
-    'the durable row carries the same entry objects');
 });
