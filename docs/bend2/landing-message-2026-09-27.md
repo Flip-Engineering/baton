@@ -62,4 +62,34 @@ Git repository, proof driver and `evidence.json` under
 `.scratch/bend2/architect15-message/`. The proof uses a local scratch repository
 and the carried harness wrapper, which stores native state within this assigned
 checkout. It changes no live trial files or processes and publishes no remote
-branch. Subsequent trial landings need the updated kit executable.
+branch.
+
+## Published kit and remaining trial check
+
+The recovery inspection on 2026-09-27 confirmed that `origin/bend2-rewrite`
+and the live trial's `kit` checkout both resolve to
+`4c2be1c463baf1676eaf5b1d4ba0caadc762ebf4`. The trial executable at
+`state/trial.db.trial/baton2` has modification time
+`2026-09-27T10:10:30.649941Z`.
+
+The latest trial landing is #616 at
+`4dcdc34cce9c9d4d75c832b3ea7583923ab2cfbc`. Its message retains the worker
+tip's full body and the worker-branch trailer. The independent review in
+`contribution-50160a4b92e56e20e0f4a38afa2dd190` records that this landing
+started 14 seconds before the executable rebuild completed. That review also
+probed the rebuilt executable in a scratch repository and verified the new
+message behavior.
+
+The recovery read opened the live trial database with SQLite `mode=ro`.
+Its latest message remains sequence 28, `issue-616-landed-4dcdc34c`, with no
+later task or landing recorded. The next multi-commit trial landing started
+with the rebuilt executable can establish the message behavior in the trial's
+own history. The native regression and real-worker proof above already
+establish it in the assigned checkout.
+
+The recovered source built a fresh native landing test, which printed
+`land checks: all green`. The 13 Python landing tests passed again. Reading
+the retained proof's Git objects confirmed its exact message, target parent
+and matching worker and landed trees. These checks changed only scratch files
+inside the assigned checkout. Inspection changed no live trial file or process.
+The generic deployment verification command was not run.
