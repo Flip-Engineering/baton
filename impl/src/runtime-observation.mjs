@@ -2996,11 +2996,9 @@ export function elevateTaskScratchpad(coordinator, recorder, taskId, entryIds) {
 
 export function promoteWorkflowFinding(coordinator, recorder, runId, candidateFindingId, policy, lease, session) {
     coordinator.tick();
-    // Step 1 admits through the ONE admit wrapper (resolved indirectly so kg-activation's A5
-    // source-scan still counts exactly one gate call site — this is a delegation, not a second
-    // gate). The live property is read at call time so a spied coordinator is honoured (KS3).
-    const admitGate = coordinator.admitWorkflowFinding;
-    const admitted = admitGate.call(coordinator, runId, candidateFindingId, policy, lease, session);
+    // Step 1 admits through the ONE admit wrapper — the coordinator's own gate, read on the live
+    // coordinator so a spied coordinator is honoured (KS3). A delegation, never a second gate.
+    const admitted = coordinator.admitWorkflowFinding(runId, candidateFindingId, policy, lease, session);
     const leaseRow = recorder.coordination.runOrchestratorLease(lease.id);
     const parentTaskId = leaseRow?.parent?.taskId ?? null;
     if (leaseRow && leaseRow.status === 'active') {
