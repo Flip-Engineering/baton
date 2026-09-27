@@ -88,7 +88,6 @@ const WORKFLOW_WEB_ENTRIES = Object.freeze([
   ['run_message_receipt', 'run.message.receipt', Object.freeze(['observe'])],
   ['run_attention_watch', 'run.attention.watch', Object.freeze(['observe'])],
   ['run_scratchpad_read', 'run.scratchpad.read', Object.freeze(['observe'])],
-  ['run_scratchpad_elevate', 'run.scratchpad.elevate', Object.freeze(['control', 'observe'])],
   ['run_board_post', 'run.board.post', Object.freeze(['control', 'observe'])],
   ['run_board_read', 'run.board.read', Object.freeze(['observe'])],
   ['run_knowledge_seed', 'run.knowledge.seed', Object.freeze(['control', 'observe'])],

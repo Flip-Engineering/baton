@@ -169,7 +169,7 @@ export class Swarm {
   }
 
   /** Any knowledge verb from the shared table (`run.knowledge.seed`, `run.board.post`,
-   * `run.board.read`, `run.scratchpad.append`, `run.scratchpad.read`, `run.scratchpad.elevate`,
+   * `run.board.read`, `run.scratchpad.append`, `run.scratchpad.read`,
    * `evidence.search`), with the swarm identity this handle carries. */
   knowledge(command, args = {}) {
     if (!swarmKnowledgeCommand(command)) throw clientError(`Unknown swarm knowledge command ${command}`);

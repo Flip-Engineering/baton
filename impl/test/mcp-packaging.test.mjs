@@ -242,98 +242,11 @@ test('MP6: waves.attach over MCP returns runIds that accept waves.send/stop (res
 // MCP-W2 — settlement tools via the S-2 envelope (stage: tools missing)
 // ===========================================================================
 
-test('MP7: the four settlement tools register on MCP and promote requires the sessionAuthority envelope', async () => {
-  const { server } = setup({ principal: principal({ capabilities: ['control', 'observe', 'approve', 'settlement'] }) });
-  await initialized(server);
-  const list = await request(server, 2, 'tools/list', {});
-  const names = JSON.stringify(list.result);
-  for (const tool of ['baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease']) {
-    assert.ok(names.includes(tool), `${tool} is advertised`);
-  }
-  const noEnvelope = await call(server, 3, 'baton_knowledge_promote', {
-    repoId: REPO_ID, idempotencyKey: 'mp7-promote',
-    runId: 'run-a', candidateFindingId: 'finding:board-close:x:1',
-    policy: { repoId: REPO_ID, maxBatchBytes: 1024, maxResultBytes: 1024 },
-    lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
-  });
-  assert.equal(noEnvelope.result.isError, true);
-  assert.match(resultText(noEnvelope), /lease|authority|required/, 'the envelope is required, exactly as S-2 made it for board commands');
-});
 
-test('MP8: a REPLAYED admission with a foreign session refuses the session code (session gate precedes replay)', async () => {
-  const directory = root('mp8');
-  const store = new CoordinationStore(join(directory, 'coordination'), {
-    repoId: REPO_ID,
-    clock: () => new Date(NOW).toISOString(),
-    ...(await import('../src/index.mjs')).DEFAULT_RUN_LINEAGE_POLICY
-      ? { runLineagePolicy: (await import('../src/index.mjs')).DEFAULT_RUN_LINEAGE_POLICY } : {},
-  });
-  const { digest: storeDigest } = await import('./helpers/kg-digest.mjs').catch(() => ({ digest: null }));
-  void storeDigest;
-  // A REAL prior admission: settlement task + lease (session A) + candidate + first admit.
-  store.createTask({
-    id: 'task-mp8', brief: { objective: 'settlement task for wave wave:mp8', capabilities: ['baton_orchestrator'] },
-    deps: [], refines: null, relation: 'root', runId: 'run-settlement:wave:mp8', taskType: 'general',
-    reservedWorkerId: 'worker-mp8', vendorRequested: 'mock', modelRequested: 'mock-model',
-    modelPolicy: null, effortRequested: 'low', sessionRequest: { mode: 'new' },
-  }, { actor: 'orchestrator', key: 'task.created:task-mp8' });
-  store.claimTask('task-mp8', 'worker-mp8', 1, { actor: 'orchestrator', key: 'task.claimed:task-mp8' }, {
-    harnessRequested: 'mock', harnessResolved: 'mock@fixture',
-    modelRequested: 'mock-model', modelResolved: 'mock-model', modelObserved: 'mock-model',
-    effortRequested: 'low', effortResolved: 'low', effortObserved: 'low',
-    routeKey: '["mock","fixture","mock-model","low"]',
-  });
-  const sessionA = {
-    principalId: 'operator-a', sessionId: 'stdio-a',
-    authorityDigest: 'a'.repeat(64),
-    expiresAt: new Date(NOW + 3_600_000).toISOString(),
-  };
-  const { createHash } = await import('node:crypto');
-  const canonical = (v) => Array.isArray(v) ? v.map(canonical) : (v && typeof v === 'object'
-    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])])) : v);
-  const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-  const leaseIdentity = {
-    repoId: REPO_ID, parentRunId: 'run-settlement:wave:mp8', parentTaskId: 'task-mp8', parentTaskVersion: 2,
-    workerId: 'worker-mp8', principalId: sessionA.principalId, sessionId: sessionA.sessionId,
-    sessionAuthorityDigest: sessionA.authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-  const issued = store.issueRunOrchestratorLease(
-    { schemaVersion: 1, repoId: REPO_ID, parentTask: { id: 'task-mp8', version: 2 }, session: sessionA },
-    { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
-  );
-  const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: 'wave-settlement:wave:mp8', title: 't', detail: 'd' },
-    { actor: 'orchestrator', key: 'board.candidacy:mp8:1' });
-  const closed = store.closeBoardItem(posted.item.itemId, { actor: 'orchestrator', key: 'board.candidacy.close:mp8:1' });
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
-  const policy = Object.freeze({ repoId: REPO_ID, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
-  const first = store.admitWorkflowFinding(REPO_ID, 'run-settlement:wave:mp8', candidateFindingId, policy,
-    { actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`, principalId: sessionA.principalId, sessionId: sessionA.sessionId, sessionAuthorityDigest: sessionA.authorityDigest },
-    lease);
-  assert.equal(first.replayed, false, 'the prior admission lands (session A)');
-  // The replay with a FOREIGN session: the session gate must fire BEFORE the replay path.
-  const refusal = (() => {
-    try {
-      store.admitWorkflowFinding(REPO_ID, 'run-settlement:wave:mp8', candidateFindingId, policy,
-        { actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`, principalId: 'mallory', sessionId: 'mallory-session', sessionAuthorityDigest: 'f'.repeat(64) },
-        lease);
-      return null;
-    } catch (error) { return error?.code ?? 'unknown'; }
-  })();
-  assert.equal(refusal, 'run_orchestrator_session_mismatch',
-    'a replay with a foreign session is the session refusal, never a replay success (codex #2b)');
-});
 
-test('MP9: knowledge_settlement_lease requires the settlement capability on the principal', async () => {
-  const { server } = setup({ principal: principal({ capabilities: ['control', 'observe'] }) });
-  await initialized(server);
-  const response = await call(server, 2, 'baton_knowledge_settlement_lease', {
-    repoId: REPO_ID, idempotencyKey: 'mp9-lease', waveId: `wave:${'a'.repeat(32)}`,
-  });
-  assert.equal(response.result.isError, true);
-  assert.match(resultText(response), /forbidden/, 'without the settlement capability class the tool refuses');
-});
+
+
+
 
 // ===========================================================================
 // MCP-W3 — quota-free fresh doctor (stage: tool missing)

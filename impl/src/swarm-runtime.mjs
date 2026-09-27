@@ -1420,7 +1420,6 @@ const KNOWLEDGE_METHODS = Object.freeze({
   'run.board.read': 'boardRead',
   'run.scratchpad.append': 'scratchpadAppend',
   'run.scratchpad.read': 'scratchpadRead',
-  'run.scratchpad.elevate': 'scratchpadElevate',
 });
 
 // ── the seat read verbs (issue #441, lane B) ────────────────────────────────────────────────────
@@ -5809,8 +5808,7 @@ export class SwarmRuntime {
   /** The participant knowledge verbs (#318). Admission is the swarm's own: a SCOPED participant
    * (its token names the seat; an external orchestrator uses the verbs' ordinary run.* surface),
    * the permission the knowledge table names, and the canonical argument shape minus the identity
-   * fields the runtime binds from that seat — the run, and for the elevate lane the task, are
-   * THIS participant's, never caller-chosen. The effect rides the deployment's `knowledge`
+   * fields the runtime binds from that seat. The run belongs to this participant. The effect rides the deployment's `knowledge`
    * authority, so each verb keeps exactly one implementation: the application lane it always had. */
   async _knowledgeDispatch(command, args, principal, context) {
     validateSwarmKnowledgeCommand(command, args);
@@ -5825,13 +5823,6 @@ export class SwarmRuntime {
     const method = KNOWLEDGE_METHODS[command];
     const worker = this._workerFor(caller, this.coordinator.list());
     const request = { ...args, runId: caller.runId };
-    if (command === 'run.scratchpad.elevate') {
-      if (!worker?.taskId) {
-        refuse('Participant has no current task binding to elevate from', 'swarm_participant_unbound',
-          { participantId: caller.participantId });
-      }
-      request.taskId = worker.taskId;
-    }
     if (command === 'run.scratchpad.append' || command === 'run.scratchpad.read') {
       request.scope = typeof args.scope === 'string' && args.scope.length > 0
         ? args.scope

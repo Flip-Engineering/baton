@@ -215,8 +215,7 @@ export const SWARM_KNOWLEDGE_COMMANDS = Object.freeze({
     permission: 'read', identityFields: Object.freeze(['runId']),
     situation: 'read the board bound to your own run',
   }),
-  // The scratchpad pair (#33 accessor family): working notes, shared-scope reads, and the
-  // elevation of one\u2019s own entries to candidate Findings.
+  // The scratchpad pair (#33 accessor family): working notes and shared-scope reads.
   'run.scratchpad.append': Object.freeze({
     permission: 'contribute', identityFields: Object.freeze(['runId']),
     situation: 'note working state in your scratchpad — the shared scope is visible to your peers',
@@ -225,10 +224,7 @@ export const SWARM_KNOWLEDGE_COMMANDS = Object.freeze({
     permission: 'read', identityFields: Object.freeze(['runId']),
     situation: 'read your scratchpad or the run-shared scope back',
   }),
-  'run.scratchpad.elevate': Object.freeze({
-    permission: 'contribute', identityFields: Object.freeze(['runId', 'taskId']),
-    situation: 'elevate your own scratchpad entries to candidate Findings',
-  }),
+
   // Retrieval over what was exchanged (#318 deliverable 5): find a fact by text, participant or
   // kind across the swarm, cursor derived from the ledger seq.
   'evidence.search': Object.freeze({

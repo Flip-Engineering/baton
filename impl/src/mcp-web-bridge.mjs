@@ -39,7 +39,7 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.review', 'run.integrate', 'run.export', 'run.recover',
   'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
+  'run.scratchpad.read', 'run.scratchpad.append',
   'run.board.post', 'run.board.read', 'run.knowledge.seed',
   'runs.list',
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
@@ -57,7 +57,7 @@ const MUTATIONS = new Set([
   'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve', 'run.feedback',
   'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
   'run.export', 'run.recover', 'run.workstream.notify', 'run.workstream.stop',
-  'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
+  'run.message.send', 'run.scratchpad.append',
   'run.board.post', 'run.knowledge.seed',
   'waves.start', 'waves.send', 'waves.stop', 'waves.run',
 ]);

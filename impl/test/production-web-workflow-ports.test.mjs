@@ -82,7 +82,6 @@ const CASES = [
   ['run_message_receipt', { messageId: `message:${'a'.repeat(64)}` }, 'query'],
   ['run_attention_watch', { runId: 'run:a', cursor: 0 }, 'query'],
   ['run_scratchpad_read', { runId: 'run:a', scope: 'shared', cursor: 0 }, 'query'],
-  ['run_scratchpad_elevate', { runId: 'run:a', taskId: 'task:a', entryIds: [] }, 'effect'],
   ['run_board_post', { runId: 'run:a', board: 'work', title: 'item', evidence: [] }, 'effect'],
   ['run_board_read', { runId: 'run:a', board: 'work' }, 'query'],
   ['run_knowledge_seed', {
