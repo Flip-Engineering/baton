@@ -205,17 +205,27 @@ explicit operator action after determining the work is no longer needed.
 The rewrite's acceptance is the root's working day described above. These old
 runtime facilities are outside this design:
 
-| JS runtime facility | Bend2 scope |
+| Omitted JS facility | Bend2 behavior and reason |
 | --- | --- |
-| Resident deployment lifecycle, HTTP/web operator surface and general MCP command bridge | A native command executable and three purpose-specific root adapters. |
-| Swarms, seats, waves, assignment boards, resource leases and concurrency admission | Explicit workers under a parent, with foreground turns started by that parent. |
-| Route catalogs, credential probes, quota tracking and automatic provider rerouting | Caller-selected harness/model/effort using an existing native login. |
-| Delegation grants, exclusive writer couplings and contribution review roles | Trusted local command access, native review and direct Git commands. |
-| Contribution capture, integration queue and deployment-wide test selection | Committed worker branches, an explicit checked landing and caller-selected checks. |
-| Knowledge stores, packages, scratchpad elevation and composed recruitment briefs | Task files, native conversation context and coordinator messages. |
-| Operational event replay, wake subscriptions and resident recovery machinery | Current SQLite records, native session storage and direct post-commit root delivery. |
-| Automatic workspace reclamation, old-state migration and old protocol compatibility | Retained workspaces and a separate Bend2 database. |
-| Budget and usage telemetry, host scheduling | The orchestrator decides continuation from reports and actual task needs. |
+| Resident process and deployment lifecycle | Each command opens SQLite and performs its operation; a turn supervisor owns its native child. The demonstrated workflow needs these process lifetimes. |
+| Ledger replay and projection checkpoints | SQLite holds current sessions, messages and turns. Native conversation files and Git supply the remaining recovery facts, so recovery can read those sources directly. |
+| Capacity admission, resource leases and custody bookkeeping | The root starts foreground turns and retains their worktrees. One turn per worker and retained workspaces cover the demonstrated execution and resume workflow. |
+| Swarms, seats, waves and assignment boards | A worker's parent and task identify who directs its work. The root-day runs require that relationship and ordinary messages. |
+| Route catalogs, credential probes, quota tracking and automatic rerouting | The caller chooses the harness, model and effort and uses the native login. Native failures produce reports for the root's next decision. |
+| Delegation grants, exclusive writer couplings and contribution review roles | The implementation serves trusted local agents with the user's repository access. Native review and explicit Git operations supply the demonstrated review path. |
+| Contribution capture, integration queue and deployment-wide test selection | Workers commit branches and the root supplies a check script and selection to a foreground landing. The root can inspect the actual branch and result directly. |
+| HTTP/web operator surface and general MCP command bridge | The operator works through native sessions, with the three root adapters supplying the required delivery paths. |
+| Knowledge stores, packages, scratchpad elevation and composed recruitment briefs | Task files, native conversation context and coordinator messages carry the working context used in these runs. |
+| Wake subscriptions and resident recovery machinery | The report writer invokes the registered root endpoint after commit. Reattachment reads the pending messages and resumes native context. |
+| Automatic workspace reclamation | Recovery uses the retained worker workspace. A completed turn or landing does not establish that the worker has no further work. |
+| Old-state migration and old protocol compatibility | Bend2 has its own database and command interface; the rewrite's acceptance is the real root-day sequence. |
+| Budget and usage telemetry, host scheduling | The orchestrator decides continuation from reports and task needs. These runs have not required a separate scheduling service. |
+
+The landing gate's comparison with target failures is **retained** in
+`land-checked`. It answers the repository's existing rule: whether the change
+introduces a failure that the target does not share. Bend2 omits the JS
+contribution queue, capture machinery and deployment-wide selection around
+that comparison.
 
 These omissions do not define a compatibility backlog. Add behavior when a real
 use fails without it, following `AGENTS.md`.
