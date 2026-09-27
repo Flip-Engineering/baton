@@ -322,8 +322,8 @@ test('the target-set literals are gone from the three sites, and the ONE helper 
   assert.equal(fleetDrain.includes('assertTargetSetAdmissible('), false,
     'the fleet-drain admission derives no ledger bound: its target set is the local controller\'s '
     + 'live fleet, not a projection of this ledger');
-  assert.match(fleetDrain, /_drainPolicy\.maxWorkers/u,
-    'and the site names the bound that does apply to a drain (the deployment\'s own drain policy)');
+  assert.equal(fleetDrain.includes('maxWorkers'), false,
+    'and the fleet-drain admission names no deployment worker cap either');
   // The fold path itself: the target helpers state why they carry no ceiling at all — both of them,
   // the window this pin always read (from `_runStopContextTargets` through `_runStopTargets`).
   const targetHelpers = [siteSource('_runStopContextTargets'), siteSource('_runStopTargets')].join('\n');

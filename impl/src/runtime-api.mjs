@@ -632,14 +632,6 @@ export function _freshTurnProgress(coordinator, turnEpoch) {
     };
   }
 
-export function abandonedWorkers(coordinator) {
-    return Object.freeze([...coordinator._workers.values()]
-      .filter((handle) => handle.stopAbandoned)
-      .map((handle) => Object.freeze({
-        workerId: handle.id, attempt: handle.stopAbandoned.attempts,
-        alive: handle.stopAbandoned.alive, holds: Object.freeze([...handle.stopAbandoned.holds]),
-      })));
-  }
 
 export async function _claimInteraction(coordinator, requestId, opts = {}) {
     if (typeof requestId !== 'string' || requestId.length === 0) return { ok: false, result: 'not_found' };

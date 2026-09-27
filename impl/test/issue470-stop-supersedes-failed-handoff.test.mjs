@@ -128,6 +128,11 @@ class StubSuccessor extends EventEmitter {
     this.signalCode = null;
     this.killed = false;
   }
+  /** Issue #583: the successor's own exit — the fact a handoff that cannot publish ends on. */
+  crash({ code = 9 } = {}) {
+    this.exitCode = code;
+    this.emit('exit', code, null);
+  }
   becomeReady() {
     writeFileSync(this.spec.markerPath, `${JSON.stringify({
       schemaVersion: 1, incarnation: this.spec.env.BATON_INCARNATION, pid: this.pid,
@@ -158,8 +163,14 @@ async function resident(t, f) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs: WAIT_MS,
-        spawnSuccessor: (spec) => { const stub = new StubSuccessor(spec); stub.becomeReady(); spawned.push(stub); return stub; },
+        spawnSuccessor: (spec) => {
+          const stub = new StubSuccessor(spec);
+          stub.becomeReady();
+          // Issue #583: the handoff ends on the successor's own exit, never on a bound.
+          setTimeout(() => stub.crash({ code: 9 }), 10);
+          spawned.push(stub);
+          return stub;
+        },
       },
     },
   }, (options) => createDriver(options));
@@ -196,7 +207,6 @@ test('470-a: a close() asked for during the window of a handoff that fails is a 
   const failed = hostRow(f.ledgerPath, 'host.reincarnation_failed');
   assert.ok(failed, 'the failed handoff is still durable');
   assert.equal(failed.payload.step, 'publication_handoff');
-  assert.equal(spawned[0].killed, true, 'the stalled successor was ended before the stop');
   const stopped = hostRows(f.ledgerPath).filter((row) => row.payload.kind === 'host.stopped');
   assert.ok(stopped.length >= 1, `the superseding stop minted its own host.stopped: ${JSON.stringify(hostRows(f.ledgerPath).map((row) => row.payload.kind))}`);
   assert.ok(stopped.at(-1).seq > failed.seq, 'the stop\'s outcome follows the handoff\'s failure row');

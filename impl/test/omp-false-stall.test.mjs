@@ -140,7 +140,7 @@ test('OMP-FALSE-STALL: a live omp turn (steer-nudged, mid-tool-call) is never de
     repoRoot: repo, repoId: 'repo-omp-false-stall', logDir, adapters: { omp: adapter },
     goalPlanAuthority: { policy, authorize: async () => true },
     stopDeadlineMs: 1_000,
-    drainPolicy: { maxWorkers: 4, timeoutMs: 10_000, pollMs: 10 },
+    drainPolicy: { pollMs: 10 },
     watchdog: { stallMs: STALL_MS, stallAction: 'escalate' },
   });
 

@@ -500,7 +500,13 @@ test('T8 stopping a participant that owns its clean checkout converges and remov
   assert.equal(workerFor(driver, solo.runId).worktree, null);
   const log = driver.log.read(soloWorker.id);
   assert.equal(log.some((event) => event.kind === 'kill.confirmed'), true);
-  assert.equal(log.some((event) => event.kind === 'control.stop_waiting_on'), false, 'a converged stop never names a wait');
+  // Issue #583: the stop narrates the wait it OBSERVES — the durable row lands before the attempt,
+  // so a converged stop does name the holds it passes through. What must hold is that the wait it
+  // named is the one it then settled: the checkout it names is the one removed above.
+  const named = log.filter((event) => event.kind === 'control.stop_waiting_on');
+  assert.ok(named.length >= 1, 'the stop names the wait it observes');
+  assert.ok(named.at(-1).payload.waiting.some((entry) => entry.resource === 'local_resources:worktree'),
+    `the named wait is the checkout the stop settles: ${JSON.stringify(named.at(-1).payload)}`);
 });
 
 test('T9 residue no capture can record is retained with its refusal event while the stop still converges', async (t) => {
@@ -528,7 +534,12 @@ test('T9 residue no capture can record is retained with its refusal event while 
   assert.ok(retained, 'the retention is recorded, never silent');
   assert.equal(retained.code, 'workspace_uncommitted_content_retained');
   assert.deepEqual([...retained.dirtyPaths], ['residue.local.txt']);
-  assert.equal(log.some((event) => event.kind === 'control.stop_waiting_on'), false, 'a converged stop never names a wait');
+  // Issue #583: the stop names the wait it observes before it attempts it, so a stop that converges
+  // still names the checkout it settles — here by the refusal below, which retains it.
+  const named = log.filter((event) => event.kind === 'control.stop_waiting_on');
+  assert.ok(named.length >= 1, 'the stop names the wait it observes');
+  assert.ok(named.at(-1).payload.waiting.some((entry) => entry.resource === 'local_resources:worktree'),
+    `the named wait is the checkout the stop settles: ${JSON.stringify(named.at(-1).payload)}`);
   const after = workerFor(driver, solo.runId);
   assert.equal(after.worktree, null, 'the handle released the checkout');
   assert.equal(after.workspaceCleanupDeferred, 'content_retained');

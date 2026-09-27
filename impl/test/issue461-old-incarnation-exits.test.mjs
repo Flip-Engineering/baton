@@ -9,8 +9,8 @@
 // What is pinned here, on the issue306a fixture (a real temporary repository, an injected successor
 // spawner — never a second real resident except where a row NEEDS a real process):
 //   (a) after the successor publishes, the old incarnation's close() resolves and the old releases
-//       the successor's process handle (no ProcessWrap left keeping its event loop alive) within
-//       `host.reincarnation.wait_ms` with no signal — the successor process itself keeps serving;
+//       the successor's process handle (no ProcessWrap left keeping its event loop alive) with no
+//       signal — the successor process itself keeps serving;
 //   (b) end to end, two real processes: the old exits 0 BY ITSELF after the withdrawal, and the
 //       successor records `host.publication_withdrawn` + `host.reincarnated` when the old's process
 //       is gone (never at its own poll bound);
@@ -221,7 +221,7 @@ test.after(() => { for (const child of realChildren) { try { child.kill('SIGKILL
 
 /** One open deployment over the fixture world, with the successor spawner injected and the handoff
  * bound shrunk to the test's own scale. */
-async function resident(t, f, { onSpawn, reincarnationWaitMs = WAIT_MS } = {}) {
+async function resident(t, f, { onSpawn,  } = {}) {
   let driver = null;
   const deployment = await openBatonDeployment({
     repo: f.repo,
@@ -235,7 +235,6 @@ async function resident(t, f, { onSpawn, reincarnationWaitMs = WAIT_MS } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },
@@ -366,7 +365,7 @@ test('461a: the old incarnation releases the successor handle once the handoff i
   assert.equal(closed.state, 'closed', `a completed handoff exits 0: ${JSON.stringify(closed)}`);
   assert.equal(selectorOf(f).incarnation, receipt.successor.incarnation, 'the successor serves the publication');
   assert.ok(Date.now() - closedAt <= WAIT_MS,
-    'close() resolves within host.reincarnation.wait_ms without any signal');
+    'close() resolves with no signal, inside the handoff bound this fixture declares');
 
   // The old has let go of the successor process handle: nothing it holds keeps its event loop
   // alive. The successor itself is STILL RUNNING — released, never stopped.
@@ -448,7 +447,6 @@ const deployment = await openBatonDeployment({
       home: world.home,
       webDrainMs: 500,
       sessionTtlMs: 60_000,
-      reincarnationWaitMs: world.waitMs,
       spawnSuccessor: (spec) => {
         // A REAL successor handle that publishes nothing on its own: the test process plays the
         // publishing successor, the readiness marker is written here, and the child exists so the

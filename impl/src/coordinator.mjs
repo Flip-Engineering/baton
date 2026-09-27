@@ -126,11 +126,6 @@ function transientRetryInstruction(code) {
 // an anonymous death (#295 comment b): every site below states WHY the member was killed, so the
 // durable record can be read without guessing at the code path that produced it.
 
-// Issue #467: the bounded attempt bound on ONE worker's stop. The ordinary confirmed deadline is
-// attempt 1; a deadline that could not settle prints attempt 2 (the escalation the resident's own
-// group kill + reap drives), and a third does not exist — a stop that keeps re-arming the wait it
-// just failed is the non-convergence this issue reports, not a stop that is still trying.
-const STOP_DEADLINE_ATTEMPT_BOUND = 2;
 
 // BD3-D: the storm-coalescing window for same-run attention wakes. Reasons minted within the
 // window merge into one entry carrying an explicit count + perPhase distribution.
@@ -212,15 +207,8 @@ export class ReviewSelectionError extends Error {
 
 
 
-/** The convergence policy every stop/drain deadline derives from. Closed and bounded by design:
- * each field is a deployment decision, never a silent numeric default that acts as a limit.
- * `maxInteractions` bounds the in-flight interaction authority a drain cancels; when the
- * deployment does not name it, it is derived from the fleet (16 interactions per reserved
- * worker), never from a duration. */
-
-
-
-
+/** The convergence policy every stop and drain derives its poll cadence from. Closed by design:
+ * the one field is a deployment decision, never a silent numeric default that acts as a limit. */
 /** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
  * gracefulPath} on the thrown error AND a human message composed by the ONE helper — numbers
  * only, never body content (AS-4). */
@@ -803,7 +791,7 @@ export class Coordinator {
    * settled for that worker; every named wait is also appended to the worker's durable log
    * (`control.stop_waiting_on`) so a non-convergence is never silent. Workers whose predicates all
    * hold are omitted; `dispositions` is null for a drain. */
-  _stopWaitRows(targetWorkerIds, dispositions, actor) {
+  _stopWaitRows(targetWorkerIds, dispositions, actor, { record = true } = {}) {
     this._drainWaitSince ??= new Map();
     this._drainReleased ??= [];
     const rows = [];
@@ -816,17 +804,9 @@ export class Coordinator {
         processState: handle?.processRef?.state ?? null,
         waiting: Object.freeze(waiting), released: Object.freeze(released),
       };
-      // Issue #467: WHICH bounded attempt this wait belongs to, the pid/group liveness the stop
-      // observed when it named the wait, and whether the stop has already stopped waiting on this
-      // worker. Published by the DP5 pattern the doctor rows already use — a reading consumer
-      // reaches them by property access while the pre-existing serialized row shape (and every pin
-      // on it) stays byte-stable.
-      Object.defineProperty(row, 'attempt', { value: this._stopAttemptOf(handle), enumerable: false });
-      Object.defineProperty(row, 'alive', { value: handle?.stopLivenessObserved ?? null, enumerable: false });
-      Object.defineProperty(row, 'abandoned', { value: handle?.stopAbandoned ? true : false, enumerable: false });
       Object.freeze(row);
       rows.push(row);
-      if (!handle) return;
+      if (!record || !handle) return;
       try {
         const task = this._tasks.get(handle.taskId);
         const named = this._log.append({
@@ -835,7 +815,6 @@ export class Coordinator {
           payload: {
             waiting: row.waiting.map((entry) => ({ resource: entry.resource, reaper: entry.reaper, since: entry.since })),
             disposition: row.disposition, status: row.status, processState: row.processState,
-            attempt: row.attempt, alive: row.alive, abandoned: row.abandoned,
             released: released.map((entry) => ({ ...entry })),
           },
         });
@@ -876,6 +855,16 @@ export class Coordinator {
 
   _stopWaitingOn(targetWorkerIds, dispositions, actor) {
     return this._stopWaitRows(targetWorkerIds, dispositions, actor);
+  }
+
+  /** Issue #476/#583: the waits this controller holds RIGHT NOW, for a served read (the resident's
+   * `stopping` section). Read-only: the same rows `_stopWaitRows` builds, without writing a durable
+   * row per read. Absent a target set, every live worker holding local resources is named. */
+  currentStopWaits(targetWorkerIds = null) {
+    const ids = targetWorkerIds ?? this._drainTargetIds
+      ?? [...this._workers.values()]
+        .filter((handle) => this._ownsLocalResources(handle)).map((handle) => handle.id);
+    return this._stopWaitRows([...ids], null, 'policy', { record: false });
   }
 
     _hasPendingInteractionAuthority() {
@@ -1236,38 +1225,32 @@ export class Coordinator {
     return runtimeObservation._recordDrainDisposition(this, this._recorder, drainId, actor, workerId, disposition);
   }
 
-    _mirrorDrainDispositions(sourceDrainId, targetDrainId, actor, assertWithinDeadline) {
-    return runtimeObservation._mirrorDrainDispositions(this, this._recorder, sourceDrainId, targetDrainId, actor, assertWithinDeadline);
+    _mirrorDrainDispositions(sourceDrainId, targetDrainId, actor) {
+    return runtimeObservation._mirrorDrainDispositions(this, this._recorder, sourceDrainId, targetDrainId, actor);
   }
 
-    async _cancelPendingForDrain(deadline) {
-    return runtimeObservation._cancelPendingForDrain(this, this._recorder, deadline);
+  async _cancelPendingForDrain() {
+    return runtimeObservation._cancelPendingForDrain(this, this._recorder);
   }
 
-  async _performDrain(targetWorkerIds, repoId, deadline, physicalDrainId, physicalActor) {
-    await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline, () => ({ reason: 'startup_cleanup_pending', timeoutMs: this._drainPolicy.timeoutMs }));
-    if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
+  async _performDrain(targetWorkerIds, repoId, physicalDrainId, physicalActor) {
+    await Promise.all(this._startupCleanupPromises);
+    if (this._startupCleanupError) throw Object.assign(new Error('the fleet drain could not reconcile its owned resources'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
     // Issue #576: the integrate gate runners are the drain's OWN children, cancelled and reaped
     // as part of it — never after it. The fence drops first (no new gate starts once a stop is
     // requested, and a run still QUEUED for its verify lease aborts), every live child is
     // killed with its process group, and the wait is for each child's close: when the drain
     // moves on, no gate runner still burns the host, and `closed` can mean the process exits.
-    // A landing the cancellation abandons records its own abandoned-attempt row.
-    await this._beforeDrainDeadline(this._supervised.cancelAndReap(), deadline,
-      () => ({ reason: 'gate_runners_pending', timeoutMs: this._drainPolicy.timeoutMs }));
+    // A landing the cancellation abandons records its own abandoned-attempt row. Issue #583: the
+    // wait is unbounded — these children are this controller's own and their reap is the fact
+    // it waits for.
+    await this._supervised.cancelAndReap();
     // Operations admitted before the irreversible fence may finish, but no stop effect races
     // them. In particular, publisher/integration/provider work cannot be relabelled as drained
     // while it still owns an external or repository effect boundary.
-    while (this._authorityOps > 0 && this._now() < deadline) {
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
-    }
-    if (this._authorityOps > 0) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'authority_operations_in_flight', count: this._authorityOps } });
-    while (this._startupRecoveryState === 'pending' && this._now() < deadline) {
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
-    }
-    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_recovery_pending' } });
-    await this._cancelPendingForDrain(deadline);
-    if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'pending_interaction_authority', count: this._activeInteractionIds.size } });
+    while (this._authorityOps > 0) await this._sleep(this._drainPolicy.pollMs);
+    while (this._startupRecoveryState === 'pending') await this._sleep(this._drainPolicy.pollMs);
+    await this._cancelPendingForDrain();
     const durablePhysical = this._coordination.fleetDrain(physicalDrainId);
     if (!durablePhysical || durablePhysical.status !== 'admitted'
       || canonicalDigest(durablePhysical.targetWorkerIds) !== canonicalDigest(targetWorkerIds)) {
@@ -1292,7 +1275,6 @@ export class Coordinator {
       dispositions.set(workerId, disposition);
     };
     for (const workerId of targetWorkerIds) {
-      if (this._now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) } });
       if (dispositions.has(workerId)) continue;
       const handle = this._workers.get(workerId); const task = handle ? this._tasks.get(handle.taskId) : null;
       if (!handle) { setDisposition(workerId, 'alreadyTerminal'); continue; }
@@ -1321,7 +1303,7 @@ export class Coordinator {
         try {
           await this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId));
           if (!this._ownsLocalResources(handle)) setDisposition(handle.id, 'alreadyTerminal');
-        } catch { /* the bounded convergence loop retries exact cleanup */ }
+        } catch { /* the closed transport's reap is retried by the next pass */ }
         return;
       }
       try {
@@ -1329,36 +1311,46 @@ export class Coordinator {
         if (result?.ok && result.result === 'confirmed') setDisposition(handle.id, 'killConfirmed');
         else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) setDisposition(handle.id, 'alreadyTerminal');
-        // Issue #467: the worker's stop has spent both bounded attempts. The drain stops asking and
-        // NAMES the worker it stopped waiting on, so the resident's own bounded waits see a settled
-        // fact instead of arming the deadline that never ends.
-        else if (result?.result === 'stop_attempts_exhausted') this._abandonStopWorker(handle, result);
-      } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
+      } catch { /* exact state below is authoritative; the next pass retries it */ }
     };
-    while (this._now() <= deadline) {
+    // Issue #583: this drain waits until it converges, so the narration that names its wait is
+    // keyed on the wait it OBSERVES — a row is written when the set of holds changes — instead of
+    // on a fixed window. A long drain is visibly alive and a stalled one is named once.
+    const waitSignature = () => canonicalDigest({
+      targets: targetWorkerIds.map((workerId) => {
+        const handle = this._workers.get(workerId);
+        if (!handle) return [workerId, dispositions.get(workerId) ?? null];
+        return [workerId, dispositions.get(workerId) ?? null, handle.processRef?.state ?? null,
+          Object.keys(this._localResourceOwnership(handle)).sort()];
+      }),
+      holders: [...this._workers.values()].filter((handle) => this._ownsLocalResources(handle))
+        .map((handle) => handle.id).sort(),
+      authorityOps: this._authorityOps,
+      interactions: this._activeInteractionIds.size,
+    });
+    let lastWait = null;
+    for (;;) {
+      const observed = waitSignature();
+      if (observed !== lastWait) {
+        lastWait = observed;
+        this._stopWaitingOn(targetWorkerIds, dispositions, physicalActor);
+      }
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
       // #360: release what a settled holder cannot. A worker whose process is exactly closed
       // and whose seat has left/stopped (a durably admitted run stop) is reaped by the drain
-      // itself — through the #428/#435 custody boundary — instead of being waited on until the
-      // deadline; a hold with no reaper is released with reason `orphaned`, never waited on. A
-      // task still verifying keeps its reaper (the trust gate honors cleanupAfterVerification),
-      // and a bare operator kill without a run stop keeps the named wait (G-21).
-      // Issue #467: a target worker whose stop the kill path SETTLED — the kernel's own ESRCH closed
-      // its process, and the reap that follows released what it held — is holding nothing and
-      // waiting on nothing. Recording the disposition it actually reached here keeps the drain's own
-      // success test reachable instead of running the loop out to its deadline (the observed shape:
-      // `coordinator_drain_incomplete {reason: 'convergence', waitingOn: []}`).
+      // itself — through the #428/#435 custody boundary — instead of being waited on; a hold
+      // with no reaper is released with reason `orphaned`, never waited on. A task still
+      // verifying keeps its reaper (the trust gate honors cleanupAfterVerification), and a bare
+      // operator kill without a run stop keeps the named wait (G-21).
+      this._drainWaitObserve(targetWorkerIds);
+      // A target worker whose stop the kill path SETTLED — the kernel's own ESRCH closed its
+      // process, and the reap that follows released what it held — is holding nothing and
+      // waiting on nothing. Recording the disposition it actually reached here keeps the drain's
+      // own success test reachable instead of running the loop out to a deadline.
       for (const workerId of targetWorkerIds) {
         if (dispositions.has(workerId)) continue;
         const settledTarget = this._workers.get(workerId);
-        // Issue #472: a target the stop STOPPED WAITING ON is settled for the drain too — the
-        // bounded attempts are spent, the holds it keeps are named durably (`drain.worker_abandoned`
-        // and `control.stop_abandoned`) and the next open's reconciliation owns its checkout. The
-        // drain never waits on it again, so the target reaches the one disposition that means
-        // "nothing left for this drain to do" (the durable vocabulary is closed at three, and the
-        // store demands a disposition for every target).
         if (!settledTarget) continue;
-        if (settledTarget.stopAbandoned) { setDisposition(workerId, 'alreadyTerminal'); continue; }
         if (this._ownsLocalResources(settledTarget)
           || (settledTarget.processRef && settledTarget.processRef.state !== 'closed')) continue;
         setDisposition(workerId, settledTarget.stopAttested ? 'killConfirmed' : 'alreadyTerminal');
@@ -1375,12 +1367,9 @@ export class Coordinator {
       // The drain's own success test counts every worker in the fleet that still holds local
       // resources, so the drain attempts every worker that test counts (#277 G-20): a
       // cleanupAfterVerification hold that lands on a non-target mid-drain is attempted, not
-      // merely observed until the deadline. Issue #472: a worker the stop STOPPED WAITING ON is not
-      // one this drain still owes — its holds are the abandonment's named remainder (see the
-      // disposition arm above), so counting them here would keep the drain from ever converging
-      // and the stop from ever minting its outcome.
+      // merely observed.
       const globalRemaining = [...this._workers.values()]
-        .filter((handle) => this._ownsLocalResources(handle) && !handle.stopAbandoned);
+        .filter((handle) => this._ownsLocalResources(handle));
       if (globalRemaining.length === 0 && this._authorityOps === 0
         && !this._hasPendingInteractionAuthority() && targetWorkerIds.every((id) => dispositions.has(id))) {
         if (!this._drainHistoricalReconciled) {
@@ -1398,18 +1387,14 @@ export class Coordinator {
             });
           }
           const reconciliation = this._drainHistoricalReconcilePromise;
-          await this._beforeDrainDeadline(reconciliation, deadline, () => ({ reason: 'historical_reconciliation_pending', timeoutMs: this._drainPolicy.timeoutMs }));
+          await reconciliation;
           if (this._drainHistoricalReconcilePromise === reconciliation) this._drainHistoricalReconcilePromise = null;
           this._drainHistoricalReconciled = true;
           continue;
         }
-        // Issue #472: the processes this drain OBSERVED. An abandoned worker's recovered authority
-        // is not an observation — the stop probed it, found nothing to answer and said so
-        // (`alive: null` on its row), so it is counted in neither half of the pair the store
-        // validates as equal (every observed process ends closed).
-        const observedTargets = targets.filter((handle) => !handle.stopAbandoned);
-        const processesObserved = observedTargets.filter((handle) => handle.processRef !== null).length;
-        const processesClosed = observedTargets.filter((handle) => handle.processRef?.state === 'closed').length;
+        // The processes this drain OBSERVED. Every observed process ends closed.
+        const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
+        const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
         const counts = {
           pendingCancelled: [...dispositions.values()].filter((value) => value === 'pendingCancelled').length,
           killConfirmed: [...dispositions.values()].filter((value) => value === 'killConfirmed').length,
@@ -1425,36 +1410,9 @@ export class Coordinator {
         };
         return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       }
-      await this._beforeDrainDeadline(Promise.all(globalRemaining.map(attempt)), deadline,
-        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(globalRemaining.map((handle) => handle.id), null, physicalActor) }));
-      if (this._now() >= deadline) break;
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
+      await Promise.all(globalRemaining.map(attempt));
+      await this._sleep(this._drainPolicy.pollMs);
     }
-    // The terminal throw names its wait like every other deadline path (#277 G-21): a bare
-    // non-convergence is never wrapped as its own cause by _drainFailure.
-    throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
-      code: 'coordinator_drain_incomplete',
-      detail: { reason: 'deadline', stage: 'convergence', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) },
-    });
-  }
-
-  /** Races one drain step against the deployment deadline. `describe` names the wait (#265) when
-   * the deadline wins; it is evaluated only then, so a settled step costs nothing. */
-  _beforeDrainDeadline(operation, deadline, describe = null) {
-    const expired = () => {
-      const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
-      if (describe) { try { failure.detail = describe(); } catch { /* a wait that cannot be described is still a named deadline */ } }
-      return failure;
-    };
-    const remaining = deadline - this._now();
-    if (remaining <= 0) return Promise.reject(expired());
-    return new Promise((resolveOperation, rejectOperation) => {
-      const timer = setTimeout(() => rejectOperation(expired()), remaining);
-      Promise.resolve(operation).then(
-        (value) => { clearTimeout(timer); resolveOperation(value); },
-        (error) => { clearTimeout(timer); rejectOperation(error); },
-      );
-    });
   }
 
   /** #360: the seat-left signal the drain may act on. A worker whose process is exactly closed
@@ -1472,9 +1430,7 @@ export class Coordinator {
    * co-holders — never a bare delete), the runtime scope through its own exact removal, and a
    * hold with NO reaper is released immediately with reason `orphaned` instead of being waited
    * on. Every release is recorded as {workerId, resource, how} — `custody_reaped`, `retained`,
-   * `detached`, `orphaned` — on the durable ledger and on the drain's wait rows. A
-   * custody refusal that names no settled outcome leaves the holds for the next pass, where
-   * the deadline rows name them. */
+   * `detached`, `orphaned` — on the durable ledger and on the drain's wait rows. */
   async _releaseSettledHolder(handle, task) {
     const before = this._localResourceOwnership(handle);
     if (Object.keys(before).length === 0) return;
@@ -1488,17 +1444,16 @@ export class Coordinator {
         if (error?.code === 'workspace_other_holder_live_retained' && ownerTaskId) {
           await this._detachSharedWorkspace(handle, Array.isArray(error.holders) ? error.holders : []);
           worktreeHow = 'detached';
-        } else if (ownerTaskId && (error?.retained === true
-          || error?.code === 'progress_preservation_failed'
-          || (typeof error?.code === 'string' && error.code.endsWith('_retained')))) {
-          // Capture-or-retain: the capture refused, so the checkout is retained for the
-          // reconciliation authority and THIS handle releases its hold — the exact outcome
-          // that keeps the seat's work on disk while the drain converges.
-          await this._releaseRetainedCheckout(handle, { code: error.code, observation: error.observation });
+        } else {
+          // Issue #583: a reap refusal the drain cannot settle releases THIS handle's hold and is
+          // named durably. The 2026-09-26 21:28:32Z resident stop died on the opposite shape — a
+          // refusal that recorded nothing and left the handle holding its checkout, its local
+          // authority and `cleanupPending`, so neither the stop nor the drain ever converged. The
+          // checkout is retained for the reconciliation authority; the refusal code stays
+          // observable on the handle and on the custody row.
+          await this._releaseRetainedCheckout(handle, { code: error?.code ?? 'worktree_cleanup_failed', observation: error?.observation ?? null });
           this._recordDrainCustodyRetained(handle, task, error);
           worktreeHow = 'retained';
-        } else {
-          return;
         }
       }
     }
@@ -3970,15 +3925,6 @@ export class Coordinator {
       }));
     }
 
-    // Issue #467: a third deadline does not exist. A worker whose stop has spent both bounded
-    // attempts answers here, typed, naming what the stop observed: the caller (a drain pass, a seat
-    // stop) records the abandonment instead of re-arming the wait the last deadline just failed.
-    if (this._stopAttemptOf(handle) >= STOP_DEADLINE_ATTEMPT_BOUND) {
-      return Promise.resolve({
-        ok: false, result: 'stop_attempts_exhausted',
-        attempts: this._stopAttemptOf(handle), alive: handle.stopLivenessObserved ?? null,
-      });
-    }
 
     this._fences.bumpHuman(handle.id);
     const harness = this._harnessOf(handle.vendor);
@@ -4284,7 +4230,13 @@ export class Coordinator {
       && handle.ownedWorktreeAuthority !== true;
     if (opaquePhysicalOwner && handle.ownedWorktreeAuthority !== true
       && (!borrowedCheckout || !this._checkoutExactUnderContext(handle, task))) {
-      handle.cleanupPending = true;
+      // Issue #583: the refusal is terminal for THIS handle. The checkout is never destroyed, so
+      // the handle must not keep holding the local authority the refusal was protecting: a
+      // refusal that left `localAuthority` and `cleanupPending` held is the shape whose stop and
+      // fleet drain waited on a hold no act could release (the 2026-09-27 phase67 AX4c run, where
+      // an unprovable binding over an already-released checkout held both forever).
+      if (!handle.processRef || handle.processRef.state === 'closed') handle.localAuthority = false;
+      handle.cleanupPending = handle.runtimeScope?.active === true;
       handle.cleanupError = handle.workspaceOwnerBindingDiagnostic
         ?? 'workspace_owner_binding_unproven';
       return Promise.reject(Object.assign(
@@ -4333,20 +4285,20 @@ export class Coordinator {
       if (error?.code === 'workspace_other_holder_live_retained' && opaquePhysicalOwner) {
         return this._detachSharedWorkspace(handle, Array.isArray(error.holders) ? error.holders : []);
       }
-      // Any retention refusal — content no capture recorded, an unobservable checkout — is
-      // terminal for THIS HANDLE, owner or borrower alike (#277): the physical resource is
-      // intact with its receipt, the refusal code stays observable, and the
-      // existing reconciliation authority owns it. Retention must never hold a stopping
-      // participant's local authority open: that was the own-checkout stop that could never
-      // converge. A capture still in flight is awaited before cleanup ever starts, so this
+      // A reap that REFUSED is terminal for THIS HANDLE whatever the refusal names — content no
+      // capture recorded, an unobservable checkout, a durable record the reaper cannot parse.
+      // Issue #583: the 2026-09-26 21:28:32Z resident stop refused here, recorded nothing, and
+      // left the handle holding its checkout, its local authority and `cleanupPending`, so the
+      // fleet drain and the stop never converged. The physical resource is intact with its
+      // receipt, the refusal code stays observable on the handle and is named durably on the
+      // custody row, and the existing reconciliation authority owns it. Refusal must never hold
+      // a stopping participant's local authority open. A capture still in flight is awaited
+      // before cleanup ever starts, so this
       // release cannot race the allocator's own contribution capture.
-      if (error?.retained === true && opaquePhysicalOwner) {
-        return this._releaseRetainedCheckout(handle, error);
-      }
-      handle.cleanupPending = true;
-      handle.cleanupError = error?.retained === true ? error.code
-        : error?.code === 'progress_preservation_failed' ? error.code : 'worktree_cleanup_failed';
-      throw error;
+      return this._releaseRetainedCheckout(handle, {
+        code: typeof error?.code === 'string' && error.code.length > 0 ? error.code : 'worktree_cleanup_failed',
+        observation: error?.observation ?? null,
+      });
     }).finally(() => {
       if (handle.cleanupPromise === cleanup) handle.cleanupPromise = null;
     });
@@ -4781,9 +4733,6 @@ export class Coordinator {
       const absent = absence?.alive === false;
       if (absent) {
         this._attestAbsentStop(handle, null, KILL_RULES.stopDeadline, absence);
-      } else if (waiter.mode === 'kill') {
-        handle.stopDeadlineAttempts = this._stopAttemptOf(handle) + 1;
-        handle.stopLivenessObserved = absence?.alive ?? null;
       }
       if (!absent && handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
         handle.processRef = { ...handle.processRef, state: 'unconfirmed_after_restart' };
@@ -4817,22 +4766,16 @@ export class Coordinator {
           kind: 'control.stop_deadline_cleanup', actor: 'policy', ...this._routeAttribution(handle, task),
           payload: {
             rule: KILL_RULES.stopDeadline, mode: waiter.mode, forcedSeq: forcedEvent.seq,
-            attempt: this._stopAttemptOf(handle),
-            alive: handle.stopLivenessObserved ?? null,
             action: absent ? 'reap_after_absence' : exactClose ? 'reap_after_deadline' : 'retain_until_exact_close',
           },
         });
       } catch { /* the deadline receipt below still settles the waiter */ }
       if (!exactClose) {
-        // Issue #467: the deadline NAMES the wait it could not settle — once per attempt — and it
-        // never re-arms it. What moves a worker past this deadline is the drain's own retry and the
-        // resident's bounded group kill (#351), which is the second deadline; a stop that spent
-        // both is abandoned here rather than waited on a third time.
+        // The deadline NAMES the wait it could not settle. Nothing is destroyed here —
+        // uncertainty is never permission to destroy — so the handle keeps what it holds and the
+        // drain's next pass, or the next open's reconciliation, owns it.
         try {
           this._stopWaitingOn([workerId], null, 'policy');
-          if (this._stopAttemptOf(handle) >= STOP_DEADLINE_ATTEMPT_BOUND) {
-            this._abandonStopWorker(handle, { alive: handle.stopLivenessObserved ?? null });
-          }
         } catch { /* named on the next convergence read */ }
       } else {
         deadlineCleanup = { handle, task };
@@ -4846,12 +4789,6 @@ export class Coordinator {
     // stop waiter left, and this transaction is over.
     if (deadlineCleanup) this._cleanupTransportInBackground(deadlineCleanup.handle, deadlineCleanup.task, forcedEvent);
 
-  }
-  /** Issue #467: how many bounded stop deadlines this worker's stop has spent. 0 means the stop is
-   * still inside its ordinary confirmed window. */
-  _stopAttemptOf(handle) {
-    const attempts = handle?.stopDeadlineAttempts;
-    return Number.isSafeInteger(attempts) && attempts > 0 ? attempts : 0;
   }
 
   /** Issue #467: the ONE process-absence observation the stop path reads. ESRCH is an exact
@@ -4893,23 +4830,7 @@ export class Coordinator {
     return runtimeObservation._attestAbsentStop(this, this._recorder, handle, waiter, rule, absence);
   }
 
-  /** Issue #467: name the worker a stop STOPPED WAITING on, once its bounded attempts are spent.
-   * Nothing is destroyed here — uncertainty is never permission to destroy, so the handle keeps
-   * whatever it holds and the next open's reconciliation owns it. What changes is that the stop no
-   * longer waits: the reader sees the attempts it made, the liveness it observed, and the holds it
-   * leaves behind, and the outcome row lists the worker under `abandoned` beside #450's `released`. */
-    _abandonStopWorker(handle, observation = null) {
-    return runtimeObservation._abandonStopWorker(this, this._recorder, handle, observation);
-  }
 
-  /** Issue #467/#472: the workers a stop has STOPPED WAITING ON — the ONE reader the stop's own
-   * `abandoned` list is minted from (the deployment's narration line, the doctor and
-   * `host.stopped.abandoned` all read this derivation, never a second sink). Each row names the
-   * bounded attempt the stop reached and the liveness it observed; `holds` says what the worker
-   * kept, which is exactly what the stop did NOT release. */
-    abandonedWorkers() {
-    return runtimeApi.abandonedWorkers(this);
-  }
 
   /** Issue #467: the resident's own absence observation, handed back to the seat whose stop is
    * waiting. The deployment that owns the process group reads it first-hand (its group signal
