@@ -10,12 +10,14 @@
 // contribution, and the deployment's own default landing steps. The gate runner sleeps long enough
 // for the withdraw to arrive while the operation is in flight.
 //
-//   (a) a withdraw of a QUEUED landing (waiting on the verify lease) aborts the lease wait,
-//       records a named terminal row, and the scratch checkout is gone;
-//   (b) a withdraw of a RUNNING landing (gate child in flight) kills the gate child, releases
+//   (a) a withdraw of a RUNNING landing (gate child in flight) kills the gate child, releases
 //       the lease, records a terminal row, and the scratch checkout is gone;
-//   (c) a superseding contribution by the same participant withdraws the older pending operation;
-//   (d) a withdraw of a contribution with no pending integration refuses typed.
+//   (b) a LATER CONTRIBUTION by the same participant — a report, a note, an addendum whose commit
+//       is null — withdraws NOTHING (#615): the landing it did not supersede runs to completion;
+//   (c) a withdraw of a contribution with no pending integration refuses typed;
+//   (d) attaching a NEW REVISION to the contribution a queued landing carries withdraws that
+//       landing and names the revision (#615) — the one structural supersession act, because a
+//       landing of the previous revision would put superseded code on the target.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -141,9 +143,20 @@ async function world(t, { gate = {} } = {}) {
     root: capacityRoot, residentId: 'issue600-resident', pollMs: 10,
     observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 0 }),
   });
+  // #615: the seat's worker binding, so `swarm.capture` can resolve a worker and attach a revision.
+  const laneWorker = { id: 'w-lane-a', taskId: 't-lane-a', runId: 'run-lane-a' };
+  const lanePrincipal = Object.freeze({
+    actor: `worker:${laneWorker.id}`, principalId: `worker:${laneWorker.id}`, sessionId: 'lane-a-session',
+  });
   const runtime = new SwarmRuntime({
     store,
-    coordinator: { list: () => [], ...(pool === null ? {} : { supervisedProcesses: () => pool }) },
+    coordinator: {
+      list: () => [laneWorker],
+      captureContribution: async (workerId, { contributionId }) => ({
+        contributionId, workerId, sha: tip, ref: `refs/baton/checkpoints/${tip}`,
+      }),
+      ...(pool === null ? {} : { supervisedProcesses: () => pool }),
+    },
     hostCapacity,
     authorize: async () => true,
     prepareRun: (request) => request,
@@ -160,7 +173,10 @@ async function world(t, { gate = {} } = {}) {
   await runtime.command('swarm.create', { swarmId: 's1', purpose: 'landing withdraw (#600)', idempotencyKey: 'i600:create' }, principal);
   const record = (kind, payload, key) => store.recordSwarm(kind, { swarmId: 's1', ...payload },
     { actor: principal.actor, key: `i600:${key}` });
-  record('swarm.participant_joined', { participantId: 'lane-a', role: 'Builder' }, 'join');
+  record('swarm.participant_joined',
+    { participantId: 'lane-a', role: 'Builder', runId: laneWorker.runId }, 'join');
+  record('swarm.participant_bound',
+    { participantId: 'lane-a', workerId: laneWorker.id, taskId: laneWorker.taskId }, 'bound');
   record('swarm.work_updated', { workId: 'w1', objective: 'land the lane' }, 'work');
   record('swarm.contribution_recorded', {
     contributionId: 'contribution:1', participantId: 'lane-a', workId: 'w1',
@@ -186,7 +202,7 @@ async function world(t, { gate = {} } = {}) {
     .filter((name) => name.startsWith('integrate-') && !name.endsWith('.projection.exclude'));
   return {
     directory, repo, publishRemote, store, runtime, pool, hostCapacity, capacityRoot,
-    integration, markerPath, tip, targetHead, observedHead,
+    integration, markerPath, tip, targetHead, observedHead, laneWorker, lanePrincipal,
     driverRows, integrateDriverRows, failureRows, wtRoot, leftoverCheckouts,
   };
 }
@@ -240,34 +256,33 @@ test('600a: withdrawing a running landing kills the gate child, releases the lea
   assert.equal(withdrawalRow.detail.actor, principal.actor, 'the row names who asked');
 });
 
-// ── (b) superseding contribution withdraws the older queued operation ────────────────────────────
+// ── (b) a later contribution by the same seat supersedes NOTHING ────────────────────────────────
 
-test('600b: recording a superseding revision withdraws the older pending operation', needsGit, async (t) => {
-  const w = await world(t, { gate: { sleepMs: 10_000, green: true } });
+test('600b: a later contribution by the same seat never withdraws its in-flight landing', needsGit, async (t) => {
+  const w = await world(t, { gate: { sleepMs: 3_000, green: true } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
 
   const landing = w.integration();
   const seen = await observe(() => w.integrateDriverRows()[0] ?? null);
-  assert.ok(seen, 'the first landing is in flight');
+  assert.ok(seen, 'the landing is in flight');
 
+  // The exact observed failure (#615): the author's own report — a DIFFERENT contribution, commit
+  // null — killed its gate work twice (about 90 then 50 minutes of it) before this narrowing.
   await w.runtime.command('swarm.update', {
     swarmId: 's1', event: 'swarm.contribution_recorded',
     payload: {
       contributionId: 'contribution:2', participantId: 'lane-a',
-      body: 'Superseding revision (#600)',
+      body: 'A report, not a revision (#615)',
     },
-    idempotencyKey: 'i600:update-supersede',
+    idempotencyKey: 'i600:update-report',
   }, principal);
 
-  const error = await landing.then(() => null, (thrown) => thrown);
-  assert.ok(error, 'the first landing refuses after supersession');
-  assert.equal(error.code, 'integrate_withdrawn');
-
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  const failures = w.failureRows();
-  const withdrawalRow = failures.find((row) =>
-    row.code === 'integrate_withdrawn' && row.detail?.supersededBy === 'contribution:2');
-  assert.ok(withdrawalRow, 'a durable failure row names the superseding contribution');
-  assert.equal(withdrawalRow.contributionId, 'contribution:1');
+  const settled = await landing;
+  assert.equal(settled.integration.targetHeadAfter, git(w.repo, 'rev-parse', 'master'),
+    'the landing ran to completion and moved the target');
+  assert.notEqual(settled.integration.targetHeadAfter, headBefore, 'the target moved');
+  assert.equal(w.failureRows().some((row) => row.code === 'integrate_withdrawn'), false,
+    'nothing superseded the landing, so no withdrawal row exists');
 });
 
 // ── (c) withdraw of something not in flight refuses typed ────────────────────────────────────────
@@ -289,4 +304,35 @@ test('600c: a withdraw of a contribution with no pending integration refuses typ
     'the refusal code is in the family\'s closed set');
   assert.ok(Object.hasOwn(SWARM_REFUSAL_CODES, 'integrate_withdrawn'),
     'the withdrawn code is in the family\'s closed set');
+});
+
+// ── (d) a new revision supersedes the landing it carried ─────────────────────────────────────────
+
+test('600d: attaching a revision of the landing contribution withdraws it, naming the revision', needsGit, async (t) => {
+  const w = await world(t, { gate: { sleepMs: 10_000, green: true } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const landing = w.integration();
+  const seen = await observe(() => w.integrateDriverRows()[0] ?? null);
+  assert.ok(seen, 'the first landing is in flight');
+
+  // The ONE structural supersession act (#615): a revision attached to the contribution the
+  // landing carries. Left to land, it would put the previous revision on the target.
+  const captured = await w.runtime.command('swarm.capture', {
+    swarmId: 's1', participantId: 'lane-a', contributionId: 'contribution:1',
+  }, w.lanePrincipal);
+  assert.equal(captured.sha, w.tip, "the capture attached the seat's current revision");
+
+  const error = await landing.then(() => null, (thrown) => thrown);
+  assert.ok(error, 'the landing refuses after the revision supersedes it');
+  assert.equal(error.code, 'integrate_withdrawn');
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const row = w.failureRows().find((candidate) => candidate.code === 'integrate_withdrawn');
+  assert.ok(row, 'a durable withdrawal row is recorded');
+  assert.equal(row.contributionId, 'contribution:1');
+  assert.equal(row.detail.supersededBy, `revision ${w.tip}`, 'the row names the superseding revision');
+  assert.deepEqual(w.leftoverCheckouts(), [], 'the scratch checkout is gone after the withdrawal');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore,
+    'a withdrawn landing never moves the target');
 });

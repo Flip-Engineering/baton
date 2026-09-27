@@ -7846,17 +7846,12 @@ export class SwarmRuntime {
     });
   }
 
-  _withdrawSupersededIntegrations(swarm, newContribution, newContributionId, principal) {
-    const participantId = newContribution.participantId;
-    if (typeof participantId !== 'string' || participantId.length === 0) return;
-    for (const [candidateId, entry] of this._pendingIntegrations) {
-      if (candidateId === newContributionId) continue;
-      if (entry.swarmId !== swarm.swarmId) continue;
-      if (entry.participantId !== participantId) continue;
-      this._withdrawIntegrationForSupersession(swarm.swarmId, candidateId, newContributionId, principal);
-    }
-  }
-
+  /** Issue #615 (#600): the ONE act that supersedes a landing is a new REVISION of the
+   * contribution that landing carries — `swarm.capture` attaching a revision to it. The landing
+   * of the previous revision would put superseded code on the target, so the attach withdraws it
+   * and names the revision that superseded it. Nothing else supersedes: a later contribution by
+   * the same seat — a report, a note, an addendum — is a DIFFERENT contribution, and recording it
+   * withdraws no landing. */
   _withdrawIntegrationForSupersession(swarmId, contributionId, supersededBy, principal) {
     const entry = this._pendingIntegrations.get(contributionId);
     if (!entry) return;
@@ -8429,7 +8424,6 @@ export class SwarmRuntime {
         if (recordedContribution !== null) {
           rootAttention = this._recordRootAttentionRows(recordedSwarm,
             rootContributionAttention(recordedSwarm, recordedContribution), principal.actor);
-          this._withdrawSupersededIntegrations(recordedSwarm, recordedContribution, payload.contributionId, principal);
         }
         // Issue #594: a contract's own commit is published when the update that records it
         // lands — the commit the contribution names, pushed like any seat commit.
@@ -9181,6 +9175,11 @@ export class SwarmRuntime {
         ...(capture.observedHead ? { observedHead: capture.observedHead } : {}),
         ...(base?.mergeBase ? { mergeBase: base.mergeBase } : {}),
       }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`));
+      // Issue #615: a revision attached HERE supersedes this contribution's in-flight landing —
+      // the landing would put the previous revision on the target. Recording a later
+      // contribution, even one by this same seat, supersedes nothing.
+      this._withdrawIntegrationForSupersession(
+        args.swarmId, args.contributionId, `revision ${capture.sha}`, principal);
       // Issue #594: the captured revision is published the moment it is recorded — the commit
       // exists, the contribution names it, and the preserve push rides that record.
       if (this.preserver !== null && this.preserver.available && typeof capture.sha === 'string') {
