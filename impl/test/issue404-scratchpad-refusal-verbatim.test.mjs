@@ -5,7 +5,7 @@
 // handler translates — a code outside the allowlist is surfaced as itself with the store's
 // message, never re-labelled.
 //
-// Fixture mirrors the nearest existing scratchpad tests (tight-cell-red.test.mjs's lightweight
+// Fixture mirrors the nearest existing scratchpad tests (tight-cell.test.mjs's lightweight
 // Coordinator idiom): a real Coordinator over a real log-backed coordination store, one spawned
 // worker, and the store's writeScratchpad seam wrapped so it raises a real CoordinationRefusal
 // carrying a code the allowlist has never heard of.

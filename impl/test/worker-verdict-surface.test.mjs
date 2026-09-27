@@ -450,7 +450,7 @@ class DebugAdapter extends MockAdapter {
         mode: 'exact', configuredDefault: 'mock-model', available: ['mock-model'],
         family: 'mock', acceptedPrefixes: [], acceptedAliases: [],
         reasoningEffort: ['low'], serviceTier: null,
-        provenance: 'worker-verdict-surface-red', refreshedAt: null,
+        provenance: 'worker-verdict-surface', refreshedAt: null,
       },
     };
   }

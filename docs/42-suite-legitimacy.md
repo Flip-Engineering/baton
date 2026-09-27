@@ -201,7 +201,7 @@ the coordinator registers its own when its deferred startup reconstruction compl
 made the deployment open path async). The later registration orphaned the earlier observer on a
 single-slot fixture, the probe's terminal wire reached nobody, the gate's `ensure()` never settled
 and the loop drained: 26 rows of `readiness-credentials-red.test.mjs` and 15 of
-`readiness-honesty-red.test.mjs` were cancelled with zero assertions. The fixtures now deliver
+`readiness-honesty.test.mjs` were cancelled with zero assertions. The fixtures now deliver
 every event to every registered observer, in registration order.
 
 **The orphaning itself was the production defect (#477).** The paragraph above records a

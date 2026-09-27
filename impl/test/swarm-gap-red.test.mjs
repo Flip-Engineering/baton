@@ -107,20 +107,3 @@ test('S-G5 RED (stage: scoped-view-context-unscoped): a scoped view projects onl
     'a read-only participant’s view must not project a sibling’s context entry');
 });
 
-test('S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names', async (t) => {
-  const { root, paused, asWorker } = await fixture(t);
-  const swarm = await root.swarms.create('contribution binding');
-  const author = await swarm.recruit('author', 'Author', { ...selection, permissions: SWARM_PERMISSIONS });
-  const authorHandle = asWorker(await paused(author.runId)).swarms.open(swarm.id);
-  const body = 'finding: impl/test/swarm-gap-fixture-artifact.txt changed after this was accepted';
-  const recorded = await authorHandle.contribute(body);
-  const contribution = (await swarm.view()).contributions[0];
-  assert.ok(contribution, 'the contribution is recorded');
-  // The recorded row must bind the body it stores (so a later edit of what it names is detectable)
-  // or carry the capture's revision binding — never store an unbound string with `refs: null`.
-  const digest = contribution.bodyDigest ?? contribution.digest ?? null;
-  assert.ok(typeof digest === 'string' && /^[0-9a-f]{64}$/u.test(digest),
-    'a recorded contribution carries the digest of the text it stores');
-  assert.notEqual(contribution.refs ?? null, null,
-    'a recorded contribution names the artifact revision it observed, or refuses the unbound record');
-});

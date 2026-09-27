@@ -76,7 +76,7 @@
 // no clocks as controls (epochLag is ledgerHeadSeq − observedSeq, both primary seqs). Verified
 // split is recorded below after two consecutive runs from the repo root.
 //
-// VERIFIED SPLIT — two consecutive runs from the repo root (`node --test impl/test/cross-deployment-knowledge-red.test.mjs`):
+// VERIFIED SPLIT — two consecutive runs from the repo root (`node --test impl/test/cross-deployment-knowledge.test.mjs`):
 //   run 1: tests 31 · pass 9 · fail 22 · cancelled 0 · skipped 0 · todo 0
 //   run 2: tests 31 · pass 9 · fail 22 · cancelled 0 · skipped 0 · todo 0
 //   stable — the identical 22 rows fail at their NAMED stages on both runs; the 9 PIN rows

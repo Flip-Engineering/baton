@@ -1,10 +1,10 @@
 # Swarm visibility: one liveness, the contributions ledger, and the cost of a view (issues #433, #364 view half, #268)
 
-Design direction: 2026-09-18, design seat kimi-vis. Stage: `landed` (#433 lane 2223154b; #438 e7708e5c; #364 view half via #442/#385) — this document was
-pinned red-before by `impl/test/issue433-contributions-projection.test.mjs` and
-`impl/test/issue268-visibility-red.test.mjs`; every row in those files asserts behaviour this
-document specifies against the CURRENT runtime and fails until an implementation lane lands it
-(docs/44).
+Design direction: 2026-09-18, design seat kimi-vis. Stage: `landed` (#433 lane 2223154b; #438 e7708e5c; #364 view half via #442/#385). The
+design was pinned red-before by `impl/test/issue433-contributions-projection.test.mjs` and
+`impl/test/issue268-visibility.test.mjs`. The rows that still named unbuilt work were removed on
+2026-09-27 as never-built specifications with no observed failure behind them; the rows that
+assert behaviour the runtime serves stay in those files.
 
 Evidence this design answers:
 

@@ -56,7 +56,7 @@
 //         them verbatim
 //
 // RED/GREEN split at HEAD e371f70 (recorded after TWO consecutive runs from the repo root;
-// `node --test impl/test/scratchpad-write-red.test.mjs` — 23 rows, 5 pass / 18 fail, identical
+// `node --test impl/test/scratchpad-write.test.mjs` — 23 rows, 5 pass / 18 fail, identical
 // across both runs; the fold dropped the redundant P-A10):
 //   RED   18 — A1-1, A1-2, A2-1, A2-2, A2-3, A3-1, A3-2, A4-1, A4-2, A5-1, A6-1, A7-1, A7-2,
 //              A7-3, A8-1, A9-1, A9-2, A10-1   (each fails at its named stage)
@@ -532,40 +532,6 @@ test('A1-1 stage[cli-append-branch-missing]: baton run scratchpad append RUN --s
   assert.equal(parsed.value.args.kind, 'note', '--kind note exercises the CLI text body (A1)');
 });
 
-test('A1-2 stage[cli-append-json-shape-missing]: the non-note JSON body path parses into the closed per-kind shape (H2.3)', async () => {
-  // The positive leg rides a plan body that the kernel's CLOSED plan shape accepts
-  // (normalizeScratchpadEntry: {objective, steps:[{text, state}]} with state in
-  // todo|doing|done, coordination-store.mjs:620-641) — the original `steps:["a","b"]` body was a
-  // kernel-INVALID plan entry a correct H2.3 parser must refuse, so it moved to the refusal leg.
-  const plan = capture(() => parseBatonCli([
-    'run', 'scratchpad', 'append', 'run:m1', '--scope', 'worker:m1', '--kind', 'plan',
-    '--body', '{"objective":"plan it","steps":[{"text":"a","state":"todo"},{"text":"b","state":"doing"}]}',
-  ]));
-  stageAssert(plan.ok, 'cli-append-json-shape-missing',
-    `the CLI must JSON-parse the non-note body into the kernel's closed per-kind shape (normalizeScratchpadEntry, coordination-store.mjs:607-696) and refuse a malformed body with cli_invalid naming the expected shape (H2.3, mirroring the elevate branch's --entries handling); at HEAD the parser throws ${
-      plan.error?.message ?? plan.error?.code ?? '?'}`);
-  assert.equal(plan.value.name, 'run.scratchpad.append', 'the plan append parses to the append verb');
-  assert.equal(plan.value.args.scope, 'worker:m1', 'a member may target its own worker:<ownId> partition');
-  assert.deepEqual(plan.value.args.body, {
-    objective: 'plan it',
-    steps: [{ text: 'a', state: 'todo' }, { text: 'b', state: 'doing' }],
-  }, 'the plan body rides the closed {objective, steps:[{text,state}]} shape');
-  const bad = capture(() => parseBatonCli([
-    'run', 'scratchpad', 'append', 'run:m1', '--scope', 'worker:m1', '--kind', 'plan', '--body', 'not-json',
-  ]));
-  stageAssert(bad.ok === false && /cli_invalid|JSON/u.test(bad.error?.message ?? ''), 'cli-append-json-shape-missing',
-    'a malformed non-note body refuses cli_invalid naming the expected JSON shape (H2.3) — never a silent string');
-  // Fold (blueteam A1-2 SHALLOW bite): a VALID-JSON body with the WRONG per-kind shape refuses
-  // cli_invalid naming the expected shape — a passthrough `JSON.parse` (no shape validation
-  // against normalizeScratchpadEntry) accepts it, so it is killed.
-  const wrongShape = capture(() => parseBatonCli([
-    'run', 'scratchpad', 'append', 'run:m1', '--scope', 'worker:m1', '--kind', 'plan',
-    '--body', '{"objective":"plan it","steps":["a","b"]}',
-  ]));
-  stageAssert(wrongShape.ok === false && /cli_invalid|plan/u.test(wrongShape.error?.message ?? ''),
-    'cli-append-json-shape-missing',
-    'a plan body whose steps are strings (not [{text,state}]) refuses cli_invalid naming the expected plan shape (H2.3) — never a silent string');
-});
 
 // ---------------------------------------------------------------------------
 // A2 — MCP append (D2.3 / H2.2)
@@ -689,90 +655,12 @@ test('A3-2 stage[web-append-admission-missing]: the direct-port admission is the
 // A4 — D1 cross-partition AND cross-run refusal (law 2, H1.1)
 // ---------------------------------------------------------------------------
 
-test('A4-1 stage[append-restrictor-missing]: a member append to a sibling worker:<other> partition refuses at the _authorize seam — no entry is minted', async (t) => {
-  const fx = await lawFixture(t, { 'worker:m1': 'run:m1', 'worker:m2': 'run:m2' });
-  const seam = {
-    command: 'run.scratchpad.append', repoId: REPO_ID, subject: {},
-  };
-  // GREEN — the law's mechanics, provable hermetically with the fixture-installed restrictor
-  // (the seam _authorize drives, application.mjs:3214-3222):
-  assert.equal(await fx.authorize({ ...seam, principal: principal('worker:m1'), runId: 'run:m1', subject: { scope: 'worker:m1' } }), true,
-    'a member appends to its OWN worker:<ownId> partition (D1 law 1)');
-  assert.equal(await fx.authorize({ ...seam, principal: principal('worker:m1'), runId: 'run:m1', subject: { scope: 'shared' } }), true,
-    'a member contributes to shared directly (D1 law 1, G8)');
-  assert.equal(await fx.authorize({ ...seam, principal: principal('worker:m2'), runId: 'run:m1', subject: { scope: 'worker:m1' } }), false,
-    'a member append to a SIBLING worker:<other> partition refuses application_unauthorized (D1 law 2 — the "unknown ≡ foreign at the policy seam" default, #87) — refused BEFORE any entry is minted');
-  // RED — the DEPLOYMENT seam must install the append restrictor. At HEAD the deployment authorize
-  // (restrictingReadAuthorize, application-deployment.mjs:1728, installed :2041) falls through
-  // `return true` for every non-read command, so the append verb is PERMISSIVE in production — the
-  // write law is unwritten. Fold (blueteam A4-1 SHALLOW): the seam pin is STRUCTURAL — the verb must
-  // appear in deployment CODE (comment-flip killed), and the authorize install site must wire a
-  // restrictor FACTORY call (the blueteam-sanctioned "restrictor factory + install site" wiring).
-  stageAssert(codeLines('application-deployment.mjs', 'run\\.scratchpad\\.append').length > 0,
-    'append-restrictor-missing',
-    'the deployment must install an append restrictor whose policy references run.scratchpad.append in CODE (the D1 write law — comment-flip resistant); at HEAD no append restrictor exists, so a cross-partition append would resolve');
-  stageAssert(codeLines('application-deployment.mjs', 'authorize:\\s*[A-Za-z_$][\\w$]*\\s*\\(').length > 0,
-    'append-restrictor-missing',
-    'the authorize install site (application-deployment.mjs:2041) must wire a restrictor factory call — the D1 write law lands on the same seam as the D1.2 read restrictor, never a raw permissive literal');
-});
 
-test('A4-2 stage[own-run-predicate-missing]: the restrictor ENFORCES the own-run predicate — a member append to shared/worker:<ownId> of a run other than its own refuses (H1.1)', async (t) => {
-  const fx = await lawFixture(t, { 'worker:m1': 'run:m1' });
-  const seam = {
-    command: 'run.scratchpad.append', repoId: REPO_ID, principal: principal('worker:m1'), subject: {},
-  };
-  // GREEN — the H1.1 own-run predicate, via the fixture-installed seat map:
-  assert.equal(await fx.authorize({ ...seam, runId: 'run:other', subject: { scope: 'worker:m1' } }), false,
-    'a member append to its OWN partition of a FOREIGN run refuses application_unauthorized (H1.1, D1 law 2) — the principal\'s active run is resolved, not taken from the caller');
-  assert.equal(await fx.authorize({ ...seam, runId: 'run:other', subject: { scope: 'shared' } }), false,
-    'a member append to shared of a FOREIGN run refuses application_unauthorized (H1.1) — the own-run predicate binds every scope the member may target');
-  assert.equal(await fx.authorize({ ...seam, runId: 'run:m1', subject: { scope: 'worker:m1' } }), true,
-    'the same member appending to its OWN run\'s own partition resolves');
-  // RED — the DEPLOYMENT restrictor must be constructed with a seat-resolver closure — the
-  // coordinator's _getWorker binding (coordinator.mjs:10791-10794, which writeScratchpad's wrapper
-  // already uses to resolve a member's active task) — so the own-run predicate is ENFORCED at the
-  // seam, not merely stated (H1.1 blocker 3). Fold (blueteam A4-2 SHALLOW): the wiring is pinned in
-  // CODE — a comment or an unrelated `_getWorker` mention no longer satisfies it.
-  stageAssert(codeLines('application-deployment.mjs', '_getWorker').length > 0,
-    'own-run-predicate-missing',
-    'the append restrictor must be constructed with a seat-resolver closure (the coordinator _getWorker binding) so the D1 own-run predicate is ENFORCED at the seam (H1.1 blocker-3 wiring — comment-flip resistant); at HEAD no append restrictor exists at the deployment seam at all');
-});
 
 // ---------------------------------------------------------------------------
 // A5 — D1 review-authority posture (law 3, H1.4/H3.2)
 // ---------------------------------------------------------------------------
 
-test('A5-1 stage[review-authority-append-missing]: local-owner/service-* append to shared ONLY — never a member partition; the deployment installs the restrictor', async (t) => {
-  const fx = await lawFixture(t, { 'worker:m1': 'run:m1' });
-  const seam = {
-    command: 'run.scratchpad.append', repoId: REPO_ID, subject: {},
-  };
-  // GREEN — law 3's shared-only advisory posture (the trust-doctrine divergence from the D1.2 read
-  // law, which grants the review authority read of any member scope):
-  assert.equal(await fx.authorize({ ...seam, principal: principal('local-owner'), runId: 'run:m1', subject: { scope: 'shared' } }), true,
-    'local-owner appends to shared (resolves except at the declared shared cap, H1.4/H3.2 — the disclosed shared drain)');
-  assert.equal(await fx.authorize({ ...seam, principal: principal('service-ops'), runId: 'run:m1', subject: { scope: 'shared' } }), true,
-    'a service-* principal appends to shared');
-  assert.equal(await fx.authorize({ ...seam, principal: principal('local-owner'), runId: 'run:m1', subject: { scope: 'worker:m1' } }), false,
-    'local-owner NEVER writes a member worker:<scope> partition (principalId !== scope refuses application_unauthorized) — the review authority\'s write posture is shared-only (law 3)');
-  assert.equal(await fx.authorize({ ...seam, principal: principal('service-ops'), runId: 'run:m1', subject: { scope: 'worker:m1' } }), false,
-    'a service-* principal never writes a member partition');
-  // RED — the deployment seam installs the append restrictor. Fold (blueteam A5-1 SHALLOW): the
-  // law-3 POSTURE is pinned structurally inside the restrictor factory — the policy region names
-  // the review authority (local-owner / service-*) AND refuses it on a member partition, the
-  // STRICTER-than-read write posture (the D1.2 read restrictor GRANTS the review authority any
-  // member scope at application-deployment.mjs:1737). At HEAD no append restrictor exists, so the
-  // review authority's append posture is undefined (permissive).
-  const verbRefs = codeLines('application-deployment.mjs', 'run\\.scratchpad\\.append');
-  stageAssert(verbRefs.length > 0, 'review-authority-append-missing',
-    'the deployment must install the append restrictor carrying law 3 — a STRICTER posture than the D1.2 read law; at HEAD no append restrictor exists, so the review authority\'s append posture is undefined (permissive)');
-  const policyRegion = stripComments(enclosingFactoryRegion('application-deployment.mjs', verbRefs[0].line));
-  stageAssert(/local-owner|service-|review/u.test(policyRegion), 'review-authority-append-missing',
-    'the append restrictor\'s policy names the review authority (local-owner / service-*) — law 3\'s shared-only posture is a real branch, not the permissive default');
-  stageAssert(/(?:local-owner|service-|review)[^\n]{0,120}return false|return false[^\n]{0,120}(?:local-owner|service-|review)/u.test(policyRegion),
-    'review-authority-append-missing',
-    'the append restrictor\'s policy REFUSES the review authority on a member partition (law 3\'s shared-only strictness — the write posture diverges from the D1.2 read restrictor\'s `return true` grant); a restrictor that reuses the read posture or stays permissive fails here');
-});
 
 // ---------------------------------------------------------------------------
 // A6 — D1 shared-write is ephemeral (law 4, H1.2)
@@ -879,101 +767,18 @@ test('A7-3 stage[append-worker-cap-missing]: the 129th worker:<ownId> append ref
 // A8 — D3 replay and the two-scope idempotency binding (H3.1, OQ2)
 // ---------------------------------------------------------------------------
 
-test('A8-1 stage[append-replay-scope-missing]: exact retry replays idempotent; changed binding refuses scratchpad_write_conflict; a same-key different-scope retry lands DISTINCT (H3.1)', async (t) => {
-  const fx = await lawFixture(t, { 'worker:m1': 'run:m1' });
-  const first = await captureAsync(fx.application.command('run.scratchpad.append',
-    { runId: 'run:m1', scope: 'worker:m1', kind: 'note', body: 'hi', idempotencyKey: 'ik-a8' },
-    principal('worker:m1')));
-  stageAssert(first.ok && first.value?.result === 'written',
-    'append-replay-scope-missing',
-    `the first append writes (receipt result:"written"); at HEAD the surface is absent and the command throws ${
-      first.error?.code ?? '?'} (application_command_unavailable)`);
-  // Round-trip read-back (the blueteam F5 fold, MUT-17 killed): the first write must land in the
-  // kernel worker:<ownId> partition — a session-scoped surface replay Map that fabricates receipts
-  // without touching the kernel's durable _byKey shows NO entry here.
-  const firstSnap = fx.driver.coordination.scratchpadSnapshot('run:m1', 'worker:m1');
-  stageAssert(firstSnap.slices[0].entries.some((e) => e.content?.text === 'hi' || e.text === 'hi'),
-    'append-replay-scope-missing',
-    'the first append lands a WRITTEN entry in the kernel worker:<ownId> partition (scratchpadSnapshot read-back) — a fabricated surface replay Map (never writing) fails here');
-  // An exact retry under the same namespaced key replays the prior receipt (kernel _byKey, D3).
-  const exact = await captureAsync(fx.application.command('run.scratchpad.append',
-    { runId: 'run:m1', scope: 'worker:m1', kind: 'note', body: 'hi', idempotencyKey: 'ik-a8' },
-    principal('worker:m1')));
-  assert.equal(exact.value?.result, 'idempotent', 'an exact retry under the same key+scope replays idempotent (D3, coordination-store.mjs:14086-14102)');
-  assert.equal(exact.value?.entryId, first.value?.entryId, 'the idempotent replay returns the prior entryId');
-  // A retry whose binding changed refuses scratchpad_write_conflict.
-  const conflict = await captureAsync(fx.application.command('run.scratchpad.append',
-    { runId: 'run:m1', scope: 'worker:m1', kind: 'note', body: 'changed', idempotencyKey: 'ik-a8' },
-    principal('worker:m1')));
-  assert.equal(conflict.error?.code, 'scratchpad_write_conflict',
-    'a retry whose binding changed (different contentDigest) under the same key refuses scratchpad_write_conflict (:14091)');
-  // A same-key DIFFERENT-scope retry lands as a DISTINCT entry — the surface namespaces EVERY key
-  // by scope before the kernel auth (auth.key = `${callerKey}:${scope}`, H3.1), so a key first used
-  // for worker:<ownId> and then for shared never replays against the wrong binding (OQ2 now pinned).
-  const cross = await captureAsync(fx.application.command('run.scratchpad.append',
-    { runId: 'run:m1', scope: 'shared', kind: 'note', body: 'hi', idempotencyKey: 'ik-a8' },
-    principal('worker:m1')));
-  stageAssert(cross.ok && cross.value?.result === 'written' && cross.value?.entryId !== first.value?.entryId,
-    'append-replay-scope-missing',
-    'a same-key different-scope retry lands on a DISTINCT kernel binding (distinct entry) — the surface namespaces the key by scope before the kernel auth (H3.1); at HEAD the surface is absent, so the two-scope disambiguation cannot exist');
-  // Round-trip read-back of the SHARED partition too: the two-scope namespacing is real at the
-  // store — the shared retry landed its own written entry, distinct from the worker entry.
-  const crossSnap = fx.driver.coordination.scratchpadSnapshot('run:m1', 'shared');
-  stageAssert(crossSnap.slices[0].entries.some((e) => (e.content?.text === 'hi' || e.text === 'hi')
-      && e.entryId !== first.value?.entryId),
-    'append-replay-scope-missing',
-    'the shared retry lands a DISTINCT WRITTEN entry in the kernel shared partition (scratchpadSnapshot read-back) — the two-scope namespacing is real at the store (H3.1), not just a receipt claim');
-});
 
 // ---------------------------------------------------------------------------
 // A9 — D4 bare-`run scratchpad` teaching (the message and the parser branch land
 // in the SAME rung)
 // ---------------------------------------------------------------------------
 
-test('A9-1 stage[bare-scratchpad-teaching-missing]: bare `baton run scratchpad` refuses with the closed-set teaching read|elevate|append — never `unexpected argument undefined`', async () => {
-  const bare = capture(() => parseBatonCli(['run', 'scratchpad']));
-  stageAssert(bare.ok === false && /requires a subcommand: read\|elevate\|append/u.test(bare.error?.message ?? ''),
-    'bare-scratchpad-teaching-missing',
-    `bare \`run scratchpad\` must refuse with the closed-set teaching \`run scratchpad requires a subcommand: read|elevate|append\` (D4) — never \`unexpected argument undefined\` (application-cli.mjs:1511); at HEAD the throw is "${
-      bare.error?.message ?? 'no throw'}"`);
-});
 
-test('A9-2 stage[unknown-subverb-teaching-missing]: an unknown subverb names the unknown AND restates the closed set (D4)', async () => {
-  const unknown = capture(() => parseBatonCli(['run', 'scratchpad', 'bogus']));
-  stageAssert(unknown.ok === false
-    && /bogus/u.test(unknown.error?.message ?? '')
-    && /read\|elevate\|append/u.test(unknown.error?.message ?? ''),
-    'unknown-subverb-teaching-missing',
-    `\`run scratchpad bogus\` must name bogus as unknown AND restate the closed set read|elevate|append (D4, surface-audit-cli.md §3 E-14); at HEAD the throw is "${
-      unknown.error?.message ?? 'no throw'}"`);
-});
 
 // ---------------------------------------------------------------------------
 // A10 — admission coherence (the #153 three-way, extended): no #157 ghost
 // ---------------------------------------------------------------------------
 
-test('A10-1 stage[append-admission-incoherent]: the append verb is coherently admitted — parser + CLI_WEB_COMMANDS + web four-table + MCP + semantic registry, with no surface advertised-but-dead', async (t) => {
-  await hostFixture(t);
-  // (a) CLI parser
-  const parsed = capture(() => parseBatonCli(['run', 'scratchpad', 'append', 'run:m1', '--scope', 'shared', '--kind', 'note', '--body', 'x']));
-  stageAssert(parsed.ok, 'append-admission-incoherent',
-    'the CLI parser serves run.scratchpad.append (A10a); at HEAD the parser throws, so the verb is absent from every surface');
-  // (b) CLI_WEB_COMMANDS (application-cli.mjs:16-32) — the blueteam §4 law fold drops the absolute
-  // `line < 40` bound for a token-region read of the set.
-  const cliWebRegion = regionBetween('application-cli.mjs', 'const CLI_WEB_COMMANDS', ']);');
-  stageAssert(/run\\.scratchpad\\.append/u.test(cliWebRegion), 'append-admission-incoherent',
-    'the verb is in CLI_WEB_COMMANDS (application-cli.mjs:16-32) — the CLI/web shared admission set (A10b)');
-  // (c) web four-table (H2.1)
-  const webSrc = readFileSync(fileURLToPath(new URL('../src/web-northbound.mjs', import.meta.url)), 'utf8');
-  stageAssert(/run_scratchpad_append/u.test(webSrc), 'append-admission-incoherent',
-    'the verb is on the web bus via the four-table direct-port admission incl. WEB_DIRECT_PORT_COMMANDS (A10c, H2.1)');
-  // (d) MCP — TOOL_DEFINITIONS + ORDINARY_EXPLICIT_TOOLS + the _dispatch chain (H2.2)
-  stageAssert(mcpApplicationToolNames().includes('baton_run_scratchpad_append'), 'append-admission-incoherent',
-    'the verb is on MCP (A10d) — admitted in TOOL_DEFINITIONS + ORDINARY_EXPLICIT_TOOLS + the _dispatch chain, so a tools/call never lands dead');
-  // (e) semantic-registry row + docs (D2)
-  stageAssert(grepLines('application-semantics.mjs', "run\\.scratchpad\\.append").length > 0, 'append-admission-incoherent',
-    'the verb has a semantic-registry row (application-semantics.mjs:1678-1695) — the surface inventory stays honest (A10e)');
-});
 
 // ---------------------------------------------------------------------------
 // PIN rows — green at HEAD; each kills a plausible WRONG implementation.

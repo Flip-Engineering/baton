@@ -65,7 +65,7 @@
 // enforces both over the resolved detection home).
 //
 // ── VERIFIED SPLIT (run twice from the repo root) ──────────────────────────────────────────
-//   `node --test impl/test/prescriptive-doctor-red.test.mjs`
+//   `node --test impl/test/prescriptive-doctor.test.mjs`
 //   Run 1: 17 tests — 4 pass (PT-2p, PT-4p, PT-8p guard pins, PT-L fixture-lint) / 13 fail
 //          (PT-1..PT-13 red rows).
 //   Run 2: 17 tests — 4 pass / 13 fail. STABLE. The 13 red rows fail at the stage guard

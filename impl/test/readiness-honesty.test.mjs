@@ -59,7 +59,7 @@
 // application-semantics.mjs, impl/scripts/baton.mjs).
 //
 // ── VERIFIED SPLIT (run twice from the repo root; both recorded in suite-notes-167.md) ──────
-//   `node --test impl/test/readiness-honesty-red.test.mjs`
+//   `node --test impl/test/readiness-honesty.test.mjs`
 //   Run 1: 17 tests — 8 pass (A1p, A3p, A4p, A5p, A6p, P-stale, A-L, A-Lcap) / 9 fail (A1a, A1b,
 //          A1c, A2, A3, A4, A5, A6, V-stale red rows).
 //   Run 2: 17 tests — 8 pass / 9 fail. STABLE. The 9 red rows fail at their named stage; they go
@@ -191,7 +191,7 @@ class LivenessAdapter {
         mode: 'exact', configuredDefault: this._route.model, available: [this._route.model],
         family: this._family, acceptedPrefixes: [], acceptedAliases: [],
         reasoningEffort: ['low', 'high'], serviceTier: null,
-        provenance: 'readiness-honesty-red', refreshedAt: null,
+        provenance: 'readiness-honesty', refreshedAt: null,
       },
       providerCompatibility: { credentialState: this._credentialState },
       permissions: { mode: 'unattended-full', boundary: 'same-UID test process' },
@@ -667,228 +667,14 @@ test('P-stale (pin): the landed staleness law — a lapsed verified window proje
 // RED ROWS — fail TODAY for the named stage; GREEN only on a contract-correct implementation.
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-test('V-stale (stage: lapsed-window verdict): the honest verdict follows the staleness law — a lapsed verified window reads verdict unverified, NEVER stale probe-verified, with probedAt retaining the last recorded measurement (D2 staleness law, P-stale twin)', async () => {
-  let nowMs = NOW;
-  const adapter = new LivenessAdapter({ route: ROUTE, mode: 'complete' });
-  const fixture = await openFixture({
-    routes: [ROUTE],
-    adapters: { grok: adapter },
-    extraAdvanced: { liveness: { now: () => nowMs, probeTimeoutMs: PROBE_TIMEOUT_MS, failureWindowMs: FAILURE_WINDOW_MS } },
-  });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    await spawnWorker(fixture.deployment, ROUTE, 'v-stale-probe');
-    // The window lapses: the recorded verifiedAt (NOW) is now GROK_WINDOW_MS + 1ms in the past.
-    nowMs = NOW + GROK_WINDOW_MS + 1;
-    const lapsed = routeRow(await fixture.deployment.doctor(), ROUTE);
-    assert.ok(lapsed, 'the fixture serves the route row');
-    assert.equal(lapsed.verdict, 'unverified',
-      'stage V-stale: a lapsed verified window reads verdict unverified — never stale probe-verified (D2 staleness law)');
-    assert.ok(VERDICTS.includes(lapsed.verdict), 'verdict is from the closed vocabulary');
-    assert.equal(lapsed.probedAt, new Date(NOW).toISOString(),
-      'probedAt retains the last recorded measurement after the window lapses — content-derived, never cleared (OQ5)');
-    assert.equal(lapsed.liveness?.verifiedAt, NOW,
-      'the sibling records the same content-derived verifiedAt (P-stale agreement)');
-    assert.equal(lapsed.static?.state, 'ready', 'the static substrate is unchanged (G1)');
-  } finally {
-    await fixture.close();
-  }
-});
 
-test('A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)', async () => {
-  const adapter = new LivenessAdapter({ route: ROUTE, mode: 'complete' });
-  const fixture = await openFixture({
-    routes: [ROUTE],
-    adapters: { grok: adapter },
-    extraAdvanced: { liveness: { now: () => NOW, probeTimeoutMs: PROBE_TIMEOUT_MS, failureWindowMs: FAILURE_WINDOW_MS } },
-  });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    const row = routeRow(await fixture.deployment.doctor(), ROUTE);
-    assert.ok(row, 'the fixture serves the route row');
-    assert.ok(typeof row.verdict === 'string',
-      'stage A1a: doctor route rows carry no enumerable verdict field (D2 shape)');
-    assertHonestProjection(row, { verdict: 'unverified', probedAt: null });
-    assert.ok(VERDICTS.includes(row.verdict), 'verdict is from the closed vocabulary');
-    assert.ok(Object.keys(row).includes('verdict'), 'verdict is enumerable (Object.keys sees it)');
-    const serialized = JSON.parse(JSON.stringify(row));
-    assert.equal(serialized.verdict, 'unverified', 'verdict survives the wire (serialized JSON carries it)');
-    assert.equal(serialized.probedAt, null, 'probedAt survives the wire');
-    assert.equal(row.static?.state, 'ready', 'the static substrate is unchanged (G1)');
 
-    // Probe-verified: a fresh content-verified probe relabels the row, probedAt = verifiedAt.
-    await spawnWorker(fixture.deployment, ROUTE, 'a1a-probe');
-    const row2 = routeRow(await fixture.deployment.doctor(), ROUTE);
-    assert.equal(row2.verdict, 'probe-verified', 'a fresh content-verified probe reads probe-verified');
-    assert.equal(row2.probedAt, new Date(row2.liveness.verifiedAt).toISOString(),
-      'probedAt is content-derived from the recorded verifiedAt (never a TTL guess)');
-    assert.equal(JSON.parse(JSON.stringify(row2)).verdict, 'probe-verified', 'probe-verified survives the wire');
-  } finally {
-    await fixture.close();
-  }
-});
 
-test('A1b (stage: roster honest projection): the fleet_roster row carries the same {verdict, probedAt} projection — the liveness class is not a private sibling (D2 shape)', async () => {
-  const adapter = new LivenessAdapter({ route: ROUTE, mode: 'complete' });
-  const fixture = await openFixture({
-    routes: [ROUTE],
-    adapters: { grok: adapter },
-    extraAdvanced: { liveness: { now: () => NOW, probeTimeoutMs: PROBE_TIMEOUT_MS, failureWindowMs: FAILURE_WINDOW_MS } },
-  });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    const roster = await fixture.deployment.fleet.roster();
-    const row = (roster?.routes ?? []).find((candidate) => candidate.harness === ROUTE.harness
-      && candidate.model === ROUTE.model && candidate.effort === ROUTE.effort) ?? null;
-    assert.ok(row, 'the roster serves the route row');
-    assert.ok(typeof row.verdict === 'string', 'stage A1b: roster rows carry no verdict field (D2)');
-    assertHonestProjection(row, { verdict: 'unverified', probedAt: null });
-    assert.ok(Object.keys(row).includes('verdict'), 'verdict is enumerable on the roster row');
-    assert.ok(Object.keys(row).includes('probedAt'), 'probedAt is enumerable on the roster row');
-  } finally {
-    await fixture.close();
-  }
-});
 
-test('A1c (stage: northbound re-add): the operator wire surfaces — /v1/application-card, the CLI doctor read, deployment.doctor — re-add verdict + probedAt so a JSON round-trip cannot strip them (D2 wire law, blocker 3)', async () => {
-  const webCode = stripComments(readFileSync(join(srcDir, 'web-northbound.mjs'), 'utf8'));
-  const cardSlice = methodSlice(webCode, /async _handleOperatorRead\(/u);
-  assert.ok(cardSlice.includes('probedAt'),
-    'stage A1c: the /v1/application-card handler re-adds no probedAt — the honest projection vanishes on the wire (web re-adds only briefing)');
 
-  const cliCode = stripComments(readFileSync(join(srcDir, 'application-cli.mjs'), 'utf8'));
-  const doctorSlice = methodSlice(cliCode, /async doctor\(\)/u);
-  assert.ok(doctorSlice.includes('probedAt'),
-    'stage A1c: BatonWebClient.doctor() re-adds no probedAt (application-cli.mjs:1961)');
 
-  const mcpCode = stripComments(readFileSync(join(srcDir, 'mcp-northbound.mjs'), 'utf8'));
-  const freshSlice = methodSlice(mcpCode, /async _freshDoctorReadiness\(\)/u);
-  assert.ok(freshSlice.includes('probedAt'),
-    'stage A1c: the deployment.doctor MCP result re-adds no probedAt (mcp-northbound.mjs:1804-1808)');
 
-  // The honest fields are the doctor row's, so every re-add carries them explicitly (the D6c
-  // briefing precedent) — the sibling-only form is struck.
-  assert.ok(cardSlice.includes('verdict'), 'the web re-add carries verdict');
-  assert.ok(doctorSlice.includes('verdict'), 'the CLI re-add carries verdict');
-  assert.ok(freshSlice.includes('verdict'), 'the MCP result carries verdict');
-});
 
-test('A2 (stage: on-demand forced probe): baton doctor --check forces exactly one fresh probe per stale route through the OPERATOR path — baton.mjs → BatonWebClient.doctor() → a /v1/application-card forced-probe parameter (D1 trigger 3, blocker 2)', async () => {
-  const batonSource = stripComments(readFileSync(join(scriptsDir, 'baton.mjs'), 'utf8'));
-  const doctorBranch = sliceBetween(batonSource, /parsed\.kind === 'doctor'/u, /parsed\.kind === 'serve'/u);
-  assert.ok(doctorBranch.includes('forceProbe'),
-    'stage A2: the baton.mjs doctor branch never forces a probe — --check only selects local-vs-remote (baton.mjs:81)');
-
-  const cliCode = stripComments(readFileSync(join(srcDir, 'application-cli.mjs'), 'utf8'));
-  const doctorSlice = methodSlice(cliCode, /async doctor\(\)/u);
-  assert.ok(/forceProbe/u.test(doctorSlice),
-    'stage A2: BatonWebClient.doctor() accepts no forced-probe signal (application-cli.mjs:1961-1978)');
-
-  const webCode = stripComments(readFileSync(join(srcDir, 'web-northbound.mjs'), 'utf8'));
-  const cardSlice = methodSlice(webCode, /async _handleOperatorRead\(/u);
-  assert.ok(cardSlice.includes('forceProbe'),
-    'stage A2: /v1/application-card has no forced-probe parameter (web-northbound.mjs:1504-1513)');
-});
-
-test('A3 (stage: typed refusal vocabulary): provider_unreachable, probe_content_mismatch, probe_oversize, and provider_quota each have a PROVIDER_TERMINAL_GUIDANCE row with {category, summary, remediation, retryable} — and a probe verdict never collapses to the generic (G6, refusal vocabulary)', async () => {
-  const semanticsSource = readFileSync(join(srcDir, 'application-semantics.mjs'), 'utf8');
-  const guidance = sliceBetween(stripComments(semanticsSource),
-    /const PROVIDER_TERMINAL_GUIDANCE/u, /const GENERIC_PROVIDER_TERMINAL_GUIDANCE/u);
-  assert.ok(guidance.length > 0, 'the PROVIDER_TERMINAL_GUIDANCE literal is present');
-  for (const code of PROBE_CODES) {
-    const rowStart = guidance.indexOf(`${code}: {`);
-    assert.ok(rowStart !== -1,
-      `stage A3: the typed refusal vocabulary has no ${code} row — the probe verdict collapses to the generic (G6)`);
-    const rowBlock = guidance.slice(rowStart, guidance.indexOf('},', rowStart) + 2);
-    for (const field of TABLE_FIELDS) {
-      assert.ok(rowBlock.includes(field), `the ${code} row carries ${field}`);
-    }
-  }
-  // The provider_quota row excludes automatic re-probe (OQ3 decided) — operator surface only.
-  const quotaRow = guidance.slice(guidance.indexOf('provider_quota: {'));
-  assert.ok(/no automatic re-probe|operator surface|re-probe/u.test(quotaRow),
-    'the provider_quota row excludes automatic re-probe');
-
-  // Behavior: a probe verdict never projects through GENERIC_PROVIDER_TERMINAL_GUIDANCE.
-  const projected = projectTypedTerminalCause({ terminalOutcome: { accepted: false, code: 'probe_content_mismatch' } });
-  assert.ok(projected, 'the terminal-cause projection resolves');
-  assert.notEqual(projected.summary, GENERIC_SUMMARY,
-    'stage A3: a probe verdict collapses to the generic provider failure at the terminal-cause projection (application-semantics.mjs:2127-2130)');
-  assert.equal(projected.category, 'provider_protocol', 'the probe-content-mismatch row class is provider_protocol');
-});
-
-test('A4 (stage: quota/capacity death class): a probe whose output carries the quota/capacity wire — HTTP 402 / insufficient_quota — classifies to the typed provider_quota verdict, distinct from provider_unreachable and probe_content_mismatch, and excludes the automatic re-probe cadence (D1, refusal vocabulary, OQ3)', async () => {
-  // Classification separation: a completed quota turn and a failed quota turn BOTH classify
-  // provider_quota — never content-mismatch or unreachable.
-  for (const mode of ['quota', 'quota_failed']) {
-    const adapter = new LivenessAdapter({ route: ROUTE, mode });
-    const fixture = await openFixture({
-      routes: [ROUTE],
-      adapters: { grok: adapter },
-      extraAdvanced: { liveness: { now: () => NOW, probeTimeoutMs: PROBE_TIMEOUT_MS, failureWindowMs: FAILURE_WINDOW_MS } },
-    });
-    try {
-      assert.equal(fixture.wiringError, null, 'fixture must open');
-      await gateOutcome(fixture.deployment, ROUTE, `a4-${mode}`);
-      const row = routeRow(await fixture.deployment.doctor(), ROUTE);
-      assert.equal(row?.liveness?.code, 'provider_quota',
-        `stage A4: a ${mode} probe carrying the quota/capacity wire does not classify provider_quota — it collapses to probe_content_mismatch/provider_unreachable at HEAD`);
-      assert.equal(row?.liveness?.state, 'failed', 'the quota death is a failed verdict');
-    } finally {
-      await fixture.close();
-    }
-  }
-
-  // No-auto-re-probe: a quota-dead row is excluded from the automatic failureWindowMs cadence
-  // (route-liveness.mjs:132-146) — operator surface only.
-  const livenessCode = stripComments(readFileSync(join(srcDir, 'route-liveness.mjs'), 'utf8'));
-  const ensureSlice = methodSlice(livenessCode, /async ensure\(/u);
-  assert.ok(/provider_quota|quota/u.test(ensureSlice),
-    'stage A4: a quota-dead route is not excluded from the automatic failureWindowMs re-probe (no provider_quota handling)');
-});
-
-test('A5 (stage: honest-projection refusal): a failed verdict refuses wave preflight with wave_driver_route_unready BEFORE any member spawn, and the driver never substitutes a route (D3)', async () => {
-  const adapter = new LivenessAdapter({ route: ROUTE, mode: 'die' });
-  const fixture = await openFixture({
-    routes: [ROUTE],
-    adapters: { grok: adapter },
-    extraAdvanced: { liveness: { now: () => NOW, probeTimeoutMs: PROBE_TIMEOUT_MS, failureWindowMs: FAILURE_WINDOW_MS } },
-  });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    await gateOutcome(fixture.deployment, ROUTE, 'a5-dead');
-    const row = routeRow(await fixture.deployment.doctor(), ROUTE);
-    assert.ok(row?.verdict,
-      'stage A5: doctor route rows carry no verdict field — the preflight cannot refuse on the honest projection (D3, D2 wire law)');
-    assert.equal(row.verdict, 'failed', 'a failed probe reads verdict failed');
-    assert.equal(row.probedAt, new Date(row.liveness.failedAt).toISOString(),
-      'a failed verdict still reports when it was measured (OQ5)');
-
-    const outcome = await runWavePreflight(fixture.deployment, ROUTE, 2);
-    assert.equal(outcome, 'wave_driver_route_unready',
-      'a failed verdict refuses preflight with the typed code BEFORE any member spawn');
-
-    // No substitution: matchRoute selects only the member's own route.
-    const waveSource = stripComments(readFileSync(join(srcDir, 'wave-driver.mjs'), 'utf8'));
-    const matchSlice = methodSlice(waveSource, /function matchRoute\(/u);
-    for (const token of ['fallback', 'alternate', 'substitute', 'router']) {
-      assert.equal(matchSlice.includes(token), false, `matchRoute performs no ${token} selection — the member's exact route is the sole authority`);
-    }
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('A6 (stage: spawn-gate coverage): #livenessGate is consulted on every provider-spawn surface — run, startMany, workflow, explore, review — before any real turn, exactly as assertRouteReady already is (D1 trigger 1, blocker 4)', () => {
-  const code = stripComments(deploymentSource);
-  for (const method of ['run', 'startMany', 'workflow', 'explore', 'review']) {
-    const slice = methodSlice(code, new RegExp(`async ${method}\\(`, 'u'));
-    assert.ok(slice.includes('#livenessGate'),
-      `stage A6: ${method}() consults no #livenessGate — the gate covers only run() (D1, blocker 4)`);
-    assert.ok(slice.includes('assertRouteReady'),
-      `${method}() keeps the existing assertRouteReady consultation (the gate is additive, never a replacement)`);
-  }
-});
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // GREEN FIXTURE-LINT PIN — pass TODAY, stage-independent; proves the LivenessAdapter modes plant

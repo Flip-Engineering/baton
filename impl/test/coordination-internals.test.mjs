@@ -349,7 +349,7 @@ test('CI5: the store keeps its exact public behavior across the move (create, re
 test('CI6: the 14 members slice 2 relocated are delegates, and the pins that keyed them to the store now name them', () => {
   // Slice 1 kept these 14 in the store because two red-first suites pinned byte-literal LOCATIONS in
   // coordination-store.mjs: frame-economics-red exempted F1's byte literals by FILE, and
-  // worker-verdict-surface-red grepped the store path for the recovery-refinement digest pin. Slice 2
+  // worker-verdict-surface grepped the store path for the recovery-refinement digest pin. Slice 2
   // retired both: F1's exemptions and the digest pin now name the MEMBER, resolving its home through
   // the committed seam map, so the bodies could move — and this row pins that they did, and that the
   // store's copy of the pin is gone rather than duplicated.

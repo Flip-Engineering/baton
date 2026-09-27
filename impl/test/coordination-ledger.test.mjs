@@ -21,7 +21,7 @@
 // `CL6` pins the half of this slice that is not the move: the source scans that read a member's own
 // text (the fold's event kinds, the scratchpad replay terms, the run-stop sites) now resolve the
 // member through `test/seam-member-source.mjs` instead of reading `coordination-store.mjs` — the
-// mechanism slice 2 introduced for `frame-economics-red` F1 and `worker-verdict-surface-red` C4/E4,
+// mechanism slice 2 introduced for `frame-economics-red` F1 and `worker-verdict-surface` C4/E4,
 // applied to the six pins that still keyed on the file.
 
 import assert from 'node:assert/strict';
@@ -374,7 +374,7 @@ test('CL6: the pins that read a moved member\'s text resolve it through the live
     'the ledger bodies left the store file: a file-keyed scan would now miss them');
   for (const file of [
     'test/scratchpad-33-red.test.mjs',
-    'test/scratchpad-write-red.test.mjs',
+    'test/scratchpad-write.test.mjs',
     'test/issue366-run-stop-replay-ceiling.test.mjs',
   ]) {
     assert.ok(read(file).includes('memberSource('), `${file}: a moved member's text is read by name`);

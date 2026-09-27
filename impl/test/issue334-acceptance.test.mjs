@@ -49,7 +49,7 @@ function tmpDir(prefix = 'baton-334-') {
 test.after(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
 
 // ---------------------------------------------------------------------------
-// Coordinator-direct harness (mirrors worker-verdict-surface-red.test.mjs:
+// Coordinator-direct harness (mirrors worker-verdict-surface.test.mjs:
 // a 'claim'-card adapter whose completed turn falls straight through to the
 // real trust gate; a fixed microtask drain drives the production dispatch).
 // ---------------------------------------------------------------------------

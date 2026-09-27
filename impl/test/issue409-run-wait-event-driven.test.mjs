@@ -4,7 +4,7 @@
 // (`coordination.waitAfter(view.cursor, remaining)`). The fix parks run.wait on that SAME
 // primitive with the caller's remaining budget and retires the fixed cadence.
 //
-// Fixture idiom: blind-waits-red.test.mjs (a real createDriver + BatonApplication stack over a
+// Fixture idiom: blind-waits.test.mjs (a real createDriver + BatonApplication stack over a
 // MockAdapter, a parent orchestrator task + recursive lease, so run.start/run.wait run through
 // the REAL seams). Spies wrap and call through, so every row observes the real primitive.
 import assert from 'node:assert/strict';

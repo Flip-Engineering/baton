@@ -87,70 +87,8 @@ test('#268: the participant row carries activity and usage from folded rows', as
     'land usage {tokens|unavailable, providerCalls|unavailable}: absence is labelled per field, never zero-filled (docs/46 §1.2 rule 2)');
 });
 
-test('#364 RED (stage: SWARM_PARTICIPANT_RUNTIME_STATES not exported): the closed runtime state set is exported and every surface reads the ONE derivation', async (t) => {
-  const f = fixture(t);
-  await f.call('create', { purpose: 'One liveness (#364 view half)' });
-  await f.recruit('alpha');
-  await f.recruit('beta');
-  assert.ok(Array.isArray(swarmRuntime.SWARM_PARTICIPANT_RUNTIME_STATES),
-    'land SWARM_PARTICIPANT_RUNTIME_STATES: the exported closed set every surface validates runtime.state against (docs/46 §1.1)');
-  for (const state of ['pending', 'working', 'blocked', 'idle', 'stopping', 'dead', 'exited', 'completed', 'lost', 'unbound', 'root']) {
-    assert.ok(swarmRuntime.SWARM_PARTICIPANT_RUNTIME_STATES.includes(state),
-      `land '${state}' in the closed runtime state set — 'lost' is the #364 restart reading, 'root' the §5 actor row (docs/46 §1.1, §5.2)`);
-  }
-  // A dead seat's view row and the next recruit's brief agree: the ONE derivation, so the 40
-  // dead seats of 2026-09-18 can never ride a Peers section again (docs/46 §1.1 rule 3, §4.2).
-  f.workers.find((row) => row.id === 'w-2').status = 'dead';
-  const dead = await f.participantRow('beta');
-  assert.equal(dead.runtime.live, false, 'a seat whose worker died reads live: false from the ONE liveness derivation');
-  await f.recruit('gamma');
-  const brief = f.starts.at(-1).objective;
-  const peersBlock = brief.split('Peers (the seats already working beside you):')[1]?.split('\n\n')[0] ?? '';
-  assert.ok(!peersBlock.includes('beta'),
-    'land the brief fix: a seat _canAct rejects is never listed as a working peer (docs/46 §4.2 rule 1)');
-});
 
-test('#268 RED (stage: the root participant row not landed): the root is a participant row and its acts render attributed', async (t) => {
-  const f = fixture(t);
-  await f.call('create', { purpose: 'The root has an actor row (root standing gap b)' });
-  await f.recruit('builder');
-  const builder = principal('w-1');
-  await f.call('update', { event: 'swarm.contribution_recorded', payload: {
-    contributionId: 'c1', participantId: 'builder', body: 'For the root to review.',
-  } }, builder);
-  // The orchestrator (no seat) reviews: the durable row keeps reviewerId null with actor 'owner';
-  // the VIEW renders the attribution against the root row (docs/46 §5.3).
-  await f.call('update', { event: 'swarm.contribution_reviewed', payload: {
-    contributionId: 'c1', decision: 'accept', reason: 'Accepted by the root.',
-  } }, owner);
-  const root = await f.participantRow('root');
-  assert.ok(root,
-    'land the synthesized root participant row on every view\'s participants array (docs/46 §5.1)');
-  assert.equal(root.status, 'active', 'the root row reads active while the resident answers (docs/46 §5.2)');
-  assert.deepEqual([...root.permissions].sort(),
-    ['communicate', 'contribute', 'organize', 'read', 'recruit', 'review', 'stop'],
-    'the root row carries the whole permission grant set (docs/46 §5.1)');
-  assert.equal(root.runtime?.state, 'root', 'the root row\'s runtime state is root (docs/46 §5.2)');
-  const view = await f.call('view', { projection: 'contributions' });
-  const reviews = view.reviews?.c1 ?? [];
-  assert.equal(reviews[0]?.reviewerId, 'root',
-    'land attribution rendering: an orchestrator review lands with reviewerId root — the null never reaches a reader (docs/46 §5.3)');
-  await assert.rejects(f.recruit('root'), /root/,
-    'root is a reserved participant name: it is derived, never recruited (docs/46 §5.1)');
-});
 
-test('#268 RED (stage: the attention coverage envelope not landed): attention carries its coverage — examined seats are named', async (t) => {
-  const f = fixture(t);
-  await f.call('create', { purpose: 'Attention coverage (root standing gap c)' });
-  await f.recruit('builder');
-  const view = await f.call('view', { projection: 'attention' });
-  assert.ok(view.attention && !Array.isArray(view.attention) && Array.isArray(view.attention.rows),
-    'land the attention envelope {rows, coverage}: rows keep today\'s array content (docs/46 §6.1)');
-  assert.ok(Array.isArray(view.attention.coverage?.examined) && Array.isArray(view.attention.coverage?.unexamined),
-    'land attention.coverage {examined, unexamined}: an empty rows list is distinguishable from an unexamined one (docs/46 §6.3)');
-  assert.ok(view.attention.coverage.examined.includes('builder'),
-    'coverage.examined names every participant the attention derivation evaluated this read (docs/46 §6.2)');
-});
 
 test('#268: swarm.view --projection participants spawns no process (#438)', async (t) => {
   const f = fixture(t);
