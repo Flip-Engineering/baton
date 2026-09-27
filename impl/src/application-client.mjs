@@ -1135,21 +1135,10 @@ export class BatonRun {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow Candidate selection is invalid');
     return this.act('select_candidate', { role, reason });
   }
-  stopMember(role, reason = 'Stop and reap this active Workflow member.') {
-    if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow member stop is invalid');
-    return this.act('stop_member', { role, reason });
-  }
-  adopt(reason) {
-    if (reason !== undefined && !nonempty(reason)) throw clientError('Run adoption reason is invalid');
-    return this.act('adopt_result', reason === undefined ? {} : { reason });
-  }
   revise(reason) {
     if (reason !== undefined && !nonempty(reason)) throw clientError('Workflow revision reason is invalid');
     return this.act('revise_candidate', reason === undefined ? {} : { reason });
   }
-  export() { return this.act('export_result'); }
-  review(inputs) { return this.act('semantic_review', inputs); }
-  integrate(options = {}) { return this.apply(options); }
 
   candidates() { return this.inspect({ depth: 'section', section: 'candidates' }); }
 

@@ -893,9 +893,9 @@ const cli = {
     },
     'run.episode': { aliasFor: 'run.inspect.episode' },
     'run.inspect.workstreams': {
-      commandIds: ['run.workstreams', 'run.notify', 'run.stop-member'],
+      commandIds: ['run.workstreams'],
       paragraphs: [
-        'Workstreams expose stable semantic roles and durable workflow generations. Notify, result, Episode, and stop resolve their worker, task, fence, receipt, and transport coordinates inside Baton.',
+        'Workstreams expose stable semantic roles and durable workflow generations. Result and Episode resolve their worker, task, fence, receipt, and transport coordinates inside Baton.',
       ],
     },
     'run.workstreams': { aliasFor: 'run.inspect.workstreams' },

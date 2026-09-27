@@ -157,8 +157,7 @@ pacing. `swarm.watch` is retired from MCP (§5).
 | `send` | `runId`, `message` | the lane outcome | — |
 | `stop` | `runId`, `reason` | the stop receipt | — |
 
-`waves.attach`/`waves.compile`/`waves.run` stay behind the surface: the bridge session IS the
-attachment lifetime, and spec compilation is a build-time act.
+`waves.compile`/`waves.run` stay behind the surface: spec compilation is a build-time act.
 
 ### `baton_knowledge` — 2 verbs
 
@@ -456,13 +455,11 @@ it against impl/MCP.md on every run, so a tool added to the inventory without a 
 | `baton_surface_catalog` / `describe` / `invoke` / `snapshot` / `watch` / `visualize` | `baton_surface` with the same verb |
 | `baton_help` / `baton_application_help` | `baton_surface {verb: "describe"}` |
 | `baton_run_member_view` / `baton_run_workstreams` | surface: `run.member.view` |
-| `baton_run_member_send` / `baton_workstream_notify` | surface: `run.member.send` |
-| `baton_run_member_stop` / `baton_workstream_stop` | surface: `run.member.stop` |
 | `baton_run_message_receipt` | surface: `run.message.receipt` |
 | `baton_run_scratchpad_read` / `append` / `elevate` | surface: `run.scratchpad.*` (seat-side verbs) |
 | `baton_swarm_stop` | surface: `swarm.stop` (the `emergency_stop` class) |
 | `baton_swarm_integrate` | surface: `swarm.integrate` (the root's landing verb) |
-| `baton_waves_attach` / `compile` / `run` | surface: `waves.attach` / `waves.compile` / `waves.run` |
+| `baton_waves_compile` / `run` | surface: `waves.compile` / `waves.run` |
 | `baton_scratchpad_elevate` / `baton_scratchpad_settle` / `baton_knowledge_promote` / `baton_knowledge_settlement_lease` | descriptor kernel profile, never bridged — the landed U-G3 posture, unchanged |
 | `baton_run_attention_watch` | **retired** — `baton_wakes {verb: "subscribe"}` replaces it |
 | `baton_swarm_watch` | **retired from MCP** — `baton_wakes {verb: "subscribe", swarms: [id]}` replaces it; the CLI keeps `baton swarm watch` |
