@@ -1028,12 +1028,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
 // however many subscriptions it opens, and each subscription's frames arrive as
 // `notifications/baton/wake` frames for as long as the session lives.
 const WAKE_NOTIFICATION_METHOD = 'notifications/baton/wake';
-// Issue #314 lane 3 (docs/49 §6.5, §10): the session-LIFECYCLE notification the bridge emits
-// exactly once when it re-binds to a successor incarnation (#306). It is not a wake class — the
-// wake table is the deployment's vocabulary and this is the session's own authority event — so the
-// METHOD is spelled here, beside the wake method, and the frame is delivered on the session's one
-// notification channel whatever any subscription's filter admits.
-const RESIDENT_REINCARNATED_NOTIFICATION_METHOD = 'notifications/baton/resident_reincarnated';
 const WAKE_FILTER_TOKEN = Object.freeze({ type: 'string', minLength: 1 });
 const WAKE_TOKEN_LIST = Object.freeze({
   oneOf: [
@@ -2241,13 +2235,9 @@ export class McpFleetServer {
   }
 
   /** Issue #294/#529: the ONE sink a wake frame reaches this session's client through — an
-   * explicit subscription, a long verb's handoff, and the auto-subscription all deliver here. The
-   * frame's kind is the only discriminator: the session's own reincarnation fact (#314 lane 3)
-   * carries its own notification method, every wake row carries the wake method. */
+   * explicit subscription, a long verb's handoff, and the auto-subscription all deliver here. */
   _wakeNotificationSink(frame) {
-    return this.notify(frame?.kind === 'baton.resident_reincarnated'
-      ? RESIDENT_REINCARNATED_NOTIFICATION_METHOD
-      : WAKE_NOTIFICATION_METHOD, frame);
+    return this.notify(WAKE_NOTIFICATION_METHOD, frame);
   }
 
   /** Issue #529 (docs/54 §4): the auto-subscription is taken at the connection, through the same
@@ -3193,9 +3183,8 @@ export class McpFleetServer {
     // is THIS server's transport, so a frame reaches the client that opened the subscription.
     else if (name === 'baton_wakes_subscribe') {
       if (typeof this.application?.wakeSubscribe !== 'function') throw wakeStreamUnavailable('subscribe to');
-      // The session's one delivery sink carries both vocabularies: a deployment wake row under the
-      // wake method, and the session's own reincarnation fact (#314 lane 3) under its own method —
-      // the frame's kind is the only discriminator, so the session never restates the method.
+      // The session's one delivery sink carries every wake row this session's subscriptions admit,
+      // under the ONE wake notification method.
       value = await this.application.wakeSubscribe(clone(args), (frame) => this._wakeNotificationSink(frame));
     }
     else if (name === 'baton_wakes_unsubscribe') {

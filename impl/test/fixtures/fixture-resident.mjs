@@ -16,8 +16,7 @@
 // The resident half lives in `baton serve` (`impl/scripts/baton.mjs`): a declared parent's exit is
 // a stop trigger of its own (`host.stop_requested {trigger: 'parent_exited', parentPid}`), so a
 // resident whose runner was SIGKILLed — no handler can run — stops by itself within its stop
-// bound, and so does a reincarnation successor, which inherits the declaration and stays in the
-// predecessor's group.
+// bound, and so does any child the resident spawned into the same group.
 import { spawn } from 'node:child_process';
 
 /** The variable the resident reads (`impl/scripts/baton.mjs`, `declaredServeParentPid`). */
@@ -30,7 +29,7 @@ const TERMINATING_SIGNALS = Object.freeze(['SIGTERM', 'SIGINT', 'SIGHUP']);
 const POLL_MS = 20;
 
 // One entry per spawned group, for the process's whole life: a resident that exited by itself can
-// still leave a straggler in its group (a reincarnation successor), so the group stays registered
+// still leave a straggler in its group (a seat worker it spawned), so the group stays registered
 // until `endFixtureResident` runs. The signal/exit handlers are installed on the FIRST spawn; a
 // fixture file that never spawns a resident never installs them.
 const groups = new Map();
@@ -57,8 +56,8 @@ function signalGroup(child, signal) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** End one fixture resident: SIGTERM by process group, then SIGKILL the group when the bound
- * passes. Waiting on the GROUP (not only the direct child) is what also ends a successor the
- * resident spawned before it exited. Safe to call more than once. */
+ * passes. Waiting on the GROUP (not only the direct child) is what also ends a child the resident
+ * spawned before it exited. Safe to call more than once. */
 export async function endFixtureResident(child, { graceMs = FIXTURE_RESIDENT_GRACE_MS } = {}) {
   if (!groupExists(child)) {
     groups.delete(child);

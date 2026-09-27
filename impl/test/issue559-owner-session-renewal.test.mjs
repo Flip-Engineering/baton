@@ -10,7 +10,7 @@ import { MockAdapter, connectBaton, openBaton } from '../src/index.mjs';
 // `advanced.resident.sessionTtlMs`. Before the fix nothing renewed it, so an incarnation that
 // outlived its own TTL refused every owner call with `401 unauthenticated` while the process, its
 // workers and its socket stayed healthy — `/v1/auth/login` needs an identity provider, `/v1/auth/refresh`
-// needs an unexpired session, and `deployment.reincarnate` is itself authenticated.
+// needs an unexpired session, and every owner call is itself authenticated.
 //
 // The declared lifetime here is short enough that a test can outlive it. Every wait is a deadline
 // on an observable fact (the published credential changing, the session ledger gaining a rotation

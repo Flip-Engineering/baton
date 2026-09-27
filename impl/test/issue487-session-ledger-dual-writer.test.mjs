@@ -1,16 +1,14 @@
-// Issue #487 — the resident session ledger is written by TWO incarnations across a handoff.
+// Issue #487 — the resident session ledger can be written by TWO writers at once.
 //
 // The live evidence (2026-09-18, the primary's clone): `resident/sessions/sessions.jsonl` carried a
-// duplicate seq — the successor's `session.issued` (row N+1, numbered from the N rows it loaded)
-// and the old incarnation's `session.revoked` (row N+1 too, numbered from the SAME N rows it had
-// loaded at its own open, because it never re-read the file). The running processes never noticed;
-// the next incarnation to open the ledger refused line N+2 with `sequence_gap` and the deployment
-// could no longer reincarnate.
+// duplicate seq — one writer's `session.issued` (row N+1, numbered from the N rows it loaded) and
+// another's `session.revoked` (row N+1 too, numbered from the SAME N rows it had loaded at its own
+// open, because it never re-read the file). The running processes never noticed; the next store to
+// open the ledger refused line N+2 with `sequence_gap`.
 //
-// The path belongs to the DEPLOYMENT, not to an incarnation (resident-authority.mjs:
-// `join(this.root, 'sessions')` where `root` is `deploymentRoot/resident`), and the handoff order
-// (#306/#461b) is what puts the two writers in the window: the successor publishes and issues its
-// own resident session BEFORE the old incarnation closes and revokes its own.
+// The path belongs to the DEPLOYMENT, not to one process (resident-authority.mjs:
+// `join(this.root, 'sessions')` where `root` is `deploymentRoot/resident`), so more than one store
+// can hold it at once and neither may treat its own memory as the file's.
 //
 // What is pinned here, on the store the deployment constructs:
 //   (a) two stores over one file — A issues, B issues, A revokes A's session, B revokes B's — and a
@@ -19,11 +17,10 @@
 //   (b) B's in-memory view after its own append carries A's rows: B validates a bearer A issued;
 //   (c) a ledger that already carries the duplicate (two rows with seq 2, written by hand) refuses
 //       on load with the typed `sequence_gap` whose message names the line, the seq, and BOTH rows'
-//       actor and ts — the successor's log and `host.reincarnation_failed.cause.stderrTail` say who
-//       wrote what;
+//       actor and ts — the two writers' own names say who wrote what;
 //   (d) the same dual write across a real PROCESS boundary (a bounded `spawnSync` child), because
-//       the window the issue measured is two processes and only a process boundary proves the other
-//       writer's rows are what a fresh open replays.
+//       the incident measured two processes and only a process boundary proves the other writer's
+//       rows are what a fresh open replays.
 //
 // No await is taken (docs/42 §8): every step below is synchronous, and the one child is bounded by
 // `spawnSync`'s own `timeout`.
@@ -48,8 +45,8 @@ const ISSUE = Object.freeze({
   userId: 'local-owner', authMethod: 'bearer', capabilities: ['observe', 'control'], repoIds: ['repo-487'], ttlMs: 60_000,
 });
 const ACTOR = 'deployment:repo-487:resident';
-// The two hand-written rows in 487c keep the two writers distinguishable by actor; the deployment
-// itself writes ONE spelling from both incarnations, where the ts is what tells them apart.
+// The two hand-written rows in 487c keep the two writers distinguishable by actor; a deployment's
+// own writes carry ONE actor spelling, where the ts is what tells two writers apart.
 const ledgerPath = (directory) => join(directory, 'sessions.jsonl');
 const rows = (directory) => {
   const raw = readFileSync(ledgerPath(directory), 'utf8');
@@ -101,13 +98,13 @@ test('487c: a ledger that already carries the duplicate refuses typed, naming li
       issuedAt: ts, expiresAt: '2026-09-18T13:00:00.000Z',
     },
   });
-  const successorTs = '2026-09-18T12:00:01.000Z';
-  const predecessorTs = '2026-09-18T12:00:02.000Z';
+  const earlierTs = '2026-09-18T12:00:01.000Z';
+  const laterTs = '2026-09-18T12:00:02.000Z';
   const lines = [
     issued(1, '2026-09-18T12:00:00.000Z', 'ses-old', ACTOR),
-    issued(2, successorTs, 'ses-new', 'deployment:repo-487:successor'),
-    // The old incarnation's own row, numbered from the memory it held before the successor wrote.
-    issued(2, predecessorTs, 'ses-older', 'deployment:repo-487:predecessor'),
+    issued(2, earlierTs, 'ses-new', 'deployment:repo-487:writer-b'),
+    // The first writer's own row, numbered from the memory it held before the second one wrote.
+    issued(2, laterTs, 'ses-older', 'deployment:repo-487:writer-a'),
   ];
   writeFileSync(ledgerPath(directory), `${lines.map((row) => JSON.stringify(row)).join('\n')}\n`);
   let failure = null;
@@ -118,10 +115,10 @@ test('487c: a ledger that already carries the duplicate refuses typed, naming li
   assert.equal(failure.code, 'sequence_gap');
   assert.match(failure.message, /line 3/u, 'the line that carries the duplicate is named');
   assert.match(failure.message, /seq 2/u, 'the seq it repeats is named');
-  assert.ok(failure.message.includes('deployment:repo-487:predecessor'), `the repeating row's actor: ${failure.message}`);
-  assert.ok(failure.message.includes('deployment:repo-487:successor'), `the holding row's actor: ${failure.message}`);
-  assert.ok(failure.message.includes(successorTs), `the holding row's ts: ${failure.message}`);
-  assert.ok(failure.message.includes(predecessorTs), `the repeating row's ts: ${failure.message}`);
+  assert.ok(failure.message.includes('deployment:repo-487:writer-a'), `the repeating row's actor: ${failure.message}`);
+  assert.ok(failure.message.includes('deployment:repo-487:writer-b'), `the holding row's actor: ${failure.message}`);
+  assert.ok(failure.message.includes(earlierTs), `the holding row's ts: ${failure.message}`);
+  assert.ok(failure.message.includes(laterTs), `the repeating row's ts: ${failure.message}`);
 });
 
 test('487d: the dual write across a real process boundary leaves one replayable ledger', () => {
@@ -138,7 +135,7 @@ process.stdout.write('B487 ' + JSON.stringify({ sessionId: issued.sessionId, tok
   const answer = child.stdout.split('\n').find((line) => line.startsWith('B487 '));
   assert.ok(answer, `the second process published no answer: ${child.stdout}${child.stderr}`);
   const other = JSON.parse(answer.slice('B487 '.length));
-  // This append is the one the issue measured: numbered from a memory that predates the child.
+  // This append is the one the incident measured: numbered from a memory that predates the child.
   const second = parent.issue(ISSUE, { actor: ACTOR });
   assert.deepEqual(rows(directory).map((row) => row.seq), [1, 2, 3]);
   const replay = new WebSessionStore(directory, { now: () => now });

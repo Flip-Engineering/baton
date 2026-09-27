@@ -43,8 +43,8 @@ export const WAKE_STREAM_END_REASONS = Object.freeze([
 // (followWakes) and the loopback WebSocket bridge derive their final frame through the SAME mapping
 // below, so one attachment end cannot be reported two ways depending on the transport it rode:
 //
-//   restart           — the resident went away under the attachment (it stopped serving, restarted
-//                       or reincarnated) and the attachment ended because of THAT;
+//   restart           — the resident went away under the attachment (it stopped serving or
+//                       restarted) and the attachment ended because of THAT;
 //   transport_closed  — the link closed without the resident naming a restart: a clean end, a
 //                       caller's own stop, an archive-behind end, or a socket that simply closed;
 //   error             — the attachment FAILED (a transport fault, or a protocol error on the wire),
@@ -252,24 +252,6 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // proposal IS the act the consumer takes — the recruit it names, or an explicit refusal of it.
     rows: [ledgerKind('swarm.reroute_proposed')],
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
-  }),
-  wakeRow({
-    wakeClass: 'incarnation_changed', scope: 'deployment', terminal: false, next: null,
-    summary: 'the resident reincarnated over this deployment — a successor incarnation serves it now, or the handoff failed before its successor published and the same incarnation went on serving; re-read the view (the rows and the attachment you held came from the predecessor)',
-    // #306 (lane B): the successor records `host.reincarnated {from, to}` when it sees the old
-    // process exit, so the change of incarnation is a DURABLE row and not only the live
-    // `resident_lifecycle` observation beside it. It is `dead`'s sibling — the same deployment
-    // scope, the next row in the table — and it is deliberately NOT terminal: nothing is refused
-    // and no holder must be released, the watcher's act is to re-read the view (the guidance the
-    // summary carries, since the table's one invariant lets only a terminal class name a `next`
-    // command). The subject reads the successor's identity where the successor writes it, with the
-    // deployment as the fallback the resident-lifecycle observation already uses.
-    // #306r: the handoff's FAILURE is the other end of the same fact — the successor never
-    // published, the predecessor re-took the writer authority and went on serving (docs/48 §11
-    // item 7), so a root following this class sees the outcome it is waiting for either way
-    // instead of silence. One row kind, one class (the table's own invariant).
-    rows: [operationalKind('host.reincarnated'), operationalKind('host.reincarnation_failed')],
-    subject: { field: 'incarnation', kind: 'resident', fallback: { field: 'deploymentId', kind: 'deployment' } },
   }),
   wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
