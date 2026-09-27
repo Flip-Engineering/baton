@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { normalizeContextMapNodeBinding } from './context-map.mjs';
-import { normalizeContextEffectNodeBinding } from './context-call.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import { normalizeWorkflowRevision } from './workflow-revision.mjs';
@@ -314,10 +312,8 @@ function normalizeNode(value, policy, goal, options) {
   const hasRequiredEffects = Object.hasOwn(value ?? {}, 'requiredEffects');
   const hasWorkerPolicy = Object.hasOwn(value ?? {}, 'workerPolicy');
   const hasRevision = Object.hasOwn(value ?? {}, 'revision');
-  const hasContextScope = Object.hasOwn(value ?? {}, 'contextScope');
-  const hasContextCall = Object.hasOwn(value ?? {}, 'contextCall');
   const hasAnalysis = Object.hasOwn(value ?? {}, 'analysis');
-  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : []), ...(hasAnalysis ? ['analysis'] : [])]);
+  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasAnalysis ? ['analysis'] : [])]);
   const key = normalizedText(value.key, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
   const deps = normalizedSet(value.deps, 'node.deps');
@@ -326,26 +322,12 @@ function normalizeNode(value, policy, goal, options) {
     try { revision = normalizeWorkflowRevision(value.revision); }
     catch (error) { fail(error.message, error.code ?? 'workflow_revision_invalid'); }
   }
-  let contextCall;
-  if (hasContextCall) {
-    if (hasRevision) fail('Context call and revision authority are mutually exclusive',
-      'context_call_binding_invalid');
-    try {
-      contextCall = value.contextCall?.kind === 'context_effect_child'
-        ? normalizeContextEffectNodeBinding(value.contextCall)
-        : normalizeContextMapNodeBinding(value.contextCall);
-    } catch (error) {
-      fail(error.message, error.code ?? (value.contextCall?.kind === 'context_effect_child'
-        ? 'context_call_binding_invalid' : 'context_map_binding_invalid'));
-    }
-  }
   const result = {
     key,
     objective: normalizedText(value.objective, 'node.objective'),
     definitionOfDone: normalizedSet(value.definitionOfDone, 'node.definitionOfDone'),
     deps,
     pathScope: normalizeScope(value.pathScope),
-    ...(hasContextScope ? { contextScope: normalizeScope(value.contextScope) } : {}),
     risk: value.risk,
     budget: normalizeBudget(value.budget, 'plan node'),
     verification: normalizeVerification(value.verification, deps),
@@ -357,7 +339,6 @@ function normalizeNode(value, policy, goal, options) {
     } : {}),
     ...(hasWorkerPolicy ? { workerPolicy: normalizeWorkerPolicyRequest(value.workerPolicy) } : {}),
     ...(hasRevision ? { revision } : {}),
-    ...(hasContextCall ? { contextCall } : {}),
     ...(hasAnalysis ? { analysis: value.analysis === true } : {}),
   };
   if (riskIndex(policy, result.risk) < riskIndex(policy, goal.risk)) fail('plan node risk weakens the goal execution-control tier', 'plan_risk_mismatch');
@@ -450,7 +431,6 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
     ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
     ...(Object.hasOwn(node, 'workerPolicy') ? { workerPolicy: clone(node.workerPolicy) } : {}),
     ...(Object.hasOwn(node, 'revision') ? { revisionContext: clone(node.revision) } : {}),
-    ...(Object.hasOwn(node, 'contextCall') ? { contextCall: clone(node.contextCall) } : {}),
     goalPlan: clone(binding),
   };
   // BU-2-1 amendment (a): the plan node's analysis declaration reaches the Brief the TG5
@@ -479,7 +459,6 @@ export function semanticBriefCore(value) {
     ...(Object.hasOwn(value, 'requiredEffects') ? ['requiredEffects'] : []),
     ...(Object.hasOwn(value, 'workerPolicy') ? ['workerPolicy'] : []),
     ...(Object.hasOwn(value, 'revisionContext') ? ['revisionContext'] : []),
-    ...(Object.hasOwn(value, 'contextCall') ? ['contextCall'] : []),
     ...(Object.hasOwn(value, 'analysis') ? ['analysis'] : []),
   ];
   return Object.fromEntries(fields
@@ -494,7 +473,6 @@ export function planBriefMatches(value, authoritative, { goalPlanCoordinates = f
     ...(Object.hasOwn(authoritative ?? {}, 'requiredEffects') ? ['requiredEffects'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'workerPolicy') ? ['workerPolicy'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'revisionContext') ? ['revisionContext'] : []),
-    ...(Object.hasOwn(authoritative ?? {}, 'contextCall') ? ['contextCall'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'analysis') ? ['analysis'] : []),
     ...(goalPlanCoordinates ? ['goalPlan'] : []),
   ];

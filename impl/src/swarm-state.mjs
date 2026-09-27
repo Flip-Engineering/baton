@@ -652,12 +652,6 @@ export function validateSwarmEvent(kind, payload) {
         && (typeof p.plan.options !== 'object' || Array.isArray(p.plan.options))) {
         refuse('swarm.resume_decision_requested plan.options must be an object or null', 'invalid_payload');
       }
-      const contextPackage = p.plan.contextPackage ?? null;
-      if (contextPackage !== null
-        && (typeof contextPackage !== 'object' || Array.isArray(contextPackage)
-          || !isNonEmptyString(contextPackage.digest))) {
-        refuse('swarm.resume_decision_requested plan.contextPackage must name a digest', 'invalid_payload');
-      }
     }
     return;
   }
@@ -1313,10 +1307,6 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
           carry: Object.freeze({ how: p.carry.how ?? null, workspaceId: p.carry.workspaceId ?? null, snapshotSha: p.carry.snapshotSha ?? null }),
           plan: p.plan === undefined || p.plan === null ? null : Object.freeze({
             options: Object.freeze({ ...(p.plan.options ?? {}) }),
-            contextPackage: p.plan.contextPackage === undefined || p.plan.contextPackage === null
-              ? null
-              : Object.freeze({ digest: p.plan.contextPackage.digest,
-                docs: Object.freeze([...(p.plan.contextPackage.docs ?? [])]) }),
           }),
           at: p.at ?? meta.ts,
           seq: meta.seq, ts: meta.ts,

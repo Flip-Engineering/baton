@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase, providerSettled } from './application-semantics.mjs';
+=======
+import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
+>>>>>>> b9911f75 (#598 context-plane removal re-cut onto master b173b15d (revision of contribution-dde05c62f6c8f8ed34eccf4a23a0782f))
 import { createRecipes } from './recipes.mjs';
 import { createWave } from './wave.mjs';
 import { createSwarms } from './swarm-client.mjs';
@@ -38,22 +42,6 @@ function frozenClone(value) {
     return Object.freeze(candidate);
   };
   return freeze(cloned);
-}
-
-function pureContextProgram(value) {
-  const candidate = value instanceof BatonContextExpression ? value.toJSON() : value;
-  let normalized;
-  try { normalized = normalizeContextProgram(candidate); }
-  catch (error) {
-    throw clientError(error.message, error.code ?? 'context_program_invalid');
-  }
-  if (!contextProgramIsPure(normalized)) {
-    throw clientError('Context evaluation accepts only pure expressions',
-      'context_program_effect_forbidden');
-  }
-  return frozenClone({
-    schemaVersion: 1, kind: 'baton.context_program', expression: normalized.expression,
-  });
 }
 
 function outlineActions(view) {
@@ -347,6 +335,7 @@ async function observeUntilAbort(observation, signal) {
   }
 }
 
+<<<<<<< HEAD
 export class BatonContextExpression {
   #program;
 
@@ -724,6 +713,8 @@ export class BatonRunContext {
   }
 }
 
+=======
+>>>>>>> b9911f75 (#598 context-plane removal re-cut onto master b173b15d (revision of contribution-dde05c62f6c8f8ed34eccf4a23a0782f))
 const EPISODE_TOPICS = Object.freeze([
   'outline', 'output', 'sources', 'derivations', 'contradictions', 'trace', 'route',
   'verification', 'result', 'cleanup', 'help',
@@ -891,8 +882,6 @@ export class BatonRun {
   index() { return this.inspect({ depth: 'index' }); }
 
   members() { return this.inspect({ depth: 'section', section: 'execution' }); }
-
-  context() { return new BatonRunContext(this); }
 
   workstreams() { return new BatonWorkstreams(this); }
 
@@ -1575,12 +1564,6 @@ export class BatonClient {
     return this.#application.command('_wave.closed', { record });
   }
 
-  // D2 (epic #103): the wave driver's post-close campaign-briefing mint. INTERNAL deployment
-  // plumbing (underscore-prefixed, never a user-facing surface) — composes from the post-close
-  // ledger and the pinned standing-law config, then mints via the store's D3/D4 rules.
-  async _mintCampaignBriefing() {
-    return this.#application.command('_briefing.mint', {});
-  }
 
   async routes() {
     const doctor = await this.doctor();

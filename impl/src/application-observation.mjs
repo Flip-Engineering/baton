@@ -1,6 +1,6 @@
 // application-observation.mjs — issue #259 slice 15: the application's observation bucket.
 //
-// The 80 observation members of BatonApplication — the run, workflow, context and episode
+// The observation members of BatonApplication — the run, workflow and episode
 // projections with the projection helpers they compose — move here verbatim under the bare
 // `application` receiver: the slice-3 precedent (application-briefing.mjs) extended by slice
 // 13's authority-free runtime-API module. BatonApplication owns no log, no coordination
@@ -18,9 +18,6 @@
 // class keeps same-name delegates, so the command dispatch table and every caller are untouched.
 import { APPLICATION_SEMANTIC_REGISTRY, PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause } from './application-semantics.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
-import { contextProgramIsPure } from './context-authority.mjs';
-import { contextEffectCallIdentity, contextEffectNodeBinding, contextEffectRetryCallIdentity } from './context-call.mjs';
-import { normalizeContextProgram } from './context-program.mjs';
 import { goalPlanPage, normalizePlanRequest, planRouteAuthorityState, planRouteMatches, planSingleExactRoute } from './goal-plan.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
@@ -76,8 +73,8 @@ export const RUN_VIEW_SHED_STEPS = Object.freeze([
   // The evidence rows: the artifacts the episode/verification sections carry.
   { section: 'evidence', read: '--depth section --section verification',
     shed: (view) => (Array.isArray(view.evidence) && view.evidence.length > 0 ? { evidence: [] } : null) },
-  // The worker's scratchpad: a Context read of its own, never the view's point.
-  { section: 'scratchpad', read: '--depth section --section context',
+  // The worker's scratchpad: a read of its own, never the view's point.
+  { section: 'scratchpad', read: 'run.scratchpad',
     shed: (view) => (view.scratchpad === null || view.scratchpad === undefined ? null : { scratchpad: null }) },
   // The Plan subjects the preview and the node rows carry (the plan section serves them whole).
   { section: 'planPreview', read: '--depth section --section plan',
@@ -330,27 +327,6 @@ export function boundedAttentionText(value) {
   const normalized = value.normalize('NFKC').trim();
   if (SECRET_SHAPED_TEXT.some((pattern) => pattern.test(normalized))) return '[credential-shaped content redacted]';
   return normalized;
-}
-// REFLEX-3 (docs/32 §3.3 Part D, issue #18; red-team F14): a context package branch's resolved
-// content is untrusted input to every reader (a worker or a prior package can shape it). Every
-// non-null slice routes through the same `boundedAttentionText`/`SECRET_SHAPED_TEXT` discipline as
-// worker prose elsewhere in this file, and the projection carries an explicit untrusted-prose
-// provenance marker rather than hub-styled visual weight.
-export function projectContextPackageBranch(resolved) {
-  if (!resolved || typeof resolved !== 'object' || Array.isArray(resolved)) {
-    throw applicationError('context package branch is invalid', 'application_context_package_branch_invalid');
-  }
-  const projectSlice = (value) => (value === null || value === undefined ? null : boundedAttentionText(
-    typeof value === 'string' ? value : JSON.stringify(value),
-  ));
-  return deepFreeze({
-    name: resolved.name,
-    schema: resolved.schema ? clone(resolved.schema) : null,
-    provenance: 'untrusted',
-    source: projectSlice(resolved.source),
-    artifact: projectSlice(resolved.artifact),
-    valueRef: projectSlice(resolved.valueRef),
-  });
 }
 // issue #10 / docs/32 §5 (AX-1): a bounded (160 bytes with the ellipsis included), NFC-normalized,
 // credential-sanitized projection of a pending worker request's own text — never worker prose
@@ -676,24 +652,6 @@ export function projectScratchpadView(snapshot, viewer = {}, cache = null) {
     while (cache.size > MAX_SCRATCHPAD_VIEW_CACHE_KEYS) cache.delete(cache.keys().next().value);
   }
   return view;
-}
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval`'s own request shape
-// check. Kept as a standalone function (not a validateApplicationCommandArgs branch) because
-// `contextEval` is not registered in APPLICATION_COMMAND_DEFINITIONS — see the note above that
-// table for why.
-const CONTEXT_EVAL_ARGS = Object.freeze(['runId', 'manifestDigest', 'role', 'program']);
-export function validateContextEvalArgs(args) {
-  const allowed = new Set(CONTEXT_EVAL_ARGS);
-  if (!args || typeof args !== 'object' || Array.isArray(args)
-    || Object.keys(args).some((key) => !allowed.has(key))
-    || (args.runId !== undefined && !validId(args.runId))
-    || (args.manifestDigest !== undefined && !HEX64.test(args.manifestDigest))
-    || (args.runId === undefined) === (args.manifestDigest === undefined)
-    || (args.role !== undefined && !validId(args.role))
-    || !args.program || typeof args.program !== 'object' || Array.isArray(args.program)) {
-    throw applicationError('Context evaluation request is invalid', 'application_context_eval_invalid');
-  }
-  return true;
 }
 // Mirrors coordinator.mjs's own typedTerminalCode: a durable, payload-recomputed terminal code
 // (never handle.terminalCause, which is in-memory only — issue53-decisions.md v2 rule 2).
@@ -2214,14 +2172,7 @@ export function _performRunStop(application, stop) {
       if (!current) throw applicationError('Run stop admission is unavailable', 'application_run_stop_incomplete');
       if (current.status === 'stopped') return current.receipt;
       const targetRunIds = current.targetRunIds ?? [stop.runId];
-      const contextOperations = [];
-      for (const targetRunId of targetRunIds) {
-        for (const operation of application._contextControllers?.get(targetRunId) ?? []) {
-          operation.controller.abort();
-          contextOperations.push(operation.settled);
-        }
-      }
-      await Promise.allSettled(contextOperations);
+
       // VR6: stop cancels an in-flight verifier retry exactly and settles its durable admission.
       for (const targetRunId of targetRunIds) {
         for (const controller of application._runRetryControllers.get(targetRunId) ?? []) controller.abort();
@@ -2257,30 +2208,6 @@ export function _performRunStop(application, stop) {
         counts: clone(outcome.counts),
         checks: { dispatchClosed: true, interactionsResolved: true, runAuthorityReleased: true },
         effects: { coordinatorClosed: false, writerReleased: false, transportsClosed: false },
-        ...(current.schemaVersion >= 2 ? {
-          context: {
-            targetSessionCount: current.targetContextSessionIds.length,
-            targetCellCount: current.targetContextCellIds.length,
-            ...(current.schemaVersion >= 3 ? {
-              targetCallCount: current.targetContextCallIds.length,
-            } : {}),
-            remainingSessionCount: current.targetContextSessionIds.filter((sessionId) => (
-              application.driver.coordination.contextSession(sessionId)?.state !== 'stopped'
-            )).length,
-            remainingCellCount: current.targetContextCellIds.filter((cellId) => (
-              application.driver.coordination.contextCell(cellId)?.state !== 'stopped'
-            )).length,
-            ...(current.schemaVersion >= 3 ? {
-              // #390: a call that reads `stopping` is waiting on exactly the run.stop_completed
-              // receipt this receipt IS, so it counts as ended here — never as remaining.
-              remainingCallCount: current.targetContextCallIds.filter((callId) => (
-                !['completed', 'failed', 'stopped', 'stopping'].includes(
-                  application.driver.coordination.contextCall(callId)?.state,
-                )
-              )).length,
-            } : {}),
-          },
-        } : {}),
       };
       const receipt = deepFreeze({ ...core, receiptDigest: digest(core) });
       const completed = application.driver.coordination.completeRunStop(current.runId, receipt, {
@@ -2737,7 +2664,6 @@ export async function _historicalProfileView(application, current, observer, opt
         node: {
           key: planNode.key, objectiveRef: objectiveReach(objectiveBytes),
           pathScope: clone(planNode.pathScope),
-          ...(planNode.contextScope ? { contextScope: clone(planNode.contextScope) } : {}),
           risk: planNode.risk, budget: clone(planNode.budget), verification: clone(planNode.verification),
           route: requested, capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
         },
@@ -3870,14 +3796,6 @@ export function _eventBelongsToRun(application, event, current) {
     if (event.kind.startsWith('run.stop_')) {
       return payload.runId === runId || payload.targetRunIds?.includes(runId) === true;
     }
-    if (event.kind === 'context.session_admitted') return payload.session?.runId === runId;
-    if (event.kind === 'context.cell_admitted') {
-      return application.driver.coordination.contextSession(payload.cell?.sessionId)?.runId === runId;
-    }
-    if (event.kind === 'context.cell_settled') {
-      const cell = application.driver.coordination.contextCell(payload.cellId);
-      return application.driver.coordination.contextSession(cell?.sessionId)?.runId === runId;
-    }
     const explicit = [payload.runId, payload.goal?.runId, payload.plan?.runId,
       payload.authority?.runId, payload.binding?.runId].filter((value) => value !== undefined && value !== null);
     if (explicit.some((value) => value !== runId)) return false;
@@ -4003,11 +3921,8 @@ export function _progressTiming(application, current, view) {
 // reducer is total over phase/attention/timing/terminalCause); requiredAction rides ONLY when
 // the rule-2 blocking predicate holds. `principal` scopes the advertised actionId to the view
 // consumer so the token it carries is the one the same principal can act on. The actionId is
-// computed against the CONTEXT-PROJECTED view — the exact view shape `_resolveSemanticAction`
-// and the inspect outline use — so a token offered by `status()` is the token `run.act`
-// resolves (the view digest is otherwise stable across the projection).
 export function _semanticProgressProjection(application, current, view, principal) {
-    const semanticView = application._withContextProjection(current, view);
+    const semanticView = view;
     let timing;
     try {
       timing = application._progressTiming(current, semanticView);
@@ -4053,1020 +3968,6 @@ export function _followPage(application, current, view, afterCursor) {
       terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
       changes,
     };
-  }
-export function _contextState(application, current) {
-    const projected = typeof application.driver.coordination.snapshot === 'function'
-      ? application.driver.coordination.snapshot().context : null;
-    const sessions = (projected?.sessions ?? [])
-      .filter((session) => session.repoId === application.repoId && session.runId === current.goal.runId)
-      .sort((left, right) => left.admittedEvent - right.admittedEvent);
-    const sessionIds = new Set(sessions.map((session) => session.sessionId));
-    const cells = (projected?.cells ?? [])
-      .filter((cell) => sessionIds.has(cell.sessionId))
-      .sort((left, right) => left.admittedEvent - right.admittedEvent);
-    const calls = (projected?.calls ?? [])
-      .filter((call) => (
-        (call.kind === 'baton.context_map_call' && call.source?.runId === current.goal.runId)
-          || (call.kind === 'baton.context_effect_call'
-            && call.authority?.contextPrincipal?.runId === current.goal.runId)
-      ))
-      .sort((left, right) => left.admittedEvent - right.admittedEvent);
-    const currentSessions = sessions.filter((session) => (
-      session.manifest?.workflow?.plan?.digest === current.plan?.digest
-      && session.state === 'active'
-    ));
-    const currentSessionIds = new Set(currentSessions.map((session) => session.sessionId));
-    const currentCells = cells.filter((cell) => currentSessionIds.has(cell.sessionId));
-    const currentCalls = calls.filter((call) => (
-      call.expectedPlanDigest === current.plan?.digest
-        || (call.kind === 'baton.context_effect_call'
-          ? call.authority.predecessorPlan.digest : call.source.predecessorPlan.digest)
-          === current.plan?.digest
-    ));
-    const lastCell = currentCells.at(-1) ?? cells.at(-1) ?? null;
-    const lastCall = currentCalls.at(-1) ?? calls.at(-1) ?? null;
-    const branchCount = sessions.reduce(
-      (sum, session) => sum + (session.manifest?.branches?.length ?? 0), 0,
-    );
-    const coverageRows = (currentSessions.length > 0 ? currentSessions : sessions)
-      .flatMap((session) => session.sourceAttestations ?? [])
-      .map((attestation) => attestation.coverage).filter(Boolean);
-    const coverageCounts = coverageRows.reduce((counts, coverage) => ({
-      includedFiles: counts.includedFiles + coverage.includedFiles,
-      includedItems: counts.includedItems + coverage.includedItems,
-      excludedEntries: counts.excludedEntries
-        + coverage.excludedSensitivePaths + coverage.excludedUnsupportedTypes
-        + coverage.excludedBinaryOrInvalidText + coverage.excludedOversizeFiles
-        + coverage.excludedSensitiveContent,
-    }), { includedFiles: 0, includedItems: 0, excludedEntries: 0 });
-    const state = currentCalls.some((call) => call.state === 'failed')
-      ? 'failed'
-      : currentCalls.some((call) => call.state === 'awaiting_plan_approval')
-      ? 'awaiting_plan_approval'
-      : currentCalls.some((call) => ['approved', 'running', 'settlement_ready'].includes(call.state))
-        ? 'working'
-        : currentSessions.length === 0
-      ? (sessions.length === 0 ? 'unavailable' : 'historical')
-      : currentCells.some((cell) => cell.state === 'attention') ? 'attention'
-        : currentCells.some((cell) => cell.state === 'admitted') ? 'working' : 'ready';
-    return deepFreeze({
-      sessions, cells, calls, currentSessions, currentCells, currentCalls,
-      projection: {
-        state,
-        sessionCount: sessions.length,
-        currentSessionCount: currentSessions.length,
-        branchCount,
-        cellCount: cells.length,
-        callCount: calls.length,
-        completedCellCount: cells.filter((cell) => cell.state === 'completed').length,
-        pendingCellCount: cells.filter((cell) => cell.state === 'admitted').length,
-        stoppedCellCount: cells.filter((cell) => cell.state === 'stopped').length,
-        providerEffects: calls.reduce((count, call) => (
-          count + (call.result?.providerEffects ?? call.executionUnitIds?.length
-            ?? call.children?.length ?? 0)
-        ), 0),
-        sourceCoverage: {
-          state: coverageRows.length === 0 ? 'unavailable'
-            : coverageCounts.excludedEntries > 0 ? 'filtered' : 'complete',
-          ...coverageCounts,
-        },
-        lastCell: lastCell ? {
-          id: lastCell.cellId, ordinal: lastCell.ordinal, state: lastCell.state,
-          operation: lastCell.program?.expression?.op ?? null,
-        } : null,
-        lastCall: lastCall ? {
-          id: lastCall.callId, state: lastCall.state,
-          operation: lastCall.operator ?? 'map',
-          unitCount: lastCall.units?.length ?? lastCall.partitions?.length ?? 0,
-          generation: lastCall.generation,
-          executionUnitCount: lastCall.executionUnitIds?.length
-            ?? lastCall.partitions?.length ?? 0,
-          inheritedUnitCount: lastCall.inheritedChildren?.length ?? 0,
-        } : null,
-        summary: currentCalls.length > 0
-          ? 'Provider-backed Context is compiled through a separately approved successor Plan.'
-          : currentSessions.length > 0
-          ? 'Immutable addressed Context is available through pure replayable cells.'
-          : sessions.length > 0
-            ? 'Historical Context is available; no session matches the current Plan.'
-            : 'No Context session has been admitted for this Run.',
-      },
-    });
-  }
-export function _withContextProjection(application, current, view) {
-    return deepFreeze({ ...view, context: clone(application._contextState(current).projection) });
-  }
-export function _contextTargets(application, current, view) {
-    if (!application.context || !application._isWorkflowRun(current)
-      || ['stopped', 'closed'].includes(view.phase)) return [];
-    const dispatches = current.dispatches ?? (current.dispatch ? [current.dispatch] : []);
-    return dispatches.map((dispatch) => {
-      const task = application.driver.coordination.task(dispatch.taskId);
-      const nodeKey = dispatch.binding?.nodeKey ?? dispatch.nodeKey ?? null;
-      const attempt = (view.attempts ?? []).find((candidate) => candidate.nodeKey === nodeKey);
-      return task?.status === 'working' ? {
-        role: attempt?.role ?? nodeKey ?? 'context', nodeKey,
-      } : null;
-    }).filter(Boolean);
-  }
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): the sole relaxation `application.context_eval`
-// makes versus `_contextTargets` above — no `_isWorkflowRun` gate, so a caller need not hold
-// the target role's own dispatch to evaluate a pure program against it. Everything else
-// (`this.context`, phase, live 'working' task) is identical, and `this.context.openSession`
-// still enforces its own Workflow-definition/dispatch authority beneath this, unchanged.
-export function _contextEvalTargets(application, current, view) {
-    if (!application.context || ['stopped', 'closed'].includes(view.phase)) return [];
-    const dispatches = current.dispatches ?? (current.dispatch ? [current.dispatch] : []);
-    return dispatches.map((dispatch) => {
-      const task = application.driver.coordination.task(dispatch.taskId);
-      const nodeKey = dispatch.binding?.nodeKey ?? dispatch.nodeKey ?? null;
-      const attempt = (view.attempts ?? []).find((candidate) => candidate.nodeKey === nodeKey);
-      return task?.status === 'working' ? {
-        role: attempt?.role ?? nodeKey ?? 'context', nodeKey,
-      } : null;
-    }).filter(Boolean);
-  }
-export function _contextSectionItems(application, current) {
-    const context = application._contextState(current);
-    // REPL-1 rule 13a: REPL sessions ride the same session list but carry no `workflow`
-    // coordinate; they are not Workflow eval targets, so skip them in this Workflow-shaped view.
-    const sessionItems = context.sessions
-      .filter((session) => session.manifest.kind === 'baton.context_manifest')
-      .map((session) => ({
-      id: session.sessionId,
-      section: 'context',
-      state: session.state,
-      summary: session.manifest.workflow.plan.digest === current.plan?.digest
-        ? 'Current immutable Context session.' : 'Historical immutable Context session.',
-      value: {
-        kind: 'session',
-        treeSha: session.manifest.tree.sha,
-        branchCount: session.manifest.branches.length,
-        cellCount: context.cells.filter((cell) => cell.sessionId === session.sessionId).length,
-        providerEffects: 0,
-        sourceCoverage: (session.sourceAttestations ?? []).map((attestation) => ({
-          branch: attestation.branch, ...clone(attestation.coverage),
-        })),
-      },
-    }));
-    const cellItems = context.cells.map((cell) => ({
-      id: cell.cellId,
-      section: 'context',
-      state: cell.state,
-      summary: `Pure Context ${cell.program?.expression?.op ?? 'cell'} is ${cell.state}.`,
-      value: {
-        kind: 'cell', ordinal: cell.ordinal, operation: cell.program?.expression?.op ?? null,
-        providerEffects: cell.result?.providerEffects ?? 0,
-        artifactState: cell.state === 'completed' ? 'reference_only' : 'none',
-        ...(cell.result?.termination ? { termination: clone(cell.result.termination) } : {}),
-      },
-    }));
-    const callItems = context.calls.map((call) => ({
-      id: call.callId,
-      section: 'context',
-      state: call.state,
-      summary: `Context ${call.operator ?? 'map'} over ${call.units?.length ?? call.partitions?.length ?? 0} immutable units is ${call.state}.`,
-      value: {
-        kind: 'call', operation: call.operator ?? 'map',
-        inputId: call.kind === 'baton.context_effect_call' ? call.source.id : call.source.cellId,
-        logicalRole: call.role,
-        unitCount: call.units?.length ?? call.partitions?.length ?? 0,
-        childCount: call.children?.length ?? 0,
-        generation: call.generation,
-        executionUnitCount: call.executionUnitIds?.length ?? call.partitions?.length ?? 0,
-        inheritedUnitCount: call.inheritedChildren?.length ?? 0,
-        providerEffects: call.result?.providerEffects ?? call.executionUnitIds?.length
-          ?? call.children?.length ?? 0,
-        ...(call.predecessorCall ? {
-          predecessorCallId: call.predecessorCall.callId,
-          retryDigest: call.predecessorCall.retryDigest,
-        } : {}),
-        ...(call.result?.termination ? { termination: clone(call.result.termination) } : {}),
-        retry: clone(application.driver.coordination.contextRetryEligibility(call.callId)),
-        plan: clone(call.plan), approval: clone(call.approval),
-      },
-    }));
-    return [...sessionItems, ...cellItems, ...callItems];
-  }
-export function _contextItemDetail(application, selected) {
-    if (selected.value?.kind === 'call' && selected.state === 'completed') {
-      const artifacts = application.driver.coordination.contextCallArtifacts(selected.id);
-      return {
-        ...selected,
-        value: {
-          ...clone(selected.value), artifactState: 'verified', output: clone(artifacts.output),
-        },
-      };
-    }
-    if (selected.value?.kind !== 'cell' || selected.state !== 'completed') return selected;
-    const artifacts = application.driver.coordination.contextCellArtifacts(selected.id);
-    return {
-      ...selected,
-      value: {
-        ...clone(selected.value), artifactState: 'verified', output: clone(artifacts.output),
-      },
-    };
-  }
-export function _contextItemContent(application, selected, offset, bounds) {
-    if (selected.value?.kind !== 'call' || selected.state !== 'completed') {
-      throw applicationError('Context content requires a completed effect call',
-        'application_context_content_unavailable');
-    }
-    if (typeof application.driver.coordination.contextCallContents !== 'function') {
-      throw applicationError('Context content projection is unavailable',
-        'application_context_content_unavailable');
-    }
-    const projected = application.driver.coordination.contextCallContents(selected.id);
-    const results = projected.results.map(({ source, ...result }) => ({
-      ...clone(result), sourceItems: source.length,
-    }));
-    const chunks = projected.results.flatMap((result) => result.source.map((source, sourceIndex) => ({
-      resultIndex: result.index, sourceIndex, unitId: result.unitId,
-      capsuleId: result.capsuleId, ...clone(source),
-    })));
-    if (offset > chunks.length) {
-      throw applicationError('Context content offset is beyond the verified result',
-        'application_context_content_invalid');
-    }
-    const fixed = {
-      schemaVersion: 1, kind: 'baton.context_call_content', callId: selected.id,
-      resultCount: projected.resultCount, results, totalItems: chunks.length, offset,
-    };
-    const fixedBytes = Buffer.byteLength(JSON.stringify(fixed));
-    const contentBudget = Math.max(1, bounds.maxBytes - fixedBytes - 16 * 1024);
-    const items = [];
-    let itemBytes = 0;
-    for (let index = offset; index < chunks.length && items.length < bounds.maxItems; index += 1) {
-      const candidateBytes = Buffer.byteLength(JSON.stringify(chunks[index]));
-      if (items.length > 0 && itemBytes + candidateBytes > contentBudget) break;
-      if (candidateBytes > contentBudget) {
-        throw applicationError('One Context content item exceeds deployment policy',
-          'application_inspect_oversize');
-      }
-      items.push(chunks[index]);
-      itemBytes += candidateBytes;
-    }
-    const nextOffset = offset + items.length < chunks.length ? offset + items.length : null;
-    return {
-      ...fixed, items, nextOffset, truncated: nextOffset !== null,
-    };
-  }
-export function _contextItemEvidence(application, current, selected) {
-    const state = application._contextState(current);
-    const session = state.sessions.find((candidate) => candidate.sessionId === selected.id);
-    if (session) return [{
-      kind: 'context_manifest', digest: session.manifest.digest,
-      provenance: 'durable Context session admission', value: clone(session.manifest),
-    }];
-    const call = state.calls.find((candidate) => candidate.callId === selected.id);
-    if (call) {
-      const settlementEvidence = ['completed', 'failed'].includes(call.state)
-        ? application.driver.coordination.contextCallArtifacts(call.callId).evidence : null;
-      const failureEvidence = call.state === 'failed' ? settlementEvidence : null;
-      return [
-      {
-        kind: 'context_call_admission', digest: call.admissionDigest,
-        provenance: 'durable Context call and successor Plan prebinding',
-        value: {
-          call: call.kind === 'baton.context_effect_call' ? clone({
-            callId: call.callId, callDigest: call.callDigest,
-            requestId: call.requestId, requestDigest: call.requestDigest,
-            generation: call.generation, operator: call.operator,
-            predecessorCall: call.predecessorCall,
-            executionUnitIds: call.executionUnitIds,
-            inheritedChildren: call.inheritedChildren,
-            source: call.source, role: call.role, units: call.units,
-          }) : clone({
-            callId: call.callId, callDigest: call.callDigest,
-            programDigest: call.programDigest, generation: call.generation,
-            source: call.source, role: call.role, partitions: call.partitions,
-          }),
-          expectedPlanDigest: call.expectedPlanDigest,
-        },
-      },
-      ...(call.plan ? [{
-        kind: 'context_successor_plan', digest: call.plan.digest,
-        provenance: 'ordinary append-only Goal/Plan authority', value: clone(call.plan),
-      }] : []),
-      ...(['completed', 'failed'].includes(call.state) && call.result?.cleanup ? [{
-        kind: 'context_call_cleanup', digest: call.result.cleanup.cleanupDigest,
-        provenance: 'restart-aware descendant stop and zero-ownership receipt',
-        value: clone(call.result.cleanup),
-      }] : []),
-      ...(failureEvidence ? [{
-        kind: 'context_call_failure', digest: call.result.evidenceRef.digest,
-        provenance: 'terminal failed or cancelled child Attempts', value: failureEvidence,
-      }] : []),
-      ...(settlementEvidence ? [{
-        kind: 'context_call_evidence', digest: call.result.evidenceRef.digest,
-        provenance: 'terminal child attachment and aggregate Context settlement',
-        value: clone(settlementEvidence),
-      }] : []),
-      ];
-    }
-    const cell = state.cells.find((candidate) => candidate.cellId === selected.id);
-    if (!cell) throw applicationError('Context item is unavailable', 'application_inspect_item_invalid');
-    const evidence = cell.state === 'completed'
-      ? application.driver.coordination.contextCellArtifacts(cell.cellId).evidence : null;
-    return [
-      {
-        kind: 'context_program', digest: cell.programDigest,
-        provenance: 'durable Context cell admission', value: clone(cell.program),
-      },
-      ...(evidence ? [{
-        kind: 'context_evidence', digest: cell.result.evidenceRef.digest,
-        provenance: 'source-grounded immutable Context evidence', value: clone(evidence),
-      }] : []),
-    ];
-  }
-export function _contextProviderResultRequests(application, call, children, cleanup) {
-    const generic = call.kind === 'baton.context_effect_call';
-    const plan = call.plan ? application.driver.coordination.planVersion(
-      call.plan.planId, call.plan.version,
-    ) : null;
-    if (!plan || plan.digest !== call.expectedPlanDigest) {
-      throw applicationError('Context result projection lost its exact successor Plan',
-        'application_context_map_integrity');
-    }
-    return children.filter((child) => (
-      child.origin === 'inherited' || child.state === 'accepted'
-    )).map((child) => {
-      if (generic && child.origin === 'inherited') {
-        const predecessor = application.driver.coordination.contextCall(call.predecessorCall.callId);
-        const origin = predecessor?.result?.children?.find((candidate) => (
-          candidate.unitId === child.unitId
-            && candidate.childDigest === child.originChildDigest
-        ));
-        const providerResult = predecessor?.result?.providerResults?.find((candidate) => (
-          candidate.unitId === child.unitId
-        ));
-        if (!origin || !providerResult || child.originCallId !== predecessor.callId
-          || digest(providerResult) !== child.resultRefDigest) {
-          throw applicationError('Context inherited result projection authority changed',
-            'application_context_call_integrity');
-        }
-        return { providerResult: clone(providerResult) };
-      }
-      const node = plan.nodes.find((candidate) => (
-        candidate.key === child.nodeKey
-          && candidate.contextCall?.callId === call.callId
-          && (generic
-            ? candidate.contextCall?.unit?.unitId === child.unitId
-            : candidate.contextCall?.partition?.partitionId === child.partitionId)
-      ));
-      const commits = child.artifacts.filter((artifact) => artifact.kind === 'commit');
-      const commit = commits.length === 1 ? commits[0] : null;
-      if (!node || digest(node) !== child.nodeDigest || !commit
-        || commit.refs?.sha !== child.resultSha
-        || commit.refs?.retainedResultRef !== `refs/baton/results/${child.resultSha}`
-        || child.cleanupDigest !== cleanup.cleanupDigest
-        || child.resourceRelease?.releaseDigest !== cleanup.targets.find((target) => (
-          generic ? target.unitId === child.unitId : target.partitionId === child.partitionId
-        ))?.releaseDigest) {
-        throw applicationError(
-          'Context result projection lacks one canonical accepted child authority',
-          'application_context_map_integrity',
-        );
-      }
-      return {
-        callId: call.callId, unitId: generic ? child.unitId : child.partitionId,
-        taskId: child.taskId, taskVersion: child.taskVersion,
-        terminalEvent: child.terminalEvent, childDigest: child.childDigest,
-        route: clone(child.route), artifactDigest: child.artifactDigest,
-        cleanupDigest: cleanup.cleanupDigest,
-        baseSha: generic ? call.authority.treeSha : call.source.treeSha,
-        resultSha: child.resultSha,
-        retainedResultRef: commit.refs.retainedResultRef,
-        pathScope: clone(node.pathScope),
-      };
-    });
-  }
-export async function _proposeContextMap(application, current, inputs, caller) {
-    if (!application._isWorkflowRun(current) || !current.profile) {
-      throw applicationError('Context map requires a current recursively composable Workflow',
-        'application_context_map_unavailable');
-    }
-    const sourceCell = application.driver.coordination.contextCell(inputs.cellId);
-    const sourceSession = sourceCell
-      ? application.driver.coordination.contextSession(sourceCell.sessionId) : null;
-    if (!sourceCell || sourceCell.state !== 'completed' || !sourceCell.result || !sourceSession
-      || sourceSession.runId !== current.goal.runId || sourceSession.state !== 'active'
-      || sourceSession.manifest.workflow.plan.digest !== current.plan.digest) {
-      throw applicationError('Context map input is not a completed current-session cell',
-        'application_context_map_source_invalid');
-    }
-    let artifacts;
-    try { artifacts = application.driver.coordination.contextCellArtifacts(sourceCell.cellId); }
-    catch (error) {
-      throw applicationError(error?.message ?? 'Context map input artifacts are unavailable',
-        error?.code ?? 'application_context_map_source_invalid');
-    }
-    const items = artifacts.output?.items;
-    const outputLineages = artifacts.evidence?.outputLineages;
-    if (artifacts.evidence?.schemaVersion !== 2
-      || !Array.isArray(outputLineages) || outputLineages.length !== items?.length
-      || !/^[a-f0-9]{64}$/u.test(artifacts.evidence.outputLineageDigest ?? '')
-      || outputLineages.some((lineage, index) => (
-        lineage?.index !== index || lineage.itemDigest !== digest(items[index])
-        || !/^[a-f0-9]{64}$/u.test(lineage.coordinateDigest ?? '')
-        || !/^[a-f0-9]{64}$/u.test(lineage.lineageDigest ?? '')
-      ))) {
-      throw applicationError(
-        'Context map requires exact per-output lineage; evaluate the source under the current Context runtime.',
-        'context_output_lineage_required',
-      );
-    }
-    // The successor Plan is normalised under the deployment policy for its identity and digest —
-    // never for a size or count bound, which the policy no longer carries (#530).
-    const goalPlanPolicy = application.driver.coordination.goalPlanPolicy();
-    if (!Array.isArray(items) || items.length < 2) {
-      throw applicationError('Context map is parallel and needs at least two immutable items; inspect this cell or use one ordinary Run/review for singleton input',
-        'context_map_not_parallel');
-    }
-    const definition = application._workflowDefinition(current);
-    const roleCatalog = application._workflowRoleCatalog(current, definition);
-    const roleAttempt = definition.attempts.find((attempt) => attempt.role === inputs.role);
-    const catalogRole = roleCatalog.roles.find((role) => role.role === inputs.role) ?? null;
-    const catalogRoleAuthorized = definition.schemaVersion === 3 ? catalogRole : null;
-    const logicalRole = catalogRoleAuthorized?.role
-      ?? (roleAttempt ? workflowAttemptLogicalRole(definition, roleAttempt) : null);
-    const sourceNode = roleAttempt
-      ? current.plan.nodes.find((node) => node.key === roleAttempt.nodeKey) : null;
-    if ((!catalogRoleAuthorized && (!roleAttempt || !sourceNode)) || !catalogRole || !logicalRole) {
-      throw applicationError('Context map role is outside the approved Workflow definition',
-        'application_context_map_role_invalid');
-    }
-    const history = application._workflowPlanHistory(current);
-    const workflowPolicy = workflowDefinitionPolicy(definition);
-    const nodeBudget = workflowRevisionBudget(
-      current.profile, history.map((entry) => entry.plan), items.length,
-      workflowPolicy.maxRounds,
-    );
-    if (!nodeBudget) {
-      throw applicationError('Context map has no remaining cumulative Workflow budget authority',
-        'application_context_map_capacity');
-    }
-    const contextPrincipal = application.context.principal;
-    const contextAuthority = {
-      actor: contextPrincipal.actor, principalId: contextPrincipal.principalId,
-      repoId: application.repoId, runId: current.goal.runId,
-    };
-    const call = contextEffectCallIdentity({
-      schemaVersion: 1, kind: 'baton.context_effect_call', operator: 'map',
-      generation: 1, predecessorCall: null, inheritedChildren: [],
-      authority: {
-        contextPrincipal: clone(contextAuthority),
-        requester: { principalId: caller.principalId, sessionId: caller.sessionId },
-        sessionId: sourceSession.sessionId, manifestDigest: sourceSession.manifestDigest,
-        treeSha: sourceSession.manifest.tree.sha,
-        environmentDigest: sourceSession.environmentDigest,
-        policyDigest: sourceSession.policyDigest,
-        definitionDigest: definition.definitionDigest,
-        roleCatalogDigest: roleCatalog.catalogDigest,
-        profileDigest: current.profile.digest,
-        predecessorPlan: {
-          planId: current.plan.planId, version: current.plan.version,
-          digest: current.plan.digest,
-        },
-      },
-      source: {
-        kind: 'cell', id: sourceCell.cellId,
-        admissionDigest: sourceCell.admissionDigest,
-        settlementDigest: sourceCell.settlementDigest,
-        coordinateDigest: sourceCell.result.coordinateDigest,
-        outputLineageDigest: artifacts.evidence.outputLineageDigest,
-        outputRef: clone(sourceCell.result.outputRef),
-        evidenceRef: clone(sourceCell.result.evidenceRef),
-        itemCount: items.length,
-      },
-      role: inputs.role, instruction: inputs.instruction,
-      units: outputLineages.map((lineage) => ({
-        index: lineage.index,
-        inputs: [{
-          index: lineage.index, itemDigest: lineage.itemDigest,
-          lineageDigest: lineage.lineageDigest,
-        }],
-        coordinateDigest: lineage.coordinateDigest,
-      })),
-    });
-    const nodes = call.units.map((unit, index) => {
-      const memberRole = `${call.role}:${String(index + 1).padStart(4, '0')}`;
-      const template = catalogRole.nodeTemplate;
-      return {
-        ...(template ? {
-          definitionOfDone: clone(template.definitionOfDone),
-          pathScope: clone(template.pathScope),
-          contextScope: clone(template.contextScope),
-          risk: template.risk,
-          verification: clone(template.verification),
-          capabilities: clone(template.capabilities),
-          effects: clone(template.effects),
-          requiredEffects: clone(template.requiredEffects),
-          ...(template.workerPolicy ? { workerPolicy: clone(template.workerPolicy) } : {}),
-        } : clone(sourceNode)),
-        routes: exactPlanRoutes(catalogRole.route),
-        key: `attempt:${memberRole}`,
-        objective: `${call.role} Context map unit ${index + 1}/${call.units.length}: ${call.instruction}\nImmutable unit: ${unit.unitId}`,
-        deps: [],
-        budget: clone(nodeBudget),
-        contextCall: contextEffectNodeBinding(call, unit),
-      };
-    });
-    const planRequest = {
-      goal: {
-        goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest,
-      },
-      predecessor: {
-        planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest,
-      },
-      nodes,
-    };
-    const normalizedPlan = normalizePlanRequest(planRequest, goalPlanPolicy, current.goal);
-    const expectedPlanDigest = digest({
-      schemaVersion: 1, repoId: application.repoId, runId: current.goal.runId,
-      goal: normalizedPlan.goal, predecessor: normalizedPlan.predecessor,
-      nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
-      policyDigest: goalPlanPolicy.policyDigest,
-    });
-    const successorDefinitionCore = {
-      schemaVersion: 3, repoId: application.repoId, runId: current.goal.runId,
-      goalDigest: current.goal.digest, planDigest: expectedPlanDigest,
-      profileDigest: current.profile.digest,
-      workflowPolicy: clone(workflowPolicy), workflowPolicyDigest: workflowPolicy.policyDigest,
-      strategy: 'parallel_attempts', workspace: 'isolated', join: 'operator_selected',
-      workItem: {
-        objective: current.goal.objective,
-        definitionOfDone: clone(current.goal.definitionOfDone),
-      },
-      roleCatalog: clone(roleCatalog),
-      lineage: {
-        generation: definition.schemaVersion === 3 ? definition.lineage.generation + 1 : 2,
-        rootDefinitionDigest: definition.schemaVersion === 3 && definition.lineage.generation > 1
-          ? definition.lineage.rootDefinitionDigest : definition.definitionDigest,
-        parentDefinitionDigest: definition.definitionDigest,
-      },
-      attempts: call.units.map((unit, index) => workflowAttempt(
-        `${call.role}:${String(index + 1).padStart(4, '0')}`,
-        logicalRole, nodes[index].key, roleCatalog,
-      )),
-    };
-    validateWorkflowDefinitionV3(successorDefinitionCore, {
-      nodes: normalizedPlan.nodes,
-      ancestors: application._workflowDefinitionAncestors(current.goal.runId),
-    });
-    application.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-      ...successorDefinitionCore, definitionDigest: digest(successorDefinitionCore),
-    }, {
-      actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
-      key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
-    });
-    const admitted = application.driver.coordination.admitContextEffectCall({
-      call, planRequest, expectedPlanDigest,
-    }, {
-      actor: contextPrincipal.actor, principalId: contextPrincipal.principalId,
-      repoId: application.repoId, runId: current.goal.runId,
-      requesterPrincipalId: caller.principalId, requesterSessionId: caller.sessionId,
-      key: `context.call:${call.callId}`,
-    });
-    const proposed = await application.driver.coordinator.proposePlan(planRequest,
-      authority(application.principals.planner, application.repoId, current.goal.runId, 'plan:propose',
-        `application:${current.goal.runId}:context-map:${call.callDigest}`));
-    if (proposed.plan.digest !== expectedPlanDigest
-      || admitted.call.expectedPlanDigest !== expectedPlanDigest) {
-      throw applicationError('Context map successor Plan differs from its durable prebinding',
-        'application_context_map_integrity');
-    }
-    const refreshed = application._findRun(current.goal.runId);
-    application._workflowDefinition(refreshed);
-    return application._validateContextEffectPlan(refreshed);
-  }
-export async function _proposeContextReduce(application, current, inputs, caller) {
-    if (!application._isWorkflowRun(current) || !current.profile) {
-      throw applicationError('Context reduce requires a current recursively composable Workflow',
-        'application_context_reduce_unavailable');
-    }
-    const sourceCall = application.driver.coordination.contextCall(inputs.callId);
-    if (!sourceCall || sourceCall.state !== 'completed') {
-      throw applicationError('Context reduce input is not a completed call',
-        'application_context_reduce_source_invalid');
-    }
-    const genericMap = sourceCall.kind === 'baton.context_effect_call'
-      && sourceCall.operator === 'map';
-    if (sourceCall.kind !== 'baton.context_map_call' && !genericMap) {
-      throw applicationError(
-        'Context composition after one reduce is closed; retry remains the next recursive edge.',
-        'application_context_reduce_depth_closed',
-      );
-    }
-    let source; let artifacts;
-    try {
-      ({ source, artifacts }
-        = application.driver.coordination.contextCompletedCallSourceAndArtifacts(sourceCall.callId));
-    } catch (error) {
-      throw applicationError(error?.message ?? 'Context reduce source is unavailable',
-        error?.code ?? 'application_context_reduce_source_invalid');
-    }
-    const definition = application._workflowDefinition(current);
-    if (definition.schemaVersion !== 3) {
-      throw applicationError('Context reduce requires a self-describing Workflow role catalog',
-        'application_context_reduce_unavailable');
-    }
-    const roleCatalog = definition.roleCatalog;
-    const catalogRole = workflowCatalogRole(definition, inputs.role);
-    if (!catalogRole) {
-      throw applicationError('Context reduce role is outside the approved Workflow definition',
-        'application_context_reduce_role_invalid');
-    }
-    const sourceSessionId = sourceCall.kind === 'baton.context_effect_call'
-      ? sourceCall.authority.sessionId : sourceCall.source.sessionId;
-    const session = application.driver.coordination.contextSession(sourceSessionId);
-    const principal = application.context.principal;
-    const contextAuthority = {
-      actor: principal.actor, principalId: principal.principalId,
-      repoId: application.repoId, runId: current.goal.runId,
-    };
-    if (!session || session.state !== 'active' || session.runId !== current.goal.runId
-      || digest(session.authority) !== digest(contextAuthority)) {
-      throw applicationError('Context reduce session authority is unavailable or stale',
-        'application_context_reduce_source_invalid');
-    }
-    const lineages = artifacts.evidence?.outputLineages;
-    const sourceEvidenceVersion = genericMap ? 4 : 3;
-    if (artifacts.evidence?.schemaVersion !== sourceEvidenceVersion || !Array.isArray(lineages)
-      || lineages.length !== source.itemCount || artifacts.output?.items?.length !== source.itemCount) {
-      throw applicationError('Context reduce requires exact per-output call lineage',
-        'context_output_lineage_required');
-    }
-    const workflowPolicy = workflowDefinitionPolicy(definition);
-    const history = application._workflowPlanHistory(current);
-    const nodeBudget = workflowRevisionBudget(
-      current.profile, history.map((entry) => entry.plan), 1, workflowPolicy.maxRounds,
-    );
-    if (!nodeBudget) {
-      throw applicationError('Context reduce has no remaining cumulative Workflow budget authority',
-        'application_context_reduce_capacity');
-    }
-    const call = contextEffectCallIdentity({
-      schemaVersion: 1, kind: 'baton.context_effect_call', operator: 'reduce',
-      generation: 1, predecessorCall: null, inheritedChildren: [],
-      authority: {
-        contextPrincipal: clone(contextAuthority),
-        requester: { principalId: caller.principalId, sessionId: caller.sessionId },
-        sessionId: session.sessionId, manifestDigest: session.manifestDigest,
-        treeSha: session.manifest.tree.sha, environmentDigest: session.environmentDigest,
-        policyDigest: session.policyDigest, definitionDigest: definition.definitionDigest,
-        roleCatalogDigest: roleCatalog.catalogDigest, profileDigest: definition.profileDigest,
-        predecessorPlan: {
-          planId: current.plan.planId, version: current.plan.version,
-          digest: current.plan.digest,
-        },
-      },
-      source, role: inputs.role, instruction: inputs.instruction,
-      units: [{
-        index: 0,
-        inputs: lineages.map((lineage) => ({
-          index: lineage.index, itemDigest: lineage.itemDigest,
-          lineageDigest: lineage.lineageDigest,
-        })),
-        coordinateDigest: source.coordinateDigest,
-      }],
-    });
-    const unit = call.units[0];
-    const template = catalogRole.nodeTemplate;
-    const memberRole = `${call.role}:0001`;
-    const node = {
-      definitionOfDone: clone(template.definitionOfDone),
-      pathScope: clone(template.pathScope), contextScope: clone(template.contextScope),
-      risk: template.risk, verification: clone(template.verification),
-      routes: exactPlanRoutes(catalogRole.route),
-      capabilities: clone(template.capabilities), effects: clone(template.effects),
-      requiredEffects: clone(template.requiredEffects),
-      ...(template.workerPolicy ? { workerPolicy: clone(template.workerPolicy) } : {}),
-      key: `attempt:${memberRole}`,
-      objective: `${call.role} Context reduce over ${source.itemCount} exact results: ${call.instruction}`,
-      deps: [], budget: clone(nodeBudget), contextCall: contextEffectNodeBinding(call, unit),
-    };
-    const planRequest = {
-      goal: {
-        goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest,
-      },
-      predecessor: {
-        planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest,
-      },
-      nodes: [node],
-    };
-    const goalPlanPolicy = application.driver.coordination.goalPlanPolicy();
-    const normalizedPlan = normalizePlanRequest(planRequest, goalPlanPolicy, current.goal);
-    const expectedPlanDigest = digest({
-      schemaVersion: 1, repoId: application.repoId, runId: current.goal.runId,
-      goal: normalizedPlan.goal, predecessor: normalizedPlan.predecessor,
-      nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
-      policyDigest: goalPlanPolicy.policyDigest,
-    });
-    const successorDefinitionCore = {
-      schemaVersion: 3, repoId: application.repoId, runId: current.goal.runId,
-      goalDigest: current.goal.digest, planDigest: expectedPlanDigest,
-      profileDigest: current.profile.digest,
-      workflowPolicy: clone(workflowPolicy), workflowPolicyDigest: workflowPolicy.policyDigest,
-      strategy: definition.strategy, workspace: definition.workspace, join: definition.join,
-      workItem: clone(definition.workItem), roleCatalog: clone(roleCatalog),
-      lineage: {
-        generation: definition.lineage.generation + 1,
-        rootDefinitionDigest: definition.lineage.generation > 1
-          ? definition.lineage.rootDefinitionDigest : definition.definitionDigest,
-        parentDefinitionDigest: definition.definitionDigest,
-      },
-      attempts: [workflowAttempt(memberRole, call.role, node.key, roleCatalog)],
-    };
-    validateWorkflowDefinitionV3(successorDefinitionCore, {
-      nodes: normalizedPlan.nodes,
-      ancestors: application._workflowDefinitionAncestors(current.goal.runId),
-    });
-    application.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-      ...successorDefinitionCore, definitionDigest: digest(successorDefinitionCore),
-    }, {
-      actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
-      key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
-    });
-    const admitted = application.driver.coordination.admitContextEffectCall({
-      call, planRequest, expectedPlanDigest,
-    }, {
-      actor: principal.actor, principalId: principal.principalId,
-      repoId: application.repoId, runId: current.goal.runId,
-      requesterPrincipalId: caller.principalId, requesterSessionId: caller.sessionId,
-      key: `context.call:${call.callId}`,
-    });
-    const proposed = await application.driver.coordinator.proposePlan(planRequest,
-      authority(application.principals.planner, application.repoId, current.goal.runId, 'plan:propose',
-        `application:${current.goal.runId}:context-call:${call.callDigest}`));
-    if (proposed.plan.digest !== expectedPlanDigest
-      || admitted.call.expectedPlanDigest !== expectedPlanDigest) {
-      throw applicationError('Context reduce successor Plan differs from its durable prebinding',
-        'application_context_call_integrity');
-    }
-    const refreshed = application._findRun(current.goal.runId);
-    application._workflowDefinition(refreshed);
-    return application._validateContextEffectPlan(refreshed);
-  }
-export async function _proposeContextRetry(application, current, inputs, caller) {
-    if (!application._isWorkflowRun(current) || !current.profile) {
-      throw applicationError('Context retry requires a current recursively composable Workflow',
-        'application_context_retry_unavailable');
-    }
-    const predecessor = application.driver.coordination.contextCall(inputs.callId);
-    const selection = application.driver.coordination.contextRetryEligibility(inputs.callId);
-    if (!predecessor || predecessor.kind !== 'baton.context_effect_call'
-      || selection.eligible !== true
-      || predecessor.expectedPlanDigest !== current.plan.digest) {
-      throw applicationError(selection.summary ?? 'Context call is not retryable at this Plan head',
-        selection.code ?? 'application_context_retry_source_invalid');
-    }
-    const definition = application._workflowDefinition(current);
-    if (definition.schemaVersion !== 3) {
-      throw applicationError('Context retry requires a self-describing Workflow role catalog',
-        'application_context_retry_unavailable');
-    }
-    const catalogRole = workflowCatalogRole(definition, predecessor.role);
-    if (!catalogRole) {
-      throw applicationError('Context retry role is outside the current Workflow authority',
-        'application_context_retry_role_invalid');
-    }
-    const session = application.driver.coordination.contextSession(predecessor.authority.sessionId);
-    const principal = application.context.principal;
-    const contextAuthority = {
-      actor: principal.actor, principalId: principal.principalId,
-      repoId: application.repoId, runId: current.goal.runId,
-    };
-    if (!session || session.state !== 'active'
-      || digest(session.authority) !== digest(contextAuthority)) {
-      throw applicationError('Context retry session authority is unavailable or stale',
-        'application_context_retry_source_invalid');
-    }
-    const workflowPolicy = workflowDefinitionPolicy(definition);
-    const history = application._workflowPlanHistory(current);
-    const nodeBudget = workflowRevisionBudget(
-      current.profile, history.map((entry) => entry.plan), selection.retryUnitIds.length,
-      workflowPolicy.maxRounds,
-    );
-    if (!nodeBudget) {
-      throw applicationError('Context retry has no remaining cumulative Workflow budget authority',
-        'application_context_retry_capacity');
-    }
-    const call = contextEffectRetryCallIdentity(application._contextCallCore(predecessor), {
-      settlementDigest: selection.settlementDigest,
-      inheritedChildren: selection.inheritedChildren,
-      retryUnitIds: selection.retryUnitIds,
-      authority: {
-        contextPrincipal: clone(contextAuthority),
-        requester: {
-          principalId: predecessor.authority.requester.principalId,
-          sessionId: predecessor.authority.requester.sessionId,
-        },
-        sessionId: session.sessionId, manifestDigest: session.manifestDigest,
-        treeSha: session.manifest.tree.sha, environmentDigest: session.environmentDigest,
-        policyDigest: session.policyDigest, definitionDigest: definition.definitionDigest,
-        roleCatalogDigest: definition.roleCatalog.catalogDigest,
-        profileDigest: definition.profileDigest,
-        predecessorPlan: {
-          planId: current.plan.planId, version: current.plan.version,
-          digest: current.plan.digest,
-        },
-      },
-    });
-    const executionUnits = call.executionUnitIds.map((unitId) => (
-      call.units.find((unit) => unit.unitId === unitId)
-    ));
-    const template = catalogRole.nodeTemplate;
-    const nodes = executionUnits.map((unit) => {
-      const memberRole = `${call.role}:${String(unit.index + 1).padStart(4, '0')}`;
-      return {
-        definitionOfDone: clone(template.definitionOfDone),
-        pathScope: clone(template.pathScope), contextScope: clone(template.contextScope),
-        risk: template.risk, verification: clone(template.verification),
-        routes: exactPlanRoutes(catalogRole.route),
-        capabilities: clone(template.capabilities), effects: clone(template.effects),
-        requiredEffects: clone(template.requiredEffects),
-        ...(template.workerPolicy ? { workerPolicy: clone(template.workerPolicy) } : {}),
-        key: `attempt:${memberRole}`,
-        objective: `${call.role} Context ${call.operator} retry generation ${call.generation}, unit ${unit.index + 1}/${call.units.length}: ${call.instruction}\nImmutable retry unit: ${unit.unitId}`,
-        deps: [], budget: clone(nodeBudget), contextCall: contextEffectNodeBinding(call, unit),
-      };
-    });
-    const planRequest = {
-      goal: {
-        goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest,
-      },
-      predecessor: {
-        planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest,
-      },
-      nodes,
-    };
-    const goalPlanPolicy = application.driver.coordination.goalPlanPolicy();
-    const normalizedPlan = normalizePlanRequest(planRequest, goalPlanPolicy, current.goal);
-    const expectedPlanDigest = digest({
-      schemaVersion: 1, repoId: application.repoId, runId: current.goal.runId,
-      goal: normalizedPlan.goal, predecessor: normalizedPlan.predecessor,
-      nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
-      policyDigest: goalPlanPolicy.policyDigest,
-    });
-    const successorDefinitionCore = {
-      schemaVersion: 3, repoId: application.repoId, runId: current.goal.runId,
-      goalDigest: current.goal.digest, planDigest: expectedPlanDigest,
-      profileDigest: current.profile.digest,
-      workflowPolicy: clone(workflowPolicy), workflowPolicyDigest: workflowPolicy.policyDigest,
-      strategy: definition.strategy, workspace: definition.workspace, join: definition.join,
-      workItem: clone(definition.workItem), roleCatalog: clone(definition.roleCatalog),
-      lineage: {
-        generation: definition.lineage.generation + 1,
-        rootDefinitionDigest: definition.lineage.generation > 1
-          ? definition.lineage.rootDefinitionDigest : definition.definitionDigest,
-        parentDefinitionDigest: definition.definitionDigest,
-      },
-      attempts: executionUnits.map((unit) => {
-        const memberRole = `${call.role}:${String(unit.index + 1).padStart(4, '0')}`;
-        return workflowAttempt(memberRole, call.role, `attempt:${memberRole}`,
-          definition.roleCatalog);
-      }),
-    };
-    validateWorkflowDefinitionV3(successorDefinitionCore, {
-      nodes: normalizedPlan.nodes,
-      ancestors: application._workflowDefinitionAncestors(current.goal.runId),
-    });
-    application.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-      ...successorDefinitionCore, definitionDigest: digest(successorDefinitionCore),
-    }, {
-      actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
-      key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
-    });
-    const admitted = application.driver.coordination.admitContextEffectCall({
-      call, planRequest, expectedPlanDigest,
-    }, {
-      actor: principal.actor, principalId: principal.principalId,
-      repoId: application.repoId, runId: current.goal.runId,
-      requesterPrincipalId: call.authority.requester.principalId,
-      requesterSessionId: call.authority.requester.sessionId,
-      key: `context.call:${call.callId}`,
-    });
-    const proposed = await application.driver.coordinator.proposePlan(planRequest,
-      authority(application.principals.planner, application.repoId, current.goal.runId, 'plan:propose',
-        `application:${current.goal.runId}:context-retry:${call.callDigest}`));
-    if (proposed.plan.digest !== expectedPlanDigest
-      || admitted.call.expectedPlanDigest !== expectedPlanDigest) {
-      throw applicationError('Context retry successor Plan differs from its durable prebinding',
-        'application_context_retry_integrity');
-    }
-    const refreshed = application._findRun(current.goal.runId);
-    application._workflowDefinition(refreshed);
-    return application._validateContextEffectPlan(refreshed);
-  }
-// REFLEX-4 slice A (docs/32 §3.4, issue #19; red-team F12, docs/reference/evidence/
-// reflex-wave-live-2026-07-21/reflex-redteam.md): application.context_eval is the pure-only
-// Bench surface without a Workflow run/action gate. Named explicitly, per the F12 refinement:
-//
-// Transport: this is a public method, not an APPLICATION_COMMAND_DEFINITIONS entry — see the
-// note above that table (near CONTEXT_EVAL_ARGS/validateContextEvalArgs) for why: any new key
-// there, under any `.web`/`.mcp` flag combination, breaks a fixed-mock `application.card()`
-// assertion in a test file outside this task's scope. Calling `application.contextEval(...)`
-// directly is Rule 3's "direct command port" transport; Web, MCP, and generic
-// `application.command('application.context_eval', ...)` string dispatch are real, documented
-// gaps pending a change that can update those fixtures.
-//
-// Non-Workflow manifest-admission authority = NONE is created here. This command never admits
-// a new ContextManifest and never opens a session against a synthesized authority. It only
-// resolves to an EXISTING durably-admitted session — one previously admitted through the same
-// dispatch-bound `this.context.openSession` the Workflow `context_eval` action above uses
-// (`_resolveContextEvalRunTarget`/`_resolveContextEvalManifestTarget`) — and re-opens that
-// identical session (idempotently, by construction: same manifest, same dispatch, same
-// `this.context.principal`) to evaluate a new pure program against it. The only authority this
-// surface relaxes versus the Workflow action is `_contextEvalTargets`: the caller need not hold
-// the target role's own dispatch. `this.context.openSession` still requires a live 'working'
-// Plan-node dispatch and its Workflow-definition ledger record underneath, unchanged; a Run
-// that never went through that path (a genuinely Workflow-free "plain" Run) has no manifest
-// reachable here and this command refuses. So this widens *who* may evaluate, never *what* may
-// be evaluated against, and creates no new Workflow, Plan, dispatch, or effect authority.
-//
-// ManifestRef simplification: spec/phase93-closed-program-ir.md's ManifestRef is the exact
-// 4-tuple {kind, manifestId, manifestDigest, treeSha, environmentDigest}. The CLI surface named
-// in this slice's contract (`baton context eval --manifest DIGEST ...`) carries only a digest,
-// and a manifestDigest already uniquely resolves one durably-admitted session (it is content-
-// addressed over the manifest, which itself embeds runId/plan/node/task/tree/branches — see
-// context-program.mjs normalizeContextManifest). So `manifestDigest` alone is the addressing
-// key here; `_resolveContextEvalManifestTarget` still cross-checks the reopened session's own
-// manifest digest before evaluating, which is what catches a stale or tampered reference.
-//
-// Durable admission (red-team F12 refinement, second half): every cell this surface returns
-// is produced by the identical `DurableContextSession.evaluate()` -> coordination
-// admitContextCell/settleContextCell path as the Workflow surface (via `this.context.openSession`
-// -> `session.evaluate(program)`). `StatelessContextBench` is never constructed or touched
-// directly in application.mjs. A cell returned here is therefore always durably admitted and
-// citable by digest exactly like a Workflow-produced cell — never a stateless-computed-only cell.
-export async function contextEval(application, rawRequest, rawPrincipal, rawContext = null) {
-    application._assertOpen();
-    await application.ready;
-    const context = normalizeCommandContext(rawContext);
-    validateContextEvalArgs(rawRequest);
-    const request = deepFreeze(clone(rawRequest));
-    const principal = normalizePrincipal(rawPrincipal, 'context eval principal');
-    if (!application.context) {
-      throw applicationError('Context runtime is unavailable', 'application_context_unavailable');
-    }
-    await application._authorize('application.context_eval', principal, request.runId ?? null, {
-      manifestDigest: request.manifestDigest ?? null,
-    });
-    application._assertOpen();
-    return application.driver.coordination.withContextArtifactVerification(async () => {
-      let program;
-      try {
-        program = normalizeContextProgram(
-          request.program, application.driver.coordination.contextProgramPolicy(),
-        );
-        if (!contextProgramIsPure(program, application.driver.coordination.contextProgramPolicy())) {
-          throw applicationError('Context evaluation contains a provider effect',
-            'application_context_effect_forbidden');
-        }
-      } catch (error) {
-        if (error?.code === 'application_context_effect_forbidden') throw error;
-        throw applicationError(error.message, 'application_action_input_invalid');
-      }
-      application._assertOpen();
-      const { current, target } = request.manifestDigest !== undefined
-        ? await application._resolveContextEvalManifestTarget(request.manifestDigest)
-        : await application._resolveContextEvalRunTarget(request.runId, request.role ?? null);
-      const session = await application.context.openSession({
-        authority: { current, role: target.role, nodeKey: target.nodeKey },
-        principal: application.context.principal, signal: null,
-      });
-      if (!session || typeof session.evaluate !== 'function') {
-        throw applicationError('Context runtime returned an invalid session',
-          'application_context_unavailable');
-      }
-      if (request.manifestDigest !== undefined && session.manifest.digest !== request.manifestDigest) {
-        throw applicationError('Context manifest is not durably admitted',
-          'application_context_eval_manifest_unavailable');
-      }
-      const cell = await session.evaluate(program);
-      if (!/^cell:[a-f0-9]{64}$/u.test(cell?.cellId ?? '')) {
-        throw applicationError('Context runtime returned an invalid cell',
-          'application_context_result_invalid');
-      }
-      return application.inspect({
-        runId: current.goal.runId, depth: 'item', section: 'context', item: cell.cellId,
-      }, principal, context);
-    });
-  }
-export async function contextPackageBranch(application, packageDigest, branchName, rawPrincipal, rawContext = null) {
-    application._assertOpen();
-    await application.ready;
-    normalizeCommandContext(rawContext);
-    const principal = normalizePrincipal(rawPrincipal, 'context package principal');
-    await application._authorize('application.context_package_branch', principal, null, {
-      packageDigest, branchName,
-    });
-    application._assertOpen();
-    const resolved = application.driver.coordination.withContextArtifactVerification(
-      () => application.driver.coordination.resolveContextPackageBranch(packageDigest, branchName),
-    );
-    return projectContextPackageBranch(resolved);
   }
 export function _semanticActions(application, current, view, principal, context = null) {
     const candidates = [];
@@ -5142,43 +4043,6 @@ export function _semanticActions(application, current, view, principal, context 
         });
       }
     }
-    const contextTargets = application._contextTargets(current, view);
-    if (contextTargets.length > 0) {
-      const roles = contextTargets.map((target) => target.role);
-      candidates.push({ kind: 'context_eval', source: { roles }, target: { roles } });
-    }
-    if (application._contextState(current).currentCells.some((cell) => cell.state === 'completed')) {
-      const definition = application._workflowDefinition(current);
-      const roles = definition.schemaVersion === 3
-        ? definition.roleCatalog.roles.map((entry) => entry.role)
-        : definition.attempts.map((attempt) => attempt.role);
-      if (roles.length > 0) {
-        candidates.push({ kind: 'context_map', source: { roles }, target: { roles } });
-      }
-    }
-    if (application._contextState(current).currentCalls.some((call) => (
-      call.state === 'completed' && (
-        call.kind === 'baton.context_map_call'
-          || (call.kind === 'baton.context_effect_call' && call.operator === 'map')
-      )
-    ))) {
-      const definition = application._workflowDefinition(current);
-      const roles = definition.schemaVersion === 3
-        ? definition.roleCatalog.roles.map((entry) => entry.role)
-        : [];
-      if (roles.length > 0) {
-        candidates.push({ kind: 'context_reduce', source: { roles }, target: { roles } });
-      }
-    }
-    for (const call of application._contextState(current).currentCalls) {
-      if (call.kind !== 'baton.context_effect_call' || call.state !== 'failed') continue;
-      const eligibility = application.driver.coordination.contextRetryEligibility(call.callId);
-      if (eligibility.eligible === true) {
-        candidates.push({
-          kind: 'context_retry', source: eligibility, target: { callId: call.callId },
-        });
-      }
-    }
     const stopClosesOpenDispatchAuthority = [
       'planning', 'planning_failed', 'awaiting_plan_approval', 'approved', 'running', 'reviewing',
     ].includes(view.phase);
@@ -5195,15 +4059,6 @@ export function _semanticActions(application, current, view, principal, context 
       const inputSchema = clone(definition.inputSchema);
       if (kind === 'select_candidate' && Array.isArray(source?.roles)) {
         inputSchema.properties.role.enum = clone(source.roles);
-      }
-      if (kind.startsWith('context_') && Array.isArray(source?.roles)) {
-        if (source.roles.length === 1) {
-          delete inputSchema.properties.role;
-          inputSchema.required = inputSchema.required.filter((field) => field !== 'role');
-        } else {
-          inputSchema.properties.role.enum = clone(source.roles);
-          if (!inputSchema.required.includes('role')) inputSchema.required.push('role');
-        }
       }
       if (['send', 'interrupt'].includes(kind) && Array.isArray(source?.recipients)) {
         inputSchema.properties.recipient.enum = clone(source.recipients);
@@ -5231,8 +4086,7 @@ export function _semanticActions(application, current, view, principal, context 
         idempotent: definition.idempotent,
         priority: definition.priority,
         choices: ['send', 'interrupt'].includes(kind) ? clone(source?.recipients ?? [])
-          : (kind === 'select_candidate' || kind.startsWith('context_'))
-            ? clone(source?.roles ?? []) : [],
+          : kind === 'select_candidate' ? clone(source?.roles ?? []) : [],
         ...(target ? { target: clone(target) } : {}),
         freshness: {
           registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
@@ -5602,7 +4456,6 @@ export function _closedVerdictProjection(application, result, planNode, phase, w
     });
   }
 export function _semanticSectionItems(application, current, view, sectionId, episodeContext = null) {
-    if (sectionId === 'context') return application._contextSectionItems(current);
     if (sectionId === 'workstreams') return episodeContext?.streams
       ?? application._episodeWorkstreams(current, view);
     if (sectionId === 'episode') {
@@ -5833,7 +4686,6 @@ export function _historicalProfileInspection(application, current, view, request
           ...(view.requiredAction ? { requiredAction: clone(view.requiredAction) } : {}),
           attention: { count: 0, state: 'clear', summary: 'No historical attention is projected.' },
           route: clone(view.route), workerPolicy: clone(view.workerPolicy),
-          context: clone(application._contextState(current).projection),
           terminalCause: clone(view.terminalCause),
           resources: {
             state: projectedCleanupState(view),
@@ -5896,8 +4748,7 @@ export function _historicalProfileInspection(application, current, view, request
       });
     }
     if (request.depth === 'item') {
-      const hasContent = request.section === 'context'
-        || (request.section === 'episode' && request.item.startsWith('episode:output'))
+      const hasContent = (request.section === 'episode' && request.item.startsWith('episode:output'))
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return application._finalizeSemanticInspection({
@@ -5905,7 +4756,7 @@ export function _historicalProfileInspection(application, current, view, request
           ...(hasContent ? [{ depth: 'content', section: request.section, item: request.item }] : []),
           { depth: 'evidence', section: request.section, item: request.item },
         ],
-        item: request.section === 'context' ? application._contextItemDetail(selected) : selected,
+        item: selected,
       }, bounds);
     }
     if (request.depth === 'content') {
@@ -5958,28 +4809,13 @@ export function _historicalProfileInspection(application, current, view, request
           item: { id: selected.id, section: selected.section }, content,
         }, bounds);
       }
-      if (request.section !== 'context') {
-        throw applicationError('Content depth is only available for Context results',
-          'application_context_content_unavailable');
-      }
-      const content = application._contextItemContent(selected, request.offset ?? 0, bounds);
-      return application._finalizeSemanticInspection({
-        ...base, truncated: content.truncated,
-        expansions: [
-          ...(content.nextOffset === null ? [] : [{
-            depth: 'content', section: request.section, item: request.item,
-            offset: content.nextOffset,
-          }]),
-          { depth: 'evidence', section: request.section, item: request.item },
-        ],
-        item: { id: selected.id, section: selected.section }, content,
-      }, bounds);
+      throw applicationError('Content depth is only available for episode output and execution items',
+        'application_inspect_content_unavailable');
     }
     const evidence = [
       { kind: 'goal', digest: current.goal.digest, provenance: 'durable Goal authority' },
       ...(current.plan ? [{ kind: 'plan', digest: current.plan.digest, provenance: 'durable Plan authority' }] : []),
       ...(current.approval ? [{ kind: 'approval', digest: current.approval.digest, provenance: 'durable Plan approval authority' }] : []),
-      ...(request.section === 'context' ? application._contextItemEvidence(current, selected) : []),
       ...(request.section === 'episode'
         ? application._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
@@ -6055,9 +4891,7 @@ export function _debugReceipt(application, event) {
   }
 export async function _activeWorkstream(application, rawRequest, principal) {
     const current = application._findRun(rawRequest.runId);
-    const view = application._withContextProjection(
-      current, await application._buildView(current, application.principals.observer),
-    );
+    const view = await application._buildView(current, application.principals.observer);
     const bindings = application._episodeBindings(current, view);
     const binding = application._episodeBinding({ bindings }, rawRequest.role,
       rawRequest.generation ?? null);

@@ -409,34 +409,4 @@ test('489-c: run show answers at every depth for a run whose full view is over t
   assert.match(narrowed.narrowed.read, new RegExp(`baton run show ${runId} --depth outline`, 'u'));
 });
 
-// ── 489-d: the recruit admits, and its attach answers from the store ────────────────────────────
 
-test('489-d: a recruit whose brief projects over the ceiling is admitted, and its package attach never reads the view', async (t) => {
-  // The brief the root composes is the seat's whole objective: the deployment admits it up to the
-  // run.objective lane, and the view built for the participant's own start is over the ceiling.
-  const { application, driver, receipt, seat } = await recruitedSeat(t, { briefBytes: 600_000 });
-
-  assert.equal(receipt.refusal ?? null, null, 'the recruit is admitted — never recruit_refused');
-  assert.equal(seat.status, 'active', 'the seat joined');
-  assert.equal(seat.leftReason ?? null, null, 'no admission refusal left a settled row behind');
-  assert.equal(driver.coordination.eventsView()
-    .filter((event) => event.kind === 'swarm.participant_left'
-      && event.payload?.reason === 'recruit_refused').length, 0,
-    'no rollback row was written — the start never refused on a view it does not read');
-
-  // The attach leg binds through the coordination store and answers its receipt: an unknown digest
-  // refuses as the STORE's own context_package_not_found. A read of the Run view would have refused
-  // application_run_view_oversize first, so the refusal's identity is the proof that no view was read.
-  const refusal = await application.attachContextPackage({
-    packageDigest: 'f'.repeat(64), runId: seat.runId, scope: 'worker:seat-489',
-  }, principal('owner')).then(() => null, (error) => error);
-  assert.ok(refusal, 'an unattached digest refuses');
-  assert.equal(refusal.code, 'context_package_not_found',
-    'the attach resolves against the store — never against the Run view the ceiling refuses');
-
-  // The ceiling still holds for a caller that asks for the whole view: it is served as a spill,
-  // never refused (#530) — the admission did not come from raising the ceiling.
-  const full = await application.status(seat.runId, principal('observer'));
-  assert.equal(full.spilled, true, 'a caller that asks for the whole view gets the spill citation');
-  assert.ok(full.bytes > MAX_RUN_VIEW_BYTES);
-});

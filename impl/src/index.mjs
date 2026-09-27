@@ -39,8 +39,6 @@ import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
 import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
-import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
-import { materializeContextCallBrief } from './context-call.mjs';
 import { openBatonDeployment, DEFAULT_BUDGET, normalizeIntegrationPublishRemote } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
@@ -113,27 +111,6 @@ export {
   workflowAttemptRoute, workflowCatalogRole, workflowDefinitionDigest,
   workflowNodeTemplate, workflowNodeTemplateDigest,
 } from './workflow-definition.mjs';
-export {
-  contextEffectCallIdentity, contextEffectNodeBinding, contextEffectRetryCallIdentity,
-  contextEffectUnitIdentity,
-  contextMapCallToEffectCall, materializeContextCallBrief,
-  normalizeContextEffectCall, normalizeContextEffectNodeBinding,
-  normalizeContextEffectSource,
-} from './context-call.mjs';
-export {
-  buildContextMapResultLineage, validateContextMapResultLineage,
-} from './context-result-lineage.mjs';
-export {
-  buildContextEffectResultLineage, validateContextEffectResultLineage,
-} from './context-effect-result-lineage.mjs';
-export {
-  DEFAULT_CONTEXT_PROGRAM_POLICY, contextValueDigest,
-  normalizeContextManifest, normalizeContextProgram, normalizeContextProgramPolicy,
-} from './context-program.mjs';
-export {
-  contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
-  normalizeContextArtifactRef,
-} from './context-authority.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
@@ -208,8 +185,8 @@ export {
   KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential, readHiddenKimiCredential,
 } from './kimi-credential-setup.mjs';
 export {
-  BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonEpisode,
-  BatonRun, BatonRunContext, BatonRunGroup, BatonRuns, BatonWorkstream, BatonWorkstreams,
+  BatonClient, BatonEpisode,
+  BatonRun, BatonRunGroup, BatonRuns, BatonWorkstream, BatonWorkstreams,
   bindBaton, bindBatonPort,
 } from './application-client.mjs';
 export { createWave } from './wave.mjs';
@@ -935,27 +912,6 @@ export function createDriver(opts) {
     providerProcessingPolicy = Object.freeze({ ...policy });
   }
   const workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy);
-  let contextProgram = null;
-  if (opts.contextProgram !== undefined) {
-    if (!opts.contextProgram || typeof opts.contextProgram !== 'object'
-      || Array.isArray(opts.contextProgram)
-      || Object.keys(opts.contextProgram).sort().join(',')
-        !== ['environmentDigest', 'policy', 'referenceIdentity', 'referenceRead', 'sourceAttest'].sort().join(',')
-      || typeof opts.contextProgram.referenceRead !== 'function'
-      || typeof opts.contextProgram.sourceAttest !== 'function'
-      || !/^[a-f0-9]{64}$/u.test(opts.contextProgram.environmentDigest ?? '')
-      || !/^[a-f0-9]{64}$/u.test(opts.contextProgram.referenceIdentity ?? '')
-      || !/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha ?? '')) {
-      throw new TypeError('Context Program requires one closed deployment tree, environment, policy, and reference resolver identity');
-    }
-    contextProgram = Object.freeze({
-      environmentDigest: opts.contextProgram.environmentDigest,
-      policy: normalizeContextProgramPolicy(opts.contextProgram.policy),
-      referenceIdentity: opts.contextProgram.referenceIdentity,
-      referenceRead: opts.contextProgram.referenceRead,
-      sourceAttest: opts.contextProgram.sourceAttest,
-    });
-  }
   // Issue #351 lane 3: the production open constructs the store DEFERRED and drives lane 2's
   // chunked-yielding replay through loadCoordinationStoreAsync — the open's loop beats during
   // the replay instead of blocking for its whole duration (measured: 7.8 s silent on the
@@ -983,14 +939,6 @@ export function createDriver(opts) {
     ...(canonicalOrderPolicy ? { canonicalOrderPolicy } : {}),
     ...(taskTopologyPolicy ? { taskTopologyPolicy } : {}),
     ...(runLineagePolicy ? { runLineagePolicy } : {}),
-    ...(contextProgram ? {
-      deploymentBaseSha: opts.deploymentBaseSha,
-      contextEnvironmentDigest: contextProgram.environmentDigest,
-      contextProgramPolicy: contextProgram.policy,
-      contextReferenceIdentity: contextProgram.referenceIdentity,
-      contextReferenceRead: contextProgram.referenceRead,
-      contextSourceAttest: contextProgram.sourceAttest,
-    } : {}),
     workflowPolicy,
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
@@ -1004,22 +952,6 @@ export function createDriver(opts) {
   if (opts.coordination && taskTopologyPolicy && (typeof coordination.taskTopologyPolicy !== 'function' || canonicalDigest(coordination.taskTopologyPolicy()) !== canonicalDigest(taskTopologyPolicy))) throw new TypeError('custom coordination store disagrees with deployment task topology policy');
   if (opts.coordination && runLineagePolicy && (typeof coordination.runLineagePolicy !== 'function' || canonicalDigest(coordination.runLineagePolicy()) !== canonicalDigest(runLineagePolicy))) throw new TypeError('custom coordination store disagrees with deployment run lineage policy');
   if (opts.coordination && opts.workflowPolicy !== undefined && (typeof coordination.workflowPolicy !== 'function' || canonicalDigest(coordination.workflowPolicy()) !== canonicalDigest(workflowPolicy))) throw new TypeError('custom coordination store disagrees with deployment Workflow policy');
-  if (opts.coordination && contextProgram) {
-    const expectedContextAuthority = {
-      schemaVersion: 1,
-      deploymentBaseSha: opts.deploymentBaseSha,
-      environmentDigest: contextProgram.environmentDigest,
-      policyDigest: contextProgram.policy.policyDigest,
-      referenceIdentity: contextProgram.referenceIdentity,
-    };
-    if (typeof coordination.contextProgramPolicy !== 'function'
-      || typeof coordination.contextProgramAuthority !== 'function'
-      || canonicalDigest(coordination.contextProgramPolicy()) !== canonicalDigest(contextProgram.policy)
-      || canonicalDigest(coordination.contextProgramAuthority())
-        !== canonicalDigest(expectedContextAuthority)) {
-      throw new TypeError('custom coordination store disagrees with deployment Context Program authority');
-    }
-  }
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
@@ -1256,13 +1188,6 @@ export function createDriver(opts) {
     watchdog: opts.watchdog,
     drainPolicy,
     ...(goalPlanAuthority ? { goalPlanAuthority } : {}),
-    ...(contextProgram ? {
-      contextBriefMaterializer: (brief) => materializeContextCallBrief(
-        brief,
-        contextProgram.referenceRead,
-        contextProgram.policy.maxArtifactBytes,
-      ),
-    } : {}),
   });
   liveWorkspaceHoldersFor = (physicalOwnerId, holderOpts) =>
     coordinator.liveWorkspaceHolders(physicalOwnerId, holderOpts);

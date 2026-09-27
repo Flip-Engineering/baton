@@ -41,9 +41,7 @@ const RECLASSIFIED = Object.freeze([
   ['drain', 'admission'], ['_semanticControlBinding', 'surface'], ['_isReviewAuthority', 'admission'],
   ['_attentionPage', 'admission'], ['_send', 'surface'], ['readProviderStatus', 'admission'],
   ['claimScratch', 'admission'], ['postScratchFact', 'admission'], ['writeScratchpad', 'admission'],
-  ['_answerContextRead', 'admission'], ['_recordOrientationRating', 'admission'],
-  ['bindingFence', 'admission'],
-  ['replBindingSnapshot', 'admission'], ['resolveReplCitation', 'admission'],
+  ['_answerContextRead', 'admission'],
 ]);
 
 test('RO1: the module imports neither monolith and contains no implicit receiver at all', () => {

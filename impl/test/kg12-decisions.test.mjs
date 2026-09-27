@@ -17,7 +17,6 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy } from '../src/context-program-policy.mjs';
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -99,8 +98,8 @@ test('KG-1a: task horizon cache hits when the fence tuple is unchanged and misse
   assert.equal(stable, afterProjectionInput, 'with nothing changed, the next read is a cache hit again');
 });
 
-test('KG-1b (P1-1 fix): a package admission or an unrelated knowledge write misses the task/workflow cache via projectionInputFence alone', () => {
-  const { coordinator, coordination } = lightweightCoordinator({ repoId, ...packageAuthority });
+test('KG-1b (P1-1 fix): an unrelated knowledge write misses the task/workflow cache via projectionInputFence alone', () => {
+  const { coordinator, coordination } = lightweightCoordinator();
   const taskId = 'task-b';
   coordinator._tasks.set(taskId, { id: taskId, assignee: 'worker-b', runId: 'run-b' });
 
@@ -120,6 +119,7 @@ test('KG-1b (P1-1 fix): a package admission or an unrelated knowledge write miss
 test('KG-1c: a decision settle bumps the workflow horizon fence; an interaction ask/resolve does not', () => {
   const { coordinator } = lightweightCoordinator();
   const runId = 'run-c';
+
   const before = coordinator.workflowHorizon(runId);
 
   coordinator._bumpInteractionGeneration('task-c');
@@ -194,106 +194,6 @@ test('KG-1f (P1-1 property, acceptance P1): ANY queryKnowledge-visible mutation 
     'a Task node minted by task.created must miss the workflow horizon cache too');
 });
 
-// ============================================================
-// Part C (KG-2 rule 6): package citation, Source-node bridge
-// ============================================================
-
-const programPolicy = normalizeContextProgramPolicy(DEFAULT_CONTEXT_PROGRAM_POLICY);
-
-// The Context Program authority a package admission needs — shared by Part C's package fixture
-// and the Part D candidate mint (the surviving candidate path into the admit gate).
-const packageAuthority = Object.freeze({
-  deploymentBaseSha: '1'.repeat(40),
-  contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-  contextEnvironmentDigest: '2'.repeat(64),
-  contextReferenceIdentity: '3'.repeat(64),
-  contextReferenceRead: () => { throw Object.assign(new Error('unused in this suite'), { code: 'context_artifact_unavailable' }); },
-  contextSourceAttest: () => { throw new Error('not used in this suite'); },
-});
-
-function packageStore(label) {
-  return freshStore(label, packageAuthority);
-}
-
-function valueRefBranch(name, store, seed = name) {
-  const artifactDigest = digest({ a: seed });
-  const schemaId = `schema:${digest({ s: seed })}`;
-  const valueDigest = digest({ v: seed });
-  const lineageDigest = digest({ l: seed });
-  const artifactId = `artifact:${seed}`;
-  store._artifacts.set(artifactId, { id: artifactId, digest: artifactDigest });
-  const valueId = `pvalue:${digest({ artifactDigest, schemaId, valueDigest, lineageDigest })}`;
-  return {
-    name, source: null, artifact: null, schema: null,
-    valueRef: { kind: 'value_ref', valueId, artifactId, artifactDigest, schemaId, valueDigest, lineageDigest },
-  };
-}
-
-function packageFields(branches, overrides = {}) {
-  return {
-    schemaVersion: 1, kind: 'baton.context_package', branches,
-    provenance: { runId: overrides.runId ?? 'run-pkg', principalId: overrides.principalId ?? 'principal-pkg' },
-    policyDigest: programPolicy.policyDigest,
-  };
-}
-
-test('KG-2/C1: N branches wrapping M unique cells mint exactly M Source nodes and M DerivedFrom edges from one package Finding, all with a hardcoded policy actor', () => {
-  const store = packageStore('package-1');
-  const branches = [
-    valueRefBranch('one', store), valueRefBranch('two', store),
-    valueRefBranch('one-again', store, 'one'), // same cell content, wrapped a second time in this package
-  ];
-  const admitted = store.admitContextPackage(packageFields(branches), auth('admit-1'));
-  const findingId = `finding:package:${admitted.package.packageDigest}`;
-  const sources = store.queryKnowledge({ types: ['Source'] });
-  assert.equal(sources.length, 2, 'exactly M=2 unique Source nodes are minted for N=3 branches');
-  const edges = store.queryKnowledgeEdges({ types: ['DerivedFrom'] }).filter((edge) => edge.from === findingId);
-  assert.equal(edges.length, 2, 'exactly M DerivedFrom edges from the one package Finding');
-  const finding = store.queryKnowledge({ ids: [findingId] })[0];
-  assert.ok(finding, 'the package Finding is minted unconditionally');
-  assert.equal(finding.grounding, 'observed');
-  for (const source of sources) {
-    const mintEvent = store._events.find((event) => event.kind === 'knowledge.node_added' && event.payload?.id === source.id);
-    assert.equal(mintEvent.actor, 'policy', 'every Source mint carries the hardcoded policy actor');
-  }
-  const findingMint = store._events.find((event) => event.payload?.id === findingId);
-  assert.equal(findingMint.actor, 'policy');
-  store.releaseWriterLease();
-});
-
-test('KG-2/C2: re-wrapping an already-cited cell in a second package mints zero additional Source nodes and reuses the existing one', () => {
-  const store = packageStore('package-2');
-  const first = store.admitContextPackage(packageFields([valueRefBranch('shared', store)], { runId: 'run-first' }), auth('admit-1'));
-  const sourceCountAfterFirst = store.queryKnowledge({ types: ['Source'] }).length;
-  const second = store.admitContextPackage(packageFields([valueRefBranch('shared', store)], { runId: 'run-second' }), auth('admit-2'));
-  assert.equal(store.queryKnowledge({ types: ['Source'] }).length, sourceCountAfterFirst, 'no new Source node is minted');
-  const sourceId = `source:cell:${digest({ v: 'shared' })}`;
-  const firstFindingId = `finding:package:${first.package.packageDigest}`;
-  const secondFindingId = `finding:package:${second.package.packageDigest}`;
-  assert.notEqual(firstFindingId, secondFindingId, 'each package admission still mints its own Finding');
-  const edgeToShared = store.queryKnowledgeEdges({ types: ['DerivedFrom'] }).filter((edge) => edge.to === sourceId);
-  assert.equal(edgeToShared.length, 2, 'both packages DerivedFrom-cite the identical, reused Source node');
-  store.releaseWriterLease();
-});
-
-test('KG-2/C3: a branch with no valueRef produces no Source node and no DerivedFrom edge', () => {
-  const store = packageStore('package-3');
-  const bareBranch = {
-    name: 'bare', valueRef: null, schema: null,
-    source: { kind: 'context_source', ref: `ctx:sha256:${'4'.repeat(64)}`, digest: '4'.repeat(64), mediaType: 'application/json', itemCount: 1 },
-    artifact: null,
-  };
-  store._contextReferenceRead = (reference) => {
-    if (reference.ref === bareBranch.source.ref) return { hello: 'bare' };
-    throw Object.assign(new Error('unavailable'), { code: 'context_artifact_unavailable' });
-  };
-  const admitted = store.admitContextPackage(packageFields([bareBranch]), auth('admit-1'));
-  assert.equal(store.queryKnowledge({ types: ['Source'] }).length, 0, 'no Source node for a bare source/artifact ref');
-  const findingId = `finding:package:${admitted.package.packageDigest}`;
-  assert.ok(store.queryKnowledge({ ids: [findingId] })[0], 'the package Finding is still minted');
-  assert.equal(store.queryKnowledgeEdges({ types: ['DerivedFrom'] }).filter((edge) => edge.from === findingId).length, 0);
-  store.releaseWriterLease();
-});
 
 // ============================================================
 // Part D (KG-2 rule 7): the settle-time orchestrator-admit gate

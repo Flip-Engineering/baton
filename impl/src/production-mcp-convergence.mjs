@@ -135,22 +135,6 @@ function attentionCursorGuard(tool, message, response) {
   return response;
 }
 
-async function authorizeRunScopedQuery(target, tool, message) {
-  if (!['baton_repl_cite', 'repl.cite'].includes(tool)) return null;
-  const runId = message?.params?.arguments?.runId;
-  if (!runId || typeof target.application?.authorizeReplay !== 'function') return null;
-  const principal = target.principal ?? {};
-  try {
-    await target.application.authorizeReplay('run.inspect', { runId, depth: 'outline' }, {
-      actor: `mcp:${principal.userId ?? 'unknown'}:${principal.sessionId ?? 'unknown'}`,
-      principalId: principal.userId,
-      sessionId: principal.sessionId,
-    }, { transport: 'mcp', requestId: String(message?.id ?? 'repl-cite-authority') });
-    return null;
-  } catch (error) {
-    return toolErrorResponse(message, error);
-  }
-}
 
 async function admitAndDispatch(runtime, definition, message, dispatch) {
   const commandId = typeof message?.id === 'string' || Number.isSafeInteger(message?.id)
@@ -830,8 +814,6 @@ export function wrapProductionMcpServer(server, {
         const definition = definitionFor(tool);
         if (!definition) return target.handle(message);
         if (definition.mode === 'query') {
-          const authorityFailure = await authorizeRunScopedQuery(target, tool, message);
-          if (authorityFailure) return authorityFailure;
           return attentionCursorGuard(tool, message, await target.handle(message));
         }
         return admitAndDispatch(runtime, definition, message, () => target.handle(message));

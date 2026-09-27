@@ -2,8 +2,6 @@ import { createHash } from 'node:crypto';
 
 const SAFE_COORDINATION_KINDS = new Set([
   'artifact.registered', 'artifact.superseded',
-  'context.call_admitted', 'context.call_settled', 'context.cell_admitted',
-  'context.cell_settled', 'context.session_admitted',
   'evidence.mapped', 'goal.version_defined', 'plan.approval_decided',
   'plan.node_budget_settled', 'plan.node_dispatched', 'plan.version_proposed',
   'run.control_admitted', 'run.control_effect_started', 'run.control_provider_acked',

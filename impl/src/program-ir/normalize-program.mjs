@@ -1,9 +1,8 @@
 // Phase 93a.2/93a.3a Program source grammar and canonical normalizer (§93.3, §93.4, §93.9, §93.10,
 // §93.10A, §93.20). normalizeProgramSource accepts raw JSON text/bytes or an already-parsed value
 // and performs: envelope validation; ProgramPolicy/ManifestRef/registry/verificationContracts/
-// role-catalog normalization; the closed source grammar for the ten node kinds value/context/
-// sequence/branch/parallel/await/collect/select/repeat/child, including the context grammar's
-// §93.10 purity gate and its §93.10A closed result-schema derivation (context-derivation.mjs);
+// role-catalog normalization; the closed source grammar for the nine node kinds value/
+// sequence/branch/parallel/await/collect/select/repeat/child;
 // serial/parallel policy consistency; approval-template projection validation; control/data/union
 // cycle refusal; control dominance; Kahn canonical ordering with byte-identical coalescing; and
 // Program identity. The returned static effect ownership is exact with empty entries: this
@@ -26,9 +25,7 @@ import {
   normalizeManifestRef, normalizeVerificationContractRef, predicatePortRefs, sourceControlRef,
   validateJoin, validatePredicate, validateSelector, validateSourceNode,
 } from './control-nodes.mjs';
-import {
-  deriveContextResultSchema, normalizeContextNodeProgram, resolveCollectResultSchema,
-} from './context-derivation.mjs';
+import { resolveCollectResultSchema } from './collect-derivation.mjs';
 
 const PROGRAM_SOURCE_FIELDS = Object.freeze([
   'schemaVersion', 'kind', 'language', 'manifest', 'schemas', 'roleCatalog',
@@ -67,13 +64,12 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   if (parsed.language !== 'baton-program-ir-v1') fail('Program source language is invalid');
 
   const policy = normalizeProgramPolicy(parsed.policy, deployed);
-  // §93.10A admission constraint: the ContextCellValue envelope arrays are bounded by
-  // policy.maxJoinMembers, and §93.5 array maxItems may not exceed the injected value authority's
-  // — so a ProgramPolicy above the authority ceiling dies at policy admission with the field
-  // named, not at every context node with a bare "array schema bounds are invalid".
+  // §93.5 admission constraint: array maxItems may not exceed the injected value authority's,
+  // so a ProgramPolicy above the authority ceiling dies at policy admission with the field named,
+  // not at every node with a bare "array schema bounds are invalid".
   if (policy.maxJoinMembers > deployed.maxJoinMembers) {
     fail('ProgramPolicy maxJoinMembers exceeds the injected value authority maxJoinMembers; '
-      + 'the §93.10A envelope would be unregistrable on this deployment', 'program_policy_invalid');
+      + 'a Program array bound would be unregistrable on this deployment', 'program_policy_invalid');
   }
   const manifest = normalizeManifestRef(parsed.manifest, 'Program manifest');
   if (!Array.isArray(parsed.schemas) || parsed.schemas.length > policy.maxSchemaDefinitions) {
@@ -104,13 +100,10 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   for (const node of parsed.nodes) {
     validateSourceNode(node, { policy });
     if (records.has(node.nodeKey)) fail(`Program nodes contain a duplicate nodeKey ${node.nodeKey}`);
-    const normalizedContextProgram = node.kind === 'context'
-      ? normalizeContextNodeProgram(node.program, { policy })
-      : null;
-    records.set(node.nodeKey, { source: node, kind: node.kind, normalizedContextProgram });
+    records.set(node.nodeKey, { source: node, kind: node.kind });
   }
   // 93a.2 statically present effect kinds are always empty: the source grammar admits only the
-  // ten control/data node kinds above, and repeat/child bodies are digest refs to separately
+  // nine control/data node kinds above, and repeat/child bodies are digest refs to separately
   // normalized Programs rather than inline nodes, so no effect node is statically present.
   const usedEffectKinds = [];
   const approvalTemplate = normalizeApprovalTemplate(parsed.approvalTemplate, {
@@ -273,7 +266,7 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   // Settle-then-read settlement domains (§93.9 amended). sequence.result,
   // parallel.branches[].result, and branch.{then,otherwise}.result read only after their
   // governing control chain settles, and are never dominator-checked. Each such PortRef is walked
-  // through the transitive pure-data closure (collect items recursively; value/context add no
+  // through the transitive pure-data closure (collect items recursively; value adds no
   // further refs — the same walk the demand-edge relation performs above) and every control
   // producer so reached must lie inside the settlement domain of the chain that governs the
   // position: for a sequence, every step and each step's own domain; for a parallel branch, its
@@ -381,14 +374,6 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
       return {
         body: { kind: 'value', value: typed, schema: typed.schema },
         ports: new Map([['value', portEntry(typed.schema, declared.definition)]]),
-      };
-    }
-    if (record.kind === 'context') {
-      const { schema: outputSchema, definition } = deriveContextResultSchema(
-        record.normalizedContextProgram, { authority: deployed, policy, registry });
-      return {
-        body: { kind: 'context', program: record.normalizedContextProgram, outputSchema },
-        ports: new Map([['value', portEntry(outputSchema, definition)]]),
       };
     }
     if (record.kind === 'collect') {
