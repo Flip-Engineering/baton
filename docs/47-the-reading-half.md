@@ -236,7 +236,7 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
   brief renders (#371) are untouched.
 - The contributions read derives review state at read time through the ONE exported derivation
   (`contributionLedgerRows` + `SWARM_REVIEW_STATES`, docs/46 §2.1); no durable row is rewritten.
-- The wave-13 red-before skeleton (`impl/test/issue441-reading-half-red.test.mjs`) is a
+- The wave-13 red-before skeleton (`impl/test/issue441-reading-half.test.mjs`) is a
   conformance pin now: nothing in its row set pins an unlanded promise — no row remains red.
   Its six rows assert the LANDED spellings, re-derived
   after the four lanes landed: (a) `--issue N` parses onto the recruit's context leg and the

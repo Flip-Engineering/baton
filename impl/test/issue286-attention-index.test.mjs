@@ -205,7 +205,7 @@ function gateVerdictReference(events, workerId) {
     message: typeof event.payload?.message === 'string' && event.payload.message.length > 0
       ? sanitizeVerifierDiagnosticText(event.payload.message).text : null,
     // The fixture's latest verdict is the red/green one, so the reference re-derives exactly that
-    // case; the scope case (digests + counts) is pinned by worker-delivery-push-red.test.mjs.
+    // case; the scope case (digests + counts) is pinned by worker-delivery-push.test.mjs.
     detail: { tail: sanitizeVerifierDiagnosticText(raw).text },
   };
 }

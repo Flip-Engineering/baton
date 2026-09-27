@@ -6,7 +6,7 @@
 // above the bound is refused typed (`result_export_archive_oversize`) — quarantined for
 // operator inspection, never re-derived whole and never removed as proved.
 //
-// Fixture mirrors phase66-export-lifecycle-red.test.mjs: a real materialized completed export
+// Fixture mirrors phase66-export-lifecycle.test.mjs: a real materialized completed export
 // (stage + exactly verified final + digest-pinned receipt), reconciled under a deployment
 // export policy SMALLER than the one the export completed under — the restart-under-a-new-bound
 // shape the finding names.

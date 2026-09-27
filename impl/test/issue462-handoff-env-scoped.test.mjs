@@ -354,7 +354,7 @@ test('462-F: the six keep-green rows run green in the environment a successor le
       '--test-concurrency=1',
       '--test-reporter=tap',
       '--test-name-pattern', '§2\\.1|§2\\.5|§2\\.8|RS2|RS4|SA2',
-      'test/issue306-reincarnation-red.test.mjs',
+      'test/issue306-reincarnation.test.mjs',
       'test/issue351-resident-shutdown.test.mjs',
       'test/issue351-startup-answer.test.mjs',
     ], { cwd: IMPL_DIR, env: childEnv, encoding: 'utf8', timeout: 300_000 });

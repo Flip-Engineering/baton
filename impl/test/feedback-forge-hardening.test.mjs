@@ -153,7 +153,7 @@ function scopeGatePayload({
 }
 
 // ---------------------------------------------------------------------------
-// DG-1b harness (mirrors diagnostics-red.test.mjs) — for P1, P3, P4.
+// DG-1b harness (mirrors diagnostics.test.mjs) — for P1, P3, P4.
 // ---------------------------------------------------------------------------
 
 function root(label) {
@@ -607,7 +607,7 @@ test('P5 (PIN): GREEN-5b push constancy — the #79 gate_verdict push item stays
   assert.ok(!d6.includes('derived'), 'P5: the D6 push-item spec must not gain a derived field (B6)');
 
   // The push red suite pins the literal — it must keep carrying NO derived key.
-  const suitePath = new URL('./worker-delivery-push-red.test.mjs', import.meta.url);
+  const suitePath = new URL('./worker-delivery-push.test.mjs', import.meta.url);
   const suite = readFileSync(suitePath, 'utf8');
   const itemLine = suite.split('\n').find((line) => line.includes("kind: 'gate_verdict'"));
   assert.ok(itemLine, 'precondition: the push red suite pins a gate_verdict item literal');

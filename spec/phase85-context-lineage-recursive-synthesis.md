@@ -790,28 +790,28 @@ and provider derivations without revealing private raw partition bytes or secret
 
 ## Build order and red suites
 
-1. `phase85-context-lineage-red.test.mjs`: item lineage through source, outline, index, search,
+1. `phase85-context-lineage.test.mjs`: item lineage through source, outline, index, search,
    slice, chunk, filter, project, sort, unique, join, collect, coverage, and finish; grouping unions,
    projection preservation, sorted movement, output-order digest, v1 read/v2 effect refusal,
    distinct map coordinates, private Briefs, and byte/index/coordinate/parent substitution replay
    failures.
-2. `phase85-context-result-capsule-red.test.mjs`: the retained-commit projection core and
+2. `phase85-context-result-capsule.test.mjs`: the retained-commit projection core and
    coordination-derived accepted-child attachment now ship for exact retained commits after cleanup;
    continue with the eligible accepted-artifact variant and private CAS materialization into a later Brief;
    changed artifact/ref/media type, base, commit, blob, path set, source bytes, sensitivity,
    capsule/projection/source digest, route, task, and release refusal; no raw capsule content in
    coordination events and no forced repository edit for an eligible read-only result artifact.
-3. `phase85-context-role-catalog-red.test.mjs`: root role survival; non-cyclic root/parent/generation
+3. `phase85-context-role-catalog.test.mjs`: root role survival; non-cyclic root/parent/generation
    ancestry; exact template instantiation; template/route/model/effort/catalog tamper refusal; v2
    direct-role upgrade; synthetic-v2 missing-role refusal; and restart replay.
-4. `phase85-context-eval-application-red.test.mjs`: immutable builder and normalized programs for
+4. `phase85-context-eval-application.test.mjs`: immutable builder and normalized programs for
    every pure operator; one advertised action/schema digest; compatibility helpers emit
    `context_eval`; effect/code/path/route/provider-command/credential refusal.
 5. `phase85-context-reduce-red.test.mjs`: preapproval zero effect; one approved Attempt; actual child
    capsule content in the reduce Brief; complete parent/source lineage and direct derivation;
    nonterminal/v1/stale/cross-Run/already-composed refusal; no implicit truth, selection,
    integration, adoption, publication, or promotion.
-6. `phase85-context-call-generation-red.test.mjs`: durable failed settlement with the complete unit
+6. `phase85-context-call-generation.test.mjs`: durable failed settlement with the complete unit
    set; completed/failed/cancelled task release; workerless non-admission proof; selective retry of
    only failed/cancelled/not-dispatched retryable units;
    inherited-success provider-effect suppression; request identity continuity; idempotency;

@@ -2835,14 +2835,14 @@ direct/CLI/Web/browser/MCP parity tests are green.
 
 Implementation starts with these exact red suites:
 
-1. `phase93a-source-schema-red.test.mjs`: every allowed/unknown/missing field and discriminator;
+1. `phase93a-source-schema.test.mjs`: every allowed/unknown/missing field and discriminator;
    duplicate-key/Unicode/number/array rejection; zero effects on invalid input.
-2. `phase93a-canonical-identity-red.test.mjs`: ID-excluded hashes, dependency-sensitive IDs,
+2. `phase93a-canonical-identity.test.mjs`: ID-excluded hashes, dependency-sensitive IDs,
    duplicate-node coalescing, cycle/collision refusal, canonical Kahn order, JCS vectors, and
    byte-identical raw/Python/TypeScript fixtures.
-3. `phase93a-schema-values-red.test.mjs`: every schema form, closed object/union validation,
+3. `phase93a-schema-values.test.mjs`: every schema form, closed object/union validation,
    recursive/external-ref refusal, no coercion, durable ValueRef tamper/missing bytes.
-4. `phase93a-control-grammar-red.test.mjs`: every control node, PortRef type mismatch, every
+4. `phase93a-control-grammar.test.mjs`: every control node, PortRef type mismatch, every
    predicate/join/selector, split control/data cycles and dominance, demand-evaluation effect
    refusal, static effect ownership, branch/sequence/repeat/child bounds, all three exact handle
    schemas, settlement-only await, explicit success extraction, derived-only Context/collect
@@ -2850,7 +2850,7 @@ Implementation starts with these exact red suites:
    The derived-only Context output-schema rows land with the suite-5 sub-slice (93a.3); in 93a.2
    this suite pins the `collect` derivation, the `context` source grammar and §93.10 purity gate,
    and the temporary closed normalization refusal of `context` nodes pending 93a.3.
-5. `phase93a-context-purity-red.test.mjs`: pure operations accepted; legacy
+5. `phase93a-context-purity.test.mjs`: pure operations accepted; legacy
    map/reduce/review/verify and unknown operations rejected before effect; historical replay stable;
    explicit migration receives a new identity. In 93a.3a this suite additionally pins the §93.10A
    derivation rows: every per-op transformer (including homogeneous-only `collect`/`finish`

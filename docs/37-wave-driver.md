@@ -97,11 +97,11 @@ renderer's 4096-byte re-declaration). (The machinery's oversize error is `applic
 `application.mjs:1094-1096`; `'Run objective is required'` is the EMPTY-objective client
 error, `application-client.mjs:112` — neither names the cap, hence the driver precheck.)
 
-## 3. Red-first tests — `impl/test/wave-driver-policy-red.test.mjs`
+## 3. Red-first tests — `impl/test/wave-driver-policy.test.mjs`
 
-Harness mirrors `wave-driver-red.test.mjs:54-124` with the checkpoint conjunction pinned:
+Harness mirrors `wave-driver.test.mjs:54-124` with the checkpoint conjunction pinned:
 BOTH a `turnCompletion:'pausable'` card override (exactly as
-`turn-checkpoints-31b5-surface-red.test.mjs:105-113`) AND the `steering.registered` record
+`turn-checkpoints-31b5-surface.test.mjs:105-113`) AND the `steering.registered` record
 (wave membership via `driverKind:'wave'`). As revised in September 2026, a pausable card
 alone parks its checkpoint for explicit adjudication; driver registration does not transfer
 completion authority to an automatic policy prompt. The worker watchdog is neutralized

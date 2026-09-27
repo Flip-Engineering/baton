@@ -373,7 +373,7 @@ test('CL6: the pins that read a moved member\'s text resolve it through the live
   assert.equal(store.includes('scratchpad_partition_exhausted'), false,
     'the ledger bodies left the store file: a file-keyed scan would now miss them');
   for (const file of [
-    'test/scratchpad-33-red.test.mjs',
+    'test/scratchpad-33.test.mjs',
     'test/scratchpad-write.test.mjs',
     'test/issue366-run-stop-replay-ceiling.test.mjs',
   ]) {

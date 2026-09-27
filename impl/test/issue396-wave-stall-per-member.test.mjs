@@ -4,7 +4,7 @@
 // because a sibling is slow; a member behind a real dependency reads waiting-on with the
 // dependency named, not stalled.
 //
-// Harness idiom mirrors issue10-waiting-vocabulary-red.test.mjs:504-572 (the fake-wave
+// Harness idiom mirrors issue10-waiting-vocabulary.test.mjs:504-572 (the fake-wave
 // facade): scripted FakeRun status programs drive the REAL driver, so each row observes
 // the adjudication directly with short relative timeouts on the real clock (no time-bombs).
 
