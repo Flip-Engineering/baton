@@ -120,7 +120,7 @@ test('Phase 58: createDriver composes worker/verify sparse views with projected 
     workerSparsePaths: ['src', 'report'],
     verifySparsePaths: ['src', 'report'],
     toolchainProjection: config,
-    drainPolicy: { maxWorkers: 4, timeoutMs: 5_000, pollMs: 5 },
+    drainPolicy: { pollMs: 5 },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
 

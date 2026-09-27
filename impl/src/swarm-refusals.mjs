@@ -189,11 +189,11 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   integrate_withdrawn: row(409, ['runtime'], 'the landing was withdrawn while queued on the verify lease or running its gate set'),
   integrate_not_in_flight: row(409, ['runtime'], 'no landing for the named contribution is queued or running, so there is nothing to withdraw'),
   // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
-  // `stopRun` port, so a run whose stop does not converge inside its bound reached the operator as
-  // 503 `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. Both
-  // codes are a state the caller must OBSERVE (409), never a transport fault: waiting for the
-  // deadline, or stopping again after it, is what converges the seat.
-  coordinator_run_stop_incomplete: row(409, ['coordinator'], 'the run stop did not converge before its deadline: the named workers are still being reaped, so the seat has not settled'),
+  // `stopRun` port, so a run whose stop could not settle reached the operator as 503
+  // `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. The code is
+  // a state the caller must OBSERVE (409), never a transport fault: the refusal names the workers
+  // still held, and the stop keeps reaping them until they settle (issue #583).
+  coordinator_run_stop_incomplete: row(409, ['coordinator'], 'the run stop has not converged: the named workers are still being reaped, so the seat has not settled'),
   coordinator_run_stop_invalid: row(409, ['coordinator'], 'the admitted run stop names a target authority this deployment cannot act on, so no retry of the same stop converges'),
   // Issue #483: the bounded watch's own wait. A `swarm.watch` held across a reincarnation handoff
   // (or an ordinary stop) is torn down when the incarnation holding it leaves: the store mints

@@ -61,15 +61,13 @@ const deepFreeze = (value) => {
   return Object.freeze(value);
 };
 const normalizeDrainPolicy = (value) => {
-  const policy = value ?? { maxWorkers: 1024, timeoutMs: 60_000, pollMs: 10 };
-  const fields = ['maxWorkers', 'pollMs', 'timeoutMs'];
+  const policy = value ?? { pollMs: 10 };
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)
-    || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
-    || fields.some((field) => !Number.isSafeInteger(policy[field]) || policy[field] <= 0)
-    || policy.maxWorkers > 100_000 || policy.timeoutMs > 300_000 || policy.pollMs > policy.timeoutMs) {
-    throw new TypeError('drain policy must be a closed bounded deployment policy');
+    || Object.keys(policy).length !== 1
+    || !Number.isSafeInteger(policy.pollMs) || policy.pollMs <= 0) {
+    throw new TypeError('drain policy must name one positive poll cadence');
   }
-  return Object.freeze({ maxWorkers: policy.maxWorkers, timeoutMs: policy.timeoutMs, pollMs: policy.pollMs });
+  return Object.freeze({ pollMs: policy.pollMs });
 };
 const normalizeAtlasDeployment = (value, repoRoot) => {
   if (value === undefined) return null;
@@ -1346,17 +1344,12 @@ export function createDriver(opts) {
       return closeAuthority();
     } catch (error) { driverState = 'open'; throw error; }
   };
-  const closeSupervisor = (name, supervisor, deadline) => {
+  const closeSupervisor = (name, supervisor) => {
     if (!supervisor) return Promise.resolve('absent');
-    const remaining = Math.max(1, deadline - Date.now());
-    return new Promise((resolveClose, rejectClose) => {
-      const timer = setTimeout(() => rejectClose(Object.assign(new Error('driver supervisor close exceeded deployment deadline'), { code: 'coordinator_drain_incomplete' })), remaining);
-      if (typeof timer.unref === 'function') timer.unref();
-      Promise.resolve().then(() => supervisor.close()).then(
-        () => { clearTimeout(timer); resolveClose('closed'); },
-        () => { clearTimeout(timer); rejectClose(Object.assign(new Error(`driver ${name} close failed`), { code: 'coordinator_drain_incomplete' })); },
-      );
-    });
+    return Promise.resolve().then(() => supervisor.close()).then(
+      () => 'closed',
+      () => { throw Object.assign(new Error(`driver ${name} close failed`), { code: 'coordinator_drain_incomplete' }); },
+    );
   };
   const drainAndClose = (actor = 'orchestrator') => {
     if (typeof actor !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(actor)) return Promise.reject(Object.assign(new TypeError('driver close actor is invalid'), { code: 'driver_close_invalid' }));
@@ -1367,38 +1360,28 @@ export function createDriver(opts) {
     drainActor ??= actor;
     driverState = 'draining';
     const operation = (async () => {
-      const deadline = Date.now() + drainPolicy.timeoutMs;
-      const assertWithinDeadline = () => {
-        if (Date.now() >= deadline) throw Object.assign(new Error('driver close exceeded deployment deadline'), { code: 'coordinator_drain_incomplete' });
-      };
       if (!drainedFleet) {
-        assertWithinDeadline();
         // drain() fences synchronously before returning its Promise; supervisors are then closed
         // concurrently so no new scheduled authority can enter behind the fence.
         const fleetPromise = coordinator.drain({ actor: drainActor, repoId: deploymentRepoId, idempotencyKey: driverDrainIdempotencyKey });
         const [fleet, recoveryState, processingState, pollingState] = await Promise.all([
           fleetPromise,
-          closeSupervisor('session recovery', sessionRecovery, deadline),
-          closeSupervisor('provider processing', providerProcessor, deadline),
-          closeSupervisor('provider polling', providerPoller, deadline),
+          closeSupervisor('session recovery', sessionRecovery),
+          closeSupervisor('provider processing', providerProcessor),
+          closeSupervisor('provider polling', providerPoller),
         ]);
-        assertWithinDeadline();
         drainedFleet = fleet;
         drainedSupervisors = Object.freeze({ sessionRecovery: recoveryState, providerProcessing: processingState, providerPolling: pollingState });
       }
       if (!coordinatorAuthorityClosed) {
-        assertWithinDeadline();
         const coordinatorClosed = coordinator.closeAuthority();
         if (coordinatorClosed !== true) throw Object.assign(new Error('coordinator authority close was not exact'), { code: 'coordinator_drain_incomplete' });
         coordinatorAuthorityClosed = true;
-        assertWithinDeadline();
       }
       if (!writerAuthorityReleased) {
-        assertWithinDeadline();
         const writerReleased = coordination.releaseWriterLease({ requireOwned: true });
         if (writerReleased !== true) throw Object.assign(new Error('coordination writer release was not exact'), { code: 'coordination_writer_lost' });
         writerAuthorityReleased = true;
-        assertWithinDeadline();
       }
       const core = {
         schemaVersion: 1, state: 'closed', fleet: drainedFleet,

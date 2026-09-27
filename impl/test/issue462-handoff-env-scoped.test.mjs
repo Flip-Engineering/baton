@@ -154,6 +154,12 @@ function adapter() {
 async function openFixture(t, f, { onSpawn = null, waitMs = WAIT_MS } = {}) {
   const adapters = { [ROUTE.harness]: adapter() };
   let driver = null;
+  let spawnedSuccessor = null;
+  const spawner = onSpawn === null ? null : (spec) => {
+    const child = onSpawn(spec);
+    spawnedSuccessor = child;
+    return child;
+  };
   const deployment = await openBatonDeployment({
     repo: f.repo,
     advanced: {
@@ -166,12 +172,16 @@ async function openFixture(t, f, { onSpawn = null, waitMs = WAIT_MS } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs: waitMs,
-        ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
+        ...(spawner === null ? {} : { spawnSuccessor: spawner }),
       },
     },
   }, (options) => { driver = createDriver(options); return driver; });
-  t.after(async () => { try { await deployment.close(); } catch { /* the row already closed it */ } });
+  t.after(async () => {
+    // Issue #583: a successor that never publishes is ended here, so the window closes on its own
+    // exit rather than on a bound.
+    try { spawnedSuccessor?.crash?.(); } catch { /* a stub already gone needs no crash */ }
+    try { await deployment.close(); } catch { /* the row already closed it */ }
+  });
   return { deployment, driver, adapters };
 }
 
@@ -184,12 +194,18 @@ class StubSuccessor extends EventEmitter {
     this.spec = spec;
     this.pid = StubSuccessor.nextPid += 1;
     this.stderr = new EventEmitter();
+    this.exitCode = null;
+    this.signalCode = null;
   }
   becomeReady() {
     writeFileSync(this.spec.markerPath, `${JSON.stringify({ schemaVersion: 1, state: 'waiting' })}\n`);
   }
+  /** Issue #583: the successor's own exit — the fact a handoff that cannot publish ends on. */
+  crash({ code = 7 } = {}) {
+    this.exitCode = code;
+    this.emit('exit', code, null);
+  }
 }
-
 const markerOf = (f, incarnation) => reincarnationMarkerPath(f.deploymentRoot, incarnation);
 const readMarker = (path) => JSON.parse(readFileSync(path, 'utf8'));
 

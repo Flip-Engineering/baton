@@ -2906,9 +2906,9 @@ export async function reconcileProviderProcessing(coordinator, recorder, process
 
 export async function reapRunScratchpads(coordinator, recorder, runId) {
     coordinator.tick();
-    // #403: the window rides the coordinator's OWN clock, so a fixture clock (or a recovered
-    // member's reading) expires it — the host clock is not the authority here.
-    const deadline = coordinator._now() + coordinator._drainPolicy.timeoutMs;
+    // #403: the reap rides the coordinator's OWN clock, never the host clock, so a fixture clock
+    // (or a recovered member's reading) is the authority here. A pass that stops advancing is a
+    // real defect this names, never a wait it keeps spending.
     const describe = (receipt) => ({
       code: 'coordinator_scratchpad_reap_incomplete',
       detail: { runId, remainingPartitions: receipt?.remainingPartitions ?? null, remainingEntries: receipt?.remainingEntries ?? null },
@@ -2921,9 +2921,6 @@ export async function reapRunScratchpads(coordinator, recorder, runId) {
         throw Object.assign(new Error('run scratchpad reap stopped advancing between passes'), describe(receipt));
       }
       previousProgress = progress;
-      if (coordinator._now() >= deadline) {
-        throw Object.assign(new Error('run scratchpad reap did not converge before its deadline'), describe(receipt));
-      }
       await coordinator._sleep(0);
       receipt = recorder.coordination.reapRunScratchpads(runId);
     }

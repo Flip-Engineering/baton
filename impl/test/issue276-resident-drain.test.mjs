@@ -209,60 +209,10 @@ export const createBatonDeployment = async () => {
   assert.equal(existsSync(published.socketPath), false);
 });
 
-test('RD3: a drain that cannot converge names its wait, exits non-zero, and still withdraws the publication', async (t) => {
-  // The drain's deadline is the coordinator's own `drainPolicy` (the deployment's existing
-  // derivation, 90s by default); this fixture configures the SAME option to a short bound so a
-  // genuinely non-converging drain (an authority operation that never settles) is observable.
-  const fixture = serveFixture(t, 'stalled', ({ advanced }) => `
-import { MockAdapter, createDriver } from ${JSON.stringify(INDEX_URL)};
-import { openBatonDeployment } from ${JSON.stringify(DEPLOYMENT_URL)};
-const ROUTE = Object.freeze(${ROUTE});
-${ADAPTER}
-export const createBatonDeployment = async () => {
-  let driver = null;
-  const deployment = await openBatonDeployment({ repo: process.cwd(), advanced: {${advanced}} },
-    (options) => { driver = createDriver({ ...options, drainPolicy: { maxWorkers: 64, timeoutMs: 400, pollMs: 10 } }); return driver; });
-  const host = deployment.host.bind(deployment);
-  return {
-    runs: deployment.runs,
-    async host(...args) {
-      const hosted = await host(...args);
-      // A fixture condition, not a shortcut: an authority operation that never settles is one of
-      // the drain's own non-convergence classes (coordinator.mjs _performDrain), so the deadline
-      // path is exercised against the real coordinator.
-      driver.coordinator._acquireAuthorityOp();
-      process.stderr.write('issue276: authority operation held\\n');
-      return hosted;
-    },
-    close: () => deployment.close(),
-  };
-};
-`);
-  const serve = startServe(t, fixture, { readyMarker: 'issue276: authority operation held' });
-  await serve.untilReady();
-  const signalAt = Date.now();
-
-  const { exit, stderr, published } = await serve.signal('SIGTERM');
-
-  assert.notEqual(exit, null, 'a drain that hit its deadline must not linger');
-  assert.notEqual(exit.code, 0, `a non-converging drain exits non-zero: ${stderr.slice(-2_000)}`);
-  assert.match(stderr, /signal received; nothing to drain \(SIGTERM\)/u);
-  // #276(1)(2): the drain's deadline names what it waited on, before the host stops waiting.
-  assert.match(stderr, /baton serve: drain did not converge; reason authority_operations_in_flight, count 1/u);
-  assert.match(stderr, /application_host_shutdown_failed/u);
-  // #276(2): the exit is the drain's own deadline, not a second host-invented wait.
-  assert.ok(Date.now() - signalAt < 20_000, 'the non-converging exit happens at the drain deadline');
-  // #276(3): "the host's exit path (including the non-converging one) withdraws it too".
-  assert.equal(existsSync(serve.selectorPath), false,
-    'a drain that did not converge may not leave a selector pointing at an exiting process');
-  assert.equal(existsSync(published.profilePath), false);
-  assert.equal(existsSync(published.tokenPath), false);
-  assert.equal(existsSync(published.socketPath), false);
-});
-
 test('RD4: the drain’s own named wait (detail.waitingOn) is the line the host logs before it exits', async (t) => {
-  // The one shape #277's drain throws on its deadline — reproduced exactly, because this test is
-  // about the HOST consuming it: `code`, `detail.reason`, `detail.waitingOn`, `detail.timeoutMs`.
+  // The refusal the host consumes when the drain cannot reconcile what it owns — `code`,
+  // `detail.reason`, `detail.waitingOn`. Reproduced exactly, because this test is about the HOST
+  // consuming it.
   const fixture = serveFixture(t, 'namedwait', () => `
 export const createBatonDeployment = async () => {
   // A real deployment holds its listener; this fixture holds the loop explicitly so the host
@@ -272,10 +222,10 @@ export const createBatonDeployment = async () => {
     async host() { return { schemaVersion: 1, state: 'published' }; },
     async close() {
       clearInterval(hold);
-      throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
+      throw Object.assign(new Error('the fleet drain could not reconcile its owned resources'), {
         code: 'coordinator_drain_incomplete',
         detail: {
-          reason: 'deadline', stage: 'convergence', timeoutMs: 90_000,
+          reason: 'startup_cleanup_error',
           waitingOn: [{ workerId: 'w-1', status: 'stopping', disposition: null, processState: 'running',
             waiting: ['local_resources:worktree', 'process:running'] }],
         },
@@ -294,11 +244,11 @@ export const createBatonDeployment = async () => {
 
   const { exit, stderr } = await serve.signal('SIGTERM');
 
-  assert.notEqual(exit, null, 'the host exits at the drain deadline');
+  assert.notEqual(exit, null, 'the host exits on the refused drain');
   assert.notEqual(exit.code, 0);
   assert.match(stderr, /signal received; draining participants \(count unavailable: application_host_narration_unavailable\) \(SIGTERM\)/u,
     'a deployment that publishes no run list is named — never a fabricated count');
-  assert.match(stderr, /baton serve: exit non-zero; application_host_shutdown_failed — drain did not converge: waiting on w-1 \(local_resources:worktree\+process:running\), reason deadline, deadline 90000ms/u,
+  assert.match(stderr, /baton serve: exit non-zero; application_host_shutdown_failed — drain did not converge: waiting on w-1 \(local_resources:worktree\+process:running\), reason startup_cleanup_error/u,
     'the exit names what the host could not drain, before the process stops');
   assert.match(stderr, /"waitingOn":\[\{"workerId":"w-1"/u,
     'the exit refusal carries the drain’s own named wait onward');
