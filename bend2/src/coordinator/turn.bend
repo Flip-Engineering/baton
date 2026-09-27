@@ -127,6 +127,20 @@ def observe_event(db: String, worker: String, id: String, line: String, relevant
     case True{}: Store.apply(db,C.Observe{id,worker,line})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
+def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match keep:
+    case True{}: T.Text.append(log,line ++ "\n")
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+# The live #379 trial filled the disk with OMP's cumulative message_update
+# snapshots. message_end supplies the complete message; keep every other frame.
+def record_frame(db: String, log: String, +line: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match omp:
+    case False{}: T.Text.append(log,line ++ "\n")
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      keep : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='message_update' THEN 0 ELSE 1 END ELSE 1 END;"))
+      append_frame(log,line,String.eq(keep,"1\n"))
+
 @unsafe
 def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match result:
@@ -140,7 +154,7 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
         waited(db,worker,id,log,remember_write(first_error,sent),status)
     case Done{Some{+line}}:
       do IO<Unit>:
-        written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,line ++ "\n")
+        written : Result<&1,&1,U32 & String,Unit> <- record_frame(db,log,line,String.eq(harness,"omp\n"))
         +relevant : Bool <- Guidance.relevant(db,line,String.eq(harness,"omp\n"))
         next_cursor : String <- Guidance.observe(db,worker,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
