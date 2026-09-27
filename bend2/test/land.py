@@ -1,5 +1,6 @@
 """Landing module: advance a target branch to include a worker's committed tip."""
 import json
+import os
 import pathlib
 import subprocess
 import threading
@@ -281,6 +282,27 @@ class Land(unittest.TestCase):
         self.assertEqual(under['files'], 'file.txt')
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
+
+    def test_conflicted_worker_relands_after_its_branch_is_rebased(self):
+        self.waiting_checks()
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit('w5', 'we', 'wt5')
+        self.recruit_and_commit('w6', 'wf', 'wt6')
+        moved, under = self.land_under_a_move('w6', 'w5')
+        self.assertEqual(under['status'], 'conflict')
+        wt = self.repo / 'wt6'
+        rebase = subprocess.run(['git', '-C', str(wt), 'rebase', 'main'],
+                                capture_output=True, text=True)
+        self.assertNotEqual(rebase.returncode, 0, 'the rebase was to stop on the conflict')
+        (wt / 'file.txt').write_text('worker change for w5 and w6\n')
+        subprocess.run(['git', '-C', str(wt), 'add', 'file.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(wt), 'rebase', '--continue'], check=True,
+                       capture_output=True, env={**os.environ, 'GIT_EDITOR': 'true'})
+        self.assertEqual(self.git('rev-parse', 'wf^').strip(), moved['commit'])
+        again = self.call('land-checked', 'w6', self.repo, 'main',
+                          'check-plain.sh', 'file.txt')
+        self.assertEqual(again['status'], 'landed')
+        self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w5 and w6')
 
 if __name__ == '__main__':
     unittest.main()

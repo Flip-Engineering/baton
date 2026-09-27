@@ -65,6 +65,51 @@ The second landing names the unmerged path and keeps its prepared tree for the
 requester. The target stays at the first landing's commit `340c82b1…`, whose
 `data/shared.txt` is `three`.
 
+## Scenario 3: the conflicted worker is guided, rebases, and lands
+
+Run the same day as its own sequence, on target `820cad9…`: `worker w3` on
+`wc` commits `048d501` and `worker w4` on `wd` commits `4214b51`, each writing
+the single line of `data/shared.txt`. `w4`'s landing, started first, conflicts
+when `w3`'s landing moves the target:
+
+```json
+{"status":"conflict","files":"data/shared.txt","dir":"…/bend2-land-w4-B2CC4394DCB1FBA7"}
+```
+
+The target is then `024de4f6…` with `data/shared.txt` `three`. The root guides
+the worker through the coordinator's own message store:
+
+```sh
+baton2 state.db message g1 root w4 guidance "Your landing onto main conflicted:
+  the target moved to 024de4f6… and data/shared.txt now carries another worker's
+  line. Rebase your branch onto main, resolve data/shared.txt so its single line
+  is: three and four, and commit the rebase."
+```
+
+The guidance is a row the worker reads from its own inbox
+(`baton2 state.db inbox w4`), and the worker's next turn resumes its native
+session (`01a0e135-b640-7000-9212-d091e6124789`). That turn rebases `wd` onto
+the moved target, resolves the file, and reports `done w4`; `wd` is then
+`38ad70b`, whose parent is the moved target `024de4f6…`, with
+`data/shared.txt` reading `three and four` and a clean worktree.
+
+Landing the revised branch answers
+`{"status":"landed","target":"main","commit":"2cf7ba1cc9a165d10f30808a837c7c64f2db9000"}`,
+and the target reads
+
+```
+2cf7ba1 land wd
+024de4f land wc
+820cad9 seed
+```
+
+with `data/shared.txt` `three and four`: both workers' work is on the target
+and the conflict is resolved in the landed content. The run is
+`.scratch/conflict-resolve-run.sh` with its transcript
+`.scratch/conflict-resolve-run.out`; its workers' turns are real OMP turns,
+and `bend2/test/land.py` carries the same recovery as a fixture row, where the
+test performs the worker's rebase in the working tree.
+
 ## Refusals seen on the way
 
 The first attempt of this run refused every landing with `target busy: main`,
