@@ -158,10 +158,10 @@ class Land(unittest.TestCase):
         self.assertEqual(result['branch'], 'main')
         self.assertEqual(result['remote'], 'test-remote')
         remote_tip = subprocess.run(
-            ['git', '-C', str(remote), 'rev-parse', 'main'],
+            ['git', 'ls-remote', str(remote), 'refs/heads/main'],
             check=True, text=True, capture_output=True,
-        ).stdout.strip()
-        self.assertEqual(remote_tip, commit)
+        ).stdout.split()
+        self.assertEqual(remote_tip, [commit, 'refs/heads/main'])
 
     def test_push_rejected_when_remote_ahead(self):
         remote = self.directory / 'remote.git'
