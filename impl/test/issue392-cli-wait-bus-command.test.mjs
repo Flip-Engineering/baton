@@ -38,8 +38,8 @@ test('392-w2: the run.view spelling reads the run.inspect continuation wait the 
   await c.command('run.view', { runId: 'r-392', cursor: 0, waitMs: 30_000 });
   assert.equal(seen[0], null,
     `the named continuation wait is answered by the resident (saw ${seen[0]}; the declared command bound is 1_000)`);
-  // No named continuation wait means the run.inspect spelling names no server wait at all, so the
-  // caller's own declared command bound governs the request.
+  // The cursor alone makes the run.inspect spelling a wait: the resident owns the continuation
+  // wait under its own policy when the caller names none, so the client still arms no cut.
   await c.command('run.view', { runId: 'r-392', cursor: 0 });
-  assert.equal(seen[1], 1_000);
+  assert.equal(seen[1], null);
 });
