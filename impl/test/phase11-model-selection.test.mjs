@@ -103,7 +103,8 @@ test('MS1/MS5: spawn model is independent of vendor and survives handle, event, 
   assert.equal(h.modelResolved, 'stub-exact');
   assert.equal(h.modelObserved, null);
   assert.equal(calls[0].opts.model, 'stub-exact');
-  assert.equal(log.read(h.id)[0].payload.modelRequested, 'stub-exact');
+  const spawned = log.read(h.id).find(event => event.kind === 'lifecycle.spawned');
+  assert.equal(spawned.payload.modelRequested, 'stub-exact');
 
   ad.cb({ worker: h.id, harness: 'stub', turnEpoch: 2, actor: 'worker', kind: 'resource.tokens', payload: { modelId: 'stub-exact', totalTokens: 5 } });
   assert.equal(c.list()[0].modelObserved, 'stub-exact');

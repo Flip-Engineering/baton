@@ -2669,7 +2669,7 @@ export function contextRead(coordinator, recorder, workerId, payload) {
     // {repoId, runId, taskId, taskVersion, workerId, op, normalizedQueryDigest, packDigest,
     // freshnessDigest} — never the landed BD3-A interim shape.
     if (recorder.coordination.recordContextRead) {
-      try {
+      coordinator._bestEffortSync(() => {
         const codeOrientation = (payload.query.kind === 'code' && answered.orientation) ? answered.orientation : null;
         const readFields = codeOrientation
           ? {
@@ -2682,7 +2682,7 @@ export function contextRead(coordinator, recorder, workerId, payload) {
               resultDigest: canonicalDigest(answered.rendered ?? null), runId, taskId: task.id, workerId,
             };
         recorder.coordination.recordContextRead(readFields, { actor: 'hub', key: `context.read:${workerId}:${payload.idempotencyKey}` });
-      } catch { /* the audit is best-effort; the read itself stands on the operational log */ }
+      }, 'context_read_audit');
     }
     return {
       ok: true,
@@ -2984,7 +2984,11 @@ export function recordWorkerGeneration(coordinator, recorder, handle) {
         workerId: handle.id, processGeneration: handle.processGeneration,
         runId: task.runId ?? null, taskId: task.id, taskVersion: durableTask.version,
       }, { actor: 'hub', key: `worker.generation_bound:${handle.id}:${handle.processGeneration}` });
-    } catch {
+    } catch (error) {
+      coordinator._recordOperationFailure('error', handle, 'worker_generation_bind_failed', error, {
+        workerId: handle.id, processGeneration: handle.processGeneration,
+        taskId: task.id, runId: task.runId ?? null,
+      });
       return null;
     }
   }
