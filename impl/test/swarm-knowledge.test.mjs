@@ -330,8 +330,8 @@ test('the recruit brief carries the seed payload shape, and the example it print
     'the brief names the seed type set the validator admits');
   assert.ok(brief.includes(`grounding — one of ${schema.grounding.enum.join(', ')}`),
     'the brief names the grounding choices');
-  assert.ok(brief.includes(`1 to ${schema.body.maxLength} bytes`),
-    'the brief names the body bound in the bytes the application measures');
+  assert.ok(!/\d+ to \d+ bytes/u.test(brief),
+    'the brief teaches no numeric body bound — the run.objective frame lane is the only bound and it spills');
   assert.ok(brief.includes('"artifactId"') && brief.includes('"coordinationSeq"'),
     'the brief names both evidence reference shapes');
 

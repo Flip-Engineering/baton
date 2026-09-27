@@ -83,7 +83,7 @@
 //   PIN (green today; assert what legitimately exists):
 //     TC-07  shared-horizon law              run-scoped nodes serve every worker; foreign runs refuse
 //     TC-09b C5 fan-out receipt              sendMessage({to:{runId}}) -> delivered/targetCount
-//     TC-17b derivation anchors              wave member bound 64 + MAX_WAVE_PROGRESS_BYTES
+//     TC-17b size pin                      MAX_WAVE_PROGRESS_BYTES
 //     TC-18  loose form byte-identical       one run/one worker; 3 delivery modes; single-worker target
 //     TC-18a single-reply slot               non-cell second reply / reply-to-reply refuse depth
 //     TC-22b first-worker resolution          waves.send to a runId targets worker[0] only, no targetCount
@@ -926,12 +926,9 @@ test('TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented c
     + `undefined (${String(waveModule.MAX_CELL_SIZE)})`);
 });
 
-test('TC-17b size pin: the derivation anchors MAX_CELL_SIZE rests on exist today', () => {
+test('TC-17b size pin: MAX_WAVE_PROGRESS_BYTES exists today', () => {
   assert.equal(typeof waveModule.MAX_WAVE_PROGRESS_BYTES, 'number',
     'PIN: MAX_WAVE_PROGRESS_BYTES bounds the wave progress snapshot (wave.mjs:21)');
-  const waveSrc = readFileSync(new URL('../src/wave.mjs', import.meta.url), 'utf8');
-  assert.match(waveSrc, /membersInput\.length > 64/u,
-    'PIN: the wave member-array ceiling is 64 (wave.mjs:163) — the derivation anchor for MAX_CELL_SIZE');
 });
 
 test('TC-18 loose[pin]: a wave with no group fields is byte-identical today', async () => {
