@@ -414,6 +414,7 @@ test('564-f: an append fault at the provider-fault observation is repaired by a 
   f.setFaultDeath(f.workerIdOf('reviewer'),
     { seq: 1, code: 'provider_fault',
       route: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+      providerFault: true,
       resetAt: null, snapshotSha: null });
   f.failRootAttention(true);
   await f.call('update', { event: 'swarm.context_updated',

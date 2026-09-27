@@ -456,6 +456,7 @@ test('475-d: a probe whose turn the provider faulted leaves the degrade in place
   const resetAt = new Date(Date.now() + 2 * HOUR_MS).toISOString();
   fixture.deaths.set(workerId, {
     code: PROVIDER_FAULT_CODES.quota, route: DEGRADED_ROUTE, resetAt, seq: 7, snapshotSha: null,
+    providerFault: true,
   });
   log.append(degradedRow(DEGRADED_ROUTE, {
     at: Date.now(), resetAt, resetAtText: null,
