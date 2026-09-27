@@ -10,10 +10,11 @@ import test from 'node:test';
 
 import {
   allocatePhysicalWorkspaceOwner, applySnapshotToWorktree, createFromBase,
-  markStopped, physicalWorkspaceOwnerReceipt, reap, reconcile,
+  listWorktrees, markStopped, physicalWorkspaceOwnerReceipt, reap, reconcile,
   seatLinkedWorktreeOwnershipPath,
 } from '../src/worktree.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
+import { createBrief, createDriver, MockAdapter } from '../src/index.mjs';
 
 const testRoot = dirname(fileURLToPath(import.meta.url));
 const git = (cwd, args) => execFileSync('git', args, {
@@ -47,7 +48,18 @@ function fixture(t, label) {
   git(repo, ['add', 'base.txt']);
   git(repo, ['commit', '-qm', 'base']);
   t.after(() => rmSync(world, { recursive: true, force: true }));
-  return { repo, baseSha: git(repo, ['rev-parse', 'HEAD']) };
+  return { world, repo, baseSha: git(repo, ['rev-parse', 'HEAD']) };
+}
+
+/** Bounded wait on a read a fixture's own acts settle. */
+async function until(read, label, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = read();
+    if (value) return value;
+    if (Date.now() >= deadline) throw new Error(`timeout waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function ownerBinding(baseSha, suffix = 'owner') {
@@ -668,4 +680,67 @@ test('568-N: a Git observation failure retains its row and examines later rows',
   assert.equal(existsSync(first), false);
   assert.equal(existsSync(second), false);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+});
+
+// Issue #608: after a recovered startup a dead worker's checkout stayed registered in Git. The
+// startup reconciliation asks the deployment's custody seam who holds each owner's checkout, and
+// the replayed dead generation's OWN handle answered yes (a terminal handle with an unreleased
+// hold), so the reconciliation read the dead worker as a live holder of its own checkout and
+// retained it. Observed 2026-09-26: digest-lead16t verified #319 on master c55199aa
+// (contribution-07ff5ec1) and found the two dead workers' worktrees still registered. This row
+// drives the production open path (`coordinationAsyncOpen`, the one the resident uses), where the
+// custody seam is wired before the reconstruction runs.
+test('568-P: a recovered startup reclaims a dead generation\'s still-registered checkout', async (t) => {
+  const f = fixture(t, 'recovered-startup');
+  const logDir = join(f.world, 'log');
+  const options = () => ({
+    repoRoot: f.repo, repoId: 'repo-issue568-recovered-startup', logDir,
+    adapters: {
+      mock: new MockAdapter({
+        scenario: {
+          outcome: 'completed', edits: [],
+          ask: { kind: 'question', question: 'hold the checkout', blocking: true, afterEditIndex: 0 },
+        },
+      }),
+    },
+    coordinationAsyncOpen: true,
+  });
+  const before = createDriver(options());
+  await before.coordinationOpened;
+  const handle = await before.coordinator.spawn('mock', createBrief({
+    goal: 'hold a checkout while this incarnation is lost',
+    constraints: [], pathScope: ['**'], definitionOfDone: 'wait for an answer',
+    verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }), { taskId: 'issue568-608', runId: 'run-issue568-608' });
+  const context = await until(() => before.coordinator.list()
+    .find((row) => row.id === handle.id)?.sessionContext ?? null, 'the seat checkout');
+
+  // The seat committed work on its lane branch: the checkout is clean, and the branch is what
+  // reclamation has to keep.
+  writeFileSync(join(context.worktree, 'seat-work.txt'), 'work the seat committed\n');
+  git(context.worktree, ['add', 'seat-work.txt']);
+  git(context.worktree, ['commit', '-qm', 'seat work']);
+  const seatSha = git(f.repo, ['rev-parse', `baton/${context.ownerTaskId}`]);
+  assert.notEqual(seatSha, f.baseSha, 'the lane branch carries the seat\'s commit');
+  assert.equal(existsSync(context.worktree), true);
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo),
+    [context.worktree], 'Git registers the live seat checkout before the recovered startup');
+
+  // The incarnation is lost with its writer lease released and no drain: the state a crashed
+  // resident leaves behind.
+  before.coordination.releaseWriterLease();
+
+  const after = createDriver(options());
+  await after.coordinationOpened;
+  await after.coordinator.startupReady();
+
+  assert.equal(existsSync(context.worktree), false,
+    'the recovered startup reclaims the dead generation\'s checkout');
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo), [],
+    'the recovered startup removes the dead generation\'s Git registration');
+  assert.equal(git(f.repo, ['rev-parse', `baton/${context.ownerTaskId}`]), seatSha,
+    'the seat\'s lane branch keeps its work');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, context.ownerTaskId), null,
+    'the reclaimed checkout leaves no owner receipt');
 });
