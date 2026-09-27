@@ -2,8 +2,8 @@
 // mcp-reflex-live-2026-07-22/mcp-reflex-surface-decisions.md (v2 FINAL, de68345).
 //
 // Slice 1 scope (Part J): registration machinery (Parts A, F) + baton_context_eval (Part B) +
-// baton_decision_list/baton_decision_answer (Part C) + inventory/error tests (Part H). Board
-// (Part D) and package (Part E) tools are Slice 2, a separate seat binding coordination-store.mjs
+// baton_decision_list/baton_decision_answer (Part C) + inventory/error tests (Part H). The package
+// (Part E) tools are Slice 2, a separate seat binding coordination-store.mjs
 // methods this task's file scope does not include.
 //
 // This file tests the MCP-northbound wiring (registration, dispatch routing, typed-error reach,
@@ -175,13 +175,12 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   // E04: the enumeration's size is the registry's own derivation, never a pinned total.
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list',
-    'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
   for (const name of reflexNames) assert.ok(names.includes(name), `${name} must be listed`);
   const reflexTools = response.result.tools.filter((tool) => reflexNames.includes(tool.name));
-  assert.equal(reflexTools.length, 14);
+  assert.equal(reflexTools.length, 8);
   for (const tool of reflexTools) {
     assert.equal(tool.execution.taskSupport, 'forbidden', `${tool.name} taskSupport`);
     assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} additionalProperties`);

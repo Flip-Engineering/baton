@@ -83,8 +83,6 @@ const CASES = [
   ['run_attention_watch', { runId: 'run:a', cursor: 0 }, 'query'],
   ['run_scratchpad_read', { runId: 'run:a', scope: 'shared', cursor: 0 }, 'query'],
   ['run_scratchpad_elevate', { runId: 'run:a', taskId: 'task:a', entryIds: [] }, 'effect'],
-  ['run_board_post', { runId: 'run:a', board: 'work', title: 'item', evidence: [] }, 'effect'],
-  ['run_board_read', { runId: 'run:a', board: 'work' }, 'query'],
   ['run_knowledge_seed', {
     runId: 'run:a', type: 'Finding', grounding: 'observed', body: 'bounded', evidence: [],
   }, 'effect'],
@@ -123,8 +121,8 @@ test('workflow Web port adapter refuses undeclared, credential-shaped and mismat
   const unknown = await executeProductionWorkflowWebPort(
     first.northbound,
     ctx,
-    envelope('run_board_read', { runId: 'run:a', board: 'work', forged: true }, 'unknown'),
-    PRODUCTION_WORKFLOW_WEB_PORTS.run_board_read,
+    envelope('run_scratchpad_read', { runId: 'run:a', scope: 'shared', forged: true }, 'unknown'),
+    PRODUCTION_WORKFLOW_WEB_PORTS.run_scratchpad_read,
   );
   assert.equal(unknown.status, 400);
   assert.equal(unknown.body.error.code, 'unknown_argument_field');
@@ -135,21 +133,20 @@ test('workflow Web port adapter refuses undeclared, credential-shaped and mismat
   const secret = await executeProductionWorkflowWebPort(
     second.northbound,
     ctx,
-    envelope('run_board_post', {
-      runId: 'run:a', board: 'work', title: 'item',
-      evidence: [{ token: 'not-accepted' }],
+    envelope('run_scratchpad_elevate', {
+      runId: 'run:a', taskId: 'task:a', entryIds: [{ token: 'not-accepted' }],
     }, 'secret'),
-    PRODUCTION_WORKFLOW_WEB_PORTS.run_board_post,
+    PRODUCTION_WORKFLOW_WEB_PORTS.run_scratchpad_elevate,
   );
   assert.equal(secret.status, 400);
   assert.equal(secret.body.error.code, 'invalid_command');
   assert.equal(second.calls.length, 0);
 
   const third = harness();
-  const mismatch = envelope('run_board_read', { runId: 'run:a', board: 'work' }, 'mismatch');
+  const mismatch = envelope('run_scratchpad_read', { runId: 'run:a', scope: 'shared' }, 'mismatch');
   mismatch.runId = 'run:b';
   const refused = await executeProductionWorkflowWebPort(
-    third.northbound, ctx, mismatch, PRODUCTION_WORKFLOW_WEB_PORTS.run_board_read,
+    third.northbound, ctx, mismatch, PRODUCTION_WORKFLOW_WEB_PORTS.run_scratchpad_read,
   );
   assert.equal(refused.status, 400);
   assert.equal(refused.body.error.code, 'application_run_id_mismatch');

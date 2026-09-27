@@ -140,9 +140,8 @@ export function coordinationReplayFailure(root) {
 
 
 
-// The non-knowledge half of the projection-input fence (see _apply's closing note): board
-// claim/report traffic (deliberately non-board-fence-bumping) and package admission/attach —
-// the only non-knowledge inputs the horizons read, closed by design.
+// The non-knowledge half of the projection-input fence (see _apply's closing note): package
+// admission/attach — the only non-knowledge inputs the horizons read, closed by design.
 
 // KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
 // knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
@@ -172,20 +171,6 @@ const REPRESENTATION_POLICY_FIELDS = [
 // projection (the family's existing posture); the durable fact is never rewritten. Facts
 // without the handle pass through byte-identical so the projection is scoped to web-sourced
 // bodies only.
-// REFLEX-2 board bounds. A board item's identity (itemId/itemVersion/itemDigest/ordinal)
-// is hub-minted; the content core that the itemDigest content-addresses is exactly these
-// nine fields, in the delete-and-recompute discipline (never accepted from a submitter).
-// Live board bounds imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the
-// store is a first-class registry consumer, never a second door for a cataloged lane.
-// Epic #78 Decision 5: the L1 worker read page is at most 16 items and 28 KiB serialized (the
-// receipt wrapper carries the ok/kind/renderedText/idempotencyKey overhead, so the page budget
-// is deliberately below the 32 KiB wire ceiling to leave room for it).
-/** Epic #78 Decision 6 rule 3: the kernel-level request digest for worker board mutations. It
- * covers ONLY the content the caller submitted (the derived owner/claim/grant coordinates are
- * authority, not content — a replay after a close must not re-judge the original request). The
- * seam additionally namespaces the effective replay key with the grant digest so cross-worker
- * key-string collisions cannot occur. */
-/** itemDigest = H(the nine content-core fields), recomputed by the hub, never trusted from input. */
 
 // REPL-2/REPL-3 (docs/reference/evidence/repl-kg-wave-2026-07-22/repl23-decisions.md, issues
 // #22/#23). Binding identity/fences/history/citations are (runId, scope, name)-tupled via
@@ -1656,8 +1641,7 @@ export class CoordinationStore {
   // PRIOR settlement lease (a wave other than the one now closing) that carries no admission — its
   // review window is over precisely because a later wave has closed, so the window is bounded by
   // driver cadence, not a wall clock. Revokes with reason `review_window_expired`, cancels the
-  // settlement task, and retires un-admitted candidate board items. Bounded ≤ maxLeases per pass;
-  // each step is idempotent (a revoked lease is skipped next pass, a terminal task is left alone),
+  // settlement task. Bounded ≤ maxLeases per pass;
   // so repeated driver passes finish the residue. The currently-closing wave is excluded so its own
   // freshly-materialized lease is never swept (re-drive stays exactly-once).
   sweepSettlementLeases(repoId, options = {}) { return coordinationLedger.sweepSettlementLeases(this, repoId, options); }
@@ -2040,22 +2024,8 @@ export class CoordinationStore {
     return coordinationReplay.reapRunScratchpads(this, runId, opts);
   }
 
-  // -------------------------------------------------------------------------
-  // REFLEX-2 boards (issue #17, docs/32 §3.2). Immutable versioned items with
-  // successor versions and claim migration keyed to itemId (F8); a board-scoped,
-  // replay-derivable fence — NEVER the worker FenceTable (F9); non-evented reads
-  // (no board.read event kind; a poll never appends to the ledger — F10).
-  // -------------------------------------------------------------------------
-
-  /** The board fence: the count of admitted orchestrator-authority events for the board,
-   * derived purely by re-counting in _apply. Replay reconstructs it exactly. */
-  boardFence(board) {
-    return coordinationInternals.boardFence(this._boardFences, board);
-  }
-
   /** KG-1 Part A rule 5 (P1-1 fix): store-level, global, replay-derived counter incremented once
-   * per applied event of a kind that can change a task/workflow projection's output without
-   * already being counted by boardFence's five orchestrator-authority transitions. */
+   * per applied event of a kind that can change a task/workflow projection's output. */
   projectionInputFence() { return coordinationLedger.projectionInputFence(this._projectionInputFence); }
 
   /** KG-1 Part A rule 4: the project horizon fence — the store's own applied-event position,
@@ -2064,74 +2034,6 @@ export class CoordinationStore {
     return coordinationInternals.eventFence(this._events);
   }
 
-  _boardAdmissionFailure(message, code) { return coordinationAdmission._boardAdmissionFailure(message, code); }
-
-  /** S-2 v2's single serialized authority entry for transported/facade board commands.
-   * Shape is closed before any state lookup. The caller supplies the session proof; identity is
-   * recovered only from the matching lease. The final fence/parent compare is repeated by the
-   * append's before-write gate, so no adapter-side check-then-write window exists. */
-  admitBoardCommand(envelope) { return coordinationAdmission.admitBoardCommand(this, envelope); }
-
-  postBoardItem(fields, auth, appendGate = null, boardAdmission = null) { return coordinationLedger.postBoardItem(this, fields, auth, appendGate, boardAdmission); }
-
-  /** A successor version under the SAME itemId (immutable prior version retained). If a granted
-   * claim exists, a benign edit (retitle/reorder) carries it forward via board.claim_migrated —
-   * the worker is never forced to re-claim (F8, rule 3). */
-  _boardSuccessor(itemId, kind, changes, auth, appendGate = null, boardAdmission = null) { return coordinationLedger._boardSuccessor(this, itemId, kind, changes, auth, appendGate, boardAdmission); }
-
-  retitleBoardItem(itemId, fields, auth, appendGate = null, boardAdmission = null) { return coordinationLedger.retitleBoardItem(this, itemId, fields, auth, appendGate, boardAdmission); }
-
-  reorderBoardItem(itemId, ordinal, auth, appendGate = null, boardAdmission = null) { return coordinationLedger.reorderBoardItem(this, itemId, ordinal, auth, appendGate, boardAdmission); }
-
-  closeBoardItem(itemId, auth, appendGate = null, boardAdmission = null) { return coordinationLedger.closeBoardItem(this, itemId, auth, appendGate, boardAdmission); }
-
-  dropBoardItem(itemId, auth, appendGate = null, boardAdmission = null) { return coordinationLedger.dropBoardItem(this, itemId, auth, appendGate, boardAdmission); }
-
-  /** First claim wins, exactly-once, only if expectedBoardFence === boardFence(board) at apply
-   * time (F9, rule 8); else stale_board_fence (rejected, cheap re-read). Never the worker fence.
-   * Epic #78 Decision 6 rule 3: prior-key lookups digest-adjudicate — changed content under one
-   * key refuses board_replay_conflict, never a blind return of the old success. `beforeWrite`
-   * (the seam's in-append gate, Decision 3 step 7) re-checks the fence/item/open/claim state
-   * inside the append window. */
-  requestBoardClaim(fields, auth, beforeWrite = null) { return coordinationLedger.requestBoardClaim(this, fields, auth, beforeWrite); }
-
-  /** A report binds the EXACT (itemVersion, itemDigest) the worker observed; a later retitle can
-   * never silently re-point its evidence (F8, rule 3). Epic #78 Decision 6 rule 3: prior-key
-   * lookups digest-adjudicate (changed content/op under one key refuses board_replay_conflict).
-   * The envelope coordinates (claimVersion, ownerTask, grantDigest) are derived from the active
-   * claim — authority, not content, so they are excluded from the request digest. `beforeWrite`
-   * (the seam's in-append gate, Decision 3 step 7) re-checks the item-open/claim-owner/version
-   * state inside the append window. */
-  submitBoardReport(fields, auth, beforeWrite = null) { return coordinationLedger.submitBoardReport(this, fields, auth, beforeWrite); }
-
-  /** Version-CAS expiry mirroring expireScratchClaim; returns the item to claimable (never a
-   * phantom done). Does not bump the board fence (F9, rule 7). Epic #78 Decision 6 rule 3:
-   * prior-key lookups digest-adjudicate — changed expiry content under one key refuses
-   * board_replay_conflict, never a stale success. */
-  expireBoardClaim(itemId, expectedVersion, auth) { return coordinationLedger.expireBoardClaim(this, itemId, expectedVersion, auth); }
-
-  activeBoardClaims({ workerId = null, taskId = null } = {}) { return coordinationLedger.activeBoardClaims(this._boardClaims, { workerId, taskId }); }
-  boardItem(itemId) {
-    return coordinationInternals.boardItem(this._boardItems, itemId);
-  }
-  boardItemVersions(itemId) {
-    return coordinationInternals.boardItemVersions(this._boardItemHistory, itemId);
-  }
-
-  /** Non-evented board read (F10, rule 9): a poll appends nothing to the ledger and drives the
-   * per-board indexed item map, never a full claim/fact scan. */
-  boardSnapshot(board) { return coordinationLedger.boardSnapshot(this, board); }
-
-  // -------------------------------------------------------------------------
-  // Epic #78 (board worker-half) — worker grants, the worker admission seam, and
-  // the grant-scoped L1 read lane (Decisions 2/3/5). All state derives from
-  // board.grant_minted / board.grant_revoked / worker.generation_bound events.
-  // -------------------------------------------------------------------------
-  boardGrant(grantId) {
-    return coordinationInternals.boardGrant(this._boardGrants, grantId);
-  }
-
-  activeBoardGrants({ workerId = null, taskId = null } = {}) { return coordinationLedger.activeBoardGrants(this._boardGrants, { workerId, taskId }); }
   workerGeneration(workerId) {
     return coordinationInternals.workerGeneration(this._workerGenerations, workerId);
   }
@@ -2150,64 +2052,12 @@ export class CoordinationStore {
     return coordinationReplay.orphans(this, { liveWorkers });
   }
 
-  /** Decision 2: the durable grant revoke. Every terminator (member task terminalization,
-   * reassignment, process generation replacement, member Run/wave stop) appends one
-   * board.grant_revoked event naming the cause; replay derives active/revoked solely from the
-   * mint and revoke events. */
-    revokeBoardGrants({ workerId = null, taskId = null, cause = null, reason = null }, auth) { return coordinationLedgerWrites.revokeBoardGrants(this, { workerId, taskId, cause, reason }, auth); }
-
-  /** The S-2-shaped worker admission seam for claim/report (Decision 3). One entry point from
-   * every adapter. Steps in order: (1) close the wire shape; (2) resolve+prove the grant against
-   * the authenticated worker/task/generation; (3) derive scope from the grant; (4) verify board
-   * binding, grant permission, and Run/wave state before item existence; (5) normalize the
-   * request digest; (6) authority-before-replay — the effective key is namespaced
-   * <opKind>:<grantDigest>:<callerKey> so cross-worker/cross-op collisions cannot occur; (7) the
-   * kernel's in-append CAS re-check (final fence/item/open/claim gate). An absent, revoked,
-   * foreign, or generation-stale grant receives the SAME constant board_worker_scope_refused
-   * before any board/item lookup. */
-  admitWorkerBoardCommand({ kind, grantId, payload, workerId, taskId, taskVersion, processGeneration, idempotencyKey }) { return coordinationAdmission.admitWorkerBoardCommand(this, { kind, grantId, payload, workerId, taskId, taskVersion, processGeneration, idempotencyKey }); }
-
-  /** Decision 2/3: the S-2-shaped grant mint behind waves.send claimGrant. The caller names no
-   * grantee and no permissions; the hub proves the orchestrator's session authority, resolves
-   * the member coordinates server-side, derives the wave, verifies board binding and wave
-   * membership, records the orchestrator-selected permission subset, and durably mints one
-   * closed grant BEFORE the steer is deliverable. The effective replay key
-   * <grant.mint>:<grantDigest>:<callerKey> plus the caller-key digest index make an exact retry
-   * exactly-once and a changed-content retry a typed board_replay_conflict. */
-  mintBoardGrant(entry, auth) { return coordinationLedger.mintBoardGrant(this, entry, auth); }
   _taskByRun(runId) {
     return coordinationInternals._taskByRun(this._tasks, runId);
   }
   _waveMembershipOf(runId) {
     return coordinationInternals._waveMembershipOf(this._events, runId);
   }
-
-  // -------------------------------------------------------------------------
-  // Decision 5 — the grant-scoped L1 board read. One board, every item (unowned open work
-  // included), stable pages of at most 16 items and 28 KiB, stable (ordinal,itemId) ordering,
-  // in-item report continuation by (itemId, lastReportSeq), and typed board_oversize_item
-  // truncation. The cursor digest binds grant digest, board, board Run, member Run, page
-  // position, and both fence components.
-  // -------------------------------------------------------------------------
-
-  boardGrantPage({ grantId, cursor, workerId, taskId, taskVersion, processGeneration }) { return coordinationLedger.boardGrantPage(this, { grantId, cursor, workerId, taskId, taskVersion, processGeneration }); }
-
-  _mintBoardCursor(grant, { page, itemId = null, lastReportSeq = null }) { return coordinationLedger._mintBoardCursor(this, grant, { page, itemId, lastReportSeq }); }
-
-  _verifyBoardCursor(cursor, grant) { return coordinationLedger._verifyBoardCursor(this, cursor, grant); }
-  _sortedBoardItems(board) {
-    return coordinationInternals._sortedBoardItems(this, board);
-  }
-
-  _reportsForItem(itemId) { return coordinationLedger._reportsForItem(this._boardReports, itemId); }
-  _boardGrantItemRow(item, frame) {
-    return coordinationInternals._boardGrantItemRow(this._boardClaims, item, frame);
-  }
-  _boardGrantReportRow(report, frame) {
-    return coordinationInternals._boardGrantReportRow(report, frame);
-  }
-
-  _renderBoardGrantPage(grant, state) { return coordinationLedger._renderBoardGrantPage(this, grant, state); }
 
   // -------------------------------------------------------------------------
   // REPL-3 branch resolution (repl23-decisions.md Part F rules 17-19). Wired into the real
@@ -2227,11 +2077,10 @@ export class CoordinationStore {
   // -------------------------------------------------------------------------
   // REPL-2 (issue #22, repl23-decisions.md): named bindings, immutable versions under
   // (runId, scope, name); no `repl.read` event kind (F10); cached, non-evented reads own the
-  // per-(runId, scope) fence (Part C/D). Never the board fence or FenceTable (Part I).
+  // per-(runId, scope) fence (Part C/D), never the worker FenceTable (Part I).
   // -------------------------------------------------------------------------
 
-  /** The binding fence: EVERY write to (runId, scope) — worker writes included, unlike
-   * boardFence's orchestrator-authority-only carve-out (Part C rule 7). Replay-derivable,
+  /** The binding fence: EVERY write to (runId, scope) — worker writes included. Replay-derivable,
    * never a separately durable counter (rule 8). */
   bindingFence(runId, scope) {
     return coordinationInternals.bindingFence(this._replBindingFences, runId, scope);
@@ -2321,7 +2170,7 @@ export class CoordinationStore {
   // KG-2 Part D (rule 14): the settle-time orchestrator-admit gate. A new event kind,
   // structurally modeled on knowledge.scratch_corrected (not a reuse of
   // knowledge.promotion_batch — that event's validator re-derives its candidate set from the
-  // scratch/verified-outcome scan policy and would reject a board/package Finding candidate).
+  // scratch/verified-outcome scan policy and would reject a package Finding candidate).
   // -------------------------------------------------------------------------
 
   /** Rule 15 eligibility, checked against the state strictly before beforeEventSeq (so a replay

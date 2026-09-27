@@ -40,7 +40,7 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
-  'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'run.knowledge.seed',
   'runs.list',
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
   'waves.stop', 'waves.run', 'waves.compile',
@@ -58,7 +58,7 @@ const MUTATIONS = new Set([
   'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
   'run.export', 'run.recover', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
-  'run.board.post', 'run.knowledge.seed',
+  'run.knowledge.seed',
   'waves.start', 'waves.send', 'waves.stop', 'waves.run',
 ]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;

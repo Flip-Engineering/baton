@@ -65,7 +65,7 @@
 //       emergency_stop → 403 forbidden. Both stay constant; the carve-out (R4) is narrow.
 //   P5  Legacy operator set constancy for the NON-worker owner: every family still 200.
 //   P6  v1 lane reach on the child's OWN subtree: message.send/receipt, attention.watch (the
-//       lane's own lease-parent law), scratchpad.read/elevate, board.post/read, knowledge.seed.
+//       lane's own lease-parent law), scratchpad.read/elevate, knowledge.seed.
 //   P7  Resolve-then-authorize constancy: unknown message.receipt and unknown/cross-run
 //       scratchpad.elevate → application_unauthorized; foreign/unknown attention.watch →
 //       attention_scope_forbidden (the lane's own landed law).
@@ -73,7 +73,7 @@
 // Verified split (baseline, two consecutive runs): 7 pins green, 8 reds failing at their
 // named stages. NUL-byte discipline: this suite never reads application.mjs /
 // coordination-store.mjs / coordinator.mjs wholesale (behavioral rows only); the fixture
-// stack is the board-workerhalf waveFixture idiom (real createDriver + ScriptableAdapter)
+// stack is the waveFixture idiom (real createDriver + ScriptableAdapter)
 // plus the phase77 standalone-store transport idiom.
 //
 // Campaign law: every control is a constructor-injected clock, never a wall-clock;
@@ -218,7 +218,7 @@ const PROFILE = Object.freeze({
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
 });
 
-// Full application fixture (board-workerhalf pattern, trimmed): one real createDriver
+// Full application fixture (trimmed): one real createDriver
 // stack so the facade, the kernel lanes, and the durable store share state. The host
 // authorize policy defaults to the CURRENT vacuous admit (the seam the lane-scope binding
 // must land in) — R6 drives foreign runs through it and must fail today.
@@ -275,7 +275,7 @@ function completeTask(fx, taskId) {
   });
 }
 
-// The board-authority-red lease ceremony: an orchestrator task on runId, a claimed worker,
+// The authority-red lease ceremony: an orchestrator task on runId, a claimed worker,
 // and an issued run-orchestrator lease; returns the closed sessionAuthority proof plus the
 // coordinates the child principal (lease holder) carries.
 function authorityOn(fx, { runId, principalId, sessionId }) {
@@ -631,14 +631,6 @@ test('P6 PIN: v1 lane reach on the child\'s own subtree', async (t) => {
     runId: 'run:own', taskId: ownTask.id, entryIds: [note.entry.entryId],
   }, childPrincipal, null);
   assert.equal(elevated?.result, 'settled');
-  // board.post + board.read on the own subtree run.
-  const posted = await fx.application.command('run.board.post', {
-    runId: 'run:own', board: 'board-own', title: 'child board',
-  }, childPrincipal, null);
-  assert.equal(posted?.result, 'posted');
-  const board = await fx.application.command('run.board.read', { runId: 'run:own', board: 'board-own' }, childPrincipal, null);
-  assert.equal(board?.schemaVersion, 1);
-  assert.equal(board?.board, 'board-own');
   // knowledge.seed inside the own subtree run's horizon.
   const seeded = await fx.application.command('run.knowledge.seed', {
     runId: 'run:own', type: 'Finding', grounding: 'observed', body: 'child finding',

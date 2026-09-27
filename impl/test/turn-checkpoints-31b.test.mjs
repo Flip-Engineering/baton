@@ -328,7 +328,7 @@ test('B3: `_deliverFollowUp` is unreachable for a paused task\'s worker — the 
 });
 
 test('B4: nudge expires ONLY scratch claims CAS\'d on the pre-nudge fence, with a `turn_nudged` '
-  + 'reason; a post-nudge-fence claim survives and BOARD claims are untouched', async () => {
+  + 'reason; a post-nudge-fence claim survives', async () => {
   const kit = await pausedKit();
   const { coordinator, coordination, handle, task } = kit;
   const envRef = { repoId: 'repo-31b', treeSha: 'a'.repeat(40) };
@@ -360,9 +360,6 @@ test('B4: nudge expires ONLY scratch claims CAS\'d on the pre-nudge fence, with 
   assert.ok(String(expiries[0].idempotencyKey).endsWith(':turn_nudged'),
     'nudge is a policy-driven continuation, never a provider failure');
 
-  // Board claims CAS on a BOARD-scoped fence, never the worker turn fence — fence-filtering them
-  // off the turn fence would be a category error, so nudge must not touch them at all.
-  assert.equal(coordination.events().some((e) => e.kind === 'board.claim_expired'), false);
   clearTimeout(handle.watchdogTimer);
 });
 

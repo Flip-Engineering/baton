@@ -145,8 +145,6 @@ const SUBSTRATE = Object.freeze({
   'scanner.window.context_read': { lane: 'scanner.window.context_read', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'scanner.window.message_send': { lane: 'scanner.window.message_send', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'stream.omp.flush': { lane: 'stream.omp.flush', class: 'substrate', value: 4096, unit: 'bytes', graceful: null },
-  'scanner.window.board_claim': { lane: 'scanner.window.board_claim', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
-  'scanner.window.board_report': { lane: 'scanner.window.board_report', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'wire.frame': { lane: 'wire.frame', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
   'credential.file': { lane: 'credential.file', class: 'substrate', value: 16384, unit: 'bytes', graceful: null },
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
@@ -236,8 +234,6 @@ const PARTICIPANT_COMMIT_PAGE_SHARE = 1 / 8;
 const PARTICIPANT_COMMITS_ITEMS = Math.floor(LIST_PAGE_ITEMS * PARTICIPANT_COMMIT_PAGE_SHARE);
 
 const VIEW = Object.freeze({
-  'view.board.bytes': { lane: 'view.board.bytes', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
-  'view.board.items': { lane: 'view.board.items', class: 'view', value: 512, unit: 'items', graceful: 'shed-flagged' },
   'view.repl.bytes': { lane: 'view.repl.bytes', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   'view.scratchpad.bytes': { lane: 'view.scratchpad.bytes', class: 'view', value: 32768, unit: 'bytes', graceful: 'shed-flagged' },
   'view.scratchpad.items': { lane: 'view.scratchpad.items', class: 'view', value: 64, unit: 'items', graceful: 'shed-flagged' },

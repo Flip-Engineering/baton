@@ -1,5 +1,5 @@
 // Issue #503 — a recruited worker's brief lists the collaboration surface by bare verb
-// name only, so 21 swarm participants never reached for boards, scratchpads,
+// name only, so 21 swarm participants never reached for scratchpads,
 // run.knowledge.seed, evidence.search, or the REPL layer. The repair (like #310's
 // contribution-contract example): the recruit brief's "bridge verbs it holds" block carries
 // a one-line situated purpose per verb, derived from the ONE registry tables —

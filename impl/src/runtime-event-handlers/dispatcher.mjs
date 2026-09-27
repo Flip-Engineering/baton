@@ -19,7 +19,7 @@ import {
   questionCancelled, questionAsked, approvalRequested, decisionRequested, interactionSettled,
 } from './interaction.mjs';
 import {
-  resourceTokens, scratchpadWrite, contextRead, orientationRate, boardClaim, boardReport,
+  resourceTokens, scratchpadWrite, contextRead, orientationRate,
   messageSend, nativeSubagentObserved,
 } from './observation-events.mjs';
 
@@ -367,12 +367,6 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
       }
       case 'orientation.rate': {
         orientationRate(coordinator, recorder, ctx); break;
-      }
-      case 'board.claim': {
-        boardClaim(coordinator, recorder, ctx); break;
-      }
-      case 'board.report': {
-        boardReport(coordinator, recorder, ctx); break;
       }
       case 'message.send': {
         messageSend(coordinator, recorder, ctx); break;
