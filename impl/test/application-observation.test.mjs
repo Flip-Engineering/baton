@@ -34,7 +34,7 @@ const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
 const ASYNC = Object.freeze(["_goalPlanStatus","_historicalProfileView","_workflowRoundSummaries","_buildWorkflowView","_proposeContextMap","_proposeContextReduce","_proposeContextRetry","contextEval","contextPackageBranch","_activeWorkstream","_pagePreservedInspections"]);
 
-const HOST_REEXPORTS = Object.freeze(["APPLICATION_RUN_TERMINAL_PHASES","MAX_SCRATCHPAD_VIEW_BYTES","MAX_SCRATCHPAD_VIEW_CACHE_KEYS","MAX_SCRATCHPAD_VIEW_ITEMS","PROVIDER_EXECUTION_SETTLED_PHASES","VERDICT_CORRECTIVE_TABLE","actionDoInputs","byteBoundedPage","goalPlanDispatchesPage","goalPlanReadAll","goalPlanRunPlansPage","projectContextPackageBranch","projectProgressClass","projectRouteAttestation","projectRunRouteEvidence","projectScratchpadView","projectVerdictSurface","semanticViewDigest"]);
+const HOST_REEXPORTS = Object.freeze(["APPLICATION_RUN_TERMINAL_PHASES","MAX_SCRATCHPAD_VIEW_BYTES","MAX_SCRATCHPAD_VIEW_CACHE_KEYS","MAX_SCRATCHPAD_VIEW_ITEMS","PROVIDER_EXECUTION_SETTLED_PHASES","VERDICT_CORRECTIVE_TABLE","actionDoInputs","byteBoundedPage","goalPlanDispatchesPage","goalPlanReadAll","goalPlanRunPlansPage","projectProgressClass","projectRouteAttestation","projectRunRouteEvidence","projectScratchpadView","projectVerdictSurface","semanticViewDigest"]);
 
 test('AO1: the module imports neither monolith and contains no implicit receiver at all', () => {
   const root = parseOf(read(MEMBER_FILE));

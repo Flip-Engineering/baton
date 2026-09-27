@@ -9,15 +9,14 @@
 // delegate, and a second hop would be noise.
 
 
-import { canonicalDigest, parseReplCitation } from './coordination-internals.mjs';
+import { canonicalDigest } from './coordination-internals.mjs';
 import * as coordinationLedger from './coordination-ledger.mjs';
 import { ContributionService } from './contribution-service.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import {
-  attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createDigest, replObjectRefusal,
+  attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createDigest,
   sanitizeWebContent, wrapFact, wrapHubDerived, wrapProse,
 } from './messages.mjs';
-import { assertReplObjectAddressed } from './runtime-admission.mjs';
 import { NATIVE_SETTLEMENT_GAP, nativeSubagentView } from './native-subagent-view.mjs';
 import { validProcessClosedPayload } from './process-lifecycle.mjs';
 import { PROVIDER_FAULT_CODES, routeQuotaScope } from './provider-faults.mjs';
@@ -2592,27 +2591,6 @@ export function contextRead(coordinator, recorder, workerId, payload) {
       }
       return { ok: false, result: refusalCode };
     }
-    // BD3-A/A6: the read mints a context.read audit event — its own class with ZERO promotion
-    // weight, never the scratch.read family (minScratchReaders never counts these). Epic #81
-    // (O-2): a code.orient.* materialization mints the full hub-derived identity tuple
-    // {repoId, runId, taskId, taskVersion, workerId, op, normalizedQueryDigest, packDigest,
-    // freshnessDigest} — never the landed BD3-A interim shape.
-    if (recorder.coordination.recordContextRead) {
-      coordinator._bestEffortSync(() => {
-        const codeOrientation = (payload.query.kind === 'code' && answered.orientation) ? answered.orientation : null;
-        const readFields = codeOrientation
-          ? {
-              freshnessDigest: codeOrientation.freshnessDigest, normalizedQueryDigest: codeOrientation.normalizedQueryDigest,
-              op: codeOrientation.op, packDigest: codeOrientation.packDigest, repoId: codeOrientation.repoId,
-              runId, taskId: task.id, taskVersion: (recorder.coordination.task(task.id)?.version ?? 0), workerId,
-            }
-          : {
-              kind: payload.query.kind, queryDigest: canonicalDigest(payload.query),
-              resultDigest: canonicalDigest(answered.rendered ?? null), runId, taskId: task.id, workerId,
-            };
-        recorder.coordination.recordContextRead(readFields, { actor: 'hub', key: `context.read:${workerId}:${payload.idempotencyKey}` });
-      }, 'context_read_audit');
-    }
     return {
       ok: true,
       kind: payload.query.kind,
@@ -2630,7 +2608,6 @@ export function _answerContextRead(coordinator, recorder, handle, task, query, r
       throw Object.assign(new Error('context read query is invalid'), { code: 'context_read_invalid' });
     }
     const kind = query.kind;
-    if (kind === 'code') return coordinator._answerCodeOrient(handle, task, query, runId);
     if (kind === 'knowledge') {
       if (typeof query.text !== 'string' || query.text.trim().length === 0) {
         throw Object.assign(new Error('context read knowledge query is invalid'), { code: 'context_read_invalid' });
@@ -2776,24 +2753,6 @@ export function _renderContextRead(coordinator, recorder, { kind, items, spill }
     return { rendered, deliverable, truncated };
   }
 
-export function _recordOrientationRating(coordinator, recorder, workerId, payload) {
-    let handle;
-    try { handle = coordinator._getWorker(workerId); } catch { return { ok: false, code: 'worker_not_active' }; }
-    const task = coordinator._tasks.get(handle.taskId);
-    if (!task) return { ok: false, code: 'worker_not_active' };
-    const ctask = recorder.coordination.task(handle.taskId);
-    const packDigest = payload?.packDigest; const rating = payload?.rating;
-    if (!/^[a-f0-9]{64}$/.test(packDigest ?? '') || !['useful', 'missed'].includes(rating)) {
-      return { ok: false, code: 'orientation_rating_refused' };
-    }
-    const read = recorder.coordination.orientationReadHead(workerId, packDigest);
-    if (!read) return { ok: false, code: 'orientation_rating_refused' };
-    const attempt = { grantOrReadEventSeq: read.eventSeq, packDigest, rating, repoId: read.repoId ?? task.runId ?? null, runId: task.runId ?? null, taskId: task.id, taskVersion: ctask?.version ?? 0, workerId };
-    try {
-      const result = recorder.coordination.recordOrientationRating({ packDigest, rating }, { actor: `worker:${workerId}`, key: payload?.idempotencyKey, attempt });
-      return { ok: true, event: result?.event ?? null };
-    } catch (error) { return { ok: false, code: error?.code ?? 'orientation_rating_refused' }; }
-  }
 
 export function _runHorizonNodeIds(coordinator, recorder, runId) {
     const nodes = recorder.coordination.queryKnowledge({});
@@ -3135,13 +3094,12 @@ export function taskHorizon(coordinator, recorder, taskId, { board = null } = {}
     if (!task) throw Object.assign(new Error(`unknown task ${taskId}`), { name: 'CoordinationRefusal', code: 'not_found' });
     const workerId = task.assignee ?? null;
     const boardFence = board != null ? recorder.coordination.boardFence(board) : 0;
-    const bindingFence = workerId != null ? recorder.coordination.bindingFence(task.runId ?? null, `worker:${workerId}`) : 0;
     const interactionGeneration = coordinator.interactionGeneration(taskId);
     const projectionInputFence = recorder.coordination.projectionInputFence();
     const scratchpadScopes = workerId == null ? ['shared'] : [`worker:${workerId}`, 'shared'];
     const scratchpadCapture = recorder.coordination.scratchpadSnapshotBatch(task.runId, scratchpadScopes);
     const fenceTuple = [
-      boardFence, bindingFence, interactionGeneration, projectionInputFence,
+      boardFence, interactionGeneration, projectionInputFence,
       scratchpadCapture.fenceTuple,
     ];
     return coordinator._horizonCacheGet('task', taskId, fenceTuple, () => ({
@@ -3154,12 +3112,10 @@ export function taskHorizon(coordinator, recorder, taskId, { board = null } = {}
   }
 
 export function workflowHorizon(coordinator, recorder, runId, { viewer = 'orchestrator' } = {}) {
-    const attachments = recorder.coordination.contextPackageAttachments(runId);
-    const boards = [...new Set(attachments
-      .filter((attachment) => attachment.scope.startsWith('board:'))
-      .map((attachment) => attachment.scope.slice('board:'.length)))].sort();
+    const boards = [...recorder.coordination._boardRunBindings.entries()]
+      .filter(([, binding]) => binding.runId === runId)
+      .map(([board]) => board).sort();
     const boardFences = boards.map((board) => recorder.coordination.boardFence(board));
-    const bindingFence = recorder.coordination.bindingFence(runId, 'shared');
     const decisionSettleCount = coordinator.decisionSettleCount(runId);
     const projectionInputFence = recorder.coordination.projectionInputFence();
     const ownedWorkerIds = [...coordinator._tasks.values()]
@@ -3176,7 +3132,7 @@ export function workflowHorizon(coordinator, recorder, runId, { viewer = 'orches
       : [`worker:${viewer}`, 'shared'];
     const scratchpadCapture = recorder.coordination.scratchpadSnapshotBatch(runId, scratchpadScopes);
     const fenceTuple = [
-      boardFences, bindingFence, decisionSettleCount, projectionInputFence,
+      boardFences, decisionSettleCount, projectionInputFence,
       scratchpadCapture.fenceTuple,
     ];
     return coordinator._horizonCacheGet('workflow', `${runId}:${viewer}`, fenceTuple, () => ({
@@ -3212,158 +3168,13 @@ export function boardSnapshot(coordinator, recorder, board) {
     return recorder.coordination.boardSnapshot(board);
   }
 
-export function dropReplBinding(coordinator, recorder, fields, opts = {}) {
-    coordinator.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('REPL binding drop requires idempotencyKey');
-    return recorder.coordination.dropReplBinding(fields, {
-      actor: opts.actor ?? 'worker', principalId: opts.principalId ?? opts.actor ?? 'worker',
-      key: opts.idempotencyKey,
-    });
-  }
 
-export function bindingFence(coordinator, recorder, runId, scope) {
-    coordinator._assertReadable();
-    return recorder.coordination.bindingFence(runId, scope);
-  }
 
-export function replBindingSnapshot(coordinator, recorder, runId, scope) {
-    coordinator._assertReadable();
-    return recorder.coordination.replBindingSnapshot(runId, scope);
-  }
 
-export function resolveReplCitation(coordinator, recorder, runId, citation) {
-    coordinator._assertReadable();
-    return recorder.coordination.resolveReplCitation(runId, citation);
-  }
 
-// Issue #143: the in-caller-run cite projection (R10). Derives the runId from the caller's
-// task and resolves the citation in that run only. A citation that does not resolve in the
-// caller's own run (whether it exists in another run or not at all) is refused with
-// repl_citation_out_of_run — the run boundary prevents cross-run data exfiltration.
-export function _replCiteInOwnRun(coordinator, recorder, taskId, citation) {
-    coordinator._assertReadable();
-    const task = recorder.coordination.task(taskId);
-    if (!task) {
-      throw Object.assign(new Error(`unknown task ${taskId}`), {
-        name: 'CoordinationRefusal', code: 'repl_citation_out_of_run',
-      });
-    }
-    const ownRunId = task.runId;
-    if (!ownRunId) {
-      throw Object.assign(new Error('task has no runId'), {
-        name: 'CoordinationRefusal', code: 'repl_citation_out_of_run',
-      });
-    }
-    try {
-      return recorder.coordination.resolveReplCitation(ownRunId, citation);
-    } catch (error) {
-      if (error?.code === 'repl_binding_citation_not_found') {
-        throw Object.assign(new Error('REPL citation does not resolve in the caller\'s own run'), {
-          name: 'CoordinationRefusal', code: 'repl_citation_out_of_run',
-        });
-      }
-      throw error;
-    }
-  }
 
-// ---------------------------------------------------------------------------
-// Issue #69 — the REPL realization's serving path. An orchestrator-authored context object
-// crosses the provider seam as a CLOSED entry ({citation, scope, name, bindingVersion, cellId,
-// digest, head}); these members resolve it from the addressed run and read a shed entry's full
-// text back. What may be SERVED is decided by the lane's guards, which live in
-// runtime-admission.mjs beside the bucket's other deciders.
-// ---------------------------------------------------------------------------
 
-/** The closed context-read lane's own refusals, reused verbatim by the REPL spill read. */
-function contextReadRefusal(message, code) {
-  return Object.assign(new Error(message), { name: 'CoordinationRefusal', code });
-}
 
-/** The bounded head of a resolved context value: one line, sanitized (the R9 discipline), so a
- * value whose bytes embed a section heading can never escape the bullet. */
-function boundedReplHead(value) {
-  return sanitizeWebContent(typeof value === 'string' ? value : JSON.stringify(value ?? null));
-}
-
-/** The closed entry a citation resolves to: the EXACT binding version's row plus its settled
- * cell's artifact coordinate and a bounded, hub-derived head. */
-function replObjectEntry(recorder, citation, row, workerId) {
-  const cell = recorder.coordination.contextCell(row.cellId);
-  if (!cell || cell.state !== 'completed') {
-    throw replObjectRefusal(`REPL object ${citation} names a cell that is not settled`, 'repl_object_unresolved');
-  }
-  const outputRef = cell.result?.outputRef ?? null;
-  let value;
-  try { value = recorder.coordination._contextReferenceRead(outputRef); }
-  catch (error) {
-    throw replObjectRefusal(error?.message ?? 'context artifact is unavailable',
-      error?.code ?? 'context_artifact_unavailable');
-  }
-  return Object.freeze({
-    citation, scope: row.scope, name: row.name, bindingVersion: row.bindingVersion,
-    cellId: row.cellId, digest: outputRef?.digest ?? null,
-    head: wrapHubDerived(workerId, boundedReplHead(value)),
-  });
-}
-
-/** D1/D2/D3: the citation-resolution projection. Each `repl:<scope>:<name>@<version>` is
- * address-checked first (never resolve what is not addressed to this worker), then resolved in the
- * addressed run to the EXACT binding version (never "latest"), its settled cell's artifact
- * coordinate, and a bounded hub-derived head — then the serving guard bounds and refuses. */
-export function _citedReplObjects(coordinator, recorder, runId, workerId, citations) {
-    coordinator._assertReadable();
-    const entries = (Array.isArray(citations) ? citations : []).map((citation) => {
-      const parsed = parseReplCitation(citation);
-      if (!parsed) throw replObjectRefusal(`REPL citation ${citation ?? ''} is unparseable`, 'repl_object_unresolved');
-      assertReplObjectAddressed(workerId, parsed.scope);
-      let row;
-      try { row = recorder.coordination.resolveReplCitation(runId, citation); }
-      catch (error) {
-        if (error?.code !== 'repl_binding_citation_not_found') throw error;
-        throw replObjectRefusal(`REPL citation ${citation} does not resolve in this run`, 'repl_object_unresolved');
-      }
-      return replObjectEntry(recorder, citation, row, workerId);
-    });
-    return coordinator._assertReplObjectsServed(workerId, entries, { runId, spillLane: true });
-  }
-
-/** D2/OQ1: the CLOSED lane a shed entry's full text is read through — the same digest-addressed
- * spill the `CONTEXT_READ {kind:'spill'}` query serves, so the citation in hand resolves it. */
-export function _resolveReplSpill(coordinator, recorder, spillId) {
-    coordinator._assertReadable();
-    if (typeof spillId !== 'string' || !/^spill:sha256:[a-f0-9]{64}$/u.test(spillId)) {
-      throw contextReadRefusal('REPL spill citation is invalid', 'context_read_invalid');
-    }
-    const materialized = typeof recorder.coordination.materializeSpill === 'function'
-      ? recorder.coordination.materializeSpill(spillId) : null;
-    if (!materialized) throw contextReadRefusal('REPL spill is unknown or reaped', 'context_not_found');
-    return coordinator._renderContextRead({ kind: 'spill', spill: materialized });
-  }
-
-/** D6/GT10: the run-view REPL review projection — every manifest the run admitted, in admission
- * order, through the closed review-shape guard, and per worker its own scope's bindings through
- * the shipped per-worker projection (scope/name wrapped untrusted; a resolved cellId never
- * wrapped). The orchestrator approves by promotion, so the run view shows exactly what it
- * reviews. */
-export function _replManifestReview(coordinator, recorder, runId) {
-    coordinator._assertReadable();
-    const manifests = recorder.coordination.replManifestAdmissions(runId).map((row) => (
-      coordinator._assertReplReviewProjection({
-        manifestDigest: row.manifestDigest, replRole: row.replRole, principal: row.principal,
-        branchCount: Array.isArray(row.branches) ? row.branches.length : 0,
-      })
-    ));
-    const workers = {};
-    for (const row of manifests) {
-      if (!row.replRole.startsWith('worker:')) continue;
-      workers[row.replRole.slice('worker:'.length)] = coordinationLedger.projectReplBindingView(
-        recorder.coordination.replBindingSnapshot(runId, row.replRole), { role: 'orchestrator' },
-      );
-    }
-    return Object.freeze({
-      runId, manifests: Object.freeze(manifests), workers: Object.freeze(workers),
-    });
-  }
 
 export function _lastDeathCertEvidence(coordinator, recorder, row) {
     if (row?.status === 'retry_pending' && typeof recorder.coordination?.events === 'function') {

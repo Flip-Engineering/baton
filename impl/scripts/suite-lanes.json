@@ -24,7 +24,6 @@
     "test/issue306a-reincarnate.test.mjs",
     "test/issue351-open-liveness.test.mjs",
     "test/issue383-child-pipe-error.test.mjs",
-    "test/issue390-context-call-stopping.test.mjs",
     "test/issue467-stop-converges.test.mjs"
   ]
 }

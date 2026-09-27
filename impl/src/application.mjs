@@ -11,11 +11,6 @@ import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
   planRouteMatches, planSingleExactRoute,
 } from './goal-plan.mjs';
-import {
-  contextEffectCallIdentity, contextEffectNodeBinding, contextEffectRetryCallIdentity,
-} from './context-call.mjs';
-import { contextProgramIsPure } from './context-authority.mjs';
-import { normalizeContextProgram } from './context-program.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import { normalizeWorkflowRevision } from './workflow-revision.mjs';
 import {
@@ -42,10 +37,6 @@ import * as coordinationLedger from './coordination-ledger.mjs';
 import {
   normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText,
 } from './verifier-diagnostics.mjs';
-// Epic #103 (D2/D5): the campaign-briefing surface — the resolve lane, the post-close mint seam,
-// and the D5(a)/D5(c) frame and disclosure constants — lives in application-briefing.mjs (issue
-// #259 slice 3). The dispatcher keeps the same member names on this class.
-import * as applicationBriefing from './application-briefing.mjs';
 import { searchDeploymentEvidence, validateEvidenceSearchArgs } from './evidence-search.mjs';
 import { validateServicesListArgs } from './provider-services.mjs';
 import * as applicationObservation from './application-observation.mjs';
@@ -127,7 +118,6 @@ import {
   profileRegistryCoordinate,
   profileRegistryKey,
   projectBlockedInteraction,
-  projectContextPackageBranch,
   projectDecisionAttention,
   projectPlanRouteAuthority,
   projectProgressClass,
@@ -155,7 +145,6 @@ import {
   terminalCauseNarrative,
   validId,
   validText,
-  validateContextEvalArgs,
   workflowDefinitionPolicy,
   workflowEligibilityProjection,
   workflowNodeBudget,
@@ -176,7 +165,6 @@ export {
   goalPlanDispatchesPage,
   goalPlanReadAll,
   goalPlanRunPlansPage,
-  projectContextPackageBranch,
   projectProgressClass,
   projectRouteAttestation,
   projectRunRouteEvidence,
@@ -410,18 +398,6 @@ function knowledgeDoubtsPage(coordination, args, principal) {
       : null,
   };
 }
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` (below,
-// `BatonApplication.prototype.contextEval`) is deliberately NOT an entry here and NOT reachable
-// through `command(name, ...)`/`validateApplicationCommandArgs`. The legacy command keys stay
-// byte-stable (grammar-m3-red pins `Object.keys(APPLICATION_COMMAND_DEFINITIONS)`); the canonical
-// grammar names never become keys here — they surface only on `card().commands` (below) as the
-// M4b transport flip's advertised-beside-legacy list, resolved to their legacy handler by the
-// dispatch-layer alias map. `contextEval` is instead exposed as its own public method, callable
-// directly on the
-// `BatonApplication` instance — the "direct command port" transport in Rule 3, honestly. Web,
-// MCP, and the generic `application.command('application.context_eval', ...)` string dispatch
-// remain real, documented gaps pending a change that can update those fixtures.
-
 // docs/36 §9 M4 (M4b) — the canonical grammar names advertised beside the retained legacy commands
 // on `card().commands`. Derived once from registry v2: every ordinary canonical operation whose
 // legacy application-command spelling is a live command definition. These are NOT keys of
@@ -705,10 +681,6 @@ export function projectBoardView(snapshot, viewer = {}, cache = null) {
   return view;
 }
 
-// REPL-2's per-worker binding projection lives in coordination-ledger.mjs, beside the snapshot it
-// projects: the coordinator's run-view REPL review (issue #69 D6) reads it there. Kept exported
-// from here as well, because this module stays the application-facing home of the binding view.
-export { projectReplBindingView } from './coordination-ledger.mjs';
 
 
 
@@ -765,9 +737,9 @@ function assertAnswerKindMatches(interactionKind, answer) {
 
 
 // Issue #53: `run.debug`'s own request shape check. Standalone (not a validateApplicationCommandArgs
-// branch / APPLICATION_COMMAND_DEFINITIONS entry) for the same reason as context_eval above
-// (docs/reference/evidence/issue53-run-debug-2026-07-24/issue53-decisions.md v2 rule 5): it is a
-// direct command port, not a legacy transport-name row the M3 ledger pin freezes.
+// branch / APPLICATION_COMMAND_DEFINITIONS entry) because it is a direct command port
+// (docs/reference/evidence/issue53-run-debug-2026-07-24/issue53-decisions.md v2 rule 5), not a
+// legacy transport-name row the M3 ledger pin freezes.
 const RUN_DEBUG_ARGS = Object.freeze(['runId', 'member', 'limit']);
 function validateDebugArgs(args) {
   if (!args || typeof args !== 'object' || Array.isArray(args)
@@ -1724,20 +1696,6 @@ export class BatonApplication {
     if (this.providerServices === null && options.providerServices !== undefined) {
       throw applicationError('application provider services authority must carry a list function', 'application_config_invalid');
     }
-    this.context = null;
-    if (options.context !== undefined) {
-      exactObject(options.context, ['materializeCallResult', 'openSession', 'principal'], 'application_config_invalid',
-        'application Context configuration');
-      if (typeof options.context.openSession !== 'function'
-        || typeof options.context.materializeCallResult !== 'function') {
-        throw applicationError('application Context runtime is invalid', 'application_config_invalid');
-      }
-      this.context = deepFreeze({
-        openSession: options.context.openSession,
-        materializeCallResult: options.context.materializeCallResult,
-        principal: normalizePrincipal(options.context.principal, 'Context service principal'),
-      });
-    }
     this.principals = deepFreeze({
       planner: normalizePrincipal(options.principals.planner, 'planner principal'),
       dispatcher: normalizePrincipal(options.principals.dispatcher, 'dispatcher principal'),
@@ -1808,7 +1766,6 @@ export class BatonApplication {
     this._runExportPromises = new Map();
     this._runRetryPromises = new Map();
     this._runRetryControllers = new Map();
-    this._contextControllers = new Map();
     this._runEffectChains = new Map();
     this._runDeliveryRegistrations = new Map();
     this._semanticReviewPromises = new Map();
@@ -2865,9 +2822,7 @@ export class BatonApplication {
 
   async _resolveSemanticAction(request, principal, context = null) {
     const current = this._findRun(request.runId);
-    const view = this._withContextProjection(
-      current, await this._buildView(current, this.principals.observer),
-    );
+    const view = await this._buildView(current, this.principals.observer);
     const action = this._semanticActions(current, view, principal, context)
       .find((candidate) => candidate.actionId === request.actionId);
     return { current, view, action: action ?? null };
@@ -2890,9 +2845,7 @@ export class BatonApplication {
   }
 
   async _recheckSemanticAction(current, expected, principal) {
-    const view = this._withContextProjection(
-      current, await this._buildView(current, this.principals.observer),
-    );
+    const view = await this._buildView(current, this.principals.observer);
     const action = this._semanticActions(current, view, principal)
       .find((candidate) => candidate.actionId === expected.actionId);
     if (!action
@@ -3483,9 +3436,6 @@ export class BatonApplication {
         }
         continue;
       }
-      if (await this._reconcileContextCalls(current)) {
-        current = this._findRun(runId, { allowUnavailableProfile: true });
-      }
       if (current.plan && current.approval?.disposition === 'approved'
         && current.dispatches.length < current.plan.nodes.length) {
         try {
@@ -3894,8 +3844,6 @@ export class BatonApplication {
       definitionOfDone,
       deps: [],
       pathScope: clone(intent.scope),
-      ...(digest(intent.scope) === digest(profile.pathScope)
-        ? {} : { contextScope: clone(profile.pathScope) }),
       risk: profile.risk,
       budget: clone(profile.nodeBudget),
       verification: clone(profile.verification),
@@ -4076,9 +4024,6 @@ export class BatonApplication {
       this._workflowDefinition(current);
       if (current.plan.nodes.some((node) => node.revision)) {
         await this._validateWorkflowRevisionPlan(current);
-      }
-      if (current.plan.nodes.some((node) => node.contextCall)) {
-        this._validateContextEffectPlan(current);
       }
     }
     if (current.approval === null) {
@@ -5459,9 +5404,6 @@ export class BatonApplication {
   }
 
   async _buildView(current, observer, options = {}) {
-    if (await this._reconcileContextCalls(current)) {
-      current = this._findRun(current.goal.runId);
-    }
     if (!current.profile) return this._historicalProfileView(current, observer, options);
     if (this._isWorkflowRun(current)) return this._buildWorkflowView(current, observer, options);
     if (!current.plan) return this._planningView(current);
@@ -5719,7 +5661,6 @@ export class BatonApplication {
         key: planNode.key,
         objectiveRef: objectiveReach(objectiveBytes),
         pathScope: clone(planNode.pathScope),
-        ...(planNode.contextScope ? { contextScope: clone(planNode.contextScope) } : {}),
         risk: planNode.risk,
         budget: clone(planNode.budget),
         verification: clone(planNode.verification),
@@ -6023,7 +5964,6 @@ export class BatonApplication {
       'plan.node_dispatched', 'plan.node_budget_settled'].includes(event.kind)) return 'plan';
     if (['task.created', 'task.claimed', 'task.transitioned', 'task.acceptance_revoked'].includes(event.kind)) return 'execution';
     if (event.kind.startsWith('run.orchestrator_lease_') || event.kind.startsWith('run.lineage_')) return 'orchestration';
-    if (event.kind.startsWith('context.')) return 'context';
     if (['artifact.registered', 'artifact.superseded'].includes(event.kind)) return 'evidence';
     if (event.kind === 'evidence.mapped') {
       return NOISE_TELEMETRY_OPERATIONAL_KINDS.has(event.payload?.kind) ? null : 'evidence';
@@ -6126,7 +6066,6 @@ export class BatonApplication {
       plan: 'Run Plan authority changed.',
       execution: 'Run execution state changed.',
       orchestration: 'Run orchestration authority or topology changed.',
-      context: 'Run Context state changed.',
       verification: 'Run verification state changed.',
       evidence: 'Run evidence changed.',
       result: 'Run result selection changed.',
@@ -6248,384 +6187,11 @@ export class BatonApplication {
     return null;
   }
 
-  _contextState(current) {
-    return applicationObservation._contextState(this, current);
-  }
-
-  _withContextProjection(current, view) {
-    return applicationObservation._withContextProjection(this, current, view);
-  }
-
-  _contextTargets(current, view) {
-    return applicationObservation._contextTargets(this, current, view);
-  }
-
-  _contextEvalTargets(current, view) {
-    return applicationObservation._contextEvalTargets(this, current, view);
-  }
-
-  _contextSectionItems(current) {
-    return applicationObservation._contextSectionItems(this, current);
-  }
-
-  _contextItemDetail(selected) {
-    return applicationObservation._contextItemDetail(this, selected);
-  }
-
-  _contextItemContent(selected, offset, bounds) {
-    return applicationObservation._contextItemContent(this, selected, offset, bounds);
-  }
-
-  _contextItemEvidence(current, selected) {
-    return applicationObservation._contextItemEvidence(this, current, selected);
-  }
-
-  _validateContextMapPlan(current) {
-    const bindings = current.plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
-    if (bindings.length === 0) return null;
-    if (bindings.length !== current.plan.nodes.length
-      || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
-      throw applicationError('Context map Plan bindings are incomplete or ambiguous',
-        'application_context_map_integrity');
-    }
-    const call = this.driver.coordination.contextCall?.(bindings[0].callId);
-    if (!call || call.expectedPlanDigest !== current.plan.digest
-      || call.source.runId !== current.goal.runId
-      || call.source.predecessorPlan.digest !== current.plan.predecessor?.digest
-      || call.partitions.length !== bindings.length
-      || bindings.some((binding) => (
-        binding.callDigest !== call.callDigest
-        || !call.partitions.some((partition) => (
-          partition.partitionId === binding.partition.partitionId
-        ))
-      ))) {
-      throw applicationError('Context map Plan differs from its durable call admission',
-        'application_context_map_integrity');
-    }
-    return deepFreeze(call);
-  }
-
-  _validateContextEffectPlan(current) {
-    const bindings = current.plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
-    if (bindings.length === 0) return null;
-    if (bindings.length !== current.plan.nodes.length
-      || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
-      throw applicationError('Context effect Plan bindings are incomplete or ambiguous',
-        'application_context_call_integrity');
-    }
-    if (bindings[0].kind === 'context_map_child') return this._validateContextMapPlan(current);
-    const call = this.driver.coordination.contextCall?.(bindings[0].callId);
-    const predecessor = call?.authority?.predecessorPlan;
-    const unitIds = new Set(call?.executionUnitIds ?? []);
-    const bindingUnitIds = new Set(bindings.map((binding) => binding.unit?.unitId));
-    const callCore = call ? {
-      schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
-      requestId: call.requestId, requestDigest: call.requestDigest,
-      generation: call.generation, predecessorCall: clone(call.predecessorCall),
-      executionUnitIds: clone(call.executionUnitIds),
-      inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
-      source: clone(call.source), role: call.role, instruction: call.instruction,
-      units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
-    } : null;
-    if (!call || call.kind !== 'baton.context_effect_call'
-      || call.expectedPlanDigest !== current.plan.digest
-      || call.authority.contextPrincipal.runId !== current.goal.runId
-      || predecessor?.digest !== current.plan.predecessor?.digest
-      || bindings.length !== call.executionUnitIds.length
-      || bindingUnitIds.size !== bindings.length
-      || bindings.some((binding) => (
-        binding.kind !== 'context_effect_child'
-        || binding.callDigest !== call.callDigest
-        || binding.requestId !== call.requestId
-        || binding.requestDigest !== call.requestDigest
-        || binding.operator !== call.operator
-        || !unitIds.has(binding.unit?.unitId)
-        || digest(binding) !== digest(contextEffectNodeBinding(
-          callCore, call.units.find((unit) => unit.unitId === binding.unit?.unitId),
-        ))
-      ))) {
-      throw applicationError('Context effect Plan differs from its durable call admission',
-        'application_context_call_integrity');
-    }
-    return deepFreeze(call);
-  }
-
-  _contextCallCore(call) {
-    if (call.kind === 'baton.context_effect_call') {
-      return {
-        schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
-        requestId: call.requestId, requestDigest: call.requestDigest,
-        generation: call.generation, predecessorCall: clone(call.predecessorCall),
-        executionUnitIds: clone(call.executionUnitIds),
-        inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
-        source: clone(call.source), role: call.role, instruction: call.instruction,
-        units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
-      };
-    }
-    return {
-      schemaVersion: call.schemaVersion, kind: call.kind, generation: call.generation,
-      source: clone(call.source), role: call.role, instruction: call.instruction,
-      partitions: clone(call.partitions), programDigest: call.programDigest,
-      callId: call.callId, callDigest: call.callDigest,
-    };
-  }
-
-  _contextProviderResultRequests(call, children, cleanup) {
-    return applicationObservation._contextProviderResultRequests(this, call, children, cleanup);
-  }
-
-  async _reconcileContextCalls(current) {
-    if (!this.context || this._closing) return;
-    const calls = (this.driver.coordination.contextCalls?.({ runId: current.goal.runId }) ?? [])
-      .filter((call) => ['baton.context_map_call', 'baton.context_effect_call'].includes(call.kind));
-    let planChanged = false;
-    for (const call of calls) {
-      if (call.state === 'plan_pending' && call.plan === null) {
-        const predecessor = call.kind === 'baton.context_effect_call'
-          ? call.authority.predecessorPlan : call.source.predecessorPlan;
-        if (current.plan?.digest !== predecessor.digest) {
-          throw applicationError('Context call pending Plan lost its predecessor head',
-            'application_context_call_recovery_conflict');
-        }
-        const proposed = await this.driver.coordinator.proposePlan({
-          goal: call.planRequest.goal,
-          predecessor: call.planRequest.predecessor,
-          nodes: call.planRequest.nodes,
-        },
-          authority(this.principals.planner, this.repoId, current.goal.runId, 'plan:propose',
-            `application:${current.goal.runId}:context-call:${call.callDigest}`));
-        if (proposed.plan.digest !== call.expectedPlanDigest) {
-          throw applicationError('Context call recovered Plan differs from its durable admission',
-            'application_context_call_integrity');
-        }
-        planChanged = true;
-        continue;
-      }
-      if (call.state !== 'settlement_ready') continue;
-      const generic = call.kind === 'baton.context_effect_call';
-      const children = this.driver.coordination.contextCallSettlementChildren(call.callId);
-      const cleanupChildren = generic
-        ? children.filter((child) => child.origin !== 'inherited') : children;
-      const targetWorkerIds = cleanupChildren.map((child) => child.workerId).sort();
-      if (targetWorkerIds.some((workerId) => typeof workerId !== 'string')
-        || new Set(targetWorkerIds).size !== targetWorkerIds.length) {
-        throw applicationError('Context call child cleanup lacks an exact descendant union',
-          generic ? 'application_context_call_cleanup_incomplete'
-            : 'application_context_map_cleanup_incomplete');
-      }
-      const releases = await Promise.all(cleanupChildren.map((child) => (
-        this.driver.coordinator.releaseTerminalTaskResources(
-          child.taskId, child.workerId, generic
-            ? 'application:context-effect-settlement'
-            : 'application:context-map-settlement',
-        )
-      )));
-      const targets = cleanupChildren.map((child, index) => ({
-        ...(generic ? { unitId: child.unitId } : { partitionId: child.partitionId }),
-        taskId: child.taskId, workerId: child.workerId,
-        releaseEvent: releases[index].releaseEvent,
-        releaseDigest: releases[index].releaseDigest,
-        evidence: clone(releases[index].evidence),
-      }));
-      const cleanupCore = {
-        schemaVersion: generic ? 2 : 1,
-        callId: call.callId, admissionDigest: call.admissionDigest,
-        targets, targetDigest: digest(targets), targetCount: targets.length,
-        remainingCount: 0,
-      };
-      const cleanup = deepFreeze({ ...cleanupCore, cleanupDigest: digest(cleanupCore) });
-      const settledChildren = this.driver.coordination.contextCallSettlementChildren(
-        call.callId, cleanup,
-      );
-      const providerResultRequests = this._contextProviderResultRequests(
-        call, settledChildren, cleanup,
-      );
-      const failed = settledChildren.some((child) => (
-        child.origin !== 'inherited' && child.state !== 'accepted'
-      ));
-      const termination = failed ? {
-        code: 'context_child_failed', retryable: true,
-        summary: `One or more Context ${generic ? call.operator : 'map'} children failed before acceptance.`,
-      } : null;
-      const materialized = failed
-        ? this.context.materializeCallResult({
-          call: this._contextCallCore(call), children: settledChildren,
-          cleanup, providerResultRequests, termination,
-        })
-        : this.context.materializeCallResult({
-          call: this._contextCallCore(call), children: settledChildren,
-          cleanup, planDigest: call.expectedPlanDigest, providerResultRequests,
-        });
-      const principal = this.context.principal;
-      this.driver.coordination[generic
-        ? 'settleContextEffectCall' : 'settleContextMapCall']({
-        callId: call.callId, expectedVersion: call.version,
-        cleanup,
-        result: {
-          outputRef: materialized.outputRef, evidenceRef: materialized.evidenceRef,
-          providerResults: materialized.providerResults,
-          providerResultDigest: materialized.providerResultDigest,
-          ...(termination ? { termination } : {}),
-        },
-      }, {
-        actor: principal.actor, principalId: principal.principalId,
-        repoId: this.repoId, runId: current.goal.runId,
-        sessionDigest: digest(principal),
-        key: `context.call.settle:${call.callId}:${call.admissionDigest}`,
-      });
-    }
-    return planChanged;
-  }
-
-  async _proposeContextMap(current, inputs, caller) {
-    return applicationObservation._proposeContextMap(this, current, inputs, caller);
-  }
-
-  async _proposeContextReduce(current, inputs, caller) {
-    return applicationObservation._proposeContextReduce(this, current, inputs, caller);
-  }
-
-  async _proposeContextRetry(current, inputs, caller) {
-    return applicationObservation._proposeContextRetry(this, current, inputs, caller);
-  }
-
-  async _performContextAction(current, action, inputs, caller, signal = null) {
-    if (!this.context) {
-      throw applicationError('Context runtime is unavailable', 'application_context_unavailable');
-    }
-    if (action.kind === 'context_retry') {
-      return this._proposeContextRetry(current, inputs, caller);
-    }
-    if (['context_map', 'context_reduce'].includes(action.kind)) {
-      const definition = this._workflowDefinition(current);
-      const roles = definition.schemaVersion === 3
-        ? definition.roleCatalog.roles.map((entry) => entry.role)
-        : [...new Set(definition.attempts.map((attempt) => attempt.role))];
-      const selectedRole = inputs.role ?? (roles.length === 1 ? roles[0] : null);
-      if (!selectedRole || !roles.includes(selectedRole)) {
-        throw applicationError('Context effect requires one eligible approved Workflow role',
-          'application_context_call_role_invalid');
-      }
-      const resolvedInputs = { ...inputs, role: selectedRole };
-      return action.kind === 'context_map'
-        ? this._proposeContextMap(current, resolvedInputs, caller)
-        : this.driver.coordination.withContextArtifactVerification(
-          () => this._proposeContextReduce(current, resolvedInputs, caller),
-        );
-    }
-    const targets = this._contextTargets(
-      current, this._withContextProjection(current, await this._buildView(
-        current, this.principals.observer,
-      )),
-    );
-    const role = targets.length === 1 ? targets[0].role : inputs.role;
-    const target = targets.find((candidate) => candidate.role === role);
-    if (!target) {
-      throw applicationError('Context role is outside current Workflow authority',
-        'application_action_input_invalid');
-    }
-    let program;
-    try {
-      const expression = action.kind === 'context_eval' ? inputs.program : {
-        schemaVersion: 1, kind: 'baton.context_program', expression:
-          action.kind === 'context_search' ? {
-            op: 'search', input: { op: 'source', branch: inputs.branch ?? 'repository' },
-            query: inputs.query, mode: inputs.mode ?? 'case_insensitive',
-          } : action.kind === 'context_chunk' ? {
-            op: 'chunk', input: { op: 'source', branch: inputs.branch ?? 'repository' },
-            by: inputs.by ?? 'item',
-          } : {
-            op: 'coverage', input: { op: 'source', branch: inputs.branch ?? 'repository' },
-          },
-      };
-      program = normalizeContextProgram(expression,
-        this.driver.coordination.contextProgramPolicy());
-      if (!contextProgramIsPure(program, this.driver.coordination.contextProgramPolicy())) {
-        throw applicationError('Context evaluation contains a provider effect',
-          'application_context_effect_forbidden');
-      }
-    } catch (error) {
-      if (error?.code === 'application_context_effect_forbidden') throw error;
-      throw applicationError(error.message, 'application_action_input_invalid');
-    }
-    const session = await this.context.openSession({
-      authority: { current, role, nodeKey: target.nodeKey },
-      principal: this.context.principal,
-      signal,
-    });
-    if (!session || typeof session.evaluate !== 'function') {
-      throw applicationError('Context runtime returned an invalid session',
-        'application_context_unavailable');
-    }
-    const cell = await session.evaluate(program);
-    if (!/^cell:[a-f0-9]{64}$/u.test(cell?.cellId ?? '')) {
-      throw applicationError('Context runtime returned an invalid cell',
-        'application_context_result_invalid');
-    }
-    return cell;
-  }
-
-  async contextEval(rawRequest, rawPrincipal, rawContext = null) {
-    return applicationObservation.contextEval(this, rawRequest, rawPrincipal, rawContext);
-  }
-
-  async _resolveContextEvalRunTarget(runId, role) {
-    if (!validId(runId)) {
-      throw applicationError('Context evaluation Run is invalid', 'application_action_input_invalid');
-    }
-    const current = this._findRun(runId);
-    const view = this._withContextProjection(current, await this._buildView(
-      current, this.principals.observer,
-    ));
-    const targets = this._contextEvalTargets(current, view);
-    const selectedRole = targets.length === 1 ? targets[0].role : role;
-    const target = targets.find((candidate) => candidate.role === selectedRole);
-    if (!target) {
-      throw applicationError('Context target is outside current Run authority',
-        'application_action_input_invalid');
-    }
-    return { current, target };
-  }
-
-  async _resolveContextEvalManifestTarget(manifestDigest) {
-    const sessions = (this.driver.coordination.snapshot().context?.sessions ?? [])
-      .filter((session) => session.repoId === this.repoId && session.manifestDigest === manifestDigest);
-    if (sessions.length !== 1) {
-      throw applicationError('Context manifest is not durably admitted',
-        'application_context_eval_manifest_unavailable');
-    }
-    const [session] = sessions;
-    // REPL-1 rule 13a: a REPL manifestDigest resolves to a REPL session with no `workflow`
-    // coordinate; refuse with the existing typed code rather than dereferencing `.workflow`.
-    if (session.manifest.kind !== 'baton.context_manifest') {
-      throw applicationError('Context manifest is not durably admitted',
-        'application_context_eval_manifest_unavailable');
-    }
-    const baseCurrent = this._findRun(session.runId, { allowUnavailableProfile: true });
-    const plan = this.driver.coordination.planVersion(
-      session.manifest.workflow.plan.planId, session.manifest.workflow.plan.version,
-    );
-    if (!plan || plan.digest !== session.manifest.workflow.plan.digest) {
-      throw applicationError('Context manifest is not durably admitted',
-        'application_context_eval_manifest_unavailable');
-    }
-    const current = this._runAtPlan(baseCurrent, plan);
-    const view = this._withContextProjection(current, await this._buildView(
-      current, this.principals.observer,
-    ));
-    const targets = this._contextEvalTargets(current, view);
-    const target = targets.find((candidate) => candidate.nodeKey === session.manifest.workflow.node.key);
-    if (!target) {
-      throw applicationError('Context manifest is not durably admitted',
-        'application_context_eval_manifest_unavailable');
-    }
-    return { current, target };
-  }
 
   // MCP reflex surface contract Part C.6 (docs/reference/evidence/mcp-reflex-live-2026-07-22/
-  // mcp-reflex-surface-decisions.md, issue #16): a direct command port (mirroring `contextEval`'s
-  // transport above, deliberately NOT an APPLICATION_COMMAND_DEFINITIONS entry for the identical
-  // reason documented at that table) returning every pending decision request for one Run's own
+  // mcp-reflex-surface-decisions.md, issue #16): a direct command port, deliberately NOT an
+  // APPLICATION_COMMAND_DEFINITIONS entry for the identical reason documented at that table, returning
+  // every pending decision request for one Run's own
   // workers, projected through `projectDecisionAttention` — the full `{requestId, question,
   // options, allowFreeResponse, recommended}` shape, never the single-summary
   // `projectBlockedInteraction` slice `run.inspect` shows. Read-only: never a ledger event.
@@ -6645,50 +6211,6 @@ export class BatonApplication {
     return { decisions: projectDecisionAttention(this.driver.coordinator, workers) };
   }
 
-  // REFLEX-3 (docs/32 §3.3, issue #18; contract: docs/reference/evidence/
-  // reflex-wave-live-2026-07-21/reflex3-packages-decisions.md, Part D / red-team F14): direct
-  // command ports for context-package admit/attach/branch-resolve, mirroring `contextEval`'s
-  // "direct command port" transport above — deliberately NOT entries in
-  // `APPLICATION_COMMAND_DEFINITIONS` for the identical reason documented at that table (:136-147):
-  // any new key there breaks `card().commands`/MCP-tool-derivation fixtures this task cannot touch.
-  // Web, MCP, and generic `application.command(...)` string dispatch remain a documented gap.
-  async admitContextPackage(rawFields, rawPrincipal, rawContext = null) {
-    this._assertOpen();
-    await this.ready;
-    const context = normalizeCommandContext(rawContext);
-    const principal = normalizePrincipal(rawPrincipal, 'context package principal');
-    await this._authorize('application.context_package_admit', principal, null, {});
-    this._assertOpen();
-    const auth = {
-      actor: principal.actor,
-      key: context?.idempotencyKey ?? `context-package.admit:${digest(rawFields)}`,
-    };
-    const admitted = this.driver.coordination.admitContextPackage(rawFields, auth);
-    return { result: admitted.result, package: clone(admitted.package) };
-  }
-
-  async attachContextPackage(rawFields, rawPrincipal, rawContext = null) {
-    this._assertOpen();
-    await this.ready;
-    normalizeCommandContext(rawContext);
-    const principal = normalizePrincipal(rawPrincipal, 'context package principal');
-    if (!validId(rawFields?.runId)) {
-      throw applicationError('Context package attach target is invalid',
-        'application_context_package_attach_invalid');
-    }
-    await this._authorize('application.context_package_attach', principal, rawFields.runId, {});
-    this._assertOpen();
-    const auth = {
-      actor: principal.actor,
-      key: `package.attach:${rawFields?.packageDigest}:${rawFields.runId}:${rawFields?.scope}`,
-    };
-    const attached = this.driver.coordination.attachContextPackage(rawFields, auth);
-    return { result: attached.result, attachment: clone(attached.attachment) };
-  }
-
-  async contextPackageBranch(packageDigest, branchName, rawPrincipal, rawContext = null) {
-    return applicationObservation.contextPackageBranch(this, packageDigest, branchName, rawPrincipal, rawContext);
-  }
 
   _semanticActions(current, view, principal, context = null) {
     return applicationObservation._semanticActions(this, current, view, principal, context);
@@ -6944,9 +6466,7 @@ export class BatonApplication {
     // the caller asked for is reached.
     const narrowing = { ...(viewOptions ?? {}), narrow: true };
     if (!current.profile) {
-      const view = this._withContextProjection(
-        current, await this._buildView(current, this.principals.observer, narrowing),
-      );
+      const view = await this._buildView(current, this.principals.observer, narrowing);
       return this._historicalProfileInspection(current, view, request);
     }
     const policy = current.profile.followPolicy;
@@ -6960,9 +6480,7 @@ export class BatonApplication {
     const effectiveWaitMs = request.cursor === undefined
       ? undefined : (request.waitMs ?? policy.maxWaitMs);
     const bounds = this._semanticBounds(current);
-    let view = this._withContextProjection(
-      current, await this._buildView(current, this.principals.observer, narrowing),
-    );
+    let view = await this._buildView(current, this.principals.observer, narrowing);
     if (request.cursor !== undefined && request.cursor > view.cursor) {
       throw applicationError('Run inspection cursor is ahead of durable authority', 'application_inspect_cursor_ahead');
     }
@@ -6996,9 +6514,7 @@ export class BatonApplication {
             throw applicationError('Run inspection was cancelled', 'application_inspect_cancelled');
           }
           this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
-          view = this._withContextProjection(
-            current, await this._buildView(current, this.principals.observer, narrowing),
-          );
+          view = await this._buildView(current, this.principals.observer, narrowing);
           await this._authorize('run.status', principal, request.runId, authorizationSubject);
           if (notification?.advanced === false && !APPLICATION_RUN_TERMINAL_PHASES.has(view.phase)) {
             timedOut = true;
@@ -7072,7 +6588,6 @@ export class BatonApplication {
         // outline (only `candidatesAwaitingAdmission`, never `candidates`, so the raw wave close
         // receipt's `knowledge.candidates` projection stays unchanged — kg-activation A3/A4).
         knowledge: { candidatesAwaitingAdmission: view.knowledge?.candidates ?? 0 },
-        context: clone(this._contextState(current).projection),
         // PS3/PS7: outline depth says plainly whether work was preserved, the stop reason, the
         // cleanup state, and the next semantic action — never the checkpoint ref/SHA or a path.
         preservation: {
@@ -7128,8 +6643,7 @@ export class BatonApplication {
     );
     if (!selected) throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid');
     if (request.depth === 'item') {
-      const hasContent = request.section === 'context'
-        || (request.section === 'episode' && request.item.startsWith('episode:output'))
+      const hasContent = (request.section === 'episode' && request.item.startsWith('episode:output'))
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return this._finalizeSemanticInspection({
@@ -7137,7 +6651,7 @@ export class BatonApplication {
           ...(hasContent ? [{ depth: 'content', section: request.section, item: request.item }] : []),
           { depth: 'evidence', section: request.section, item: request.item },
         ],
-        item: request.section === 'context' ? this._contextItemDetail(selected) : selected,
+        item: selected,
       }, bounds);
     }
     if (request.depth === 'content') {
@@ -7196,28 +6710,13 @@ export class BatonApplication {
           item: { id: selected.id, section: selected.section }, content,
         }, bounds);
       }
-      if (request.section !== 'context') {
-        throw applicationError('Content depth is only available for Context results',
-          'application_context_content_unavailable');
-      }
-      const content = this._contextItemContent(selected, request.offset ?? 0, bounds);
-      return this._finalizeSemanticInspection({
-        ...base, actions: callerActions, truncated: content.truncated,
-        expansions: [
-          ...(content.nextOffset === null ? [] : [{
-            depth: 'content', section: request.section, item: request.item,
-            offset: content.nextOffset,
-          }]),
-          { depth: 'evidence', section: request.section, item: request.item },
-        ],
-        item: { id: selected.id, section: selected.section }, content,
-      }, bounds);
+      throw applicationError('Content depth is only available for episode output and execution items',
+        'application_inspect_content_unavailable');
     }
     const evidence = [
       { kind: 'goal', digest: current.goal.digest, provenance: 'durable Goal authority' },
       ...(current.plan ? [{ kind: 'plan', digest: current.plan.digest, provenance: 'durable Plan authority' }] : []),
       ...(current.approval ? [{ kind: 'approval', digest: current.approval.digest, provenance: 'durable Plan approval authority' }] : []),
-      ...(request.section === 'context' ? this._contextItemEvidence(current, selected) : []),
       ...(request.section === 'episode'
         ? this._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
@@ -8127,9 +7626,7 @@ export class BatonApplication {
     const projected = [];
     for (const goal of pageable) {
       const current = this._findRun(goal.runId, { allowUnavailableProfile: true });
-      const view = this._withContextProjection(
-        current, await this._buildView(current, this.principals.observer),
-      );
+      const view = await this._buildView(current, this.principals.observer);
       const semanticActions = current.profile
         ? this._semanticActions(current, view, principal, context)
         : [];
@@ -8210,7 +7707,6 @@ export class BatonApplication {
     const synthetic = {
       advanced: 'Advanced fleet compatibility is opt-in; ordinary Run, Episode, and workstream operations hide worker coordinates.',
       workflow: 'A Workflow is one Run with role-addressed, generation-stable workstreams and attributable result Episodes.',
-      'run.inspect.context': 'Context is progressively inspectable without exposing storage or capability-call choreography.',
     }[request.topic] ?? null;
     const summary = workerPolicyTopic
       ? 'Worker policy separates approval autonomy, full-versus-workspace harness access, and independently attested containment. The default is unattended full access; a worktree and private runtime do not prove host containment.'
@@ -8294,11 +7790,8 @@ export class BatonApplication {
     const semanticAuthority = semanticAuthorityForAction(action);
     await this._authorizeSemanticAuthority(semanticAuthority, principal, request.runId, context);
     if (context?.sessionAuthority) {
-      if (!action.kind.startsWith('context_')) {
-        throw applicationError('recursive Run command is forbidden',
-          'run_orchestrator_command_forbidden');
-      }
-      this._authorizeRecursiveCommand('run.context', request.runId, principal, context);
+      throw applicationError('recursive Run command is forbidden',
+        'run_orchestrator_command_forbidden');
     }
     // 2026-09-14 audit (U-E5): the `action.do` envelope the served view advertises is ACCEPTED
     // here. `requestId` names the exact advertised target (verified against the resolved action,
@@ -8324,63 +7817,6 @@ export class BatonApplication {
         return this._performSemanticControl(
           current, action, request.inputs, principal, context,
         );
-      });
-    }
-    if (action.kind.startsWith('context_')) {
-      return this.driver.coordination.withContextArtifactVerification(async () => {
-      if ((action.kind === 'context_search'
-        && (!validText(request.inputs.query, 4_096)
-          || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.query))))
-        || (action.kind === 'context_map'
-          && (!/^cell:[a-f0-9]{64}$/u.test(request.inputs.cellId ?? '')
-            || !validText(request.inputs.instruction, 16_384)
-            || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.instruction))))
-        || (action.kind === 'context_reduce'
-          && (!/^context-call:[a-f0-9]{64}$/u.test(request.inputs.callId ?? '')
-            || !validText(request.inputs.instruction, 16_384)
-            || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.instruction))))
-        || (action.kind === 'context_retry'
-          && (!/^context-call:[a-f0-9]{64}$/u.test(request.inputs.callId ?? '')
-            || request.inputs.callId !== action.target?.callId))
-        || (request.inputs.branch !== undefined && !validText(request.inputs.branch, 256))
-        || (request.inputs.by !== undefined && !validText(request.inputs.by, 256))
-        || (request.inputs.role !== undefined && !action.choices.includes(request.inputs.role))
-        || (request.inputs.mode !== undefined
-          && !['literal', 'case_insensitive'].includes(request.inputs.mode))) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      // Authorization and view construction may yield. Recheck the deployment gate at the
-      // synchronous registration boundary so shutdown cannot miss a late Context admission.
-      this._assertOpen();
-      await this._recheckSemanticAction(current, semanticAuthority, principal);
-      const controller = new AbortController();
-      const controllers = this._contextControllers.get(request.runId) ?? new Set();
-      const operation = {
-        controller,
-        settled: this._withRunEffect(request.runId,
-          () => this._performContextAction(
-            current, action, request.inputs, principal, controller.signal,
-          )),
-      };
-      controllers.add(operation);
-      this._contextControllers.set(request.runId, controllers);
-      let result;
-      try {
-        result = await operation.settled;
-      } finally {
-        controllers.delete(operation);
-        if (controllers.size === 0 && this._contextControllers.get(request.runId) === controllers) {
-          this._contextControllers.delete(request.runId);
-        }
-      }
-      const contextItemId = result?.callId ?? result?.cellId;
-      if (!/^(?:cell|context-call):[a-f0-9]{64}$/u.test(contextItemId ?? '')) {
-        throw applicationError('Context action returned an invalid addressed result',
-          'application_context_result_invalid');
-      }
-      return this.inspect({
-        runId: request.runId, depth: 'item', section: 'context', item: contextItemId,
-      }, principal, context);
       });
     }
     if (action.kind === 'approve_plan') {
@@ -8783,15 +8219,10 @@ export class BatonApplication {
     // and the wave ports below) — the byte-stable command-table key set is unchanged, and the
     // authoritative refusal for an unauthorized or unhosted caller is thrown inside reincarnate().
     if (name === 'deployment.reincarnate') return this.reincarnate(args, principal, rawContext);
-    // Epic #103 (D7): the orchestrator's embedded briefing resolve lane — server-derived like the
-    // settlement commands (kg-settlement-decisions.md D2), never advertised on MCP/CLI/web. It
-    // resolves the family head and serves the D5-framed pack + lag; no head → typed refusal.
-    if (name === 'context.briefing') return this.resolveBriefing(args, principal);
-    // Epic #103 (D9/D2): the two internal post-close seams the wave driver calls between the
+    // Epic #103 (D9): the internal post-close wave.closed seam the wave driver calls between the
     // receipt build and the receipt write. Underscore-prefixed, top-level only, actor derived
     // server-side as 'orchestrator'; never advertised on any user-facing surface.
     if (name === '_wave.closed') return this.appendWaveClosedInternal(args, principal);
-    if (name === '_briefing.mint') return this.mintCampaignBriefingInternal(args, principal);
     validateApplicationCommandArgs(name, args);
     if (Object.hasOwn(SWARM_COMMAND_DEFINITIONS, name)) return this._swarmCommand(name, args, principal, context);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
@@ -8993,13 +8424,6 @@ export class BatonApplication {
     return coordinator.settlementLease(args.waveId, session, { members: args.members });
   }
 
-  // Epic #103 (D7): the orchestrator's embedded briefing resolve lane. Like the settlement
-  // commands it is a DIRECT PORT — never an APPLICATION_COMMAND_DEFINITIONS key and never
-  // advertised on MCP/CLI/web. The serve itself lives in application-briefing.mjs (issue #259
-  // slice 3); this delegate keeps the member name and arity the dispatcher calls.
-  resolveBriefing(args, principal) {
-    return applicationBriefing.resolveBriefing(this, args, principal, applicationError);
-  }
 
   // Epic #103 (D9): the wave driver's post-close wave.closed append seam. The actor is
   // server-derived 'orchestrator' and the idempotency key is minted per attempt, so an injected
@@ -9015,12 +8439,6 @@ export class BatonApplication {
     });
   }
 
-  // Epic #103 (D2/D8): the wave driver's post-close campaign-briefing mint seam. The mint itself
-  // lives in application-briefing.mjs (issue #259 slice 3); this delegate keeps the member name
-  // and arity the dispatcher calls.
-  mintCampaignBriefingInternal(args, principal) {
-    return applicationBriefing.mintCampaignBriefingInternal(this, args, principal);
-  }
 
   // -------------------------------------------------------------------------
   // Facade-projection epic (#87+#48, contract v2.2) — the workflow-surface direct ports.
@@ -9648,7 +9066,7 @@ export class BatonApplication {
     if (this._runDeliveryRegistrations.size > 0) {
       throw applicationError('application has active result deliveries; use deployment shutdown', 'application_detach_active');
     }
-    if (this.driver.coordinator.list().length !== 0 || this._contextControllers.size !== 0) {
+    if (this.driver.coordinator.list().length !== 0) {
       throw applicationError('application has admitted workers; use deployment shutdown for exact fleet drain', 'application_detach_active');
     }
     await this.resultExportLifecycle?.close();
@@ -9685,9 +9103,6 @@ export class BatonApplication {
     await this._swarmService?.settleLandings?.();
     await this._swarmNativeAccess?.close();
     for (const controller of this._followControllers) controller.abort();
-    for (const controllers of this._contextControllers?.values() ?? []) {
-      for (const operation of controllers) operation.controller.abort();
-    }
     await Promise.allSettled([...(this._runEffectChains?.values() ?? [])]);
     await this._abortResultExportDeliveries();
     await this.resultExportLifecycle?.close();

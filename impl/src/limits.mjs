@@ -322,14 +322,6 @@ const VIEW = Object.freeze({
     enforcedAt: 'swarm-runtime.mjs inspect (the participant row\'s workspace.commits tail)' },
 });
 
-// Issue #441 (the reading half): the brief's rendered slice is a VIEW bound (a shed-flagged read,
-// never a write): the brief-time knowledge slice KG-3 already injects, times four, because a
-// brief's context slice must carry an issue's opening — its title and first paragraphs — where a
-// knowledge snippet carries one fact.
-const CONTEXT_PACKAGE_BRIEF_BYTES = VIEW['view.knowledge_slice.bytes'].value * 4;
-const CONTEXT_PACKAGE = Object.freeze({
-  'context_package.brief_bytes': { lane: 'context_package.brief_bytes', class: 'view', value: CONTEXT_PACKAGE_BRIEF_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the rendered slice per branch)' },
-});
 
 // Issue #423 (docs/45 §6/§8): the bounds a recruited seat's two new situation sections draw.
 // The peers-now section IS the seat read's own page (`view.seat_read.items` above, the row
@@ -344,11 +336,11 @@ const CONTEXT_PACKAGE = Object.freeze({
 // commit tail per row) and the settled history is ONE counted line, so what still grew with the
 // swarm's AGE was the contract list: measured on the primary, 54 contract rows rendered
 // 132 587 B of the 158 233 B section (the commits since the base added 24 715 B) while the seats
-// that can act carried 2 rows. The bound is the registry's OWN rendered-slice row for one brief
-// section (`context_package.brief_bytes`, itself `view.knowledge_slice.bytes` x 4), because a
+// that can act carried 2 rows. The bound is the registry's own rendered-slice row for one brief
+// section (`view.knowledge_slice.bytes` x 4), because a
 // situation block is exactly that: a slice of the swarm's record rendered into a brief, with the
 // remainder COUNTED and the read that reaches it named — never a silently short list.
-const BRIEF_SITUATION_BYTES = CONTEXT_PACKAGE_BRIEF_BYTES;
+const BRIEF_SITUATION_BYTES = VIEW['view.knowledge_slice.bytes'].value * 4;
 // Issue #529 (docs/54 §6.1): the wake-events block is a THIRD age-scaling block beside the
 // contracts and the commits, so it declares its own ceiling the way they do. A count, not a byte
 // budget: the block's lines are the events a seat acts on at its own boundary, and whenever the
@@ -386,12 +378,12 @@ const CHECKPOINT = Object.freeze({
 
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...BRIEF, ...CHECKPOINT });
 
 export const FRAME_LIMITS_VERSION = '1.4.0';
 /** Named-export `code` (a string) so the suite's `assertLimitsModule` helper — which reads
  * `module?.code ?? module` when stringifying its red-stage message — is safe once the module
- * actually loads: an ESM namespace object has a null prototype and would otherwise throw
+ * exports it: without it, `${module}` throws
  * "Cannot convert object to primitive value" inside the template literal. */
 export const code = 'limits-module';
 

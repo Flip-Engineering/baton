@@ -93,24 +93,6 @@ test('MCP attention watch refuses a silent cursor rewind instead of fabricating 
   assert.deepEqual(response.result.structuredContent.error.detail, { requestedCursor: 7, throughCursor: 0 });
 });
 
-test('MCP REPL citation checks run authorization before resolving caller-supplied runId', async () => {
-  let dispatched = false;
-  const raw = {
-    principal: { userId: 'worker:a', sessionId: 'session:a' },
-    application: {
-      async authorizeReplay(_command, args) {
-        if (args.runId !== 'run:owned') throw Object.assign(new Error('application command forbidden'), { code: 'application_unauthorized' });
-      },
-    },
-    async handle(message) { dispatched = true; return { jsonrpc: '2.0', id: message.id, result: { structuredContent: { citation: 'x' } } }; },
-  };
-  const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
-  const refused = await server.handle({ jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'baton_repl_cite', arguments: { repoId: 'repo', runId: 'run:foreign', kernelId: 'k', cellId: 'c' } } });
-  assert.equal(refused.result.isError, true); assert.equal(refused.result.structuredContent.error.code, 'application_unauthorized'); assert.equal(dispatched, false);
-  const allowed = await server.handle({ jsonrpc: '2.0', id: 42, method: 'tools/call', params: { name: 'baton_repl_cite', arguments: { repoId: 'repo', runId: 'run:owned', kernelId: 'k', cellId: 'c' } } });
-  assert.equal(allowed.result.isError, undefined); assert.equal(dispatched, true);
-});
-
 test('MCP convergence records structured tool-error outcomes as failed durable effects', async () => {
   const raw = { async handle(message) { return { jsonrpc: '2.0', id: message.id, result: { isError: true, structuredContent: { error: { code: 'refused', message: 'no' } } } }; } };
   const runtime = new ProductionConvergenceRuntime(); const server = wrapProductionMcpServer(raw, { runtime });

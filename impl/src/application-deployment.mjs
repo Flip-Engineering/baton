@@ -10,7 +10,6 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
 import { bindBaton } from './application-client.mjs';
-import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
 import { BatonWebHost, STOP_STAGES } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli, loadProviderCredentialFile } from './claude-session.mjs';
@@ -32,9 +31,6 @@ import { aaCredentialPath, designArenaCredentialPath, operatorHome } from './ada
 import { createRecipes } from './recipes.mjs';
 import { SUITE_COMPARISON } from './suite-comparison.mjs';
 import { ResultExportLifecycle } from './result-export.mjs';
-import {
-  defaultRepositoryContextPolicy, RepositoryContextRuntime,
-} from './context-runtime.mjs';
 import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
 import { MAX_STDERR_TAIL_BYTES, MuseCli } from './cli-adapters.mjs';
@@ -3224,10 +3220,6 @@ class BatonDeployment {
   #workspaceProbe = null;
   #hostCapacity = null;
   #hostCapacityProbe = null;
-  // #441 lane A: the deployment-owned context-CAS writer the web transport mints package branch
-  // documents through (`package.admit`); null for a deployment that serves no context runtime,
-  // and the port then refuses `context_source_unavailable` instead of inventing a store.
-  #contextSourceAdmit = null;
   // #306 (2): the revision this deployment serves, frozen at open.
   #served = null;
   #claudeCredentialProbe = null;
@@ -3311,7 +3303,6 @@ class BatonDeployment {
     // #495: the authority this resident watches after admission — the post-admission half of the
     // capacity rule (see `#watchHostExhaustion`). Null on a host the suite left unwired.
     this.#hostCapacity = deployment.hostCapacity ?? null;
-    this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
@@ -3508,20 +3499,6 @@ class BatonDeployment {
       });
       return Object.freeze(composed);
     }));
-    // Epic #103 (D6b): the non-enumerable `briefing` sibling — { packId, composedAtEventSeq,
-    // ledgerHeadSeq, epochLag } | null — attached by the same Object.defineProperty pattern as
-    // liveness/occupancy. Consumers that READ the sibling (the CLI, D6c) see it; serialized
-    // doctor output stays byte-stable for non-reading consumers (Object.keys/JSON.stringify
-    // exclude it — D6b, A8-2). The lag feeds from the tiny additive ledgerHeadSeq accessor
-    // (G10) so it always tracks the live ledger, never a frozen or fabricated value.
-    const coordination = this.#driver?.coordination ?? null;
-    const briefingHead = coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
-    const briefing = briefingHead ? {
-      packId: briefingHead.packId,
-      composedAtEventSeq: briefingHead.observedSeq,
-      ledgerHeadSeq: coordination.ledgerHeadSeq(),
-      epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
-    } : null;
     // #295 item 4: the composed document's verdict is derived from the SAME rows it publishes —
     // a route its provider exhausted is not ready for a recruit, so the open-time verdict can
     // never sit beside fresh blocked rows.
@@ -3550,10 +3527,9 @@ class BatonDeployment {
     // `state: 'stopping'` beside the waits the stop holds. Present only while a stop is in flight,
     const stopping = this.#stoppingState();
     if (stopping !== null) base.stopping = stopping;
-    Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     // Issue #351 lane 2: the startup truth the publication contract renders — the coordination
     // replay's final state (state/rows/checkpoint) beside the open's elapsed milliseconds, read
-    // fresh on every doctor. Attached NON-enumerable by the same DP5 pattern as `briefing`:
+    // fresh on every doctor. Attached NON-enumerable by the same DP5 pattern:
     // property-access readers (the flip line, the wave driver, tests) see it; the serialized
     // doctor row shape stays byte-stable.
     Object.defineProperty(base, 'coordination', {
@@ -4118,9 +4094,6 @@ class BatonDeployment {
       // The stream reads it once at publish and refreshes it on its observation cadence, so the
       // drift is visible where the deaths appear without a git read per frame.
       served: () => this.wakeServedFact(),
-      // #441 lane A: the ONE context-CAS writer (`bench.admitSource`) the package.admit port mints
-      // branch documents through — the resident wiring the lane handed back in needsFromOthers.
-      ...(this.#contextSourceAdmit === null ? {} : { contextSourceAdmit: this.#contextSourceAdmit }),
     });
     const server = createLocalAuthenticatedWebServer(web);
     const webHost = new BatonWebHost({
@@ -6056,15 +6029,13 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     && routes.some((route) => route.harness === 'grok')
     ? grokAuthenticationState(join(operatorHome(), '.grok', 'auth.json')) : null;
   ensureBatonExcluded(repository.root);
-  // The default namespace is an on-disk compatibility boundary. Phase 83 adds durable Context
-  // deployment authority and a private repository Context CAS. Older namespaces remain available
+  // The default namespace is an on-disk compatibility boundary. Older namespaces remain available
   // only through an explicit advanced recovery root instead of being reinterpreted under v3.
   const deploymentRoot = privateDirectory(advanced.deploymentRoot
     ?? join(repository.common, 'baton', 'application-v3'));
   const stateRoot = privateDirectory(join(deploymentRoot, 'state'));
   const runtimeRoot = privateDirectory(join(deploymentRoot, 'runtime'));
   const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
-  const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
   // #328: root-side credential materialisations live OUTSIDE runtimeRoot, whose owner
   // (the worker RuntimeIsolation) reconciles away every entry that is not a live worker.
   const credentialRoot = privateDirectory(join(deploymentRoot, 'credentials'));
@@ -6334,13 +6305,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     });
   };
   const workspaceProbe = () => workspaceCapacityReadiness(repository.root);
-  const contextRuntime = new RepositoryContextRuntime({
-    artifactRoot: contextRoot,
-    policy: defaultRepositoryContextPolicy(),
-    repoId: repository.repoId,
-    repoRoot: repository.root,
-    treeSha: snapshot.sha,
-  });
   // #295 item 4: ONE exhausted-route authority for this deployment. The coordinator records a
   // provider quota refusal onto it; the readiness derivation and every pre-effect recruit
   // assertion read it back. Both sides receive the SAME instance — a block recorded from an
@@ -6390,7 +6354,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       credentialDocuments: projection.credentialDocuments,
     },
     goalPlanAuthority: deploymentGoalPlanAuthority(repository.repoId),
-    contextProgram: contextRuntime.driverConfiguration(),
     workflowPolicy,
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
     approvalTimeoutMs: DEFAULT_BUDGET.wallMin * 60_000,
@@ -6532,7 +6495,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // so the first run view never pays for 669 workers' ledgers in one synchronous stretch.
     if (driver.coordinationOpened) await driver.coordinationOpened;
     if (typeof driver.story.drainPendingAsync === 'function') await driver.story.drainPendingAsync();
-    contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
       driver,
       repoId: repository.repoId,
@@ -6546,11 +6508,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       defaults: { profile: 'default', route: publicRoutes.length === 1 ? publicRoutes[0] : null },
       exportRoot: evidenceRoot,
       principals: { planner: service('planner'), dispatcher: service('dispatcher'), observer: service('observer') },
-      context: {
-        principal: service('context'),
-        openSession: (request) => contextRuntime.openSession(request),
-        materializeCallResult: (request) => contextRuntime.materializeCallResult(request),
-      },
       // Issue #74 (D1.2): the scratchpad read-authorization law at the deployment seam. The
       // permissive literal is GONE — the restricting authorize is the default (see
       // restrictingReadAuthorize below). Non-read commands stay permissive; a foreign
@@ -6634,9 +6591,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // #429: the measured-profile reader the route tables are served from (null for a deployment
       // that maps no route to an Artificial Analysis model).
       modelProfiles,
-      // #441 lane A: hand the context runtime's source writer to the resident so `package.admit`
-      // can mint on a served deployment.
-      contextSourceAdmit: (value) => contextRuntime.bench.admitSource(value),
     });
     return opened;
   } catch (error) {

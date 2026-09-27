@@ -50,7 +50,6 @@ const ARM_MAP = Object.freeze({
   'resource.tokens': ['observation-events', 'resourceTokens'],
   'scratchpad.write': ['observation-events', 'scratchpadWrite'],
   'context.read': ['observation-events', 'contextRead'],
-  'orientation.rate': ['observation-events', 'orientationRate'],
   'board.claim': ['observation-events', 'boardClaim'],
   'board.report': ['observation-events', 'boardReport'],
   'message.send': ['observation-events', 'messageSend'],

@@ -120,10 +120,6 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/runtime-briefing.mjs', className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
-  Object.freeze({
-    file: 'impl/src/application-briefing.mjs', className: null, receiver: 'application',
-    dispatchers: Object.freeze([]), surface: Object.freeze([]),
-  }),
   // Slice 4's module target: the store's observation bucket (241 members) moved to
   // coordination-ledger.mjs, which reads the class it was moved out of through its `store` first
   // parameter — the same receiver convention the two module targets above use. The relocated

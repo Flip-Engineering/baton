@@ -21,18 +21,14 @@ test('#381 seam 1: kimiBatonMcpEntry enabledTools matches CORE_TOOL_NAMES', () =
   );
 });
 
-// Seam 2: the served wire card must include the deployment and context-package direct-port
-// commands the web server admits.
-test('#381 seam 2: wire card includes deployment and context-package commands', () => {
+// Seam 2: the served wire card must include the deployment direct-port commands the web server
+// admits.
+test('#381 seam 2: wire card includes deployment commands', () => {
   const card = webCardCommandNames();
   assert.ok(card.includes('deployment.doctor'),
     'wire card must include deployment.doctor');
   assert.ok(card.includes('deployment.reincarnate'),
     'wire card must include deployment.reincarnate');
-  assert.ok(card.includes('package.admit'),
-    'wire card must include package.admit');
-  assert.ok(card.includes('package.attach'),
-    'wire card must include package.attach');
 });
 
 // Seam 3: the MESSAGE_SEND guidance's kind example must be a kind that createMessage accepts.

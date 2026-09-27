@@ -160,11 +160,6 @@ function transientRetryInstruction(code) {
 // ---------------------------------------------------------------------------
 
 
-/** Issue #69 — the cited-REPL-object lane's closed refusal family, re-exported on the coordinator
- * surface the realization declares (declared once, in messages.mjs, beside the lane's render
- * family). */
-export { REPL_OBJECT_REFUSAL_CODES } from './messages.mjs';
-
 export class DuplicateTaskIdError extends Error {
   constructor(message) {
     super(message);
@@ -1733,21 +1728,13 @@ export class Coordinator {
     return runtimeEffects._dispatch(this, this._recorder, task, vendor, model, effort, workerPolicyResolution);
   }
 
-  /** BD3-B: the live-head CAS at spawn admission. Every cited packId must be the current head
-   * of its family; possession of a superseded digest is never authority. Throws
-   * context_pack_stale (or context_pack_invalid for a malformed citation list) — the typed
-   * refusal surfaces to the spawn caller, never a silent serve of an old version. */
-    _admitContextPackCitations(brief) {
-    return runtimeAdmission._admitContextPackCitations(this, this._recorder, brief);
-  }
 
   /** The brief a provider sees for one dispatch: the admitted brief plus every block this
-   * deployment attaches at the provider edge (context packs, swarm surface, lane contract,
-   * orientation L0, cited REPL objects, attention, knowledge briefing). The composition lives in
-   * runtime-briefing.mjs (issue #259 slice 3); this delegate keeps the member name, arity and
-   * prototype position, so every call site and every prototype-level exercise is untouched.
-   * `workerId` is the addressed worker; the `{workerId}` form is the same fact stated as the
-   * addressing options the #69 cite-into-brief seam is asked with. */
+   * deployment attaches at the provider edge (swarm surface, lane contract, attention,
+   * knowledge briefing). The composition lives in runtime-briefing.mjs (issue #259 slice 3);
+   * this delegate keeps the member name, arity and prototype position, so every call site and
+   * every prototype-level exercise is untouched. `workerId` is the addressed worker; the
+   * `{workerId}` form is the same fact stated as the addressing options the seam is asked with. */
   _providerBrief(brief, workerId = null) {
     const addressed = workerId !== null && typeof workerId === 'object'
       ? (workerId.workerId ?? null) : workerId;
@@ -2098,11 +2085,6 @@ export class Coordinator {
     } else {
       admittedBrief = createBrief(brief);
     }
-    // BD3-B: a brief citing context packs must cite the LIVE HEAD of each family at admission —
-    // a stale citation fails at spawn with context_pack_stale, never silently serving old
-    // content. The head's body materializes (UNTRUSTED-framed) at the provider edge in
-    // _providerBrief; this check runs before any task/run admission side effect.
-    this._admitContextPackCitations(admittedBrief);
 
     const deps = planState ? [...planState.resolvedDeps] : (opts.deps ? [...opts.deps] : []);
     if (planState && opts.deps && canonicalDigest([...opts.deps].sort()) !== canonicalDigest(deps)) throw Object.assign(new Error('caller dependencies differ from the approved plan DAG'), { code: 'plan_dependency_mismatch' });
@@ -2177,11 +2159,6 @@ export class Coordinator {
       if (this._coordination && !planState) {
         const created = this._coordination.createTask(taskFields(), { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
         coordinationVersion = created.task.version;
-        // Epic #81 (O-6): artifact-write → atomic grant+spawn append → provider dispatch. The
-        // attempt-scoped pack grants are durable BEFORE the provider is dispatched, so a crash
-        // after append exact-replays and a dispatch never precedes its grant. Idempotent by
-        // task+pack, so a retried spawn mints no second grant.
-        this._grantOrientationContextPacks(taskId, runId, workerId, coordinationVersion, admittedBrief);
       }
     } catch (error) {
       if (planState) {
@@ -5209,341 +5186,18 @@ export class Coordinator {
     _renderContextRead({ kind, items, spill }) {
     return runtimeObservation._renderContextRead(this, this._recorder, { kind, items, spill });
   }
-
-  // -------------------------------------------------------------------------
-  // Epic #81 (#81) — the orientation ladder (code.orient.map/region/detail) on the BD3-A `code`
-  // query kind. ONE closed-union renderer; hub-derived scope (pathScope) with constant scope
-  // refusal BEFORE any module/path existence check; detail descends from a live citation and
-  // proves range containment; every answer is a content-addressed pack cited by digest, never
-  // spliced. Refusals throw so the read-port refusal path receipts them and mints no evidence.
-  // -------------------------------------------------------------------------
-
-    _renderCodeOrientation(items) {
-    return runtimeAdmission._renderCodeOrientation(this, this._recorder, items);
+  /** Deliver one read answer to the worker that asked: the rendered text rides the provider the
+   * same way a nudge does, and a failed send is a dropped delivery, never a failed read. */
+  _deliverContextRead(handle, receipt) {
+    const workerId = handle.id;
+    if (!this._adapters[handle.vendor]) return;
+    const content = receipt.renderedText ?? '';
+    const slot = (handle.sendChain ?? Promise.resolve()).then(() =>
+      Promise.resolve(this._adapters[handle.vendor].prompt(workerId, content, 'nudge'))
+        .then((ack) => ({ ok: true, ack }), (error) => ({ ok: false, error: String(error?.message ?? error) })));
+    handle.sendChain = slot.then(noop, noop);
   }
 
-    _answerCodeOrient(handle, task, query, runId) {
-    return runtimeAdmission._answerCodeOrient(this, this._recorder, handle, task, query, runId);
-  }
-
-  _orientationScope(task, runId) {
-    const rawScope = Array.isArray(task?.brief?.pathScope) && task.brief.pathScope.length > 0 ? task.brief.pathScope : ['.'];
-    const pathScope = [...new Set(rawScope.map((entry) => String(entry)))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    const repoId = (typeof runId === 'string' && runId.length > 0 ? runId : 'orientation-lane');
-    return { pathScope, repoId, runId: runId ?? null, scopeDigest: canonicalDigest({ pathScope, repoId, runId: runId ?? null }) };
-  }
-
-  _orientationAtlasEntry() {
-    try {
-      const reg = this._capabilityRegistry?.();
-      const entries = reg?.entries ?? null;
-      if (entries && typeof entries.get === 'function') {
-        const entry = entries.get('atlas-index');
-        if (entry?.capability && typeof entry.capability._invokeSync === 'function') return entry;
-      }
-    } catch { /* no atlas-index capability registered — the lane answers synthetically */ }
-    return null;
-  }
-
-  _orientationAtlas() { return this._orientationAtlasEntry()?.capability ?? null; }
-  _orientationAtlasBaseRoot() { return this._orientationAtlasEntry()?.context?.baseRoot ?? null; }
-
-  _orientationAtlasEpoch(atlas, baseRoot) {
-    if (!this._orientationEpochs) this._orientationEpochs = new WeakMap();
-    let epoch = this._orientationEpochs.get(atlas);
-    if (!epoch) {
-      const built = atlas._invokeSync('index.build', {}, { budgetTokens: 10000, baseRoot, actor: 'hub' });
-      epoch = built?.provenance?.index_epoch ?? null;
-      if (epoch) this._orientationEpochs.set(atlas, epoch);
-    }
-    return epoch;
-  }
-
-  _orientationAtlasMap(atlas, baseRoot) {
-    const epoch = this._orientationAtlasEpoch(atlas, baseRoot);
-    if (!epoch) return null;
-    return atlas._invokeSync('repo.map', { indexEpoch: epoch }, { budgetTokens: 10000, baseRoot, worktreeRoot: baseRoot, actor: 'hub' });
-  }
-
-  _orientationInScope(rootPath, scope, atlas) {
-    const rp = String(rootPath ?? '');
-    if (rp.length === 0) return false;
-    if (scope.pathScope.includes('.')) return true;
-    if (scope.pathScope.includes(rp)) return true;
-    if (atlas && scope.pathScope.some((entry) => rp === entry || rp.startsWith(`${entry}/`))) return true;
-    return false;
-  }
-
-  // O-1 fold: moduleKey rootPath = deepest supported package/workspace root containing the file,
-  // else the file's first path segment, else '.' for root files. Never the package parent.
-  _orientationModuleKey(filePath, packageRoots) {
-    const seg = String(filePath ?? '').replace(/^\.\//, '');
-    if (seg === '' || !seg.includes('/')) return '.';
-    const containing = packageRoots.filter((root) => root !== '.' && (seg === root || seg.startsWith(`${root}/`))).sort((a, b) => b.length - a.length);
-    if (containing.length > 0) return containing[0];
-    return seg.split('/')[0];
-  }
-
-  _orientationFreshness(scope, baseTreeSha, indexEpoch, overlayDigest) {
-    return canonicalDigest({
-      baseTreeSha: baseTreeSha ?? '0'.repeat(40), indexEpoch: indexEpoch ?? '0'.repeat(64),
-      overlayDigest: overlayDigest ?? '0'.repeat(64), repoId: scope.repoId, scopeDigest: scope.scopeDigest,
-    });
-  }
-
-  _orientationEmptyCoverage() {
-    return { excludedFiles: 0, parseErrorCount: 0, parseErrorFiles: 0, supportedFiles: 0, totalFiles: 0, unsupportedFiles: 0 };
-  }
-
-  _orientationBound(value, maxBytes) {
-    let current = value;
-    while (Buffer.byteLength(JSON.stringify(current)) > maxBytes) {
-      if (Array.isArray(current?.modules) && current.modules.length > 1) {
-        current = { ...current, modules: current.modules.slice(0, current.modules.length - 1) };
-      } else if (Array.isArray(current?.modules) && current.modules.length === 1 && Array.isArray(current.modules[0]?.leaves) && current.modules[0].leaves.length > 1) {
-        const [head, ...rest] = current.modules[0].leaves;
-        current = { ...current, modules: [{ ...current.modules[0], leaves: [head, ...rest.slice(0, Math.max(0, rest.length - 1))] }] };
-      } else break;
-    }
-    return current;
-  }
-
-  _orientationRecordCitation(packDigest, scope, freshnessDigest, maxLine = 4096, resolution = null) {
-    if (!this._orientationCitations) this._orientationCitations = new Map();
-    // Issue #389: a content-backed citation pins how its lines resolve — the ladder's
-    // own baseRoot plus the admitted {path, lineCount} table from the repo.map payload.
-    // A citation admitted without repository content (the synthetic no-atlas lane)
-    // carries no resolution and detail keeps its legacy contained-scope answer.
-    this._orientationCitations.set(packDigest, {
-      freshnessDigest, maxLine, scopeDigest: scope.scopeDigest,
-      ...(resolution ? { resolution } : {}),
-    });
-  }
-
-  _orientationDetailUnavailable(citation, reason, file, startLine, endLine, lineCount, next) {
-    return Object.assign(
-      new Error(`orientation detail for "${file}" is unavailable (${reason}): requested lines ${startLine}..${endLine} but the file has ${lineCount} lines — next: ${next}`),
-      { code: 'orientation_detail_unavailable', detail: { citation, reason, file, range: { start: startLine, end: endLine }, lineCount, next } },
-    );
-  }
-
-  _orientationDetailLines(citation, query, admitted) {
-    const resolution = admitted.resolution ?? null;
-    const files = Array.isArray(resolution?.files) ? resolution.files : [];
-    const baseRoot = resolution?.baseRoot ?? null;
-    if (typeof baseRoot !== 'string' || baseRoot.length === 0 || files.length === 0) return { content: null, lines: [] };
-    const startLine = query.range.start.line; const endLine = query.range.end.line;
-    // The file selector has two spellings: top-level `path`, and `range.path` (the
-    // contract's canonical spelling — the range names the cited file it spans).
-    const topPath = typeof query.path === 'string' && query.path.length > 0 ? query.path : null;
-    const rangePath = typeof query.range?.path === 'string' && query.range.path.length > 0 ? query.range.path : null;
-    const named = topPath ?? rangePath;
-    const selected = named !== null
-      ? files.find((entry) => entry?.path === named) ?? null
-      : (files.length === 1 ? files[0] : null);
-    if (named !== null && !selected) {
-      throw this._orientationDetailUnavailable(citation, 'file_not_admitted', named, startLine, endLine, 0,
-        're-issue code.orient.map or code.orient.region for a live citation that admits the file, then descend from that citation');
-    }
-    if (!selected) {
-      const admittedPaths = files.map((entry) => entry?.path).filter((path) => typeof path === 'string').sort().join(', ');
-      throw Object.assign(
-        new Error(`orientation detail is unavailable (file_ambiguous): the citation admits ${files.length} files (${admittedPaths}) — next: name one admitted file via path and re-issue code.orient.detail`),
-        { code: 'orientation_detail_unavailable', detail: { citation, reason: 'file_ambiguous', file: null, range: { start: startLine, end: endLine }, lineCount: 0, next: 'name one admitted file via path' } },
-      );
-    }
-    // Issue #389: the content resolves through the SAME atlas the ladder resolves with —
-    // index.build re-derives the base record from the live tree and returns its own
-    // integrity-checked artifact, which _readArtifact verifies by digest before a byte is
-    // served. No second file reader exists on this path, and the served lines carry the
-    // atlas's per-file content digest. Admitted paths are the atlas's own scanned
-    // repo-relative paths (symlink-free by scan), so admission is membership alone.
-    const atlas = this._orientationAtlas();
-    if (!atlas || typeof atlas._invokeSync !== 'function' || typeof atlas._readArtifact !== 'function') {
-      throw this._orientationDetailUnavailable(citation, 'atlas_unavailable', selected.path, startLine, endLine, 0,
-        're-issue code.orient.map or code.orient.region on a lane with an atlas-index capability, then descend from that citation');
-    }
-    let record;
-    try {
-      const built = atlas._invokeSync('index.build', {}, { budgetTokens: 10000, baseRoot, actor: 'hub' });
-      const ref = (Array.isArray(built?.refs) ? built.refs : []).find((entry) => entry?.kind === 'atlas_index');
-      if (!ref || typeof ref.path !== 'string' || typeof ref.digest !== 'string') throw new Error('atlas index artifact ref is missing');
-      const base = JSON.parse(atlas._readArtifact(ref.path, ref.digest).toString('utf8'));
-      record = (Array.isArray(base?.files) ? base.files : []).find((file) => file?.path === selected.path) ?? null;
-    } catch (cause) {
-      if (cause?.code === 'orientation_detail_unavailable') throw cause;
-      throw this._orientationDetailUnavailable(citation, 'file_absent', selected.path, startLine, endLine, 0,
-        're-issue code.orient.map or code.orient.region for a live citation, then descend from that citation');
-    }
-    if (!record || !Array.isArray(record.lines)) {
-      throw this._orientationDetailUnavailable(citation, 'file_absent', selected.path, startLine, endLine, 0,
-        're-issue code.orient.map or code.orient.region for a live citation, then descend from that citation');
-    }
-    const all = record.lines;
-    if (endLine > all.length) {
-      throw this._orientationDetailUnavailable(citation, 'range_outside_file', selected.path, startLine, endLine, all.length,
-        `narrow the range to 1..${all.length} and re-issue code.orient.detail against the live citation`);
-    }
-    return {
-      content: { digest: typeof record.digest === 'string' ? record.digest : null, file: selected.path, lineCount: all.length, status: 'served' },
-      lines: all.slice(startLine - 1, endLine).map((lineText, index) => ({ line: startLine + index, text: lineText })),
-    };
-  }
-
-  _orientationSyntheticModule(repoId, rootPath) {
-    const moduleDigest = canonicalDigest({ generated: true, repoId, rootPath });
-    return {
-      moduleDigest, moduleKey: { repoId, rootPath }, purpose: `generated orientation module at ${rootPath}`,
-      leaves: [{ entryPoints: [], moduleDigest, path: rootPath, source: 'generated' }],
-    };
-  }
-
-  _orientationRollupModule(repoId, rootPath, members) {
-    const sortedMembers = members.map((member) => ({ contentDigest: member.digest ?? canonicalDigest({ lines: member.lines ?? 0, path: member.path }), path: member.path }))
-      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-    const moduleDigest = canonicalDigest({ members: sortedMembers });
-    return {
-      moduleDigest, moduleKey: { repoId, rootPath }, purpose: `generated module ${rootPath}`,
-      leaves: [{ entryPoints: members.flatMap((member) => member.symbols ?? []).slice(0, 16), moduleDigest, path: rootPath, source: 'generated' }],
-    };
-  }
-
-  _codeOrientationMap(query, scope) {
-    const atlas = this._orientationAtlas();
-    let modules; let coverage = this._orientationEmptyCoverage(); let freshnessInputs = {}; let mapFiles = [];
-    if (atlas) {
-      const baseRoot = this._orientationAtlasBaseRoot();
-      const result = this._orientationAtlasMap(atlas, baseRoot);
-      const files = Array.isArray(result?.payload) ? result.payload : [];
-      const packageRoots = typeof atlas._packageRoots === 'function' ? atlas._packageRoots(baseRoot) : [];
-      const byModule = new Map();
-      for (const file of files) {
-        const rootPath = this._orientationModuleKey(file.path, packageRoots);
-        if (!this._orientationInScope(rootPath, scope, atlas)) continue;
-        if (!byModule.has(rootPath)) byModule.set(rootPath, []);
-        byModule.get(rootPath).push(file);
-      }
-      modules = [...byModule.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([rootPath, members]) => this._orientationRollupModule(scope.repoId, rootPath, members));
-      mapFiles = [...byModule.values()].flat();
-      coverage = result?.coverage ?? coverage;
-      freshnessInputs = { baseTreeSha: result?.provenance?.baseTreeSha ?? null, indexEpoch: result?.provenance?.index_epoch ?? null, overlayDigest: result?.provenance?.overlay_digest ?? null };
-    } else {
-      modules = scope.pathScope.map((rootPath) => this._orientationSyntheticModule(scope.repoId, rootPath));
-    }
-    const map = this._orientationBound({ modules }, 2048);
-    const freshnessDigest = this._orientationFreshness(scope, freshnessInputs.baseTreeSha, freshnessInputs.indexEpoch, freshnessInputs.overlayDigest);
-    const packDigest = canonicalDigest({ map, op: 'code.orient.map' });
-    this._orientationRecordCitation(packDigest, scope, freshnessDigest, undefined,
-      atlas ? { baseRoot: this._orientationAtlasBaseRoot(), files: mapFiles.map((file) => ({ path: file.path, lineCount: file.lines })) } : null);
-    const rendered = { coverage, freshnessDigest, map, packDigest, scopeDigest: scope.scopeDigest };
-    const orientation = this._renderContextRead({ kind: 'code', items: map.modules.flatMap((module) => module.leaves) });
-    const deliverable = `${orientation.deliverable}\npackDigest: ${packDigest}\n${JSON.stringify(map)}`;
-    return { rendered: { ok: true, ...rendered }, deliverable, pageTop: true, orientation: { freshnessDigest, normalizedQueryDigest: canonicalDigest(query), op: 'code.orient.map', packDigest, repoId: scope.repoId } };
-  }
-
-  _codeOrientationRegion(query, scope) {
-    const rootPath = query.moduleKey?.rootPath;
-    const atlas = this._orientationAtlas();
-    if (!this._orientationInScope(rootPath, scope, atlas)) {
-      throw Object.assign(new Error('orientation region is outside the attempt pathScope'), { code: 'context_scope_forbidden' });
-    }
-    let leaves; let freshnessInputs = {}; let regionFiles = [];
-    if (atlas) {
-      const baseRoot = this._orientationAtlasBaseRoot();
-      const result = this._orientationAtlasMap(atlas, baseRoot);
-      const files = (Array.isArray(result?.payload) ? result.payload : []).filter((file) => rootPath === '.' || file.path === rootPath || file.path.startsWith(`${rootPath}/`));
-      regionFiles = files;
-      leaves = files.map((file) => ({ entryPoints: [], moduleDigest: canonicalDigest({ path: file.path }), path: file.path, source: 'generated', symbols: file.symbols ?? 0 }));
-      freshnessInputs = { baseTreeSha: result?.provenance?.baseTreeSha ?? null, indexEpoch: result?.provenance?.index_epoch ?? null, overlayDigest: result?.provenance?.overlay_digest ?? null };
-    } else {
-      leaves = [{ entryPoints: [], moduleDigest: canonicalDigest({ rootPath }), path: rootPath, source: 'generated' }];
-    }
-    const moduleDigest = canonicalDigest({ leaves: leaves.map((leaf) => leaf.path), rootPath });
-    const moduleKey = { repoId: scope.repoId, rootPath };
-    const page = [];
-    for (const leaf of leaves) {
-      // bound the FULL region object (leaves + moduleDigest + moduleKey) to the 4KiB tier bound.
-      const candidate = { leaves: [...page, leaf], moduleDigest, moduleKey };
-      if (Buffer.byteLength(JSON.stringify(candidate)) > 4096) break;
-      page.push(leaf);
-    }
-    const truncated = page.length < leaves.length;
-    const region = { leaves: page, moduleDigest, moduleKey };
-    const freshnessDigest = this._orientationFreshness(scope, freshnessInputs.baseTreeSha, freshnessInputs.indexEpoch, freshnessInputs.overlayDigest);
-    const packDigest = canonicalDigest({ op: 'code.orient.region', region });
-    // The citation admits the disclosed page files (a truncated tail stays behind the cursor).
-    const regionCounts = new Map(regionFiles.map((file) => [file.path, file.lines]));
-    this._orientationRecordCitation(packDigest, scope, freshnessDigest, undefined,
-      atlas ? { baseRoot: this._orientationAtlasBaseRoot(), files: page.map((leaf) => ({ path: leaf.path, lineCount: regionCounts.get(leaf.path) ?? null })) } : null);
-    const rendered = { freshnessDigest, mergeAuthority: false, packDigest, region, scopeDigest: scope.scopeDigest, status: truncated ? 'needs_resume' : 'ok', verificationAuthority: false, ...(truncated ? { cursor: `orientation:${packDigest}:${page.length}` } : {}) };
-    const orientation = this._renderContextRead({ kind: 'code', items: page });
-    const deliverable = `${orientation.deliverable}\npackDigest: ${packDigest}\n${JSON.stringify(region)}`;
-    return { rendered: { ok: true, ...rendered }, deliverable, pageTop: true, orientation: { freshnessDigest, normalizedQueryDigest: canonicalDigest(query), op: 'code.orient.region', packDigest, repoId: scope.repoId } };
-  }
-
-  _codeOrientationDetail(query, scope) {
-    // detail descends from a LIVE map/region citation — a citation-less caller-named path/range
-    // is a raw-file read alias and is refused before any byte is served.
-    const citation = query.citation;
-    if (typeof citation !== 'string' || !this._orientationCitations?.has(citation)) {
-      throw Object.assign(new Error('orientation detail requires a live citation'), { code: 'context_scope_forbidden' });
-    }
-    const admitted = this._orientationCitations.get(citation);
-    const range = query.range;
-    const startLine = range?.start?.line; const endLine = range?.end?.line;
-    // the requested range MUST be contained in the citation's admitted scope.
-    if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine) || startLine < 1 || endLine < startLine || endLine > admitted.maxLine) {
-      throw Object.assign(new Error('orientation detail range is outside the citation scope'), { code: 'context_scope_forbidden' });
-    }
-    // Issue #389: serve the cited lines from the ladder's own resolution, or refuse
-    // typed when the file is absent or the range falls outside it. A citation admitted
-    // without repository content (synthetic lane) keeps its legacy ok:true answer but
-    // says why it served nothing and what to do next — an empty answer is never silent.
-    const served = this._orientationDetailLines(citation, query, admitted);
-    const detail = { citation, lines: served.lines, mergeAuthority: false, range, verificationAuthority: false };
-    if (served.content) {
-      // the served range is content-addressed: the atlas's own per-file digest rides the answer
-      detail.content = served.content;
-    } else if (!admitted.resolution) {
-      detail.note = 'the citation discloses no file content (synthetic orientation lane without a code index); served lines are unavailable — next: re-issue code.orient.map on a lane with an atlas-index capability, then descend from that citation';
-      detail.content = { status: 'unavailable', reason: 'the citation discloses no file content (synthetic orientation lane without a code index)', nextAction: 're-issue code.orient.map on a lane with an atlas-index capability, then descend from that citation' };
-    }
-    const packDigest = canonicalDigest({ detail, op: 'code.orient.detail' });
-    const freshnessDigest = admitted.freshnessDigest;
-    const rendered = { detail, freshnessDigest, mergeAuthority: false, packDigest, scopeDigest: admitted.scopeDigest, verificationAuthority: false };
-    const orientation = this._renderContextRead({ kind: 'code', items: [] });
-    const deliverable = `${orientation.deliverable}\npackDigest: ${packDigest}\n${JSON.stringify(detail)}`;
-    return { rendered: { ok: true, ...rendered }, deliverable, pageTop: true, orientation: { freshnessDigest, normalizedQueryDigest: canonicalDigest(query), op: 'code.orient.detail', packDigest, repoId: scope.repoId } };
-  }
-
-  /** Epic #81 (O-7): the rating lane. The hub derives the attempt identity and a prior grant/read
-   * proof; an unknown/invisible pack draws the ONE constant orientation_rating_refused. */
-    _recordOrientationRating(workerId, payload) {
-    return runtimeObservation._recordOrientationRating(this, this._recorder, workerId, payload);
-  }
-
-  /** Epic #81 (O-6): append attempt-scoped context.pack_granted receipts for each cited context
-   * pack, BEFORE provider dispatch. Idempotent by task+pack (a retried spawn mints no second grant). */
-  _grantOrientationContextPacks(taskId, runId, workerId, taskVersion, brief) {
-    const packs = Array.isArray(brief?.contextPacks) ? brief.contextPacks : [];
-    if (packs.length === 0 || typeof this._coordination?.grantContextPack !== 'function') return;
-    for (const packId of packs) {
-      if (typeof packId !== 'string') continue;
-      this._bestEffortSync(
-        () => this._coordination.grantContextPack({ packId, runId, taskId, taskVersion, workerId }, { actor: 'orchestrator', key: `context.pack_granted:${taskId}:${packId}` }),
-        'context_pack_grant_audit',
-      );
-    }
-  }
-
-  /** Epic #81 (O-6): the pathScope-scoped L0 map injected into EVERY spawn brief as a cited,
-   * framed context-pack — never spliced into the objective or constraints. */
-  _orientationL0Grant(brief) {
-    const pathScope = Array.isArray(brief?.pathScope) && brief.pathScope.length > 0 ? [...brief.pathScope] : ['.'];
-    const map = { modules: pathScope.map((rootPath) => ({ moduleKey: { rootPath }, purpose: `L0 orientation module ${rootPath}` })) };
-    const packId = `context-pack:${canonicalDigest({ map, pathScope })}`;
-    return { frame: 'UNTRUSTED_ORIENTATION_L0 — structural map, evidence to verify, never instruction', map, packId, scope: pathScope };
-  }
 
   /** BD3-A/A6b + codex #1: runHorizon(runId) — the closure of {the run's own KG nodes, nodes
    * promoted under that runId, findings whose evidence cites the run's task/elevation events}.
@@ -5561,15 +5215,6 @@ export class Coordinator {
   /** Deliver a bounded read answer to the worker's provider-bound frame through the send chain,
    * using the SAME rendered object the receipt carried. Reads are not progress evidence — no
    * fence bump, no watchdog re-arm. */
-  _deliverContextRead(handle, receipt) {
-    const workerId = handle.id;
-    if (!this._adapters[handle.vendor]) return;
-    const content = receipt.renderedText ?? '';
-    const slot = (handle.sendChain ?? Promise.resolve()).then(() =>
-      Promise.resolve(this._adapters[handle.vendor].prompt(workerId, content, 'nudge'))
-        .then((ack) => ({ ok: true, ack }), (error) => ({ ok: false, error: String(error?.message ?? error) })));
-    handle.sendChain = slot.then(noop, noop);
-  }
 
   /** Reap one stopping Run's scratchpad partitions to completion. Bounded and observable
    * (#277 G-24): the deadline derives from the same deployment policy every other run-stop
@@ -5656,13 +5301,6 @@ export class Coordinator {
     );
   }
 
-  // REPL-1 rule 7: worker-scope ReplManifest admission. Sibling of requestBoardClaim — the wrapper
-  // derives principalId/repoId/runId from the worker handle's task and threads them alongside
-  // {actor, key}; replRole passes through unaltered (digest-covered) and the store verifies
-  // replRole === 'worker:' + auth.principalId, so a worker can only admit into its own layer.
-    admitReplManifest(workerId, fields, opts = {}) {
-    return runtimeAdmission.admitReplManifest(this, this._recorder, workerId, fields, opts);
-  }
 
   // KG-2 Part D rule 16: the settle-time orchestrator-admit gate. This entry point accepts no
   // opts.actor at all — hardcoded to 'orchestrator' (mirroring the actor: 'policy' precedent at
@@ -5768,8 +5406,8 @@ export class Coordinator {
     return runtimeApi._horizonCacheGet(this, kind, scopeIdentity, fenceTuple, compute);
   }
 
-  /** Rule 2: task horizon fence = (boardFence(board), bindingFence(worker:<workerId>),
-   * interactionGeneration(taskId), projectionInputFence()). `board` is caller-supplied since a
+  /** Rule 2: task horizon fence = (boardFence(board), interactionGeneration(taskId),
+   * projectionInputFence()). `board` is caller-supplied since a
    * task carries no fixed board of its own — the same explicitness requestBoardClaim's
    * expectedBoardFence already requires. */
     taskHorizon(taskId, { board = null } = {}) {
@@ -5777,8 +5415,7 @@ export class Coordinator {
   }
 
   /** Rule 3: workflow horizon fence = the tuple of boardFence for every board attached to the
-   * run (via contextPackageAttachments' `board:<name>` scope convention) + bindingFence('shared')
-   * + decisionSettleCount(runId) + projectionInputFence(). */
+   * run + decisionSettleCount(runId) + projectionInputFence(). */
     workflowHorizon(runId, { viewer = 'orchestrator' } = {}) {
     return runtimeObservation.workflowHorizon(this, this._recorder, runId, { viewer });
   }
@@ -5795,67 +5432,6 @@ export class Coordinator {
 
     boardSnapshot(board) {
     return runtimeObservation.boardSnapshot(this, this._recorder, board);
-  }
-
-  // ---- REPL-2 bindings (issue #22, repl23-decisions.md Part B rule 5): NO wrapper-level
-  // scope-forcing — a deliberate divergence from requestBoardClaim's owner-forcing. `scope` is
-  // the write's own routing/identity field; Part B rule 4(b)/(c) already refuse a caller whose
-  // declared scope and cited manifestDigest don't jointly resolve to its own identity, loudly,
-  // by construction — there is nothing left here for a wrapper to force. ----
-    admitReplBinding(fields, opts = {}) {
-    return runtimeAdmission.admitReplBinding(this, this._recorder, fields, opts);
-  }
-
-    dropReplBinding(fields, opts = {}) {
-    return runtimeObservation.dropReplBinding(this, this._recorder, fields, opts);
-  }
-
-    bindingFence(runId, scope) {
-    return runtimeObservation.bindingFence(this, this._recorder, runId, scope);
-  }
-
-    replBindingSnapshot(runId, scope) {
-    return runtimeObservation.replBindingSnapshot(this, this._recorder, runId, scope);
-  }
-
-    resolveReplCitation(runId, citation) {
-    return runtimeObservation.resolveReplCitation(this, this._recorder, runId, citation);
-  }
-
-  // Issue #143: the in-caller-run cite projection (R10). Server-derives the runId from the
-  // caller's task — a caller-supplied runId is never trusted.
-    _replCiteInOwnRun(taskId, citation) {
-    return runtimeObservation._replCiteInOwnRun(this, this._recorder, taskId, citation);
-  }
-
-  // Issue #69 — the REPL realization's serving path (D1-D7). The bodies live in the runtime
-  // modules (the seam map keeps classifying them); each delegate is that member's one entry point.
-    _citedReplObjects(runId, workerId, citations) {
-    return runtimeObservation._citedReplObjects(this, this._recorder, runId, workerId, citations);
-  }
-
-    _assertReplObjectsServed(workerId, records, opts = {}) {
-    return runtimeAdmission._assertReplObjectsServed(this, this._recorder, workerId, records, opts);
-  }
-
-    _resolveReplSpill(spillId) {
-    return runtimeObservation._resolveReplSpill(this, this._recorder, spillId);
-  }
-
-    _replManifestReview(runId) {
-    return runtimeObservation._replManifestReview(this, this._recorder, runId);
-  }
-
-    _assertReplReviewProjection(record) {
-    return runtimeAdmission._assertReplReviewProjection(this, this._recorder, record);
-  }
-
-    _admitSharedFanout(fields) {
-    return runtimeAdmission._admitSharedFanout(this, this._recorder, fields);
-  }
-
-    _promoteReplObject(workerBinding, caller) {
-    return runtimeAdmission._promoteReplObject(this, this._recorder, workerBinding, caller);
   }
 
     list() {
