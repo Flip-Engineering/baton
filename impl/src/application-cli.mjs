@@ -4444,7 +4444,7 @@ export function parseBatonCli(rawArgs) {
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'resultpin',
-    'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
+    'stop', 'evidence', 'adopt', 'select', 'feedback', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
   // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
   // start/follow spellings, and the canonical alias first-tokens. Composed by spread — never a
@@ -4712,13 +4712,6 @@ export function parseBatonCli(rawArgs) {
     return {
       kind: 'semantic-action', actionKind: 'send_feedback', runId,
       inputs: { role, feedback }, idempotencyKey,
-    };
-  }
-  if (action === 'revise') {
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    return {
-      kind: 'semantic-action', actionKind: 'revise_candidate', runId,
-      inputs: { reason }, idempotencyKey,
     };
   }
   throw cliError(`unknown run action ${action ?? ''}`);

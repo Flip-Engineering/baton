@@ -1414,19 +1414,6 @@ export function workflowDefinitionPolicy(definition) {
   }
   return policy;
 }
-export function workflowEligibilityProjection(eligibility) {
-  return deepFreeze({
-    state: eligibility.state,
-    reason: eligibility.reason,
-    nextRound: eligibility.nextRound,
-    maxRounds: eligibility.maxRounds,
-    policyDigest: eligibility.policy.policyDigest,
-    budget: {
-      state: eligibility.budget ? 'available' : 'exhausted',
-      mode: eligibility.policy.budgetMode,
-    },
-  });
-}
 /** ONE paged store read (#391). A modern store answers the page contract itself; a coordination
  * object that predates it — a hand-built harness, a foreign store — answers the bare array the
  * accessors returned before this change, which the ONE page derivation cuts here; a store without
@@ -3569,24 +3556,6 @@ export function _performWorkflowMemberStop(application, current, definition, sto
     }).catch(() => {});
     return operation;
   }
-export function _workflowRevisionFeedbackRows(application, feedback, candidate) {
-    const byId = new Map(application.driver.coordination.eventsView().filter((event) => (
-      event.kind === 'driver.recorded'
-      && event.payload?.kind === APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND
-    )).map((event) => [event.payload.feedbackId, event]));
-    return feedback.filter((packet) => packet.target.candidateId === candidate.candidateId)
-      .map((packet) => {
-        const event = byId.get(packet.feedbackId);
-        if (!event) {
-          throw applicationError('Workflow revision feedback event is unavailable',
-            'application_workflow_integrity');
-        }
-        return {
-          feedbackId: packet.feedbackId, feedbackDigest: packet.feedbackDigest,
-          eventSeq: event.seq, feedback: clone(packet.feedback),
-        };
-      }).sort((left, right) => (left.feedbackId < right.feedbackId ? -1 : 1));
-  }
 export async function _workflowRoundSummaries(application, current, observer) {
     const history = application._workflowPlanHistory(current);
     const summaries = [];
@@ -3646,18 +3615,12 @@ export async function _workflowRoundSummaries(application, current, observer) {
     return deepFreeze(summaries);
   }
 export async function _buildWorkflowView(application, current, observer, options = {}) {
-    if (current.plan.nodes.some((node) => node.revision)) {
-      await application._validateWorkflowRevisionPlan(current);
-    }
     const definition = application._workflowDefinition(current);
     const projection = await application._goalPlanStatus(current, observer);
     const candidates = application._workflowCandidates(current, projection, definition);
     const selection = application._workflowSelection(current, definition, candidates);
     const feedback = application._workflowFeedback(current, definition, candidates);
     const memberStops = application._workflowMemberStops(current, definition);
-    const revisionEligibility = await application._workflowRevisionEligibility(current, {
-      definition, projection, candidates, selection, feedback,
-    });
     const rounds = await application._workflowRoundSummaries(current, observer);
     const runId = current.goal.runId;
     const { workers, ownedWorkers } = runWorkerOwnership(application.driver, runId);
@@ -3819,8 +3782,6 @@ export async function _buildWorkflowView(application, current, observer, options
       && selectedAdopted && !selectedIntegration
       && current.profile.integrationPolicy.mode === 'manual'
       && current.profile.integrationPolicy.requireSemanticReview === false;
-    const canReviseSelected = phase === 'candidate_selected'
-      && revisionEligibility.state === 'eligible';
 
     const runWorkerIds = new Set(workers.map((handle) => handle.id));
     const workerAttention = Object.entries(story.workers)
@@ -3842,13 +3803,6 @@ export async function _buildWorkflowView(application, current, observer, options
       summary: 'Parallel Candidates are verified; operator selection is required.',
       roles: candidates.map((candidate) => candidate.role),
     }] : [];
-    const revisionAttention = phase === 'candidate_selected'
-      && revisionEligibility.state !== 'eligible'
-      && !['feedback_required', 'selection_required'].includes(revisionEligibility.reason)
-      ? [{
-        kind: 'workflow_revision', state: 'blocked', reason: revisionEligibility.reason,
-        summary: `Recursive Candidate revision paused: ${revisionEligibility.reason}.`,
-      }] : [];
     const recoveryAttention = recovery ? [{
       kind: 'workflow_recovery', state: recovery.state, reason: recovery.reason,
       summary: 'Revision provider ownership is unconfirmed after restart; redelivery is forbidden.',
@@ -3862,7 +3816,7 @@ export async function _buildWorkflowView(application, current, observer, options
     // count, and the required-action projection below still reads EVERY row (a truncated display
     // may never hide a required operator action).
     const allWorkflowAttention = [
-      ...workerAttention, ...decisionAttention, ...selectionAttention, ...revisionAttention,
+      ...workerAttention, ...decisionAttention, ...selectionAttention,
       ...recoveryAttention, ...preservationAttention,
     ];
     const attention = byteBoundedPage(allWorkflowAttention, ATTENTION_PAGE_BYTES).page;
@@ -3941,7 +3895,6 @@ export async function _buildWorkflowView(application, current, observer, options
         ]
           : phase === 'stopping' ? [{ kind: 'stop' }, { kind: 'wait' }]
           : phase === 'candidate_selected' ? [
-            ...(canReviseSelected ? [{ kind: 'revise_candidate' }] : []),
             { kind: 'evidence' },
           ] : [{ kind: 'evidence' }],
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
@@ -3955,7 +3908,6 @@ export async function _buildWorkflowView(application, current, observer, options
         strategy: definition.strategy, workspace: definition.workspace, join: definition.join,
         definitionDigest: definition.definitionDigest,
         round: rounds.length, roundCount: rounds.length,
-        revisionEligibility: workflowEligibilityProjection(revisionEligibility),
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
       nodes: boundedPlanNodes(projection.nodes, objectiveLine, objectiveBytes),
@@ -3970,7 +3922,7 @@ export async function _buildWorkflowView(application, current, observer, options
       workerPolicy: { state: 'multiple', attempts: attempts.map(({ role }) => ({ role, request: clone(current.profile.workerPolicy) })) },
       budget: { allocated: clone(current.goal.budget), node: null, termination: terminalCause },
       attention, attentionTruncated: workerAttention.length + selectionAttention.length
-        + revisionAttention.length + recoveryAttention.length + preservationAttention.length
+        + recoveryAttention.length + preservationAttention.length
         > attention.length,
       blockedInteraction,
       waitingOn,
@@ -5283,7 +5235,7 @@ export function _semanticActions(application, current, view, principal, context 
       });
     }
     for (const candidate of view.nextActions ?? []) {
-      if (['select_candidate', 'revise_candidate'].includes(candidate.kind)
+      if (candidate.kind === 'select_candidate'
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
         candidates.push({ kind: candidate.kind, source: candidate, target: null });
       }

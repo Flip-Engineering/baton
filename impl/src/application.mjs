@@ -154,9 +154,7 @@ import {
   validText,
   validateContextEvalArgs,
   workflowDefinitionPolicy,
-  workflowEligibilityProjection,
   workflowNodeBudget,
-  workflowRevisionBudget,
 } from './application-observation.mjs';
 // Issue #286 G-36: the physical-workspace-id shape has ONE definition; the workspace admission
 // below asks the custody predicate instead of re-spelling it.
@@ -974,25 +972,6 @@ function normalizeWorkflowComposition(value) {
   return deepFreeze({
     strategy: 'parallel_attempts', workspace: 'isolated', join: 'operator_selected', team,
   });
-}
-
-function renderWorkflowRevisionObjective(role, objective, reason, packets) {
-  const findings = packets.flatMap((packet) => packet.feedback.findings.map((finding) => {
-    const anchor = finding.path === null ? ''
-      : ` (${finding.path}${finding.line === null ? '' : `:${finding.line}`})`;
-    return `- [${finding.severity}/${finding.kind}] ${finding.message}${anchor}`;
-  }));
-  const rendered = [
-    `${role} revision attempt: ${objective}`,
-    `Revision direction: ${reason}`,
-    ...packets.map((packet) => `Feedback: ${packet.feedback.summary}`),
-    ...findings,
-  ].join('\n');
-  if (!validText(rendered, 64 * 1024) || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(rendered))) {
-    throw applicationError('Workflow revision instructions exceed their bounded safe context',
-      'application_workflow_revision_invalid');
-  }
-  return rendered;
 }
 
 function applicationDefaults(rawDefaults, profiles) {
@@ -3316,47 +3295,6 @@ export class BatonApplication {
         },
       );
     }
-    if (refreshed.plan.nodes.length === 1 && refreshed.plan.nodes[0]?.revision) {
-      await this._validateWorkflowRevisionPlan(refreshed);
-      if (refreshed.dispatch) return refreshed.dispatch;
-      if (typeof this.driver.coordinator.spawnPlanRevision !== 'function') {
-        throw applicationError('coordinator lacks durable Workflow revision authority',
-          'application_workflow_revision_unavailable');
-      }
-      const node = refreshed.plan.nodes[0];
-      const gate = {
-        goalId: refreshed.goal.goalId, goalVersion: refreshed.goal.version,
-        goalDigest: refreshed.goal.digest, planId: refreshed.plan.planId,
-        planVersion: refreshed.plan.version, planDigest: refreshed.plan.digest,
-        nodeKey: node.key, expectedDispatchVersion: 0,
-        capabilities: clone(node.capabilities), effects: clone(node.effects),
-        ...(Object.hasOwn(node, 'requiredEffects')
-          ? { requiredEffects: clone(node.requiredEffects) } : {}),
-      };
-      const selectedRoute = exactPlanNodeRoute(node, 'Workflow revision Plan node');
-      const route = {
-        vendor: selectedRoute.harness, model: selectedRoute.model,
-        effort: selectedRoute.effort,
-      };
-      const preview = this.driver.coordination.previewPlanRevision(gate, route);
-      const { goalPlan: ignored, ...brief } = preview.brief;
-      void ignored;
-      const taskId = `baton-${digest({
-        repoId: this.repoId, runId: refreshed.goal.runId,
-        planDigest: refreshed.plan.digest, nodeKey: node.key, dispatchVersion: 1,
-      }).slice(0, 24)}-${node.key.replaceAll(':', '-')}`;
-      await this.driver.coordinator.spawnPlanRevision({
-        vendor: route.vendor, model: route.model, effort: route.effort,
-        brief, goalPlan: gate, runId: refreshed.goal.runId, taskId,
-      }, {
-        actor: this.principals.dispatcher.actor,
-        principalId: this.principals.dispatcher.principalId,
-        sessionId: this.principals.dispatcher.sessionId,
-        powers: ['plan:dispatch'],
-        idempotencyKey: `application:${refreshed.goal.runId}:revision:${refreshed.plan.digest}:v1`,
-      });
-      return this._findRun(refreshed.goal.runId).dispatch;
-    }
     if (this._isWorkflowRun(refreshed) && refreshed.plan.nodes.length > 1) {
       const definition = this._workflowDefinition(refreshed);
       if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
@@ -3860,9 +3798,6 @@ export class BatonApplication {
     if (current.plan.digest !== planDigest) throw applicationError('displayed plan digest is stale', 'application_plan_stale');
     if (this._isWorkflowRun(current)) {
       this._workflowDefinition(current);
-      if (current.plan.nodes.some((node) => node.revision)) {
-        await this._validateWorkflowRevisionPlan(current);
-      }
       if (current.plan.nodes.some((node) => node.contextCall)) {
         this._validateContextEffectPlan(current);
       }
@@ -4183,230 +4118,6 @@ export class BatonApplication {
     });
     return this._buildView(current, this.principals.observer, {
       action: { command: 'run.act', result: 'candidate_selected', role: candidate.role },
-    });
-  }
-
-  _workflowRevisionFeedbackRows(feedback, candidate) {
-    return applicationObservation._workflowRevisionFeedbackRows(this, feedback, candidate);
-  }
-
-  async _workflowRevisionEligibility(current, prepared = {}) {
-    const history = this._workflowPlanHistory(current);
-    const definition = prepared.definition ?? this._workflowDefinition(current);
-    const policy = workflowDefinitionPolicy(definition);
-    const projection = prepared.projection
-      ?? await this._goalPlanStatus(current, this.principals.observer);
-    const candidates = prepared.candidates
-      ?? this._workflowCandidates(current, projection, definition);
-    const selection = prepared.selection
-      ?? this._workflowSelection(current, definition, candidates);
-    const feedback = prepared.feedback
-      ?? this._workflowFeedback(current, definition, candidates);
-    const selected = selection
-      ? candidates.find((candidate) => candidate.candidateId === selection.candidate.id) ?? null
-      : null;
-    const packets = selected ? this._workflowRevisionFeedbackRows(feedback, selected) : [];
-    const sourceNode = selected
-      ? current.plan.nodes.find((node) => node.key === selected.nodeKey) ?? null : null;
-    const budget = workflowRevisionBudget(
-      current.profile, history.map((entry) => entry.plan), 1, policy.maxRounds,
-    );
-    const nextRound = history.length + 1;
-    const result = (state, reason) => ({
-      state, reason, nextRound, maxRounds: policy.maxRounds,
-      policy, budget, history, definition, projection, candidates,
-      selection, feedback, selected, packets, sourceNode,
-    });
-    if (history.length >= policy.maxRounds) return result('blocked', 'round_limit');
-    if (!selected || !sourceNode) return result('blocked', 'selection_required');
-    const ancestorSelectedShas = new Set(history.slice(1).map((entry) => (
-      normalizeWorkflowRevision(entry.plan.nodes[0].revision).parent.resultSha
-    )));
-    if (ancestorSelectedShas.has(selected.resultSha)) {
-      return result('blocked', 'no_verified_progress');
-    }
-    if (!budget) return result('blocked', 'budget_exhausted');
-    return result('eligible', 'ready');
-  }
-
-  async _validateWorkflowRevisionPlan(current) {
-    const node = current.plan?.nodes[0];
-    if (!node?.revision) return null;
-    const definition = this._workflowDefinition(current);
-    const history = this._workflowPlanHistory(current);
-    if (history.length < 2) {
-      throw applicationError('Workflow revision history is incomplete',
-        'application_workflow_integrity');
-    }
-    const predecessor = history.at(-2);
-    const predecessorDefinition = this._workflowDefinition(predecessor);
-    const eligibility = await this._workflowRevisionEligibility(predecessor, {
-      definition: predecessorDefinition,
-    });
-    const { selected, packets } = eligibility;
-    const revision = normalizeWorkflowRevision(node.revision);
-    const expectedParent = selected ? {
-      role: selected.role, nodeKey: selected.nodeKey, taskId: selected.taskId,
-      candidateId: selected.candidateId, candidateDigest: selected.candidateDigest,
-      resultSha: selected.resultSha, retainedResultRef: selected.retainedResultRef,
-      treeIdentityDigest: digest({
-        resultSha: selected.resultSha, retainedResultRef: selected.retainedResultRef,
-      }),
-      changedPaths: clone(selected.changedPaths), changedPathsDigest: digest(selected.changedPaths),
-      evidenceDigest: selected.evidenceDigest,
-      commitArtifact: clone(selected.evidence.commitArtifact),
-      verificationArtifact: clone(selected.evidence.verificationArtifact),
-    } : null;
-    if (eligibility.state !== 'eligible' || !selected || !eligibility.budget
-      || revision.round !== history.length
-      || revision.workflow.definitionDigest !== predecessorDefinition.definitionDigest
-      || revision.predecessorPlan.planId !== predecessor.plan.planId
-      || revision.predecessorPlan.version !== predecessor.plan.version
-      || revision.predecessorPlan.digest !== predecessor.plan.digest
-      || digest(revision.parent) !== digest(expectedParent)
-      || digest(revision.feedback) !== digest(packets)
-      || digest(node.budget) !== digest(eligibility.budget)
-      || definition.revisionDigest !== revision.revisionDigest
-      || definition.workflowPolicyDigest !== eligibility.policy.policyDigest) {
-      throw applicationError('Workflow revision Plan failed its immutable Candidate and feedback binding',
-        'application_workflow_integrity');
-    }
-    return deepFreeze({
-      predecessor, predecessorDefinition, selected, packets, revision,
-      eligibility: workflowEligibilityProjection(eligibility),
-    });
-  }
-
-  async reviseWorkflowCandidate(rawRequest, rawPrincipal, semanticDispatch = null) {
-    this._assertOpen();
-    await this.ready;
-    const fields = ['actionId', 'principalScopeDigest', 'reason', 'runId'];
-    if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
-      || Object.keys(rawRequest).sort().join(',') !== fields.sort().join(',')
-      || !validId(rawRequest.runId) || !validText(rawRequest.actionId, 4_096)
-      || !/^[a-f0-9]{64}$/u.test(rawRequest.principalScopeDigest ?? '')
-      || !validText(rawRequest.reason)
-      || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(rawRequest.reason))) {
-      throw applicationError('Workflow revision request is invalid',
-        'application_workflow_revision_invalid');
-    }
-    const principal = normalizePrincipal(rawPrincipal, 'Workflow revision principal');
-    const reason = rawRequest.reason.normalize('NFKC').trim();
-    if (semanticDispatch !== SEMANTIC_ACTION_DISPATCH) {
-      await this._authorizeSemanticKind('revise_candidate', principal, rawRequest.runId);
-    }
-    const current = this._findRun(rawRequest.runId);
-    this._assertRunMutable(rawRequest.runId);
-    if (!this._isWorkflowRun(current)) {
-      throw applicationError('Run is not a recursively composable Workflow',
-        'application_workflow_revision_unavailable');
-    }
-    const eligibility = await this._workflowRevisionEligibility(current);
-    const {
-      definition, selected, packets, sourceNode, budget, policy,
-    } = eligibility;
-    if (eligibility.state !== 'eligible') {
-      const error = applicationError(`Workflow revision is blocked: ${eligibility.reason}`,
-        'application_workflow_revision_unavailable');
-      error.reason = eligibility.reason;
-      throw error;
-    }
-    const revision = normalizeWorkflowRevision({
-      schemaVersion: 1, kind: 'candidate_feedback_revision', round: eligibility.nextRound,
-      workflow: { definitionDigest: definition.definitionDigest },
-      predecessorPlan: {
-        planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest,
-      },
-      parent: {
-        role: selected.role, nodeKey: selected.nodeKey, taskId: selected.taskId,
-        candidateId: selected.candidateId, candidateDigest: selected.candidateDigest,
-        resultSha: selected.resultSha, retainedResultRef: selected.retainedResultRef,
-        treeIdentityDigest: digest({
-          resultSha: selected.resultSha, retainedResultRef: selected.retainedResultRef,
-        }),
-        changedPaths: clone(selected.changedPaths), changedPathsDigest: digest(selected.changedPaths),
-        evidenceDigest: selected.evidenceDigest,
-        commitArtifact: clone(selected.evidence.commitArtifact),
-        verificationArtifact: clone(selected.evidence.verificationArtifact),
-      },
-      feedback: packets,
-      decision: {
-        actionId: rawRequest.actionId,
-        principalScopeDigest: rawRequest.principalScopeDigest,
-        reasonDigest: digest(reason),
-      },
-    });
-    const node = {
-      ...clone(sourceNode),
-      key: `revision:${revision.round}:${selected.role}`,
-      objective: renderWorkflowRevisionObjective(selected.role, current.goal.objective, reason, packets),
-      budget: clone(budget),
-      routes: exactPlanRoutes((() => {
-        const sourceAttempt = definition.attempts.find((attempt) => (
-          attempt.nodeKey === sourceNode.key || attempt.role === selected.role
-        ));
-        const selectedRoute = sourceAttempt ? workflowAttemptRoute(definition, sourceAttempt) : null;
-        if (!selectedRoute || !planRouteMatches(sourceNode.routes, selectedRoute)) {
-          throw applicationError('Workflow revision route is outside source Plan authority',
-            'application_workflow_integrity');
-        }
-        return selectedRoute;
-      })()),
-      revision: clone(revision),
-    };
-    const request = {
-      goal: {
-        goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest,
-      },
-      predecessor: {
-        planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest,
-      },
-      nodes: [node],
-    };
-    const normalized = normalizePlanRequest(request,
-      this.driver.coordination.goalPlanPolicy(), current.goal);
-    const expectedPlanDigest = digest({
-      schemaVersion: 1, repoId: this.repoId, runId: current.goal.runId,
-      goal: normalized.goal, predecessor: normalized.predecessor,
-      nodes: normalized.nodes, totals: normalized.totals,
-      policyDigest: this.driver.coordination.goalPlanPolicy().policyDigest,
-    });
-    let predecessorDefinition = definition;
-    if (definition.kind === 'application.workflow_revision_derived') {
-      const { kind, ...boundDefinition } = definition;
-      void kind;
-      this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, boundDefinition, {
-        actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
-        key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${current.plan.digest}`,
-      });
-      predecessorDefinition = {
-        kind: APPLICATION_WORKFLOW_RECORD_KIND, ...clone(boundDefinition),
-      };
-    }
-    const successorCore = this._workflowSuccessorDefinitionCore({
-      current, planDigest: expectedPlanDigest, node,
-      predecessorDefinition, revision, policy,
-    });
-    this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-      ...successorCore, definitionDigest: digest(successorCore),
-    }, {
-      actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
-      key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
-    });
-    const proposed = await this.driver.coordinator.proposePlan(request,
-      authority(this.principals.planner, this.repoId, current.goal.runId, 'plan:propose',
-        `application:${current.goal.runId}:revision-plan:${revision.revisionDigest}`));
-    if (proposed.plan.digest !== expectedPlanDigest) {
-      throw applicationError('Workflow revision Plan differs from its semantic prebinding',
-        'application_workflow_integrity');
-    }
-    const refreshed = this._findRun(current.goal.runId);
-    await this._validateWorkflowRevisionPlan(refreshed);
-    return this._buildView(refreshed, this.principals.observer, {
-      action: {
-        command: 'run.act', result: 'revision_plan_proposed',
-        revisionId: revision.revisionId,
-      },
     });
   }
 
@@ -7203,17 +6914,6 @@ export class BatonApplication {
       }
       await this.selectWorkflowCandidate({
         runId: request.runId, role: request.inputs.role, reason: request.inputs.reason,
-      }, principal, SEMANTIC_ACTION_DISPATCH);
-    } else if (action.kind === 'revise_candidate') {
-      if (!validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.reviseWorkflowCandidate({
-        runId: request.runId, reason: request.inputs.reason,
-        actionId: action.actionId,
-        principalScopeDigest: digest({
-          principalId: principal.principalId, sessionId: principal.sessionId,
-        }),
       }, principal, SEMANTIC_ACTION_DISPATCH);
     } else if (action.kind === 'stop') {
       normalizeStop({ runId: request.runId, reason: request.inputs.reason });

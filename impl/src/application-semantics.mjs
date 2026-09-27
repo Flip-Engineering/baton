@@ -558,23 +558,6 @@ const actions = {
     idempotent: true, priority: 'required',
     helpTopic: 'run.act.select_candidate', expectedDepth: 'outline',
   },
-  revise_candidate: {
-    label: 'Revise selected Candidate',
-    summary: 'Propose one exact successor Plan that corrects the selected immutable Candidate from its bound feedback.',
-    inputSchema: objectSchema({
-      reason: {
-        type: 'string', minLength: 1,
-        default: 'Revise the selected Candidate using its recorded feedback.',
-      },
-    }, ['reason']),
-    serverDerived: [
-      'predecessorPlan', 'revisionId', 'candidateId', 'candidateDigest', 'resultSha',
-      'retainedResultRef', 'feedbackIds', 'route', 'nodeBudget',
-    ],
-    effect: 'plan_proposal', destructive: false, irreversible: false,
-    idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.revise_candidate', expectedDepth: 'outline',
-  },
   stop: {
     label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
@@ -601,7 +584,6 @@ const APPLICATION_ACTION_CAPABILITY_SOURCE = {
   send: ['control', 'observe'],
   interrupt: ['control', 'observe'],
   select_candidate: ['control', 'observe'],
-  revise_candidate: ['control', 'observe'],
   stop: ['emergency_stop', 'observe'],
 };
 
@@ -680,7 +662,6 @@ const ACTION_OPERATIONS = {
   send: 'run.send',
   interrupt: 'run.interrupt',
   select_candidate: 'run.select',
-  revise_candidate: 'run.revise',
   stop: 'run.stop',
 };
 
@@ -735,7 +716,6 @@ const cliCommands = [
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
   ['run.debug', null, null, 'baton run debug RUN_ID [--member ROLE] [--limit N]'],
   ['run.select', null, 'select_candidate', 'baton run select RUN_ID ROLE --reason REASON'],
-  ['run.revise', null, 'revise_candidate', 'baton run revise RUN_ID --reason REASON'],
 ].map(([id, operation, action, usage]) => ({
   id, subcommand: id.split('.')[1], ...(operation ? { operation } : { compatibility: true }),
   ...(action ? { action } : {}),
@@ -864,8 +844,7 @@ const cli = {
     run: {
       commandIds: ['run.objective', 'run.start.exact', 'run.show', 'run.progress', 'run.events', 'run.output',
         'run.do', 'run.stop', 'run.status',
-        'run.approve', 'run.answer', 'run.interrupt', 'run.evidence', 'run.select',
-        'run.revise'],
+        'run.approve', 'run.answer', 'run.interrupt', 'run.evidence', 'run.select'],
       selectorRule: 'manualRoute',
       paragraphs: [
         'Run starts compile explicit change result intent. Use explore for one-route evidence or review for two-route evidence.',
@@ -1240,7 +1219,6 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton run debug RUN_ID',
   }],
   ['run.select', { action: 'select_candidate', outputView: 'outline', example: 'baton run select RUN_ID ROLE --reason R' }],
-  ['run.revise', { action: 'revise_candidate', outputView: 'outline', example: 'baton run revise RUN_ID --reason R' }],
   ['run.member.view', {
     op: 'run.workstreams', effect: 'member_read', capabilities: ['observe'], outputView: 'section',
     example: 'baton run member view RUN_ID',
@@ -1835,7 +1813,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.member.view', 'embedded', 'BatonWorkstreams.help'],
   ['run.member.view', 'embedded', 'BatonWorkstreams.list'],
   ['run.member.view', 'embedded', 'BatonWorkstreams.open'],
-  ['run.revise', 'embedded', 'BatonRun.revise'],
   ['run.select', 'embedded', 'BatonRun.select'],
   ['run.send', 'embedded', 'BatonRun.send'],
   ['run.send', 'embedded', 'BatonRun.steer'],

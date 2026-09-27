@@ -149,87 +149,6 @@ function fixture({ repo, logDir }) {
   };
 }
 
-async function twoRoundWorkflow(current) {
-  const workflow = await current.baton.workflow(
-    'Produce and correct an attributable Candidate under a two-round policy.',
-    {
-      team: [
-        { role: 'builder', exact: routeA },
-        { role: 'challenger', exact: routeB },
-      ],
-    },
-  );
-  await workflow.complete();
-  const settled = await current.application.wait(
-    workflow.id, principal('workflow-owner'), { timeoutMs: 5_000 },
-  );
-  assert.equal(settled.phase, 'selection_required');
-  await workflow.select('builder', 'Use builder as the correction basis.');
-  const proposed = await workflow.revise('Address the recorded defect in one bounded correction round.');
-  assert.equal(proposed.outline.phase, 'awaiting_plan_approval');
-  return workflow;
-}
-
-function proposedPlans(driver) {
-  return driver.coordination.events()
-    .filter((event) => event.kind === 'plan.version_proposed')
-    .map((event) => event.payload.plan);
-}
-
-test('I407a: maxRounds+1 distinct revisions refuse workflow_plan_history_exceeds_policy', async (t) => {
-  const repo = repository();
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-issue407-depth-'));
-  const current = fixture({ repo, logDir });
-  t.after(async () => {
-    try { await current.application.shutdown(principal('cleanup')); } catch {}
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(logDir, { recursive: true, force: true });
-  });
-  const workflow = await twoRoundWorkflow(current);
-  // A chain at the bound still reads: two plans under maxRounds 2.
-  assert.equal((await workflow.rounds()).section.itemCount, 2);
-  // A third distinct revision exceeds the deployment policy's own maxRounds. The facade's
-  // eligibility gate would never mint it, so it arrives through plan authority directly —
-  // three legitimate linked versions, no repeated identity, hence not a cycle.
-  const [first, second] = proposedPlans(current.driver);
-  assert.equal(first.predecessor, null);
-  assert.deepEqual(
-    { planId: second.predecessor.planId, version: second.predecessor.version },
-    { planId: first.planId, version: first.version },
-  );
-  await current.driver.coordinator.proposePlan({
-    goal: { goalId: second.goal.goalId, version: second.goal.version, digest: second.goal.digest },
-    predecessor: { planId: second.planId, version: second.version, digest: second.digest },
-    nodes: [{
-      ...second.nodes[0],
-      objective: `${second.nodes[0].objective}\nExcess round past the deployment policy.`,
-      revision: {
-        ...second.nodes[0].revision,
-        round: 3,
-        predecessorPlan: { planId: second.planId, version: second.version, digest: second.digest },
-        // Stale computed identity: round and predecessor moved, so the id and digest
-        // recompute at normalize time instead of failing the proposal.
-        revisionId: undefined, revisionDigest: undefined,
-      },
-    }],
-  }, {
-    actor: 'direct:issue407-proposer',
-    principalId: 'issue407-proposer',
-    sessionId: 'issue407-proposer-session',
-    powers: ['plan:propose'],
-    repoId,
-    runId: workflow.id,
-    idempotencyKey: `issue407:excess-round:${workflow.id}`,
-  });
-  assert.equal(proposedPlans(current.driver).length, 3);
-  await assert.rejects(workflow.rounds(), (error) => (
-    error?.code === 'workflow_plan_history_exceeds_policy'
-    && error?.detail?.bound === workflowPolicy.maxRounds
-    && error?.detail?.observed === workflowPolicy.maxRounds
-    && typeof error?.detail?.next === 'string'
-  ), 'a deep chain must name the policy bound and the observed depth, never a cycle');
-});
-
 test('I407b: a repeated plan identity refuses workflow_plan_cycle', () => {
   const runId = 'run:issue407-cycle';
   const goal = {
@@ -270,23 +189,6 @@ test('I407b: a repeated plan identity refuses workflow_plan_cycle', () => {
     && error?.detail?.planId === 'plan:issue407-cycle'
     && Array.isArray(error?.detail?.chain)
   ), 'a proven cycle must name the repeated planId');
-});
-
-test('I407c: a chain within the policy bound reads its full history', async (t) => {
-  const repo = repository();
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-issue407-within-'));
-  const current = fixture({ repo, logDir });
-  t.after(async () => {
-    try { await current.application.shutdown(principal('cleanup')); } catch {}
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(logDir, { recursive: true, force: true });
-  });
-  const workflow = await twoRoundWorkflow(current);
-  const rounds = await workflow.rounds();
-  assert.equal(rounds.section.itemCount, 2);
-  assert.deepEqual(rounds.section.items.map((item) => item.value.kind), [
-    'parallel_attempts', 'revision',
-  ]);
 });
 
 test('I407d: the Plan history ceiling carries no second literal', () => {
