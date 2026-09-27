@@ -25,9 +25,9 @@ function routedAdapter(harness, family, models, scenario = { outcome: 'blocked',
 }
 const brief = { goal: 'produce one derived claim', constraints: [], pathScope: ['src/**'], definitionOfDone: 'claim posted', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 10_000, usd: 1, wallMin: 2 } };
 const oraclePolicy = (overrides = {}) => ({ repoId: 'repo-a', maxTargetBytes: 16 * 1024, maxConstraints: 8, maxConstraintBytes: 1024, ...overrides });
-const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 4096, maxNodes: 1024, maxEdges: 2048, maxEvidenceRefs: 8192, maxAuditSamples: 256, maxTraceDepth: 8, maxTraceRows: 1024, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, maxScanEvents: 4096, maxCandidates: 512, maxCandidateBytes: 512 * 1024, maxEvidenceRefs: 8192, maxBatchBytes: 1024 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const correctionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, maxScanEvents: 4096, maxAffectedReads: 1024, maxEvidenceRefs: 8192, maxBatchBytes: 1024 * 1024, maxResultBytes: 256 * 1024, ...overrides });
+const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, ...overrides });
+const correctionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, ...overrides });
 async function until(fn, timeoutMs = 5000) { const end = Date.now() + timeoutMs; while (Date.now() < end) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 10)); } throw new Error('condition not met'); }
 async function reap(driver) { await until(() => driver.coordinator.list().every((worker) => !['pending', 'working'].includes(worker.status))); for (const worker of driver.coordinator.list()) await driver.coordinator.kill(worker.id, 'test'); await until(() => driver.coordinator.list().every((worker) => ['dead', 'exited'].includes(worker.status))); }
 
@@ -294,16 +294,7 @@ test('SC1-SC3: route admission, policy shape, producer-route integrity, and hub-
   await assert.rejects(replay.coordinator.spawnScratchOracle(driver.fact.id, 'reviewer', { model: 'reviewer-model', effort: 'low', verification: { command: 'true', expectExit: 0 } }), (error) => error.code === 'scratch_oracle_route_unavailable'); replay.close();
 });
 
-test('SC8-SC9: scan/read/evidence/batch/result ceilings, cancellation, ACI preflight, and append failure leave no correction', async () => {
-  for (const overrides of [{ maxScanEvents: 1 }, { maxEvidenceRefs: 1 }, { maxBatchBytes: 64 }, { maxResultBytes: 64 }]) {
-    const driver = await correctionFixture({ correctionOverrides: overrides }); const bound = await oracledFact(driver, `ceiling-${Object.keys(overrides)[0]}`); assert.equal(bound.result.status, 'completed'); const before = driver.coordination.snapshot().lastSeq;
-    await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', { action: 'release', scratchFactId: bound.fact.id, oracleTaskId: bound.taskId, observedSeq: before }, { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: `ceiling:${Object.keys(overrides)[0]}`, budgetTokens: 32_000 }), (error) => error.code === 'causal_correction_oversize');
-    assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.scratch_corrected'), false); await reap(driver); driver.close();
-  }
-
-  const reads = await correctionFixture({ correctionOverrides: { maxAffectedReads: 1 } }); const target = await promotedObservedTarget(reads, 'read-ceiling-target');
-  reads.coordination.readKnowledge({ ids: [target.nodeId] }, { readerActor: 'operator:a' }, { actor: 'operator:a', key: 'read-ceiling:a' }); reads.coordination.readKnowledge({ ids: [target.nodeId] }, { readerActor: 'operator:b' }, { actor: 'operator:b', key: 'read-ceiling:b' }); const readBefore = reads.coordination.snapshot().lastSeq;
-  await assert.rejects(reads.coordinator.invokeCapability('cairn', 'causal.correct_scratch', { action: 'retract', targetNodeId: target.nodeId, expectedValidityVersion: 1, reason: 'operator_correction', observedSeq: readBefore }, { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'ceiling:reads', budgetTokens: 32_000 }), (error) => error.code === 'causal_correction_oversize'); assert.equal(reads.coordination.queryKnowledge({ ids: [target.nodeId] }).length, 1); await reap(reads); reads.close();
+test('SC8-SC9: cancellation, ACI preflight, and append failure leave no correction', async () => {
 
   const budget = await correctionFixture(); const budgetBound = await oracledFact(budget, 'aci-budget'); const budgetBefore = budget.coordination.snapshot().lastSeq;
   await assert.rejects(budget.coordinator.invokeCapability('cairn', 'causal.correct_scratch', { action: 'release', scratchFactId: budgetBound.fact.id, oracleTaskId: budgetBound.taskId, observedSeq: budgetBefore }, { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'aci-budget', budgetTokens: 1 }), (error) => error.code === 'capability_result_oversize'); assert.equal(budget.coordination.events().some((event) => event.kind === 'knowledge.scratch_corrected'), false); await reap(budget); budget.close();

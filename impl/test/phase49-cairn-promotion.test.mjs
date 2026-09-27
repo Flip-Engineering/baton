@@ -13,8 +13,8 @@ reapFixtureDirectories();
 
 const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-phase49-${name}-`));
 const task = (id) => ({ id, brief: { goal: `SECRET brief ${id}` }, deps: [], refines: null, taskType: 'promotion', reservedWorkerId: `w-${id}` });
-const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 1024, maxNodes: 256, maxEdges: 512, maxEvidenceRefs: 1024, maxAuditSamples: 128, maxTraceDepth: 8, maxTraceRows: 512, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, maxScanEvents: 1024, maxCandidates: 128, maxCandidateBytes: 256 * 1024, maxEvidenceRefs: 1024, maxBatchBytes: 512 * 1024, maxResultBytes: 128 * 1024, ...overrides });
+const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 2, ...overrides });
 const ctx = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase49:direct', budgetTokens: 16_000, ...overrides });
 function clock(start = '2026-07-13T08:00:00.000Z') { let now = Date.parse(start); return () => new Date(now++).toISOString(); }
 function cairn(store, promotionOverrides = {}, auditOverrides = {}) { return new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot: root('artifacts'), knowledgeAuditPolicy: auditPolicy(auditOverrides), knowledgePromotionPolicy: promotionPolicy(promotionOverrides) }); }
@@ -75,11 +75,8 @@ test('SP3/SP4: derived, cross-repo, expired, under-cited, stale-grounding, polic
   assert.equal(result.payload[0].candidates.some((row) => [under.event.seq, expired.event.seq, stale.event.seq].includes(row.sourceSeq)), false); void a;
 });
 
-test('SP6/SP8: scan, candidate, byte, evidence, batch, result, cancellation, and append failures leave no effect', async () => {
+test('SP8: cancellation and append failure leave no promotion effect', async () => {
   const make = () => { const store = new CoordinationStore(root('ceiling'), { clock: clock() }); completed(store, 'a'); completed(store, 'b'); return store; };
-  for (const [overrides, code = 'causal_promotion_oversize'] of [
-    [{ maxScanEvents: 1 }], [{ maxCandidates: 1 }], [{ maxCandidateBytes: 1 }], [{ maxEvidenceRefs: 1 }], [{ maxBatchBytes: 64 }], [{ maxResultBytes: 64 }],
-  ]) { const store = make(); const before = store.snapshot().lastSeq; await assert.rejects(cairn(store, overrides).invoke('causal.promote', { observedSeq: before }, ctx()), (error) => error.code === code); assert.equal(store.snapshot().lastSeq, before); }
   const cancelled = make(); const abort = new AbortController(); abort.abort(); const cancelBefore = cancelled.snapshot().lastSeq; await assert.rejects(cairn(cancelled).invoke('causal.promote', { observedSeq: cancelBefore }, ctx({ signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal(cancelled.snapshot().lastSeq, cancelBefore);
   const failed = make(); const failedBefore = failed.snapshot().lastSeq; failed._appendFile = () => { throw new Error('disk full'); }; await assert.rejects(cairn(failed).invoke('causal.promote', { observedSeq: failedBefore }, ctx()), /disk full/); assert.equal(failed.snapshot().lastSeq, failedBefore);
 });

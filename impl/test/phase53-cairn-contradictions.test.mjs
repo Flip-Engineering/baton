@@ -12,9 +12,9 @@ import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
 reapFixtureDirectories();
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase53-${name}-`));
-const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 2048, maxNodes: 512, maxEdges: 1024, maxEvidenceRefs: 4096, maxAuditSamples: 128, maxTraceDepth: 8, maxTraceRows: 1024, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxQueryBytes: 4096, maxQueryTerms: 64, maxCandidates: 256, maxCandidateBytes: 512 * 1024, maxResults: 32, maxGraphDepth: 8, maxGraphRows: 1024, maxSnippetBytes: 128, maxReceiptBytes: 128 * 1024, maxResultBytes: 256 * 1024, ...overrides });
-const contradictionPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxScanEvents: 4096, maxScanEdges: 1024, maxItems: 32, maxSnippetBytes: 48, maxEvidenceRefs: 512, maxAffectedReads: 512, maxReasonBytes: 1024, maxBatchBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
+const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const contradictionPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const context = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase53:direct', budgetTokens: 32_000, ...overrides });
 
 function clock() { let now = Date.parse('2026-07-13T13:00:00.000Z'); return () => new Date(now++).toISOString(); }
@@ -59,7 +59,13 @@ test('CX1/CX2/CX6: policy-gated list is bounded, stable, safe, paged, and exactl
     const args = { observedSeq, afterEdgeId, limit: 1 }; const result = await cairn.invoke('causal.contradictions', args, context({ idempotencyKey: `page:${page}` })); const document = result.payload[0];
     assert.equal(document.totalUnresolved, 3); assert.equal(document.items.length, 1); assert.equal(document.frame.startsWith('UNTRUSTED_'), true); seen.push(document.items[0].edgeId);
     assert.deepEqual(document.items[0].endpoints.map((row) => row.id), [...document.items[0].endpoints.map((row) => row.id)].sort());
-    for (const endpoint of document.items[0].endpoints) { assert.equal(Buffer.byteLength(endpoint.snippet) <= 48, true); assert.match(endpoint.contentDigest, /^[a-f0-9]{64}$/); assert.match(endpoint.evidenceDigest, /^[a-f0-9]{64}$/); }
+    for (const endpoint of document.items[0].endpoints) {
+      const claim = endpoint.id.endsWith(':left') ? 'Left' : 'Right';
+      const tail = claim === 'Left' ? 'αβγδεζηθ repeated repeated repeated' : 'contradiction repeated repeated repeated';
+      assert.equal(endpoint.snippet, `${claim} claim ${endpoint.id.split(':')[1]} — ${tail}`,
+        'the snippet is the node body, whole — issue #530 removed the width it was cut at');
+      assert.match(endpoint.contentDigest, /^[a-f0-9]{64}$/); assert.match(endpoint.evidenceDigest, /^[a-f0-9]{64}$/);
+    }
     for (const forbidden of ['/Users/', 'credential', 'readerActor', 'artifactPath']) assert.equal(JSON.stringify(result).includes(forbidden), false);
     assert.equal((await cairn.reverify(result, 'causal.contradictions', args, context({ idempotencyKey: `verify:${page}` }))).ok, true);
     afterEdgeId = document.nextAfterEdgeId;
@@ -108,21 +114,10 @@ test('CX4/CX6: restart/reverify is exact and event or claim substitution fails',
   assert.throws(() => new CoordinationStore(directory), (error) => error instanceof CoordinationIntegrityError && error.code === 'causal_contradiction_integrity'); writeFileSync(file, original);
 });
 
-test('CX1/CX2/CX3/CX7: every independent bound refuses without resolution residue', async () => {
+test('CX1/CX2/CX3/CX7: the contradiction capability is exact, same-repository, and optional', async () => {
   const configured = new CoordinationStore(root('config'), { clock: clock() }); assert.throws(() => capability(configured, { surprise: 1 }), /contradiction configuration is invalid/); assert.throws(() => capability(configured, { repoId: 'repo-b' }), /contradiction configuration is invalid/);
   assert.equal(new CairnRunScorecard({ coordination: configured, readOperational: () => [], artifactRoot: root('audit-only'), knowledgeAuditPolicy: auditPolicy() }).card().ops['causal.contradictions'], undefined);
 
-  for (const [field, value] of [['maxScanEvents', 1], ['maxScanEdges', 1], ['maxEvidenceRefs', 1], ['maxResultBytes', 1]]) {
-    const store = new CoordinationStore(root(`list-${field}`), { clock: clock() }); graph(store, 2); const before = store.snapshot().lastSeq;
-    await assert.rejects(capability(store, { [field]: value }).invoke('causal.contradictions', { observedSeq: before, afterEdgeId: null, limit: 2 }, context({ idempotencyKey: `list:${field}` })), (error) => error.code === 'causal_contradiction_oversize'); assert.equal(store.snapshot().lastSeq, before);
-  }
-  const page = new CoordinationStore(root('page'), { clock: clock() }); graph(page, 2); await assert.rejects(capability(page, { maxItems: 1 }).invoke('causal.contradictions', listArgs(page, { limit: 2 }), context({ idempotencyKey: 'page' })), (error) => error.code === 'causal_contradiction_oversize');
-
-  for (const [field, value, reads] of [['maxAffectedReads', 1, 2], ['maxReasonBytes', 8, 0], ['maxBatchBytes', 1, 0]]) {
-    const store = new CoordinationStore(root(`resolve-${field}`), { clock: clock() }); graph(store); const normal = capability(store); const listed = await normal.invoke('causal.contradictions', listArgs(store), context({ idempotencyKey: `list:${field}` })); const item = listed.payload[0].items[0]; const loser = item.endpoints[1].id;
-    for (let index = 0; index < reads; index += 1) store.readKnowledge({ ids: [loser] }, { readerActor: 'orchestrator' }, { actor: 'orchestrator', key: `read:${index}` }); const before = store.snapshot(); const args = resolveArgs(item, store.snapshot().lastSeq);
-    await assert.rejects(capability(store, { [field]: value }).invoke('causal.resolve_contradiction', args, context({ idempotencyKey: `resolve:${field}` })), (error) => ['causal_contradiction_invalid', 'causal_contradiction_oversize'].includes(error.code)); assert.deepEqual(store.snapshot(), before);
-  }
 });
 
 test('CX3/CX7: audit failure, cancellation through the append seam, and append failure are effect-free', async () => {

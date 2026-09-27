@@ -6927,7 +6927,7 @@ export function _validateKnowledgeEdgePayload(store, fields, event, integrity = 
 
 export function _deriveKnowledgePromotion(store, repoId, observedSeq, policy, beforeEventSeq = store._events.length + 1) {
   if (!validKnowledgePromotionPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq >= beforeEventSeq || observedSeq > store._events.length) throw new CoordinationRefusal('knowledge promotion request is invalid', 'causal_promotion_invalid');
-  if (observedSeq > policy.maxScanEvents) throw new CoordinationRefusal('knowledge promotion scan exceeded deployment ceiling', 'causal_promotion_oversize');
+  
   const prefix = store._events.slice(0, observedSeq); const nodesAtBoundary = store.queryKnowledge({ observedSeq }); const edgesAtBoundary = store.queryKnowledgeEdges({ observedSeq }); const nodeMap = new Map(nodesAtBoundary.map((node) => [node.id, node]));
   const promoted = new Set(store._events.slice(0, Math.max(0, beforeEventSeq - 1)).filter((event) => event.kind === 'knowledge.promotion_batch').flatMap((event) => event.payload?.candidates?.map((row) => `${row.sourceSeq}:${row.sourceKind}`) ?? []));
   const taskStatus = new Map(); const scratch = new Map(); const scratchReads = [];
@@ -6982,10 +6982,10 @@ export function _deriveKnowledgePromotion(store, repoId, observedSeq, policy, be
   }
   const order = (a, b) => a.sourceSeq - b.sourceSeq || compareCanonicalStrings(a.sourceKind, b.sourceKind) || compareCanonicalStrings(a.nodeId, b.nodeId); candidates.sort(order);
   const candidateOrder = new Map(candidates.map((row, index) => [row.nodeId, index])); nodes.sort((a, b) => (candidateOrder.get(a.id) ?? candidateOrder.get(a.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) - (candidateOrder.get(b.id) ?? candidateOrder.get(b.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) || compareCanonicalStrings(a.id, b.id)); edges.sort((a, b) => compareCanonicalStrings(a.id, b.id));
-  if (candidates.length > policy.maxCandidates) throw new CoordinationRefusal('knowledge promotion candidates exceeded deployment ceiling', 'causal_promotion_oversize');
+  
   const candidateBytes = candidates.reduce((sum, candidate) => sum + canonicalBytes({ candidate, nodes: nodes.filter((node) => node.id === candidate.nodeId || node.sourceSeq === candidate.sourceSeq), edges: edges.filter((edge) => edge.from === candidate.nodeId) }), 0);
   const evidenceRefs = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0);
-  if (candidateBytes > policy.maxCandidateBytes || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge promotion projection exceeded deployment ceiling', 'causal_promotion_oversize');
+  
   for (const node of nodes) if ((store._knowledgeNodeHistory.get(node.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('knowledge promotion node namespace is occupied', 'causal_promotion_conflict');
   for (const edge of edges) if ((store._knowledgeEdgeHistory.get(edge.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('knowledge promotion edge namespace is occupied', 'causal_promotion_conflict');
   return freeze({ candidates, nodes, edges, candidateBytes, evidenceRefs, projectionDigest: canonicalDigest({ candidates, nodes, edges }) });
@@ -7001,7 +7001,7 @@ export function _validateKnowledgePromotionPayload(store, payload, event, integr
   let derived; try { derived = store._deriveKnowledgePromotion(payload.repoId, payload.observedSeq, payload.policy, event.seq); } catch (error) { fail(error.message, error.code ?? 'causal_promotion_integrity'); }
   if (derived.candidates.length === 0 || canonicalDigest(payload.candidates) !== canonicalDigest(derived.candidates) || canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges) || payload.projectionDigest !== derived.projectionDigest) fail('knowledge promotion projection diverged', 'causal_promotion_integrity');
   const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
-  if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('knowledge promotion receipt is invalid or oversized', 'causal_promotion_integrity');
+  if (payload.receiptDigest !== canonicalDigest(core)) fail('knowledge promotion receipt is invalid', 'causal_promotion_integrity');
   return derived;
 }
 
@@ -7054,7 +7054,7 @@ export function _eligibleScratchOracle(store, repoId, factRow, oracleTaskId, sta
 export function _deriveScratchCorrection(store, repoId, observedSeq, policy, rawRequest, beforeEventSeq = store._events.length + 1) {
   if (!validKnowledgeScratchCorrectionPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq >= beforeEventSeq || observedSeq > store._events.length) throw new CoordinationRefusal('Scratch correction boundary or policy is invalid', 'causal_correction_invalid');
   if (store._events.slice(observedSeq, Math.max(observedSeq, beforeEventSeq - 1)).some((event) => !SCRATCH_CORRECTION_ADMIN_EVENTS.has(event.kind))) throw new CoordinationRefusal('Scratch correction boundary became stale', 'causal_correction_conflict');
-  if (observedSeq > policy.maxScanEvents) throw new CoordinationRefusal('Scratch correction scan exceeded deployment ceiling', 'causal_correction_oversize');
+  
   const request = store._scratchCorrectionRequest(rawRequest); const state = store._scratchCorrectionPrefix(observedSeq); const nodesAtBoundary = store.queryKnowledge({ observedSeq }); const edgesAtBoundary = store.queryKnowledgeEdges({ observedSeq }); const nodeMap = new Map(nodesAtBoundary.map((node) => [node.id, node]));
   const targetNodeId = request.targetNodeId ?? null; let target = null;
   if (targetNodeId) {
@@ -7066,7 +7066,7 @@ export function _deriveScratchCorrection(store, repoId, observedSeq, policy, raw
   }
   if (request.action === 'retract') {
     const affectedReadEvents = store._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(targetNodeId)).map((read) => read.eventSeq);
-    if (affectedReadEvents.length > policy.maxAffectedReads) throw new CoordinationRefusal('Scratch correction contamination exceeded deployment ceiling', 'causal_correction_oversize');
+    
     const evidenceDigest = canonicalDigest({ target, affectedReadEvents }); const projectionDigest = canonicalDigest({ action: request.action, target, nodes: [], edges: [], affectedReadEvents, evidenceDigest });
     return freeze({ request, target, nodes: [], edges: [], affectedReadEvents, evidenceRefs: 0, evidenceDigest, projectionDigest, replacement: null, oracleTaskId: null });
   }
@@ -7107,7 +7107,7 @@ export function _deriveScratchCorrection(store, repoId, observedSeq, policy, raw
   for (const node of nodes) if ((store._knowledgeNodeHistory.get(node.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('Scratch correction node namespace is occupied', 'causal_correction_conflict');
   for (const edge of edges) if ((store._knowledgeEdgeHistory.get(edge.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('Scratch correction edge namespace is occupied', 'causal_correction_conflict');
   const affectedReadEvents = target ? store._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(target.nodeId)).map((read) => read.eventSeq) : [];
-  const evidenceRefs = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0); if (affectedReadEvents.length > policy.maxAffectedReads || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('Scratch correction projection exceeded deployment ceiling', 'causal_correction_oversize');
+  const evidenceRefs = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0); 
   const evidenceDigest = canonicalDigest({ sourceEventSeq: factRow.event.seq, evidenceSeqs, target, affectedReadEvents, oracleTaskId: oracle?.taskId ?? null, producerRouteDigest: oracle?.producerRouteDigest ?? null, reviewerRouteDigest: oracle?.reviewerRouteDigest ?? null }); const projectionDigest = canonicalDigest({ action: request.action, target, nodes, edges, affectedReadEvents, evidenceDigest });
   return freeze({ request, target, nodes, edges, affectedReadEvents, evidenceRefs, evidenceDigest, projectionDigest, replacement: { nodeId: findingId, grounding }, oracleTaskId: oracle?.taskId ?? null });
 }
@@ -7120,7 +7120,7 @@ export function _validateScratchCorrectionPayload(store, payload, event, integri
   const requestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: payload.repoId, observedSeq: payload.observedSeq, policyDigest: payload.policyDigest, request: payload.request }); if (payload.requestDigest !== requestDigest) fail('Scratch correction request binding is invalid');
   let derived; try { derived = store._deriveScratchCorrection(payload.repoId, payload.observedSeq, payload.policy, payload.request, event.seq); } catch (error) { fail(error.message, error.code ?? 'causal_correction_integrity'); }
   if (canonicalDigest(payload.target) !== canonicalDigest(derived.target) || canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges) || canonicalDigest(payload.affectedReadEvents) !== canonicalDigest(derived.affectedReadEvents) || payload.evidenceDigest !== derived.evidenceDigest || payload.projectionDigest !== derived.projectionDigest) fail('Scratch correction projection diverged');
-  const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest')); if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('Scratch correction receipt is invalid or oversized'); return derived;
+  const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest')); if (payload.receiptDigest !== canonicalDigest(core)) fail('Scratch correction receipt is invalid'); return derived;
 }
 
 export function reverifyScratchCorrection(store, repoId, observedSeq, policy, actor, eventSeq, request) {
@@ -7265,10 +7265,10 @@ export function _prepareKnowledgeNode(store, fields, promotion = null, validate 
 
 export function _deriveBoundedContradictionResolution(store, repoId, observedSeq, policy, rawRequest, beforeEventSeq = store._events.length + 1) {
   if (!validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq >= beforeEventSeq || observedSeq > store._events.length) throw new CoordinationRefusal('knowledge contradiction resolution boundary is invalid', 'causal_contradiction_invalid');
-  if (observedSeq > policy.maxScanEvents) throw new CoordinationRefusal('knowledge contradiction resolution scan exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   if (store._events.slice(observedSeq, Math.max(observedSeq, beforeEventSeq - 1)).some((event) => !CONTRADICTION_ADMIN_EVENTS.has(event.kind))) throw new CoordinationRefusal('knowledge contradiction resolution boundary became stale', 'causal_contradiction_conflict');
   const request = store._contradictionResolutionRequest(rawRequest, policy); const nodes = store.queryKnowledge({ observedSeq }); const edges = store.queryKnowledgeEdges({ observedSeq });
-  if (edges.length > policy.maxScanEdges) throw new CoordinationRefusal('knowledge contradiction resolution edge scan exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   const nodeMap = new Map(nodes.map((node) => [node.id, node])); const edge = edges.find((row) => row.id === request.edgeId); const winner = nodeMap.get(request.winnerId); const loser = nodeMap.get(request.loserId);
   const preAppendNodes = new Map(store.queryKnowledge({ observedSeq: beforeEventSeq - 1 }).map((node) => [node.id, node])); const preAppendEdges = new Map(store.queryKnowledgeEdges({ observedSeq: beforeEventSeq - 1 }).map((row) => [row.id, row]));
   const currentEdge = preAppendEdges.get(request.edgeId); const currentWinner = preAppendNodes.get(request.winnerId); const currentLoser = preAppendNodes.get(request.loserId);
@@ -7277,7 +7277,7 @@ export function _deriveBoundedContradictionResolution(store, repoId, observedSeq
     || canonicalDigest(edge) !== canonicalDigest(currentEdge) || canonicalDigest(winner) !== canonicalDigest(currentWinner) || canonicalDigest(loser) !== canonicalDigest(currentLoser)) throw new CoordinationRefusal('knowledge contradiction is stale, resolved, or mismatched', 'causal_contradiction_conflict');
   if (edge.validityVersion !== request.expectedEdgeValidityVersion || winner.validityVersion !== request.expectedWinnerValidityVersion || loser.validityVersion !== request.expectedLoserValidityVersion) throw new CoordinationRefusal('knowledge contradiction versions are stale', 'causal_contradiction_conflict');
   const affectedReadEvents = store._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(loser.id)).map((read) => read.eventSeq); const evidenceRefs = (edge.evidence ?? []).length + (winner.evidence ?? []).length + (loser.evidence ?? []).length;
-  if (affectedReadEvents.length > policy.maxAffectedReads || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge contradiction resolution evidence exceeded deployment ceiling', 'causal_contradiction_oversize');
+  
   const projectionCore = {
     edgeId: edge.id, winnerId: winner.id, loserId: loser.id,
     expectedEdgeValidityVersion: edge.validityVersion, expectedWinnerValidityVersion: winner.validityVersion, expectedLoserValidityVersion: loser.validityVersion,
@@ -7299,7 +7299,7 @@ export function _validateBoundedContradictionResolutionPayload(store, payload, e
   let derived; try { derived = store._deriveBoundedContradictionResolution(payload.repoId, payload.observedSeq, payload.policy, payload.request, event.seq); } catch (error) { fail(error.message, error.code === 'causal_contradiction_oversize' ? error.code : 'causal_contradiction_integrity'); }
   if (canonicalDigest(payload.affectedReadEvents) !== canonicalDigest(derived.affectedReadEvents) || payload.projectionDigest !== derived.projectionDigest) fail('knowledge contradiction resolution projection diverged');
   const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
-  if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('knowledge contradiction resolution receipt is invalid or oversized');
+  if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core)) fail('knowledge contradiction resolution receipt is invalid');
   return derived;
 }
 
@@ -7346,7 +7346,7 @@ export function _validateKnowledgeRecallPayload(store, payload, event, integrity
     || payload.policyDigest !== canonicalDigest(payload.policy) || !/^[a-f0-9]{64}$/.test(payload.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(payload.resultProjectionDigest ?? '')
     || payload.observedSeq !== payload.query?.observedSeq || payload.asOf !== payload.query?.asOf || payload.observedAt !== store.observationTime(payload.observedSeq)) fail('knowledge recall receipt shape is invalid');
   const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
-  if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxReceiptBytes) fail('knowledge recall receipt binding is invalid');
+  if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core)) fail('knowledge recall receipt binding is invalid');
   const expectedRequestDigest = canonicalDigest({ query: payload.query, reader: { readerActor: payload.readerActor, taskId: payload.taskId ?? null, runId: payload.runId ?? null }, policyDigest: payload.policyDigest });
   if (payload.requestDigest !== expectedRequestDigest) fail('knowledge recall request identity is invalid');
   const taskId = payload.taskId ?? null; const runId = payload.runId ?? null; const task = taskId === null ? null : store._tasks.get(taskId);
@@ -7375,6 +7375,6 @@ export function _validateKnowledgeRecallAssessmentPayload(store, payload, event,
     const { assessmentDigest, ...core } = row ?? {}; if (!/^[a-f0-9]{64}$/.test(assessmentDigest ?? '') || assessmentDigest !== canonicalDigest(core)) fail('knowledge recall assessment row binding is invalid');
   }
   const { receiptDigest, ...receiptCore } = payload;
-  if (!/^[a-f0-9]{64}$/.test(receiptDigest ?? '') || receiptDigest !== canonicalDigest(receiptCore) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('knowledge recall assessment batch binding is invalid');
+  if (!/^[a-f0-9]{64}$/.test(receiptDigest ?? '') || receiptDigest !== canonicalDigest(receiptCore)) fail('knowledge recall assessment batch binding is invalid');
   return freeze({ ...clone(rebuilt), eventSeq: event.seq, receiptDigest: payload.receiptDigest });
 }

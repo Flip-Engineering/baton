@@ -157,11 +157,11 @@ const REPRESENTATION_POLICY_FIELDS = [
 ];
 
 
-// KG-3/KG-4 (v2-P1-3, P2-7). The preview policy is a two-level split so `policy.recall` stays
-// byte-exactly the 11 recall fields (accepted verbatim by validKnowledgeRecallPolicy) while
+// KG-3/KG-4 (v2-P1-3, P2-7). The preview policy is a two-level split: `policy.recall` names the
+// repository the read answers for (issue #530 removed its caller-declared ceilings), while
 // `policy.preview` carries the composite weights, byte caps, per-type auto-link thresholds, K,
-// the LRU cache bound, and the staleness age. Unlike the recall numeric guard (≤0 ⇒ invalid) the
-// composite weights admit 0 — a disabled term is legal (v2-P2-12).
+// the LRU cache bound, and the staleness age. The composite weights admit 0 — a disabled term is
+// legal (v2-P2-12).
 
 
 
@@ -2442,7 +2442,7 @@ export class CoordinationStore {
     const allowed = new Set(['text', 'types', 'grounding', 'seedNodeIds', 'limit']);
     if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !allowed.has(key))
       || typeof request.text !== 'string' || request.text.trim().length === 0 || request.text.includes('\0') || !validUnicodeScalarString(request.text)
-      || !Number.isSafeInteger(request.limit) || request.limit <= 0 || request.limit > recallPolicy.maxResults) {
+      || !Number.isSafeInteger(request.limit) || request.limit <= 0) {
       throw new CoordinationRefusal('knowledge preview request is invalid', 'causal_recall_invalid');
     }
     const terms = recallTerms(request.text);
@@ -2456,9 +2456,6 @@ export class CoordinationStore {
     const projectFence = this._knowledgeProjectFence();
     const observedAt = this.observationTime(projectFence);
     const degrade = (reason, extra = {}) => freeze({ schemaVersion: 1, repoId, projectFence, briefingUnavailable: true, reason, ...extra, nodes: [], contradictions: [] });
-    if (Buffer.byteLength(request.text) > recallPolicy.maxQueryBytes || terms.length > recallPolicy.maxQueryTerms) {
-      return degrade('causal_recall_oversize');
-    }
     // Rule 10a: pre-filter seeds against current eligibility so the body's :12876 seed gate can
     // never fire on ordinary KG churn; dropped seeds are counted, never silently discarded.
     const eligibleNodes = this.queryKnowledge({ observedSeq: projectFence, asOf: observedAt })
@@ -2482,17 +2479,14 @@ export class CoordinationStore {
       projection = this._buildKnowledgeRecall(query, recallPolicy);
     } catch (error) {
       if (!(error instanceof CoordinationRefusal) || error.code !== 'causal_recall_oversize') throw error;
-      if (!/contradiction bundle/.test(error.message)) {
-        return this._cachePreview(cacheKey, degrade('causal_recall_oversize'), previewPolicy);
-      }
-      // Rule 11a: contradiction-peel. Re-run against the maxResults ceiling with a shrinking
-      // SELECTION cap, preserving the top node + its live-Contradicts peers, until the bundle
-      // fits. Only a single-node bundle that still overflows degrades — with contradictionFlood.
-      const peelQuery = freeze({ ...query, limit: recallPolicy.maxResults });
+      // Rule 11a: contradiction-peel. The only recall ceiling left is the caller's own request
+      // limit — the bundle must fit `query.limit` — so a bundle that overflows it is re-run with a
+      // shrinking SELECTION cap, preserving the top node + its live-Contradicts peers. Only a
+      // single-node bundle that still overflows degrades, with contradictionFlood.
       let peeled = null;
       for (let selectionLimit = request.limit - 1; selectionLimit >= 1; selectionLimit -= 1) {
-        try { peeled = this._buildKnowledgeRecall(peelQuery, recallPolicy, { selectionLimit }); contradictionPeeled = request.limit - selectionLimit; break; }
-        catch (peelError) { if (!(peelError instanceof CoordinationRefusal) || peelError.code !== 'causal_recall_oversize' || !/contradiction bundle/.test(peelError.message)) throw peelError; }
+        try { peeled = this._buildKnowledgeRecall(query, recallPolicy, { selectionLimit }); contradictionPeeled = request.limit - selectionLimit; break; }
+        catch (peelError) { if (!(peelError instanceof CoordinationRefusal) || peelError.code !== 'causal_recall_oversize') throw peelError; }
       }
       if (peeled === null) {
         return this._cachePreview(cacheKey, degrade('causal_recall_oversize', { contradictionFlood: true }), previewPolicy);
@@ -2519,7 +2513,7 @@ export class CoordinationStore {
       const recency = projectFence > 0 ? Math.max(0, Math.min(1, eventSeq / projectFence)) : 0;
       const composite = previewPolicy.weightTerm * termScore + previewPolicy.weightEdgeDegree * edgeDegree
         + previewPolicy.weightEvidence * evidenceCount + previewPolicy.weightRecency * recency;
-      const confidence = full?.type === 'Finding' ? madConfidenceOf(full.body, recallPolicy.maxCandidates) : null;
+      const confidence = full?.type === 'Finding' ? madConfidenceOf(full.body) : null;
       const staleness = full ? this._knowledgeStaleness(full, projectFence, liveContradictNodeIds, liveSupersedeTargetIds, previewPolicy.staleAfterSeq) : null;
       return { ...clone(pn), composite, confidence, staleness, warning: warningIds.has(pn.id) };
     });
@@ -2607,27 +2601,23 @@ export class CoordinationStore {
   }
 
   traceKnowledgeBounded(nodeId, options = {}) {
-    const observedSeq = options.observedSeq ?? this._events.length; const maxDepth = options.maxDepth; const maxRows = options.maxRows; const maxEvidenceRefs = options.maxEvidenceRefs; const maxStateRows = options.maxStateRows; const maxNodes = options.maxNodes; const maxEdges = options.maxEdges;
-    if (typeof nodeId !== 'string' || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > this._events.length || !Number.isSafeInteger(maxDepth) || maxDepth < 0 || !Number.isSafeInteger(maxRows) || maxRows <= 0 || !Number.isSafeInteger(maxEvidenceRefs) || maxEvidenceRefs <= 0
-      || !Number.isSafeInteger(maxStateRows) || maxStateRows <= 0 || !Number.isSafeInteger(maxNodes) || maxNodes <= 0 || !Number.isSafeInteger(maxEdges) || maxEdges <= 0) throw new CoordinationRefusal('causal trace request is invalid', 'causal_trace_invalid');
-    if (this._knowledgeNodeHistory.size > maxNodes || this._knowledgeEdgeHistory.size > maxEdges || this._knowledgeNodeHistory.size + this._knowledgeEdgeHistory.size > maxStateRows) throw new CoordinationRefusal('causal trace exceeded deployment state ceiling', 'causal_trace_oversize');
+    const observedSeq = options.observedSeq ?? this._events.length;
+    if (typeof nodeId !== 'string' || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > this._events.length) throw new CoordinationRefusal('causal trace request is invalid', 'causal_trace_invalid');
     const allNodes = this.queryKnowledge({ observedSeq }); const allEdges = this.queryKnowledgeEdges({ observedSeq });
     const nodeMap = new Map(allNodes.map((node) => [node.id, node])); if (!nodeMap.has(nodeId)) throw new CoordinationRefusal(`unknown or non-current knowledge node ${nodeId}`, 'not_found');
     const causalTypes = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
     const incident = new Map(); for (const edge of allEdges.filter((row) => causalTypes.has(row.type) && nodeMap.has(row.from) && nodeMap.has(row.to)).sort((a, b) => compareCanonicalStrings(a.id, b.id))) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
-    const queue = [{ id: nodeId, depth: 0 }]; const seenNodes = new Set(); const seenEdges = new Set(); const selectedNodes = []; const selectedEdges = []; const frontier = new Set(); let evidenceRefs = 0;
-    const assertRows = () => { if (selectedNodes.length + selectedEdges.length + evidenceRefs + frontier.size > maxRows || evidenceRefs > maxEvidenceRefs) throw new CoordinationRefusal('causal trace exceeded deployment ceiling', 'causal_trace_oversize'); };
+    const queue = [{ id: nodeId, depth: 0 }]; const seenNodes = new Set(); const seenEdges = new Set(); const selectedNodes = []; const selectedEdges = []; const frontier = new Set();
     while (queue.length > 0) {
       const current = queue.shift(); if (seenNodes.has(current.id)) continue; const node = nodeMap.get(current.id); if (!node) continue;
-      seenNodes.add(current.id); frontier.delete(current.id); selectedNodes.push(node); evidenceRefs += (node.evidence?.length ?? 0); assertRows();
+      seenNodes.add(current.id); frontier.delete(current.id); selectedNodes.push(node);
       const edges = incident.get(current.id) ?? [];
-      if (current.depth >= maxDepth) { for (const edge of edges) { const next = edge.from === current.id ? edge.to : edge.from; if (!seenNodes.has(next)) frontier.add(next); } continue; }
       for (const edge of edges) {
-        if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); selectedEdges.push(edge); evidenceRefs += (edge.evidence?.length ?? 0); assertRows(); }
+        if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); selectedEdges.push(edge); }
         const next = edge.from === current.id ? edge.to : edge.from; if (!seenNodes.has(next)) queue.push({ id: next, depth: current.depth + 1 });
       }
     }
-    for (const id of seenNodes) frontier.delete(id); assertRows();
+    for (const id of seenNodes) frontier.delete(id);
     const safeNode = (node) => Object.fromEntries(['id', 'type', 'grounding', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion'].filter((key) => Object.hasOwn(node, key)).map((key) => [key, clone(node[key])]));
     const safeEdge = (edge) => Object.fromEntries(['id', 'type', 'from', 'to', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion', 'resolvedBy', 'winnerId', 'loserId'].filter((key) => Object.hasOwn(edge, key)).map((key) => [key, clone(edge[key])]));
     const evidence = [...selectedNodes, ...selectedEdges].flatMap((row) => (row.evidence ?? []).map((ref) => ({ ownerId: row.id, ...clone(ref) })));

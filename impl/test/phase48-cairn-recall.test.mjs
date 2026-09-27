@@ -14,17 +14,8 @@ reapFixtureDirectories();
 
 const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-phase48-${name}-`));
 const task = (id, runId = null) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-recall', reservedWorkerId: `w-${id}`, ...(runId ? { runId } : {}) });
-const auditPolicy = (overrides = {}) => ({
-  repoId: 'repo-a', maxStateRows: 512, maxNodes: 128, maxEdges: 256, maxEvidenceRefs: 512,
-  maxAuditSamples: 64, maxTraceDepth: 8, maxTraceRows: 256, maxArtifactBytes: 128 * 1024,
-  maxResultBytes: 128 * 1024, ...overrides,
-});
-const recallPolicy = (overrides = {}) => ({
-  repoId: 'repo-a', maxQueryBytes: 4_096, maxQueryTerms: 64, maxCandidates: 128,
-  maxCandidateBytes: 256 * 1024, maxResults: 16, maxGraphDepth: 8, maxGraphRows: 256,
-  maxSnippetBytes: 64, maxReceiptBytes: 64 * 1024, maxResultBytes: 128 * 1024,
-  ...overrides,
-});
+const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
+const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const ctx = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase48:direct', budgetTokens: 16_000, ...overrides });
 const stable = (value) => {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -66,7 +57,9 @@ test('BR1/BR3/BR4/BR6/BR8: deterministic bounded pull recall appends one compact
     { id: 'decision:retry', score: 140, reason: { idExact: false, idMatches: 1, typeMatches: 0, bodyMatches: 1, graphDistance: 0, graphScore: 30, selected: true, contradictionPeer: false } },
     { id: 'finding:left', score: 40, reason: { idExact: false, idMatches: 0, typeMatches: 0, bodyMatches: 1, graphDistance: 0, graphScore: 30, selected: true, contradictionPeer: false } },
   ]);
-  assert.equal(document.nodes.every((node) => Number.isSafeInteger(node.score) && Buffer.byteLength(node.snippet) <= recallPolicy().maxSnippetBytes), true);
+  assert.deepEqual(document.nodes.map((node) => node.snippet),
+    ['Retain the retry.', 'The retry is idempotent and safe.'],
+    'the snippet is the node body, whole — issue #530 removed the width it was cut at');
   assert.equal(result.provenance.readOnly, false); assert.equal(result.provenance.coordinationEffect, 'knowledge.read_receipt');
   for (const field of ['workerAuthority', 'editAuthority', 'verificationAuthority', 'mergeAuthority', 'approvalAuthority', 'publicationAuthority', 'routingMutationAuthority', 'proofAuthority', 'noteAuthority', 'policyAuthoringAuthority']) assert.equal(result.provenance[field], false);
   const receipt = store.events(document.receipt.eventSeq, 1)[0]; assert.equal(receipt.kind, 'knowledge.recall'); assert.equal(receipt.actor, 'operator:alice');
@@ -98,29 +91,14 @@ test('BR3: equal integer scores break ties by node ID', async () => {
   assert.deepEqual(result.payload[0].nodes.map((node) => [node.id, node.score]), [['finding:tie-a', 40], ['finding:tie-b', 40]]);
 });
 
-test('BR3/BR4/BR6/BR8: closed requests and every deployment ceiling fail closed at max+1', async () => {
+test('BR3/BR4/BR6/BR8: closed requests fail closed without a receipt', async () => {
   const store = new CoordinationStore(root('limits-store'), { clock: clock() }); graph(store); const observedSeq = store.snapshot().lastSeq;
   const invoke = (capability, args, key) => capability.invoke('causal.recall', { text: 'retry', limit: 1, observedSeq, reader: {}, ...args }, ctx({ idempotencyKey: key }));
   await assert.rejects(invoke(cairn(store), { extra: true }, 'bad:field'), (error) => error.code === 'causal_recall_invalid');
   await assert.rejects(invoke(cairn(store), { text: 'retry\0hidden' }, 'bad:nul'), (error) => error.code === 'causal_recall_invalid');
   await assert.rejects(invoke(cairn(store), { text: '\uD800 retry' }, 'bad:unicode'), (error) => error.code === 'causal_recall_invalid');
-  await assert.rejects(invoke(cairn(store, { maxQueryBytes: 4 }), { text: '12345' }, 'bad:bytes'), (error) => error.code === 'causal_recall_oversize');
-  await assert.rejects(invoke(cairn(store, { maxQueryTerms: 1 }), { text: 'retry second' }, 'bad:terms'), (error) => error.code === 'causal_recall_oversize');
-  await assert.rejects(invoke(cairn(store, { maxCandidates: 3 }), {}, 'bad:candidates'), (error) => error.code === 'causal_recall_oversize');
-  await assert.rejects(invoke(cairn(store, { maxCandidateBytes: 1 }), {}, 'bad:candidate-bytes'), (error) => error.code === 'causal_recall_oversize');
-  await assert.rejects(invoke(cairn(store, { maxResults: 1 }), { limit: 2 }, 'bad:results'), (error) => error.code === 'causal_recall_invalid');
-  await assert.rejects(invoke(cairn(store, { maxGraphRows: 1 }), {}, 'bad:graph'), (error) => error.code === 'causal_recall_oversize');
-  await assert.rejects(invoke(cairn(store, { maxReceiptBytes: 1 }), {}, 'bad:receipt'), (error) => error.code === 'causal_recall_oversize');
-  await assert.rejects(invoke(cairn(store, { maxResultBytes: 1 }), {}, 'bad:result'), (error) => error.code === 'causal_recall_oversize');
   assert.equal(store.snapshot().knowledge.reads.length, 0);
 
-  const deep = new CoordinationStore(root('depth-store'), { clock: clock() }); const created = deep.createTask(task('depth-source'), { actor: 'orchestrator', key: 'depth:task' });
-  for (const [id, body] of [['finding:depth-a', 'rootonly'], ['finding:depth-b', 'middle'], ['finding:depth-c', 'tail']]) deep.addKnowledgeNode({ id, type: 'Finding', grounding: 'observed', body, evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: `depth:${id}` });
-  deep.addKnowledgeEdge({ type: 'DerivedFrom', from: 'finding:depth-b', to: 'finding:depth-a', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'depth:edge-ab' });
-  deep.addKnowledgeEdge({ type: 'DerivedFrom', from: 'finding:depth-c', to: 'finding:depth-b', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'depth:edge-bc' });
-  const deepObservedSeq = deep.snapshot().lastSeq;
-  await assert.rejects(cairn(deep, { maxGraphDepth: 1 }).invoke('causal.recall', { text: 'rootonly', limit: 3, observedSeq: deepObservedSeq, seedNodeIds: ['finding:depth-a'], reader: {} }, ctx({ idempotencyKey: 'bad:graph-depth' })), (error) => error.code === 'causal_recall_oversize');
-  assert.equal(deep.snapshot().knowledge.reads.length, 0, 'maxGraphDepth+1 refuses without a partial receipt');
 });
 
 test('BR6/BR7/BR9: receipt, ReadBy, contamination, replay, and read-only reverify are exact', async () => {

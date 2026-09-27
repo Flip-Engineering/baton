@@ -292,11 +292,7 @@ function complete(store, id, worker) {
   }, { kind: 'Finding', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `outcome:${id}` });
 }
 
-const promotionPolicy = (overrides = {}) => ({
-  repoId: 'repo-a', minScratchReaders: 1, maxScanEvents: 1024, maxCandidates: 128,
-  maxCandidateBytes: 256 * 1024, maxEvidenceRefs: 1024, maxBatchBytes: 512 * 1024,
-  maxResultBytes: 128 * 1024, ...overrides,
-});
+const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReaders: 1, ...overrides });
 
 // The run-orchestrator lease fixture for the workflow admission gate (mirrors kg-activation).
 const lineagePolicy = Object.freeze({

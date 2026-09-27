@@ -23,11 +23,7 @@ const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskTy
 function clock(start = '2026-07-22T00:00:00.000Z') { let now = Date.parse(start); return () => new Date(now++).toISOString(); }
 const store = (name) => new CoordinationStore(root(name), { clock: clock() });
 
-const recallPolicy = (overrides = {}) => ({
-  repoId: 'repo-a', maxQueryBytes: 4_096, maxQueryTerms: 64, maxCandidates: 128,
-  maxCandidateBytes: 256 * 1024, maxResults: 16, maxGraphDepth: 8, maxGraphRows: 256,
-  maxSnippetBytes: 64, maxReceiptBytes: 64 * 1024, maxResultBytes: 128 * 1024, ...overrides,
-});
+const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const previewExtras = (overrides = {}) => ({
   weightTerm: 1, weightEdgeDegree: 1, weightEvidence: 1, weightRecency: 0,
   autoLinkThresholds: { Supports: 50, Refines: 50, Cites: 50 },
@@ -72,15 +68,16 @@ test('KG3-B: the projection is cached to the KG fence — a non-KG event does no
   assert.ok(!Object.is(third, first), 'the preview recomputes on fence advance');
 });
 
-test('KG3-C: a ceiling breach fails open with briefingUnavailable and dispatch proceeds; a caller-shape fault throws', () => {
+test('KG3-C: a contradiction flood fails open with briefingUnavailable and dispatch proceeds; a caller-shape fault throws', () => {
   const s = store('failopen'); const created = seed(s);
   finding(s, 'finding:one', 'over token', { evidence: [{ coordinationSeq: created.event.seq }] });
   finding(s, 'finding:two', 'over token two', { evidence: [{ coordinationSeq: created.event.seq }] });
-  const degraded = s.recallPreview('repo-a', { text: 'over', limit: 2 }, policy({ maxCandidates: 1 }));
+  contradiction(s, 'finding:one', 'finding:two', created.event.seq, 'contra:over');
+  const degraded = s.recallPreview('repo-a', { text: 'over', limit: 1 }, policy());
   assert.equal(degraded.briefingUnavailable, true);
   assert.equal(degraded.reason, 'causal_recall_oversize');
   assert.deepEqual(degraded.nodes, []);
-  assert.notEqual(degraded.contradictionFlood, true, 'a non-contradiction ceiling is not a flood');
+  assert.equal(degraded.contradictionFlood, true, 'a bundle that cannot fit the request limit is a flood');
   // Caller-shape faults are loud (never degraded).
   assert.throws(() => s.recallPreview('repo-a', { text: 'over', limit: 0 }, policy()), (e) => e.code === 'causal_recall_invalid');
   assert.throws(() => s.recallPreview('repo-a', { text: 'over\0hidden', limit: 2 }, policy()), (e) => e.code === 'causal_recall_invalid');
@@ -133,9 +130,9 @@ test('KG3-F: a node joined by a live Contradicts ranks first with warning:true; 
   assert.equal(winner.warning, false, 'a resolved contradiction never warns');
 });
 
-test('KG3-G: a Contradicts bundle over maxResults peels the ranked tail, still surfaces the top contradiction, and dispatch proceeds', () => {
+test('KG3-G: a Contradicts bundle over the request limit peels the ranked tail, still surfaces the top contradiction, and dispatch proceeds', () => {
   const s = store('peel'); const created = seed(s); const ev = created.event.seq;
-  // Three contradiction pairs; a/e/g match the query, b/f/h join only via the bundle. maxResults=3
+  // Three contradiction pairs; a/e/g match the query, b/f/h join only via the bundle. limit=3
   // so selecting all three tops overflows; peel to a single top preserves the top warning.
   finding(s, 'peel:a', 'peel top strong', { evidence: [{ coordinationSeq: ev }] });
   finding(s, 'finding:e', 'peel middle', { evidence: [{ coordinationSeq: ev }] });
@@ -146,7 +143,7 @@ test('KG3-G: a Contradicts bundle over maxResults peels the ranked tail, still s
   contradiction(s, 'peel:a', 'finding:b', ev, 'contra:ab');
   contradiction(s, 'finding:e', 'finding:f', ev, 'contra:ef');
   contradiction(s, 'finding:g', 'finding:h', ev, 'contra:gh');
-  const preview = s.recallPreview('repo-a', { text: 'peel', limit: 3 }, policy({ maxResults: 3 }));
+  const preview = s.recallPreview('repo-a', { text: 'peel', limit: 3 }, policy());
   assert.equal(preview.briefingUnavailable, false, 'peel keeps dispatch flowing');
   assert.ok(preview.contradictionPeeled > 0, 'the peel count is surfaced, never silent');
   assert.equal(preview.nodes[0].warning, true, 'the top contradiction still surfaces with a WARNING');

@@ -51,7 +51,9 @@ export class CoordinationRefusal extends Error {
 
 export const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
 
-export const KNOWLEDGE_CONTRADICTION_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes'];
+// Issue #530: the contradiction policy carried the same caller-declared size and count ceilings as
+// its five siblings; they are gone with every read of them. The identity is what a policy names.
+export const KNOWLEDGE_CONTRADICTION_POLICY_FIELDS = ['repoId'];
 
 export const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'acceptanceInvalidation', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
 
@@ -199,7 +201,7 @@ export function freeze(value) {
 
 export function madCanonUnit(unit) { const lower = unit.toLowerCase(); return MAD_UNIT_CANON.get(lower) ?? lower; }
 
-export function madConfidenceOf(body, maxMetrics) {
+export function madConfidenceOf(body, maxMetrics = 100_000) {
   const text = recallBody(body); const groups = new Map(); let count = 0;
   MAD_METRIC.lastIndex = 0;
   for (let match = MAD_METRIC.exec(text); match !== null; match = MAD_METRIC.exec(text)) {
@@ -257,12 +259,8 @@ export function scratchpadScopeKey(runId, scope) { return JSON.stringify([runId,
 export function sha256Bytes(value) { return createHash('sha256').update(value).digest('hex'); }
 
 export function validKnowledgeContradictionPolicy(policy) {
-  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_CONTRADICTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_CONTRADICTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.maxScanEvents <= 1_000_000 && policy.maxScanEdges <= 1_000_000 && policy.maxItems <= 100_000
-    && policy.maxSnippetBytes <= 64 * 1024 && policy.maxEvidenceRefs <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
-    && policy.maxReasonBytes <= 64 * 1024 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return !!policy && Object.keys(policy).sort().join(',') === [...KNOWLEDGE_CONTRADICTION_POLICY_FIELDS].sort().join(',')
+    && typeof policy.repoId === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId);
 }
 
 export function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
@@ -1185,7 +1183,6 @@ export function _contradictionListRequest(store, request, policy) {
   if (!validKnowledgeContradictionPolicy(policy) || !request || Object.keys(request).sort().join(',') !== fields.sort().join(',')
     || !Number.isSafeInteger(request.observedSeq) || request.observedSeq < 0 || request.observedSeq > store._events.length
     || (request.afterEdgeId !== null && !boundedText(request.afterEdgeId, 4_096)) || !Number.isSafeInteger(request.limit) || request.limit <= 0) throw new CoordinationRefusal('knowledge contradiction list request is invalid', 'causal_contradiction_invalid');
-  if (request.observedSeq > policy.maxScanEvents || request.limit > policy.maxItems) throw new CoordinationRefusal('knowledge contradiction list exceeded deployment ceiling', 'causal_contradiction_oversize');
   return freeze(clone(request));
 }
 
@@ -1197,7 +1194,7 @@ export function _contradictionResolutionRequest(request, policy) {
     || !Number.isSafeInteger(request.expectedEdgeValidityVersion) || request.expectedEdgeValidityVersion <= 0
     || !Number.isSafeInteger(request.expectedWinnerValidityVersion) || request.expectedWinnerValidityVersion <= 0
     || !Number.isSafeInteger(request.expectedLoserValidityVersion) || request.expectedLoserValidityVersion <= 0
-    || !boundedText(request.reason, policy.maxReasonBytes) || !validUnicodeScalarString(request.reason)) throw new CoordinationRefusal('knowledge contradiction resolution request is invalid', 'causal_contradiction_invalid');
+    || typeof request.reason !== 'string' || request.reason.trim().length === 0 || request.reason.includes('\0') || !validUnicodeScalarString(request.reason)) throw new CoordinationRefusal('knowledge contradiction resolution request is invalid', 'causal_contradiction_invalid');
   return freeze(clone(request));
 }
 
