@@ -41,7 +41,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONTEXT_PACKAGE_BRANCH_CEILING } from '../src/web-northbound.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import {
   DEFAULT_CONTEXT_PROGRAM_POLICY, contextSourceChunkBytes,
@@ -274,31 +273,22 @@ test('488-c2: a secret-shaped source string answers context_source_sensitive nam
     'a first-line shape is line 1 and the matched text never travels');
 });
 
-// ── 488-d: a document too large for the package refuses typed, before any effect ──────────────────
+// ── 488-d (#530): the reading leg no longer refuses a document for its branch count ───────────────
 
-test('488-d: a document whose chunks would overflow the package refuses typed before any effect', async () => {
+test('488-d (#530): the leg composes past the old branch ceiling; the transport frame is the only bound left', async () => {
   const repoRoot = checkout();
   writeDoc(repoRoot, CHUNKED_DOC, longDocText());
   writeDoc(repoRoot, SENSITIVE_DOC, sensitiveDocText());
   writeDoc(repoRoot, OVERFLOW_DOC, overflowDocText());
   const report = await recruit(join(repoRoot, 'impl'), { docs: [OVERFLOW_DOC] });
 
-  // The issue cites the chunked pair and this row names the overflowing document as well: the leg
-  // reads every member, then refuses rather than hand the port a package it would answer as a
-  // malformed request — the operator's own bound, refused BEFORE any effect.
-  assert.equal(report.receipt, null, 'nothing was admitted');
-  assert.equal(report.seatJoined, false, 'no seat joined');
+  // #530: the branch ceiling left, so the leg no longer refuses a document for the number of chunk
+  // branches it needs. This fixture's 800 KiB of citations still exceeds the deployment's transport
+  // frame — a frame bound, refused by the transport with its own code, never the leg's.
+  assert.notEqual(report.refusal?.code, 'context_source_oversize',
+    'the branch ceiling is gone: the leg composes whatever the citations need');
+  assert.equal(report.seatJoined, false, 'nothing joined');
   assert.equal(report.admittedPackages, 0, 'no package was admitted');
-  assert.equal(report.refusal?.code, 'context_source_oversize', 'the refusal is the oversize code');
-  assert.equal(report.refusal?.detail?.path, OVERFLOW_DOC, 'the refusal names the document');
-  assert.equal(report.refusal?.detail?.bound, CONTEXT_PACKAGE_BRANCH_CEILING,
-    'the refusal measures against the branch ceiling the port admits');
-  assert.equal(report.refusal?.detail?.limit, 'branches',
-    'the refusal names the bound it hit, not the byte bound it did not');
-  assert.equal(report.refusal?.detail?.rule, 'the document exceeds the context package branch ceiling',
-    'the reading leg\'s own closed rule text explains it');
-  assert.match(report.refusal.message, /recruit without --issue/u,
-    'the remedy names the reading leg the operator can drop');
 });
 
 // ── 488-e: a document with no bytes is a named gap, never a silent hole ──────────────────────────
