@@ -334,9 +334,12 @@ function admissionFixture(label) {
   const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
   const issued = store.issueRunOrchestratorLease(leaseRequest, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
   const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: `board-${label}`, title: 'do the thing' }, { actor: 'orchestrator', key: `post-${label}` });
-  const closed = store.closeBoardItem(posted.item.itemId, { actor: 'orchestrator', key: `close-${label}` });
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
+  const candidateFindingId = `finding:package-admitted:${label}`;
+  store.addKnowledgeNode({
+    id: candidateFindingId, type: 'Finding', grounding: 'observed',
+    body: 'the orchestration candidacy the admission reviews', evidence: [],
+    promotion: { kind: 'Finding', trigger: 'package.admitted' },
+  }, { actor: 'orchestrator', key: `candidacy-${label}` });
   return { store, runId, taskId, lease, candidateFindingId };
 }
 
@@ -1072,8 +1075,8 @@ test('OR-E3 [stage: receipt-ceiling-missing]: per-attempt receipt count/byte cei
 
 test('OR-E4 [stage: admission-vocabulary-unamended]: orientation.leaf_proposed admits through the orchestrator/operator gate ONLY — worker self-admission refuses', () => {
   const f = admissionFixture('e4');
-  // Control 1 (EXISTING): a board.item_closed candidate admits through the real gate.
-  f.store.admitWorkflowFinding('repo-a', f.runId, f.candidateFindingId, workflowAdmissionPolicy, { actor: 'orchestrator', key: 'or-e4-board' }, f.lease);
+  // Control 1 (EXISTING): a package.admitted candidate admits through the real gate.
+  f.store.admitWorkflowFinding('repo-a', f.runId, f.candidateFindingId, workflowAdmissionPolicy, { actor: 'orchestrator', key: 'or-e4-package' }, f.lease);
   // The orientation candidate: an observed Finding with the contract's new trigger.
   f.store.addKnowledgeNode({
     id: 'finding:orientation-leaf-1', type: 'Finding', grounding: 'observed',

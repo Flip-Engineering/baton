@@ -11,7 +11,7 @@
 // rows are green today by construction and must STAY green on the implementation (the fold's
 // "must NOT change").
 //
-// Row inventory (35 rows — 30 RED / 5 PIN):
+// Row inventory (34 rows — 30 RED / 4 PIN):
 //   A1     RED  D1 elevation                      (note+plan-only selection, coordinator.mjs:11513)
 //   A2     PIN  D1 non-doubt path byte-identical  (green today — note fact + candidacy, plan fact-null)
 //   A3     RED  D1 derived sub-cap refusal        (doubts-only starvation refuses scratchpad_partition_exhausted)
@@ -43,9 +43,8 @@
 //   K2     RED  refusals 9-code family constant   (coordinatorNs.DOUBT_REFUSAL_CODES missing)
 //   K3     RED  refusals fire typed in scenario   (coordinator.resolveDoubt missing)
 //   K4     RED  refusals the three surface-only codes fire (not_authorized / conflict / carry-conflict no-op)
-//   G1     PIN  R9 board candidacy stays note-only (green today)
 //   G2     PIN  OQ3 open doubt on the scratchpad  (green today — application.mjs:745-748)
-//   G3     PIN  D5 sweep still retires + cancels  (green today — the existing sweep behavior)
+//   G3     PIN  D5 sweep still revokes + cancels  (green today — the existing sweep behavior)
 //   G4     PIN  no localeCompare in impl/src      (green today)
 //
 // Invented surfaces (every one absent at HEAD — the first assertion on each is an `assert.ok` so
@@ -79,20 +78,10 @@
 // split is recorded below after two consecutive runs from the repo root.
 //
 // VERIFIED SPLIT — two consecutive runs from the repo root (`node --test impl/test/doubt-review.test.mjs`):
-//   run 1: tests 35 · pass 5 · fail 30 · cancelled 0 · skipped 0 · todo 0
-//   run 2: tests 35 · pass 5 · fail 30 · cancelled 0 · skipped 0 · todo 0
-//   stable — the identical 30 rows fail at their NAMED stages on both runs; the 5 PIN rows
-//   (A2, G1–G4) stay green. Failing rows, by named stage: A1 (coordinator.mjs:11513 note+plan-only
-//   selection), A3/A5 (no sub-cap prevalidation in elevateTaskScratchpad), A4 (the selection does
-//   not discriminate the doubt kind — the link's not_elevated negative control is unobservable),
-//   B1/B2/B3/B4 (no doubt event kind / coordinator.resolveDoubt missing / sweep has no doubt
-//   handling / no doubt events to replay), C1/C2 (knowledge.doubts absent, no openDoubts field),
-//   C3/C4 (application_command_unavailable), C5 (rows absent from FRAME_LIMITS), C6/C7/C8
-//   (knowledge.doubts command missing), D1–D6 (coordinator.resolveDoubt missing), E1 (no doubt_raised
-//   event kind), E2 (sweep has no doubt handling), E3 (the settle ritual's reap dispositions the
-//   doubt orchestrator_skipped at HEAD), F1 (coordinator.resolveDoubt missing), K1/K2/K3 (rows
-//   missing / coordinatorNs.DOUBT_REFUSAL_CODES absent / coordinator.resolveDoubt missing),
-//   K4 (coordinator.resolveDoubt missing — the three surface-only codes have no scenario).
+//   run 1: tests 34 · pass 34 · fail 0 · cancelled 0 · skipped 0 · todo 0
+//   run 2: tests 34 · pass 34 · fail 0 · cancelled 0 · skipped 0 · todo 0
+//   stable — every row is green at HEAD: the 30 capability rows and the 4 structural pins
+//   (A2, G2–G4); each row's named stage above is its regression identity.
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -113,11 +102,10 @@ import { bindBaton, createDriver, DEFAULT_RUN_LINEAGE_POLICY } from '../src/inde
 import { Log } from '../src/log.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 
-// Verified split (recorded after the fold — two consecutive runs from the repo root):
-//   run 1: tests 35 · pass 5 · fail 30 · cancelled 0 · skipped 0 · todo 0
-//   run 2: tests 35 · pass 5 · fail 30 · cancelled 0 · skipped 0 · todo 0
-//   deterministic — the 5 passes are exactly the PIN rows (A2, G1, G2, G3, G4); the 30 failures
-//   are the RED rows, each confirmed to fail at its NAMED stage.
+// Verified split (recorded after the coordination board was removed in #598 — two consecutive runs from the repo root):
+//   run 1: tests 34 · pass 34 · fail 0 · cancelled 0 · skipped 0 · todo 0
+//   run 2: tests 34 · pass 34 · fail 0 · cancelled 0 · skipped 0 · todo 0
+//   deterministic — the 4 pins (A2, G2, G3, G4) and the 30 capability rows all pass.
 
 const repoId = 'repo-doubt-review';
 const FIXED_TS = '2026-08-01T08:00:00.000Z';
@@ -221,7 +209,6 @@ test('A2: the non-doubt path is byte-identical to v1.0 (PIN — green today, mus
   const noteShared = shared.entries.find((entry) => entry.kind === 'note');
   assert.ok(noteShared.scratchFactId, 'the note mints a scratch fact (D4.3), unchanged');
   assert.equal(shared.entries.find((entry) => entry.kind === 'plan')?.scratchFactId ?? null, null, 'the plan carries no fact');
-  assert.equal(store.boardSnapshot(`wave-settlement:${W1}`).items.length, 1, 'the note candidacy posts');
   assert.equal(receipt.candidatesAwaitingAdmission, 1, 'candidacy count unchanged');
 });
 
@@ -432,7 +419,7 @@ test('C1: the doubt projection folds into snapshot().knowledge and the registry 
   const row = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === 'knowledge.doubts');
   assert.ok(row, 'the knowledge.doubts registry row exists');
   assert.equal(row.profile, 'kernel');
-  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded'], 'embedded-only, orchestrator-addressed (the board.claim precedent)');
+  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded'], 'embedded-only, orchestrator-addressed');
   assert.equal(row.effect, 'observe');
   assert.deepEqual([...(row.serverDerived ?? [])].sort(), ['actor', 'principalId', 'sessionId']);
 });
@@ -520,7 +507,7 @@ test('C5: the three D7 frame rows land in the ONE registry (RED — rows absent 
   assert.deepEqual(
     { ...(FRAME_LIMITS['doubt.resolution.bytes'] ?? { lane: null }), value: FRAME_LIMITS['doubt.resolution.bytes']?.value ?? null },
     DOUBT_RESOLUTION_BYTES_ROW,
-    'doubt.resolution.bytes = 4096 (bytes, admission) — derived from board.detail',
+    'doubt.resolution.bytes = 4096 (bytes, admission)',
   );
   assert.ok(8192 >= 1024 + 2048 + 4096, 'one answered record (question + context + resolution + wrappers) renders inside view.open_doubts.bytes (HOLE-1)');
 });
@@ -720,8 +707,8 @@ test('D4: a worker self-resolution never auto-closes the doubt (RED — no doubt
   const { store, coordinator } = directHarness();
   const runId = 'run:d4'; const taskId = 'task:d4'; const workerId = 'worker:d4';
   registerSteering(store, runId, W1, 'research');
-  // The member's OWN note is the self-resolution — it elevates and candidacies separately, but
-  // must never close the doubt record (OQ2: the review authority is never bypassed).
+  // The member's OWN note is the self-resolution — it elevates alongside the doubt, but must
+  // never close the doubt record (OQ2: the review authority is never bypassed).
   seedMember(store, { runId, taskId, workerId, entries: [
     { kind: 'doubt', question: 'self-resolved?', context: null },
     { kind: 'note', text: 'resolved it myself' },
@@ -730,7 +717,6 @@ test('D4: a worker self-resolution never auto-closes the doubt (RED — no doubt
   const record = store.snapshot().knowledge.doubts?.find((row) => row.question?.text === 'self-resolved?');
   assert.ok(record, 'the raised doubt record exists (stage: no doubt record to keep reviewed)');
   assert.equal(record.state, 'reviewed', 'the self-resolution note never auto-closes the doubt (OQ2)');
-  assert.equal(store.boardSnapshot(`wave-settlement:${W1}`).items.length, 1, 'the note candidacies separately, never as the doubt’s close');
 });
 
 test('D5: the resolve authority is the server-re-derived lease, never a caller field (RED — coordinator.resolveDoubt missing)', () => {
@@ -755,7 +741,7 @@ test('D5: the resolve authority is the server-re-derived lease, never a caller f
   assert.equal(forged, 'run_orchestrator_session_mismatch', 'the #73 forge class is closed — a foreign session cannot resolve');
 });
 
-test('D6: answer/dismiss mints no Finding, KG node, board item, workflow_admitted, or scratch-fact (RED — coordinator.resolveDoubt missing)', () => {
+test('D6: answer/dismiss mints no Finding, KG node, workflow_admitted, or scratch-fact (RED — coordinator.resolveDoubt missing)', () => {
   const { store, coordinator } = directHarness();
   const runId = 'run:d6'; const taskId = 'task:d6'; const workerId = 'worker:d6';
   registerSteering(store, runId, W1, 'research');
@@ -767,14 +753,11 @@ test('D6: answer/dismiss mints no Finding, KG node, board item, workflow_admitte
   const doubtId = store.events().find((event) => event.kind === 'knowledge.doubt_raised')?.payload?.doubtId ?? 'doubt:missing';
   assert.ok(coordinator.resolveDoubt, 'coordinator.resolveDoubt-missing');
   const nodesBefore = store.snapshot().knowledge.nodes.length;
-  const boardsBefore = store.events().filter((event) => event.kind === 'board.item_posted').length;
   const factsBefore = store.events().filter((event) => event.kind === 'scratch.fact_posted').length;
   coordinator.resolveDoubt(receipt.runId, doubtId, 'answered', REVIEW_SESSION, { resolution: 'the taxonomy boundary is structural' });
   const nodesAfter = store.snapshot().knowledge.nodes.length;
-  const boardsAfter = store.events().filter((event) => event.kind === 'board.item_posted').length;
   const factsAfter = store.events().filter((event) => event.kind === 'scratch.fact_posted').length;
   assert.equal(nodesAfter, nodesBefore, 'no new KG node (GT2/GT5 — a doubt answer never enters the Finding graph)');
-  assert.equal(boardsAfter, boardsBefore, 'no new board item');
   assert.equal(factsAfter, factsBefore, 'no new scratch fact');
   assert.equal(store.events().filter((event) => event.kind === 'knowledge.workflow_admitted').length, 0, 'no workflow admission');
 });
@@ -1005,21 +988,6 @@ test('K4: the three surface-only refusal codes fire in their named scenarios (RE
 // G-rows — structural pins (green today, must stay green)
 // ---------------------------------------------------------------------------
 
-test('G1: board candidacy stays note-only — a doubt never posts a board item (PIN)', () => {
-  const { store, coordinator } = directHarness();
-  const runId = 'run:g1'; const taskId = 'task:g1'; const workerId = 'worker:g1';
-  registerSteering(store, runId, W1, 'research');
-  seedMember(store, { runId, taskId, workerId, entries: [
-    { kind: 'doubt', question: 'never a candidate', context: null },
-    { kind: 'note', text: 'the only candidate' },
-  ] });
-  coordinator.settlementLease(W1, REVIEW_SESSION, { members: [runId] });
-  assert.equal(store.boardSnapshot(`wave-settlement:${W1}`).items.length, 1, 'only the note candidacies');
-  const posts = store.events().filter((event) => event.kind === 'board.item_posted' && event.payload?.board === `wave-settlement:${W1}`);
-  assert.equal(posts.length, 1, 'one candidacy post');
-  assert.ok(posts[0].idempotencyKey.includes('scratchpad-entry:'), 'the candidacy key is the note’s shared entry, never a doubtId');
-});
-
 test('G2: an open doubt is visible on the worker scratchpad projection (PIN — OQ3 split)', () => {
   const { store } = directHarness();
   const runId = 'run:g2'; const taskId = 'task:g2'; const workerId = 'worker:g2';
@@ -1030,14 +998,14 @@ test('G2: an open doubt is visible on the worker scratchpad projection (PIN — 
   assert.equal(row.content?.question, 'pre-raise open doubt', 'the doubt is visible via the scratchpad projection (the wave driver already sees it)');
 });
 
-test('G3: the sweep still retires note-candidacy board items and cancels settlement tasks (PIN)', () => {
+test('G3: the sweep still revokes the stale settlement lease and cancels the settlement task (PIN)', () => {
   const { store, coordinator } = directHarness();
   const runId = 'run:g3'; const taskId = 'task:g3'; const workerId = 'worker:g3';
   registerSteering(store, runId, W1, 'research');
-  seedMember(store, { runId, taskId, workerId, entries: [{ kind: 'note', text: 'candidate note' }] });
+  // The note is load-bearing: the settle ritual materializes the review window only for a wave
+  // that elevated a note (or raised a doubt), and this row needs that window to sweep it.
+  seedMember(store, { runId, taskId, workerId, entries: [{ kind: 'note', text: 'settled note' }] });
   coordinator.settlementLease(W1, REVIEW_SESSION, { members: [runId] });
-  const board = store.boardSnapshot(`wave-settlement:${W1}`);
-  assert.equal(board.items.length, 1, 'the note candidacy posts');
   const swept = store.sweepSettlementLeases(repoId, { maxLeases: 16, currentWaveId: 'wave:next' });
   assert.ok(swept.revoked.length >= 1, 'the sweep revokes the stale settlement lease');
   const task = store.task(`settlement-task:${W1}`);

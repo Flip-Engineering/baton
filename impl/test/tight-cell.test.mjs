@@ -21,9 +21,6 @@
 //     (application.mjs:7393-7404); `_historicalProfileView` (5680-5700) likewise.
 //   * A message record admits exactly ONE reply (parent.reply, coordinator.mjs:12511);
 //     replies are attributed `from: workerId` (12508-12511) — the per-member slots are absent.
-//   * Board grant mints are indexed by the RAW caller key (coordination-store.mjs:14992-14995)
-//     — a second different-content mint under one key refuses board_replay_conflict (ground
-//     truth 15; BW-05).
 //   * The trust gate fires per-worker when !brief.analysis && requiredEffects includes
 //     repository_edit and the fresh capture is diffless -> required_effect_absent -> policy_failure
 //     (coordinator.mjs:12839-12849,13719-13723); analysis:true is the existing TG5 hatch.
@@ -115,7 +112,6 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -165,11 +161,11 @@ function assertTokenInApplication(token, stage, note) {
 }
 
 // ---------------------------------------------------------------------------
-// Lightweight Coordinator fixture (bd3 pattern — the board-workerhalf idiom)
+// Lightweight Coordinator fixture (bd3 pattern — the coordinator-direct idiom)
 // ---------------------------------------------------------------------------
 function makeBrief(overrides = {}) {
   return {
-    goal: 'work the shared cell board', constraints: [], pathScope: ['.'],
+    goal: 'work the shared cell', constraints: [], pathScope: ['.'],
     definitionOfDone: 'reports filed', verification: { command: 'true', expectExit: 0 },
     budget: { tokens: 100000, usd: 5, wallMin: 30 }, requiredEffects: [],
     ...overrides,
@@ -259,112 +255,12 @@ function emitTurnCompleted(adapter, handle, turnEpoch = 1, output = 'final turn'
   });
 }
 
-// Worker-stream board frames (board-workerhalf pattern): the adapter injects the parsed frame kind
-// on the authenticated per-worker stream; the hub owes the closed re-validation and the typed result.
-function emitBoardClaim(adapter, handle, payload) {
-  adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'board.claim', actor: 'worker', payload,
-  });
-}
-function emitBoardReport(adapter, handle, payload) {
-  adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'board.report', actor: 'worker', payload,
-  });
-}
-
 function streamEvents(coordinator, handle, kind) {
   return coordinator._log.read(handle.id).filter((event) => event.kind === kind);
 }
 
 // ---------------------------------------------------------------------------
-// S-2 board-authority helpers (ported from board-workerhalf — used only by the
-// TC-08/TC-22 post-mint bindings so the per-worker grant mint can be driven
-// through a REAL waves.send claimGrant once the cell mint + claimGrant land).
-// ---------------------------------------------------------------------------
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
-}
-function digest(value) {
-  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-}
-
-// An orchestrator task on `runId`, a claimed worker, and an issued run-orchestrator lease;
-// returns the closed sessionAuthority proof the S-2 envelope consumes. `expiresAt` rides the
-// REAL wall clock so a post-mint run is never expired by lease-clock drift.
-function authorityOn(coordination, { runId, principalId, sessionId }) {
-  const authorityDigest = digest({ proof: `${runId}:${principalId}:${sessionId}` });
-  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
-  const taskId = `task-${runId}-${principalId}`.replaceAll(':', '-');
-  const workerId = `worker-${runId}-${principalId}`.replaceAll(':', '-');
-  coordination.createTask({
-    id: taskId, brief: { objective: `orchestrate ${runId}`, capabilities: ['baton_orchestrator'] },
-    deps: [], refines: null, relation: 'root', runId, taskType: 'general',
-    reservedWorkerId: workerId, vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
-    modelPolicy: null, effortRequested: 'max', sessionRequest: { mode: 'new' },
-  }, { actor: 'orchestrator', key: `task.created:${taskId}` });
-  const task = coordination.claimTask(taskId, workerId, 1,
-    { actor: 'orchestrator', key: `task.claimed:${taskId}` }, {
-      harnessRequested: 'kimi-code', harnessResolved: 'kimi-code@fixture',
-      modelRequested: 'kimi-code/k3', modelResolved: 'kimi-code/k3', modelObserved: 'kimi-code/k3',
-      effortRequested: 'max', effortResolved: 'max', effortObserved: 'max',
-      routeKey: '["kimi-code","fixture","kimi-code/k3","max"]',
-    }).task;
-  const identity = {
-    repoId: coordination._repoId ?? REPO, parentRunId: runId, parentTaskId: taskId,
-    parentTaskVersion: task.version, workerId, principalId, sessionId,
-    sessionAuthorityDigest: authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(identity)}`;
-  const receipt = coordination.issueRunOrchestratorLease({
-    schemaVersion: 1, repoId: coordination._repoId ?? REPO, parentTask: { id: taskId, version: task.version },
-    session: { principalId, sessionId, authorityDigest, expiresAt },
-  }, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
-  const sessionAuthority = Object.freeze({
-    schemaVersion: 1, authorityDigest, expiresAt, orchestratorLeaseId: receipt.lease.leaseId,
-  });
-  return { receipt, runId, principalId, sessionId, sessionAuthority, taskId, workerId };
-}
-
-// Steering-register a run as a wave member of the SAME wave as the cell — the cross-Run
-// relaxation the grant mint's wave-membership check requires (Decision 2).
-function bindWaveRun(fx, runId, role, waveId, principalId) {
-  fx.coordination.recordDriver('steering.registered', {
-    runId, driverKind: 'wave', actor: principalId, waveId, waveRole: role,
-  }, { actor: principalId, key: `run.steering_registered:${runId}` });
-}
-
-// An orchestrator board post through the real S-2 admission seam (also creates/keeps the
-// board→Run binding the grant's boardRunId must equal, Decision 3 step 4).
-function s2Post(fx, { board, title, runId, orch, detail = null, owner = null, evidence = [] }) {
-  return fx.coordination.admitBoardCommand({
-    sessionAuthority: orch.sessionAuthority, runId, board, item: null,
-    mutation: { kind: 'post', title, detail, owner, evidence },
-    expectedBoardFence: fx.coordination.boardFence(board),
-    idempotencyKey: `tc:post:${board}:${title}`,
-  });
-}
-
-// The waves.send claimGrant call (Decision 4) — kept UNasserted so the tight-cell rows own
-// their named stages (a shared sendGrant helper's own stage would muddy the split).
-async function sendCellGrant(fx, { runId, board, boardRunId, idem, orch, message = 'work the shared cell board' }) {
-  return fx.application.command('waves.send',
-    { runId, message, claimGrant: { boardRunId, board } },
-    { actor: `direct:${orch.principalId}`, principalId: orch.principalId, sessionId: orch.sessionId },
-    { transport: 'direct', requestId: `${idem}:req`, idempotencyKey: idem, sessionAuthority: orch.sessionAuthority })
-    .then((receipt) => ({ ok: true, receipt }), (error) => ({ ok: false, code: error?.code ?? 'thrown', error }));
-}
-
-// The durable cell grant mints (Decision 4: a cell send mints size grants under one runId).
-function mintedCellGrants(fx, { board, memberRunId }) {
-  return fx.coordination.events().filter((event) => typeof event.kind === 'string'
-    && event.kind.startsWith('board.grant_') && !event.kind.endsWith('_revoked')
-    && event.payload?.board === board && event.payload?.memberRunId === memberRunId);
-}
-
-// ---------------------------------------------------------------------------
-// Full application fixture (board-workerhalf waveFixture + goalPlanAuthority
+// Full application fixture (waveFixture + goalPlanAuthority
 // mandatory:false so snapshot().goalPlan exists and direct run.start works;
 // baton bound to a principal DISTINCT from the application planner).
 // ---------------------------------------------------------------------------
@@ -457,7 +353,7 @@ async function waveFixture({ pausable = true } = {}) {
 // `omitSeat: true` sends a genuinely seatless group so TC-02's wave_group_seat_missing refusal
 // is reachable. The caller may also name an explicit `seat` in `group`, which wins over the
 // default (no spread-order surprise).
-async function startCellRun(fx, { role = 'cell', size = 2, group = {}, objective = 'coordinate the cell through the board', idem, omitSeat = false }) {
+async function startCellRun(fx, { role = 'cell', size = 2, group = {}, objective = 'coordinate the cell', idem, omitSeat = false }) {
   const groupFields = { ...group, size };
   if (!omitSeat && !Object.hasOwn(groupFields, 'seat')) groupFields.seat = SEAT;
   return fx.application.command('waves.start',
@@ -484,7 +380,7 @@ test('TC-01 group[group-field-admission-missing]: waves.start accepts the closed
   // Ground truth for the id scheme: a member row carries the deployment's own run identity —
   // `run-<32 hex>` (swarm-runtime.mjs:580 mints it for a participant run; observed on a plain
   // member row through this same seam as `run-c7f6dbdd…`). The `run:`-prefixed ids elsewhere in
-  // this suite are caller-supplied board/authority ids, a different namespace.
+  // this suite are caller-supplied authority ids, a different namespace.
   assert.ok(/^run-[a-f0-9]{32}$/u.test(sent.receipt.members[0].runId),
     `the cell member produced one runId (got ${sent.receipt.members[0].runId})`);
 });
@@ -629,7 +525,7 @@ test('TC-20b quorum[cell-quorum-behavioral-missing]: rest/kill/degrade probes th
   // nodes[0]): worker #1 (index 0) resting does NOT settle the cell; a live worker dying while quorum is
   // reachable does NOT fail it; quorum <= survived < size mints degraded with cell.lost receipted.
   const fx = await waveFixture({ pausable: false });
-  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'coordinate the cell through the board', scope: ['.'], group: { seat: SEAT, size: 3, quorum: 2 } }] });
+  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'coordinate the cell', scope: ['.'], group: { seat: SEAT, size: 3, quorum: 2 } }] });
   const run = wave.runs.get('cell');
   assert.ok(run,
     'stage[cell-quorum-behavioral-missing]: the cell member starts ONE run (the missing capability is the size '

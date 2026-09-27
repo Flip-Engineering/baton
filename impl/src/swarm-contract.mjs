@@ -205,16 +205,6 @@ export const SWARM_KNOWLEDGE_COMMANDS = Object.freeze({
     permission: 'contribute', identityFields: Object.freeze(['runId']),
     situation: 'pin a durable fact — typed, grounded, evidence-linked — that your peers must be able to find',
   }),
-  // Run-scoped boards keep the binding law: a participant posts to and reads the board bound to
-  // its OWN run, never another seat's.
-  'run.board.post': Object.freeze({
-    permission: 'contribute', identityFields: Object.freeze(['runId']),
-    situation: 'keep one runnable item on your own run\u2019s board',
-  }),
-  'run.board.read': Object.freeze({
-    permission: 'read', identityFields: Object.freeze(['runId']),
-    situation: 'read the board bound to your own run',
-  }),
   // The scratchpad pair (#33 accessor family): working notes, shared-scope reads, and the
   // elevation of one\u2019s own entries to candidate Findings.
   'run.scratchpad.append': Object.freeze({

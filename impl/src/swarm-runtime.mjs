@@ -1416,8 +1416,6 @@ export function validateSwarmKnowledgeCommand(name, args) {
  * ONE application-side implementation each verb already has (the run.* lanes over the store). */
 const KNOWLEDGE_METHODS = Object.freeze({
   'run.knowledge.seed': 'knowledgeSeed',
-  'run.board.post': 'boardPost',
-  'run.board.read': 'boardRead',
   'run.scratchpad.append': 'scratchpadAppend',
   'run.scratchpad.read': 'scratchpadRead',
   'run.scratchpad.elevate': 'scratchpadElevate',
@@ -1897,7 +1895,7 @@ export function parseRoutingExcludeHarnesses(value) {
  * reads: the #574 re-route check must have performed a pending resume before a route reading
  * observes the fleet, and the turn-boundary reconcile walks the same worker handles the roster
  * read does. #486's rule — a route read belongs where a route is read — makes every other command
- * (`swarm.list`, the seat and knowledge reads, the board and receipt reads: all answered from the
+ * (`swarm.list`, the seat, knowledge and receipt reads: all answered from the
  * fold) run neither. A name added here must be a command whose served path really reads a route
  * row; the test that pins this is issue612-route-read-command-entry. */
 const ROUTE_READING_COMMANDS = Object.freeze(new Set(['swarm.view', 'swarm.watch', 'swarm.recruit']));
@@ -7608,7 +7606,7 @@ export class SwarmRuntime {
     if (claimLines.length > 0) blocks.push(['## Claims', ...claimLines].join('\n'));
     // Issue #503: the bridge verbs this seat holds, each with the ONE situated purpose its
     // registry row teaches — a bare verb name never taught 21 workers when to reach for a
-    // board, a scratchpad, a seeded fact, or a search (#310's rule: teach by derivation,
+    // scratchpad, a seeded fact, or a search (#310's rule: teach by derivation,
     // never by naming a field). Filtered to the seat's own grant, so the brief never teaches
     // a call the bridge would refuse.
     const collaborationLines = this._briefCollaborationLines(args.permissions);

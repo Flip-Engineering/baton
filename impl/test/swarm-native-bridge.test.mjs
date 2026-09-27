@@ -378,7 +378,7 @@ test('contract admission refuses forged identity fields and malformed args befor
     await assert.rejects(call(issued, 'swarm.update', { swarmId: 'swarm-1', event: 'swarm.contribution_recorded' }),
       (error) => error.code === 'swarm_command_invalid' && error.detail.field === 'idempotencyKey');
     await assert.rejects(call(issued, 'swarm.update', {
-      swarmId: 'swarm-1', event: 'board.item_closed', idempotencyKey: 'op-x',
+      swarmId: 'swarm-1', event: 'swarm.item_closed', idempotencyKey: 'op-x',
     }), (error) => error.code === 'swarm_command_invalid' && error.detail.field === 'event');
     // Non-contract commands are unavailable — the bridge keeps no command list of its own.
     for (const command of ['run.inspect', 'system.shutdown', 'swarm.promote']) {

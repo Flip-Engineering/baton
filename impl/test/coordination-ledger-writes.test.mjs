@@ -261,8 +261,6 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
       { packId: 'pack:x', runId: 'run:x', taskId: 'clw-a', taskVersion: 2, workerId: 'w-clw-a' },
       { actor: 'orchestrator', key: 'context.pack_granted:clw-a:pack:x' });
     assert.deepEqual([grant.result, grant.event.kind, grant.event.seq], ['granted', 'context.pack_granted', 4]);
-    assert.deepEqual(store.revokeBoardGrants({ workerId: 'w-clw-a' }, { actor: 'orchestrator', key: 'revoke-none' }),
-      { ok: true, revoked: [] });
 
     // The compaction seam: segment file, segment index, ledger rewrite, checkpoint — byte-pinned.
     store.createTask(fields('clw-c'), { actor: 'orchestrator', key: 'fixture-c' });
@@ -282,12 +280,13 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
         ['index.json', '778d58928e63d98d3a06c5264105abdae5a69ce95ba492371b5ad4abd3703763']]);
     assert.equal(sha(readFileSync(join(root, 'events.jsonl'))),
       '0baa9c18c598e1face7da42bf9e773a6d29588fdfa56f00322e383963d1927ea');
-    // Re-captured after the projection gained its surface: #66 (1e050e42) added the doubt review
-    // plane to PROJECTION_CHECKPOINT_FIELDS, so projectionShapeDigest and projectionDigest moved
-    // and the checkpoint's bytes with them. The other two digests on this line's neighbours are
-    // unchanged, which is what says the move is the projection's and not the write path's.
+    // Re-captured after the projection lost surface: #598 removed the board, so
+    // PROJECTION_CHECKPOINT_FIELDS dropped the board families and the checkpoint's bytes moved
+    // with its shape digest. #66 (1e050e42) moved the same bytes the other way when it added the
+    // doubt review plane. The other two digests on this line's neighbours are unchanged, which is
+    // what says the move is the projection's and not the write path's.
     assert.equal(sha(readFileSync(join(root, 'projection.checkpoint'))),
-      'a3c561371c766feb32f4cde09a93ec7785df5047eadc070c366b2608fa1da7b6');
+      '7ec25a2e405b6d89069d46a647b7a742ca8265123acb792ce452eea90ddd0205');
 
     assert.equal(store.releaseWriterLease({ requireOwned: true }), true);
     assert.equal(existsSync(join(root, 'writer.lease')), false);

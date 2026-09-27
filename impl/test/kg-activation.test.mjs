@@ -25,6 +25,7 @@ import test from 'node:test';
 import { renderBrief, MockAdapter } from '../src/adapter.mjs';
 import { buildKnowledgeSlice, createBrief } from '../src/messages.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
@@ -68,16 +69,53 @@ function freshStore(label, opts = {}) {
   return new CoordinationStore(dir(label), { repoId, clock: () => '2026-07-22T08:00:00.000Z', ...opts });
 }
 
+// The Context Program authority a package admission needs — the store opts plus the branch shape
+// the admission consumes (kg12-decisions' Part C fixture writes the same rows).
+const packageAuthority = Object.freeze({
+  deploymentBaseSha: '1'.repeat(40),
+  contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
+  contextEnvironmentDigest: '2'.repeat(64),
+  contextReferenceIdentity: '3'.repeat(64),
+  contextReferenceRead: () => { throw Object.assign(new Error('unused in this suite'), { code: 'context_artifact_unavailable' }); },
+  contextSourceAttest: () => { throw new Error('not used in this suite'); },
+});
+
+function valueRefBranch(name, store, seed = name) {
+  const artifactDigest = digest({ a: seed });
+  const schemaId = `schema:${digest({ s: seed })}`;
+  const valueDigest = digest({ v: seed });
+  const lineageDigest = digest({ l: seed });
+  const artifactId = `artifact:${seed}`;
+  store._artifacts.set(artifactId, { id: artifactId, digest: artifactDigest });
+  const valueId = `pvalue:${digest({ artifactDigest, schemaId, valueDigest, lineageDigest })}`;
+  return {
+    name, source: null, artifact: null, schema: null,
+    valueRef: { kind: 'value_ref', valueId, artifactId, artifactDigest, schemaId, valueDigest, lineageDigest },
+  };
+}
+
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });
 const workflowAdmissionPolicy = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
 
-// A coordinator + its store, with a board-close candidate Finding and an active run-orchestrator
-// lease bound to it — the same shape kg12-decisions-red's settleFixture builds, exposed here so the
+// A context-package admission mints the `observed` package Finding the admit gate consumes — the
+// candidate path both fixtures below mint from.
+function admitCandidate(store, runId, label) {
+  const admitted = store.admitContextPackage({
+    schemaVersion: 1, kind: 'baton.context_package',
+    branches: [valueRefBranch('candidate', store, label)],
+    provenance: { runId, principalId: `principal-${label}` },
+    policyDigest: DEFAULT_CONTEXT_PROGRAM_POLICY.policyDigest,
+  }, auth(`admit-${label}`));
+  return `finding:package:${admitted.package.packageDigest}`;
+}
+
+// A coordinator + its store, with a package-admit candidate Finding and an active run-orchestrator
+// lease bound to it — the same shape kg12-decisions' settleFixture builds, exposed here so the
 // activation suite can both read the candidacy queue AND drive the admit gate on one fixture.
 function candidateFixture(label, opts = {}) {
-  const store = freshStore(label, { runLineagePolicy: lineagePolicy, ...opts });
+  const store = freshStore(label, { runLineagePolicy: lineagePolicy, ...packageAuthority, ...opts });
   const runId = `run-${label}`;
   const taskId = `task-${label}`;
   const workerId = `worker-${label}`;
@@ -106,9 +144,7 @@ function candidateFixture(label, opts = {}) {
   const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
   const issued = store.issueRunOrchestratorLease(leaseRequest, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
   const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: `board-${label}`, title: 'do the thing' }, auth(`post-${label}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`close-${label}`));
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
+  const candidateFindingId = admitCandidate(store, runId, label);
   return { store, runId, taskId, lease, candidateFindingId };
 }
 
@@ -117,7 +153,7 @@ function candidateFixture(label, opts = {}) {
 function coordinatorFixture(label, { withCandidate = false } = {}) {
   const d = dir(label);
   const log = new Log(join(d, 'log'));
-  const coordination = new CoordinationStore(join(d, 'coord'), { repoId, clock: () => '2026-07-22T08:00:00.000Z', runLineagePolicy: lineagePolicy });
+  const coordination = new CoordinationStore(join(d, 'coord'), { repoId, clock: () => '2026-07-22T08:00:00.000Z', runLineagePolicy: lineagePolicy, ...packageAuthority });
   const fences = new FenceTable();
   const coordinator = new Coordinator({
     log, coordination, fences, adapters: {},
@@ -159,9 +195,7 @@ function coordinatorFixture(label, { withCandidate = false } = {}) {
     const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
     const issued = coordination.issueRunOrchestratorLease(leaseRequest, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
     const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-    const posted = coordination.postBoardItem({ board: `board-${label}`, title: 'do the thing' }, auth(`post-${label}`));
-    const closed = coordination.closeBoardItem(posted.item.itemId, auth(`close-${label}`));
-    setup = { runId, lease, candidateFindingId: `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}` };
+    setup = { runId, lease, candidateFindingId: admitCandidate(coordination, runId, label) };
   }
   return { coordinator, coordination, setup };
 }
@@ -264,7 +298,6 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   const s = freshStore('queue', { clock: clockMs() });
   // A task node grounds the verification-class candidate (verified_task_outcome binds its task).
   s.addKnowledgeNode({ id: 'task:t-ver', type: 'Task', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-task' });
-  s.addKnowledgeNode({ id: 'finding:board-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'board.item_closed' } }, { actor: 'policy', key: 'kn-board' });
   s.addKnowledgeNode({ id: 'finding:pkg-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'package.admitted' } }, { actor: 'policy', key: 'kn-pkg' });
   s.addKnowledgeNode({ id: 'finding:scratch-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' } }, { actor: 'policy', key: 'kn-scratch' });
   s.addKnowledgeNode({ id: 'finding:ver-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'verified_task_outcome' }, taskId: 't-ver' }, { actor: 'policy', key: 'kn-ver' });
@@ -272,9 +305,9 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   const q = s.knowledgeCandidateQueue({ now });
   assert.ok(Array.isArray(q.candidates));
   const sources = q.candidates.map((c) => c.source).sort();
-  assert.deepEqual(sources, ['board_close', 'package_admit', 'scratchpad_settle', 'verification'], 'each source kind appears with its canonical label');
+  assert.deepEqual(sources, ['package_admit', 'scratchpad_settle', 'verification'], 'each source kind appears with its canonical label');
   for (const c of q.candidates) {
-    assert.ok(['board_close', 'package_admit', 'scratchpad_settle', 'verification'].includes(c.source));
+    assert.ok(['package_admit', 'scratchpad_settle', 'verification'].includes(c.source));
     assert.equal(typeof c.id, 'string');
     assert.equal(typeof c.type, 'string');
     assert.ok(Number.isFinite(c.ageMs) && c.ageMs >= 0, 'ageMs is a non-negative millisecond age');
@@ -291,7 +324,7 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   // Admitting one candidate removes EXACTLY that candidate; the rest remain.
   const f = candidateFixture('admit-remove');
   const before = f.store.knowledgeCandidateQueue({ now });
-  assert.ok(before.candidates.some((c) => c.id === f.candidateFindingId), 'the board-close candidate is queued before admit');
+  assert.ok(before.candidates.some((c) => c.id === f.candidateFindingId), 'the package-admit candidate is queued before admit');
   f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('admit-a2'), f.lease);
   const after = f.store.knowledgeCandidateQueue({ now });
   assert.equal(after.candidates.some((c) => c.id === f.candidateFindingId), false, 'admit removes exactly that candidate');
@@ -302,7 +335,7 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   const s2 = freshStore('cap');
   s2.addKnowledgeNode({ id: 'task:t-cap', type: 'Task', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-cap-task' });
   for (let i = 0; i < 24; i += 1) {
-    s2.addKnowledgeNode({ id: `finding:cap-${i}`, type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'board.item_closed' } }, { actor: 'policy', key: `kn-cap-${i}` });
+    s2.addKnowledgeNode({ id: `finding:cap-${i}`, type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'package.admitted' } }, { actor: 'policy', key: `kn-cap-${i}` });
   }
   const capped = s2.knowledgeCandidateQueue({ now });
   assert.ok(capped.candidates.length <= 16, 'the queue is bounded');
@@ -321,7 +354,7 @@ test('KG-A3: the ritual projection carries candidacy counts; a zero-candidate ru
   // Minting candidates moves the count; admitting moves admittedThisRun up and candidates down.
   const f = candidateFixture('ritual');
   const r0 = f.store.knowledgeRitual(f.runId, { now });
-  assert.equal(r0.candidates, 1, 'the pending board-close candidate is counted');
+  assert.equal(r0.candidates, 1, 'the pending package-admit candidate is counted');
   assert.equal(r0.admittedThisRun, 0);
   f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('admit-a3'), f.lease);
   const r1 = f.store.knowledgeRitual(f.runId, { now });

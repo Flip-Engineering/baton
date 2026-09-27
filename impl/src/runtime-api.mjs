@@ -134,7 +134,7 @@ export async function _claimLivenessPreflight(coordinator, handle, task, record)
     // CP3 + CP4: scan the worker's OWN stream inside the pause epoch for the CLOSED counted set.
     // Every class is a hub-receipted ok:true, a governance/watchdog-observed worker content event,
     // or a resolution minted inside the window. Failed receipts, pending interactions, lifecycle
-    // markers, board.claim_result and capability_op (CP7) never count; stale-epoch events never
+    // markers and capability_op (CP7) never count; stale-epoch events never
     // count (CP4's anti-stale law).
     //
     // Epoch spaces: worker-stream events (tool_calls, messages, provider_calls, hub receipts) are

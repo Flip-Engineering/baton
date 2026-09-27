@@ -94,10 +94,8 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
   '_providerSequences', '_providerSourceHealth', '_contextSessions', '_contextCells',
   '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
-  '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
-  '_boardReports', '_boardFences', '_boardRunBindings',
-  // Epic #78: replay-derived worker grant state and per-worker generation records.
-  '_boardGrants', '_boardGrantMints', '_workerGenerations',
+  // Epic #78: the per-worker generation records a replacement generation corrects (last write wins).
+  '_workerGenerations',
   '_contextPackages', '_contextPackageAttachments',
   // BD3-B context packs (server-owned supersession chain per family) and BD3-A read audit.
   '_contextPacks', '_contextPackHeads', '_contextReads',
@@ -931,27 +929,9 @@ export function _scratchpadResolveForWorker(state, runId, workerId, entryId, ent
   return row;
 }
 
-/** Moved from `CoordinationStore.boardFence` (issue #259 slice 1). State: `this._boardFences`, passed explicitly. */
-export function boardFence(state, board) {
-  return state.get(board) ?? 0;
-}
-
 /** Moved from `CoordinationStore.eventFence` (issue #259 slice 1). State: `this._events`, passed explicitly. */
 export function eventFence(state) {
   return state.length;
-}
-
-/** Moved from `CoordinationStore.boardItem` (issue #259 slice 1). State: `this._boardItems`, passed explicitly. */
-export function boardItem(state, itemId) { return clone(state.get(itemId) ?? null); }
-
-/** Moved from `CoordinationStore.boardItemVersions` (issue #259 slice 1). State: `this._boardItemHistory`, passed explicitly. */
-export function boardItemVersions(state, itemId) { return (state.get(itemId) ?? []).map(clone); }
-
-/** Moved from `CoordinationStore.boardGrant` (issue #259 slice 1). State: `this._boardGrants`, passed explicitly. */
-export function boardGrant(state, grantId) {
-  if (typeof grantId !== 'string' || grantId.length === 0) return null;
-  const grant = state.get(grantId) ?? null;
-  return grant ? clone(grant) : null;
 }
 
 /** Moved from `CoordinationStore.workerGeneration` (issue #259 slice 1). State: `this._workerGenerations`, passed explicitly. */
@@ -978,45 +958,6 @@ export function _waveMembershipOf(state, runId) {
     }
   }
   return null;
-}
-
-/** Moved from `CoordinationStore._sortedBoardItems` (issue #259 slice 1). State: the store, passed explicitly. */
-export function _sortedBoardItems(store, board) {
-  const ids = store._boardItemsByBoard.get(board) ?? [];
-  const items = ids.map((id) => store._boardItems.get(id)).filter(Boolean);
-  return items.sort((left, right) => (
-    left.ordinal === right.ordinal
-      ? (left.itemId < right.itemId ? -1 : left.itemId > right.itemId ? 1 : 0)
-      : left.ordinal - right.ordinal
-  ));
-}
-
-/** Moved from `CoordinationStore._boardGrantItemRow` (issue #259 slice 1). State: `this._boardClaims`, passed explicitly. */
-export function _boardGrantItemRow(state, item, frame) {
-  const claim = state.get(item.itemId) ?? null;
-  const active = !!(claim && claim.active);
-  const status = item.state === 'open' ? (active ? 'claimed' : 'open') : item.state;
-  return {
-    itemId: item.itemId, itemVersion: item.itemVersion, board: item.board,
-    title: item.title, detail: item.detail, state: item.state, status,
-    owner: item.owner ?? null, ordinal: item.ordinal, itemDigest: item.itemDigest,
-    evidence: item.evidence,
-    claim: active ? {
-      itemId: claim.itemId, itemVersion: claim.itemVersion, boardFence: claim.boardFence,
-      claimVersion: claim.version, ownerWorkerId: claim.owner, ownerTaskId: claim.ownerTask ?? null,
-      grantDigest: claim.grantDigest ?? null, createdEvent: claim.createdEvent, active: true,
-    } : null,
-  };
-}
-
-/** Moved from `CoordinationStore._boardGrantReportRow` (issue #259 slice 1). Reads no store state. */
-export function _boardGrantReportRow(report, frame) {
-  return {
-    itemId: report.itemId, itemVersion: report.itemVersion, itemDigest: report.itemDigest,
-    claimVersion: report.claimVersion ?? null, ownerWorkerId: report.owner,
-    ownerTaskId: report.ownerTask ?? null, grantDigest: report.grantDigest ?? null,
-    body: report.body, eventSeq: report.eventSeq,
-  };
 }
 
 /** Moved from `CoordinationStore.bindingFence` (issue #259 slice 1). State: `this._replBindingFences`, passed explicitly. */
@@ -1133,7 +1074,6 @@ export function recallAssessments(store, { nodeId = null, taskId = null, observe
 /** Moved from `CoordinationStore.KNOWLEDGE_CANDIDATE_TRIGGERS` (issue #259 slice 1). Reads no store state. */
 export function KNOWLEDGE_CANDIDATE_TRIGGERS() {
   return Object.freeze({
-    'board.item_closed': 'board_close',
     'package.admitted': 'package_admit',
     'scratch.cited_observed': 'scratchpad_settle',
     'verified_task_outcome': 'verification',

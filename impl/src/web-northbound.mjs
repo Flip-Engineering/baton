@@ -80,7 +80,7 @@ const WAVE_WEB_ENTRIES = Object.freeze([
 // direct ports beside the wave verbs — the MCP web-bridge facade (mcp-web-bridge.mjs
 // ORDINARY_COMMANDS) requires them on the resident's advertised card, and the application
 // dispatch already exists (application.mjs's messageSend/attentionWatch/scratchpadRead/
-// boardPost/knowledgeSeed seam). Without these rows ANY real resident's card fails the facade
+// knowledgeSeed seam). Without these rows ANY real resident's card fails the facade
 // constructor ('Baton Web application facade is invalid') — the bridge was unreachable against
 // real deployments. Capabilities mirror the semantics registry's classes per verb.
 const WORKFLOW_WEB_ENTRIES = Object.freeze([
@@ -89,8 +89,6 @@ const WORKFLOW_WEB_ENTRIES = Object.freeze([
   ['run_attention_watch', 'run.attention.watch', Object.freeze(['observe'])],
   ['run_scratchpad_read', 'run.scratchpad.read', Object.freeze(['observe'])],
   ['run_scratchpad_elevate', 'run.scratchpad.elevate', Object.freeze(['control', 'observe'])],
-  ['run_board_post', 'run.board.post', Object.freeze(['control', 'observe'])],
-  ['run_board_read', 'run.board.read', Object.freeze(['observe'])],
   ['run_knowledge_seed', 'run.knowledge.seed', Object.freeze(['control', 'observe'])],
   // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's web-bus admission.
   // Issue #566: the registry rows claim 'web' beside this admission — the CLI dispatch
@@ -294,7 +292,6 @@ const READ_ONLY_COMMANDS = new Set([
   'run_message_receipt', 'run.message.receipt',
   'run_attention_watch', 'run.attention.watch',
   'run_scratchpad_read', 'run.scratchpad.read',
-  'run_board_read', 'run.board.read',
 ]);
 const BOUNDED_OBSERVATION_AUDITS = new Set([
   'command_replayed', 'action_authority_read', 'operator_read_authorized',
@@ -888,7 +885,6 @@ const COACHING_LANE_FIELD = Object.freeze({
   'wave.member.objective': 'objective',
   'orientation.note': 'note',
   'steering.focus': 'focus',
-  'board.report.body': 'body',
   'run.legacy_send.body': 'body',
   'decision.text': 'decision.text',
   'scratchpad.entry.body': 'body',
@@ -900,7 +896,6 @@ const COACHING_CODE_FIELD = Object.freeze({
   spill_body_exceeded: 'objective',
   orientation_note_exceeded: 'note',
   steering_focus_exceeded: 'focus',
-  board_report_exceeded: 'body',
   run_legacy_send_exceeded: 'body',
   decision_text_exceeded: 'decision.text',
   scratchpad_entry_exceeded: 'body',

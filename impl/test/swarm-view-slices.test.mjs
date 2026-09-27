@@ -184,8 +184,6 @@ test('updates names the kinds this caller may send with the permission that admi
     // The knowledge verbs (#318), in the participant table's order, each with its admitting
     // permission — read verbs for a reader, write verbs only where contribute is granted.
     { command: 'run.knowledge.seed', permission: 'contribute' },
-    { command: 'run.board.post', permission: 'contribute' },
-    { command: 'run.board.read', permission: 'read' },
     { command: 'run.scratchpad.append', permission: 'contribute' },
     { command: 'run.scratchpad.read', permission: 'read' },
     { command: 'run.scratchpad.elevate', permission: 'contribute' },
@@ -211,7 +209,6 @@ test('updates names the kinds this caller may send with the permission that admi
     // arrival is an honest self-report, so `swarm.proposal_updated` is advertised at read.
     { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.participant_left', permission: 'read' },
-    { command: 'run.board.read', permission: 'read' },
     { command: 'run.scratchpad.read', permission: 'read' },
     { command: 'evidence.search', permission: 'read' },
   ],

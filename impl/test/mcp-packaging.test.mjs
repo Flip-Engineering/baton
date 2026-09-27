@@ -252,12 +252,12 @@ test('MP7: the four settlement tools register on MCP and promote requires the se
   }
   const noEnvelope = await call(server, 3, 'baton_knowledge_promote', {
     repoId: REPO_ID, idempotencyKey: 'mp7-promote',
-    runId: 'run-a', candidateFindingId: 'finding:board-close:x:1',
+    runId: 'run-a', candidateFindingId: 'finding:package-admitted:x:1',
     policy: { repoId: REPO_ID, maxBatchBytes: 1024, maxResultBytes: 1024 },
     lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
   });
   assert.equal(noEnvelope.result.isError, true);
-  assert.match(resultText(noEnvelope), /lease|authority|required/, 'the envelope is required, exactly as S-2 made it for board commands');
+  assert.match(resultText(noEnvelope), /lease|authority|required/, 'the envelope is required, exactly as S-2 made it for settlement commands');
 });
 
 test('MP8: a REPLAYED admission with a foreign session refuses the session code (session gate precedes replay)', async () => {
@@ -303,10 +303,12 @@ test('MP8: a REPLAYED admission with a foreign session refuses the session code 
     { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
   );
   const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: 'wave-settlement:wave:mp8', title: 't', detail: 'd' },
-    { actor: 'orchestrator', key: 'board.candidacy:mp8:1' });
-  const closed = store.closeBoardItem(posted.item.itemId, { actor: 'orchestrator', key: 'board.candidacy.close:mp8:1' });
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
+  const candidateFindingId = 'finding:package-admitted:mp8';
+  store.addKnowledgeNode({
+    id: candidateFindingId, type: 'Finding', grounding: 'observed',
+    body: 'the wave candidacy the admission reviews', evidence: [],
+    promotion: { kind: 'Finding', trigger: 'package.admitted' },
+  }, { actor: 'orchestrator', key: 'candidacy:mp8' });
   const policy = Object.freeze({ repoId: REPO_ID, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
   const first = store.admitWorkflowFinding(REPO_ID, 'run-settlement:wave:mp8', candidateFindingId, policy,
     { actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`, principalId: sessionA.principalId, sessionId: sessionA.sessionId, sessionAuthorityDigest: sessionA.authorityDigest },

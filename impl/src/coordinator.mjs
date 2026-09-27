@@ -226,9 +226,6 @@ export class ReviewSelectionError extends Error {
  * only, never body content (AS-4). */
 
 
-// KG settlement candidacy title (authority §3): the worker note's first 120 BYTES with C0/C1
-// control characters stripped -- a bounded, injection-safe head for the board's UNTRUSTED item.
-// The FULL note text rides the item detail; this is only the display head.
 
 
 
@@ -1061,9 +1058,7 @@ export class Coordinator {
    * Part B rule 5. Scratch-only, fence-filtered claim invalidation. NOT `_expireScratchClaims`'s
    * unconditional sweep (that is the provider-FAILURE behavior at `_failProviderResult`) and NOT
    * `claimScratch` (the worker-authored re-entry point, whose `expectedFence` CAS has no meaning
-   * for policy-driven expiry). Board claims are deliberately absent: their CAS carries a
-   * BOARD-scoped fence (`coordination-store.mjs` `boardFence(item.board)`), never the worker turn
-   * fence `bumpTurn` just advanced — fence-filtering them off the turn fence is a category error.
+   * for policy-driven expiry).
    */
     _expirePreNudgeScratchClaims(handle, task, newFence) {
     return runtimeObservation._expirePreNudgeScratchClaims(this, this._recorder, handle, task, newFence);
@@ -4144,12 +4139,6 @@ export class Coordinator {
     return runtimeObservation._expireScratchClaims(this, this._recorder, handle, task, reason);
   }
 
-  /** REFLEX-2: reap a dead worker's board claims verbatim to the scratch death lifecycle so an
-   * item never wedges in `claimed`. Driven from the SAME terminal hooks as _expireScratchClaims;
-   * a version-CAS expiry returns the item to claimable (F8, rule 4). */
-    _expireBoardClaims(handle, task, reason) {
-    return runtimeObservation._expireBoardClaims(this, this._recorder, handle, task, reason);
-  }
 
   async _preserveProgressBeforeReap(handle, task, stopEvent, enabled = true) {
     return runtimeRecovery._preserveProgressBeforeReap(this, this._recorder, handle, task, stopEvent, enabled);
@@ -5312,7 +5301,7 @@ export class Coordinator {
     return runtimeObservation._answerContextRead(this, this._recorder, handle, task, query, runId);
   }
 
-  /** The closed read-port response renderer. Bounded per kind (≤8 findings, ≤64 board/scratchpad
+  /** The closed read-port response renderer. Bounded per kind (≤8 findings, ≤64 scratchpad
    * rows), every model-authored leaf is UNTRUSTED-framed, and an oversize result degrades to a
    * digest citation (never raw overflow). This renderer is the ONLY path — the delivered frame
    * and the context.read_result receipt share the same rendered object. */
@@ -5694,42 +5683,6 @@ export class Coordinator {
     return runtimeObservation.readScratch(this, this._recorder, workerId, resource, envRef, opts);
   }
 
-  // ---- REFLEX-2 boards: S-2 v2 routes every transported/facade command through one admission. ----
-    acquireBoardLease(fields, opts = {}) {
-    return runtimeObservation.acquireBoardLease(this, this._recorder, fields, opts);
-  }
-
-    admitBoardCommand(envelope) {
-    return runtimeAdmission.admitBoardCommand(this, this._recorder, envelope);
-  }
-
-  // ---- REFLEX-2 boards: worker traffic (claim/report). The claim CAS carries a BOARD-scoped
-  // fence (fields.expectedBoardFence), never the worker turn fence — the claimScratch trap (F9). ----
-    requestBoardClaim(workerId, fields, opts = {}) {
-    return runtimeObservation.requestBoardClaim(this, this._recorder, workerId, fields, opts);
-  }
-
-    submitBoardReport(workerId, fields, opts = {}) {
-    return runtimeObservation.submitBoardReport(this, this._recorder, workerId, fields, opts);
-  }
-
-  // ---- Epic #78 (board worker-half): the ONE live worker path into the kernel seam. All
-  // adapters reach requestBoardClaim/submitBoardReport through admitWorkerBoardCommand — the
-  // direct store methods confer no transported authority (Decision 3). ----
-
-    admitWorkerBoardCommand(kind, workerId, payload) {
-    return runtimeAdmission.admitWorkerBoardCommand(this, this._recorder, kind, workerId, payload);
-  }
-
-  /** Decision 2: the waves.send claim-grant mint. The caller names no grantee and no
-   * permissions; the hub resolves the target member Run server-side, derives the member
-   * coordinates from the live handle + durable task + generation record, selects the
-   * orchestrator-recorded permission subset from the member's wave role, and passes the S-2
-   * session authority through the store's mint (which proves the lease and the board binding). */
-    mintMemberBoardGrant(runId, { board, boardRunId, sessionAuthority, idempotencyKey, actor }) {
-    return runtimeObservation.mintMemberBoardGrant(this, this._recorder, runId, { board, boardRunId, sessionAuthority, idempotencyKey, actor });
-  }
-
   // #286 G-31/G-45: BOTH readers take the CURRENT binding from the store's `_waveBindings` fold —
   // one reading of an append-only log's current state, last write wins (coordination-internals
   // states the law). Scanning for the first `steering.registered` for the run answered with the
@@ -5748,25 +5701,7 @@ export class Coordinator {
     return runtimeObservation.recordWorkerGeneration(this, this._recorder, handle);
   }
 
-  /** Decision 8: a terminal lifecycle transition revokes every grant the member holds. Runs in
-   * the SAME terminal hook as _expireBoardClaims so a new generation cannot reuse a revoked
-   * grant and replay cannot resurrect it. */
-  _revokeMemberGrants(handle, task, reason) {
-    if (!this._coordination || typeof this._coordination.activeBoardGrants !== 'function' || !task) return;
-    const workerId = handle?.id ?? task.assignee ?? null;
-    if (!workerId) return;
-    const grantIds = this._coordination.activeBoardGrants({ workerId, taskId: task.id })
-      .map((grant) => grant.grantId);
-    if (grantIds.length === 0) return;
-    this._bestEffortSync(
-      () => this._coordination.revokeBoardGrants({ workerId, taskId: task.id, cause: reason }, {
-        actor: 'policy', key: `board.grant_revoked:${workerId}:${task.id}:${reason}`,
-      }),
-      'board_grant_revoke_audit',
-    );
-  }
-
-  // REPL-1 rule 7: worker-scope ReplManifest admission. Sibling of requestBoardClaim — the wrapper
+  // REPL-1 rule 7: worker-scope ReplManifest admission — the wrapper
   // derives principalId/repoId/runId from the worker handle's task and threads them alongside
   // {actor, key}; replRole passes through unaltered (digest-covered) and the store verifies
   // replRole === 'worker:' + auth.principalId, so a worker can only admit into its own layer.
@@ -5777,8 +5712,8 @@ export class Coordinator {
   // KG-2 Part D rule 16: the settle-time orchestrator-admit gate. This entry point accepts no
   // opts.actor at all — hardcoded to 'orchestrator' (mirroring the actor: 'policy' precedent at
   // :5574/:10258, but for the promotionActor-gated orchestrator/operator authority tier instead).
-  // repoId is resolved from the coordinator's own deployment authority (rule 12: neither board
-  // items nor packages carry repoId). The caller supplies the active run-orchestrator lease;
+  // repoId is resolved from the coordinator's own deployment authority (rule 12: packages do not
+  // carry repoId). The caller supplies the active run-orchestrator lease;
   // ordering (rule 16b) is the caller's responsibility — this call must complete, or be
   // explicitly abandoned, before that run's lease is revoked.
     admitWorkflowFinding(runId, candidateFindingId, policy, lease, session = null) {
@@ -5843,7 +5778,7 @@ export class Coordinator {
   }
 
   // -------------------------------------------------------------------------
-  // KG-1 Part A: three horizon projections over the one Cairn KG plus board/package/binding
+  // KG-1 Part A: three horizon projections over the one Cairn KG plus package/binding
   // state (rule 1) — no new store, no new query engine. interactionGeneration/decisionSettleCount
   // are plain re-derivations of the same replay path that already rebuilds _pending/
   // _activeInteractionIds (rule 2), not a new event kind or store field.
@@ -5876,24 +5811,21 @@ export class Coordinator {
 
   /** Rule 6: cache shape `{ scope, fenceTuple, computedAt, value }` keyed by
    * `(scope-identity, fenceTuple)` — a cache hit requires exact tuple equality; a miss recomputes
-   * from queryKnowledge/queryKnowledgeEdges/boardSnapshot/binding projections, never a partial
-   * invalidation. The same (scope, fence) discipline as BoardProjection/the REPL binding
+   * from queryKnowledge/queryKnowledgeEdges/binding projections, never a partial
+   * invalidation. The same (scope, fence) discipline as the REPL binding
    * projection, generalized to three horizons. */
     _horizonCacheGet(kind, scopeIdentity, fenceTuple, compute) {
     return runtimeApi._horizonCacheGet(this, kind, scopeIdentity, fenceTuple, compute);
   }
 
-  /** Rule 2: task horizon fence = (boardFence(board), bindingFence(worker:<workerId>),
-   * interactionGeneration(taskId), projectionInputFence()). `board` is caller-supplied since a
-   * task carries no fixed board of its own — the same explicitness requestBoardClaim's
-   * expectedBoardFence already requires. */
-    taskHorizon(taskId, { board = null } = {}) {
-    return runtimeObservation.taskHorizon(this, this._recorder, taskId, { board });
+  /** Rule 2: task horizon fence = (bindingFence(worker:<workerId>), interactionGeneration(taskId),
+   * projectionInputFence()). */
+    taskHorizon(taskId) {
+    return runtimeObservation.taskHorizon(this, this._recorder, taskId);
   }
 
-  /** Rule 3: workflow horizon fence = the tuple of boardFence for every board attached to the
-   * run (via contextPackageAttachments' `board:<name>` scope convention) + bindingFence('shared')
-   * + decisionSettleCount(runId) + projectionInputFence(). */
+  /** Rule 3: workflow horizon fence = bindingFence('shared') + decisionSettleCount(runId)
+   * + projectionInputFence(). */
     workflowHorizon(runId, { viewer = 'orchestrator' } = {}) {
     return runtimeObservation.workflowHorizon(this, this._recorder, runId, { viewer });
   }
@@ -5904,16 +5836,8 @@ export class Coordinator {
     return runtimeObservation.projectHorizon(this, this._recorder, repoId);
   }
 
-    boardFence(board) {
-    return runtimeObservation.boardFence(this, this._recorder, board);
-  }
-
-    boardSnapshot(board) {
-    return runtimeObservation.boardSnapshot(this, this._recorder, board);
-  }
-
   // ---- REPL-2 bindings (issue #22, repl23-decisions.md Part B rule 5): NO wrapper-level
-  // scope-forcing — a deliberate divergence from requestBoardClaim's owner-forcing. `scope` is
+  // scope-forcing — a deliberate divergence from the owner-forcing lanes. `scope` is
   // the write's own routing/identity field; Part B rule 4(b)/(c) already refuse a caller whose
   // declared scope and cited manifestDigest don't jointly resolve to its own identity, loudly,
   // by construction — there is nothing left here for a wrapper to force. ----
@@ -6477,7 +6401,6 @@ export class Coordinator {
       this._settlePlanNodeBudget(task.id);
       if (terminal.routeObservation && this._route && typeof this._route.record === 'function') this._route.record(terminal.routeObservation.routeKey, terminal.routeObservation.taskType, terminal.routeObservation.verifiedWin, { family: terminal.routeObservation.modelFamily, taskId: terminal.routeObservation.taskId, now: Date.parse(terminal.routeObservation.observedAt) });
       this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
-      this._expireBoardClaims(handle, task, `task_${terminalStatus}`);
       const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));
       trustPhase = 'promotion';
       this._coordination.promoteKnowledgeNode({
@@ -6566,7 +6489,6 @@ export class Coordinator {
         task.terminalCause = handle.terminalCause;
         task.result = null;
         this._expireScratchClaims(handle, task, code);
-        this._expireBoardClaims(handle, task, code);
         if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
           handle.status = 'exited';
           this._cleanupTransportInBackground(handle, task, errorEvent);

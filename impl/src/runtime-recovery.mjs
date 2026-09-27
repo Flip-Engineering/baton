@@ -3667,7 +3667,6 @@ export function* _replay(coordinator, recorder) {
           if (seeded) {
             seeded.coordinationVersion = transitioned.task.version;
             coordinator._expireScratchClaims(coordinator._workers.get(workerId), seeded, 'replay_failed');
-            coordinator._expireBoardClaims(coordinator._workers.get(workerId), seeded, 'replay_failed');
           }
         }
       }

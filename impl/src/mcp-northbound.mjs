@@ -5,7 +5,7 @@ import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frame
 import { replObjectRefusal } from './messages.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
-import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectContextPackageBranch } from './application.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   SURFACING_MATRIX_KEYS,
@@ -517,8 +517,8 @@ function stateFailureCode(cause) {
     'plan_route_invalid', 'plan_route_authority_legacy_ambiguous',
     'plan_scope_invalid', 'plan_self_approval', 'plan_stale', 'plan_verification_invalid',
     'coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
-  // Part F (R5, typed-error reach) — board/package reflex codes (mcp-reflex-surface-decisions.md
-  // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part D/E tools;
+  // Part F (R5, typed-error reach) — package reflex codes (mcp-reflex-surface-decisions.md
+  // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part E tools;
   // slice 1 owns the context_eval/decision codes in this same rule. Missing/changed artifact
   // bytes collapse to the one typed `artifact_unavailable` tool error, never a silent recompute.
   if (['attention_scope_forbidden', 'attention_scope_invalid', 'attention_target_invalid'].includes(cause?.code)) return cause.code;
@@ -533,13 +533,11 @@ function stateFailureCode(cause) {
     'missing_endpoint', 'duplicate_node', 'knowledge_node_conflict', 'reserved_knowledge_field'].includes(cause?.code)) return cause.code;
   if (['context_artifact_unavailable', 'context_package_not_found', 'context_package_branch_not_found'].includes(cause?.code)) return 'artifact_unavailable';
   if (['board_admission_invalid', 'board_lease_required', 'board_session_mismatch', 'board_run_closed',
-    'board_parent_stale', 'board_replay_conflict',
-    'stale_board_fence', 'board_item_not_found', 'board_item_not_open', 'board_item_digest_mismatch',
-    'invalid_board', 'invalid_board_item', 'invalid_board_title', 'invalid_board_detail', 'invalid_board_owner',
-    'invalid_board_evidence', 'invalid_board_item_id', 'invalid_board_state', 'invalid_board_ordinal', 'invalid_board_fence',
+    'board_replay_conflict',
     'context_package_invalid', 'reserved_package_field', 'package_branch_name_conflict', 'package_branch_empty',
     'context_package_conflict', 'context_package_integrity', 'package_provenance_integrity',
-    'context_package_attach_invalid', 'context_package_unavailable'].includes(cause?.code)) return cause.code;
+    'context_package_attach_invalid', 'context_package_unavailable',
+    'settlement_lease_required'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
   // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family
@@ -887,7 +885,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
   {
     name: 'baton_scratchpad_elevate',
-    description: 'Elevate one terminal task\'s scratchpad entries into an orchestrator board candidacy (S-2 settlement lane).',
+    description: 'Elevate one terminal task\'s scratchpad entries into candidate Findings (S-2 settlement lane).',
     inputSchema: schema({
       ...repo, ...idem, runId, taskId: runId, workerId: runId,
       expectedScratchpadFence: { type: 'integer', minimum: 0 },
@@ -906,7 +904,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   },
   {
     name: 'baton_knowledge_promote',
-    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated exactly as admitBoardCommand does.',
+    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated through the S-2 lease proof.',
     inputSchema: schema({
       ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
     }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
@@ -1419,7 +1417,7 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
 // `execution: { taskSupport: 'forbidden' }` and stamped with `_meta` exactly like the ordinary
 // table above — NOT added to ORDINARY (those map 1:1 onto APPLICATION_COMMAND_DEFINITIONS) nor
 // ADVANCED (fleet_* audience). Slice 1: context_eval (Part B) + decision tools (Part C);
-// slice 2: board tools (Part D) + package tools (Part E) — one merged array per the
+// slice 2: package tools (Part E) — one merged array per the
 // MCP-SLICE1-INTEGRATION seam.
 const LEGACY_REFLEX_TOOL_DEFINITIONS = Object.freeze([
   {
@@ -1437,14 +1435,8 @@ const LEGACY_REFLEX_TOOL_DEFINITIONS = Object.freeze([
 })));
 const SURFACING_MATRIX_DESCRIPTIONS = Object.freeze({
   'decision.list': 'List one Run\'s pending decision requests awaiting an answer, sanitized and bounded.',
-  'board.read': 'Read the full non-evented orchestrator projection of one board.',
-  'board.post': 'Post a new orchestrator-authority board item; refused if the caller-observed board fence is stale.',
-  'board.retitle': 'Mint a retitled successor version of an open board item; refused if the caller-observed board fence is stale.',
-  'board.reorder': 'Mint a reordered successor version of an open board item; refused if the caller-observed board fence is stale.',
-  'board.close': 'Close an open board item; refused if the caller-observed board fence is stale.',
-  'board.drop': 'Drop an open board item; refused if the caller-observed board fence is stale.',
   'package.admit': 'Admit one immutable Context Package under the landed admission rules.',
-  'package.attach': 'Attach an admitted Context Package to a run/worker/board scope as a fenced O(1) pointer binding.',
+  'package.attach': 'Attach an admitted Context Package to a run/worker scope as a fenced O(1) pointer binding.',
   'package.read': 'Read Context Package metadata, or resolve and sanitize one named branch.',
   'repl.cite': 'Resolve one exact versioned REPL binding citation.',
   'knowledge.recall': 'Recall bounded, role-scoped knowledge from the shared coordination store.',
@@ -1467,7 +1459,7 @@ const MATRIX_REFLEX_TOOL_DEFINITIONS = Object.freeze(SURFACING_MATRIX_MCP_ROWS.m
       ...(operation.inputSchema.required ?? []).filter((field) => !hidden.has(field)),
     ]),
     annotations: Object.freeze({
-      readOnlyHint: !mutation, destructiveHint: ['board.close', 'board.drop'].includes(operation.key),
+      readOnlyHint: !mutation, destructiveHint: false,
       idempotentHint: true, openWorldHint: false,
     }),
     _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
@@ -1853,37 +1845,6 @@ function validateArguments(name, args, maxWaitMs = null) {
       || !nonempty(args.supersedes.decisionId) || !Number.isSafeInteger(args.supersedes.expectedValidityVersion) || args.supersedes.expectedValidityVersion <= 0)))) return 'invalid_reuse_decision';
   if (name === 'fleet_reuse_recheck' && (!nonempty(args.decisionId) || !Number.isSafeInteger(args.expectedValidityVersion) || args.expectedValidityVersion <= 0
     || !['advisory_refresh', 'ttl_expired'].includes(args.trigger) || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0)) return 'invalid_reuse_recheck';
-  // Part D (board tools): a hand-rolled shape check ahead of hub dispatch — the hub's own
-  // exact()-style checks (SAFE_BOARD_ID, ...) are the durable authority; this only rejects
-  // obviously-malformed calls before an orchestrator-lease lookup.
-  if (name === 'baton_board_post') {
-    if (!nonempty(args.board) || !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.board)) return 'invalid_board';
-    if (!nonempty(args.title)) return 'invalid_board_title';
-    if (Object.hasOwn(args, 'detail') && args.detail !== null && !nonempty(args.detail)) return 'invalid_board_detail';
-    if (Object.hasOwn(args, 'owner') && args.owner !== null && !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.owner ?? '')) return 'invalid_board_owner';
-    if (Object.hasOwn(args, 'evidence') && (!Array.isArray(args.evidence) || args.evidence.length > 8)) return 'invalid_board_evidence';
-    if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
-  }
-  if (name === 'baton_board_retitle') {
-    if (!nonempty(args.itemId)) return 'invalid_board_item_id';
-    if (!nonempty(args.title)) return 'invalid_board_title';
-    if (Object.hasOwn(args, 'detail') && args.detail !== null && !nonempty(args.detail)) return 'invalid_board_detail';
-    if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
-  }
-  if (name === 'baton_board_reorder') {
-    if (!nonempty(args.itemId)) return 'invalid_board_item_id';
-    if (!Number.isSafeInteger(args.ordinal) || args.ordinal <= 0) return 'invalid_board_ordinal';
-    if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
-  }
-  if (name === 'baton_board_close' && (!nonempty(args.itemId)
-    || !Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0)) {
-    return !nonempty(args.itemId) ? 'invalid_board_item_id' : 'invalid_board_fence';
-  }
-  if (name === 'baton_board_drop' && (!nonempty(args.itemId)
-    || !Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0)) {
-    return !nonempty(args.itemId) ? 'invalid_board_item_id' : 'invalid_board_fence';
-  }
-  if (name === 'baton_board_read' && !nonempty(args.board)) return 'invalid_board';
   // Part E (package tools): the branch payload's deep shape (unique names, source/artifact/
   // valueRef mold, provenance) is exhaustively validated by the hub's own
   // `_normalizeContextPackage` — never re-implemented here (Part I: no schema-evaluated
@@ -1905,7 +1866,7 @@ function validateArguments(name, args, maxWaitMs = null) {
     || (Object.hasOwn(args, 'reader') && !record(args.reader))
     || (Object.hasOwn(args, 'options') && !record(args.options)))) return 'invalid_knowledge_recall';
   if (name === 'baton_knowledge_horizon' && (!['task', 'workflow', 'project'].includes(args.kind)
-    || !nonempty(args.id) || (Object.hasOwn(args, 'board') && !nonempty(args.board)))) {
+    || !nonempty(args.id))) {
     return 'invalid_knowledge_horizon';
   }
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): hand-rolled shape guards for the ordinary-surface
@@ -2185,9 +2146,6 @@ export class McpFleetServer {
     }
     this._observationAudits = [];
     this._closePromise = null;
-    // Part D rule 10: process-local, non-evented board view cache — rebuilt from an empty Map on
-    // every restart (a fresh McpFleetServer instance), never a durable/ledger-backed cache.
-    this._boardViewCache = new Map();
   }
 
   async close() {
@@ -2921,7 +2879,7 @@ export class McpFleetServer {
     }
     // MCP-W2: the four settlement tools via the S-2 sessionAuthority envelope. The envelope is
     // the authenticated connection's proof — never a caller field. knowledge.promote REQUIRES it
-    // (validated exactly as S-2 made it for board commands); the settlement lease requires the
+    // (validated through the S-2 lease proof); the settlement lease requires the
     // settlement capability class (already enforced by _authority).
     else if (name === 'baton_scratchpad_elevate') {
       value = await this.application.command('scratchpad.elevate', {
@@ -2944,9 +2902,9 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_knowledge_promote') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      const { sessionAuthority } = this._sessionAuthorityContext(principal);
       if (sessionAuthority == null) {
-        throw Object.assign(new Error('an active settlement lease is required'), { code: 'board_lease_required' });
+        throw Object.assign(new Error('an active settlement lease is required'), { code: 'settlement_lease_required' });
       }
       value = await this.application.command('knowledge.promote', {
         runId: args.runId, candidateFindingId: args.candidateFindingId,
@@ -3092,76 +3050,20 @@ export class McpFleetServer {
     else if (name === 'fleet_reuse_recheck') value = await this.coordinator.recheckReuseDecision({ decisionId: args.decisionId, expectedValidityVersion: args.expectedValidityVersion, trigger: args.trigger, budgetTokens: args.budgetTokens }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_drain') value = await this.coordinator.drain({ actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}` });
-    // S-2 v2 board tools are thin translations into the closed admission envelope. Lease proof,
-    // Run binding, existence, fence/parent CAS, and replay all live in the serialized store path.
-    else if (name === 'baton_board_post') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
-      value = this._admitBoardEnvelope({
-        sessionAuthority, runId: args.runId, board: args.board, item: null,
-        mutation: { kind: 'post', title: args.title, detail: args.detail ?? null,
-          owner: args.owner ?? null, evidence: args.evidence ?? [] },
-        expectedBoardFence: args.expectedBoardFence, idempotencyKey: `mcp.call:${callId}`,
-      });
-    }
-    else if (name === 'baton_board_retitle') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
-      value = this._admitBoardEnvelope({
-        sessionAuthority, runId: args.runId, board: args.board,
-        item: { itemId: args.itemId, itemVersion: args.itemVersion },
-        mutation: { kind: 'retitle', title: args.title, detail: args.detail ?? null },
-        expectedBoardFence: args.expectedBoardFence, idempotencyKey: `mcp.call:${callId}`,
-      });
-    }
-    else if (name === 'baton_board_reorder') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
-      value = this._admitBoardEnvelope({
-        sessionAuthority, runId: args.runId, board: args.board,
-        item: { itemId: args.itemId, itemVersion: args.itemVersion },
-        mutation: { kind: 'reorder', ordinal: args.ordinal },
-        expectedBoardFence: args.expectedBoardFence, idempotencyKey: `mcp.call:${callId}`,
-      });
-    }
-    else if (name === 'baton_board_close') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
-      value = this._admitBoardEnvelope({
-        sessionAuthority, runId: args.runId, board: args.board,
-        item: { itemId: args.itemId, itemVersion: args.itemVersion },
-        mutation: { kind: 'close' }, expectedBoardFence: args.expectedBoardFence,
-        idempotencyKey: `mcp.call:${callId}`,
-      });
-    }
-    else if (name === 'baton_board_drop') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
-      value = this._admitBoardEnvelope({
-        sessionAuthority, runId: args.runId, board: args.board,
-        item: { itemId: args.itemId, itemVersion: args.itemVersion },
-        mutation: { kind: 'drop' }, expectedBoardFence: args.expectedBoardFence,
-        idempotencyKey: `mcp.call:${callId}`,
-      });
-    }
-    else if (name === 'baton_board_read') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
-      const admitted = this._admitBoardEnvelope({
-        sessionAuthority, runId: args.runId, board: args.board, item: null,
-        mutation: { kind: 'read' }, expectedBoardFence: null,
-        idempotencyKey: `mcp.observe:${hash({ name, args, callId })}`,
-      });
-      value = projectBoardView(admitted.snapshot, { role: 'orchestrator', workerId: null }, this._boardViewCache);
-    }
     // Part E — package tools: bound directly to the landed coordination-store hub methods (no
     // Coordinator wrapper exists for these, matching the contract's coordination-store.mjs line
     // citations). Admit/attach require an active run-orchestrator lease; attach's auth.key is the
     // exact `package.attach:<digest>:<runId>:<scope>` string the hub itself validates (the fenced
     // O(1) pointer binding — never a re-read of branch bytes).
     else if (name === 'baton_package_admit') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      const { sessionAuthority } = this._sessionAuthorityContext(principal);
       value = this.coordination.admitPackageCommand({
         sessionAuthority, runId: args.runId,
         package: args.package, mutation: { kind: 'admit' }, idempotencyKey: `mcp.call:${callId}`,
       });
     }
     else if (name === 'baton_package_attach') {
-      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      const { sessionAuthority } = this._sessionAuthorityContext(principal);
       value = this.coordination.admitPackageCommand({
         sessionAuthority, runId: args.runId, package: args.packageDigest,
         mutation: { kind: 'attach', scope: args.scope },
@@ -3183,7 +3085,7 @@ export class McpFleetServer {
       });
     }
     else if (name === 'baton_knowledge_horizon') {
-      if (args.kind === 'task') value = this.coordinator.taskHorizon(args.id, { board: args.board ?? null });
+      if (args.kind === 'task') value = this.coordinator.taskHorizon(args.id);
       else if (args.kind === 'workflow') {
         value = this.coordinator.workflowHorizon(args.id, { viewer: 'orchestrator' });
       } else value = this.coordinator.projectHorizon(args.repoId);
@@ -3247,15 +3149,10 @@ export class McpFleetServer {
     };
   }
 
-  _admitBoardEnvelope(envelope) {
-    return typeof this.coordinator.admitBoardCommand === 'function'
-      ? this.coordinator.admitBoardCommand(envelope)
-      : this.coordination.admitBoardCommand(envelope);
-  }
 
   // The proof comes from the authenticated connection. This adapter never reconstructs it from
   // caller-named principal/session identifiers or from the lease's own stored digest.
-  _boardAuthorityContext(principal) {
+  _sessionAuthorityContext(principal) {
     return { sessionAuthority: principal.sessionAuthority ?? null };
   }
 

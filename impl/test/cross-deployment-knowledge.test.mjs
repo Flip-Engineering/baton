@@ -513,8 +513,8 @@ function recallPolicyFor(rid) {
   });
 }
 
-// The #63 candidate fixture: createTask -> claimTask -> run-orchestrator lease -> board item ->
-// close -> the board-close candidate finding id (the candidacy the #63 admission reviews).
+// The #63 candidate fixture: createTask -> claimTask -> run-orchestrator lease -> an observed
+// candidate Finding -> the candidate finding id (the candidacy the #63 admission reviews).
 function candidateFixture(store, runId, taskId, workerId) {
   const rid = store.repositoryId();
   store.createTask({
@@ -543,10 +543,11 @@ function candidateFixture(store, runId, taskId, workerId) {
   const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
   const issued = store.issueRunOrchestratorLease(leaseRequest, auth(`run.orchestrator_lease:${leaseId}`));
   const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: `board-${runId}`, title: 'do the thing' }, auth(`post-${runId}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`close-${runId}`));
-  return {
-    runId, taskId, session, lease,
-    candidateFindingId: `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`,
-  };
+  const candidateFindingId = `finding:package-admitted:${runId}`;
+  store.addKnowledgeNode({
+    id: candidateFindingId, type: 'Finding', grounding: 'observed',
+    body: 'the orchestration candidacy the admission reviews', evidence: [],
+    promotion: { kind: 'Finding', trigger: 'package.admitted' },
+  }, auth(`candidacy:${runId}`));
+  return { runId, taskId, session, lease, candidateFindingId };
 }

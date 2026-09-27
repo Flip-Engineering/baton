@@ -196,12 +196,6 @@ const MAX_PROFILES = 256;
 
 
 const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
-// REFLEX-2 board-view ceilings (F10, rules 10-11). RunView's MAX_RUN_VIEW_* do not cover a
-// board, so a per-worker board projection gets its own bounded ceilings: at most MAX_BOARD_ITEMS
-// items (soft-truncate with an explicit boardViewTruncated story, never silent) and a byte
-// ceiling MAX_BOARD_VIEW_BYTES on the serialized projection.
-const MAX_BOARD_VIEW_BYTES = FRAME_LIMITS['view.board.bytes'].value;
-const MAX_BOARD_ITEMS = FRAME_LIMITS['view.board.items'].value;
 const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 // #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
@@ -632,88 +626,6 @@ export function projectRequiredAction({ phase, attention, actions }) {
     : { kind, summary });
 }
 
-
-// REFLEX-2 (issue #17, docs/32 §3.2): a bounded, sanitized, per-worker board projection.
-// Reads are NON-EVENTED (this helper is pure — it appends nothing) and CACHED by
-// (board, workerId, boardFence): while the board fence is unchanged the exact cached view is
-// served; a fence advance is the only thing that recomputes it (F10, rule 10). Every
-// worker-authored field (title, detail, report bodies) is sanitized through
-// boundedAttentionText/SECRET_SHAPED_TEXT and provenance-marked untrusted prose via wrapProse
-// (F14). Item count and serialized bytes honor MAX_BOARD_ITEMS/MAX_BOARD_VIEW_BYTES with an
-// explicit boardViewTruncated story — never a silent drop.
-export function projectBoardView(snapshot, viewer = {}, cache = null) {
-  const board = snapshot?.board ?? null;
-  const boardFence = Number.isSafeInteger(snapshot?.boardFence) ? snapshot.boardFence : 0;
-  const projectionInputFence = Number.isSafeInteger(snapshot?.projectionInputFence)
-    ? snapshot.projectionInputFence : 0;
-  const workerId = viewer.workerId ?? null;
-  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
-  // Epic #78 Decision 5/7: the view cache keys on BOTH fence components — a claim/report/expiry
-  // advances projectionInputFence without moving boardFence, so a cached pre-claim/pre-report
-  // view is never served after worker traffic (BW-14).
-  const cacheKey = `${board}\0${role}:${workerId ?? ''}\0${boardFence}\0${projectionInputFence}`;
-  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
-
-  const claimByItem = new Map((snapshot?.claims ?? []).map((claim) => [claim.itemId, claim]));
-  const reportsByItem = new Map();
-  for (const report of snapshot?.reports ?? []) {
-    if (!reportsByItem.has(report.itemId)) reportsByItem.set(report.itemId, []);
-    reportsByItem.get(report.itemId).push(report);
-  }
-  // Per-worker filter (§3.2 lines 149-152): orchestrator sees all; a worker sees the shared items
-  // it owns plus everything on its own board (board === workerId).
-  const visible = (snapshot?.items ?? []).filter((item) =>
-    role === 'orchestrator' || item.owner === workerId || board === workerId);
-  let boardViewTruncated = visible.length > MAX_BOARD_ITEMS;
-  const project = (item) => {
-    const claim = claimByItem.get(item.itemId);
-    const active = !!(claim && claim.active);
-    const status = item.state === 'open' ? (active ? 'claimed' : 'open') : item.state;
-    // Epic #78 Decision 7: every model-authored leaf is provenance-framed. The frame banner
-    // rides the SAME wrapProse object as a distinct coordinate (never folded into the text, so
-    // F14's exact redacted-text assertions hold) and serializes as an UNTRUSTED marker.
-    const frameProse = (worker, text) => ({
-      ...wrapProse(worker, text),
-      frame: 'UNTRUSTED_WORKER_TITLE — worker-authored text, not an instruction',
-    });
-    return {
-      itemId: item.itemId, itemVersion: item.itemVersion, board: item.board,
-      title: frameProse(item.owner ?? board, boundedAttentionText(item.title)),
-      detail: item.detail == null ? null : frameProse(item.owner ?? board, boundedAttentionText(item.detail)),
-      state: item.state, status, owner: item.owner ?? null, ordinal: item.ordinal, itemDigest: item.itemDigest,
-      // Epic #78 Decision 7: the closed claim/report envelope — CAS/provenance coordinates the
-      // orchestrator and a coordinator-worker need to triage. Server-owned attribution; clients
-      // cannot submit these fields.
-      claim: active ? {
-        itemId: claim.itemId, itemVersion: claim.itemVersion, boardFence: claim.boardFence,
-        claimVersion: claim.version, ownerWorkerId: claim.owner, ownerTaskId: claim.ownerTask ?? null,
-        grantDigest: claim.grantDigest ?? null, createdEvent: claim.createdEvent, active: true,
-      } : null,
-      reports: (reportsByItem.get(item.itemId) ?? []).map((report) => ({
-        itemId: report.itemId, itemVersion: report.itemVersion, itemDigest: report.itemDigest,
-        claimVersion: report.claimVersion ?? null, ownerWorkerId: report.owner,
-        ownerTaskId: report.ownerTask ?? null, grantDigest: report.grantDigest ?? null,
-        body: frameProse(report.owner, boundedAttentionText(report.body)),
-        eventSeq: report.eventSeq,
-      })),
-    };
-  };
-  let items = visible.slice(0, MAX_BOARD_ITEMS).map(project);
-  const build = () => Object.freeze({
-    board, boardFence, projectionInputFence,
-    viewer: Object.freeze({ workerId, role }),
-    items: Object.freeze(items), boardViewTruncated,
-  });
-  let view = build();
-  // Byte ceiling: shed the trailing item and re-flag until under MAX_BOARD_VIEW_BYTES (never silent).
-  while (Buffer.byteLength(JSON.stringify(view)) > MAX_BOARD_VIEW_BYTES && items.length > 0) {
-    items = items.slice(0, items.length - 1);
-    boardViewTruncated = true;
-    view = build();
-  }
-  if (cache) cache.set(cacheKey, view);
-  return view;
-}
 
 // REPL-2's per-worker binding projection lives in coordination-ledger.mjs, beside the snapshot it
 // projects: the coordinator's run-view REPL review (issue #69 D6) reads it there. Kept exported
@@ -2458,8 +2370,6 @@ export class BatonApplication {
       // gates — while the runtime binds the participant's run/task identity server-side.
       knowledge: {
         knowledgeSeed: (request, knowledgePrincipal) => this.knowledgeSeed(request, knowledgePrincipal),
-        boardPost: (request, knowledgePrincipal) => this.boardPost(request, knowledgePrincipal),
-        boardRead: (request, knowledgePrincipal) => this.boardRead(request, knowledgePrincipal),
         scratchpadAppend: (request, knowledgePrincipal) => this.scratchpadAppend(request, knowledgePrincipal),
         scratchpadRead: (request, knowledgePrincipal) => this.scratchpadRead(request, knowledgePrincipal),
         scratchpadElevate: (request, knowledgePrincipal) => this.scratchpadElevate(request, knowledgePrincipal),
@@ -7940,47 +7850,11 @@ export class BatonApplication {
     if (!Number.isSafeInteger(target.fence)) {
       throw applicationError('Run steering target has no current fence', 'application_worker_not_controllable');
     }
-    // Epic #78 Decision 2: an optional claimGrant mints one closed server-side grant BEFORE the
-    // steer is deliverable (persist-before-deliver). The orchestrator's session authority is
-    // server context — the delivered worker fact never carries S-2 lease material (BW-03).
-    // An EXACT retry (Decision 6 rule 2) returns the original grant receipt and does NOT re-send
-    // the steer — the member saw the grant exactly once (BW-05).
-    let grantFact = null;
-    let outcome = null;
-    if (request.claimGrant !== undefined) {
-      if (!context?.sessionAuthority) {
-        throw applicationError('board claim grant requires an orchestrator session authority',
-          'application_wave_member_action_invalid');
-      }
-      const minted = this.driver.coordinator.mintMemberBoardGrant(request.runId, {
-        board: request.claimGrant.board,
-        boardRunId: request.claimGrant.boardRunId,
-        sessionAuthority: context.sessionAuthority,
-        idempotencyKey: context.idempotencyKey,
-        actor: principal.actor,
-      });
-      grantFact = minted?.grant ?? minted?.event?.payload ?? null;
-      if (minted?.result !== 'idempotent') {
-        const mode = request.delivery === 'turn' ? 'turn' : request.delivery === 'now' ? 'steer' : 'nudge';
-        const message = grantFact
-          ? `${request.message}\n\n[BOARD_GRANT] ${JSON.stringify(grantFact)}`
-          : request.message;
-        outcome = await this.driver.coordinator.send(target.id, message, mode, {
-          expectedFence: target.fence, actor: principal.actor,
-        });
-      } else {
-        outcome = { result: 'idempotent' };
-      }
-    } else {
-      const mode = request.delivery === 'turn' ? 'turn' : request.delivery === 'now' ? 'steer' : 'nudge';
-      outcome = await this.driver.coordinator.send(target.id, request.message, mode, {
-        expectedFence: target.fence, actor: principal.actor,
-      });
-    }
-    return deepFreeze({
-      schemaVersion: 1, runId: request.runId, result: outcome.result, target: target.id,
-      ...(grantFact ? { grant: grantFact } : {}),
+    const mode = request.delivery === 'turn' ? 'turn' : request.delivery === 'now' ? 'steer' : 'nudge';
+    const outcome = await this.driver.coordinator.send(target.id, request.message, mode, {
+      expectedFence: target.fence, actor: principal.actor,
     });
+    return deepFreeze({ schemaVersion: 1, runId: request.runId, result: outcome.result, target: target.id });
   }
 
   async stopWaveMember(rawRequest, rawPrincipal, rawContext = null) {
@@ -8073,22 +7947,12 @@ export class BatonApplication {
 
   _normalizeWaveMemberAction(value, label, opts = {}) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['runId', 'message', 'delivery', 'reason', 'claimGrant'].includes(key))
+      || Object.keys(value).some((key) => !['runId', 'message', 'delivery', 'reason'].includes(key))
       || !validId(value.runId)
       || (opts.reason !== true && !validText(value.message))
       || (opts.reason === true && !validText(value.reason))
       || (value.delivery !== undefined && !['nudge', 'now', 'turn'].includes(value.delivery))) {
       throw applicationError(`${label} request is invalid`, 'application_wave_member_action_invalid');
-    }
-    // Epic #78 Decision 2: the optional closed claimGrant request — {boardRunId, board} ONLY.
-    // The caller names no grantee and no permissions; the hub resolves both server-side.
-    if (value.claimGrant !== undefined) {
-      const claimGrant = value.claimGrant;
-      if (!claimGrant || typeof claimGrant !== 'object' || Array.isArray(claimGrant)
-        || Object.keys(claimGrant).sort().join(',') !== 'board,boardRunId'
-        || !validId(claimGrant.board) || !validId(claimGrant.boardRunId)) {
-        throw applicationError(`${label} claim grant is invalid`, 'application_wave_member_action_invalid');
-      }
     }
     return deepFreeze(clone(value));
   }
@@ -8729,8 +8593,6 @@ export class BatonApplication {
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
-    if (name === 'run.board.post') return this.boardPost(args, principal);
-    if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
     // #176 (waves.* authority closure): the six waves.* verbs pass the recursive-session gate like
     // their run.* siblings — a sessionAuthority-context call refuses typed rather than dispatching
@@ -8738,17 +8600,9 @@ export class BatonApplication {
     // validation so any session-authority marker refuses (never a pre-gate dispatch).
     if (rawContext?.sessionAuthority
       && ['waves.start', 'waves.run', 'waves.stop', 'waves.send', 'waves.progress', 'waves.list', 'waves.compile'].includes(name)) {
-      // #176 exception (S-2 admission seam): waves.send's closed claimGrant mint is the
-      // orchestrator's board-grant transport — it REQUIRES the session authority (board-workerhalf
-      // BW-03/05/22) and is a board operation, not a recursive steering verb. Exempt it from the
-      // closure; every other waves.* verb (and a non-claimGrant waves.send) still refuses typed.
-      const isClaimGrant = name === 'waves.send' && args && typeof args === 'object'
-        && !Array.isArray(args) && args.claimGrant !== undefined;
-      if (!isClaimGrant) {
-        const runId = args?.runId ?? null;
-        if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, rawContext);
-        throw applicationError('recursive waves command is forbidden', 'run_orchestrator_command_forbidden');
-      }
+      const runId = args?.runId ?? null;
+      if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, rawContext);
+      throw applicationError('recursive waves command is forbidden', 'run_orchestrator_command_forbidden');
     }
     const context = normalizeCommandContext(rawContext);
     // CS-3: run.debug is a direct port (not in APPLICATION_COMMAND_DEFINITIONS). Validate via
@@ -9172,54 +9026,6 @@ export class BatonApplication {
     return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
   }
 
-  _normalizeBoardPost(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['runId', 'board', 'title', 'detail', 'owner', 'evidence'].includes(key))
-      || !validId(value.runId)
-      || typeof value.board !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.board)
-      || typeof value.title !== 'string' || value.title.length === 0
-      || (value.detail !== undefined && value.detail !== null
-        && (typeof value.detail !== 'string' || value.detail.length === 0))
-      || (value.owner !== undefined && value.owner !== null
-        && (typeof value.owner !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.owner)))
-      || (value.evidence !== undefined && !Array.isArray(value.evidence))) {
-      throw applicationError('run board post request is invalid', 'application_board_post_invalid');
-    }
-    const evidence = value.evidence ?? [];
-    if (evidence.length > 8) {
-      throw applicationError(
-        `Board evidence exceeds the 8-ref cap (actual ${evidence.length} refs)`,
-        'application_board_post_invalid',
-      );
-    }
-    for (const ref of evidence) {
-      if (!ref || typeof ref !== 'object' || Array.isArray(ref)) {
-        throw applicationError('run board post request is invalid', 'application_board_post_invalid');
-      }
-      const keys = Object.keys(ref).sort().join(',');
-      if (!((keys === 'coordinationSeq' && Number.isSafeInteger(ref.coordinationSeq) && ref.coordinationSeq > 0)
-        || (keys === 'artifactId' && typeof ref.artifactId === 'string' && ref.artifactId.length > 0))) {
-        throw applicationError('run board post request is invalid', 'application_board_post_invalid');
-      }
-    }
-    return deepFreeze({
-      runId: value.runId, board: value.board, title: value.title,
-      ...(value.detail !== undefined ? { detail: value.detail } : {}),
-      ...(value.owner !== undefined ? { owner: value.owner } : {}),
-      evidence: [...evidence],
-    });
-  }
-
-  _normalizeBoardRead(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).sort().join(',') !== 'board,runId'
-      || !validId(value.runId)
-      || typeof value.board !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.board)) {
-      throw applicationError('run board read request is invalid', 'application_board_read_invalid');
-    }
-    return deepFreeze({ runId: value.runId, board: value.board });
-  }
-
   // The seedable top-level types and the grounding choices ARE the canonical schema's own closed
   // sets (application-semantics), so the facade's admitted set and the bridge validator's cannot
   // drift; Decision is subtracted explicitly (it requires informedBy graph sources this shape does
@@ -9412,13 +9218,13 @@ export class BatonApplication {
       ...(truncated ? { digest: digest([...allIds].sort()) } : {}),
     });
     // PAGE-SERIALIZED BUDGET (Decision 6 / red-team blocker #5): the rendered page is capped at
-    // 256 KiB serialized (the mirrored MAX_BOARD_VIEW_BYTES ceiling). Oversize follows the
+    // 256 KiB serialized. Oversize follows the
     // renderer's overflow doctrine — rendering stops BEFORE the budget, truncated: true, a
     // digest-citation of the FULL page id set, and nextCursor continuing at the first unrendered
     // entry. This is a disclosed SURFACE bound, never a lane cap.
     let page = build(rows, false);
     let truncated = false;
-    while (Buffer.byteLength(JSON.stringify(page)) > MAX_BOARD_VIEW_BYTES && rows.length > 0) {
+    while (Buffer.byteLength(JSON.stringify(page)) > 256 * 1024 && rows.length > 0) {
       rows = rows.slice(0, rows.length - 1);
       truncated = true;
       page = build(rows, true);
@@ -9472,99 +9278,6 @@ export class BatonApplication {
       { actor: principal.actor, principalId: principal.principalId, key },
     );
     return deepFreeze({ schemaVersion: 1, runId: request.runId, scope: request.scope, ...outcome });
-  }
-
-  // run.board.post — Decision 8: the binding law verbatim, orchestrator posture, appendGate.
-  async boardPost(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = this._normalizeBoardPost(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'board post principal');
-    await this._authorize('run.board.post', principal, request.runId, {
-      board: request.board,
-      titleDigest: digest(request.title),
-      ...(request.detail != null ? { detailDigest: digest(request.detail) } : {}),
-      ...(request.owner != null ? { ownerDigest: digest(request.owner) } : {}),
-      evidenceDigest: digest(request.evidence),
-    });
-    const store = this.driver.coordination;
-    const snapshot = store.boardSnapshot(request.board);
-    const boundRunId = snapshot?.runId ?? null;
-    const hasItems = (snapshot?.items?.length ?? 0) > 0;
-    // Binding law VERBATIM: a board bound to a DIFFERENT run refuses the one constant for post
-    // AND read, decided BEFORE any item existence or write.
-    if (boundRunId !== null && boundRunId !== request.runId) {
-      throw applicationError('board is bound to another run', 'application_board_scope_forbidden');
-    }
-    // Run-open derives through the store's PUBLIC snapshot() (the coordinator's delegated read) —
-    // the named accessor; the facade never reads private run maps.
-    if ((store.snapshot().runStops ?? []).some((stop) => stop.runId === request.runId)) {
-      throw applicationError('board post to a stopped run is forbidden', 'application_board_run_closed');
-    }
-    const adopting = boundRunId === null && hasItems;
-    const requestDigest = digest({ title: request.title, detail: request.detail, owner: request.owner, evidence: request.evidence });
-    const boardAdmission = {
-      schemaVersion: 1, runId: request.runId, requestDigest, adopted: adopting, leaseId: null,
-    };
-    // Append-time re-validation (the S-2 no-check-then-write-window law): the gate RE-VALIDATES
-    // binding + run-open at append time — a post that loses the race refuses at the gate and
-    // never writes (the store's before-write callback throws on refusal).
-    const appendGate = () => {
-      const liveSnapshot = store.boardSnapshot(request.board);
-      const liveBoundRunId = liveSnapshot?.runId ?? null;
-      if (liveBoundRunId !== null && liveBoundRunId !== request.runId) {
-        throw Object.assign(new Error('board is bound to another run'), { code: 'board_session_mismatch' });
-      }
-      if ((store.snapshot().runStops ?? []).some((stop) => stop.runId === request.runId)) {
-        throw Object.assign(new Error('board post to a stopped run is forbidden'), { code: 'board_run_closed' });
-      }
-      return true;
-    };
-    const outcome = store.postBoardItem({
-      board: request.board, title: request.title,
-      ...(request.detail != null ? { detail: request.detail } : {}),
-      ...(request.owner != null ? { owner: request.owner } : {}),
-      evidence: request.evidence,
-    }, {
-      actor: principal.actor,
-      key: `run.board.post:${request.runId}:${request.board}:${requestDigest}`,
-    }, appendGate, boardAdmission);
-    if (outcome.result === 'idempotent') {
-      // The lane's replay return carries the prior event but NO boardRunBinding — the facade
-      // DERIVES it from the returned prior event's payload.boardAdmission (Decision 1 completion).
-      const admission = outcome.event?.payload?.boardAdmission ?? null;
-      return deepFreeze({
-        schemaVersion: 1, ok: true, result: 'idempotent', item: outcome.item,
-        boardRunBinding: { runId: request.runId, result: admission?.adopted ? 'adopted' : 'bound' },
-      });
-    }
-    return deepFreeze({
-      schemaVersion: 1, ok: true, result: 'posted', item: outcome.item,
-      boardRunBinding: { runId: request.runId, result: adopting ? 'adopted' : 'bound' },
-    });
-  }
-
-  // run.board.read — Decision 8: the binding law verbatim, projectBoardView's exact output.
-  async boardRead(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = this._normalizeBoardRead(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'board read principal');
-    await this._authorize('run.board.read', principal, request.runId, { board: request.board });
-    const store = this.driver.coordination;
-    const snapshot = store.boardSnapshot(request.board);
-    const boundRunId = snapshot?.runId ?? null;
-    const hasItems = (snapshot?.items?.length ?? 0) > 0;
-    if (boundRunId !== null && boundRunId !== request.runId) {
-      throw applicationError('board is bound to another run', 'application_board_scope_forbidden');
-    }
-    // Unbound AND empty: the read is unknown (the BD3-A context_not_found law). Unbound WITH
-    // items serves; bound to this run serves.
-    if (boundRunId === null && !hasItems) {
-      throw applicationError('board is not found', 'application_board_not_found');
-    }
-    const view = projectBoardView(snapshot, { role: 'orchestrator', workerId: null });
-    return deepFreeze({ schemaVersion: 1, board: request.board, boardRunId: boundRunId, view });
   }
 
   // run.knowledge.seed — Decision 9: content-addressed seeding inside the run's horizon.

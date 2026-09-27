@@ -13,7 +13,7 @@ const INSTALLED = Symbol.for('baton.productionWebConvergence.installed');
 const NATIVE_WEB_QUERIES = new Set([
   'list', 'result', 'wait', 'capabilities', 'provider_status', 'goal_plan_status',
   'waves_progress', 'waves_list', 'waves_compile', 'deployment_doctor',
-  'run_message_receipt', 'run_attention_watch', 'run_scratchpad_read', 'run_board_read',
+  'run_message_receipt', 'run_attention_watch', 'run_scratchpad_read',
 ]);
 
 function modeFor(command) {

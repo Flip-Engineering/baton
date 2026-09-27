@@ -80,8 +80,8 @@ const unique = (values) => [...new Set(values)].sort();
 const OBSERVATION = /(?:observe|read|view|inspect|list|status|progress|events|output|episode|follow|wait|result|receipt|catalog|describe|recall|horizon|cite)/u;
 const TELEMETRY = /(?:telemetry|doctor|readiness|provider|roster|seat|status|progress|events|output|episode|follow|wait|scorecard|evaluation|capabilities|route)/u;
 const COMMUNICATION = /(?:message|send|answer|respond|feedback|steer|interrupt|decision|notify|reply|approval)/u;
-const TASK = /(?:run|wave|member|worker|task|workflow|board|plan|goal|candidate|select|adopt|integrate|review|package)/u;
-const KNOWLEDGE = /(?:knowledge|scratchpad|context|repl|package|board|briefing|cairn|atlas|finding)/u;
+const TASK = /(?:run|wave|member|worker|task|workflow|plan|goal|candidate|select|adopt|integrate|review|package)/u;
+const KNOWLEDGE = /(?:knowledge|scratchpad|context|repl|package|briefing|cairn|atlas|finding)/u;
 const DIAGNOSTICS = /(?:debug|diagnos|doctor|readiness|evidence|inspect|review|verify|verification|orientation|orient|capabilities|provider|route|environment|result|health)/u;
 const NOTIFICATIONS = /(?:attention|decision|message|watch|follow|notify|receipt|approval|checkpoint)/u;
 const CONTROL = /(?:control|start|stop|interrupt|kill|drain|close|shutdown|approve|answer|respond|recover|retry|resume|adopt|integrate|select|revise|send|post|drop|reorder|retitle|promote|admit|attach|settle|seed|append|invoke|claim|report)/u;
@@ -230,7 +230,6 @@ function nativeMode(name) {
 
 function nativeOwner(name) {
   if (name.startsWith('fleet_')) return 'fleet-kernel';
-  if (name.startsWith('baton_board_')) return 'board-kernel';
   if (name.startsWith('baton_package_')) return 'package-kernel';
   if (name.startsWith('baton_knowledge_')) return 'knowledge-kernel';
   if (name.startsWith('baton_repl_')) return 'repl-kernel';

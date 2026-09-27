@@ -1,6 +1,6 @@
 // runtime-event-handlers/observation-events.mjs — issue #259, slice 14.
 // The _handleEvent switch's observation arms (resource.tokens, scratchpad.write, context.read,
-// orientation.rate, board.claim, board.report, message.send, native.subagent_observed), verbatim
+// orientation.rate, message.send, native.subagent_observed), verbatim
 // over the dispatcher's ctx record. capBytesToScalar relocates here (the message.send arm and the
 // coordinator's staying sendMessage both read it — the coordinator imports it back). Recording
 // through the port; receiver explicit; no sibling family imports.
@@ -61,27 +61,6 @@ export function orientationRate(coordinator, recorder, ctx) {
         const receipt = coordinator._recordOrientationRating(ctx.workerId, ctx.payload);
         ctx.appendAttributed({
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: 'orientation.rate_result',
-          actor: 'hub', payload: receipt,
-        });
-}
-
-export function boardClaim(coordinator, recorder, ctx) {
-// Epic #78 Decision 1: the worker claim frame. workerId is bound by the authenticated
-        // stream envelope; the wire carries NO identity/scope fields. Every attempt produces a
-        // board.claim_result — including typed refusals.
-        const receipt = coordinator.admitWorkerBoardCommand('claim', ctx.workerId, ctx.payload);
-        ctx.appendAttributed({
-          worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: 'board.claim_result',
-          actor: 'hub', payload: receipt,
-        });
-}
-
-export function boardReport(coordinator, recorder, ctx) {
-// Epic #78 Decision 1/4: the worker report frame. Same stream-bound identity discipline
-        // as the claim; every attempt produces a board.report_result, never TG2/TG3 liveness.
-        const receipt = coordinator.admitWorkerBoardCommand('report', ctx.workerId, ctx.payload);
-        ctx.appendAttributed({
-          worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: 'board.report_result',
           actor: 'hub', payload: receipt,
         });
 }

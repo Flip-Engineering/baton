@@ -10,7 +10,7 @@
 // lane (digest-addressed spill:sha256: store section, 1 MiB spill.body ceiling + the
 // spill_body_exceeded hard refusal, head + citation inline, the closed 'spill' query kind on
 // the read port through the BD3-A single renderer, reply-lane parity, wave-member advisory
-// passthrough, idempotent re-drive); D the scanner posture — shape-only forever for all SIX
+// passthrough, idempotent re-drive); D the scanner posture — shape-only forever for all FOUR
 // grammars (C0b of bidirectional-v3.test.mjs already pins MESSAGE_SEND and is NOT
 // duplicated here) plus the decision-question split; E doctor surfacing (limits projection,
 // card().agentExperience.limitsRegistryDigest, handshake verification, digest stability under
@@ -18,12 +18,12 @@
 // ratchet (value-set scan across spellings + hand-typed byte prose, named deliberate locals
 // exempted) and the store-consumer dispositions that stay; G the folded OQ2 truncation marker.
 //
-// INVENTORY + SPLIT (v1.2, re-measured 2026-08-04 from the repo root): 50 rows — A ×6,
-// B ×16 (B15 board.report.body, B16 run.legacy_send.body added at the blue-team fold),
-// C ×10 (C10 the wave-member byte-law oracle added), D ×8 (incl. 5 pins), E ×6, F ×3
-// (incl. 2 pins), G ×1. Split: 43 red / 7 green pins (D2-D6, F2, F3) — the same seven pins
-// as v1.1; every red row fails at its named stage. F1's scan counts 55 unconsolidated hits
-// (46 at v1.1 + the nine de-exempted legacy-alias door literals, retiring on import).
+// INVENTORY + SPLIT (v1.2, re-measured 2026-08-04 from the repo root; #598 dropped four
+// rows): 46 rows — A ×5, B ×15 (B16 run.legacy_send.body added at the blue-team fold),
+// C ×10 (C10 the wave-member byte-law oracle added), D ×6 (incl. 3 pins), E ×6, F ×3
+// (incl. 2 pins), G ×1. Split: 41 red / 5 green pins (D2, D3, D6, F2, F3); every red row
+// fails at its named stage. F1's scan counts 55 unconsolidated hits (46 at v1.1 + the nine
+// de-exempted legacy-alias door literals, retiring on import).
 //
 // Red-first: written against the v1.1 contract BEFORE implementation; every contract-mandated-
 // but-missing capability fails at a NAMED stage. Harness pattern mirrors
@@ -86,8 +86,6 @@
 //     unit: 'bytes', gracefulPath} where gracefulPath === the composer's path phrase (the
 //     message endsWith it). Typed codes are the registry rows' refusalCode values:
 //       graceful lanes beyond the spill ceiling  -> 'spill_body_exceeded' (cap = 1048576)
-//       board.report.body                        -> 'board_report_exceeded' (v1.2: the LIVE 4,096
-//                                                   store bound, coordination-store.mjs:416/:14442)
 //       run.legacy_send.body                     -> 'run_legacy_send_exceeded' (v1.2: the legacy
 //                                                   run.send / run.act send / run.workstream.notify /
 //                                                   waves.send message door at its LIVE 16,384)
@@ -125,12 +123,12 @@
 //   graceful class (B1): 'message.send.body is 1048577 bytes (cap 1048576); over-cap bodies
 //     spill to a durable artifact — resend with a digest-citable head'
 //
-// PINS (what legitimately exists today and must not regress — 7 green rows):
-//   D2-D5  the other five grammars' shape-only posture (SCRATCHPAD_WRITE / CONTEXT_READ /
-//          BOARD_CLAIM / BOARD_REPORT are already inline shape-only; C0b covers MESSAGE_SEND
-//          in bidirectional-v3.test.mjs:434-455 and is not duplicated)
+// PINS (what legitimately exists today and must not regress — 5 green rows):
+//   D2-D3  the other two shape-only grammars (SCRATCHPAD_WRITE / CONTEXT_READ are already
+//          inline shape-only; C0b covers MESSAGE_SEND in bidirectional-v3.test.mjs:434-455 and
+//          is not duplicated)
 //   D6     the scan windows as substrate resource guards: over-window frames are prose (null)
-//          for all six grammars (claude-session.mjs:45-46)
+//          for all four grammars (claude-session.mjs:45-46)
 //   F2     the store's deliberate-local field caps (note.text 2,048 inside the capped entry)
 //          stay shape refusals (Decision 2's named locals)
 //   F3     context_pack.body 8,192 keeps its exact refusal (substrate value unchanged — the
@@ -151,17 +149,6 @@
 //     suite-oracle gap.
 //   * The run-intent record's head+citation storage is internal; C7 pins the observable
 //     contract (admitted, byte-identical spill artifact, transparent reader resolution).
-//   * RESOLVED (contract v1.2, blue-team blocker 1 — the headline): the v1.1 fold believed the
-//     store's board-report body check was shape-only (its :14423-14425 anchor lands in the doc
-//     comment, ~17 lines short of enforcement) and declared the lane substrate-bounded with NO
-//     admission row. In THIS tree submitBoardReport ENFORCES a live 4,096 bound
-//     (MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced :14442 via
-//     boardBounded :430-432, refusal invalid_board_report; second live door
-//     application-semantics.mjs:1426). The contract now catalogs board.report.body 4,096 as a
-//     live ADMISSION row (hard, coaching, board_report_exceeded) at the LIVE value: A6 asserts
-//     the row EXISTS, B15 pins its coaching refusal over submitBoardReport, D5's message names
-//     the store bound (the pin's behavior was always layer-correct), and F1's :416/:14442/:1426
-//     hits retire on import like every other cataloged literal.
 //   * E1/E2/E5/E6 import limits.mjs FIRST, so today they report registry-missing; their
 //     named stages (doctor-projection-missing, handshake-digest-missing) are the stages they
 //     fail at once the registry exists. The E5 fixture's positive arm is smoke-verified to
@@ -466,7 +453,6 @@ const ADMISSION_LANES = Object.freeze([
   ['wave.member.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
   ['orientation.note', 2048, 'bytes', null, 'orientation_note_exceeded'],
   ['steering.focus', 2048, 'bytes', null, 'steering_focus_exceeded'],
-  ['board.report.body', 4096, 'bytes', null, 'board_report_exceeded'],
   ['run.legacy_send.body', 16384, 'bytes', null, 'run_legacy_send_exceeded'],
   ['decision.text', 4096, 'bytes', null, 'decision_text_exceeded'],
   ['scratchpad.entry.body', 8192, 'bytes', null, 'scratchpad_entry_exceeded'],
@@ -477,8 +463,6 @@ const SUBSTRATE_LANES = Object.freeze([
   ['scanner.window.scratchpad', 20480],
   ['scanner.window.context_read', 20480],
   ['scanner.window.message_send', 20480],
-  ['scanner.window.board_claim', 20480],
-  ['scanner.window.board_report', 20480],
   ['wire.frame', 1048576],
   ['credential.file', 16384],
   ['context_pack.body', 8192],
@@ -490,8 +474,6 @@ const SUBSTRATE_LANES = Object.freeze([
 // spill.body (1 MiB) is the one substrate row that mints a refusal (blocker 3).
 
 const VIEW_LANES = Object.freeze([
-  ['view.board.bytes', 262144, 'bytes'],
-  ['view.board.items', 512, 'items'],
   ['view.repl.bytes', 262144, 'bytes'],
   ['view.scratchpad.bytes', 32768, 'bytes'],
   ['view.scratchpad.items', 64, 'items'],
@@ -585,26 +567,6 @@ test('A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable acr
   ], { cwd: join(import.meta.dirname, '..'), encoding: 'utf8' });
   assert.equal(child.trim(), limits.FRAME_LIMITS_DIGEST,
     'the digest is byte-stable across processes (the CLI handshake compares it, Acceptance A)');
-});
-
-test('A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1)', async () => {
-  const limits = assertLimitsModule(await limitsOrError());
-  const row = limits.FRAME_LIMITS?.['board.report.body'];
-  assert.ok(row,
-    'the registry catalogs board.report.body — submitBoardReport enforces a LIVE 4,096 bound '
-    + '(MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced :14442 via boardBounded '
-    + ':430-432, refusal invalid_board_report; second door application-semantics.mjs:1426). '
-    + 'Cataloging the LIVE value is the board.title/board.detail disposition; deleting the bound '
-    + 'would smuggle a behavior REMOVAL in as "consolidation" (the inverse of blocker 8)');
-  assert.equal(row.class, 'admission', 'board.report.body is admission class (not substrate)');
-  assert.equal(row.value, 4096, 'the row declares the LIVE store value 4,096 (Decision 8: no value change)');
-  assert.equal(row.unit, 'bytes', 'measured in UTF-8 bytes (the byte law; boardBounded is Buffer.byteLength)');
-  assert.equal(row.graceful ?? null, null, 'hard in v1 — board bodies keep hard bounds with coaching (Non-goals)');
-  assert.equal(row.refusalCode ?? null, 'board_report_exceeded', 'the row names its typed refusal code');
-  assert.equal(typeof row.enforcedAt, 'string' , 'the row names its enforcement seam (submitBoardReport)');
-  assert.equal(limits.FRAME_LIMITS?.['scanner.window.board_report']?.value, 20480,
-    'the substrate row STAYS: the 20,480 scanner window remains the wire-layer resource guard '
-    + 'beside the admission row, so doctor shows both bounds');
 });
 
 // ===========================================================================
@@ -772,28 +734,6 @@ test('B14: the scratchpad entry canonical ceiling gains the coaching shape (numb
   assert.equal(typeof error?.gracefulPath, 'string');
   assertNamesBothNumbers(error?.message, { cap: 8192, actual: error.actual }, 'B14');
   await assertComposedRefusalText(error?.message, 'scratchpad.entry.body', error.actual, 8192, 'B14');
-});
-
-test('B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1)', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const body = `REPORT-SECRET-${'r'.repeat(4096)}`;
-  let error = null;
-  try {
-    // Every other field is well-formed, so the BODY check is the only failing condition
-    // (it fires before the item-history/claim lookups, coordination-store.mjs:14442).
-    store.submitBoardReport(
-      { itemId: 'item-fe-b15', itemVersion: 1, itemDigest: 'a'.repeat(64), body, owner: 'worker:fe-b15' },
-      { actor: 'worker', principalId: 'worker:fe-b15', key: 'fe-b15-report' },
-    );
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the LIVE store bound still enforces (coordination-store.mjs:416, enforced :14442)');
-  assert.equal(error?.code ?? null, 'board_report_exceeded',
-    'stage: refusal-coaching-missing — today numberless invalid_board_report '
-    + '(\'board report body must be bounded non-empty\', the exact sin class the epic eliminates)');
-  assertCoachingPayload(error, { cap: 4096, actual: Buffer.byteLength(body) }, 'B15');
-  assertNamesBothNumbers(error?.message, { cap: 4096, actual: Buffer.byteLength(body) }, 'B15');
-  assertNoBodyContent(error?.message, body, 'B15');
-  await assertComposedRefusalText(error?.message, 'board.report.body', Buffer.byteLength(body), 4096, 'B15');
 });
 
 test('B16: the legacy-alias send door carries the coaching shape at its LIVE 16,384 (v1.2, blue-team blocker 2)', async () => {
@@ -1090,9 +1030,9 @@ test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 K
 });
 
 // ===========================================================================
-// D — scanner posture: shape-only forever, all SIX grammars (blocker 2).
+// D — scanner posture: shape-only forever, all FOUR grammars (blocker 2).
 // C0b of bidirectional-v3.test.mjs:434-455 pins MESSAGE_SEND and is NOT
-// duplicated here; D2-D5 pin the other five (four already green), D1/D7/D8 are red.
+// duplicated here; D2-D3 pin the other two shape-only grammars (already green), D1 is red.
 // ===========================================================================
 
 const PARENT_REF = '"inReplyTo":"message:8b0c60ab74192f82f47830e313d34519bbe0229ed58d607fbf0c0cacd25b4146"';
@@ -1127,26 +1067,7 @@ test('D3 (pin): a large-but-parseable CONTEXT_READ frame is admitted shape-only'
   assert.equal(parsed.query.text.length, 3000);
 });
 
-test('D4 (pin): a large-but-parseable BOARD_CLAIM frame is admitted shape-only', () => {
-  const text = `BOARD_CLAIM: {"grantId":"${'g'.repeat(3000)}","itemId":"i1","expectedBoardFence":0,"idempotencyKey":"d4-claim"}`;
-  const parsed = claudeSession.scanForBoardClaim(text);
-  assert.ok(parsed, 'the board claim scanner is inline shape-only (no factory, no ValidationError swallow)');
-  assert.equal(parsed.grantId.length, 3000);
-});
-
-test('D5 (pin): a BOARD_REPORT body over the LIVE 4,096 admission bound is still admitted shape-only at the wire', () => {
-  const body = 'r'.repeat(5000); // over the live 4,096 store bound — the SCANNER layer never caps
-  const text = `BOARD_REPORT: {"grantId":"g1","itemId":"i1","itemVersion":1,"itemDigest":"${'a'.repeat(64)}","expectedClaimVersion":1,"body":"${body}","idempotencyKey":"d5-report"}`;
-  const parsed = claudeSession.scanForBoardReport(text);
-  assert.ok(parsed, 'the board-report scanner is inline shape-only (claude-session.mjs:195-216): the wire '
-    + 'admits what admission refuses with coaching — the LIVE 4,096 bound sits at the STORE '
-    + '(MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced in submitBoardReport at :14442 '
-    + 'via boardBounded :430-432) with a second door at the arg schema (application-semantics.mjs:1426); '
-    + 'B15 pins that refusal. A wire cap at ANY value below the 20,480 window fails this pin (Decision 5)');
-  assert.equal(parsed.body.length, 5000);
-});
-
-test('D6 (pin): the scan windows stay substrate resource guards — over-window frames are prose for all six grammars', () => {
+test('D6 (pin): the scan windows stay substrate resource guards — over-window frames are prose for all four grammars', () => {
   const decision = claudeSession.scanForDecisionRequest(
     `DECISION_REQUEST: {"question":"${'q'.repeat(8300)}","options":[{"id":"a","label":"A"}],"deadlineMs":60000}`);
   assert.equal(decision, null, 'a frame past the 8,192 decision window is prose (extractFirstBalancedJsonObject, :45-46)');
@@ -1160,12 +1081,6 @@ test('D6 (pin): the scan windows stay substrate resource guards — over-window 
   assert.equal(claudeSession.scanForMessageSend(
     `MESSAGE_SEND: {${PARENT_REF},"body":"${over20k}"}`), null,
     'MESSAGE_SEND past 20,480 is prose');
-  assert.equal(claudeSession.scanForBoardClaim(
-    `BOARD_CLAIM: {"grantId":"${over20k}","itemId":"i1","expectedBoardFence":0,"idempotencyKey":"d6-c"}`), null,
-    'BOARD_CLAIM past 20,480 is prose');
-  assert.equal(claudeSession.scanForBoardReport(
-    `BOARD_REPORT: {"grantId":"g1","itemId":"i1","itemVersion":1,"itemDigest":"${'a'.repeat(64)}","expectedClaimVersion":1,"body":"${over20k}","idempotencyKey":"d6-b"}`), null,
-    'BOARD_REPORT past 20,480 is prose');
 });
 
 

@@ -160,8 +160,6 @@ const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
-const safeBoardId = { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' };
-const safeBoardItemId = { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9_.:-]+$' };
 const digest64 = { type: 'string', pattern: '^[a-f0-9]{64}$' };
 const evidenceRef = {
   oneOf: [
@@ -1215,9 +1213,6 @@ const sessionAuthoritySchema = objectSchema({
   expiresAt: { type: 'string', minLength: 1, maxLength: 64 },
   orchestratorLeaseId: id,
 }, ['schemaVersion', 'authorityDigest', 'expiresAt', 'orchestratorLeaseId']);
-const boardItemCoordinates = {
-  itemId: safeBoardItemId, itemVersion: { type: 'integer', minimum: 1 },
-};
 
 // S-3 is a registry delta, not a second inventory. Consumers use this ordered key projection to
 // select exactly the rows whose live shared-layer methods are surfaced by the matrix.
@@ -1225,24 +1220,17 @@ const boardItemCoordinates = {
 // knowledge.promote leave the REFLEX matrix — they are the ordinary-surface settlement tools
 // (their MCP tools live in the ordinary table), so the matrix projection no longer derives them.
 export const SURFACING_MATRIX_KEYS = Object.freeze([
-  'run.scratchpad', 'decision.list', 'board.read', 'board.post', 'board.retitle',
-  'board.reorder', 'board.close', 'board.drop',
+  'run.scratchpad', 'decision.list',
   'package.admit', 'package.attach', 'package.read', 'repl.manifest', 'repl.binding',
   'repl.cite', 'knowledge.recall', 'knowledge.horizon',
 ]);
 const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'run.scratchpad': 'viewer-scoped worker and shared slices',
   'decision.list': 'Run-scoped observe authorization; deadlineAt is projected',
-  'board.read': 'transported reads require the S-2 run-orchestrator lease',
-  'board.post': 'S-2 session authority, board-to-Run binding, and in-append fence CAS',
-  'board.retitle': 'S-2 session authority, board-to-Run binding, and in-append fence CAS',
-  'board.reorder': 'S-2 session authority, board-to-Run binding, and in-append fence CAS',
-  'board.close': 'S-2 session authority; candidate Finding mint is unchanged',
-  'board.drop': 'S-2 session authority and fifth-mutation fence CAS',
   'scratchpad.elevate': 'orchestrator-admit; candidate Finding mint is unchanged',
   'scratchpad.settle': 'orchestrator-admit',
   'package.admit': 'S-2 session authority and package-to-Run binding',
-  'package.attach': 'S-2 session authority; run/worker/board scope grammar',
+  'package.attach': 'S-2 session authority; run/worker scope grammar',
   'package.read': 'resolved content remains provenance-marked untrusted prose',
   'repl.manifest': 'worker manifests remain restricted to the worker own layer',
   'repl.binding': 'binding version CAS remains authoritative',
@@ -1484,87 +1472,6 @@ const CANONICAL_OPERATION_SPECS = [
   ['context.map', { action: 'context_map', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
   ['context.reduce', { action: 'context_reduce', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
   ['context.retry', { action: 'context_retry', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
-  ['board.post', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
-      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId,
-      title: { type: 'string', minLength: 1 },
-      detail: { type: ['string', 'null'], minLength: 1 },
-      owner: { type: ['string', 'null'], minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' },
-      evidence: { type: 'array', maxItems: 8, items: evidenceRef },
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['sessionAuthority', 'runId', 'board', 'title', 'expectedBoardFence']),
-    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
-    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → postBoardItem',
-  }],
-  ['board.retitle', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
-      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
-      title: { type: 'string', minLength: 1 },
-      detail: { type: ['string', 'null'], minLength: 1 },
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
-    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
-    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → retitleBoardItem',
-  }],
-  ['board.reorder', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
-      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
-      ordinal: { type: 'integer', minimum: 1 }, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'ordinal', 'expectedBoardFence']),
-    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
-    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → reorderBoardItem',
-  }],
-  ['board.close', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
-      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
-    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
-    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → closeBoardItem',
-  }],
-  ['board.drop', {
-    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
-      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
-    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
-    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → dropBoardItem',
-  }],
-  ['board.read', {
-    effect: 'observe', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
-    surfaces: ['embedded', 'mcp'],
-    inputSchema: objectSchema({ sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId },
-      ['sessionAuthority', 'runId', 'board']),
-    authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['viewer'],
-    liveMethod: 'boardSnapshot + projectBoardView',
-  }],
-  ['board.claim', {
-    profile: 'worker', effect: 'board_claim', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run', surfaces: ['embedded'], inputSchema: objectSchema({
-      grantId: { type: 'string', minLength: 1, maxLength: 256 },
-      itemId: id, expectedBoardFence: { type: 'integer', minimum: 0 },
-      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
-    }, ['grantId', 'itemId', 'expectedBoardFence', 'idempotencyKey']),
-    authorityFields: ['grantId'], serverDerived: ['workerId', 'taskId', 'taskVersion', 'processGeneration'],
-    liveMethod: 'admitWorkerBoardCommand → requestBoardClaim',
-  }],
-  ['board.report', {
-    profile: 'worker', effect: 'board_report', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run', surfaces: ['embedded'], inputSchema: objectSchema({
-      grantId: { type: 'string', minLength: 1, maxLength: 256 },
-      itemId: id, itemVersion: { type: 'integer', minimum: 1 }, itemDigest: digest64,
-      expectedClaimVersion: { type: 'integer', minimum: 1 },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.report.body'].value },
-      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
-    }, ['grantId', 'itemId', 'itemVersion', 'itemDigest', 'expectedClaimVersion', 'body', 'idempotencyKey']),
-    authorityFields: ['grantId'], serverDerived: ['workerId', 'taskId', 'taskVersion', 'processGeneration'],
-    liveMethod: 'admitWorkerBoardCommand → submitBoardReport',
-  }],
   ['package.admit', {
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
     helpTopic: 'run', surfaces: ['embedded', 'mcp'],
@@ -1578,7 +1485,7 @@ const CANONICAL_OPERATION_SPECS = [
     helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
       sessionAuthority: sessionAuthoritySchema, runId: id, packageDigest: digest64,
       scope: { type: 'string', minLength: 3, maxLength: 600,
-        pattern: '^(?:run|worker:[A-Za-z0-9_.:-]+|board:[A-Za-z0-9_.:-]+)$' },
+        pattern: '^(?:run|worker:[A-Za-z0-9_.:-]+)$' },
     }, ['sessionAuthority', 'runId', 'packageDigest', 'scope']),
     authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['idempotencyKey'],
     liveMethod: 'attachContextPackage',
@@ -1690,7 +1597,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
     inputSchema: objectSchema({
       kind: { type: 'string', enum: ['task', 'workflow', 'project'] }, id: id,
-      board: id, viewer: id,
+      viewer: id,
     }, ['kind', 'id']),
     authorityFields: ['kind', 'id', 'viewer'], serverDerived: ['fenceTuple'],
     liveMethod: 'taskHorizon + workflowHorizon + projectHorizon',
@@ -1767,12 +1674,6 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       runId: id, message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
-      // Epic #78 Decision 2: the optional closed claimGrant request. The caller names no grantee
-      // and no permissions — the server resolves the member Run and records the selected subset.
-      claimGrant: objectSchema({
-        boardRunId: { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$' },
-        board: safeBoardId,
-      }, ['boardRunId', 'board']),
     }, ['runId', 'message']),
   }],
   ['waves.stop', {
@@ -1868,9 +1769,8 @@ const CANONICAL_OPERATION_SPECS = [
       target: { type: 'string', minLength: 1, maxLength: 1024 },
     }, ['target']),
   }],
-  // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface canonical
-  // operations (Decision 11). Boards are embedded+cli only (no ordinary MCP board tools, Decision
-  // 10); the six MCP-projected lanes surface embedded+mcp+cli. All verbs are C4-clean.
+  // Facade-projection epic (#87+#48, contract v2.2): the workflow-surface canonical
+  // operations (Decision 11); the six MCP-projected lanes surface embedded+mcp+cli. All verbs are C4-clean.
   ['run.message.send', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run', idempotent: false,
@@ -1927,21 +1827,6 @@ const CANONICAL_OPERATION_SPECS = [
       body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
       idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
     }, ['runId', 'scope', 'body']),
-  }],
-  ['run.board.post', {
-    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'control',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton run board post RUN_ID --board BOARD --title TEXT',
-    inputSchema: objectSchema({
-      runId: id, board: safeBoardId, title: { type: 'string', minLength: 1 },
-      detail: { type: 'string', minLength: 1 }, owner: safeBoardId, evidence: { type: 'array', maxItems: 8, items: evidenceRef },
-    }, ['runId', 'board', 'title']),
-  }],
-  ['run.board.read', {
-    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'observe',
-    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton run board read RUN_ID --board BOARD',
-    inputSchema: objectSchema({ runId: id, board: safeBoardId }, ['runId', 'board']),
   }],
   ['run.knowledge.seed', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',

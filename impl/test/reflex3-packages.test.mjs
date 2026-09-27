@@ -342,7 +342,7 @@ test('F11.3a: attach performs no byte re-read and is O(1) per scope', () => {
   assert.ok(f.res.calls.length > 0, 'admission resolves branch refs at least once');
   f.res.calls.length = 0;
   const packageDigest = admitted.package.packageDigest;
-  const scopes = ['run', 'worker:role-a', 'board:board-a'];
+  const scopes = ['run', 'worker:role-a'];
   for (const scope of scopes) {
     const attached = f.store.attachContextPackage(
       { packageDigest, runId: 'run-a', scope },
@@ -352,7 +352,7 @@ test('F11.3a: attach performs no byte re-read and is O(1) per scope', () => {
   }
   assert.equal(f.res.calls.length, 0, 'attach never re-reads branch bytes');
   const attachments = f.store.contextPackageAttachments('run-a');
-  assert.equal(attachments.length, 3, 'three scopes are three cheap bindings, not three re-reads');
+  assert.equal(attachments.length, 2, 'two scopes are two cheap bindings, not two re-reads');
   assert.deepEqual(attachments.map((entry) => entry.scope).sort(), [...scopes].sort());
   f.store.releaseWriterLease();
 });

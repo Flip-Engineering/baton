@@ -77,7 +77,7 @@ try {
   for (const command of [
     'run_message_send', 'run_message_receipt', 'run_attention_watch',
     'run_scratchpad_read', 'run_scratchpad_elevate',
-    'run_board_post', 'run_board_read', 'run_knowledge_seed',
+    'run_knowledge_seed',
   ]) {
     if (!workflowPorts.PRODUCTION_WORKFLOW_WEB_PORTS?.[command]) {
       throw new Error(`release-smoke: installed workflow Web adapter is missing ${command}`);

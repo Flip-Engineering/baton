@@ -102,7 +102,7 @@ function harness(coordinator) {
 }
 
 /**
- * Lightweight coordinator (mirrors reflex2-boards.test.mjs's documented harness). `refereeCalls`
+ * Lightweight coordinator (the documented harness). `refereeCalls`
  * counts trust-gate entries — the positive/negative pin for whether `_runTrustGate` dispatched.
  */
 function lightweightCoordinator({ turnCompletion = null, sessionContext = undefined } = {}) {
@@ -438,8 +438,6 @@ test('C2: every named guard site treats a `paused` task as live, exactly as it t
   const probes = [
     ['claimScratch', () => kit.coordinator.claimScratch(handle.id, {}, {})],
     ['postScratchFact', () => kit.coordinator.postScratchFact(handle.id, {}, {})],
-    ['requestBoardClaim', () => kit.coordinator.requestBoardClaim(handle.id, {}, {})],
-    ['submitBoardReport', () => kit.coordinator.submitBoardReport(handle.id, {}, {})],
     ['admitReplManifest', () => kit.coordinator.admitReplManifest(handle.id, {}, {})],
   ];
   for (const [label, probe] of probes) {
