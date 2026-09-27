@@ -58,8 +58,8 @@
 //   P2  Lease-epoch TTL: lease.expiresAt === issuedAt + leaseTtlMs (min with session TTL);
 //       the lease refuses with run_orchestrator_lease_expired past the epoch — all under an
 //       injected mutable clock, no wall-clock reads.
-//   P3  Recursive-session gate constancy: a sessionAuthority context keeps runs.list and
-//       run.workstream.stop behind run_orchestrator_command_forbidden and keeps
+//   P3  Recursive-session gate constancy: a sessionAuthority context keeps runs.list
+//       behind run_orchestrator_command_forbidden and keeps
 //       application.help admitted (the read lane the gate must never take down).
 //   P4  Transport run_stop constancy: owner (emergency_stop) → 200; non-lease child without
 //       emergency_stop → 403 forbidden. Both stay constant; the carve-out (R4) is narrow.

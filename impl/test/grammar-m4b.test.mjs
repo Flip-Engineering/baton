@@ -108,7 +108,7 @@ test('M4B-4: the C8 canonical serialization order holds and a scrambled emitter 
 test('M4B-6: the canonical transport names are present, mechanically derived from the registry', () => {
   // The new canonical names are present: every canonical operation's mechanically derived
   // transport names are live registry data, and the web set stays disjoint from kernel/authoring.
-  for (const key of ['run.do', 'run.view', 'run.member.send', 'run.member.stop', 'run.member.view']) {
+  for (const key of ['run.do', 'run.view', 'run.member.view']) {
     const operation = REGISTRY.canonicalOperations.find((entry) => entry.key === key);
     assert.deepEqual(operation.names, deriveSurfaceNames(key));
   }
