@@ -354,8 +354,6 @@ test('CL6: the pins that read a moved member\'s text resolve it through the live
   const apply = memberSource('_apply');
   assert.deepEqual(memberSpans('_apply').map((span) => span.file).sort(), ['coordination-ledger.mjs', 'coordination-store.mjs'],
     '_apply is a delegate on the class and a body in the module');
-  assert.ok(apply.includes('repl.manifest_admitted'),
-    'the fold source the repl kind-inventory pin reads is reachable by member name');
   assert.ok(apply.includes('unsupported_event_kind'),
     'and carries the fold tripwire the pin names');
   assert.ok(apply.includes('this._') && !apply.includes('store._'),

@@ -22,7 +22,6 @@ import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 
 const NOW = Date.parse('2026-07-22T00:00:00.000Z');
 const repoId = 'repo-reflex-bp';
@@ -64,38 +63,11 @@ function resolver() {
   return { artifacts, calls, read };
 }
 
-function artifactBranch(name, res, content = { hello: name }) {
-  const artifactDigest = digest(content);
-  const handle = `art:sha256:${artifactDigest}`;
-  res.artifacts.set(handle, content);
-  return {
-    name, source: null, valueRef: null, schema: null,
-    artifact: {
-      kind: 'context_value', digest: artifactDigest, handle,
-      mediaType: 'application/vnd.baton.context-value+json',
-      bytes: Buffer.byteLength(JSON.stringify(content)),
-    },
-  };
-}
-
-function packageFields(branches, overrides = {}) {
-  return {
-    schemaVersion: 1, kind: 'baton.context_package', branches,
-    provenance: { runId: overrides.runId ?? 'run-a', principalId: overrides.principalId ?? 'principal-a' },
-    policyDigest: DEFAULT_CONTEXT_PROGRAM_POLICY.policyDigest,
-    ...overrides.provenanceExtra ? { provenance: { ...overrides.provenanceExtra } } : {},
-  };
-}
 
 function coordinationFixture() {
   const res = resolver();
   const coordination = new CoordinationStore(join(tmpDir(), 'coordination'), {
     repoId, runLineagePolicy,
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: '2'.repeat(64),
-    contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: res.read,
-    contextSourceAttest: () => { throw new Error('not used in this suite'); },
     deploymentBaseSha: '1'.repeat(40),
     clock: () => new Date(NOW).toISOString(),
   });
@@ -105,11 +77,6 @@ function coordinationFixture() {
 function reopenCoordination(path, res) {
   return new CoordinationStore(path, {
     repoId, runLineagePolicy,
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: '2'.repeat(64),
-    contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: res.read,
-    contextSourceAttest: () => { throw new Error('not used in this suite'); },
     deploymentBaseSha: '1'.repeat(40),
     clock: () => new Date(NOW).toISOString(),
   });
@@ -220,14 +187,13 @@ const leaseSession = { principalId: 'orchestrator-a', sessionId: 'session-a', ex
 // Part A / Part H — registration + inventory
 // ============================================================
 
-test('registration: every board/package reflex tool is in the combined inventory, frozen, and _meta-stamped', async () => {
+test('registration: every board reflex tool is in the combined inventory, frozen, and _meta-stamped', async () => {
   const { coordination } = coordinationFixture();
   const server = setup({ coordination });
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
-  const expected = ['baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
-    'baton_package_admit', 'baton_package_attach', 'baton_package_read'];
+  const expected = ['baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read'];
   for (const name of expected) assert.ok(names.includes(name), `${name} must be registered`);
   for (const name of ['baton_board_claim', 'baton_board_report']) {
     assert.equal(names.includes(name), false, `${name} must NOT be registered (Part D.9)`);
@@ -433,100 +399,3 @@ test('Part D.9: no claim/report tools are registered — calling them by name is
 
 // ============================================================
 // Part E — package tools
-// ============================================================
-
-test('baton_package_admit refuses a submitter-supplied provenance.packageEvent as reserved_package_field', async () => {
-  const { coordination, res } = coordinationFixture();
-  issueOrchestratorLease(coordination, { runId, ...leaseSession });
-  const server = setup({ coordination });
-  await initialized(server);
-  const fields = packageFields([artifactBranch('a', res)]);
-  fields.provenance = { ...fields.provenance, packageEvent: { sourceEventSeq: 1, sourceEventDigest: '0'.repeat(64) } };
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-bad', runId, package: fields },
-  });
-  assert.equal(response.result.isError, true);
-  assert.equal(response.result.structuredContent.error.code, 'reserved_package_field');
-});
-
-test('baton_package_admit is refused board_lease_required without an active lease', async () => {
-  const { coordination, res } = coordinationFixture();
-  const server = setup({ coordination });
-  await initialized(server);
-  const fields = packageFields([artifactBranch('a', res)]);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-nolease', runId, package: fields },
-  });
-  assert.equal(response.result.isError, true);
-  assert.equal(response.result.structuredContent.error.code, 'board_lease_required');
-});
-
-test('baton_package_admit -> baton_package_attach -> baton_package_read round-trips, and attach never re-reads branch bytes', async () => {
-  const { coordination, res } = coordinationFixture();
-  issueOrchestratorLease(coordination, { runId, ...leaseSession });
-  const server = setup({ coordination });
-  await initialized(server);
-
-  const fields = packageFields([artifactBranch('a', res)], { runId });
-  const admitted = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-1', runId, package: fields },
-  });
-  assert.equal(admitted.result.isError, false);
-  assert.equal(admitted.result.structuredContent.result, 'admitted');
-  const packageDigest = admitted.result.structuredContent.package.packageDigest;
-
-  res.calls.length = 0;
-  const attached = await request(server, 3, 'tools/call', {
-    name: 'baton_package_attach', arguments: { repoId, idempotencyKey: 'attach-1', packageDigest, runId, scope: 'run' },
-  });
-  assert.equal(attached.result.isError, false);
-  assert.equal(attached.result.structuredContent.result, 'attached');
-  assert.equal(res.calls.length, 0, 'attach is a fenced O(1) pointer binding — never a re-read of branch bytes');
-
-  const metadata = await request(server, 4, 'tools/call', {
-    name: 'baton_package_read', arguments: { repoId, packageDigest },
-  });
-  assert.equal(metadata.result.isError, false);
-  assert.equal(metadata.result.structuredContent.packageDigest, packageDigest);
-  assert.equal(metadata.result.structuredContent.branches.length, 1);
-
-  const branch = await request(server, 5, 'tools/call', {
-    name: 'baton_package_read', arguments: { repoId, packageDigest, branchName: 'a' },
-  });
-  assert.equal(branch.result.isError, false);
-  assert.equal(branch.result.structuredContent.provenance, 'untrusted');
-  assert.ok(branch.result.structuredContent.artifact.includes('"hello":"a"'));
-});
-
-test('baton_package_read surfaces missing branch bytes as the typed artifact_unavailable tool error at resolve time', async () => {
-  const { coordination, res } = coordinationFixture();
-  issueOrchestratorLease(coordination, { runId, ...leaseSession });
-  const server = setup({ coordination });
-  await initialized(server);
-  const branch = artifactBranch('a', res);
-  const fields = packageFields([branch], { runId });
-  const admitted = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-1', runId, package: fields },
-  });
-  const packageDigest = admitted.result.structuredContent.package.packageDigest;
-  res.artifacts.delete(branch.artifact.handle);
-
-  const response = await request(server, 3, 'tools/call', {
-    name: 'baton_package_read', arguments: { repoId, packageDigest, branchName: 'a' },
-  });
-  assert.equal(response.result.isError, true);
-  assert.equal(response.result.structuredContent.error.code, 'artifact_unavailable');
-  assert.equal(coordination.events().some((event) => event.kind === 'mcp.call_admitted' && event.payload.tool === 'baton_package_read'),
-    false, 'package read is a read-only observe-path tool');
-});
-
-test('baton_package_read against an unknown packageDigest is refused artifact_unavailable, never a silent empty result', async () => {
-  const { coordination } = coordinationFixture();
-  const server = setup({ coordination });
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_package_read', arguments: { repoId, packageDigest: 'f'.repeat(64) },
-  });
-  assert.equal(response.result.isError, true);
-  assert.equal(response.result.structuredContent.error.code, 'artifact_unavailable');
-});

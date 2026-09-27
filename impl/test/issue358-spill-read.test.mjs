@@ -25,7 +25,6 @@ import { createHash } from 'node:crypto';
 
 import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 import { createSwarmNativeBridge, swarmBridgeCommand } from '../src/swarm-native-bridge.mjs';
 import { SWARM_PERMISSIONS, SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
@@ -45,11 +44,6 @@ async function lightFixture(t, label, { startRun } = {}) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const store = new CoordinationStore(join(directory, 'coordination'), {
     repoId: 'repo-issue358', deploymentBaseSha: '1'.repeat(40),
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: '2'.repeat(64), contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: () => { throw Object.assign(
-      new Error('context package content is unavailable'), { code: 'context_artifact_unavailable' }); },
-    contextSourceAttest: () => { throw new Error('the spill read never attests a source'); },
     clock: () => '2026-09-24T00:00:00.000Z',
   });
   const workers = [];

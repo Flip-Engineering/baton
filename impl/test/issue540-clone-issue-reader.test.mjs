@@ -118,25 +118,3 @@ test('540e: a genuine authentication answer still refuses issue_reader_unavailab
   assert.match(error.message, /not authenticated/u);
 });
 
-test('540f: a recruit issued from a clone resident hands the resolved repository to the reader', async () => {
-  const clone = checkout('clone-e2e', checkout('primary-e2e', PRIMARY_REMOTE));
-  const seen = [];
-  const reader = async ({ issue, repo }) => { seen.push({ issue, repo }); return issueDocument(issue); };
-  const sent = [];
-  const client = {
-    command: async (name, args) => {
-      sent.push({ name, args });
-      return name === 'package.admit'
-        ? { packageDigest: 'a'.repeat(64), reused: false, branches: args.branches.map((branch) => branch.name) }
-        : { ok: true };
-    },
-  };
-  const parsed = parseBatonCli(['--idempotency-key', 'k540', 'swarm', 'recruit', 's-540', 'lane', 'Read #540', '--issue', '540']);
-  await runBatonCli(parsed, client, { contextRepoRoot: clone, issueReader: reader });
-  assert.deepEqual(seen, [{ issue: 540, repo: RESOLVED }],
-    'the reading leg resolves the repository from the deployment checkout, never from the cwd');
-  assert.equal(sent[0].name, 'package.admit', 'the issue is admitted as ONE package before the recruit crosses the wire');
-  assert.equal(sent.at(-1).name, 'swarm.recruit');
-  assert.equal(sent.at(-1).args.options.contextPackage.digest, 'a'.repeat(64),
-    'the admitted digest rides the recruit');
-});

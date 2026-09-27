@@ -5,8 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
   SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
-  swarmKnowledgeCommand, swarmKnowledgePermission, readRecruitContextPackageOption,
-  withoutRecruitContextPackageOption, SWARM_GUIDANCE_DEFAULT_PRIORITY,
+  swarmKnowledgeCommand, swarmKnowledgePermission, SWARM_GUIDANCE_DEFAULT_PRIORITY,
   swarmEncodedReportBody } from './swarm-contract.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
@@ -1431,10 +1430,6 @@ const KNOWLEDGE_METHODS = Object.freeze({
 // it again as the authority, and the run/swarm identity is minted from the caller's token, never
 // chosen by the request.
 //
-// One derivation each, and nothing else:
-//   • `run.package.read` resolves through the coordination store's own package authority and the
-//     ONE branch projection the MCP leg (`baton_package_read`) also serves — never a second
-//     projection of untrusted prose, and never a second reading of the attach rows.
 //   • `run.contributions.read` reads the swarm-state fold through `contributionLedgerRows`, never a
 //     ledger scan of its own; the #433 contributions projection reuses that SAME derivation.
 //   • `run.peers.read` reads the fold-only facts: it never touches the live workspace reads
@@ -1445,7 +1440,7 @@ const KNOWLEDGE_METHODS = Object.freeze({
 // the swarm-contract registry — impl/test/swarm-brief-surface.test.mjs and issue292 test 8 require
 // every `swarm.<token>` the rendered section names to be a registered command or event kind — so a
 // `swarm.peers.read` / `swarm.contributions.read` spelling could not be advertised to a seat at
-// all; the seat's own verbs live under `run.`, beside `run.package.read`.
+// all; the seat's own verbs live under `run.`.
 
 /** One seat read verb's admission row, in the knowledge verbs' shape: the permission that admits
  * it, the fields the runtime binds from the caller's own seat (never caller-supplied), the ONE
@@ -1453,19 +1448,6 @@ const KNOWLEDGE_METHODS = Object.freeze({
  * Swarm section teaches (`swarm-native-access.mjs` derives its usage rows from this ONE table), so
  * the taught set, the admitted set and the served set cannot drift apart. */
 export const SWARM_SEAT_READ_COMMANDS = Object.freeze({
-  // The context-passing substrate (docs/32 REFLEX-3) is only half a channel until the seat can
-  // read it: the brief renders the branch digests, this verb reads the branches.
-  'run.package.read': Object.freeze({
-    permission: 'read', identityFields: Object.freeze(['runId']),
-    situation: 'read a context package attached to your run or your swarm — its branch list, or one branch\u2019s text by name',
-    fields: Object.freeze({
-      packageDigest: Object.freeze({ type: 'string', pattern: '^[a-f0-9]{64}$',
-        description: 'the package digest your brief named' }),
-      branchName: Object.freeze({ type: 'string', minLength: 1, maxLength: 512, pattern: '^[A-Za-z0-9._:-]+$',
-        description: 'one branch of that package, by name — omit it and the answer is the branch list' }),
-    }),
-    required: Object.freeze(['packageDigest']),
-  }),
   // The #433 visibility gap: a peer's landed work must be readable without the root copying it
   // into a brief, and the cursor IS the ledger seq (#312).
   'run.contributions.read': Object.freeze({
@@ -1705,26 +1687,6 @@ export function swarmPipelineRows(contributions = [], participants = []) {
   });
 }
 
-/** A refusal the seat read verbs raise. Their codes are the context-package family's, not the
- * swarm command family's: `context_package_not_found` and `context_package_branch_not_found` are
- * the coordination store's own (raised by `resolveContextPackageBranch`, spelled identically
- * wherever they are minted) and `package_not_attached_to_run` is the scope refusal this verb
- * introduces. They are raised directly rather than through `refuse()` because `refuse()` draws
- * every code from the swarm family's ONE closed set (impl/src/swarm-refusals.mjs), which these
- * codes are not in — and NOTHING here writes a durable row, so no refusal lane is bypassed. */
-
-/** One branch of a package, as the branch LIST projects it: the ref the branch carries (a package
- * branch holds exactly one content ref — artifact, source or value_ref), its digest, and the byte
- * size when the ref has one (a context source counts items, a value ref carries ids: absence is
- * named, never invented). */
-const packageBranchRef = (branch) => {
-  const artifact = branch.artifact ?? null;
-  const source = branch.source ?? null;
-  const valueRef = branch.valueRef ?? null;
-  const kind = artifact !== null ? 'artifact' : source !== null ? 'source' : valueRef !== null ? 'value_ref' : null;
-  const digest = artifact?.digest ?? source?.digest ?? valueRef?.valueDigest ?? null;
-  return Object.freeze({ kind, digest, bytes: Number.isSafeInteger(artifact?.bytes) ? artifact.bytes : null });
-};
 
 /** The pre-#310 minimal hand-off fields a body may still carry: `contract` — what a
  * successor must keep true — and `carriedForward` — the items it hands on. The contract
@@ -5895,7 +5857,6 @@ export class SwarmRuntime {
       // orchestrator, the CLI) reads the same facts through the root's own surfaces.
       refuse('Swarm seat read verbs belong to a participant of this swarm', 'swarm_membership_required', { command });
     }
-    if (command === 'run.package.read') return this._packageRead(swarm, args, caller);
     if (command === 'run.contributions.read') return this._contributionsRead(swarm, args);
     if (command === 'run.spill.read') return this._spillRead(swarm, args, caller);
     return this._peersRead(swarm, caller, this.store.eventsView());
@@ -5919,65 +5880,6 @@ export class SwarmRuntime {
       bytes: spill.bytes, body: spill.body };
   }
 
-  /** `run.package.read` (#441 item 1): the package's branch list, or ONE branch's text.
-   *
-   * SCOPE is the attach rows, checked FIRST and before the package is even resolved: a seat sees a
-   * package its OWN run carries, or one any run of its swarm carries (the root attaches the issue
-   * and its cited docs to the seat's run with scope `worker:<seat>`), and nothing else — an
-   * unattached digest refuses `package_not_attached_to_run` without disclosing whether the
-   * deployment holds it at all.
-   *
-   * The branch text is resolved through the store's own resolve-time revalidation and the ONE
-   * projection the MCP leg serves (`projectContextPackageBranch`) — imported from the application
-   * facade that owns it rather than re-spelled here, lazily, so the bridge's client path never
-   * loads that module graph for a read that only runs beside it. The answer is bounded the way the
-   * package itself is: the branch list is the manifest the store admitted (its own
-   * `maxManifestBranches` ceiling), and each projected slice is capped by the
-   * `view.attention_text.bytes` row that projection already imports — no literal is minted here,
-   * and the whole answer still crosses the bridge under its `wire.frame` bound. */
-  async _packageRead(swarm, args, caller) {
-    const packageDigest = args.packageDigest;
-    const runIds = new Set([caller.runId, ...Object.values(swarm.participants).map((row) => row.runId)]
-      .filter((runId) => typeof runId === 'string' && runId.length > 0));
-    const attached = [...runIds].some((runId) => this.store.contextPackageAttachments(runId)
-      .some((row) => row.packageDigest === packageDigest));
-    if (!attached) {
-      refuse('This context package is not attached to your run or your swarm',
-        'package_not_attached_to_run',
-        { packageDigest, participantId: caller.participantId, runId: caller.runId, rule: 'package-scope',
-          correction: 'read the digest your brief named, or ask the root to attach the package to your run' });
-    }
-    const pkg = this.store.contextPackage(packageDigest);
-    if (!pkg) {
-      refuse('Context package is unavailable', 'swarm_context_package_not_found',
-        { packageDigest, rule: 'package-known',
-          correction: 'check the digest — this deployment holds no admitted package with it' });
-    }
-    if (args.branchName === undefined) {
-      return { swarmId: swarm.swarmId, packageDigest: pkg.packageDigest,
-        branches: Object.freeze(pkg.branches.map((branch) => Object.freeze({ name: branch.name,
-          ...packageBranchRef(branch) }))),
-        provenance: Object.freeze({ runId: pkg.provenance?.runId ?? null,
-          principalId: pkg.provenance?.principalId ?? null,
-          admittedEvent: pkg.admittedEvent ?? null, admittedAt: pkg.admittedAt ?? null }) };
-    }
-    let resolved;
-    try {
-      resolved = this.store.withContextArtifactVerification(
-        () => this.store.resolveContextPackageBranch(packageDigest, args.branchName));
-    } catch (error) {
-      // The store spells its miss `context_package_branch_not_found`; the swarm family raises its
-      // own closed-set spelling (#430) so the web status map stays total — the same runtime/fold
-      // split `swarm_participant_not_found` / `participant_not_found` already carries.
-      if (error?.code !== 'context_package_branch_not_found') throw error;
-      refuse('This context package carries no branch by that name', 'swarm_context_package_branch_not_found',
-        { packageDigest, branchName: args.branchName, rule: 'package-branch-known',
-          correction: 'read the branch names your brief printed, or list them by reading the package without branchName' });
-    }
-    const { projectContextPackageBranch } = await import('./application.mjs');
-    return { swarmId: swarm.swarmId, packageDigest: pkg.packageDigest,
-      branch: projectContextPackageBranch(resolved) };
-  }
 
   /** `run.contributions.read` (#441 item 2): the swarm's contributions since a seq, in ledger
    * order, each with the review state the fold derives — read through the ONE exported derivation
@@ -7595,12 +7497,6 @@ export class SwarmRuntime {
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
-    // Issue #441: the ONE ContextPackage the root pulled at recruit time — the issue it named
-    // and the docs the issue cites — renders right after the swarm situation, so a seat can read
-    // the world its brief names. A recruit that named no package renders no section: today's
-    // hand-typed briefs stay byte-identical.
-    const contextPackageSection = this._recruitContextPackageBriefSection(args.options);
-    if (contextPackageSection !== null) blocks.push(contextPackageSection);
     // Issue #441 (#423's claims): the seat's OWN claims and the holds its declared scope runs
     // into. A recruit that declared no scope and holds nothing has no claim situation, so its
     // brief renders no block — the section is absent, never empty (the Context package rule).
@@ -7737,57 +7633,6 @@ export class SwarmRuntime {
     return lines;
   }
 
-  /** Issue #441: the `## Context package` section one recruited seat's brief carries — the
-   * package's digest, the NAMED GAPS the reading leg read about (#480), then per branch its name,
-   * digest, byte size and the first `context_package.brief_bytes` of its text (the registry row,
-   * never a literal). The branches resolve through the store's own resolver, so the seat reads the
-   * same bytes the root admitted; a branch whose bytes are gone renders its identity and says so,
-   * never a silent gap. Returns null for a recruit that named no package — every pre-#441 brief
-   * composes exactly as before.
-   */
-  _recruitContextPackageBriefSection(options) {
-    const selected = readRecruitContextPackageOption(options ?? {});
-    if (selected === null) return null;
-    const record = this.store.contextPackage(selected.digest);
-    if (record === null) {
-      refuse(`Swarm recruit context package ${selected.digest} is not admitted by this deployment`,
-        'swarm_command_invalid', {
-          field: 'options.contextPackage.digest', rule: 'unadmitted-package', digest: selected.digest,
-        });
-    }
-    const row = FRAME_LIMITS['context_package.brief_bytes'];
-    const branches = record.branches ?? [];
-    const lines = [
-      '## Context package',
-      `Package ${record.packageDigest} — ${branches.length} branch${branches.length === 1 ? '' : 'es'},`
-        + ' admitted before this recruit and attached to your run: the full text of any branch'
-        + ' resolves from the package and branch digests below.',
-    ];
-    // Issue #480: the leg's NAMED GAPS, in the shape the receipt renders. A citation the root read
-    // about but could not pull has no branch to ride in (the store's package shape carries
-    // branches only), so the brief says it out loud before the branches: a seat that never learns
-    // what is missing reads a silent hole as a complete package. Absent — never an empty line —
-    // when the leg named no gap, so every pre-#480 brief is byte-identical.
-    if (selected.docs.length > 0) {
-      lines.push(sliceUtf8(`Unreadable citations: ${JSON.stringify(selected.docs)}`, row.value));
-    }
-    for (const branch of branches) {
-      const digest = branch.source?.digest ?? branch.artifact?.digest
-        ?? branch.valueRef?.artifactDigest ?? null;
-      let text = null;
-      try {
-        const resolved = this.store.resolveContextPackageBranch(record.packageDigest, branch.name);
-        text = resolved.source === null ? null
-          : typeof resolved.source === 'string' ? resolved.source : JSON.stringify(resolved.source);
-      } catch { text = null; }
-      lines.push(`- ${branch.name}`);
-      lines.push(`  digest ${digest ?? '(none)'}${text === null ? '' : ` · ${Buffer.byteLength(text, 'utf8')} bytes`}`);
-      lines.push(text === null
-        ? '  text unavailable — this deployment could not resolve the branch bytes.'
-        : sliceUtf8(text, row.value).split('\n').map((line) => `  | ${line}`).join('\n'));
-    }
-    return lines.join('\n');
-  }
 
   // ── the landing verb (issue #296) ─────────────────────────────────────────────────────────────
   //
@@ -7816,29 +7661,11 @@ export class SwarmRuntime {
       && isContributionContractBody(body) ? body : null;
   }
 
-  /** The issue a landing serves (#466): the CONTRIBUTION's own attribution — the `issue:<n>` branch
-   * (the spelling the root's `--issue` admission writes, `application-cli.mjs`) of the context
-   * package attached to the SEAT's run. Nothing else is consulted. The swarm's purpose describes
-   * the run's frame and a region's label describes the code, and the 2026-09-18 live landing read
-   * both: a seat recruited without a package landed under the purpose's `#443`, so the target's
-   * history and the receipt kept a close-guidance line for an issue the contribution never carried.
-   * A seat that carried no package — or a participant row no run ever bound — answers null, and a
-   * null issue renders no close guidance at all. Posting the landing comment stays root-side (the
-   * worker runtime holds no gh), so the receipt carries the number and the composed text instead. */
-  _integrationIssue(swarm, contribution) {
-    const participantId = contribution?.participantId;
-    const seat = typeof participantId === 'string'
-      && Object.hasOwn(swarm?.participants ?? {}, participantId)
-      ? swarm.participants[participantId] : null;
-    const runId = typeof seat?.runId === 'string' && seat.runId.length > 0 ? seat.runId : null;
-    if (runId === null) return null;
-    for (const attachment of this.store.contextPackageAttachments(runId)) {
-      const record = this.store.contextPackage(attachment.packageDigest);
-      for (const branch of record?.branches ?? []) {
-        const number = issueNumberOf(branch?.name);
-        if (number !== null) return number;
-      }
-    }
+  /** The issue a landing serves (#466): resolved from the contribution's own attribution. No
+   * current attribution source names one, so this answers null, and a null issue renders no close
+   * guidance at all. Posting the landing comment stays root-side (the worker runtime holds no gh),
+   * so the receipt carries the number and the composed text instead. */
+  _integrationIssue() {
     return null;
   }
 
@@ -8845,16 +8672,7 @@ export class SwarmRuntime {
         // consumed by that choice exactly as the comparison's own resolution consumes them (#474).
         ?? (probeRoute === null ? args.options ?? {}
           : { ...withoutRecruitRouteSelectors(args.options ?? {}), exact: probeRoute });
-      // Issue #441: the recruit's context package is NOT a Run-start selection — it names an
-      // admitted ContextPackage by digest, and the runtime attaches it to the seat's run once the
-      // run is bound. It never reaches prepareRun/startRun (a deployment resolves a selection it
-      // knows), so it is read here and stripped from the intent's options.
-      const contextPackage = readRecruitContextPackageOption(admittedOptions);
-      // #456: the operator's probe flag is the same shape of leg — the runtime's own decision about
-      // a route, read above, and never a field a deployment's `prepareRun` resolves (its option set
-      // is closed, so a leaked flag would refuse the very recruit the override was meant to admit).
-      const selectionOptions = withoutRecruitRuntimeOptions(
-        withoutRecruitContextPackageOption(admittedOptions));
+      const selectionOptions = withoutRecruitRuntimeOptions(admittedOptions);
       // #373: the seat's contribution mode IS the run contract — a read_only recruit starts
       // its run with the read-only result intent (#334), which renders the brief's dispatch
       // block with no repository mutation authority and the read-only acceptance instead.
@@ -8993,17 +8811,6 @@ export class SwarmRuntime {
           const participants = parsed.participants === null ? null
             : Object.freeze([...parsed.participants].sort());
           if (kinds !== null || participants !== null) autoWake = Object.freeze({ kinds, participants });
-        }
-        // Issue #441: a package this deployment has not admitted cannot be attached, so the
-        // recruit is refused BEFORE any membership is written — no seat joins on a package
-        // nobody holds. The digest travels; the package itself was admitted by the root's CLI
-        // (the web context-package port), so this check is the ONE place the runtime judges it.
-        if (contextPackage !== null && this.store.contextPackage(contextPackage.digest) === null) {
-          refuse(`Swarm recruit context package ${contextPackage.digest} is not admitted by this deployment`,
-            'swarm_command_invalid', {
-              field: 'options.contextPackage.digest', rule: 'unadmitted-package',
-              participantId: args.participantId, digest: contextPackage.digest,
-            });
         }
         // Advisory, never a refusal (issue #301): the requested scope is compared with every
         // ACTIVE participant's scope across the repository's swarms, BEFORE the join writes the
@@ -9187,18 +8994,6 @@ export class SwarmRuntime {
             swarmId: args.swarmId, claimId: scopeClaimId(args.participantId),
             participantId: args.participantId, paths: [...recruitedScope], status: 'active',
           }, principal, `swarm-scope-claim:${hash([args.swarmId, args.participantId, worker.id])}`));
-        }
-        // Issue #441: the run is bound, so the recruiter's package binds to it — scope
-        // `worker:<seat>`, the ONE scope the seat's brief renders for. The attach row IS the
-        // durable fact: the package was admitted before the recruit at the root's own authority,
-        // and this fenced O(1) pointer is what makes it readable from the seat's run.
-        if (contextPackage !== null) {
-          this.store.attachContextPackage({
-            packageDigest: contextPackage.digest, runId, scope: `worker:${args.participantId}`,
-          }, {
-            actor: principal.actor,
-            key: `package.attach:${contextPackage.digest}:${runId}:worker:${args.participantId}`,
-          });
         }
         // Issue #425: the new lease learns the checkout's live writer before its seat can act.
         this._settleCheckoutWriterState();

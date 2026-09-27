@@ -389,24 +389,6 @@ test('R7 (facade-ports-web-admitted): every CLI_WEB_COMMANDS name is web-admitte
     `R7 (facade-ports-web-admitted): whitelisted-but-web-refused names — ${unadmitted.join(', ')}`);
 });
 
-// ── R8 (D3 #4): the MCP initialize instruction names only existing tools ───────────────────────
-
-test('R8 (initialize-context-briefing-unmet): the initialize briefing names no non-MCP command', () => {
-  const src = readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8');
-  const briefing = sourceRegion(src, 'const briefingSentence', 'return protocolResult(id, {');
-  // Template interpolations are data, not tool names; the sentence itself is a template literal, so
-  // single-word backtick tokens (e.g. `baton_context_eval`) and lowercase dotted command spellings
-  // (e.g. context.briefing) are the name-carrying shapes.
-  const sentences = briefing.replace(/\$\{[^}]*\}/gu, '');
-  const allowlist = new Set(mcpCombinedToolNames());
-  const named = new Set();
-  for (const match of sentences.matchAll(/`([A-Za-z_][A-Za-z0-9_.-]*)`/gu)) named.add(match[1]);
-  for (const match of sentences.matchAll(/\b[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\b/gu)) named.add(match[0]);
-  const phantom = [...named].filter((name) => !allowlist.has(name));
-  assert.deepEqual(phantom, [],
-    `R8 (initialize-context-briefing-unmet): the briefing names non-MCP tools — ${phantom.join(', ')}`);
-});
-
 // ── R9 (D3 #5): no decision branch in the schema AND the answer-shape guard covers both consumers ─
 
 test('R9 (fleet-run-answer-accepts-decision): the answer schema is decision-free AND the guard covers fleet_run_answer', async () => {

@@ -265,16 +265,15 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   // A task node grounds the verification-class candidate (verified_task_outcome binds its task).
   s.addKnowledgeNode({ id: 'task:t-ver', type: 'Task', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-task' });
   s.addKnowledgeNode({ id: 'finding:board-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'board.item_closed' } }, { actor: 'policy', key: 'kn-board' });
-  s.addKnowledgeNode({ id: 'finding:pkg-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'package.admitted' } }, { actor: 'policy', key: 'kn-pkg' });
   s.addKnowledgeNode({ id: 'finding:scratch-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' } }, { actor: 'policy', key: 'kn-scratch' });
   s.addKnowledgeNode({ id: 'finding:ver-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'verified_task_outcome' }, taskId: 't-ver' }, { actor: 'policy', key: 'kn-ver' });
 
   const q = s.knowledgeCandidateQueue({ now });
   assert.ok(Array.isArray(q.candidates));
   const sources = q.candidates.map((c) => c.source).sort();
-  assert.deepEqual(sources, ['board_close', 'package_admit', 'scratchpad_settle', 'verification'], 'each source kind appears with its canonical label');
+  assert.deepEqual(sources, ['board_close', 'scratchpad_settle', 'verification'], 'each source kind appears with its canonical label');
   for (const c of q.candidates) {
-    assert.ok(['board_close', 'package_admit', 'scratchpad_settle', 'verification'].includes(c.source));
+    assert.ok(['board_close', 'scratchpad_settle', 'verification'].includes(c.source));
     assert.equal(typeof c.id, 'string');
     assert.equal(typeof c.type, 'string');
     assert.ok(Number.isFinite(c.ageMs) && c.ageMs >= 0, 'ageMs is a non-negative millisecond age');

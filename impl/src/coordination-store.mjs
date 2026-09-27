@@ -9,22 +9,17 @@ import {
 import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
 import { normalizeRunLineagePolicy, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
-import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
-import { contextSessionIdentity } from './context-authority.mjs';
-import { contextValueDigest, normalizeContextManifest } from './context-program.mjs';
-import { normalizeContextEffectSource } from './context-call.mjs';
-import { validateContextProviderResultReference } from './context-result.mjs';
 
 import * as coordinationInternals from './coordination-internals.mjs';
 import * as coordinationReplay from './coordination-replay.mjs';
 import * as coordinationLedgerWrites from './coordination-ledger-writes.mjs';
 import {
-  BRIEFING_SCHEMA_FIELD_SOURCES, CoordinationIntegrityError, CoordinationRefusal, MAX_CONTEXT_PACK_BODY_BYTES, MAX_SCRATCHPAD_SHARED_ENTRIES, MAX_SCRATCHPAD_WORKER_ENTRIES, PROJECTION_CHECKPOINT_FIELDS, SEGMENT_INDEX_FILE, boundedText, canonical, canonicalDigest, clone, digest, freeze, madConfidenceOf, promotionActor, sha256Bytes, validRunId, validUnicodeScalarString
+  CoordinationIntegrityError, CoordinationRefusal, MAX_SCRATCHPAD_SHARED_ENTRIES, MAX_SCRATCHPAD_WORKER_ENTRIES, PROJECTION_CHECKPOINT_FIELDS, SEGMENT_INDEX_FILE, boundedText, canonical, canonicalDigest, clone, digest, freeze, madConfidenceOf, promotionActor, sha256Bytes, validRunId, validUnicodeScalarString
 } from './coordination-internals.mjs';
 
 import * as coordinationLedger from './coordination-ledger.mjs';
 import {
-  BRIEFING_FAMILY, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_ENTRY_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, PROJECTION_REFERENCES, SwarmReplayRefusal, normalizedRecallText, recallTerms, validKnowledgePreviewPolicy, validKnowledgeRecallPolicy, writeQuarantineEntry
+  KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_ENTRY_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, PROJECTION_REFERENCES, SwarmReplayRefusal, normalizedRecallText, recallTerms, validKnowledgePreviewPolicy, validKnowledgeRecallPolicy, writeQuarantineEntry
 } from './coordination-ledger.mjs';
 
 import * as coordinationAdmission from './coordination-admission.mjs';
@@ -32,13 +27,11 @@ import {
   retainedResultRef,
 } from './coordination-admission.mjs';
 
-export { BRIEFING_FAMILY, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_ENTRY_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, SwarmReplayRefusal };
+export { MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_ENTRY_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, SwarmReplayRefusal };
 
 export {
-  BRIEFING_SCHEMA_FIELD_SOURCES,
   CoordinationIntegrityError,
   CoordinationRefusal,
-  MAX_CONTEXT_PACK_BODY_BYTES,
   MAX_SCRATCHPAD_SHARED_ENTRIES,
   MAX_SCRATCHPAD_WORKER_ENTRIES,
 };
@@ -87,9 +80,6 @@ function referencedBytes(value) {
  * roster (neither a well-formed object-array nor a well-formed string-array) as an integrity
  * failure; the write gate refuses the same payloads typed BEFORE the durable append. */
 
-/** Epic #81 (O-2, issue #367): the per-attempt receipt identity — the ONE key derivation the
- * context.read fold and the O-2 ceiling admission share, so the fold's `{count, bytes}` row
- * and the admission's lookup can never drift apart. */
 
 /** Issue #290: the default ledger group-commit — one fsync per drain tick regardless of how
  * many events landed inside it, so the authoritative ledger is at least as durable as the
@@ -141,8 +131,7 @@ export function coordinationReplayFailure(root) {
 
 
 // The non-knowledge half of the projection-input fence (see _apply's closing note): board
-// claim/report traffic (deliberately non-board-fence-bumping) and package admission/attach —
-// the only non-knowledge inputs the horizons read, closed by design.
+// claim/report traffic, deliberately non-board-fence-bumping.
 
 // KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
 // knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
@@ -187,20 +176,9 @@ const REPRESENTATION_POLICY_FIELDS = [
  * key-string collisions cannot occur. */
 /** itemDigest = H(the nine content-core fields), recomputed by the hub, never trusted from input. */
 
-// REPL-2/REPL-3 (docs/reference/evidence/repl-kg-wave-2026-07-22/repl23-decisions.md, issues
-// #22/#23). Binding identity/fences/history/citations are (runId, scope, name)-tupled via
-// JSON-encoded map keys — never string concatenation (Part A rule 2).
-/** bindingDigest = H(scope, name, bindingVersion, state, cellId), hub-recomputed (Part A rule 1). */
 
 // Issue #33 — typed task-horizon scratchpad bounds. These are deployment constants, not
 // caller policy, so live admission and replay use the same ceilings.
-// The closed top-level field set (D1); the same sorted set the schema table keys.
-const BRIEFING_TOP_LEVEL_FIELDS = Object.freeze([
-  'blockedOn', 'composedAtEventSeq', 'family', 'landings', 'lanes',
-  'parked', 'rings', 'schemaVersion', 'sources', 'standingLaws',
-]);
-// The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
-// application and northbound surfaces share ONE family name with the store that mints it (D7).
 /** The DOCUMENTED DEFAULT partition admission bounds (#286 G-41): a worker's own partition and the
  * run's shared partition. They are the defaults of `scratchpadPartitionPolicy`, which the deployment
  * may raise — they are not ceilings of the store, and they are never applied on replay. */
@@ -950,9 +928,8 @@ export class CoordinationStore {
 
   _validateFleetDrainDisposition(p, event, integrity = false) { return coordinationAdmission._validateFleetDrainDisposition(this, p, event, integrity); }
 
-  _runStopContextTargets(targetRunIds) { return coordinationLedger._runStopContextTargets(this, targetRunIds); }
 
-  _runStopTargets(runId, throughSeq = this._events.length, contextVersion = 3, scoped = this._runLineagePolicy !== null) { return coordinationLedger._runStopTargets(this, runId, throughSeq, contextVersion, scoped); }
+  _runStopTargets(runId, throughSeq = this._events.length, scoped = this._runLineagePolicy !== null) { return coordinationLedger._runStopTargets(this, runId, throughSeq, scoped); }
 
   _validSessionPreservationReceipt(receipt, allowHistorical = false) { return coordinationLedger._validSessionPreservationReceipt(receipt, allowHistorical); }
   _validPreservedContinuationReceipt(receipt) {
@@ -993,80 +970,24 @@ export class CoordinationStore {
 
   _validateRunResultExportCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunResultExportCompletion(this, p, event, integrity); }
 
-  _contextFailure(message, code, integrity = false) { return coordinationAdmission._contextFailure(message, code, integrity); }
 
-  _contextDefinition(manifest, integrity = false) { return coordinationAdmission._contextDefinition(this, manifest, integrity); }
 
-  _currentContextDeployment() { return coordinationLedger._currentContextDeployment(this); }
 
-  _normalizeContextDeployment(value, integrity = false) { return coordinationAdmission._normalizeContextDeployment(this, value, integrity); }
 
-  _normalizeContextSourceAttestation(value, { deployment, manifest, node, branch, source = null },
-    integrity = false) { return coordinationAdmission._normalizeContextSourceAttestation(this, value, { deployment, manifest, node, branch, source }, integrity); }
-
-  _assertContextSessionCurrent(session, integrity = false) { return coordinationAdmission._assertContextSessionCurrent(this, session, integrity); }
-
-  _validateContextSessionPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextSessionPayload(this, payload, event, integrity); }
-
-  _validateContextCellAdmissionPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextCellAdmissionPayload(this, payload, event, integrity); }
-
-  _validateContextCellSettlementPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextCellSettlementPayload(this, payload, event, integrity); }
-  _contextCallRunId(call) {
-    return coordinationInternals._contextCallRunId(call);
-  }
-
-  _validateContextMapCallAdmissionPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextMapCallAdmissionPayload(this, payload, event, integrity); }
-
-  _validateContextEffectCallAdmissionPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextEffectCallAdmissionPayload(this, payload, event, integrity); }
-
-  _contextSettlementChildren(call, kind, integrity = false, cleanup = null) { return coordinationLedger._contextSettlementChildren(this, call, kind, integrity, cleanup); }
-
-  _contextMapSettlementChildren(call, integrity = false, cleanup = null) { return coordinationLedger._contextMapSettlementChildren(this, call, integrity, cleanup); }
-
-  _contextEffectSettlementChildren(call, integrity = false, cleanup = null) { return coordinationLedger._contextEffectSettlementChildren(this, call, integrity, cleanup); }
 
   _validateTaskResourceReleasePayload(payload, event, integrity = false) { return coordinationAdmission._validateTaskResourceReleasePayload(this, payload, event, integrity); }
 
-  _normalizeContextCleanupReceipt(call, kind, children, value, integrity = false) { return coordinationAdmission._normalizeContextCleanupReceipt(this, call, kind, children, value, integrity); }
 
-  _normalizeContextMapCleanupReceipt(call, children, value, integrity = false) { return coordinationAdmission._normalizeContextMapCleanupReceipt(this, call, children, value, integrity); }
 
-  _normalizeContextEffectCleanupReceipt(call, children, value, integrity = false) { return coordinationAdmission._normalizeContextEffectCleanupReceipt(this, call, children, value, integrity); }
-  _contextArtifactVerification() {
-    return coordinationInternals._contextArtifactVerification(this._contextArtifactVerificationStorage);
-  }
-  withContextArtifactVerification(operation) {
-    return coordinationInternals.withContextArtifactVerification(this._contextArtifactVerificationStorage, operation);
-  }
-  _contextArtifactRead(reference, verification) {
-    return coordinationInternals._contextArtifactRead(this, reference, verification);
-  }
 
-  _validateContextProviderResults(call, kind, children, cleanup, values, integrity = false,
-    verification = this._contextArtifactVerification()) { return coordinationAdmission._validateContextProviderResults(this, call, kind, children, cleanup, values, integrity, verification); }
 
-  _validateContextMapProviderResults(call, children, cleanup, values, integrity = false,
-    verification = this._contextArtifactVerification()) { return coordinationAdmission._validateContextMapProviderResults(this, call, children, cleanup, values, integrity, verification); }
 
-  _validateContextEffectProviderResults(call, children, cleanup, values, integrity = false,
-    verification = this._contextArtifactVerification()) { return coordinationAdmission._validateContextEffectProviderResults(this, call, children, cleanup, values, integrity, verification); }
 
-  _validateContextMapPlanProposal(plan, integrity = false) { return coordinationAdmission._validateContextMapPlanProposal(this, plan, integrity); }
 
-  _validateContextCallPlanProposal(plan, integrity = false) { return coordinationAdmission._validateContextCallPlanProposal(this, plan, integrity); }
 
-  _validateContextMapResultLineageEvidence(call, evidence, children, providerResults, cleanup, integrity = false,
-    verification = this._contextArtifactVerification(),) { return coordinationAdmission._validateContextMapResultLineageEvidence(this, call, evidence, children, providerResults, cleanup, integrity, verification); }
-  _contextEffectCallCore(call) {
-    return coordinationInternals._contextEffectCallCore(call);
-  }
 
-  _validateContextEffectResultLineageEvidence(call, evidence, children, providerResults, cleanup, integrity = false,
-    verification = this._contextArtifactVerification(),) { return coordinationAdmission._validateContextEffectResultLineageEvidence(this, call, evidence, children, providerResults, cleanup, integrity, verification); }
 
-  _validateContextMapCallSettlementPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextMapCallSettlementPayload(this, payload, event, integrity); }
 
-  _validateContextEffectCallSettlementPayload(payload, event, integrity = false) { return coordinationAdmission._validateContextEffectCallSettlementPayload(this, payload, event, integrity); }
 
   _assertRunAdmissionOpen(runId, integrity = false) { return coordinationAdmission._assertRunAdmissionOpen(this, runId, integrity); }
 
@@ -1207,219 +1128,19 @@ export class CoordinationStore {
   representationPolicy() { return coordinationLedger.representationPolicy(this._representationPolicy); }
   goalPlanPolicy() { return coordinationLedger.goalPlanPolicy(this._goalPlanPolicy); }
   workflowPolicy() { return coordinationLedger.workflowPolicy(this._workflowPolicy); }
-  contextProgramPolicy() { return coordinationLedger.contextProgramPolicy(this._contextProgramPolicy); }
-  contextProgramAuthority() {
-    return coordinationInternals.contextProgramAuthority(this);
-  }
-  contextSession(sessionId) {
-    return coordinationInternals.contextSession(this._contextSessions, sessionId);
-  }
-  contextCell(cellId) {
-    return coordinationInternals.contextCell(this._contextCells, cellId);
-  }
-  contextCall(callId) { return coordinationLedger.contextCall(this, callId); }
-  contextCalls({ runId = null } = {}) {
-    if (runId !== null && (typeof runId !== 'string' || runId.length === 0)) {
-      throw new TypeError('Context call Run filter is invalid');
-    }
-    return [...this._contextCalls.keys()].map((callId) => this.contextCall(callId))
-      .filter((call) => runId === null || this._contextCallRunId(call) === runId)
-      .sort((left, right) => left.admittedEvent - right.admittedEvent);
-  }
-  _contextRetrySelection(callId, integrity = false) { return coordinationAdmission._contextRetrySelection(this, callId, integrity); }
-  contextRetryEligibility(callId) { return coordinationAdmission.contextRetryEligibility(this, callId); }
-  contextCallSettlementChildren(callId, cleanupReceipt = null) { return coordinationAdmission.contextCallSettlementChildren(this, callId, cleanupReceipt); }
-  contextCallArtifacts(callId) {
-    return clone(this._contextCallArtifacts(callId, this._contextArtifactVerification()));
-  }
-  contextCallContents(callId) {
-    const verification = this._contextArtifactVerification();
-    const artifacts = this._contextCallArtifacts(callId, verification);
-    if (!artifacts.output || !Array.isArray(artifacts.output.items)) {
-      throw new CoordinationRefusal('Context call has no completed result content',
-        'context_call_content_unavailable');
-    }
-    const results = artifacts.output.items.map((candidate, index) => {
-      let capsule; let resultRef; let source;
-      try {
-        capsule = this._contextArtifactRead(candidate?.capsuleRef, verification);
-        resultRef = validateContextProviderResultReference(candidate, capsule);
-        source = this._contextArtifactRead(capsule.sourceRef, verification);
-      } catch (error) {
-        throw new CoordinationIntegrityError(
-          error?.message ?? 'Context provider result content is unavailable',
-          'context_call_settlement_integrity',
-        );
-      }
-      if (!Array.isArray(source) || source.length !== capsule.sourceRef.itemCount
-        || contextValueDigest(source) !== capsule.sourceRef.digest) {
-        throw new CoordinationIntegrityError('Context provider result content changed',
-          'context_call_settlement_integrity');
-      }
-      return freeze({
-        index, unitId: resultRef.unitId, capsuleId: resultRef.capsuleId,
-        route: clone(capsule.route),
-        result: {
-          resultSha: capsule.result.resultSha,
-          retainedResultRef: capsule.result.retainedResultRef,
-          changedPaths: clone(capsule.result.changedPaths),
-          pathScope: clone(capsule.result.pathScope),
-        },
-        source: clone(source),
-      });
-    });
-    return clone(freeze({
-      schemaVersion: 1, kind: 'baton.context_call_content', callId,
-      resultCount: results.length, results: freeze(results),
-    }));
-  }
-  _contextCallArtifacts(callId, verification) { return coordinationAdmission._contextCallArtifacts(this, callId, verification); }
-  contextCompletedCallSource(callId) {
-    return this.contextCompletedCallSourceAndArtifacts(callId).source;
-  }
-  contextCompletedCallSourceAndArtifacts(callId) {
-    const call = this._contextCalls.get(callId);
-    if (!call) throw new CoordinationRefusal('Context call is unavailable',
-      'context_map_call_not_found');
-    if (call.state !== 'completed' || !call.result) {
-      throw new CoordinationRefusal('Context call is not a completed source',
-        'context_map_call_not_completed');
-    }
-    const verification = this._contextArtifactVerification();
-    const artifacts = this._contextCallArtifacts(callId, verification);
-    const expectedEvidenceVersion = call.kind === 'baton.context_effect_call' ? 4 : 3;
-    if (artifacts.evidence.schemaVersion !== expectedEvidenceVersion) {
-      throw new CoordinationRefusal(
-        'Historical Context call output has no exact per-item lineage',
-        'context_output_lineage_required',
-      );
-    }
-    try {
-      const source = clone(normalizeContextEffectSource({
-        kind: 'call', id: call.callId, callDigest: call.callDigest,
-        generation: call.generation, settlementDigest: call.settlementDigest,
-        outputRef: call.result.outputRef, evidenceRef: call.result.evidenceRef,
-        itemCount: artifacts.output.items.length,
-        coordinateDigest: artifacts.evidence.coordinateDigest,
-        outputLineageDigest: artifacts.evidence.outputLineageDigest,
-      }));
-      return freeze({ source, artifacts: clone(artifacts) });
-    } catch (error) {
-      throw new CoordinationIntegrityError(
-        error?.message ?? 'Completed Context call source changed',
-        'context_map_call_settlement_integrity',
-      );
-    }
-  }
-  pendingContextCells(limit = 1_000) { return coordinationLedger.pendingContextCells(this._contextCells, limit); }
-  _validateContextCompletionArtifacts(cell, result, output, evidence, integrity = false) { return coordinationAdmission._validateContextCompletionArtifacts(this, cell, result, output, evidence, integrity); }
-  contextCellArtifacts(cellId) { return coordinationAdmission.contextCellArtifacts(this, cellId); }
   canonicalOrderPolicy() { return coordinationLedger.canonicalOrderPolicy(this._canonicalOrderPolicy); }
   goalVersion(goalId, version) { return coordinationLedger.goalVersion(this, goalId, version); }
   planVersion(planId, version) { return coordinationLedger.planVersion(this, planId, version); }
 
-  // REFLEX-3 (docs/32 §3.3, issue #18; contract: docs/reference/evidence/
-  // reflex-wave-live-2026-07-21/reflex3-packages-decisions.md, red-team F11/F14 lines 205-231,
-  // 282-294): a typed, immutable, replay-safe knowledge/context hand-off package.
-  //
-  // Provenance (Part A): `provenance.packageEvent` is never submitted (refused
-  // `reserved_package_field` — the `_knowledgePayload` reserved-field stance, :11648-11651) and is
-  // hub-derived from the admission ledger event itself, exactly the `scratchFactOracleTarget`
-  // ledger-binding pattern (:11566-11585): `_contextPackageProvenance` dereferences
-  // `this._events[admittedEvent - 1]`, cross-checks it still matches the durable projection, and
-  // raises the loud `package_provenance_integrity` (never a silent accept) on any divergence — a
-  // fresh derivation every read, so replay reproduces the identical binding.
-  //
-  // Shape (Part B): `_normalizeContextPackage` runs the `normalizeContextManifest` mold
-  // (context-program.mjs:183-192) — delete-and-recompute `packageDigest` without `packageEvent`,
-  // exact()-check every field, reject unknown fields, unique branch names
-  // (`package_branch_name_conflict`), and every branch requires >=1 of source/artifact/valueRef
-  // (`package_branch_empty` — a `schema` alone is not content).
-  //
-  // Attach vs resolve (Part C): admission resolves every branch ref exactly once
-  // (`_resolveContextPackageBranchContent`, called from `admitContextPackage`).
-  // `attachContextPackage` is a fenced O(1) pointer binding — it never re-reads branch bytes.
-  // `resolveContextPackageBranch` is the lazy, resolve-time revalidation point per §93.5, settling
-  // `context_artifact_unavailable` on missing/changed bytes; callers wrap it in
-  // `withContextArtifactVerification` exactly like the existing Context Program read paths.
-  //
-  // Sanitization (Part D, F14): branch content is untrusted input to every reader — the
-  // application layer projects it through `boundedAttentionText`/`SECRET_SHAPED_TEXT` with
-  // untrusted-prose provenance marking before it reaches a Brief/RunView/MCP surface.
-  contextPackage(packageDigest) {
-    return coordinationInternals.contextPackage(this, packageDigest);
-  }
-  contextPackageAttachments(runId) {
-    return coordinationInternals.contextPackageAttachments(this._contextPackageAttachments, runId);
-  }
-  _contextPackageProvenance(record) {
-    return coordinationInternals._contextPackageProvenance(this, record);
-  }
-
-  _normalizeContextPackageSourceRef(value, integrity) { return coordinationAdmission._normalizeContextPackageSourceRef(this, value, integrity); }
-
-  _normalizeContextPackageArtifactRef(value, integrity) { return coordinationAdmission._normalizeContextPackageArtifactRef(this, value, integrity); }
-
-  _normalizeContextPackageValueRef(value, integrity) { return coordinationAdmission._normalizeContextPackageValueRef(this, value, integrity); }
-
-  _normalizeContextPackageSchemaRef(value, integrity) { return coordinationAdmission._normalizeContextPackageSchemaRef(this, value, integrity); }
-
-  _normalizeContextPackageBranch(value, integrity) { return coordinationAdmission._normalizeContextPackageBranch(this, value, integrity); }
-
-  _normalizeContextPackage(fields, integrity = false) { return coordinationAdmission._normalizeContextPackage(this, fields, integrity); }
-
-  _resolveContextPackageBranchContent(branch, integrity) { return coordinationAdmission._resolveContextPackageBranchContent(this, branch, integrity); }
-
-  resolveContextPackageBranch(packageDigest, branchName) { return coordinationAdmission.resolveContextPackageBranch(this, packageDigest, branchName); }
-
-  /** S-2 v2 package side of the shared session-authority posture. Package provenance/attachment
-   * Run coordinates are required to agree with both the envelope and the proof's lease. */
-  admitPackageCommand(envelope) { return coordinationAdmission.admitPackageCommand(this, envelope); }
-
-  admitContextPackage(fields, auth) { return coordinationAdmission.admitContextPackage(this, fields, auth); }
-
-  _contextPackageAttachmentView(event) { return coordinationLedger._contextPackageAttachmentView(event); }
-
-    attachContextPackage(fields, auth) { return coordinationLedgerWrites.attachContextPackage(this, fields, auth); }
-
-  admitContextSession(fields, auth) { return coordinationAdmission.admitContextSession(this, fields, auth); }
-
-  replManifestAdmission(manifestDigest) { return coordinationAdmission.replManifestAdmission(this._replManifestAdmissions, manifestDigest); }
-
-  _replManifestFailure(message, code, integrity = false) { return coordinationAdmission._replManifestFailure(message, code, integrity); }
-
-  // REPL-1 rule 5–9: admit a ReplManifest as a single evented authority record. The principal is
-  // lease-authenticated for `shared` (run-pinned) and wrapper-forced for `worker:<id>` (store
-  // equality) — no caller-supplied `principal`/`replRole` string is ever trusted as authority.
-  _validateReplManifestAdmissionPayload(payload, event, integrity = false) { return coordinationAdmission._validateReplManifestAdmissionPayload(this, payload, event, integrity); }
-
-  admitReplManifest(fields, auth) { return coordinationAdmission.admitReplManifest(this, fields, auth); }
-
-  // REPL-1 rule 10: a session admission for a ReplManifest WITHOUT the Plan-node requirement. It
-  // reuses contextSessionIdentity (kind-dispatching) and the per-branch byte-proof loop, but does
-  // NOT call the Plan-node-coupled attestation, so it mints at schemaVersion 1.
-  admitReplSession(fields, auth) { return coordinationAdmission.admitReplSession(this, fields, auth); }
-
-  admitContextCell(fields, auth) { return coordinationAdmission.admitContextCell(this, fields, auth); }
-
-  settleContextCell(fields, auth) { return coordinationLedger.settleContextCell(this, fields, auth); }
-
-  admitContextMapCall(fields, auth) { return coordinationAdmission.admitContextMapCall(this, fields, auth); }
-
-  admitContextEffectCall(fields, auth) { return coordinationAdmission.admitContextEffectCall(this, fields, auth); }
   taskResourceRelease(taskId) {
     return coordinationInternals.taskResourceRelease(this._taskResourceReleases, taskId);
   }
 
   recordTaskResourceRelease(fields, auth) { return coordinationLedger.recordTaskResourceRelease(this, fields, auth); }
 
-  _settleContextCall(fields, auth, expectedKind = null) { return coordinationLedger._settleContextCall(this, fields, auth, expectedKind); }
 
-  settleContextCall(fields, auth) { return coordinationLedger.settleContextCall(this, fields, auth); }
 
-  settleContextMapCall(fields, auth) { return coordinationLedger.settleContextMapCall(this, fields, auth); }
 
-  settleContextEffectCall(fields, auth) { return coordinationLedger.settleContextEffectCall(this, fields, auth); }
 
   defineGoal(fields, auth) { return coordinationLedger.defineGoal(this, fields, auth); }
 
@@ -1767,27 +1488,6 @@ export class CoordinationStore {
    * seam's coaching payload rides the event payload directly (Decision 5). */
   recordAuthorityRejected(payload, auth) { return coordinationLedger.recordAuthorityRejected(this, payload, auth); }
 
-  // -------------------------------------------------------------------------
-  // BD3-B context packs — a server-owned supersession chain per family. A pack is minted with
-  // a family (= type), a bounded body, a validity deadline, and an optional predecessor that
-  // MUST be the current live head (a stale predecessor refuses context_pack_stale). The store
-  // maintains the head per family; superseded versions stay resolvable as content history.
-  // Expiry is distinct from supersession: an expired pack refuses materialization with
-  // context_pack_expired without ever being superseded.
-  // -------------------------------------------------------------------------
-  _prepareContextPackPayload(fields) {
-    return coordinationInternals._prepareContextPackPayload(this, fields);
-  }
-
-  mintContextPack(fields, auth) { return coordinationLedger.mintContextPack(this, fields, auth); }
-  contextPack(packId) {
-    return coordinationInternals.contextPack(this._contextPacks, packId);
-  }
-  contextPackHead(family) {
-    return coordinationInternals.contextPackHead(this, family);
-  }
-
-    materializeContextPack(packId) { return coordinationLedgerWrites.materializeContextPack(this, packId); }
 
   // -------------------------------------------------------------------------
   // D9 (epic #103) — the wave.closed campaign-state record. A wave driver appends exactly one
@@ -1870,41 +1570,6 @@ export class CoordinationStore {
   ledgerHeadSeq() { return coordinationLedger.ledgerHeadSeq(this._events); }
 
   // -------------------------------------------------------------------------
-  // Epic #103 — the orchestrator-briefing composition (D1/D8). Composition reads ONLY store
-  // projections the orchestrator lane owns: the wave.closed campaign-state records (D9) and the
-  // live snapshot(); the standing-law list is the ONE named non-ledger input (D8/OQ2, pinned
-  // deployment config). Unknown fields refuse by name (F15); degradation runs the pinned order
-  // until the body fits or briefing_pack_overflow with the drop ledger.
-  // -------------------------------------------------------------------------
-  composeBriefingPack(rawInput) {
-    return coordinationInternals.composeBriefingPack(rawInput);
-  }
-
-  composeCampaignBriefing(standingLaws = []) {
-    const closures = this.waveClosures();
-    const latest = closures.length > 0 ? closures[closures.length - 1] : null;
-    const lawListDigest = canonicalDigest(standingLaws);
-    return this.composeBriefingPack({
-      schemaVersion: 1, family: BRIEFING_FAMILY,
-      composedAtEventSeq: this._events.length + 1,
-      rings: latest?.rings ?? [], lanes: latest?.lanes ?? [],
-      landings: closures.map((record) => ({
-        waveId: record.waveId, closedAtEventSeq: record.closedAtEventSeq,
-        gates: {
-          admitted: record.knowledge?.admittedThisRun ?? 0,
-          refused: record.settlementErrors?.length ?? 0,
-          candidatesAwaitingAdmission: record.knowledge?.candidatesAwaitingAdmission ?? 0,
-        },
-        receiptDigest: record.receiptDigest,
-      })),
-      parked: latest?.parked ?? [], blockedOn: latest?.blockedOn ?? [],
-      standingLaws, sources: { snapshotDigest: canonicalDigest(this.snapshot()), lawListDigest },
-    });
-  }
-
-  backfillBriefingPack({ family }, auth) { return coordinationLedger.backfillBriefingPack(this, { family }, auth); }
-
-  // -------------------------------------------------------------------------
   // Decision 4 — the spill lane. Digest-addressed durable artifacts (spill:sha256:<digest>),
   // content-addressed and idempotent by auth key, with a 1 MiB ceiling (spill.body, blocker 3).
   // Spill lives exactly as long as its referencing receipt; reaping is Open question 1 (deferred,
@@ -1914,65 +1579,6 @@ export class CoordinationStore {
   mintSpill(fields, auth) { return coordinationLedger.mintSpill(this, fields, auth); }
 
     materializeSpill(spillId) { return coordinationLedgerWrites.materializeSpill(this, spillId); }
-
-  /** Epic #81 (O-6): append an attempt-scoped context.pack_granted receipt, atomically with the
-   * spawn binding and BEFORE provider dispatch. Idempotent by the caller key (the coordinator
-   * derives task+pack-scoped keys so a retried spawn of the same attempt never mints a second
-   * grant, while two attempts citing the same head hold two grants — authority never collapses). */
-    grantContextPack(fields, auth) { return coordinationLedgerWrites.grantContextPack(this, fields, auth); }
-  reapExpiredContextPacks(repoId) {
-    return coordinationReplay.reapExpiredContextPacks(this, repoId);
-  }
-
-  /** BD3-A: the read-lane audit class — bounded, content-digested, and deliberately NOT the
-   * scratch.read family (zero promotion weight; minScratchReaders never counts these). */
-  recordContextRead(fields, auth) { return coordinationLedger.recordContextRead(this, fields, auth); }
-
-  /** Epic #81 (O-2): per-attempt constructive receipt ceilings — count AND byte bounds checked
-   * BEFORE append. No clock (campaign law); the bound is the constructive flood control. */
-  _assertOrientationReceiptCeiling(payload) { return coordinationAdmission._assertOrientationReceiptCeiling(this, payload); }
-
-  /** Epic #81 (O-4): a hub-derived KG Source node per orientation module coordinate — the anchor
-   * curated-overlay leaves Cite. Source is a closed KG node type; the coordinate is the overlay's
-   * citation identity (match/omit decisions ride moduleDigest + freshnessDigest). */
-  mintOrientationSource(fields, auth) { return coordinationLedger.mintOrientationSource(this, fields, auth); }
-
-  /** Epic #81 (O-2/O-4): orientation.candidate.propose. The candidate is hub-minted observed
-   * (callers supply only {packDigest, leafDigest}); it verifies the proposing attempt previously
-   * received the orientation surface (a context.read receipt or an operator Source), coalesces
-   * duplicates by {leafDigest, freshnessDigest}, and is bounded by the per-attempt proposal
-   * ceiling. Never caller-authored body/grounding/scope. */
-    proposeOrientationCandidate({ leafDigest, packDigest }, auth) { return coordinationLedgerWrites.proposeOrientationCandidate(this, { leafDigest, packDigest }, auth); }
-
-  /** Epic #81 (O-4): merge generated module structure with the curated overlay. A curated leaf
-   * applies only on EXACT moduleDigest + freshnessDigest match; a stale leaf is omitted WITH
-   * structured trace (overlay_dangling) and the generated map serves partial; conflicting live
-   * leaves without a Supersedes winner all omit with overlay_conflict (never event-time/insertion
-   * order). Generated structure always answers for the requested coordinate. */
-  mergeOrientationMap({ moduleDigest, moduleKey, freshnessDigest, repoId: repoIdArg } = {}) { return coordinationLedger.mergeOrientationMap(this, { moduleDigest, moduleKey, freshnessDigest, repoId: repoIdArg }); }
-
-  /** Epic #81 (O-7): the closed rating event. The hub mints orientation.rating_recorded with the
-   * attempt identity (hub-derived — the worker is verified against the task record, never trusted
-   * from transport) and a prior grant/read proof. One rating per task attempt: exact replay
-   * returns the prior event, an opposite same-pack rating refuses orientation_rating_conflict,
-   * and a second pack under the same attempt refuses the constant orientation_rating_refused. */
-  recordOrientationRating({ packDigest, rating }, auth) { return coordinationLedger.recordOrientationRating(this, { packDigest, rating }, auth); }
-
-    _orientationLatestSource() { return coordinationLedgerWrites._orientationLatestSource(this); }
-
-  /** #286 G-45: the LATEST `context.read` receipt for one worker — the freshness digest and
-   * citation seq the orientation lane reads — as a fold lookup, never a ledger scan. */
-    orientationReadLatest(workerId) { return coordinationLedgerWrites.orientationReadLatest(this, workerId); }
-
-    _orientationWorkerFreshness(workerId) { return coordinationLedgerWrites._orientationWorkerFreshness(this, workerId); }
-
-  /** #286 G-45: the FIRST `context.read` receipt for one (worker, pack) — the receipt an
-   * orientation rating cites — as a fold lookup, never a ledger scan. */
-    orientationReadHead(workerId, packDigest) { return coordinationLedgerWrites.orientationReadHead(this, workerId, packDigest); }
-
-    _orientationCandidate(leafDigest, freshnessDigest) { return coordinationLedgerWrites._orientationCandidate(this, leafDigest, freshnessDigest); }
-
-  _assertOrientationProposalCeiling(workerId) { return coordinationAdmission._assertOrientationProposalCeiling(this, workerId); }
 
   /** BD3-C: append-only lane audit receipts (message.sent / message.delivered). The delivery
    * state machine (delivered/read/actedOn/reply) is process-scoped coordinator state. */
@@ -2232,62 +1838,10 @@ export class CoordinationStore {
 
   _renderBoardGrantPage(grant, state) { return coordinationLedger._renderBoardGrantPage(this, grant, state); }
 
-  // -------------------------------------------------------------------------
-  // REPL-3 branch resolution (repl23-decisions.md Part F rules 17-19). Wired into the real
-  // REPL-1 admission path (admitReplManifest pre-normalization splice): ordinary branches are
-  // caller-submitted and hub-validated; `cell:`-typed branches are resolved here at admission —
-  // settled-only (rule 18) — and their five coordinate fields are entirely hub-computed, never
-  // accepted from the caller for that branch kind.
-  // -------------------------------------------------------------------------
-
-  /** Normalizes one caller-submitted ReplManifest branch. An ordinary
-   * branch is caller-submitted and hub-validated; a `cell:`-typed branch (REPL-3, Part F rule
-   * 17-19) is resolved here at admission — settled-only (rule 18) — and its five coordinate
-   * fields (digest/ref/itemCount/mediaType/summary) are entirely hub-computed, never accepted
-   * from the caller for that branch kind. */
-  _resolveReplManifestBranch(branch) { return coordinationAdmission._resolveReplManifestBranch(this, branch); }
-
-  // -------------------------------------------------------------------------
-  // REPL-2 (issue #22, repl23-decisions.md): named bindings, immutable versions under
-  // (runId, scope, name); no `repl.read` event kind (F10); cached, non-evented reads own the
-  // per-(runId, scope) fence (Part C/D). Never the board fence or FenceTable (Part I).
-  // -------------------------------------------------------------------------
-
-  /** The binding fence: EVERY write to (runId, scope) — worker writes included, unlike
-   * boardFence's orchestrator-authority-only carve-out (Part C rule 7). Replay-derivable,
-   * never a separately durable counter (rule 8). */
-  bindingFence(runId, scope) {
-    return coordinationInternals.bindingFence(this._replBindingFences, runId, scope);
-  }
-
-  admitReplBinding(fields, auth) { return coordinationAdmission.admitReplBinding(this, fields, auth); }
-
-  dropReplBinding(fields, auth) { return coordinationLedger.dropReplBinding(this, fields, auth); }
-
-  /** Non-evented read (F10, rule 10): a poll appends nothing to the ledger. Active bindings
-   * only (state: 'bound'), one row per name keyed to its latest version (Part D rule 11). */
-  replBindingSnapshot(runId, scope) { return coordinationLedger.replBindingSnapshot(this, runId, scope); }
-
-  /** `repl:<scope>:<name>@<version>` resolves the EXACT (runId, scope, name, bindingVersion)
-   * row from history — never "latest" — even if the binding has since been dropped or
-   * superseded (Part A rule 2; Part E rule 15). */
-  resolveReplCitation(runId, citation) { return coordinationAdmission.resolveReplCitation(this._replBindingHistory, runId, citation); }
-
-  /** R11/F5: the per-member fan-out admission — one already-admitted `shared` REPL manifest is
-   * replicated into each member run of a multi-run wave, with the `shared:<name>` binding over the
-   * same settled cell. The source admission is the authority; the principal is copied from it. */
-  admitReplFanout(fields, auth) { return coordinationAdmission.admitReplFanout(this, fields, auth); }
-
-  /** The run's admitted REPL manifests, in admission order (the D6 review projection's input). */
-  replManifestAdmissions(runId) { return coordinationLedger.replManifestAdmissions(this._replManifestAdmissions, runId); }
-
   /** Does this principal hold an ACTIVE run-orchestrator lease — this run's, or any run of this
    * repository when no run is named? The orchestrator identity a D5 promotion is authorized by. */
   holdsRunOrchestratorLease(fields) { return coordinationLedger.holdsRunOrchestratorLease(this, fields); }
 
-  /** Issue #69 (D4): the run-close reap — a closed run's ACTIVE binding map and per-scope fences
-   * are dropped, its append-only history is retained for replay-exact resolution. Idempotent. */
-  reapRunReplBindings(runId) { return coordinationLedger.reapRunReplBindings(this, runId); }
 
   _knowledgeFailure(message, code, integrity = false) { return coordinationAdmission._knowledgeFailure(message, code, integrity); }
   _knowledgePayload(fields, extras = {}) {

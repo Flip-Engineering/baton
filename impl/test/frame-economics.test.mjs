@@ -481,7 +481,6 @@ const SUBSTRATE_LANES = Object.freeze([
   ['scanner.window.board_report', 20480],
   ['wire.frame', 1048576],
   ['credential.file', 16384],
-  ['context_pack.body', 8192],
   // #375: the liveness probe's capture bound — the substrate guard the probe verdict is judged
   // over. Its sibling deadline row (route.probe_deadline_ms, unit ms) is pinned by the #375 suite
   // itself, because A3 reads every listed substrate row as BYTES and an ms row must not weaken it.
@@ -1332,20 +1331,6 @@ test('F2 (pin): the store\'s deliberate-local field caps stay plain shape refusa
   assert.equal(refusal?.code ?? null, 'scratchpad_entry_invalid',
     'the field-level 2,048 partitions INSIDE the capped entry are deliberate locals (Decision 2) — '
     + 'they stay enforced and they are NOT the registry\'s coaching lanes');
-});
-
-test('F3 (pin): context_pack.body keeps its exact substrate refusal — value unchanged, only imported', () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const refusal = (() => {
-    try {
-      store.mintContextPack({ type: 'spec', body: 'x'.repeat(8193), validity: '2026-08-05T00:00:00.000Z' },
-        { actor: 'orchestrator', key: 'fe-f3-pack' });
-      return null;
-    } catch (error) { return error; }
-  })();
-  assert.equal(refusal?.code ?? null, 'context_pack_invalid',
-    'the pack body cap keeps its verified behavior (Decision 8: no substrate guard changes VALUE or '
-    + 'behavior — the store only imports the registry value)');
 });
 
 // ===========================================================================

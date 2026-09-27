@@ -30,8 +30,6 @@ import { join } from 'node:path';
 import {
   APPLICATION_COMMAND_DEFINITIONS, CoordinationStore, WebNorthbound, WebSessionStore,
 } from '../src/index.mjs';
-import { StatelessContextBench } from '../src/context-program.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { BatonWebClient, parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
 import { canonicalOperationFields, canonicalOperationForCommand } from '../src/application-semantics.mjs';
@@ -97,29 +95,19 @@ async function send(web, { method = 'POST', path, body, headers = {} }) {
   return res;
 }
 
-function storeOptions(directory, bench) {
+function storeOptions(directory) {
   return {
     repoId: REPO_ID, deploymentBaseSha: '1'.repeat(40),
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: bench.environmentDigest,
-    contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: (reference) => bench.readReference(reference),
-    contextSourceAttest: () => { throw new Error('context source attestation is not used here'); },
     clock: () => new Date(NOW).toISOString(),
   };
 }
 
-/** The REAL stack: the deployment's context CAS writer behind a real WebNorthbound, a real
- *  SwarmRuntime, and the CLI's own parser and client. */
+/** The REAL stack: a real WebNorthbound, a real SwarmRuntime, and the CLI's own parser and client. */
 function fixture(t) {
   const repoRoot = writeDocs(scratch('repo'));
   const directory = scratch('web');
   const sessions = new WebSessionStore(join(directory, 'sessions'), { now: () => NOW });
-  const bench = new StatelessContextBench({
-    artifactRoot: join(directory, 'context'), sources: {},
-    environmentDigest: '2'.repeat(64), policy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-  });
-  const coordination = new CoordinationStore(join(directory, 'coordination'), storeOptions(directory, bench));
+  const coordination = new CoordinationStore(join(directory, 'coordination'), storeOptions(directory));
   const workers = [];
   const swarmRuntime = new SwarmRuntime({
     store: coordination,
@@ -155,7 +143,6 @@ function fixture(t) {
   const web = new WebNorthbound({
     coordinator: {}, coordination, sessions, application,
     repoIds: [REPO_ID], allowedOrigins: [ORIGIN], now: () => NOW,
-    contextSourceAdmit: (value) => bench.admitSource(value),
   });
   const issued = sessions.issue({
     userId: 'issue443h-operator', authMethod: 'bearer',
@@ -177,7 +164,7 @@ function fixture(t) {
     },
     clock: () => NOW, sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
   });
-  return { directory, bench, coordination, web, swarmRuntime, client, repoRoot, workers };
+  return { directory, coordination, web, swarmRuntime, client, repoRoot, workers };
 }
 
 const swarmRows = (coordination, kind) => coordination.eventsView()
@@ -260,31 +247,3 @@ test('443h-b: the canonical swarm.create operation names policy, and validateApp
     'a policy that is not an object refuses typed');
 });
 
-// ── 443h-d: the #455 web-port hand-back — the recruit receipt says whether the package was reused ─
-
-test('443h-d: a second --issue recruit reuses the admitted package, and the CLI receipt says so', async (t) => {
-  const f = fixture(t);
-  await f.swarmRuntime.command('swarm.create', {
-    swarmId: SWARM_ID, purpose: 'issue443h', idempotencyKey: 'issue443h:swarm',
-  }, OWNER);
-
-  const recruit = (seat) => runBatonCli(
-    parseBatonCli(['swarm', 'recruit', SWARM_ID, seat, 'Land the item this issue names.',
-      '--issue', String(ISSUE)]),
-    f.client, { issueReader: issueReader(), contextRepoRoot: f.repoRoot },
-  );
-
-  const first = await recruit('lane-a');
-  assert.ok(first.contextPackage, 'the recruit receipt carries the context package');
-  assert.match(first.contextPackage.digest ?? '', /^[a-f0-9]{64}$/u, 'the receipt names the digest');
-  assert.equal(first.contextPackage.reused, false, 'the first recruit ADMITS the package');
-
-  const second = await recruit('lane-b');
-  assert.equal(second.contextPackage.reused, true,
-    'the second recruit REUSES the admission the store already holds (#455)');
-  assert.equal(second.contextPackage.digest, first.contextPackage.digest,
-    'both receipts name the same content-addressed package');
-  assert.equal(swarmRows(f.coordination, 'package.admitted').length, 1,
-    'a reuse admits nothing a second time');
-  assert.ok(seatRow(f.coordination, 'lane-b'), 'the second seat really joined on the same issue');
-});
