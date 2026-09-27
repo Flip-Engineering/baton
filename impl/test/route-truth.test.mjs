@@ -133,10 +133,6 @@ async function doctorOver({ repo, home, routes = null, adapters = null, ompCrede
         ...(adapters === null ? {} : { adapters }),
         ...(ompCredentials === null ? {} : { ompCredentials }),
         verification: { command: process.execPath, arguments: ['--version'] },
-        capacity: {
-          estimate: () => ({ bytes: 1, inodes: 1 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
       },
     });
     return await deployment.doctor();

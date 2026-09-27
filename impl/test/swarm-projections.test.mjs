@@ -29,15 +29,6 @@ const verification = Object.freeze({
   command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
   timeoutMs: 10_000, maxOutputBytes: 64 * 1024, requiredPredecessorEvidence: [],
 });
-// One reservation per physical checkout: a deliberately shared checkout must not consume a second.
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024,
-  maxReservedInodes: 10_000,
-  minFreeBytes: 1,
-  minFreeInodes: 1,
-  runtimeReserveBytes: 4 * 1024,
-  runtimeReserveInodes: 4,
-});
 const profile = Object.freeze({
   schemaVersion: 1, repoId: 'repo-swarm-projections', definitionOfDone: ['done'], constraints: ['scope'], risk: 'high',
   goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
@@ -51,7 +42,7 @@ const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' },
 
 // turnDelayMs keeps a resumed mock turn alive long enough that a guide issued right after a
 // resume reaches the live delivery lane (the receipt-writing path) instead of another pause.
-async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
+async function fixture(t, { turnDelayMs = 5 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-projections-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
@@ -70,11 +61,6 @@ async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
   const driver = createDriver({
     repoRoot: repo, repoId: policy.repoId, logDir: join(directory, 'log'),
     adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true }, stopDeadlineMs: 2000,
-    ...(sharedCheckout ? {
-      worktreeCapacity: capacityPolicy,
-      worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-      worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
-    } : {}),
   });
   const app = new BatonApplication({ driver, repoId: policy.repoId, profiles: { standard: profile },
     principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
@@ -163,7 +149,7 @@ test('guidance rows appear for every receipted guide, and a guide returns the ro
 });
 
 test('workspace projects live checkout custody: shared adopters, solo holders, and null without a live checkout', async (t) => {
-  const { swarm, delegated, driver, leadWorker, paused } = await builders(t, { sharedCheckout: true, turnDelayMs: 250 });
+  const { swarm, delegated, driver, leadWorker, paused } = await builders(t, { turnDelayMs: 250 });
   // Two holders deliberately adopt the lead's live checkout.
   const sharer = await delegated.recruit('sharer', 'Share the checkout', { ...selection, shareWorkspaceWith: 'lead' });
   await paused(sharer.runId);

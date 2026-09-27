@@ -1,13 +1,12 @@
-# 43 — Host capacity is the throttle; the workspace floor is a record
+# 43 — Host capacity is the throttle; the workspace free-space observation
 
-Status: implemented (issues #297 and #307; 2026-09-14 incident — seven lanes plus root
-verdicts on a 10-core / 16 GB host drove the load average to 24–46, and a full volume
-refused a recruit against a constant 512 MiB floor with no wake).
+Status: implemented (issue #297; 2026-09-14 incident — seven lanes plus root verdicts on a
+10-core / 16 GB host drove the load average to 24–46). The per-repo workspace floor and the
+reservation ledger issue #307 added were removed by #610; section 4 states what remains.
 
 The code of record is `impl/src/host-capacity.mjs` (the host-wide authority and the
-derivation), `impl/src/worktree-capacity.mjs` (the derived workspace floor, the
-`capacityPressure` predicate), `impl/src/application-deployment.mjs` (the doctor's
-capacity sections and the deployment wiring), `impl/src/contribution-service.mjs` and
+derivation), `impl/src/application-deployment.mjs` (the doctor's capacity sections and the
+deployment wiring), `impl/src/contribution-service.mjs` and
 `impl/src/swarm-runtime.mjs` (the typed admission rows for `swarm.recruit`), and
 `impl/scripts/run-suite.mjs` (the suite runner's derived default
 parallelism).
@@ -47,17 +46,16 @@ lease.
 
 ### Sharing: the host-scoped lease directory
 
-`defaultHostCapacityRoot()` resolves one directory per (host, user) beside the POSIX
-`/tmp` baseline — `baton-host-capacity-<fingerprint(hostname, platform, arch, uid)>` —
-the host-wide sibling of the per-repo `.baton/capacity` files. Per-worker `TMPDIR`
-isolation is deliberately not honoured: an authority that resolved through a
+`defaultHostCapacityRoot()` resolves one host-scoped directory beside the POSIX `/tmp`
+baseline — `baton-host-capacity-<fingerprint(hostname, platform, arch, uid)>`. Per-worker
+`TMPDIR` isolation is deliberately not honoured: an authority that resolved through a
 per-process temp root would fragment per resident and share nothing.
 `BATON_HOST_CAPACITY_ROOT` (or `advanced.capacity.hostCapacity.root`) pins an
 operator-chosen location when `/tmp` is not one shared filesystem. Records are mode
 0600; another user's resident gets its own directory (its processes could neither read
 nor honour this user's locks).
 
-Mutations serialize on the published-owner mutex the worktree capacity ledger proved:
+Mutations serialize on the published-owner mutex:
 an owner record published by atomic link, counted only after re-observation, a dead
 holder reclaimed only under an exclusive reaper gate, every wait bounded by a monotonic
 deadline. A crashed resident's leases and queue entries are swept by any live resident's
@@ -169,49 +167,21 @@ caller. `baton serve` starts the watch once the resident is serving
 (`BatonDeployment#startOrdinaryHost`), stops it where the incarnation withdraws, and records each row
 through the deployment's own `driver.recorded` lane.
 
-## 4. The derived workspace floor (#307)
+## 4. The workspace free-space observation (#35)
 
-The floor beneath a reservation wave is a record, not a constant:
+`deployment.doctor` and `swarm.view`'s `deployment` summary report the repository volume's
+free space, read fresh at each read: `{state: 'ready' | 'unobserved', freeBytes?, freeInodes?}`.
+Bytes and inodes are quantized DOWN to the deployment reserve granularity (64 MiB and 10 000
+inodes), so equal-state projections stay deeply equal across reads and across surfaces. Issue
+#610 removed the reservation ledger, the derived workspace floor and the `worktree_capacity_exceeded`
+dispatch refusal that read them; `impl/src/worktree-capacity.mjs` is deleted and
+`advanced.capacity` accepts only `hostCapacity`.
 
-```
-floor = largest checkout estimate the deployment has recorded (ledger high-water)
-      + measured runtime footprint (state ledger + evidence roots, walked with caps;
-        worker homes are the checkout estimates the high-water already carries)
-```
-
-`DEFAULT_WORKTREE_CAPACITY.minFreeBytes/minFreeInodes` are `null` — derive. An operator
-may pin either field through `advanced.capacity.policy`; the resolution is per field
-(configured wins, `null` derives) and the policy digest pins which regime is in force,
-so the floor cannot flip silently under live reservations. The high-water lives in the
-capacity ledger itself (schemaVersion 2, `estimateHighWater`, sealed with the
-reservations it protects; schemaVersion 1 ledgers stay verifiable byte-for-byte and
-migrate on first write). A live reservation counts against free space through
-`outstanding` exactly as before — the floor adds room for one more participant plus the
-deployment's own growth, and nothing is double-counted.
-
-### The refusal names its numbers
-
-A refused wave throws `worktree_capacity_exceeded` carrying `freeBytes, freeInodes,
-outstandingBytes, outstandingInodes, estimateBytes, estimateInodes, floorBytes,
-floorInodes, floorSource, deficitBytes, deficitInodes, reasons`, and the message spells
-the same facts with the remedy that would admit this exact request. The Web mapping
-(web 503) repeats them, replacing "what defines this limit" with the numbers.
-
-### The doctor and the view
-
-`deployment.doctor` reports the workspace observation beside the EFFECTIVE floor
-(`floorBytes, floorInodes, floorSource, estimateHighWater, runtimeFootprint`) and a
-`hostCapacity` section — the derived budget, live leases and the visible queue, read
-fresh, with memory quantized DOWN to the deployment reserve granularity and load
-quantized DOWN to whole cores so equal-state projections stay deeply equal across reads
-(the #35 discipline; admission itself always derives from the raw observation).
-
-`swarm.view` carries the `deployment` summary on every projection: the workspace
-section and the host section. The observation crossing the floor is a deployment-level
-fact — `workspaceCapacityPressure(workspace)` (exported from
-`impl/src/worktree-capacity.mjs`, re-exported from `impl/src/application-deployment.mjs`)
-is the ONE predicate; the wake stream lane imports it to derive a `capacity_pressure`
-wake. This document does not build the wake.
+`deployment.doctor` and the view's summary also carry a `hostCapacity` section — the derived
+budget, live leases and the visible queue, read fresh, with memory quantized DOWN to the
+deployment reserve granularity and load quantized DOWN to whole cores (the same #35 discipline;
+admission itself always derives from the raw observation). The wake stream derives a
+`capacity_pressure` wake from a workspace row whose state is not `ready`.
 
 `swarm.view` also carries the swarm's own `policy` (#443) — the RESOLVED re-route policy,
 `{rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}`, with `auto` and no
@@ -354,7 +324,7 @@ the one that caches (issue #465 item 4/5).
 
 ## 6. Restart truth: lost seats, refused starts, and pending scope removals (#364, #384, #542)
 
-- A restarted resident reconciles every participant's runtime row against the worker fleet it actually recovered (`coordinator.startupWorkerFleet()`: owned = spawned by this incarnation, recovered = a kernel-start-bound process the replay proved alive; everything else is lost). For each lost seat the swarm runtime folds ONE durable `swarm.participant_runtime_lost {swarmId, participantId, workerId, incarnation, at}` (runtime-recorded, never caller-submittable), so `swarm.view` reads `live: false, state: dead` with a `worker_lost_on_restart` attention row whose `next` names resume (`swarm.recruit --resume-from`) or stop. The brief's Peers section and scopeOverlap read the settled liveness; a lost seat holds no capacity reservation.
-- A start the owned-resource reconciliation refuses names its cause: `coordinator_cleanup_incomplete` carries `{reconciler, record, observed, next}` for the reconciler that failed (workspace owners, worker processes, capacity leases, publication lease), a transient observation says `retry after N ms` with the fact it waits on (N from the reconciler's own grace row), and `baton serve` records `host.startup_refused {code, reconciler, record, observed}` through the deployment's writer before exiting, so the doctor and the wake stream see it.
+- A restarted resident reconciles every participant's runtime row against the worker fleet it actually recovered (`coordinator.startupWorkerFleet()`: owned = spawned by this incarnation, recovered = a kernel-start-bound process the replay proved alive; everything else is lost). For each lost seat the swarm runtime folds ONE durable `swarm.participant_runtime_lost {swarmId, participantId, workerId, incarnation, at}` (runtime-recorded, never caller-submittable), so `swarm.view` reads `live: false, state: dead` with a `worker_lost_on_restart` attention row whose `next` names resume (`swarm.recruit --resume-from`) or stop. The brief's Peers section and scopeOverlap read the settled liveness.
+- A start the owned-resource reconciliation refuses names its cause: `coordinator_cleanup_incomplete` carries `{reconciler, record, observed, next}` for the reconciler that failed (workspace owners, worker processes, worker process cleanup), a transient observation says `retry after N ms` with the fact it waits on (N from the reconciler's own grace row), and `baton serve` records `host.startup_refused {code, reconciler, record, observed}` through the deployment's writer before exiting, so the doctor and the wake stream see it.
 - A runtime scope the start cannot remove yet is a pending removal. `RuntimeIsolation.reconcile` reports every scope it could not remove on the `runtime_cleanup_failed` error's `pending` list, the coordinator records one durable `host.cleanup_pending {code, reconciler, record, observed}` row per scope, keeps the set on `coordinator.startupCleanupDeferred()`, and reconciles exactly those scopes again — never the whole sweep, so a scope a worker admitted since the pass is untouched — on the reap grace until each is absent, which lands one `host.cleanup_completed {reconciler, record, attempts}` row. The retry count is unbounded and the loop's timer is unref'd, so a start proceeds while a killed worker's child is still releasing its scratch (`ENOTEMPTY` for one filesystem turn) and nothing waits on the loop at drain or close.
 

@@ -128,10 +128,6 @@ async function openBuiltInDeployment({ routes, adapterOptions, extraAdvanced = {
       ],
       ...(adapterOptions ? { adapterOptions } : {}),
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
       ...extraAdvanced,
     },
   }, (options) => { driver = createDriver(options); return driver; });

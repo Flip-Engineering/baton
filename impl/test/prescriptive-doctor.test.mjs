@@ -50,9 +50,9 @@
 // the suite additionally plants a canary token field to prove the warning never emits it). The W2
 // fixture writes the REAL writer-lease schema ({schemaVersion:2,pid,pidStart,token,acquiredAt}).
 // The fold-2 fixtures plant REAL resident selectors/profiles (application-cli.mjs's exact
-// schema-v2 validation), REAL owner receipts (worktree.mjs's 15-field receipt), and REAL capacity
-// reservations (worktree-capacity.mjs's authority) — the PT-L fixture-lint proves each is the
-// condition it claims, so a vacuous pass is impossible (blue-team findings 1, 3, 5, 8a, 8b, 9).
+// schema-v2 validation) and REAL owner receipts (worktree.mjs's 15-field receipt) — the PT-L
+// fixture-lint proves each is the condition it claims, so a vacuous pass is impossible
+// (blue-team findings 1, 3, 5, 8a, 8b, 9).
 //
 // ── NUL DISCIPLINE (§8) ────────────────────────────────────────────────────────────────────
 // application.mjs and coordination-store.mjs carried NUL bytes until #215. This suite cites their anchors in
@@ -66,11 +66,9 @@
 //
 // ── VERIFIED SPLIT (run twice from the repo root) ──────────────────────────────────────────
 //   `node --test impl/test/prescriptive-doctor.test.mjs`
-//   Run 1: 17 tests — 4 pass (PT-2p, PT-4p, PT-8p guard pins, PT-L fixture-lint) / 13 fail
-//          (PT-1..PT-13 red rows).
-//   Run 2: 17 tests — 4 pass / 13 fail. STABLE. The 13 red rows fail at the stage guard
-//   (resolvePrescriptiveDoctorHome() → {surface:null}); they go green only on a contract-correct
-//   implementation. The 4 guard pins pass today on unchanged surfaces and must stay green.
+//   Run 1: 4 tests — all pass (PT-2p, PT-4p, PT-8p workspace-observation pin, PT-L fixture-lint).
+//   Run 2: 4 tests — all pass. STABLE. The #72 red rows are not part of this tree: the surface
+//   they stage-guard on is not landed, and the worktree-capacity ledger they cited is removed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -88,10 +86,6 @@ import * as deploymentModule from '../src/application-deployment.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { MockAdapter, openBaton } from '../src/index.mjs';
 import { fixtureSocketRoot } from './fixture-root.mjs';
-import {
-  WorktreeCapacityAuthority, loadOrCreateWorktreeCapacityIntegrityKey,
-  normalizeWorktreeCapacityPolicy,
-} from '../src/worktree-capacity.mjs';
 
 const srcDir = fileURLToPath(new URL('../src', import.meta.url));
 const deploymentSource = readFileSync(join(srcDir, 'application-deployment.mjs'), 'utf8');
@@ -109,7 +103,7 @@ const PRESCRIPTIVE_WARNING_CODES = Object.freeze([
 ]);
 // The blocking refusal taxonomy #72 must NOT touch (§4.2) — disjoint from warning_* by name.
 const BLOCKING_CODES = Object.freeze([
-  'worktree_capacity_exceeded', 'coordination_writer_busy', 'coordination_writer_lost',
+  'coordination_writer_busy', 'coordination_writer_lost',
   'wave_driver_route_unready', 'authentication_required', 'authentication_refresh_required',
   'authentication_metadata_invalid', 'route_unconfigured', 'harness_unavailable',
 ]);
@@ -127,6 +121,7 @@ const REMOTE_ONLY = Object.freeze(new Set([
 const FLOOR_BYTES = 512 * 1024 * 1024;
 const FLOOR_INODES = 100_000;
 const BYTE_QUANTUM = 64 * 1024 * 1024;
+const INODE_QUANTUM = 10_000;
 const APPROACH_MARGIN = 0.25; // §4.1 W4 default
 const GROK_EARLY_INVALIDATION_MS = 5 * 60 * 1000; // application-deployment.mjs:71
 const RESULT_PIN_CEILING = 256; // §4.1 W5 — refs-growth cost class; deployment-configurable
@@ -294,39 +289,6 @@ function plantOwnerReceipt(repoRoot, physicalOwnerId, { pid, pidStart }) {
   writeJson(join(dir, `${physicalOwnerId}.json`), { ...receipt, receiptDigest: receiptDigestOf(receipt) });
 }
 
-// A REAL reservation ledger crossing the W1 reserved-fraction disjunct while ghostCount === 0
-// (worktree-capacity.mjs WorktreeCapacityAuthority) — planted with the real authority so a
-// real-authority read (integrity + policy digest) agrees. Returns the policy the W1 fixture passes
-// to the detection: the DEFAULTS fields (ghostReservedFraction, maxReservedBytes for the fraction
-// threshold) PLUS the same runtime-reserve values the ledger was sealed with, so a conforming
-// detection that normalizes the capacity policy from its `policy` argument reads a matching digest.
-function plantReservationLedger(repoRoot) {
-  const runtimeReserveBytes = 64 * 1024 * 1024;
-  const runtimeReserveInodes = 10_000;
-  const capacityPolicy = normalizeWorktreeCapacityPolicy({
-    maxReservedBytes: DEFAULTS.maxReservedBytes,
-    maxReservedInodes: DEFAULTS.maxReservedInodes,
-    minFreeBytes: DEFAULTS.minFreeBytes,
-    minFreeInodes: DEFAULTS.minFreeInodes,
-    runtimeReserveBytes,
-    runtimeReserveInodes,
-  });
-  const authority = new WorktreeCapacityAuthority({
-    repoRoot,
-    policy: capacityPolicy,
-    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(repoRoot),
-    observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-    estimate: () => ({ bytes: 7 * 1024 * 1024 * 1024, inodes: 600_000 }),
-    now: () => NOW,
-  });
-  authority.reserve('worker:pd72-reserved-fraction', {
-    baseSha: 'a'.repeat(40),
-    sparseCheckoutIdentity: { mode: 'full', digest: 'b'.repeat(64) },
-    toolchainProjection: null,
-  });
-  return { ...DEFAULTS, runtimeReserveBytes, runtimeReserveInodes };
-}
-
 function doctorAdapter() {
   const instance = new MockAdapter({
     harness: ROUTE.harness,
@@ -441,11 +403,9 @@ function buildDegradedReads() {
     expiresAt: NOW + 3 * 60 * 1000, refreshTokenExpiresAt: null, state: 'fresh',
     units: 'ms epoch', operatorFile: { exists: true, mtimeMs: 0 }, accessToken: TOKEN_CANARY,
   };
-  // W4 — the approach band on the SAME quantized read (576MiB ∈ [512, 640)).
-  const workspace = {
-    freeBytes: 576 * 1024 * 1024, freeInodes: 200_000, state: 'ready',
-    minFreeBytes: FLOOR_BYTES, minFreeInodes: FLOOR_INODES,
-  };
+  // W4 — the workspace observation row exactly as the doctor reads it: a state plus the quantized
+  // free space, with no floor field on it to cross.
+  const workspace = { state: 'ready', freeBytes: 576 * 1024 * 1024, freeInodes: 200_000 };
   // W5 — pin census above the configured ceiling.
   const repoRoot = gitRepo('degraded-refs');
   plantResultPins(repoRoot, RESULT_PIN_CEILING + 1);
@@ -501,9 +461,9 @@ test('PT-4p (pin): the CLI parser accepts doctor/serve, the four doctor depths, 
   assert.throws(() => parseBatonCli(['credentials', 'refresh', 'claude']), /expected credentials install kimi/u);
 });
 
-test('PT-8p (pin): the existing worktree_capacity_exceeded block still fires below the floor — unchanged by #72 (§1.1, §4.2)', async (t) => {
-  const repo = gitRepo('block-floor');
-  const root = tmpDir('block-floor-deploy');
+test('PT-8p (pin): the doctor workspace row is an observation — a state plus the quantized free space, with no floor refusal (#307, unchanged by #72)', async (t) => {
+  const repo = gitRepo('workspace-observation');
+  const root = tmpDir('workspace-observation-deploy');
   const deployment = await openBaton({
     repo,
     advanced: {
@@ -511,20 +471,31 @@ test('PT-8p (pin): the existing worktree_capacity_exceeded block still fires bel
       adapters: { mock: doctorAdapter() },
       routes: [ROUTE],
       verification: { command: process.execPath, arguments: ['--version'] },
-      capacity: {
-        // #307: the deployment default derives the floor; this pin stages an EXPLICIT floor
-        // (the pre-#307 constant) so the test pins the refusal BLOCK, not the floor's magnitude.
-        policy: { minFreeBytes: 512 * 1024 * 1024, minFreeInodes: 100_000 },
-        estimate: () => ({ reservedBytes: 0, reservedInodes: 0 }),
-        observe: () => ({ freeBytes: 100 * 1024 * 1024, freeInodes: 50_000 }), // below both floors
-      },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch { /* fixture teardown */ } });
-  const doctor = await deployment.doctor();
-  assert.equal(doctor.workspace.state, 'blocked');
-  assert.equal(doctor.workspace.code, 'worktree_capacity_exceeded');
-  assert.ok(doctor.workspace.freeBytes < doctor.workspace.minFreeBytes, 'below the byte floor');
+  const { workspace } = await deployment.doctor();
+  assert.ok(['ready', 'unobserved'].includes(workspace.state),
+    'the workspace row is observed or unobserved, never blocked');
+  // The removed ledger's floor vocabulary is gone: the row is an observation, and nothing on it
+  // refuses a dispatch.
+  for (const removed of ['code', 'floorBytes', 'floorInodes', 'minFreeBytes', 'minFreeInodes',
+    'remedy', 'pressure', 'floorSource', 'estimateHighWater', 'runtimeFootprint']) {
+    assert.equal(removed in workspace, false, `the workspace row carries no ${removed}`);
+  }
+  if (workspace.state === 'ready') {
+    assert.deepEqual(Object.keys(workspace).sort(), ['freeBytes', 'freeInodes', 'state'],
+      'an observed workspace row is exactly the quantized observation');
+    assert.ok(Number.isSafeInteger(workspace.freeBytes) && workspace.freeBytes >= 0,
+      'free bytes are a non-negative integer');
+    assert.ok(Number.isSafeInteger(workspace.freeInodes) && workspace.freeInodes >= 0,
+      'free inodes are a non-negative integer');
+    assert.equal(workspace.freeBytes % BYTE_QUANTUM, 0, 'free bytes are quantized down to 64 MiB');
+    assert.equal(workspace.freeInodes % INODE_QUANTUM, 0, 'free inodes are quantized down to 10 000');
+  } else {
+    assert.deepEqual(Object.keys(workspace).sort(), ['state', 'summary'],
+      'an unobserved workspace row carries the reason instead of numbers');
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════

@@ -20,14 +20,6 @@ const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.m
 const repoId = 'repo-issue5-cross-controller';
 const route = Object.freeze({ harness: 'glm', model: 'glm-5.2', effort: 'low' });
 const budget = Object.freeze({ tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 8 });
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024,
-  maxReservedInodes: 10_000,
-  minFreeBytes: 1,
-  minFreeInodes: 1,
-  runtimeReserveBytes: 4 * 1024,
-  runtimeReserveInodes: 4,
-});
 const goalPlanPolicy = Object.freeze({
   schemaVersion: 1,
   repoId,
@@ -154,9 +146,6 @@ function driver(repo, logDir, selectedAdapter) {
     logDir,
     adapters: { glm: selectedAdapter },
     goalPlanAuthority: { policy: goalPlanPolicy, authorize: async () => true },
-    worktreeCapacity: capacityPolicy,
-    worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-    worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
     stopDeadlineMs: 2_000,
     drainPolicy: { maxWorkers: 32, timeoutMs: 2_000, pollMs: 10 },
   });
@@ -258,9 +247,6 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
       expected: durableProcessAuthority, observed: observeProcessGroupIdentity(pid),
       lifecycleBarrierPath, barrierExists: existsSync(lifecycleBarrierPath),
     }));
-  const firstCapacity = firstDriver.worktreeCapacity.snapshot();
-  assert.equal(firstCapacity.reservations.length, 1,
-    diagnostic('initial live-generation capacity reservations', firstCapacity));
   const liveLifecycle = firstDriver.log.read(workerId);
   const ownerBound = liveLifecycle.find((event) => event.kind === 'worktree.owner_bound');
   const processStarted = liveLifecycle.find((event) => event.kind === 'lifecycle.process_started');
@@ -324,7 +310,6 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   firstDriver.coordinator._closed = true;
   assert.equal(firstDriver.coordination.releaseWriterLease({ requireOwned: true }), true);
 
-  const seededCapacityOwner = firstCapacity.reservations[0];
   const bindingMismatches = [
     ['receipt-digest', (binding) => { binding.receiptDigest = '0'.repeat(64); }],
     ['physical-owner', (binding) => { binding.physicalOwnerId = `ws-${'1'.repeat(32)}`; }],
@@ -349,10 +334,14 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
       && row.physicalOwnerId === physicalOwnerId && row.retained === true
     )), diagnostic(`typed ${label} retention`, report));
     assert.equal(existsSync(worktree), true, label);
-    const retainedCapacity = firstDriver.worktreeCapacity.snapshot().reservations[0];
-    assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
-      ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
-    }, `${label} must not adopt capacity`);
+    const retainedReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+    assert.deepEqual({
+      physicalOwnerId: retainedReceipt.physicalOwnerId,
+      receiptDigest: retainedReceipt.receiptDigest,
+    }, {
+      physicalOwnerId: exactOwnerReceipt.physicalOwnerId,
+      receiptDigest: exactOwnerReceipt.receiptDigest,
+    }, `${label} must not adopt the retained workspace owner receipt`);
   }
   const missingOwnerBound = structuredClone(exactWorkspaceExpectation);
   missingOwnerBound.binding.ownerBound = null;
@@ -374,8 +363,14 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.ok(duplicateReport.diagnostics.some((row) => (
     row.code === 'workspace_owner_binding_ambiguous' && row.physicalOwnerId === physicalOwnerId
   )));
-  assert.equal(firstDriver.worktreeCapacity.snapshot().reservations[0].nonce,
-    seededCapacityOwner.nonce);
+  const duplicateRetainedReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+  assert.deepEqual({
+    physicalOwnerId: duplicateRetainedReceipt.physicalOwnerId,
+    receiptDigest: duplicateRetainedReceipt.receiptDigest,
+  }, {
+    physicalOwnerId: exactOwnerReceipt.physicalOwnerId,
+    receiptDigest: exactOwnerReceipt.receiptDigest,
+  });
 
   const replayHandle = firstDriver.coordinator._workers.get(workerId);
   const replayTask = firstDriver.coordinator._tasks.get(taskId);
@@ -406,10 +401,14 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
         && diagnosticRow.retained === true
       )), diagnostic(row.label, report));
       assert.equal(existsSync(worktree), true);
-      const retainedCapacity = firstDriver.worktreeCapacity.snapshot().reservations[0];
-      assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
-        ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
-      });
+      const retainedReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+      assert.deepEqual({
+        physicalOwnerId: retainedReceipt.physicalOwnerId,
+        receiptDigest: retainedReceipt.receiptDigest,
+      }, {
+        physicalOwnerId: exactOwnerReceipt.physicalOwnerId,
+        receiptDigest: exactOwnerReceipt.receiptDigest,
+      }, `${row.label} must not adopt the retained workspace owner receipt`);
       const substitutedHandle = {
         ...replayHandle,
         id: row.expectationId,
@@ -459,8 +458,14 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
     row.code === 'workspace_owner_checkout_invalid' && row.expectationId === workerId
   )));
   assert.equal(existsSync(worktree), true);
-  assert.equal(firstDriver.worktreeCapacity.snapshot().reservations[0].nonce,
-    seededCapacityOwner.nonce);
+  const corruptMetadataRetainedReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+  assert.deepEqual({
+    physicalOwnerId: corruptMetadataRetainedReceipt.physicalOwnerId,
+    receiptDigest: corruptMetadataRetainedReceipt.receiptDigest,
+  }, {
+    physicalOwnerId: exactOwnerReceipt.physicalOwnerId,
+    receiptDigest: exactOwnerReceipt.receiptDigest,
+  });
   writeFileSync(metadataPath, exactMetadata, { mode: 0o600 });
 
   await t.test('P92.2-PO3: schema-valid ancestor metadata base cannot grant recovery authority', async () => {
@@ -482,9 +487,14 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
       && row.expectationId === workerId && row.retained === true
     )));
     assert.equal(existsSync(worktree), true);
-    const retainedCapacity = firstDriver.worktreeCapacity.snapshot().reservations[0];
-    assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
-      ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
+    const exactReceiptBytes = readFileSync(ownerReceiptPath, 'utf8');
+    const tamperedRetainedReceipt = JSON.parse(exactReceiptBytes);
+    assert.deepEqual({
+      physicalOwnerId: tamperedRetainedReceipt.physicalOwnerId,
+      receiptDigest: tamperedRetainedReceipt.receiptDigest,
+    }, {
+      physicalOwnerId: exactOwnerReceipt.physicalOwnerId,
+      receiptDigest: exactOwnerReceipt.receiptDigest,
     });
 
     const rejected = driver(repo, logDir, adapter());
@@ -499,10 +509,8 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
         rejected.coordinator._recoveryDispatchRefusal(replay, task),
         'workspace_owner_binding_unproven',
       );
-      const unadopted = rejected.worktreeCapacity.snapshot().reservations[0];
-      assert.deepEqual({ ownerId: unadopted.ownerId, nonce: unadopted.nonce }, {
-        ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
-      });
+      assert.equal(readFileSync(ownerReceiptPath, 'utf8'), exactReceiptBytes,
+        'unadopted replay must not rewrite the retained workspace owner receipt');
     } finally {
       rejected.coordinator._closed = true;
       rejected.coordination.releaseWriterLease({ requireOwned: true });
@@ -515,6 +523,9 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   );
   const foreignDeployment = createHash('sha256').update('foreign-deployment').digest('hex');
   const foreignController = createHash('sha256').update('foreign-controller').digest('hex');
+  const retainedReceiptBytes = () => {
+    try { return readFileSync(ownerReceiptPath, 'utf8'); } catch { return null; }
+  };
   const replayRefusals = [
     {
       label: 'missing', code: 'workspace_owner_receipt_missing',
@@ -539,6 +550,7 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   ];
   for (const refusal of replayRefusals) {
     refusal.install();
+    const installedReceiptBytes = retainedReceiptBytes();
     const rejected = driver(repo, logDir, adapter());
     try {
       await rejected.coordinator.startupReady();
@@ -576,10 +588,8 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
         replay.worktree = retainedPath;
       }
       assert.equal(existsSync(worktree), true, refusal.label);
-      const retainedCapacity = rejected.worktreeCapacity.snapshot().reservations[0];
-      assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
-        ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
-      }, `${refusal.label} replay must not adopt capacity`);
+      assert.equal(retainedReceiptBytes(), installedReceiptBytes,
+        `${refusal.label} replay must not rewrite the retained workspace owner receipt`);
     } finally {
       rejected.coordinator._closed = true;
       rejected.coordination.releaseWriterLease({ requireOwned: true });
@@ -603,28 +613,28 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.equal(existsSync(worktree), true, 'startup replay must not reap a live process-owned worktree');
   assert.equal(existsSync(runtime), true, 'startup replay must retain the live process runtime');
   assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: worktree, encoding: 'utf8' }).trim(), branch);
-  const activeCapacity = recoveredDriver.worktreeCapacity.snapshot();
-  assert.deepEqual(activeCapacity.reservations.map((row) => row.id), [`worker:${physicalOwnerId}`],
-    diagnostic('replayed live-generation capacity reservations', activeCapacity));
-  assert.equal(activeCapacity.reservations[0].ownerId, recoveredDriver.worktreeCapacity.ownerId);
-  const adoptedNonce = activeCapacity.reservations[0].nonce;
+  const replayedOwnerReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+  assert.deepEqual({
+    physicalOwnerId: replayedOwnerReceipt.physicalOwnerId,
+    receiptDigest: replayedOwnerReceipt.receiptDigest,
+  }, {
+    physicalOwnerId: exactOwnerReceipt.physicalOwnerId,
+    receiptDigest: exactOwnerReceipt.receiptDigest,
+  }, diagnostic('replayed live-generation workspace owner receipt', replayedOwnerReceipt));
   const exactRetry = recoveredDriver.coordinator._worktrees.reconcile([exactWorkspaceExpectation]);
   assert.deepEqual(exactRetry.validatedExpectedOwners, [physicalOwnerId]);
   assert.equal(exactRetry.diagnostics.some((row) => row.physicalOwnerId === physicalOwnerId), false);
   const retryReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
-  const retryCapacity = recoveredDriver.worktreeCapacity.snapshot().reservations[0];
   assert.deepEqual({
     physicalOwnerId: retryReceipt.physicalOwnerId,
     receiptDigest: retryReceipt.receiptDigest,
     processGeneration: retryReceipt.processGeneration,
-    capacityNonce: retryCapacity.nonce,
     ownerBoundCount: recoveredDriver.log.read(workerId)
       .filter((event) => event.kind === 'worktree.owner_bound').length,
   }, {
     physicalOwnerId,
     receiptDigest: exactOwnerReceipt.receiptDigest,
     processGeneration: processStarted.payload.generation,
-    capacityNonce: adoptedNonce,
     ownerBoundCount: 1,
   });
 
@@ -686,9 +696,8 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.equal(existsSync(worktree), false);
   assert.equal(existsSync(runtime), false);
   assert.equal(execFileSync('git', ['branch', '--list', branch], { cwd: repo, encoding: 'utf8' }).trim(), '');
-  const stoppedCapacity = recoveredDriver.worktreeCapacity.snapshot();
-  assert.deepEqual(stoppedCapacity.reservations, [],
-    diagnostic('capacity reservations after recovered stop', stoppedCapacity));
+  assert.equal(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), null,
+    diagnostic('workspace owner receipt after recovered stop', physicalOwnerId));
   const recoveredLifecycle = stoppedLifecycle;
   const authority = recoveredLifecycle.filter((event) => event.kind === 'lifecycle.process_authority');
   const reaped = recoveredLifecycle.filter((event) => event.kind === 'control.recovery_process_reaped');
@@ -770,8 +779,6 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.equal(closed.state, 'closed');
   assert.equal(closed.receipt.fleet.remainingCount, 0,
     diagnostic('shutdown fleet remaining count', closed.receipt));
-  assert.equal(closed.receipt.capacity.ownedReservations, 0,
-    diagnostic('shutdown owned-capacity count', closed.receipt));
   assert.equal(recoveredDriver.coordination._writerLease, null);
   assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false);
 });
@@ -818,7 +825,6 @@ test('P92.2-PO3: absent process cannot erase retained malformed workspace cleanu
   const worktree = live.worktree;
   receiptPath = join(repo, '.git', 'baton', 'workspace-owners', `${physicalOwnerId}.json`);
   exactReceipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-  const capacityBefore = first.worktreeCapacity.snapshot().reservations[0];
   firstAdapter.onEvent(() => {});
   for (const handle of first.coordinator._workers.values()) {
     first.coordinator._clearWatchdog(handle);
@@ -840,10 +846,8 @@ test('P92.2-PO3: absent process cannot erase retained malformed workspace cleanu
   assert.equal(replay.physicalWorkspaceCleanupCompleted, false);
   assert.equal(replay.cleanupPending, true);
   assert.equal(existsSync(worktree), true);
-  const capacityAfter = second.worktreeCapacity.snapshot().reservations[0];
-  assert.deepEqual({ ownerId: capacityAfter.ownerId, nonce: capacityAfter.nonce }, {
-    ownerId: capacityBefore.ownerId, nonce: capacityBefore.nonce,
-  });
+  assert.equal(readFileSync(receiptPath, 'utf8'), '{"schemaVersion":1}\n',
+    'replayed malformed owner receipt is retained byte-identical');
   let stopOutcome;
   try { stopOutcome = await second.coordinator.kill(workerId, 'policy'); }
   catch (error) { stopOutcome = { ok: false, result: error?.code }; }
@@ -951,8 +955,8 @@ test('P92.2-PO3: immutable gen1 workspace owner binds a separately proven live g
   assert.equal(processAuthorityState(replay.processRef, replay.processAuthority), 'active');
   assert.equal(replay.sessionContext.ownerTaskId, physicalOwnerId);
   assert.deepEqual(JSON.parse(readFileSync(ownerReceiptPath, 'utf8')), immutableReceipt);
-  assert.deepEqual(third.worktreeCapacity.snapshot().reservations.map((row) => row.resourceId), [
-    physicalOwnerId,
+  assert.deepEqual(readdirSync(join(repo, '.git', 'baton', 'workspace-owners')), [
+    `${physicalOwnerId}.json`,
   ]);
 
   const stopped = await application(third).stop(
@@ -962,7 +966,7 @@ test('P92.2-PO3: immutable gen1 workspace owner binds a separately proven live g
   assert.equal(processGroupAlive(secondPid), false);
   assert.equal(existsSync(worktree), false);
   assert.equal(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), null);
-  assert.deepEqual(third.worktreeCapacity.snapshot().reservations, []);
+  assert.deepEqual(readdirSync(join(repo, '.git', 'baton', 'workspace-owners')), []);
   assert.equal(third.log.read(workerId).filter((event) => event.kind === 'worktree.owner_bound').length, 1);
 });
 
@@ -1053,8 +1057,8 @@ test('P92.2-PO3: controller2 exact gen2 recovery restores authority for same-con
   assert.equal(recovered.worktree, worktree);
   assert.equal(recovered.ownedWorktreeAuthority, true);
   assert.deepEqual(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), immutableReceipt);
-  assert.deepEqual(second.worktreeCapacity.snapshot().reservations.map((row) => row.resourceId), [
-    physicalOwnerId,
+  assert.deepEqual(readdirSync(join(repo, '.git', 'baton', 'workspace-owners')), [
+    `${physicalOwnerId}.json`,
   ]);
 
   const stopped = await application(second).stop(
@@ -1064,7 +1068,7 @@ test('P92.2-PO3: controller2 exact gen2 recovery restores authority for same-con
   assert.equal(processGroupAlive(secondPid), false);
   assert.equal(existsSync(worktree), false);
   assert.equal(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), null);
-  assert.deepEqual(second.worktreeCapacity.snapshot().reservations, []);
+  assert.deepEqual(readdirSync(join(repo, '.git', 'baton', 'workspace-owners')), []);
   assert.equal(second.log.read(workerId).filter((event) => event.kind === 'worktree.owner_bound').length, 1);
 });
 
@@ -1191,11 +1195,6 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
   }).split('\n').filter((line) => line.startsWith('worktree '));
   assert.equal(recoveredWorktreeList.length, 1,
     diagnostic('git worktrees after recovered startup', recoveredWorktreeList));
-  const capacity = JSON.parse(readFileSync(
-    join(repo, '.baton', 'capacity', 'reservations.json'), 'utf8',
-  ));
-  assert.deepEqual(capacity.reservations, [],
-    diagnostic('capacity reservations after recovered startup', capacity));
   for (const { workerId, pid, generation } of seeded.sessions) {
     const events = readFileSync(join(
       deploymentRoot, 'state', `${workerId}.jsonl`,

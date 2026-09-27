@@ -237,8 +237,6 @@ const RETRYABLE_KINDS = new Set([
   'provider_unavailable',
   'watchdog_stall',
   'wave_close_teardown',
-  'worktree_capacity_exceeded',
-  'worktree_capacity_unavailable',
 ]);
 const NON_RETRYABLE_KINDS = new Set([
   'explicit_stop',

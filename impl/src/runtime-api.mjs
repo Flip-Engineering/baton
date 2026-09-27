@@ -221,28 +221,6 @@ export function _captureTrustWorktree(coordinator, handle, task, { snapshot = fa
     });
   }
 
-export function _capacityOwnerIds(coordinator, handle, task = null) {
-    const ids = new Set();
-    for (const value of [
-      handle?.sessionContext?.ownerTaskId, task?.sessionContext?.ownerTaskId, task?.id, handle?.taskId,
-    ]) {
-      if (typeof value === 'string' && value.length > 0) ids.add(value);
-    }
-    return Object.freeze([...ids]);
-  }
-
-export function _capacityOwnerHeld(coordinator, ownerTaskId) {
-    for (const handle of coordinator._workers.values()) {
-      if (!coordinator._capacityOwnerIds(handle, coordinator._tasks.get(handle.taskId)).includes(ownerTaskId)) continue;
-      // A stop in flight still owns what it is about to release; a FINALIZED waiter no longer can
-      // (its cleanup already settled), so it is not a holder.
-      const waiter = coordinator._stopWaiters.get(handle.id) ?? coordinator._fatalStopWaiters.get(handle.id) ?? null;
-      if (waiter && waiter.finalized !== true) return true;
-      if (handle.processRef && handle.processRef.state !== 'closed') return true;
-    }
-    return false;
-  }
-
 export function releasedResources(coordinator) {
     return Object.freeze((coordinator._drainReleased ?? []).map((row) => Object.freeze({ ...row })));
   }
@@ -661,19 +639,6 @@ export function abandonedWorkers(coordinator) {
         workerId: handle.id, attempt: handle.stopAbandoned.attempts,
         alive: handle.stopAbandoned.alive, holds: Object.freeze([...handle.stopAbandoned.holds]),
       })));
-  }
-
-export function abandonedCapacityReservations(coordinator) {
-    const rows = [];
-    for (const handle of coordinator._workers.values()) {
-      if (!handle.stopAbandoned) continue;
-      for (const ownerTaskId of coordinator._capacityOwnerIds(handle, coordinator._tasks.get(handle.taskId) ?? null)) {
-        rows.push(Object.freeze({
-          workerId: handle.id, taskId: handle.taskId, ownerTaskId, resource: `worker:${ownerTaskId}`,
-        }));
-      }
-    }
-    return Object.freeze(rows);
   }
 
 export async function _claimInteraction(coordinator, requestId, opts = {}) {

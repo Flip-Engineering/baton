@@ -34,7 +34,6 @@ import { ProviderProcessingSupervisor } from './provider-processing-supervisor.m
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
-import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
@@ -140,7 +139,6 @@ export {
   contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
   normalizeContextArtifactRef,
 } from './context-authority.mjs';
-export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
@@ -248,16 +246,6 @@ function boundedRepoPath(value) {
     && !value.split('/').some((part) => part.length === 0 || part === '.' || part === '..');
 }
 
-function capacityReservationIdentity(row) {
-  if (!row) return null;
-  return Object.freeze({
-    id: row.id, kind: row.kind, resourceId: row.resourceId, bytes: row.bytes, inodes: row.inodes,
-    outstandingBytes: row.outstandingBytes, outstandingInodes: row.outstandingInodes,
-    baseSha: row.baseSha, sparseDigest: row.sparseDigest,
-    toolchainProjectionDigest: row.toolchainProjectionDigest ?? null, createdAt: row.createdAt,
-    materializedAt: row.materializedAt,
-  });
-}
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot, opts = {}) {
@@ -275,37 +263,12 @@ function worktreeManager(repoRoot, opts = {}) {
   // #216 (row-git-batch): the preserved-result resolution spawn is a seam (tests count real
   // git processes through it); production defaults to the module-local localGit.
   const git = opts.gitExec ?? localGit;
-  let verifyReservationSeq = 0;
-  const verifyReservations = new Map();
-  const workerReservations = new Map();
-  const pendingWorkerReservations = new Map();
-  const failedWorkerTransactions = new Map();
   const snapshots = new Map();
-  const capacityRequest = (baseSha, sparsePaths, sparseCheckoutIdentity) => ({
-    baseSha,
-    sparsePaths,
-    sparseCheckoutIdentity,
-    toolchainProjection: opts.toolchainProjection?.identity() ?? null,
-    toolchainProjectionTargetParents: opts.toolchainProjection?.targetParentPaths() ?? [],
-  });
   const allocationBinding = (taskId, binding) => ({
     runId: binding?.runId ?? null,
     attemptId: binding?.attemptId ?? `legacy-${taskId}`,
     processGeneration: binding?.processGeneration ?? 1,
   });
-  const pendingBindingMatches = (pending, taskId, binding) => {
-    const expected = allocationBinding(taskId, binding);
-    return pending.ownerReceipt.runId === expected.runId
-      && pending.ownerReceipt.attemptId === expected.attemptId
-      && pending.ownerReceipt.processGeneration === expected.processGeneration;
-  };
-  const finalizePendingReceipt = (taskId, pending) => {
-    if (!worktreeMod.releasePhysicalWorkspaceOwner(
-      repoRoot, pending.ownerReceipt.physicalOwnerId, { requireAllocated: true },
-    )) return false;
-    pendingWorkerReservations.delete(taskId);
-    return true;
-  };
   const allocateOwner = (taskId, selected, binding) => worktreeMod.allocatePhysicalWorkspaceOwner(
     repoRoot,
     {
@@ -315,276 +278,8 @@ function worktreeManager(repoRoot, opts = {}) {
     },
     opts.ownerAuthority,
   );
-  const rememberFailedTransaction = (taskId, transaction) => {
-    failedWorkerTransactions.set(taskId, transaction);
-    failedWorkerTransactions.set(transaction.physicalOwnerId, transaction);
-  };
-  const forgetFailedTransaction = (transaction) => {
-    failedWorkerTransactions.delete(transaction.logicalTaskId);
-    failedWorkerTransactions.delete(transaction.physicalOwnerId);
-  };
-  const failedTransactionPending = () => Object.assign(
-    new Error('a prior physical workspace transaction must be finalized before reservation'),
-    { code: 'worktree_capacity_transaction_pending' },
-  );
-  const retainUnknownCapacityOutcome = async (taskId, ownerReceipt) => {
-    const transaction = {
-      logicalTaskId: taskId,
-      physicalOwnerId: ownerReceipt.physicalOwnerId,
-      capacityReservation: null,
-      capacityOutcomeUnknown: true,
-    };
-    rememberFailedTransaction(taskId, transaction);
-    try {
-      if (!await opts.worktreeCapacity.settleForCleanup(`worker:${ownerReceipt.physicalOwnerId}`)) {
-        throw Object.assign(new Error('unknown capacity reservation could not be settled'), {
-          code: 'worktree_capacity_unavailable',
-        });
-      }
-      transaction.capacityOutcomeUnknown = false;
-      if (!worktreeMod.releasePhysicalWorkspaceOwner(
-        repoRoot, ownerReceipt.physicalOwnerId, { requireAllocated: true },
-      )) {
-        throw Object.assign(new Error('physical workspace allocation receipt was not finalized'), {
-          code: 'worktree_cleanup_failed',
-        });
-      }
-      forgetFailedTransaction(transaction);
-      return null;
-    } catch (error) {
-      return error;
-    }
-  };
-  const finalizeFailedTransaction = (transaction) => {
-    if (transaction.finalizationPromise) return transaction.finalizationPromise;
-    const operation = Promise.resolve().then(async () => {
-      if (transaction.capacityReservation && opts.worktreeCapacity) {
-        if (!await opts.worktreeCapacity.release(transaction.capacityReservation)) {
-          throw Object.assign(new Error('physical workspace capacity release was not confirmed'), {
-            code: 'worktree_capacity_unavailable',
-          });
-        }
-        transaction.capacityReservation = null;
-      }
-      if (transaction.capacityOutcomeUnknown && opts.worktreeCapacity) {
-        if (!await opts.worktreeCapacity.settleForCleanup(`worker:${transaction.physicalOwnerId}`)) {
-          throw Object.assign(new Error('unknown physical workspace capacity was not settled'), {
-            code: 'worktree_capacity_unavailable',
-          });
-        }
-        transaction.capacityOutcomeUnknown = false;
-      }
-      // createFromBase may have crossed git worktree-add even when it returned no handle. Its
-      // exact reap is deliberately idempotent across pre-branch, branch-only, registered, and
-      // fully materialized response-loss states, and must always follow capacity absence.
-      await worktreeMod.reap(repoRoot, transaction.physicalOwnerId, {
-        force: true, deleteBranch: true, ...(opts.log ? { log: opts.log } : {}),
-      });
-      forgetFailedTransaction(transaction);
-    });
-    const tracked = operation.finally(() => {
-      if (transaction.finalizationPromise === tracked) transaction.finalizationPromise = null;
-    });
-    transaction.finalizationPromise = tracked;
-    return tracked;
-  };
   return {
-    async reserveCapacity(taskId, requestedBaseSha = null, binding = null) {
-      worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-      if (failedWorkerTransactions.has(taskId)) throw failedTransactionPending();
-      if (!opts.worktreeCapacity) return null;
-      const selected = requestedBaseSha ?? opts.deploymentBaseSha
-        ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-      if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
-      localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const existing = pendingWorkerReservations.get(taskId);
-      if (existing) {
-        if (existing.capacitySettled === true) throw failedTransactionPending();
-        if (existing.selected !== selected || !pendingBindingMatches(existing, taskId, binding)) {
-          throw Object.assign(new Error('pending capacity reservation is bound to another base'), {
-            code: 'worktree_capacity_reservation_conflict',
-          });
-        }
-        return existing.result ?? Object.freeze({
-          baseSha: selected, reservation: existing.reservation, ownerReceipt: existing.ownerReceipt,
-        });
-      }
-      const ownerReceipt = allocateOwner(taskId, selected, binding);
-      let reservation;
-      try { reservation = await opts.worktreeCapacity.reserve(
-        `worker:${ownerReceipt.physicalOwnerId}`,
-        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      ); } catch (error) {
-        const cleanupError = await retainUnknownCapacityOutcome(taskId, ownerReceipt);
-        if (cleanupError) {
-          throw Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
-            cause: cleanupError,
-          }), {
-            code: cleanupError?.code ?? 'worktree_capacity_unavailable',
-            reservationError: error?.code ?? null,
-          });
-        }
-        throw error;
-      }
-      const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
-      pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
-      return result;
-    },
-    async reserveCapacityMany(entries) {
-      if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
-      const prepared = entries.map((entry) => {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)
-          || Object.keys(entry).sort().join(',') !== ['attemptId', 'processGeneration', 'requestedBaseSha', 'runId', 'taskId'].sort().join(',')) {
-          throw new TypeError('capacity wave entry is invalid');
-        }
-        const { taskId, requestedBaseSha } = entry;
-        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-        const selected = requestedBaseSha ?? opts.deploymentBaseSha
-          ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-        if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
-        localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-        return { taskId, selected, binding: {
-          runId: entry.runId ?? null, attemptId: entry.attemptId,
-          processGeneration: entry.processGeneration,
-        } };
-      });
-      if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
-      if (prepared.some(({ taskId }) => failedWorkerTransactions.has(taskId))) {
-        throw failedTransactionPending();
-      }
-      if (!opts.worktreeCapacity) return Object.freeze(prepared.map(() => null));
-      const priorPending = prepared.map(({ taskId }) => pendingWorkerReservations.get(taskId) ?? null);
-      if (priorPending.some(Boolean)) {
-        if (priorPending.some((pending) => pending?.capacitySettled === true)) {
-          throw failedTransactionPending();
-        }
-        const exactReplay = priorPending.every(Boolean) && priorPending.every((pending, index) => {
-          const candidate = prepared[index];
-          const receipt = pending.ownerReceipt;
-          return pending.selected === candidate.selected
-            && receipt.runId === candidate.binding.runId
-            && receipt.attemptId === candidate.binding.attemptId
-            && receipt.processGeneration === candidate.binding.processGeneration;
-        });
-        if (!exactReplay) {
-          throw Object.assign(new Error('capacity wave conflicts with pending physical reservations'), {
-            code: 'worktree_capacity_reservation_conflict',
-          });
-        }
-        return Object.freeze(priorPending.map((pending) => pending.result ?? Object.freeze({
-          baseSha: pending.selected,
-          reservation: pending.reservation,
-          ownerReceipt: pending.ownerReceipt,
-        })));
-      }
-      const owners = [];
-      try {
-        for (const { taskId, selected, binding } of prepared) owners.push(allocateOwner(taskId, selected, binding));
-      } catch (error) {
-        for (const owner of owners) worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, owner.physicalOwnerId, { requireAllocated: true });
-        throw error;
-      }
-      let reservations;
-      try { reservations = await opts.worktreeCapacity.reserveMany(prepared.map(({ selected }, index) => ({
-        id: `worker:${owners[index].physicalOwnerId}`,
-        request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      }))); } catch (error) {
-        const cleanupErrors = [];
-        for (let index = 0; index < owners.length; index += 1) {
-          const cleanupError = await retainUnknownCapacityOutcome(prepared[index].taskId, owners[index]);
-          if (cleanupError) cleanupErrors.push(cleanupError);
-        }
-        if (cleanupErrors.length > 0) {
-          throw Object.assign(new Error('capacity wave outcome requires exact cleanup', {
-            cause: cleanupErrors[0],
-          }), {
-            code: cleanupErrors[0]?.code ?? 'worktree_capacity_unavailable',
-            reservationError: error?.code ?? null,
-          });
-        }
-        throw error;
-      }
-      const results = prepared.map(({ taskId, selected }, index) => {
-        const reservation = reservations[index];
-        const ownerReceipt = owners[index];
-        const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
-        pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
-        return result;
-      });
-      return Object.freeze(results);
-    },
-    async releaseCapacity(taskId) {
-      const pending = pendingWorkerReservations.get(taskId);
-      if (!pending || !opts.worktreeCapacity) return false;
-      if (pending.capacitySettled !== true) {
-        if (!await opts.worktreeCapacity.release(pending.reservation)) return false;
-        pending.capacitySettled = true;
-      }
-      return finalizePendingReceipt(taskId, pending);
-    },
-    async releaseCapacityMany(taskIds) {
-      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
-        throw new TypeError('capacity release wave requires unique task ids');
-      }
-      const entries = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }));
-      const owned = entries.filter(({ pending }) => pending);
-      if (!opts.worktreeCapacity) return Object.freeze(taskIds.map(() => true));
-      if (owned.length === 0) return Object.freeze(taskIds.map(() => false));
-      const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
-      if (unsettled.length > 0) {
-        const released = await opts.worktreeCapacity.releaseMany(
-          unsettled.map(({ pending }) => pending.reservation),
-        );
-        unsettled.forEach(({ pending }, index) => {
-          if (released[index]) pending.capacitySettled = true;
-        });
-      }
-      const byTask = new Map();
-      for (const { taskId, pending } of owned) {
-        if (pending.capacitySettled !== true) { byTask.set(taskId, false); continue; }
-        try { byTask.set(taskId, finalizePendingReceipt(taskId, pending)); }
-        catch { byTask.set(taskId, false); }
-      }
-      return Object.freeze(taskIds.map((taskId) => byTask.get(taskId) ?? false));
-    },
-    async settleCapacityMany(taskIds) {
-      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
-        throw new TypeError('capacity settlement wave requires unique task ids');
-      }
-      const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
-        .filter(({ pending }) => pending);
-      if (!opts.worktreeCapacity || owned.length === 0) return Object.freeze(taskIds.map(() => true));
-      const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
-      const outcomes = unsettled.length === 0 ? [] : await opts.worktreeCapacity.releaseMany(
-        unsettled.map(({ pending }) => pending.reservation),
-      );
-      if (!Array.isArray(outcomes) || outcomes.length !== unsettled.length) {
-        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
-          code: 'worktree_capacity_release_failed',
-        });
-      }
-      unsettled.forEach(({ pending }, index) => {
-        if (outcomes[index]) pending.capacitySettled = true;
-      });
-      if (owned.some(({ pending }) => pending.capacitySettled !== true)) {
-        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
-          code: 'worktree_capacity_release_failed',
-        });
-      }
-      for (const { taskId, pending } of owned) {
-        try {
-          if (!finalizePendingReceipt(taskId, pending)) throw new Error('receipt finalization refused');
-        } catch (cause) {
-          throw Object.assign(new Error('capacity settlement receipt finalization is incomplete', {
-            cause,
-          }), { code: 'worktree_cleanup_failed' });
-        }
-      }
-      return Object.freeze(taskIds.map(() => true));
-    },
     async create(taskId, requestedBaseSha = null, binding = null) {
-      const failedTransaction = failedWorkerTransactions.get(taskId);
-      if (failedTransaction) await finalizeFailedTransaction(failedTransaction);
       let selected = requestedBaseSha ?? opts.deploymentBaseSha ?? null;
       if (selected === null) {
         const base = await worktreeMod.pinBaseSha(repoRoot, {});
@@ -592,58 +287,7 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       if (!/^[a-f0-9]{40}$/.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      let pending = pendingWorkerReservations.get(taskId);
-      if (pending?.capacitySettled === true) {
-        const settlementReason = pending.settlementReason ?? null;
-        if (!finalizePendingReceipt(taskId, pending)) {
-          throw Object.assign(new Error('pending physical workspace allocation was not finalized'), {
-            code: 'worktree_cleanup_failed',
-          });
-        }
-        pending = null;
-        if (settlementReason === 'base_mismatch') {
-          throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
-        }
-      }
-      if (pending && !pendingBindingMatches(pending, taskId, binding)) {
-        throw Object.assign(new Error('pending capacity reservation has another allocation binding'), {
-          code: 'worktree_capacity_reservation_conflict',
-        });
-      }
-      if (pending && pending.selected !== selected) {
-        if (pending.capacitySettled !== true) {
-          const released = await opts.worktreeCapacity.release(pending.reservation);
-          if (!released) throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
-          pending.capacitySettled = true;
-        }
-        pending.settlementReason = 'base_mismatch';
-        if (!finalizePendingReceipt(taskId, pending)) {
-          throw Object.assign(new Error('pending physical workspace allocation was not finalized'), {
-            code: 'worktree_cleanup_failed',
-          });
-        }
-        throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
-      }
-      let capacityReservation = pending?.reservation;
-      if (pending) pendingWorkerReservations.delete(taskId);
-      let ownerReceipt = pending?.ownerReceipt ?? allocateOwner(taskId, selected, binding);
-      if (!capacityReservation && opts.worktreeCapacity) {
-        try { capacityReservation = await opts.worktreeCapacity.reserve(
-          `worker:${ownerReceipt.physicalOwnerId}`,
-          capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-        ); } catch (error) {
-          const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
-          if (cleanupError) {
-            throw Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
-              cause: cleanupError,
-            }), {
-              code: cleanupError?.code ?? 'worktree_capacity_unavailable',
-              reservationError: error?.code ?? null,
-            });
-          }
-          throw error;
-        }
-      }
+      let ownerReceipt = allocateOwner(taskId, selected, binding);
       let r = null;
       try {
         r = await worktreeMod.createFromBase(repoRoot, ownerReceipt.physicalOwnerId, selected, {
@@ -651,10 +295,6 @@ function worktreeManager(repoRoot, opts = {}) {
           ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}),
         });
         ownerReceipt = r.ownerReceipt;
-        if (capacityReservation) {
-          capacityReservation = await opts.worktreeCapacity.materialize(capacityReservation, r.dir);
-          workerReservations.set(ownerReceipt.physicalOwnerId, capacityReservation);
-        }
         return {
           path: r.dir, branch: r.branch, baseSha: r.baseSha,
           ownerTaskId: ownerReceipt.physicalOwnerId,
@@ -662,19 +302,18 @@ function worktreeManager(repoRoot, opts = {}) {
           ownerReceiptDigest: ownerReceipt.receiptDigest,
           ownerReceipt,
           sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity,
-          ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}),
           ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}),
         };
       } catch (error) {
-        const transaction = {
-          logicalTaskId: taskId,
-          physicalOwnerId: ownerReceipt.physicalOwnerId,
-          capacityReservation,
-        };
-        rememberFailedTransaction(taskId, transaction);
-        try { await finalizeFailedTransaction(transaction); }
-        catch (cleanupError) {
-          throw Object.assign(new Error('worktree capacity materialization cleanup failed', {
+        // createFromBase may have crossed git worktree-add even when it returned no handle. Its
+        // exact reap is deliberately idempotent across pre-branch, branch-only, registered, and
+        // fully materialized response-loss states.
+        try {
+          await worktreeMod.reap(repoRoot, ownerReceipt.physicalOwnerId, {
+            force: true, deleteBranch: true, ...(opts.log ? { log: opts.log } : {}),
+          });
+        } catch (cleanupError) {
+          throw Object.assign(new Error('worktree materialization cleanup failed', {
             cause: cleanupError,
           }), {
             code: cleanupError?.code ?? 'worktree_cleanup_failed',
@@ -767,44 +406,23 @@ function worktreeManager(repoRoot, opts = {}) {
       });
     },
     async createVerifyWorktree(taskId, sha, verifyOpts = {}) {
-      const reservationId = `verify:${taskId}:${++verifyReservationSeq}`;
-      let capacityReservation;
-      if (opts.worktreeCapacity) capacityReservation = await opts.worktreeCapacity.reserve(
-        reservationId,
-        capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
-      );
       let r = null;
       try {
         r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) {
-          capacityReservation = await opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
-          verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
-        }
-        return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+        return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
         if (r?.cleanup) await r.cleanup();
-        if (capacityReservation) await opts.worktreeCapacity.release(capacityReservation);
         throw error;
       }
     },
     async createBaseVerifyWorktree(taskId, sha) {
-      const label = `${taskId}-base`; const reservationId = `verify:${label}:${++verifyReservationSeq}`;
-      let capacityReservation;
-      if (opts.worktreeCapacity) capacityReservation = await opts.worktreeCapacity.reserve(
-        reservationId,
-        capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
-      );
+      const label = `${taskId}-base`;
       let r = null;
       try {
         r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) {
-          capacityReservation = await opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
-          verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
-        }
-        return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+        return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
         if (r?.cleanup) await r.cleanup();
-        if (capacityReservation) await opts.worktreeCapacity.release(capacityReservation);
         throw error;
       }
     },
@@ -975,36 +593,9 @@ function worktreeManager(repoRoot, opts = {}) {
       try { registered = (await worktreeMod.listWorktrees(repoRoot)).some((entry) => resolve(entry.dir) === candidate); }
       catch { throw Object.assign(new Error('verification worktree cleanup could not be inspected'), { code: 'worktree_cleanup_failed' }); }
       if (existsSync(confined) || registered) throw Object.assign(new Error('verification worktree cleanup was incomplete'), { code: 'worktree_cleanup_failed' });
-      const reservation = verifyReservations.get(candidate);
-      if (reservation && opts.worktreeCapacity) {
-        if (await opts.worktreeCapacity.release(reservation)) verifyReservations.delete(candidate);
-      }
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
     async remove(taskId, removeOpts = {}) {
-      const failed = failedWorkerTransactions.get(taskId);
-      if (failed) return finalizeFailedTransaction(failed);
-      const pending = pendingWorkerReservations.get(taskId);
-      if (pending && opts.worktreeCapacity) {
-        if (pending.capacitySettled !== true) {
-          if (!await opts.worktreeCapacity.release(pending.reservation)) {
-            throw Object.assign(new Error('pending physical workspace capacity release was not confirmed'), {
-              code: 'worktree_capacity_unavailable',
-            });
-          }
-          pending.capacitySettled = true;
-        }
-        pending.settlementReason = 'remove';
-        if (!finalizePendingReceipt(taskId, pending)) {
-          throw Object.assign(new Error('pending physical workspace allocation was not finalized'), {
-            code: 'worktree_cleanup_failed',
-          });
-        }
-        return;
-      }
-      // Retain custody until both filesystem removal and capacity settlement are proven.
-      // A preservation or custody refusal therefore leaves the reservation intact. If settlement
-      // fails after removal, the retained owner receipt makes the exact transaction retryable.
       await worktreeMod.reap(repoRoot, taskId, {
         force: true, deleteBranch: true, retainOwnerReceipt: true,
         ...custody(),
@@ -1012,22 +603,6 @@ function worktreeManager(repoRoot, opts = {}) {
         ...(removeOpts.excludeHolderId ? { excludeHolderId: removeOpts.excludeHolderId } : {}),
         ...(opts.log ? { log: opts.log } : {}),
       });
-      if (opts.worktreeCapacity) {
-        const reservation = workerReservations.get(taskId);
-        if (reservation) {
-          if (!await opts.worktreeCapacity.release(reservation)) {
-            throw Object.assign(new Error('physical workspace capacity release was not confirmed'), {
-              code: 'worktree_capacity_unavailable',
-            });
-          }
-          workerReservations.delete(taskId);
-        }
-        else if (!await opts.worktreeCapacity.settleForCleanup(`worker:${taskId}`)) {
-          throw Object.assign(new Error('physical workspace capacity settlement was not confirmed'), {
-            code: 'worktree_capacity_unavailable',
-          });
-        }
-      }
       // The receipt release is the last authority this transaction gives up, so a refused release
       // is a real residue: make it observable instead of dropping the boolean on the floor.
       if (!worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, taskId)) {
@@ -1158,51 +733,28 @@ function worktreeManager(repoRoot, opts = {}) {
         snapshotUncommitted,
         ...custody(),
         ...(opts.log ? { log: opts.log } : {}),
-        ...(opts.worktreeCapacity ? {
-          beforeOwnerCleanup: (physicalOwnerId) => opts.worktreeCapacity
-            .settleForCleanupNow(`worker:${physicalOwnerId}`),
-        } : {}),
       });
       // Ambiguous residue in the receipt-only loop is a deliberate diagnostics→refusal promotion
       // (rule 2): reconcile flags exactly the this-repo orphan records it retained as ambiguous
-      // (ambiguous_foreign, branch_mismatch, genuinely-corrupt receipt_invalid, capacity
-      // settlement) so the open fails closed and no double-claim is possible. Expected-active
-      // owners, known replayed handles, and the proceed set (live_foreign, dead_foreign_checkout,
-      // checkout-present, structurally-sound foreign receipts) are never flagged there.
+      // (ambiguous_foreign, branch_mismatch, genuinely-corrupt receipt_invalid) so the open fails
+      // closed and no double-claim is possible. Expected-active owners, known replayed handles, and
+      // the proceed set (live_foreign, dead_foreign_checkout, checkout-present, structurally-sound
+      // foreign receipts) are never flagged there.
       const refusedOwners = report.receiptOnlyRefusals.filter((id) => (
         !expectedActiveTaskIds.includes(id) && !knownPhysicalOwnerIds.includes(id)
       ));
       if (report.errors.length > 0 || refusedOwners.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), {
         code: 'worktree_cleanup_failed', report,
       });
-      if (opts.worktreeCapacity) {
-        for (const physicalOwnerId of knownPhysicalOwnerIds) {
-          if (expectedActiveTaskIds.includes(physicalOwnerId)
-            || report.removedPhysicalOwners.includes(physicalOwnerId)
-            || !worktreeMod.physicalWorkspaceOwnerCleanupAbsent(repoRoot, physicalOwnerId)) continue;
-          if (!opts.worktreeCapacity.settleForCleanupNow(`worker:${physicalOwnerId}`)) continue;
-          if (!opts.worktreeCapacity.snapshot().reservations.some(
-            (row) => row.id === `worker:${physicalOwnerId}`,
-          )) report.removedPhysicalOwners.push(physicalOwnerId);
-        }
-        const retained = report.validatedExpectedOwners
-          .filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
-        const retainedUnproven = report.retainedExpectedOwners
-          .filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
-        const capacityReconcile = opts.worktreeCapacity.reconcileNow(retained, retainedUnproven);
-        for (const row of capacityReconcile.adopted) workerReservations.set(row.resourceId, row);
-      } else {
-        for (const physicalOwnerId of knownPhysicalOwnerIds) {
-          if (!expectedActiveTaskIds.includes(physicalOwnerId)
-            && !report.removedPhysicalOwners.includes(physicalOwnerId)
-            && worktreeMod.physicalWorkspaceOwnerCleanupAbsent(repoRoot, physicalOwnerId)) {
-            report.removedPhysicalOwners.push(physicalOwnerId);
-          }
+      for (const physicalOwnerId of knownPhysicalOwnerIds) {
+        if (!expectedActiveTaskIds.includes(physicalOwnerId)
+          && !report.removedPhysicalOwners.includes(physicalOwnerId)
+          && worktreeMod.physicalWorkspaceOwnerCleanupAbsent(repoRoot, physicalOwnerId)) {
+          report.removedPhysicalOwners.push(physicalOwnerId);
         }
       }
       return report;
     },
-    capacitySnapshot() { return opts.worktreeCapacity?.snapshot() ?? null; },
   };
 }
 
@@ -1241,8 +793,7 @@ function refereeFn(runtime, task, result, opts) {
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          runLineagePolicy?:object, taskTopologyPolicy?:object,
  *          providerGovernance?:object,
- *          workerDependencyDirs?:string[], workerSparsePaths?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object,
- *          worktreeCapacity?:object, worktreeCapacityObserve?:Function, worktreeCapacityEstimate?:Function}} opts
+ *          workerDependencyDirs?:string[], workerSparsePaths?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
 export function createDriver(opts) {
@@ -1330,27 +881,12 @@ export function createDriver(opts) {
     ? [] : Array.isArray(opts.standingLaws) ? opts.standingLaws : (() => {
       throw new TypeError('standingLaws must be an array');
     })();
-  const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
-  if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
-  if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
-  if (opts.worktreeCapacityRuntimeFootprint !== undefined && typeof opts.worktreeCapacityRuntimeFootprint !== 'function') throw new TypeError('worktreeCapacityRuntimeFootprint must be a function');
-  if (!worktreeCapacityPolicy && (opts.worktreeCapacityObserve !== undefined || opts.worktreeCapacityEstimate !== undefined || opts.worktreeCapacityRuntimeFootprint !== undefined || opts.hostCapacity !== undefined)) throw new TypeError('worktree capacity dependencies require worktreeCapacity policy');
-  if (worktreeCapacityPolicy && ((opts.workerDependencyDirs?.length ?? 0) > 0 || (opts.verifyDependencyDirs?.length ?? 0) > 0)) throw new TypeError('worktreeCapacity requires attested toolchainProjection instead of legacy dependency copies');
   const workerSparsePaths = worktreeMod.normalizeSparsePaths(opts.workerSparsePaths ?? []);
   const verifySparsePaths = worktreeMod.normalizeSparsePaths(opts.verifySparsePaths ?? []);
   const workerSparseCheckoutIdentity = worktreeMod.sparseCheckoutIdentity(workerSparsePaths);
   const verifySparseCheckoutIdentity = worktreeMod.sparseCheckoutIdentity(verifySparsePaths);
   if (opts.toolchainProjection !== undefined && (opts.workerDependencyDirs !== undefined || opts.verifyDependencyDirs !== undefined)) throw new TypeError('toolchainProjection cannot be combined with legacy dependency directory options');
   const toolchainProjection = opts.toolchainProjection === undefined ? null : prepareToolchainProjection(opts.toolchainProjection);
-  const worktreeCapacity = worktreeCapacityPolicy ? new WorktreeCapacityAuthority({
-    repoRoot: opts.repoRoot,
-    policy: opts.worktreeCapacity,
-    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(opts.repoRoot),
-    ...(opts.worktreeCapacityObserve ? { observe: opts.worktreeCapacityObserve } : {}),
-    ...(opts.worktreeCapacityEstimate ? { estimate: opts.worktreeCapacityEstimate } : {}),
-    ...(opts.worktreeCapacityRuntimeFootprint ? { runtimeFootprint: opts.worktreeCapacityRuntimeFootprint } : {}),
-    now: opts.now ?? Date.now,
-  }) : null;
   const now = opts.now ?? Date.now;
   if (opts.reuseDecisionPolicy !== undefined && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('reuseDecisionPolicy requires one deployment-bound repoId');
   let routeLearningPolicy;
@@ -1661,7 +1197,6 @@ export function createDriver(opts) {
       verifySparsePaths,
       verifySparseCheckoutIdentity,
       toolchainProjection,
-      worktreeCapacity,
       ownerAuthority: workspaceOwnerAuthority,
       log,
       // Live shared-checkout custody: the one answer every destructive boundary consults.
@@ -1781,28 +1316,7 @@ export function createDriver(opts) {
   let drainedFleet = null; let drainedSupervisors = null; let coordinatorAuthorityClosed = false; let writerAuthorityReleased = false;
   const startProviderSupervisors = () => { if (driverState === 'open') { providerProcessor?.start(); providerPoller?.start(); } };
   ready.then((summary) => { if (!sessionRecovery || summary.status !== 'failed') startProviderSupervisors(); }).catch(() => {});
-  // Issue #472: the capacity reservations THIS stop must still answer for — every reservation the
-  // deployment's own authority holds EXCEPT the ones behind a worker the stop stopped waiting on
-  // (`coordinator.abandonedCapacityReservations`, the ONE derivation the coordinator's own fence
-  // reads). An abandoned worker's quota row is not unreleased authority: the abandonment is the
-  // release, its holdings are named durably by the #467 rows, and its checkout belongs to the next
-  // open's reconciliation — so counting it here would keep the stop from ever minting its outcome.
-  const unreleasedCapacityReservations = (snapshot) => {
-    const abandoned = new Set((typeof coordinator.abandonedCapacityReservations === 'function'
-      ? coordinator.abandonedCapacityReservations() : []).map((row) => row.resource));
-    return (snapshot?.reservations ?? [])
-      .filter((row) => row.ownerId === worktreeCapacity.ownerId && !abandoned.has(row.id));
-  };
-  const assertCapacityQuiescent = () => {
-    if (!worktreeCapacity) return null;
-    const snapshot = worktreeCapacity.snapshot();
-    if (unreleasedCapacityReservations(snapshot).length > 0) {
-      throw Object.assign(new Error('driver has active capacity reservations; use drainAndClose()'), { code: 'driver_capacity_active' });
-    }
-    return snapshot;
-  };
   const closeAuthority = () => {
-    assertCapacityQuiescent();
     const authorityClosed = coordinator.closeAuthority();
     coordination.releaseWriterLease();
     driverState = 'closed';
@@ -1817,7 +1331,6 @@ export function createDriver(opts) {
   const closeAsync = async () => {
     if (driverState === 'closed') return false;
     if (driverState !== 'open') throw Object.assign(new Error('driver close is already in progress'), { code: 'driver_closing' });
-    assertCapacityQuiescent();
     driverState = 'legacy-closing';
     try {
       await coordinatorReady;
@@ -1867,24 +1380,6 @@ export function createDriver(opts) {
         drainedFleet = fleet;
         drainedSupervisors = Object.freeze({ sessionRecovery: recoveryState, providerProcessing: processingState, providerPolling: pollingState });
       }
-      let capacity = null;
-      if (worktreeCapacity) {
-        const snapshot = worktreeCapacity.snapshot();
-        const owned = (snapshot.reservations ?? [])
-          .filter((row) => row.ownerId === worktreeCapacity.ownerId);
-        const unreleased = unreleasedCapacityReservations(snapshot);
-        if (unreleased.length > 0) throw Object.assign(new Error('driver capacity reservations remained after fleet drain'), { code: 'coordinator_drain_incomplete' });
-        // Issue #472: the reservations the stop no longer answers for are NAMED on the receipt
-        // rather than silently dropped — the abandonment is the release, and a reader of the
-        // receipt sees what left with it. Absent when there are none, so every ordinary stop's
-        // receipt (and its digest) is byte-identical.
-        const abandonedReservations = owned.filter((row) => !unreleased.includes(row)).map((row) => row.id);
-        capacity = Object.freeze({
-          policyDigest: snapshot.policyDigest, stateDigest: snapshot.stateDigest, ownedReservations: 0,
-          ...(abandonedReservations.length === 0 ? {} : { abandonedReservations: Object.freeze(abandonedReservations) }),
-          fleetTotals: snapshot.totals,
-        });
-      }
       if (!coordinatorAuthorityClosed) {
         assertWithinDeadline();
         const coordinatorClosed = coordinator.closeAuthority();
@@ -1903,7 +1398,6 @@ export function createDriver(opts) {
         schemaVersion: 1, state: 'closed', fleet: drainedFleet,
         supervisors: drainedSupervisors,
         authority: { coordinatorClosed: true, writerReleased: true },
-        ...(capacity ? { capacity } : {}),
       };
       drainReceipt = deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       driverState = 'closed';
@@ -1921,7 +1415,7 @@ export function createDriver(opts) {
   // Issue #351 lane 3: coordinationOpened is the deferred async replay's promise — non-null
   // only on the deployment open path (coordinationAsyncOpen); it must be awaited before the
   // store's first read, and it rejects typed when the replay refuses.
-  return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, routingExcludedHarnesses: opts.routingExcludedHarnesses ?? [], ready, close, closeAsync, drainAndClose, standingLaws,
+  return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, hostCapacity: opts.hostCapacity ?? null, routingExcludedHarnesses: opts.routingExcludedHarnesses ?? [], ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
     repoRoot: opts.repoRoot,

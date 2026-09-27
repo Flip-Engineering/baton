@@ -127,10 +127,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
         grok: adapter(routeB, 'candidate-b.txt', tracker),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   assert.equal(typeof deployment.workflow, 'function');
@@ -273,10 +269,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
         grok: adapter(routeB, 'candidate-b.txt', tracker),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   const replayed = await deployment.open(workflow.id).status();
@@ -309,62 +301,6 @@ test('WF79-2: unsupported shared multiwriter and malformed teams fail before app
   assert.deepEqual(calls, []);
 });
 
-test('WF79-3: an over-capacity Workflow wave refuses all candidates before task, worktree, or provider effects', async (t) => {
-  const repo = repository();
-  const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-capacity-'));
-  const tracker = { active: 0, peak: 0, calls: [] };
-  let policy;
-  let deployment;
-  t.after(async () => {
-    try { await deployment?.close(); } catch {}
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(deploymentRoot, { recursive: true, force: true });
-  });
-  deployment = await openBaton({
-    repo,
-    advanced: {
-      deploymentRoot,
-      routes: [routeA, routeB],
-      adapters: {
-        codex: adapter(routeA, 'candidate-a.txt', tracker),
-        grok: adapter(routeB, 'candidate-b.txt', tracker),
-      },
-      verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate(request) {
-          policy = request.policy;
-          return { bytes: 60, inodes: 5 };
-        },
-        observe() {
-          return {
-            freeBytes: policy.minFreeBytes + 60,
-            freeInodes: policy.minFreeInodes + 5,
-          };
-        },
-      },
-    },
-  });
-  const workflow = await deployment.workflow('Refuse the whole constrained candidate wave.', {
-    team: [
-      { role: 'builder', exact: routeA },
-      { role: 'challenger', exact: routeB },
-    ],
-  });
-
-  await assert.rejects(workflow.complete(), (error) => error?.code === 'worktree_capacity_exceeded');
-  assert.equal(tracker.calls.length, 0);
-  assert.equal(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo, encoding: 'utf8' })
-    .split('\n').filter((line) => line.startsWith('worktree ')).length, 1);
-  const events = readFileSync(join(deploymentRoot, 'state', 'coordination', 'events.jsonl'), 'utf8')
-    .trim().split('\n').map((line) => JSON.parse(line));
-  assert.equal(events.some((event) => event.batch?.kind === 'goal_plan_wave_dispatch'), false);
-
-  const stopped = await workflow.stop('Close the refused Workflow authority.');
-  assert.equal(stopped.outline.phase, 'stopped');
-  const closed = await deployment.close();
-  assert.deepEqual(closed.ownership, { workers: 0, workerIds: [], closed: true });
-});
-
 test('WF79-4: whole-Workflow stop reaps an active Wave and leaves no owned process or worktree', async (t) => {
   const repo = repository();
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-active-stop-'));
@@ -382,10 +318,6 @@ test('WF79-4: whole-Workflow stop reaps an active Wave and leaves no owned proce
     advanced: {
       deploymentRoot, routes: [routeA, routeB], adapters: { codex, grok },
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   const workflow = await deployment.workflow('Stop and reap an active two-member Wave.', {
@@ -430,10 +362,6 @@ test('WF79-5: operator-selected join preserves and selects a verified survivor a
         grok: adapter(routeB, 'failed.txt', tracker, 0, 'failed'),
       },
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   const workflow = await deployment.workflow('Keep a verified survivor selectable.', {
@@ -472,10 +400,6 @@ test('WF79-6: role-addressed member stop is durable, exact, and leaves a sibling
     advanced: {
       deploymentRoot, routes: [routeA, routeB], adapters: { codex, grok },
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   const workflow = await deployment.workflow('Stop only one active role and preserve its sibling.', {
@@ -551,10 +475,6 @@ test('WF79-7: a post-ledger Wave launch failure compensates every admitted membe
         grok: adapter(routeB, 'never-b.txt', tracker),
       },
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   const workflow = await deployment.workflow('Compensate a fault after durable Wave admission.', {

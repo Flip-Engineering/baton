@@ -211,7 +211,7 @@ function effectFixture(label, arrange) {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
   });
   arrange(coordination);
-  const effects = { reserveCapacity: 0, createWorktree: 0, adapterSpawn: 0, adapterPrompt: 0 };
+  const effects = { createWorktree: 0, adapterSpawn: 0, adapterPrompt: 0 };
   const adapter = {
     onEvent() {},
     card: () => ({
@@ -237,10 +237,8 @@ function effectFixture(label, arrange) {
     adapters: { stub: adapter },
     taskTopologyPolicy: POLICY,
     worktrees: {
-      async reserveCapacity() { effects.reserveCapacity += 1; return null; },
       async create(taskId) { effects.createWorktree += 1; return { path: `/tmp/phase75-${taskId}` }; },
       async remove() {},
-      async releaseCapacity() {},
       async reconcile() {},
     },
     referee: async () => ({ reverified: true, observedExit: 0 }),
@@ -301,7 +299,7 @@ test('TT5: Coordinator accepts and durably preserves an explicit valid follow-up
 });
 
 for (const scenario of coordinatorRefusals) {
-  test(`TT5: Coordinator refuses ${scenario.label} before capacity, worktree, or provider effects`, async (t) => {
+  test(`TT5: Coordinator refuses ${scenario.label} before worktree or provider effects`, async (t) => {
     const fixture = effectFixture(scenario.label.replaceAll(' ', '-'), scenario.arrange);
     t.after(() => closeEffectFixture(fixture));
     const attemptFields = fields('coordinator-attempt', scenario.label === 'self refinement'
@@ -332,7 +330,7 @@ for (const scenario of coordinatorRefusals) {
 
     assert.deepEqual(observed, {
       code: scenario.code,
-      effects: { reserveCapacity: 0, createWorktree: 0, adapterSpawn: 0, adapterPrompt: 0 },
+      effects: { createWorktree: 0, adapterSpawn: 0, adapterPrompt: 0 },
     });
   });
 }

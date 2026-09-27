@@ -434,16 +434,6 @@ export function normalizeSessionRequest(request) {
         throw Object.assign(new SessionSelectionError('session.context.toolchainProjection is invalid', 'invalid_session_request'), { cause });
       }
     }
-    let capacityReservation;
-    if (request.context.capacityReservation !== undefined) {
-      try {
-        const candidate = request.context.capacityReservation;
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error();
-        capacityReservation = Object.freeze(JSON.parse(JSON.stringify(candidate)));
-      } catch (cause) {
-        throw Object.assign(new SessionSelectionError('session.context.capacityReservation is invalid', 'invalid_session_request'), { cause });
-      }
-    }
     context = Object.freeze({
       worktree: request.context.worktree,
       ...(request.context.repoRoot ? { repoRoot: request.context.repoRoot } : {}),
@@ -455,7 +445,6 @@ export function normalizeSessionRequest(request) {
       ...(sparsePaths ? { sparsePaths } : {}),
       ...(sparseIdentity ? { sparseCheckoutIdentity: sparseIdentity } : {}),
       ...(toolchainProjection ? { toolchainProjection } : {}),
-      ...(capacityReservation ? { capacityReservation } : {}),
     });
   }
   return Object.freeze({
@@ -680,7 +669,7 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
       });
     }
     // A controller-local transport does not survive restart, but a kernel-start-bound process
-    // generation can. Keep every checkout/runtime/capacity lease that generation still owns;
+    // generation can. Keep every checkout and runtime lease that generation still owns;
     // Run stop will close the exact group before these resources become reapable.
     const recoveredProcessHandles = [...coordinator._workers.values()].filter((handle) => (
       handle.recoveredProcessAuthority === true
@@ -708,9 +697,9 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
                 const requested = expectedOwners.some((entry) => (
                   typeof entry === 'object' && entry?.expectationId === handle.id
                 ));
-                // Reconcile reports this only after exact capacity absence and path/admin/branch/
-                // receipt finalization. Reflect that completed transaction on replayed terminal
-                // handles so later idempotent resource settlement exercises no owner capability.
+                // Reconcile reports this only after path/admin/branch/receipt finalization.
+                // Reflect that completed transaction on replayed terminal handles so later
+                // idempotent resource settlement exercises no owner capability.
                 if (removed.has(physicalOwnerId)) {
                   handle.worktree = null;
                   handle.ownedWorktreeAuthority = false;
@@ -1104,25 +1093,6 @@ export function completeStartupRecovery(coordinator, recorder, authority, failur
     const error = new Error('startup session recovery failed'); error.code = /^[a-z0-9_]{1,64}$/.test(failureCode) ? failureCode : 'session_recovery_failed'; coordinator._startupRecoveryError = error; coordinator._startupRecoveryState = 'failed';
   }
 
-export function orphanedCapacityReservations(coordinator, recorder) {
-    const snapshot = typeof coordinator._worktrees?.capacitySnapshot === 'function'
-      ? coordinator._worktrees.capacitySnapshot() : null;
-    if (!snapshot || !Array.isArray(snapshot.reservations)) return Object.freeze([]);
-    const rows = [];
-    for (const reservation of snapshot.reservations) {
-      const resource = reservation?.id;
-      if (typeof resource !== 'string' || !resource.startsWith('worker:')) continue;
-      const ownerTaskId = resource.slice('worker:'.length);
-      if (ownerTaskId.length === 0 || coordinator._capacityOwnerHeld(ownerTaskId)) continue;
-      const handle = [...coordinator._workers.values()].find((candidate) => (
-        coordinator._capacityWorkerGone(candidate)
-        && coordinator._capacityOwnerIds(candidate, coordinator._tasks.get(candidate.taskId)).includes(ownerTaskId)));
-      if (!handle) continue;
-      rows.push(Object.freeze({ workerId: handle.id, taskId: handle.taskId, ownerTaskId, resource }));
-    }
-    return Object.freeze(rows);
-  }
-
 export function _drainReaperFor(coordinator, recorder, handle, hold, settled, verifying) {
     switch (hold) {
       case 'stopWaiter':
@@ -1141,26 +1111,6 @@ export function _drainReaperFor(coordinator, recorder, handle, hold, settled, ve
     // is the drain's kill, and the spawn holds ride with it.
     const exactClose = !handle.processRef || handle.processRef.state === 'closed';
     return exactClose ? 'exact-close-cleanup' : 'drain-kill';
-  }
-
-export function _orphanCapacityWaits(coordinator, recorder, targetWorkerIds) {
-    coordinator._drainWaitSince ??= new Map();
-    const now = Date.now();
-    const targets = new Set(targetWorkerIds);
-    const byWorker = new Map();
-    const extra = [];
-    for (const orphan of coordinator.orphanedCapacityReservations()) {
-      const key = `${orphan.workerId}\0capacity:${orphan.resource}`;
-      if (!coordinator._drainWaitSince.has(key)) coordinator._drainWaitSince.set(key, now);
-      const entry = coordinator._drainWaitEntry(`capacity:${orphan.resource}`, 'capacity-settlement',
-        coordinator._drainWaitSince.get(key));
-      if (targets.has(orphan.workerId)) {
-        byWorker.set(orphan.workerId, [...(byWorker.get(orphan.workerId) ?? []), entry]);
-      } else {
-        extra.push({ orphan, entry });
-      }
-    }
-    return { byWorker, extra };
   }
 
 export function _exactPreservedRecoveryContext(coordinator, recorder, handle, opts = {}) {

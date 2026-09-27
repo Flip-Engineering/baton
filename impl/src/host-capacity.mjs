@@ -17,11 +17,10 @@
 //                 capacity returns — admission is never refused, for being busy or for having
 //                 waited (#541); a worker is never queued at all
 //
-// The lease directory is a concurrency substrate, so it uses the ONE published-owner protocol the
-// per-repo worktree capacity ledger proved (worktree-capacity.mjs): an owner record published by
-// atomic link, counted only after re-observation, a dead holder reclaimed only under an exclusive
-// reaper gate, every wait turn bounded by a monotonic deadline. There the protocol guards one
-// repository's reservation ledger; here it guards the host's lease namespace.
+// The lease directory is a concurrency substrate, so it uses the ONE published-owner protocol: an
+// owner record published by atomic link, counted only after re-observation, a dead holder
+// reclaimed only under an exclusive reaper gate, every wait turn bounded by a monotonic deadline.
+// Here the protocol guards the host's lease namespace.
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -495,8 +494,7 @@ export class HostCapacityAuthority {
     }
   }
 
-  // ── the published-owner mutex (the worktree-capacity protocol, guarding the host namespace) ────
-
+  // ── the published-owner mutex, guarding the host namespace ─────────────────────────────────
   _observeOwner(path, label) {
     let stat;
     try { stat = lstatSync(path); } catch (error) {

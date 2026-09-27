@@ -44,10 +44,6 @@ const verification = Object.freeze({
   command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
   timeoutMs: 10_000, maxOutputBytes: 64 * 1024, requiredPredecessorEvidence: [],
 });
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024, maxReservedInodes: 10_000,
-  minFreeBytes: 1, minFreeInodes: 1, runtimeReserveBytes: 4 * 1024, runtimeReserveInodes: 4,
-});
 const profile = Object.freeze({
   schemaVersion: 1, repoId: 'repo-coupling-truth', definitionOfDone: ['done'], constraints: ['scope'], risk: 'high',
   goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
@@ -78,9 +74,6 @@ async function fixture(t) {
   const driver = createDriver({
     repoRoot: repo, repoId: policy.repoId, logDir: join(directory, 'log'),
     adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true }, stopDeadlineMs: 2000,
-    worktreeCapacity: capacityPolicy,
-    worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-    worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
   });
   const app = new BatonApplication({ driver, repoId: policy.repoId, profiles: { standard: profile },
     principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },

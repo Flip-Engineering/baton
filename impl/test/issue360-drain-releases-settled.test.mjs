@@ -10,11 +10,9 @@
 //       never a bare delete) — the drain converges within the deployment's own policy bound and
 //       the shutdown exits zero; a hold nothing could ever release is released with reason
 //       `orphaned`, never waited on;
-//   (b) a capacity reservation the settled holder left behind is released through the capacity
-//       authority and NAMED in the released rows;
-//   (c) waitingOn[].waiting entries carry {resource, reaper, since} so an operator reads which
+//   (b) waitingOn[].waiting entries carry {resource, reaper, since} so an operator reads which
 //       release is pending, while the drain's deadline stays the deployment's own policy row;
-//   (d) the enriched fields replay byte-for-byte from the durable worker log.
+//   (c) the enriched fields replay byte-for-byte from the durable worker log.
 //
 // Every row is red at HEAD (the drain waits out its deadline; no released rows, no reaper or
 // since names exist anywhere) and green after the repair.
@@ -74,16 +72,6 @@ const selection = Object.freeze({
   scope: ['impl/**'],
 });
 
-// One reservation per physical checkout (the shared-workspace-custody policy row).
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024,
-  maxReservedInodes: 10_000,
-  minFreeBytes: 1,
-  minFreeInodes: 1,
-  runtimeReserveBytes: 4 * 1024,
-  runtimeReserveInodes: 4,
-});
-
 const principal = (principalId) => ({
   actor: `direct:${principalId}`,
   principalId,
@@ -120,7 +108,7 @@ function initRepo(repo) {
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
 }
 
-async function fixture(t, { capacity = false, label = 'seat' } = {}) {
+async function fixture(t, { label = 'seat' } = {}) {
   const directory = mkdtempSync(join(tmpdir(), `baton-issue360-${label}-`));
   const repo = join(directory, 'repo');
   initRepo(repo);
@@ -130,11 +118,6 @@ async function fixture(t, { capacity = false, label = 'seat' } = {}) {
     goalPlanAuthority: { policy, authorize: async () => true },
     stopDeadlineMs: 4_000,
     drainPolicy: { maxWorkers: 8, timeoutMs: DRAIN_TIMEOUT_MS, pollMs: 10 },
-    ...(capacity ? {
-      worktreeCapacity: capacityPolicy,
-      worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-      worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
-    } : {}),
   });
   const app = new BatonApplication({
     driver, repoId,
@@ -240,16 +223,14 @@ test('360a: the drain releases a settled stopped seat through the custody bounda
   }
 });
 
-test('360b: the drain releases and names the capacity reservation a stopped seat left behind', async (t) => {
-  const { app, driver } = await fixture(t, { capacity: true, label: 'b' });
+test('360b: the drain reaps a settled stopped seat\'s checkout through the capture-then-remove custody boundary', async (t) => {
+  const { app, driver } = await fixture(t, { label: 'b' });
   const swarmId = 'issue360b';
   await createSwarm(app, swarmId);
-  const seat = await recruit(app, { swarmId, participantId: 'builder', objective: 'Hold a reservation through a stop and a drain' });
+  const seat = await recruit(app, { swarmId, participantId: 'builder', objective: 'Hold a checkout through a stop and a drain' });
   const worker = await working(driver, seat.runId);
-  const ownerId = worker.sessionContext.ownerTaskId;
   const cwd = worker.worktree;
   writeFileSync(join(cwd, 'carried.txt'), 'uncommitted seat work\n');
-  const capacityId = `worker:${ownerId}`;
 
   // The preservation outage lives only while the stop is converging: the stop chain cannot
   // settle the checkout, and the SIGTERM-scale drain takes it over once the outage ends.
@@ -267,22 +248,16 @@ test('360b: the drain releases and names the capacity reservation a stopped seat
   assert.equal(handle.status, 'dead');
   assert.ok(!handle.processRef || handle.processRef.state === 'closed');
   assert.equal(driver.coordinator._ownsLocalResources(handle), true);
-  assert.ok(driver.worktreeCapacity.snapshot().reservations.some((row) => row.id === capacityId),
-    'the stopped seat left its capacity reservation behind');
 
   const application = await app.shutdown(principal('drain'));
-  assert.equal(application.state, 'closed', 'the shutdown exits zero with no owned reservation left');
+  assert.equal(application.state, 'closed', 'the shutdown exits zero once the drain settled the holder');
   assert.equal(existsSync(cwd), false, 'the drain reaped the checkout (the capture succeeded)');
-  assert.equal(driver.worktreeCapacity.snapshot().reservations.some((row) => row.id === capacityId), false,
-    'the reservation was released through the capacity authority');
 
   const released = releasedRows(driver, worker.id);
   assert.deepEqual(
     released.filter((row) => row.resource === 'local_resources:worktree').map((row) => row.how),
     ['custody_reaped'],
     'the checkout went through the capture-then-remove custody boundary');
-  assert.ok(released.some((row) => row.resource === capacityId && row.how === 'capacity'),
-    'the capacity reservation release is named in the released rows');
 });
 
 // --- (c)/(d): the deadline row names the reaper it waits on ------------------------------

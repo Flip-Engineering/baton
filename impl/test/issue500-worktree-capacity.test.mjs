@@ -9,13 +9,12 @@ import {
   WorkspaceOwnerDiagnostic, allocatePhysicalWorkspaceOwner, normalizePhysicalOwnerId,
   normalizeSparsePaths, physicalWorkspaceOwnerReceipt, validateToolchainProjectionMetadata,
 } from '../src/worktree.mjs';
-import { WorktreeCapacityAuthority, WorktreeCapacityError } from '../src/worktree-capacity.mjs';
 
-// Issue #500 — the worktree capacity/disk bounds carried no cited derivation. Each is
+// Issue #500 — the worktree disk, path and identity bounds carried no cited derivation. Each is
 // operator-declared: no file in the repository derives the number (see the #500 comments in
-// worktree.mjs and worktree-capacity.mjs). These rows pin the live value of each bound at its
-// boundary and the refusal the reader raises past it. No value or behavior changes here: a
-// record exactly at a bound is read, one byte (or path, or segment) past it refuses.
+// worktree.mjs). These rows pin the live value of each bound at its boundary and the refusal the
+// reader raises past it. No value or behavior changes here: a record exactly at a bound is read,
+// one byte (or path, or segment) past it refuses.
 
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-500-cap-'));
@@ -124,32 +123,4 @@ test('500-cap-e: the owner-text identity default admits 4 096 bytes and refuses 
   assert.throws(() => allocatePhysicalWorkspaceOwner(root, {
     attemptId: 'attempt-2', baseSha: sha, logicalTaskId: 'x'.repeat(4097), processGeneration: 1, runId: null,
   }, authority), { name: 'TypeError' }, 'a 4 097-byte logical task id refuses the binding');
-});
-
-test('500-cap-f: the capacity owner record is bounded at 4 096 bytes', (t) => {
-  const { root } = repository(t);
-  mkdirSync(join(root, '.baton', 'capacity'), { recursive: true, mode: 0o700 });
-  const capacity = new WorktreeCapacityAuthority({
-    repoRoot: root,
-    policy: {
-      maxReservedBytes: null, maxReservedInodes: null, minFreeBytes: 0, minFreeInodes: 0,
-      runtimeReserveBytes: 0, runtimeReserveInodes: 0,
-    },
-    integrityKey: Buffer.alloc(32, 7),
-  });
-  const record = JSON.stringify({
-    generation: 'a'.repeat(32), ownerId: 'b'.repeat(32), pid: process.pid, schemaVersion: 1,
-  });
-  const atBound = record + ' '.repeat(4096 - record.length);
-
-  privateFile(capacity.lockPath, atBound);
-  assert.equal(capacity._observeOwner(capacity.lockPath, 'lock').schemaVersion, 1,
-    'a lock record exactly at the 4 096-byte bound is read');
-  privateFile(capacity.lockPath, `${atBound} `);
-  assert.throws(() => capacity._observeOwner(capacity.lockPath, 'lock'), (error) => {
-    assert.ok(error instanceof WorktreeCapacityError, 'the over-bound lock record refuses typed');
-    assert.match(error.message, /not a bounded private regular file/u,
-      'the refusal is the size guard, not the generation check');
-    return true;
-  });
 });

@@ -457,10 +457,6 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   workerDependencyDirs: 'a worktree preparation seam',
   workerSparsePaths: 'a worktree preparation seam',
   workflowPolicy: 'a policy, reached only by a workflow drive',
-  worktreeCapacity: 'a capacity policy; no case configures one',
-  worktreeCapacityEstimate: 'a capacity observation dependency',
-  worktreeCapacityObserve: 'a capacity observation dependency',
-  worktreeCapacityRuntimeFootprint: 'a capacity observation dependency',
 });
 
 /** Every `opts.<name>` the createDriver body reads, in source order, deduplicated. */

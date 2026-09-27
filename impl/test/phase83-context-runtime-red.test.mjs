@@ -110,10 +110,6 @@ function options(repo, deploymentRoot) {
       routes: [route],
       adapters: { codex: adapter() },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   };
 }

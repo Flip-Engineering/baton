@@ -108,10 +108,6 @@ test('OG-2: the CLI route verb serves omp/opencode-go/glm-5.3-flash@high (was ap
       advanced: {
         deploymentRoot: join(tmpDir('deployment-cli'), 'deployment'),
         verification: { command: process.execPath, arguments: ['--version'] },
-        capacity: {
-          estimate: () => ({ bytes: 1, inodes: 1 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
       },
     });
   } finally {
