@@ -1782,6 +1782,18 @@ function liveWorkspaceHolders(opts, physicalOwnerId) {
   return Object.freeze(Array.isArray(holders) ? [...holders] : []);
 }
 
+/** Issue #616: whether this reconciliation may snapshot a dead owner's uncommitted content before
+ * its checkout is removed. The capability is opt-in per call (`snapshotUncommitted`), and a caller
+ * that injects its ended-seat proof (`ownerSeatEndedBeforeStartup`) captures only an owner whose
+ * seat had already ended when that caller's incarnation began. A seat the caller's own recovery
+ * ends is the predecessor a `resume-from` successor still carries (#385/#517): its checkout stays
+ * on disk for that carry and a later reconciliation reclaims it. */
+function maySnapshotOwner(opts, physicalOwnerId, ownerReceipt, ownerState) {
+  if (opts?.snapshotUncommitted !== true || ownerState !== 'local_dead') return false;
+  if (typeof opts.ownerSeatEndedBeforeStartup !== 'function') return true;
+  return opts.ownerSeatEndedBeforeStartup(physicalOwnerId, ownerReceipt) === true;
+}
+
 /** Refuse before the first destructive effect while the checkout holds content no capture
  * recorded, or while another live holder is still working in it. Nothing is removed, released or
  * logged here. Custody decides whether cleanup may run at all; preservation decides whether the
@@ -3330,7 +3342,10 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @param {{log?: object, ownerAuthority?: object, expectedOwnerBindings?: object[],
  *   sparseCheckoutIdentity?: object, custodyHolders?: Function, beforeOwnerCleanup?: Function,
  *   linkedWorktreeHolders?: Function, linkedWorktreeObservation?: object,
- *   snapshotUncommitted?: boolean}} [opts]
+ *   snapshotUncommitted?: boolean, ownerSeatEndedBeforeStartup?: Function}} [opts]
+ *   `snapshotUncommitted` enables content capture for a local-dead owner; when the caller also
+ *   injects `ownerSeatEndedBeforeStartup(physicalOwnerId, ownerReceipt)`, capture holds only for an
+ *   owner whose seat had already ended when the caller's incarnation began (#616).
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
@@ -3579,14 +3594,14 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           let retainedError = error;
           // Issue #568: a prior controller's dirty checkout is recoverable only after its
           // differing files have entered the lane branch. Exact local-dead authority and the
-          // absence of other live holders are required before capture. Capture keeps paths that
-          // cannot safely enter the branch in the checkout, so the second preservation check
-          // below retains that workspace.
-          if (opts.snapshotUncommitted === true
-            && error instanceof WorkspacePreservationError
+          // absence of other live holders are required before capture; a caller that can prove
+          // which seats had already ended when its incarnation began (#616) narrows it further.
+          // Capture keeps paths that cannot safely enter the branch in the checkout, so the second
+          // preservation check below retains that workspace.
+          if (error instanceof WorkspacePreservationError
             && error.observation?.state === 'dirty'
             && ownerReceipt
-            && ownerState === 'local_dead'
+            && maySnapshotOwner(opts, normalizedTaskId, ownerReceipt, ownerState)
             && liveWorkspaceHolders(opts, normalizedTaskId).length === 0) {
             try {
               captureCommitNow(repoRoot, normalizedTaskId, {
@@ -3685,7 +3700,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         }
         try {
           cleanupSeatLinkedWorktrees(repoRoot, normalizedTaskId, {
-            snapshotUncommitted: opts.snapshotUncommitted === true && ownerState === 'local_dead',
+            snapshotUncommitted: maySnapshotOwner(opts, normalizedTaskId, ownerReceipt, ownerState),
             verifyOnly: true,
             ...(opts.linkedWorktreeHolders
               ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
@@ -3730,7 +3745,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         }
         try {
           const linkedSnapshots = cleanupSeatLinkedWorktrees(repoRoot, normalizedTaskId, {
-            snapshotUncommitted: opts.snapshotUncommitted === true && ownerState === 'local_dead',
+            snapshotUncommitted: maySnapshotOwner(opts, normalizedTaskId, ownerReceipt, ownerState),
             ...(opts.linkedWorktreeHolders
               ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
             ...(opts.linkedWorktreeObservation

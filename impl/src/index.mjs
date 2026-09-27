@@ -1139,7 +1139,9 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = [], { snapshotUncommitted = false } = {}) {
+    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = [], {
+      snapshotUncommitted = false, ownerSeatEndedBeforeStartup = null,
+    } = {}) {
       if (!Array.isArray(knownPhysicalOwnerIds)
         || knownPhysicalOwnerIds.some((id) => !isPhysicalWorkspaceId(id))) {
         throw new TypeError('known physical workspace owners are invalid');
@@ -1160,10 +1162,14 @@ function worktreeManager(repoRoot, opts = {}) {
         ownerAuthority: opts.ownerAuthority,
         expectedOwnerBindings: expectedEntries,
         // Issue #568: the capture is opt-in PER CALL. A sweep that cannot prove the owning seat
-        // ENDED must not reclaim a checkout a resume-from successor may still carry (#385/#517),
-        // so the startup recovery leaves it false and the drain's converged historical sweep
-        // opts in. The capability itself is unchanged.
+        // ENDED must not reclaim a checkout a resume-from successor may still carry (#385/#517).
+        // The startup recovery therefore asserts it owner by owner — the ended-seat proof it
+        // derives from the state its incarnation began from (#616), so only a seat that had
+        // already ended is captured and a seat its own recovery just ended keeps its checkout for
+        // that carry — and the drain's converged historical sweep, where no seat is left at all,
+        // opts in without a proof. The capability itself is unchanged.
         snapshotUncommitted,
+        ownerSeatEndedBeforeStartup,
         ...custody(),
         ...(opts.log ? { log: opts.log } : {}),
         ...(opts.worktreeCapacity ? {

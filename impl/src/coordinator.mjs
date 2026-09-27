@@ -4458,11 +4458,14 @@ export class Coordinator {
     // fatal/emergency close, or coordination-error fallback may reach reap after terminalizing the
     // task but before the ordinary stop chain recorded preservation. Such unaccepted work must be
     // captured (or retained on failure) before the checkout can be removed.
+    // Issue #616: a recorded capture is not evidence that the checkout holds nothing more, so an
+    // ended seat reaches the capture even when its task completed or already carries a checkpoint —
+    // build output, scratch trees and logs written after that capture are exactly the work the
+    // observed resident stranded. `_preserveProgressBeforeReap` reads the checkout and writes a new
+    // checkpoint only when it moved past the recorded revision.
     const preserveUnaccepted = Boolean(handle.worktree && existsSync(handle.worktree) && task
       && ['dead', 'exited'].includes(handle.status)
-      && !['completed', 'verifying'].includes(task.status)
-      && task.checkpoint?.state !== 'pinned'
-      && task.progressPreservation?.state !== 'no_progress');
+      && task.status !== 'verifying');
     const cleanup = this._preserveProgressBeforeReap(handle, task, null, preserveUnaccepted)
       .then(() => this._removeTaskWorktree(task, { excludeHolderId: handle.id })).then(() => {
       handle.worktree = null;
