@@ -349,40 +349,19 @@ surfaces only: an ordinary surface's `tools/list` never carries a tool its own d
 refuse, and the surface verbs are where a non-kernel profile reaches a kernel capability when its
 principal holds the capability class for it.
 
-## Declare coupling in a swarm
+## Declare work dependencies in a swarm
 
-The `baton_swarm_update` tool carries every domain update, including the declared coupling
-records (docs/39 §Declared coupling). Coupling is a record the swarm keeps honest — it informs
-the `baton_swarm_view` result, the attention rows, and the wake stream (`baton_wakes_subscribe`
-with a `swarms` filter — the retired blocking watch's replacement); nothing stops a worker.
-Payload examples (each with a caller `idempotencyKey`):
+The `baton_swarm_update` tool records dependencies between work items or on a named artifact.
+Each call carries an `idempotencyKey`:
 
-```jsonc
-// A dependency between units of work (swarm.work_updated): W2 waits for W1's accepted
-// contribution — or for an accepted contribution referencing a named artifact
+```json
 {"event": "swarm.work_updated", "payload": {"workId": "work-integration", "objective": "Integrate W1", "status": "open", "dependsOn": [{"workId": "work-discovery"}]}}
 {"event": "swarm.work_updated", "payload": {"workId": "work-integration", "objective": "Integrate W1", "dependsOn": [{"artifact": "artifact:iface"}]}}
-
-// A synchronization point: the group arrives at it and is released from it
-{"event": "swarm.coupling_updated", "payload": {"couplingId": "sync-freeze", "coupling": "synchronization", "action": "declare", "groupId": "impl", "name": "interface-freeze"}}
-{"event": "swarm.coupling_updated", "payload": {"couplingId": "sync-freeze", "coupling": "synchronization", "action": "arrive"}}            // you arrive; participantId defaults to you
-{"event": "swarm.coupling_updated", "payload": {"couplingId": "sync-freeze", "coupling": "synchronization", "action": "release", "reason": "interface frozen"}}
-
-// An exclusive writer over a shared checkout; release ends the window
-{"event": "swarm.coupling_updated", "payload": {"couplingId": "writer-impl", "coupling": "writer", "action": "declare", "participantId": "builder-a"}}
-{"event": "swarm.coupling_updated", "payload": {"couplingId": "writer-impl", "coupling": "writer", "action": "release", "reason": "turn done"}}
-
-// A group failure policy: independent peers continue when a member is gone, dependents are told
-{"event": "swarm.coupling_updated", "payload": {"couplingId": "policy-impl", "coupling": "failure", "action": "declare", "groupId": "impl", "policy": "independent"}}
 ```
 
-`baton_swarm_view` shows each work item's `waitsOn` (`{workId|artifact, settled, evidence}`),
-the `couplings` records (`arrivals` as `{participantId, actor, seq, ts}` rows, `awaiting`,
-`departed`, `arrived`, `released`, `releasedBy` — the ACTOR that released, never the named seat), and
-attention rows naming what needs an act: `group_member_gone` (with the `dependentWork` told),
-`coupling_writer_gone` (naming the release), and `member_left_session_live` — which names the
-responsible party for a departed member's still-running session (the recruiter, then the
-creator) and the reclaiming operation (`baton_swarm_stop`).
+`baton_swarm_view` shows each work item's `waitsOn` (`{workId|artifact, settled, evidence}`).
+The `member_left_session_live` attention row names the responsible party for a departed member's
+running session and the reclaiming operation (`baton_swarm_stop`).
 
 ## Guidance, checkout custody, and refusals
 
