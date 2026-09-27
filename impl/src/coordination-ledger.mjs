@@ -19,7 +19,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 import { boundedAttentionText, frameWebContent, referencesWebFetchHandle, wrapHubDerived, wrapProse } from './messages.mjs';
 import { GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical, goalPlanDigest, goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planBriefMatches, planRouteAuthorityState, planRouteMatches } from './goal-plan.mjs';
 import { normalizeContextAuthority } from './context-authority.mjs';
-import { PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest, planObjectSnapshot, waveRoleRunKey } from './orchestrator-plan.mjs';
 import { projectContextCallState } from './context-call.mjs';
 import { SWARM_EVENT_KINDS, SwarmIntegrityError, foldSwarmEvent, swarmSnapshot, validateSwarmEvent } from './swarm-state.mjs';
 import { usdToNanos } from './usd.mjs';
@@ -1015,17 +1014,9 @@ export function _resetProjection(store) {
   // D2.3 (epic #132): replay-derived wave.started registry rows by waveId — the in-flight wave
   // set for THIS deployment. Rebuilt by re-applying the log in _apply; wave.closed closes rows.
   store._waveRegistry = new Map();
-  // #161 (D1): the campaign-plan object projection — planId -> plan (the contract's
-  // _plans/_planTasks naming is taken by the goal-plan fold; these are the campaign twins).
-  // Rebuilt by re-applying the log in _apply via foldPlanObjectEvent; folds apply events, they
-  // never authorize (H2.3). #161 (H2.2): the (waveId, waveRole) -> runId roster index the lane
-  // resolves pre-decomposed ownedBy.run bindings from at claim time.
-  store._campaignPlans = new Map();
   store._swarms = new Map();
-  store._waveRoleRuns = new Map();
-  // #286 G-31: the current run -> wave binding, last write wins (see the fold in _apply). The
-  // seat index above is keyed (waveId, waveRole) -> runId; this is the reverse question —
-  // which wave a run sits in NOW — and it is the one reading every wave reader shares.
+  // #286 G-31: the current run -> wave binding, last write wins (see the fold in _apply) — the
+  // one reading of "which wave does this run sit in NOW" that the wave readers share.
   store._waveBindings = new Map();
   // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
   // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
@@ -1218,9 +1209,6 @@ export function _appendBatch(store, entries, batchKind = null, beforeWrite = nul
     'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
     'scratchpad_task_settlement', 'scratchpad_link_citation',
     'scratchpad_workflow_settlement', 'scratchpad_stop_cleanup',
-    // #161 (H4.1): the plan lane's auto-demote batch — a -> doing transition that demotes the
-    // subtree's current doing task to todo in the same atomic append (the kimi behavior, DR-3).
-    ...PLAN_OBJECT_BATCH_KINDS,
   ].includes(batchKind)) {
     throw new TypeError('coordination batch kind is invalid');
   }
@@ -2643,12 +2631,6 @@ export function _apply(store, event) {
         runId: p.runId, waveId: p.waveId ?? null, waveRole: p.waveRole ?? null,
         registeredEvent: event.seq,
       }));
-      // #161 (H2.2): the (waveId, waveRole) -> runId binding — the roster row the plan lane
-      // resolves a pre-decomposed ownedBy.run (null) from at the row's claim/transition time.
-      if (typeof p.waveId === 'string' && p.waveId.length > 0
-        && typeof p.waveRole === 'string' && p.waveRole.length > 0) {
-        store._waveRoleRuns.set(waveRoleRunKey(p.waveId, p.waveRole), p.runId);
-      }
     }
     if (p?.kind === 'recovery.continuation_intent') {
       store._recoveryDispatches.set(p.workerId, store._validateRecoveryContinuationPayload(p, event, true));
@@ -3548,16 +3530,6 @@ export function _apply(store, event) {
       if (store._loading && error instanceof SwarmIntegrityError) throw new SwarmReplayRefusal(event, error);
       throw error;
     }
-  } else if (PLAN_OBJECT_EVENT_KINDS.has(event.kind)) {
-    // #161 (D1/P2): the plan-object fold — the orchestrator's campaign plan state as a
-    // first-class coordination citizen. The lane module owns the closed payload shapes and the
-    // deterministic projection; an unfolderable event poisons the projection here (the TT4/board
-    // precedent). Folds apply events; they never authorize (H2.3) — ownership resolution is the
-    // lane's, and the fold resolves a pre-decomposed ownedBy.run (null) only from the durable
-    // roster facts (H2.2), so close/reopen replays the identical projection.
-    foldPlanObjectEvent(store._campaignPlans, event, {
-      resolveRunId: (waveId, role) => store._waveRoleRuns.get(waveRoleRunKey(waveId, role)) ?? null,
-    });
   } else {
     throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
   }
@@ -4519,7 +4491,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(store._campaignPlans) } : {}), ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -5657,53 +5629,8 @@ export function appendWaveClosed(store, fields, auth) {
     throw new CoordinationRefusal('wave is already closed', 'wave_already_closed');
   }
   const event = store._append('wave.closed', payload, auth);
-  // #161 (D2/P6): the wave-close elevation — the wave's plan tasks are reviewed at close.
-  store._planElevationAtWaveClose(payload.waveId, auth, event.seq);
   const record = store._waveClosures.get(payload.waveId) ?? null;
   return { ok: true, event: clone(event), record: record ? clone(record) : null };
-}
-
-export function _planElevationAtWaveClose(store, waveId, auth, closedEventSeq) {
-  if (store._campaignPlans.size === 0) return;
-  const demotions = [];
-  for (const plan of store._campaignPlans.values()) {
-    for (const taskId of Object.keys(plan.tasks).sort()) {
-      const task = plan.tasks[taskId];
-      if (task.ownedBy?.wave !== waveId) continue;
-      if (task.status === 'done') {
-        const evidence = [{ coordinationSeq: closedEventSeq }];
-        const payload = {
-          schemaVersion: 1, planId: plan.planId, taskId: task.id, evidence,
-          expectedTaskVersion: task.taskVersion,
-          requestDigest: planObjectDigest({
-            schemaVersion: 1, planId: plan.planId, taskId: task.id, evidence,
-            expectedTaskVersion: task.taskVersion,
-          }),
-        };
-        store._append('plan.task_evidence_linked', payload, {
-          actor: auth.actor,
-          key: `plan.task_evidence_linked:${plan.planId}:${task.id}:${planObjectDigest(evidence)}:v${task.taskVersion}`,
-        });
-      } else if (task.status === 'doing') {
-        demotions.push({
-          kind: 'plan.task_transitioned',
-          payload: {
-            schemaVersion: 1, planId: plan.planId, taskId: task.id, toStatus: 'todo',
-            expectedTaskVersion: task.taskVersion,
-            requestDigest: planObjectDigest({
-              schemaVersion: 1, planId: plan.planId, taskId: task.id, toStatus: 'todo',
-              expectedTaskVersion: task.taskVersion,
-            }),
-          },
-          auth: {
-            actor: auth.actor,
-            key: `plan.task_transitioned:${plan.planId}:${task.id}:todo:v${task.taskVersion}`,
-          },
-        });
-      }
-    }
-  }
-  if (demotions.length > 0) store._appendBatch(demotions, 'plan_auto_demote');
 }
 
 /** #511: the outcome of the request a colliding identity already names, read off the recorded row
