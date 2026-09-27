@@ -18,17 +18,23 @@
 //                 the 39th queued seat is visible in the budget it exhausted; an unmeasured first
 //                 worker is admitted weight-free (the host learns the footprint from the workers
 //                 it runs); `observeWorkerBytes` is how a measurement lands on an admitted lease
+//   wiring        the runtime measures each RUNNING seat's own process group and lands that
+//                 footprint on the seat's worker lease through `observeWorkerBytes` BEFORE the
+//                 next admission is judged — the half #561 was missing at first: the writer, the
+//                 budget terms and the derivation existed, and no measurement ever reached them
 //   suites        a verify request may name itself `durable`: a standing-tight host then queues
 //                 the request (no deadline) instead of answering degraded — a suite a worker seat
 //                 started takes the same verify lease as a landing gate
 //
 // Red-before: written before the implementation; rows M561-1..M561-9 fail at HEAD (no swap/disk
 // parse, no measured worker accounting, no durable admission, no observeWorkerBytes) and pass
-// once the mechanism lands.
+// once the mechanism lands. The wiring rows M561-10..M561-12 were added with the half that
+// measurement was missing: M561-10 and M561-11 pin the measurement and the landing,
+// M561-12 pins that a recruit is judged against the fleet's measured footprint.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,8 +46,11 @@ import {
   parseMemInfoAvailable,
   parseSwapUsage,
   parseMemInfoSwap,
+  readProcessTableBytes,
 } from '../src/host-capacity.mjs';
 import { suiteLeaseDurable } from '../scripts/suite-host-lease.mjs';
+import { CoordinationStore } from '../src/coordination-store.mjs';
+import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 
 const G = 1024 ** 3;
 const M = 1024 ** 2;
@@ -306,4 +315,132 @@ test('M561-9: suiteLeaseDurable is true for a participant holder and false other
   );
   assert.strictEqual(suiteLeaseDurable({}), false, 'a runner outside a swarm keeps the degraded answer');
   assert.strictEqual(suiteLeaseDurable('run-suite:4242'), false, 'the pid holder is not a seat');
+});
+
+// ── M561-10: the host's process table folds to bytes per group, and absence is never zero ───────
+
+test('M561-10: readProcessTableBytes sums each process group and answers null when nothing parses', () => {
+  // The columns are `ps -axo pgid=,rss=`'s: the group first, the resident set size in KiB second.
+  const table = readProcessTableBytes({
+    run: () => ['  440  20288', '  440   1024', '  672   2128', '', 'not a row'].join('\n'),
+  });
+  assert.deepStrictEqual([...table], [[440, (20288 + 1024) * 1024], [672, 2128 * 1024]],
+    'a worker is its harness plus its children: every member of the group is summed');
+
+  assert.strictEqual(readProcessTableBytes({ run: () => { throw new Error('ps is not installed'); } }), null,
+    'a probe that cannot be read yields null, never an empty fleet');
+  assert.strictEqual(readProcessTableBytes({ run: () => 'ps: illegal option' }), null,
+    'a probe that answers nothing usable is absence, not a measurement of zero');
+  assert.strictEqual(readProcessTableBytes({ run: () => 42 }), null);
+});
+
+// ── M561-11: a measurement lands on THIS resident's own worker leases, through the writer ───────
+
+test('M561-11: measureWorkers lands each measured footprint and leaves an unobserved worker alone', async (t) => {
+  const root = leaseRoot(t);
+  const host = { availableBytes: 8 * G };
+  const auth = authority(root, host);
+  const mine = await auth.acquire('worker', { holder: 'participant:swarm:mine' });
+  assert.ok(mine.token);
+  // A lease another resident owns: measuring must not reach it.
+  const other = new HostCapacityAuthority({
+    root, residentId: 'resident-elsewhere', observation: stagedObservation(host),
+    now: () => NOW, pollMs: 10,
+  });
+  const theirs = await other.acquire('worker', { holder: 'participant:swarm:theirs' });
+  assert.ok(theirs.token);
+
+  assert.strictEqual(
+    await auth.measureWorkers((holder) => (holder === 'participant:swarm:mine' ? 400 * M : 900 * M)),
+    1, 'one measurement landed: the lease this resident owns',
+  );
+  const observed = auth.observeNow();
+  assert.strictEqual(observed.used.workerBytes, 400 * M,
+    'the measured footprint is the budget the next admission reads');
+  assert.strictEqual(observed.used.workerMeasured, 1);
+
+  const leaseDir = join(root, 'leases');
+  const recordFor = (holder) => readdirSync(leaseDir)
+    .map((name) => JSON.parse(readFileSync(join(leaseDir, name), 'utf8')))
+    .find((record) => record.holder === holder);
+  assert.strictEqual(recordFor('participant:swarm:mine').bytes, 400 * M);
+  assert.strictEqual('bytes' in recordFor('participant:swarm:theirs'), false,
+    'a lease another resident owns is not ours to rewrite');
+
+  assert.strictEqual(await auth.measureWorkers(() => null), 0,
+    'a worker whose process cannot be observed keeps the measurement it already carries');
+  assert.strictEqual(auth.observeNow().used.workerBytes, 400 * M);
+});
+
+// ── M561-12: a recruit is judged against the memory the running seats actually hold ─────────────
+
+const owner561 = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
+
+/** A swarm runtime over a real store and a stubbed coordinator — the shape the #297 fixture builds,
+ * repeated here because THIS row's subject is a measured footprint reaching admission. */
+function swarmFixture(t, { hostCapacity, workerProcessTable }) {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-m561-swarm-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const store = new CoordinationStore(directory);
+  const workers = [];
+  const coordinator = { list: () => workers, pausedTurns: () => [] };
+  const runtime = new SwarmRuntime({
+    store, coordinator, authorize: async () => {}, hostCapacity, workerProcessTable,
+    prepareRun: async (request) => request,
+    startRun: async (request) => {
+      if (!workers.some((row) => row.runId === request.runId)) {
+        workers.push({
+          id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`,
+          runId: request.runId, status: 'working', paused: false,
+        });
+      }
+    },
+    stopRun: async (runId) => {
+      workers.find((row) => row.runId === runId).status = 'dead';
+      return { state: 'closed' };
+    },
+  });
+  let key = 0;
+  const call = (command, args = {}) => runtime.command(`swarm.${command}`,
+    { swarmId: 'baton', ...(command === 'view' ? {} : { idempotencyKey: `request-${++key}` }), ...args },
+    owner561);
+  return { store, runtime, workers, call };
+}
+
+test('M561-12: the running fleet\'s measured bytes are the budget the next recruit is judged against', async (t) => {
+  const root = leaseRoot(t);
+  // 4 cores of a 32 GiB host: one share is 8 GiB, so the byte budget is 24 GiB of measured workers.
+  const observation = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 });
+  const auth = new HostCapacityAuthority({
+    root, residentId: 'deployment-m561', observation, pollMs: 15,
+  });
+  // The table is staged (M561-10 pins the real probe): one seat's process group holds 25 GiB.
+  const table = new Map([[4242, 25 * G]]);
+  const f = swarmFixture(t, { hostCapacity: auth, workerProcessTable: () => table });
+  await f.call('create', { purpose: 'Measured admission' });
+
+  const first = await f.call('recruit', { participantId: 'p1', objective: 'One' });
+  assert.deepEqual(first.admission, { state: 'admitted', authority: 'host' },
+    'the first seat is admitted weight-free: the host has measured no worker yet');
+  f.workers[0].processRef = { pid: 4242, processGroupId: 4242, state: 'ready' };
+
+  const second = f.call('recruit', { participantId: 'p2', objective: 'Two' });
+  const queued = [];
+  for (let attempt = 0; attempt < 200 && queued.length === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    queued.push(...f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+      && event.payload.kind === 'swarm.admission_queued'));
+  }
+  assert.ok(queued.length >= 1, 'the second seat waits on the memory the first one holds');
+  assert.strictEqual(queued[0].payload.shortfall.dimension, 'budget');
+  assert.strictEqual(queued[0].payload.shortfall.required, 25 * G,
+    'the weight is the MEASURED footprint of the running seat, not an assumption');
+
+  // The measured seat leaves the host: the budget funds the waiting recruit and it is admitted.
+  const leaseDir = join(root, 'leases');
+  for (const name of readdirSync(leaseDir)) rmSync(join(leaseDir, name), { force: true });
+  const admittedSecond = await second;
+  assert.strictEqual(admittedSecond.admission.state, 'admitted',
+    'the seat that waited is admitted once the budget funds it');
+  assert.strictEqual(admittedSecond.admission.authority, 'host');
 });

@@ -30,7 +30,7 @@ import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
 import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
 import { WorktreePreserver } from './worktree-preserve.mjs';
-import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
+import { hostCapacityShortfall, HOST_CAPACITY_BYPASS, readProcessTableBytes } from './host-capacity.mjs';
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
 // pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
 // run takes the host verify lease through the suite runner's seam.
@@ -1921,7 +1921,11 @@ export class SwarmRuntime {
     // `swarm_command_unavailable` rather than pretending.
     // Issue #558: `publishRemote` rides the same authority — the deployment's DECLARED shared
     // remote, null when it declares none (a real landing then refuses instead of staying local).
-    integration = null, routingExcludedHarnesses = [] }) {
+    integration = null, routingExcludedHarnesses = [],
+    // Issue #561: the host's process table, read once per admission round so a seat is judged
+    // against the memory the running fleet actually holds. Injectable so a test stages a fleet;
+    // production reads the host.
+    workerProcessTable = readProcessTableBytes }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
       integration, issueReader,
@@ -1934,6 +1938,7 @@ export class SwarmRuntime {
     // #297: the host-wide capacity authority recruits admit through (null = admission is not
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
+    this.workerProcessTable = workerProcessTable;
     this.deploymentSummary = deploymentSummary;
     this.pending = new Map();
     this.watchController = new AbortController();
@@ -1990,12 +1995,12 @@ export class SwarmRuntime {
     this._pendingIntegrations = new Map();
   }
 
-  /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
-   * the retention set the host worker leases reconcile against, so a stop or a leave that ended
-   * a seat's runtime also returns its lease to the host budget (#297, #350). A stopped seat's
-   * membership is settled (status left), so it holds no lease; only a live active seat does. */
-  _activeWorkerHolders() {
-    const holders = [];
+  /** Every active seat whose worker is LIVE, across this runtime's swarms, as the holder id the
+   * host lease is keyed by beside the worker row itself — the ONE walk the lease retention set
+   * (#297/#350) and the measured footprint (#561) both read, so the seat a lease names and the
+   * seat a process is measured for can never be two seats. */
+  _activeWorkerSeats() {
+    const seats = [];
     const workers = this.coordinator.list();
     for (const swarm of this.store.swarms()) {
       for (const participant of Object.values(swarm.participants ?? {})) {
@@ -2006,11 +2011,48 @@ export class SwarmRuntime {
         // gone, so the resident must not keep reserving host capacity for it (#360).
         if (this._runtimeLostCurrent(participant) !== null) continue;
         if (swarmParticipantLiveness(worker).live) {
-          holders.push(`participant:${swarm.swarmId}:${participant.participantId}`);
+          seats.push(Object.freeze({
+            holder: `participant:${swarm.swarmId}:${participant.participantId}`, worker,
+          }));
         }
       }
     }
-    return holders;
+    return seats;
+  }
+
+  /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
+   * the retention set the host worker leases reconcile against, so a stop or a leave that ended
+   * a seat's runtime also returns its lease to the host budget (#297, #350). A stopped seat's
+   * membership is settled (status left), so it holds no lease; only a live active seat does. */
+  _activeWorkerHolders() {
+    return this._activeWorkerSeats().map((seat) => seat.holder);
+  }
+
+  /** #561: land the memory each RUNNING seat's own process holds on its worker lease, so the
+   * admission judged next reads the fleet's measured footprint rather than nothing. The runtime
+   * is the party that can name a seat's process (`worker.processRef`, the group the spawn
+   * authority bound); the authority owns the lease and writes through `observeWorkerBytes`.
+   * A seat whose process cannot be observed keeps the measurement it already carries. Never
+   * throws and never refuses: a host probe is evidence for the budget, not a condition of
+   * admission. Returns how many leases a fresh measurement reached. */
+  async _measureActiveWorkers() {
+    if (!this.hostCapacity || typeof this.hostCapacity.measureWorkers !== 'function') return 0;
+    const seats = this._activeWorkerSeats();
+    if (seats.length === 0) return 0;
+    let table = null;
+    try { table = this.workerProcessTable(); } catch { table = null; }
+    if (!(table instanceof Map)) return 0;
+    const groupOf = new Map();
+    for (const seat of seats) {
+      const group = seat.worker?.processRef?.processGroupId ?? null;
+      if (Number.isSafeInteger(group) && group > 0) groupOf.set(seat.holder, group);
+    }
+    try {
+      return await this.hostCapacity.measureWorkers((holder) => {
+        const group = groupOf.get(holder) ?? null;
+        return group === null ? null : (table.get(group) ?? null);
+      });
+    } catch { return 0; }
   }
 
   /** Issue #459: the supervised pool the landing's out-of-process steps run through — the
@@ -9089,6 +9131,10 @@ export class SwarmRuntime {
         let queuedRow = null;
         if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
           const operationKey = this._operationKey(command, args, principal);
+          // Issue #561: the fleet's measured footprint lands on its own worker leases BEFORE this
+          // admission is judged, so `used.bytes` counts the memory the running seats actually
+          // hold and the mean weight the next seat waits on is a measured one.
+          await this._measureActiveWorkers();
           const admitted = await this.hostCapacity.acquire('worker', {
             holder: `participant:${args.swarmId}:${args.participantId}`,
             onQueued: (row) => {

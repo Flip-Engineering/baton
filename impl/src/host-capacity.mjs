@@ -245,6 +245,31 @@ export function hostAvailableMemoryBytes({
   return Math.min(totalBytes, Math.max(freeBytes, available));
 }
 
+/** #561: the host's own process table, folded to the resident bytes each process group holds.
+ * ONE `ps` call answers it (the platform-probe shape `hostAvailableMemoryBytes` already reads),
+ * and every member of a group is summed: a worker is its harness plus the children it started,
+ * and the memory a seat holds is all of it. Never throws — a host that will not answer the
+ * probe, or answers nothing that parses, yields null, and a caller that cannot measure a worker
+ * then leaves that lease's recorded measurement alone instead of charging the budget a zero it
+ * never observed. */
+export function readProcessTableBytes({
+  run = () => execFileSync('ps', ['-axo', 'pgid=,rss='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
+} = {}) {
+  let text;
+  try { text = run(); } catch { return null; }
+  if (typeof text !== 'string') return null;
+  const bytes = new Map();
+  for (const line of text.split('\n')) {
+    const [group, rss] = line.trim().split(/\s+/u);
+    const pgid = Number.parseInt(group ?? '', 10);
+    const kib = Number.parseInt(rss ?? '', 10);
+    if (!Number.isSafeInteger(pgid) || pgid <= 0) continue;
+    if (!Number.isSafeInteger(kib) || kib <= 0) continue;
+    bytes.set(pgid, (bytes.get(pgid) ?? 0) + kib * 1024);
+  }
+  return bytes.size === 0 ? null : bytes;
+}
+
 /** The host observation every threshold derives from. Dependencies are injectable so a test can
  * stage a loaded host; production reads the machine. A STAGED observation (one that names its
  * `freeBytes`) reads `availableBytes` as that same number unless it names it too, so a staged
@@ -996,6 +1021,28 @@ export class HostCapacityAuthority {
       fsyncDirectory(this.leasesDir);
       return true;
     });
+  }
+
+  /** #561: land the footprint each of this resident's admitted workers holds RIGHT NOW on its own
+   * lease, through `observeWorkerBytes` — the writer a measurement lands with. The runtime calls
+   * this before an admission is judged, so the budget that judgement reads counts the memory the
+   * running fleet actually holds instead of the nothing an unwritten measurement leaves. The
+   * measurement itself belongs to the caller that can name the process: `measure(holder)` answers
+   * the bytes that worker's group holds now, or null when it has no OS process to observe. A null
+   * leaves the lease's recorded measurement untouched, because absence is never a zero. Returns
+   * how many leases a measurement reached. */
+  async measureWorkers(measure) {
+    if (typeof measure !== 'function') throw new TypeError('host capacity worker measurement requires a measure function');
+    let measured = 0;
+    for (const record of listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS)) {
+      if (record.kind !== 'worker' || record.residentId !== this.residentId) continue;
+      if (!this.liveness(record.pid)) continue;
+      let bytes = null;
+      try { bytes = measure(record.holder); } catch { bytes = null; }
+      if (!Number.isSafeInteger(bytes) || bytes <= 0) continue;
+      if (await this.observeWorkerBytes(record.holder, record.nonce, bytes) === true) measured += 1;
+    }
+    return measured;
   }
 
   /** Release one admitted lease. A release naming a lease this resident does not own is a no-op
