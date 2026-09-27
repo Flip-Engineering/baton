@@ -4,18 +4,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { processState } from './resident-authority.mjs';
 import {
   chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync,
-  mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, rmSync, unlinkSync,
+  mkdirSync, openSync, readFileSync, realpathSync, readdirSync, rmSync, unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { TextDecoder } from 'node:util';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalOperationForCommand, canonicalRunPhase } from './application-semantics.mjs';
 import { parseBatonTopCli } from './baton-top.mjs';
 import { FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
-import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
-import { publishResultExportNoReplace } from './result-export.mjs';
 
 import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, SWARM_VIEW_PROJECTION_NAMES,
@@ -1312,208 +1309,6 @@ export function inspectBatonConnection({
     ...(depth === 'evidence' ? { evidence: Object.freeze({ selector: 'valid', profile: 'valid', credential: 'not_opened', remote: 'not_contacted' }) } : {}),
     next: Object.freeze([{ action: 'check', command: 'baton doctor --check' }]),
   });
-}
-
-const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-const canonical = (value) => Array.isArray(value) ? value.map(canonical)
-  : value && typeof value === 'object'
-    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
-    : value;
-const canonicalJson = (value) => `${JSON.stringify(canonical(value))}\n`;
-
-function tarText(header, start, width, { utf8 = false } = {}) {
-  const field = header.subarray(start, start + width);
-  const end = field.indexOf(0);
-  const bytes = end === -1 ? field : field.subarray(0, end);
-  if (end !== -1 && field.subarray(end).some((byte) => byte !== 0)) throw cliError('archive text field has trailing bytes', 'cli_export_archive_invalid');
-  try { return new TextDecoder(utf8 ? 'utf-8' : 'ascii', { fatal: true }).decode(bytes); }
-  catch { throw cliError('archive text field is invalid', 'cli_export_archive_invalid'); }
-}
-
-function tarNumber(header, start, width) {
-  const raw = header.subarray(start, start + width);
-  if (raw[0] & 0x80) throw cliError('base-256 tar numbers are not allowed', 'cli_export_archive_invalid');
-  const text = raw.toString('ascii').replace(/\0.*$/u, '').trim();
-  if (text !== '' && !/^[0-7]+$/u.test(text)) throw cliError('archive numeric field is invalid', 'cli_export_archive_invalid');
-  const value = Number.parseInt(text || '0', 8);
-  if (!Number.isSafeInteger(value) || value < 0) throw cliError('archive numeric field is invalid', 'cli_export_archive_invalid');
-  return value;
-}
-
-function safeArchivePath(path) {
-  if (!path || isAbsolute(path) || path.includes('\\') || Buffer.from(path, 'utf8').toString('utf8') !== path
-    || path.split('/').some((part) => !part || part === '.' || part === '..'
-      || foldCanonicalCase(part.normalize('NFKC')) === '.git')) {
-    throw cliError('archive path is unsafe', 'cli_export_archive_invalid');
-  }
-  return path;
-}
-
-function parseResultExportArchive(bytes) {
-  if (!Buffer.isBuffer(bytes) || bytes.length < 1024 || bytes.length % 512 !== 0) {
-    throw cliError('archive framing is invalid', 'cli_export_archive_invalid');
-  }
-  const records = [];
-  const names = new Set();
-  let offset = 0;
-  let terminators = 0;
-  while (offset < bytes.length) {
-    const header = bytes.subarray(offset, offset + 512);
-    offset += 512;
-    if (header.every((byte) => byte === 0)) {
-      terminators += 1;
-      if (terminators === 2) break;
-      continue;
-    }
-    if (terminators !== 0) throw cliError('archive contains records after a zero block', 'cli_export_archive_invalid');
-    const checksumHeader = Buffer.from(header);
-    checksumHeader.fill(0x20, 148, 156);
-    const expectedChecksum = [...checksumHeader].reduce((sum, byte) => sum + byte, 0);
-    if (tarNumber(header, 148, 8) !== expectedChecksum
-      || tarText(header, 257, 6) !== 'ustar' || tarText(header, 263, 2) !== '00'
-      || tarText(header, 156, 1) !== '0' || tarText(header, 157, 100) !== ''
-      || tarText(header, 265, 32) !== '' || tarText(header, 297, 32) !== ''
-      || tarNumber(header, 108, 8) !== 0 || tarNumber(header, 116, 8) !== 0
-      || tarNumber(header, 136, 12) !== 0 || tarNumber(header, 329, 8) !== 0
-      || tarNumber(header, 337, 8) !== 0) {
-      throw cliError('archive header is outside baton-export-tar-v1', 'cli_export_archive_invalid');
-    }
-    const name = tarText(header, 0, 100, { utf8: true });
-    const prefix = tarText(header, 345, 155, { utf8: true });
-    const path = safeArchivePath(prefix ? `${prefix}/${name}` : name);
-    if (names.has(path)) throw cliError('archive contains duplicate paths', 'cli_export_archive_invalid');
-    names.add(path);
-    const size = tarNumber(header, 124, 12);
-    const mode = tarNumber(header, 100, 8);
-    const padded = Math.ceil(size / 512) * 512;
-    if (!Number.isSafeInteger(padded) || offset > bytes.length - padded) {
-      throw cliError('archive record is truncated', 'cli_export_archive_invalid');
-    }
-    const data = Buffer.from(bytes.subarray(offset, offset + size));
-    if (bytes.subarray(offset + size, offset + padded).some((byte) => byte !== 0)) {
-      throw cliError('archive padding is non-zero', 'cli_export_archive_invalid');
-    }
-    offset += padded;
-    records.push({ path, mode, size, data });
-  }
-  if (terminators !== 2 || offset !== bytes.length) throw cliError('archive terminator is invalid', 'cli_export_archive_invalid');
-  const sorted = [...records].sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
-  if (records.some((record, index) => record.path !== sorted[index].path)) {
-    throw cliError('archive inventory is not bytewise ordered', 'cli_export_archive_invalid');
-  }
-  return records;
-}
-
-function validateArchiveDescriptor(descriptor, archiveBytes) {
-  const fields = ['schemaVersion', 'format', 'mediaType', 'exportId', 'manifestDigest', 'archiveDigest', 'archiveBytes'];
-  if (!record(descriptor) || Object.keys(descriptor).sort().join(',') !== fields.sort().join(',')
-    || descriptor.schemaVersion !== 1 || descriptor.format !== 'baton-export-tar-v1'
-    || descriptor.mediaType !== 'application/x-tar' || !/^[a-f0-9]{64}$/u.test(descriptor.exportId ?? '')
-    || !/^[a-f0-9]{64}$/u.test(descriptor.manifestDigest ?? '')
-    || !/^[a-f0-9]{64}$/u.test(descriptor.archiveDigest ?? '')
-    || !Number.isSafeInteger(descriptor.archiveBytes) || descriptor.archiveBytes !== archiveBytes.length) {
-    throw cliError('archive descriptor is invalid', 'cli_export_archive_invalid');
-  }
-  if (sha256(archiveBytes) !== descriptor.archiveDigest) {
-    throw cliError('archive digest differs from its descriptor', 'cli_export_archive_digest_mismatch');
-  }
-}
-
-function preflightResultExportArchive(archiveBytes, descriptor) {
-  validateArchiveDescriptor(descriptor, archiveBytes);
-  const records = parseResultExportArchive(archiveBytes);
-  const manifestRecord = records.find((record) => record.path === 'manifest.json');
-  if (!manifestRecord || manifestRecord.mode !== 0o600 || sha256(manifestRecord.data) !== descriptor.manifestDigest) {
-    throw cliError('archive manifest is invalid', 'cli_export_archive_invalid');
-  }
-  let manifest;
-  try { manifest = JSON.parse(manifestRecord.data); }
-  catch { throw cliError('archive manifest is invalid', 'cli_export_archive_invalid'); }
-  if (canonicalJson(manifest) !== manifestRecord.data.toString('utf8')
-    || manifest.schemaVersion !== 1 || manifest.format !== 'directory-v1'
-    || manifest.exportId !== descriptor.exportId || !Array.isArray(manifest.files)
-    || manifest.fileCount !== manifest.files.length) {
-    throw cliError('archive manifest is invalid', 'cli_export_archive_invalid');
-  }
-  const expected = new Map([['manifest.json', { mode: 0o600, size: manifestRecord.data.length, digest: descriptor.manifestDigest }]]);
-  for (const file of manifest.files) {
-    if (!record(file) || Object.keys(file).sort().join(',') !== ['blob', 'digest', 'mode', 'path', 'size'].join(',')
-      || !['100644', '100755'].includes(file.mode) || !Number.isSafeInteger(file.size) || file.size < 0
-      || !/^[a-f0-9]{64}$/u.test(file.digest ?? '')) throw cliError('archive manifest file is invalid', 'cli_export_archive_invalid');
-    const path = `tree/${safeArchivePath(file.path)}`;
-    if (expected.has(path)) throw cliError('archive manifest paths collide', 'cli_export_archive_invalid');
-    expected.set(path, { mode: file.mode === '100755' ? 0o755 : 0o644, size: file.size, digest: file.digest });
-  }
-  if (records.length !== expected.size) throw cliError('archive inventory differs from its manifest', 'cli_export_archive_invalid');
-  for (const record of records) {
-    const wanted = expected.get(record.path);
-    if (!wanted || record.mode !== wanted.mode || record.size !== wanted.size || sha256(record.data) !== wanted.digest) {
-      throw cliError('archive record differs from its manifest', 'cli_export_archive_invalid');
-    }
-  }
-  return { manifest, files: records.filter((record) => record.path.startsWith('tree/')) };
-}
-
-function clientChild(root, path) {
-  const candidate = resolve(root, path);
-  const within = relative(root, candidate);
-  if (!within || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) {
-    throw cliError('archive path escapes client destination', 'cli_export_archive_invalid');
-  }
-  return candidate;
-}
-
-function ensureClientDirectories(root, path) {
-  const within = relative(root, path);
-  if (!within) return;
-  let current = root;
-  for (const component of within.split(sep)) {
-    current = join(current, component);
-    if (!existsSync(current)) mkdirSync(current, { mode: 0o700 });
-    const stat = lstatSync(current);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw cliError('client destination directory is unsafe', 'cli_export_archive_invalid');
-  }
-}
-
-function writeClientFile(path, bytes, mode) {
-  const fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), mode);
-  try { fchmodSync(fd, mode); writeFileSync(fd, bytes); fsyncSync(fd); }
-  finally { closeSync(fd); }
-}
-
-export function extractResultExportArchive({ archiveBytes, descriptor, destination }) {
-  if (!Buffer.isBuffer(archiveBytes) || !nonempty(destination) || destination.includes('\0')) {
-    throw cliError('archive extraction request is invalid', 'cli_export_archive_invalid');
-  }
-  const extracted = preflightResultExportArchive(archiveBytes, descriptor);
-  const final = resolve(destination);
-  if (existsSync(final)) throw cliError('export destination already exists', 'cli_export_destination_exists');
-  const parent = dirname(final);
-  let parentReal;
-  try { parentReal = realpathSync(parent); } catch { throw cliError('export destination parent is unavailable', 'cli_export_destination_invalid'); }
-  const parentStat = lstatSync(parentReal);
-  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw cliError('export destination parent is unsafe', 'cli_export_destination_invalid');
-  const temporary = mkdtempSync(join(parentReal, `.baton-export-${basename(final)}-`));
-  try {
-    for (const file of extracted.files) {
-      const relativePath = file.path.slice('tree/'.length);
-      const target = clientChild(temporary, relativePath);
-      ensureClientDirectories(temporary, dirname(target));
-      writeClientFile(target, file.data, file.mode);
-    }
-    try { publishResultExportNoReplace({ root: parentReal, temporary, final }); }
-    catch (cause) {
-      if (cause?.code === 'EEXIST') throw cliError('export destination already exists', 'cli_export_destination_exists');
-      throw cause;
-    }
-    return Object.freeze({
-      schemaVersion: 1, state: 'delivered', exportId: descriptor.exportId, destination: final,
-    });
-  } catch (cause) {
-    if (existsSync(temporary)) rmSync(temporary, { recursive: true, force: true });
-    if (cause?.code?.startsWith?.('cli_')) throw cause;
-    throw Object.assign(cliError('export extraction failed', 'cli_export_extract_failed'), { cause });
-  }
 }
 
 // docs/36 §6.1 / §9 M4 (CLI renderer) — the canonical CLI verb model is DERIVED from the registry
@@ -4463,7 +4258,7 @@ export function parseBatonCli(rawArgs) {
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'resultpin',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
-    'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+    'retry', 'resume', 'review', 'integrate', 'debug']);
   // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
   // start/follow spellings, and the canonical alias first-tokens. Composed by spread — never a
   // hand-enumerated literal — so it tracks the dispatch set it guards.
@@ -4794,12 +4589,6 @@ export function parseBatonCli(rawArgs) {
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     if (!['ff-only', 'structured'].includes(strategy)) throw cliError('integration strategy must be ff-only or structured');
     return { kind: 'integrate', runId, strategy, reason, idempotencyKey };
-  }
-  if (action === 'export') {
-    const destination = args.shift();
-    if (!nonempty(destination) || destination.includes('\0')) throw cliError('export destination is required');
-    noRemainder(args);
-    return { kind: 'export', runId, destination, idempotencyKey };
   }
   throw cliError(`unknown run action ${action ?? ''}`);
 }
@@ -5303,54 +5092,6 @@ export class BatonWebClient {
       }, this.pollMs);
       signal.addEventListener('abort', abort, { once: true });
     });
-  }
-
-  async downloadExport({ runId, receipt, destination }) {
-    if (!id(runId, 'Run ID') || !record(receipt) || receipt.state !== 'completed'
-      || !/^[a-f0-9]{64}$/u.test(receipt.exportId ?? '')
-      || !/^[a-f0-9]{64}$/u.test(receipt.manifestDigest ?? '')
-      || !nonempty(destination) || destination.includes('\0')) {
-      throw cliError('export delivery request is invalid', 'cli_export_delivery_invalid');
-    }
-    const issued = await this._json('/v1/export-downloads', {
-      method: 'POST', headers: this._headers(true), body: JSON.stringify({
-        repoId: this.repoId, runId, exportId: receipt.exportId,
-      }),
-    });
-    const descriptor = issued?.delivery;
-    if (!nonempty(issued?.ticket) || descriptor?.exportId !== receipt.exportId
-      || descriptor?.manifestDigest !== receipt.manifestDigest) {
-      throw cliError('Baton Web returned an invalid export ticket', 'cli_protocol_failed');
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    let response;
-    let archiveBytes;
-    try {
-      response = await this.fetch(`${this.baseUrl}/v1/exports/${receipt.exportId}/archive`, {
-        method: 'GET', cache: 'no-store', redirect: 'error', signal: controller.signal, headers: {
-          ...this._headers(), 'x-baton-export-ticket': issued.ticket,
-        },
-      });
-      if (!response.ok) throw cliError('Baton export download was refused', 'cli_export_download_failed');
-      const expectedContentDigest = `sha-256=:${Buffer.from(descriptor.archiveDigest ?? '', 'hex').toString('base64')}:`;
-      if (response.headers.get('content-type') !== descriptor.mediaType
-        || response.headers.get('content-length') !== String(descriptor.archiveBytes)
-        || response.headers.get('content-digest') !== expectedContentDigest
-        || response.headers.get('cache-control') !== 'no-store') {
-        throw cliError('Baton export response headers differ from the ticket', 'cli_protocol_failed');
-      }
-      archiveBytes = Buffer.from(await response.arrayBuffer());
-      if (archiveBytes.length !== descriptor.archiveBytes) {
-        throw cliError('Baton export response length differs from the ticket', 'cli_protocol_failed');
-      }
-    } catch (error) {
-      if (error?.code?.startsWith('cli_')) throw error;
-      // #160 R6: same transport-class + next-action naming on the export-download leg.
-      throw cliError('Baton export download failed; check your network and retry', 'cli_transport_failed');
-    } finally { clearTimeout(timeout); }
-    const delivered = extractResultExportArchive({ archiveBytes, descriptor, destination });
-    return Object.freeze({ ...delivered, runId });
   }
 }
 
@@ -5880,19 +5621,6 @@ export async function runBatonCli(parsed, client, options = {}) {
       runId: parsed.runId, evidenceDigest: evidence.manifestDigest,
       strategy: parsed.strategy, reason: parsed.reason,
     }, `${parsed.idempotencyKey}:integrate`);
-  }
-  if (parsed.kind === 'export') {
-    const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);
-    if (!evidence?.manifestDigest) throw cliError('Run has no terminal evidence available for export', 'application_run_not_terminal');
-    const view = await client.command('run.export', {
-      runId: parsed.runId, evidenceDigest: evidence.manifestDigest,
-    }, `${parsed.idempotencyKey}:export`);
-    if (!view?.export || view.export.state !== 'completed') {
-      throw cliError('Run export did not produce a completed receipt', 'application_export_incomplete');
-    }
-    return client.downloadExport({
-      runId: parsed.runId, receipt: view.export, destination: parsed.destination,
-    });
   }
   throw cliError('unsupported CLI operation');
 }

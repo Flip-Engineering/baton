@@ -361,7 +361,6 @@ baton run review RUN_ID --exact glm/glm-5.2@xhigh \
 baton run integrate RUN_ID --strategy ff-only \
   --reason 'Integrate the adopted independently reviewed result.'
 baton run stop RUN_ID --reason 'Operator cancelled this Run.'
-baton run export RUN_ID DIR
 baton run do RUN_ID ACTION_ID --inputs '{"key":"value"}'
 baton help run
 baton credentials install kimi

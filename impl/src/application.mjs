@@ -26,9 +26,6 @@ import {
 import {
   LEGACY_WORKFLOW_POLICY, normalizeWorkflowPolicy,
 } from './workflow-policy.mjs';
-import {
-  identifyResultExportRoot, ResultExportLifecycle,
-} from './result-export.mjs';
 import * as harvestAccessor from './harvest-accessor.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
@@ -139,7 +136,6 @@ import {
   projectedCleanupState,
   refs,
   requestedPlanNodeRoute,
-  resultExportArchiveCeiling,
   resultIntentConstraint,
   resultIntentFromConstraints,
   runActivity,
@@ -293,7 +289,6 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.recover': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   // S-1 v2: portable atomic attach-and-harvest. Observe-class; no emergency_stop; returns a
   // closed {outcomes, waveDriverDetached} payload (no live handle over MCP/web/CLI).
@@ -1386,9 +1381,6 @@ export function validateApplicationCommandArgs(name, args) {
   if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
-  if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
-    throw applicationError('Run export target is invalid', 'application_export_invalid');
-  }
   if (name === 'run.recover' && !validId(args.runId)) {
     throw applicationError('Run recovery target is invalid', 'application_recovery_invalid');
   }
@@ -1675,7 +1667,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -1749,43 +1741,6 @@ export class BatonApplication {
       && typeof this.driver.coordination.recordDriver === 'function';
     if (this._profileRegistrySupported) this._loadProfileRegistry();
     this.defaults = applicationDefaults(options.defaults, this.profiles);
-    this.exportDeliveryChunkBytes = options.exportDeliveryChunkBytes ?? 64 * 1_024;
-    if (!Number.isSafeInteger(this.exportDeliveryChunkBytes) || this.exportDeliveryChunkBytes <= 0) {
-      throw applicationError('application export delivery chunk ceiling is invalid', 'application_config_invalid');
-    }
-    const exportEnabled = [...this.profiles.values()].some((profile) => profile.exportPolicy.mode === 'manual');
-    if (exportEnabled) {
-      if (typeof this.driver.coordinator.materializeAcceptedResult !== 'function') {
-        throw applicationError('application driver lacks result-export authority', 'application_config_invalid');
-      }
-      for (const method of ['runResultExport', 'pendingRunResultExports', 'admitRunResultExport', 'completeRunResultExport']) {
-        if (typeof this.driver.coordination[method] !== 'function') {
-          throw applicationError(`application driver lacks ${method} authority`, 'application_config_invalid');
-        }
-      }
-      try {
-        const root = identifyResultExportRoot(options.exportRoot);
-        this.exportRoot = root.root;
-        this.exportRootDigest = root.identityDigest;
-      }
-      catch (cause) {
-        throw Object.assign(applicationError('application result-export root is invalid', 'application_export_root_invalid'), { cause });
-      }
-    } else {
-      if (options.exportRoot !== undefined) {
-        try {
-          const root = identifyResultExportRoot(options.exportRoot);
-          this.exportRoot = root.root;
-          this.exportRootDigest = root.identityDigest;
-        }
-        catch (cause) {
-          throw Object.assign(applicationError('application result-export root is invalid', 'application_export_root_invalid'), { cause });
-        }
-      } else {
-        this.exportRoot = null;
-        this.exportRootDigest = null;
-      }
-    }
     if (typeof this.driver.coordinator.routeCards !== 'function') {
       throw applicationError('application driver lacks route-card projection', 'application_config_invalid');
     }
@@ -1798,19 +1753,16 @@ export class BatonApplication {
         }
       }
     }
-    this.resultExportLifecycle = this.exportRoot ? new ResultExportLifecycle(this.exportRoot) : null;
     this._closed = null;
     this._closing = null;
     this._detached = false;
     this._runStopPromises = new Map();
     this._workflowMemberStopPromises = new Map();
     this._runAdoptionPromises = new Map();
-    this._runExportPromises = new Map();
     this._runRetryPromises = new Map();
     this._runRetryControllers = new Map();
     this._contextControllers = new Map();
     this._runEffectChains = new Map();
-    this._runDeliveryRegistrations = new Map();
     this._semanticReviewPromises = new Map();
     // Deliberate shared checkouts, per recruited Run: the swarm resolved a participant's LIVE
     // attachment before admission, and the dispatch of that Run's single work node adopts the
@@ -1823,15 +1775,10 @@ export class BatonApplication {
       .then(() => this._reconcileRunStops())
       .then(() => this._reconcileRunControls())
       .then(() => this._reconcileWorkflowMemberStops())
-      .then(() => this._reconcileResultExportLifecycle())
       .then(() => this._reconcileResultAdoptions())
       .then(() => this._reconcileRunVerificationRetries())
-      .then(() => this._reconcileResultExports()).then(() => this._reconcileApprovedRuns())
-      .then(() => this._reconcileSemanticReviews())
-      .catch(async (cause) => {
-        try { await this.resultExportLifecycle?.close(); } catch { /* readiness cause remains authoritative */ }
-        throw cause;
-      });
+      .then(() => this._reconcileApprovedRuns())
+      .then(() => this._reconcileSemanticReviews());
   }
 
   _loadProfileRegistry() {
@@ -3005,10 +2952,6 @@ export class BatonApplication {
       });
       return true;
     }
-    if (name === 'run.export') {
-      await this._authorize(name, principal, args.runId, { evidenceDigest: args.evidenceDigest });
-      return true;
-    }
     if (name === 'run.recover') {
       await this._authorize(name, principal, args.runId, {});
       return true;
@@ -3137,71 +3080,6 @@ export class BatonApplication {
       catch (error) { failures.push({ runId: adoption.runId, nodeKey: adoption.nodeKey, code: error?.code ?? 'application_adoption_incomplete' }); }
     }
     return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedAdoptions: pending.length, failures });
-  }
-
-  _reconcileResultExportLifecycle() {
-    if (!this.exportRoot) return deepFreeze({ removed: [], quarantined: [] });
-    const exports = (this.driver.coordination.snapshot().runResultExports ?? []).map((state) => ({
-      exportId: state.exportId, status: state.status, stagingNonce: state.stagingNonce,
-      ...(state.status === 'completed' ? { receipt: state.receipt } : {}),
-    }));
-    try { return this.resultExportLifecycle.reconcile(exports); }
-    catch (cause) {
-      throw Object.assign(applicationError('Run export staging reconciliation failed', 'application_export_reconciliation_failed'), { cause });
-    }
-  }
-
-  _completedResultExport(coordinates) {
-    return applicationObservation._completedResultExport(this, coordinates);
-  }
-
-  async authorizeResultExportDelivery(coordinates, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const principal = normalizePrincipal(rawPrincipal, 'export delivery principal');
-    const completed = this._completedResultExport(coordinates);
-    if (!completed) return false;
-    await this._authorize('run.export', principal, coordinates.runId, {
-      exportId: coordinates.exportId, operation: 'download',
-    });
-    return this._completedResultExport(coordinates) !== null;
-  }
-
-  resolveCompletedResultExport(coordinates) {
-    return this._completedResultExport(coordinates)?.receipt ?? null;
-  }
-
-  openResultExportArchive(coordinates) {
-    return applicationObservation.openResultExportArchive(this, coordinates);
-  }
-
-  registerResultExportDelivery({ runId, exportId, signal, abort }) {
-    return applicationObservation.registerResultExportDelivery(this, { runId, exportId, signal, abort });
-  }
-
-  async _abortResultExportDeliveries(runId = null) {
-    const registrations = runId === null
-      ? [...this._runDeliveryRegistrations.values()].flatMap((set) => [...set])
-      : [...(this._runDeliveryRegistrations.get(runId) ?? [])];
-    for (const registration of registrations) {
-      try { registration.abort(); } catch { registration.release(); }
-    }
-    await Promise.all(registrations.map((registration) => registration.closed));
-  }
-
-  _performResultExport(state) {
-    return applicationObservation._performResultExport(this, state);
-  }
-
-  async _reconcileResultExports() {
-    if (!this.exportRoot) return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedExports: 0, failures: [] });
-    const pending = this.driver.coordination.pendingRunResultExports(MAX_RUN_RECORDS);
-    const failures = [];
-    for (const state of pending) {
-      try { await this._withRunEffect(state.runId, () => this._performResultExport(state)); }
-      catch (error) { failures.push({ runId: state.runId, nodeKey: state.nodeKey, code: error?.code ?? 'application_export_incomplete' }); }
-    }
-    return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedExports: pending.length, failures });
   }
 
   _semanticTarget(current, view) {
@@ -4798,96 +4676,6 @@ export class BatonApplication {
     });
   }
 
-  async export(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    validateApplicationCommandArgs('run.export', rawRequest);
-    const request = deepFreeze(clone(rawRequest));
-    const principal = normalizePrincipal(rawPrincipal, 'export principal');
-    return this._withRunEffect(request.runId, () => this._export(request, principal));
-  }
-
-  async _export(request, principal) {
-    await this._authorize('run.export', principal, request.runId, { evidenceDigest: request.evidenceDigest });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    const policy = current.profile.exportPolicy;
-    if (policy.mode !== 'manual' || !this.exportRoot) {
-      throw applicationError('Run profile does not permit result export', 'application_export_forbidden');
-    }
-    const before = await this._buildView(current, this.principals.observer);
-    if (policy.requireAdoptedResult && before.result?.state !== 'adopted') {
-      throw applicationError('Run export requires explicit result adoption', 'application_result_adoption_required');
-    }
-    if (policy.requireSemanticReview && before.semanticReview?.state !== 'semantic_reviewed') {
-      throw applicationError('Run export requires a successful independent semantic review', 'application_semantic_review_required');
-    }
-    if (policy.requireIntegration && before.integration?.state !== 'integrated') {
-      throw applicationError('Run export requires an integrated result', 'application_integration_required');
-    }
-    const evidence = await this._buildEvidence(current);
-    if (evidence.manifestDigest !== request.evidenceDigest
-      || !evidence.result?.sha || evidence.result.sha !== before.result?.sha
-      || evidence.result.nodeKey !== current.plan?.nodes[0]?.key) {
-      throw applicationError('Run export target differs from the displayed evidence', 'application_evidence_stale');
-    }
-    const taskId = evidence.node?.taskId;
-    const task = validText(taskId, 4_096) ? this.driver.coordination.task(taskId) : null;
-    if (!task?.assignee) throw applicationError('Run export worker authority is unavailable', 'application_export_unavailable');
-    const exportIdentity = {
-      repoId: this.repoId,
-      runId: request.runId,
-      nodeKey: evidence.result.nodeKey,
-      taskId,
-      resultSha: evidence.result.sha,
-      evidenceDigest: request.evidenceDigest,
-      profileDigest: current.profile.digest,
-      exportPolicyDigest: digest(policy),
-      exportRootDigest: this.exportRootDigest,
-      adoptionReceiptDigest: evidence.result.adoption?.receiptDigest ?? null,
-      semanticReviewTaskId: evidence.semanticReview?.taskId ?? null,
-      semanticReviewReceiptDigest: evidence.semanticReview?.receiptDigest ?? null,
-      integrationAfterSha: evidence.integration?.afterSha ?? null,
-      format: policy.format,
-      maxFiles: policy.maxFiles,
-      maxBytes: policy.maxBytes,
-    };
-    exportIdentity.stagingNonce = uuidFromDigest(digest({
-      schemaVersion: 1, purpose: 'result_export_stage', exportIdentity,
-    }));
-    const exportId = digest(exportIdentity);
-    let admitted;
-    try {
-      admitted = this.driver.coordination.admitRunResultExport({
-        schemaVersion: 1,
-        ...clone(exportIdentity),
-        exportId,
-        requestDigest: exportId,
-      }, { actor: principal.actor, key: `run.result_export:${request.runId}:${evidence.result.nodeKey}` });
-    } catch (cause) {
-      const codes = {
-        run_result_export_conflict: 'application_export_conflict',
-        run_result_export_invalid: 'application_export_invalid',
-        run_result_export_unavailable: 'application_export_unavailable',
-        run_stopping: 'application_run_stopping',
-      };
-      throw Object.assign(applicationError('Run result export admission failed', codes[cause?.code] ?? 'application_export_incomplete'), { cause });
-    }
-    const receipt = await this._performResultExport(admitted.export);
-    const delivery = this.resultExportLifecycle.deriveArchive({
-      receipt,
-      maxArchiveBytes: resultExportArchiveCeiling(policy),
-    }).descriptor;
-    const view = await this._buildView(current, this.principals.observer, {
-      action: { command: 'run.export', result: admitted.result === 'replay' ? 'replayed' : 'completed', exportId },
-    });
-    const response = deepFreeze({ ...clone(view), export: receipt, delivery });
-    if (Buffer.byteLength(JSON.stringify(response)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run export response exceeds its deployment byte ceiling', 'application_export_oversize');
-    }
-    return response;
-  }
-
   _finalizeRunView(current, view, options = {}) {
     return applicationObservation._finalizeRunView(this, current, view, options);
   }
@@ -5762,37 +5550,10 @@ export class BatonApplication {
       afterSha: result.integration.afterSha,
       stability: result.integration.stability ?? resultStability,
     }) : null;
-    const durableExport = this.driver.coordination.runResultExport?.(runId, node.key) ?? null;
-    const exportResult = durableExport?.status === 'completed' ? clone(durableExport.receipt)
-      : durableExport?.status === 'pending' ? {
-        schemaVersion: 1,
-        state: 'pending',
-        format: durableExport.format,
-        runId: durableExport.runId,
-        nodeKey: durableExport.nodeKey,
-        resultSha: durableExport.resultSha,
-        evidenceDigest: durableExport.evidenceDigest,
-        exportId: durableExport.exportId,
-        locator: durableExport.locator,
-        admittedAt: durableExport.admittedAt,
-      } : durableExport?.status === 'cancelled' ? {
-        schemaVersion: 1,
-        state: 'cancelled',
-        format: durableExport.format,
-        runId: durableExport.runId,
-        nodeKey: durableExport.nodeKey,
-        resultSha: durableExport.resultSha,
-        exportId: durableExport.exportId,
-        cancellation: {
-          kind: durableExport.cancellation?.kind ?? 'run_stop',
-          cancellationDigest: durableExport.cancellation?.cancellationDigest ?? null,
-        },
-        cancelledAt: durableExport.cancelledAt ?? null,
-      } : null;
     if (!runStop && node.state === 'accepted' && cellTerminalPhase === null) {
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
-      else if ((integration || durableExport?.status === 'completed')
+      else if (integration
         && (current.profile.reviewPolicy.mode === 'none' || semanticReview.state === 'semantic_reviewed')) phase = 'completed';
       else phase = 'work_completed';
     }
@@ -5813,15 +5574,6 @@ export class BatonApplication {
         || semanticReview.state === 'semantic_reviewed')
       && (!current.profile.integrationPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
       && !integration;
-    const canExport = !readOnlyResult && current.profile.exportPolicy.mode === 'manual' && this.exportRoot !== null
-      && resultSha !== null && durableExport === null
-      && (!current.profile.exportPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
-      && (!current.profile.exportPolicy.requireSemanticReview || semanticReview.state === 'semantic_reviewed')
-      && (!current.profile.exportPolicy.requireIntegration || integration?.state === 'integrated');
-    const exportActions = durableExport?.status === 'completed' && !runStop
-      ? [{ kind: 'download_export', exportId: durableExport.exportId }]
-      : durableExport?.status === 'pending' ? [{ kind: 'wait' }, { kind: 'status' }]
-        : canExport ? [{ kind: 'export_result' }] : [];
     const nextActions = phase === 'stopping' ? [{ kind: 'wait' }, { kind: 'status' }]
       : phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
@@ -5832,7 +5584,6 @@ export class BatonApplication {
           : phase === 'work_completed' ? [
             ...(canReview ? [{ kind: 'semantic_review', routes: clone(current.profile.reviewPolicy.routes) }] : []),
             ...(canIntegrate ? [{ kind: 'integrate', strategies: clone(current.profile.integrationPolicy.strategies) }] : []),
-            ...exportActions,
             { kind: 'evidence' },
             ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : []),
           ]
@@ -5840,7 +5591,6 @@ export class BatonApplication {
               ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
               ...(resumeProjection?.available ? [{ kind: 'resume_work' }] : []),
               { kind: 'evidence' },
-              ...exportActions,
               ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
               : [{ kind: 'status' }];
     const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase)
@@ -5856,7 +5606,7 @@ export class BatonApplication {
         stability: resultStability,
         failureOwnership: result?.verdict?.failureOwnership ?? null,
       }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
-      result: publicResult, integration, exportResult, resourcesSettled, stop: runStop ? {
+      result: publicResult, integration, resourcesSettled, stop: runStop ? {
         state: runStop.status, receipt: runStop.receipt,
       } : null,
     }), activity: runActivity(this.driver, workers) };
@@ -5922,7 +5672,6 @@ export class BatonApplication {
       activity: this._activityProjection(current, workers),
       result: publicResult,
       integration,
-      export: exportResult,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
       execution: {
@@ -8525,10 +8274,6 @@ export class BatonApplication {
         strategy: request.inputs.strategy,
         reason: request.inputs.reason,
       }, principal);
-    } else if (action.kind === 'export_result') {
-      const evidence = await this._buildEvidence(current);
-      await this._recheckSemanticAction(current, semanticAuthority, principal);
-      await this.export({ runId: request.runId, evidenceDigest: evidence.manifestDigest }, principal);
     } else if (action.kind === 'stop') {
       normalizeStop({ runId: request.runId, reason: request.inputs.reason });
       await this.stop(request.runId, request.inputs.reason, principal);
@@ -8620,12 +8365,6 @@ export class BatonApplication {
         },
         integrationPolicy: clone(profile.integrationPolicy),
         followPolicy: { mode: profile.followPolicy.mode },
-        exportPolicy: {
-          mode: profile.exportPolicy.mode, format: profile.exportPolicy.format,
-          requireAdoptedResult: profile.exportPolicy.requireAdoptedResult,
-          requireSemanticReview: profile.exportPolicy.requireSemanticReview,
-          requireIntegration: profile.exportPolicy.requireIntegration,
-        },
         recoveryPolicy: {
           mode: profile.recoveryPolicy.mode,
           eligibleSessionModes: clone(profile.recoveryPolicy.eligibleSessionModes),
@@ -8873,9 +8612,6 @@ export class BatonApplication {
     }
     if (name === 'run.integrate') {
       return this.integrate(args, principal);
-    }
-    if (name === 'run.export') {
-      return this.export(args, principal);
     }
     if (name === 'run.recover') {
       return this.recover(args.runId, principal);
@@ -9645,13 +9381,9 @@ export class BatonApplication {
     if (this._detached) return deepFreeze({ schemaVersion: 1, state: 'detached' });
     await this.ready;
     for (const controller of this._followControllers) controller.abort();
-    if (this._runDeliveryRegistrations.size > 0) {
-      throw applicationError('application has active result deliveries; use deployment shutdown', 'application_detach_active');
-    }
     if (this.driver.coordinator.list().length !== 0 || this._contextControllers.size !== 0) {
       throw applicationError('application has admitted workers; use deployment shutdown for exact fleet drain', 'application_detach_active');
     }
-    await this.resultExportLifecycle?.close();
     await this._swarmService?.close();
     await this._swarmNativeAccess?.close();
     await this.driver.closeAsync();
@@ -9689,8 +9421,6 @@ export class BatonApplication {
       for (const operation of controllers) operation.controller.abort();
     }
     await Promise.allSettled([...(this._runEffectChains?.values() ?? [])]);
-    await this._abortResultExportDeliveries();
-    await this.resultExportLifecycle?.close();
     const receipt = await this.driver.drainAndClose(principal.actor);
     const closed = deepFreeze({
       schemaVersion: 1,

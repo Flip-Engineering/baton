@@ -31,7 +31,6 @@ import { CodexAppServerCli } from './codex-appserver.mjs';
 import { aaCredentialPath, designArenaCredentialPath, operatorHome } from './adapter.mjs';
 import { createRecipes } from './recipes.mjs';
 import { SUITE_COMPARISON } from './suite-comparison.mjs';
-import { ResultExportLifecycle } from './result-export.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
 } from './context-runtime.mjs';
@@ -1108,20 +1107,6 @@ function dependencyProjection(repoRoot, repoId) {
   }
 }
 
-function trackedTreeBounds(repoRoot, treeish) {
-  const rows = git(['ls-tree', '-r', '-l', '-z', treeish], repoRoot).toString('utf8').split('\0').filter(Boolean);
-  let bytes = 0;
-  for (const row of rows) {
-    const match = /^\d+ (?:blob|commit) [a-f0-9]+\s+(\d+|-)\t/u.exec(row);
-    if (!match) throw deploymentError('repository tree inventory is invalid');
-    if (match[1] !== '-') bytes += Number(match[1]);
-  }
-  return Object.freeze({
-    maxFiles: Math.max(256, Math.ceil(rows.length * 1.5) + 64),
-    maxBytes: Math.max(64 * 1024 * 1024, Math.ceil(bytes * 2) + (64 * 1024 * 1024)),
-  });
-}
-
 function defaultCredentialProjection(repoRoot, {
   projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
   museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
@@ -1830,7 +1815,7 @@ function goalPlanPolicy(repoId) {
   });
 }
 
-function applicationProfile(repoId, routes, verification, exportBounds) {
+function applicationProfile(repoId, routes, verification) {
   return Object.freeze({
     schemaVersion: 2,
     repoId,
@@ -1871,11 +1856,6 @@ function applicationProfile(repoId, routes, verification, exportBounds) {
       // (application.mjs normalizeFollowPolicy), so the shipped default reads the row.
       mode: 'enabled', maxWaitMs: 30_000, maxChanges: 128,
       maxResponseBytes: FRAME_LIMITS['view.run.bytes'].value, maxScanEvents: 1024,
-    },
-    exportPolicy: {
-      mode: 'manual', format: 'directory-v1',
-      maxFiles: exportBounds.maxFiles, maxBytes: exportBounds.maxBytes,
-      requireAdoptedResult: true, requireSemanticReview: false, requireIntegration: true,
     },
   });
 }
@@ -3168,7 +3148,7 @@ async function openResidentAuthorityForHandoff({ create, handoff }) {
  * this list and a renewal that has to issue instead of rotate (`#renewOwnerSession`) issues the
  * same one, so a renewed owner carries exactly the powers the open gave it. */
 const OWNER_SESSION_CAPABILITIES = Object.freeze([
-  'observe', 'control', 'approve', 'emergency_stop', 'export_result',
+  'observe', 'control', 'approve', 'emergency_stop',
   'retry_verification',
   'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
 ]);
@@ -5012,13 +4992,6 @@ class BatonDeployment {
     if (drainFailure !== null) {
       return Object.freeze({ published: false, stage: 'fleet_drain', cause: drainFailure, drained });
     }
-    // 2. The result export root is a LEASE this incarnation's application holds until its own
-    //    shutdown releases it, and the successor's open constructs an application over the same
-    //    deployment — so it is released here, by the same lifecycle close the application's
-    //    shutdown performs, BEFORE the successor can reach its own construction. A handoff that
-    //    then fails re-takes it (`ResultExportLifecycle` over the application's own root, the same
-    //    construction the application performs).
-    handoff.applicationReleased = await this.#releaseResultExportRoot();
     // 3. The writer authority moves. The successor's open waits on exactly this release, and the
     //    release mints this incarnation's `host.stopped` through the armed outcome — the row the
     //    ordinary stop's release mints, because it is the same act.
@@ -5058,30 +5031,6 @@ class BatonDeployment {
       cause: settled.cause ?? opened.cause ?? null,
       drained,
     });
-  }
-
-  /** #306r: release the result export root the successor's own open cannot proceed without — the
-   * SAME lifecycle close the application's shutdown performs, run by the handoff because the
-   * successor opens before this incarnation's shutdown would reach it. Returns whether a lifecycle
-   * was held (false for a deployment that exports nothing). */
-  async #releaseResultExportRoot() {
-    const lifecycle = this.#application?.resultExportLifecycle ?? null;
-    if (lifecycle === null) return false;
-    try { await lifecycle.close(); } catch { /* a lifecycle already closed is the state we want */ }
-    return true;
-  }
-
-  /** #306r: re-take the result export root a failed handoff had released — the SAME construction
-   * the application performs over its own export root (`ResultExportLifecycle`), because the lease
-   * is exactly that object's. Absence (no export root, or a lease another process now holds) is
-   * reported, never invented: the failure row's `authority.resultExport` says which. */
-  #retakeResultExportRoot() {
-    const application = this.#application ?? null;
-    if (application === null || application.exportRoot === null || application.exportRoot === undefined) return false;
-    try {
-      application.resultExportLifecycle = new ResultExportLifecycle(application.exportRoot);
-      return true;
-    } catch { return false; }
   }
 
   /** #306r: the fleet drain the handoff runs while it still holds the writer authority. `failure` is
@@ -5285,7 +5234,6 @@ class BatonDeployment {
     const reclaimed = handoff.writerReleased === true ? this.#reclaimWriterAuthority() : null;
     const writerLease = handoff.writerReleased !== true ? 'held'
       : (reclaimed === true ? 'reclaimed' : 'unavailable');
-    const resultExport = handoff.applicationReleased === true ? this.#retakeResultExportRoot() : null;
     const at = this.#clock();
     this.#reincarnationRecord('host.reincarnation_failed', {
       step: 'publication_handoff',
@@ -5294,16 +5242,9 @@ class BatonDeployment {
         pid: handoff.successor.pid, incarnation: handoff.successor.incarnation,
       }),
       cause: outcome.cause,
-      // What the window had already handed over when the successor failed, and what this
-      // incarnation took back: the writer authority (per the derivation above) and the result
-      // export root are re-taken here — both are leases this incarnation's own open path can claim
-      // again — while the resident and publication leases move only after the successor's own open,
-      // so a failure before that point leaves them held. `publication: 'intact'` is the point of the
-      // whole arm — nothing withdrew it.
+      // The failure records each lease held or reclaimed by this incarnation.
       authority: Object.freeze({
         writerLease,
-        resultExport: resultExport === null ? 'held'
-          : (resultExport === true ? 'reclaimed' : 'unavailable'),
         residentLease: handoff.authorityReleased === true ? 'released' : 'held',
         publicationLease: handoff.authorityReleased === true ? 'released' : 'held',
         publication: 'intact',
@@ -5751,7 +5692,7 @@ class BatonDeployment {
           // The application's authority went over with the writer lease, so its shutdown cannot
           // complete the driver's leg — the exact writer release is the successor's now. Its OWN
           // obligations are still this incarnation's to release before the successor opens (the
-          // export-root lease the successor's own open needs, the swarm services, the follow
+          // swarm services and follow
           // controllers), exactly as the ordinary stop releases them; the ONE refusal that is
           // expected here is named, never swallowed blindly.
           try { await this.#application.shutdown(this.#principal); }
@@ -6063,7 +6004,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     ?? join(repository.common, 'baton', 'application-v3'));
   const stateRoot = privateDirectory(join(deploymentRoot, 'state'));
   const runtimeRoot = privateDirectory(join(deploymentRoot, 'runtime'));
-  const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
   const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
   // #328: root-side credential materialisations live OUTSIDE runtimeRoot, whose owner
   // (the worker RuntimeIsolation) reconciles away every entry that is not a live worker.
@@ -6538,13 +6478,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       repoId: repository.repoId,
       deploymentId,
       profiles: {
-        default: applicationProfile(
-          repository.repoId, routes, verification,
-          trackedTreeBounds(repository.root, snapshot.sha),
-        ),
+        default: applicationProfile(repository.repoId, routes, verification),
       },
       defaults: { profile: 'default', route: publicRoutes.length === 1 ? publicRoutes[0] : null },
-      exportRoot: evidenceRoot,
       principals: { planner: service('planner'), dispatcher: service('dispatcher'), observer: service('observer') },
       context: {
         principal: service('context'),

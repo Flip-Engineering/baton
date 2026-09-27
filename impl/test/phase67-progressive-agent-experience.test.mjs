@@ -59,10 +59,6 @@ const profile = Object.freeze({
   capabilities: ['code', 'test'],
   effects: ['repository_edit'],
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
-  exportPolicy: {
-    mode: 'manual', format: 'directory-v1', maxFiles: 128, maxBytes: 4 * 1024 * 1024,
-    requireAdoptedResult: true, requireSemanticReview: false, requireIntegration: false,
-  },
   followPolicy: {
     mode: 'enabled', maxWaitMs: 2_000, maxChanges: 16,
     maxResponseBytes: 64 * 1024, maxScanEvents: 128,
@@ -121,7 +117,6 @@ function fixture(name, { delayMs = 5_000, files = {}, scenario = {}, budgetPolic
     principals: {
       planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer'),
     },
-    exportRoot: root(`${name}-exports`),
     authorize: async ({ command, principal: caller }) => command === 'application.shutdown'
       || (authorization.active && caller.principalId !== 'revoked'),
   });
@@ -600,25 +595,10 @@ test('AX5: result adoption and export are application-owned action cascades with
     actionId: adopt.actionId,
     inputs: { reason: 'Adopt the exact mechanically verified recursive result.' },
   }, principal('owner'));
-  const exportResult = outline.outline.actions.find((action) => action.kind === 'export_result');
-  assert.ok(exportResult);
-  assert.deepEqual(Object.keys(exportResult.inputSchema.properties), []);
-  assert.deepEqual([...exportResult.serverDerived].sort(), ['evidenceDigest', 'exportId', 'nodeKey', 'resultSha']);
-
-  outline = await f.application.command('run.act', {
-    runId, actionId: exportResult.actionId, inputs: {},
-  }, principal('owner'));
-  assert.equal(outline.outline.phase, 'completed');
-  assert.equal(outline.terminal, true);
   const result = await f.application.command('run.inspect', {
     runId, depth: 'section', section: 'result',
   }, principal('owner'));
-  const delivery = await f.application.command('run.inspect', {
-    runId, depth: 'section', section: 'delivery',
-  }, principal('owner'));
   assert.equal(result.section.items[0].value.state, 'adopted');
-  assert.equal(delivery.section.items[0].value.state, 'completed');
-  assert.match(delivery.section.items[0].value.exportId, /^[a-f0-9]{64}$/u);
 });
 
 test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inventory is compact and advanced tools are opt-in', async (t) => {
@@ -674,7 +654,7 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
   const browser = operatorAsset('/control/app.js').body;
   assert.match(browser, /actionId/u);
   assert.match(browser, /inputSchema/u);
-  for (const adapterCascade of ['run_adopt', 'run_integrate', 'run_recover', 'run_export']) {
+  for (const adapterCascade of ['run_adopt', 'run_integrate', 'run_recover']) {
     assert.equal(browser.includes(adapterCascade), false, `browser hard-coded ${adapterCascade}`);
   }
   for (const advancedControl of ["command('list'", "command('kill'", "command('drain'"]) {

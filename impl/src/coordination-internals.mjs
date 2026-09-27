@@ -88,7 +88,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_knowledgeNodes', '_knowledgeEdges', '_knowledgeNodeHistory', '_knowledgeEdgeHistory',
   '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
   '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
-  '_runStopByTarget', '_runControls', '_runResultAdoptions', '_runResultExports',
+  '_runStopByTarget', '_runControls', '_runResultAdoptions',
   '_runVerificationRetries', '_runOrchestratorLeases', '_runLineages',
   '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
   '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
@@ -295,7 +295,6 @@ export function _runIdentityHasEffects(store, runId, ignoredSeq = null) {
     || [...store._goals.values()].some((goal) => goal.runId === runId)
     || [...store._plans.values()].some((plan) => plan.runId === runId)
     || [...store._runResultAdoptions.values()].some((row) => row.runId === runId)
-    || [...store._runResultExports.values()].some((row) => row.runId === runId)
     || [...store._runVerificationRetries.values()].some((row) => row.runId === runId)
     || [...store._recoveryAttemptsById.values()].some((row) => row.runId === runId)) return true;
   return store._events.some((row) => row.seq !== ignoredSeq && (
@@ -608,13 +607,6 @@ export function fleetDrain(state, id) { return clone(state.get(id) ?? null); }
 export function runStop(store, runId) {
   const authorityRunId = store._runStopByTarget.get(runId) ?? runId;
   return clone(store._runStops.get(authorityRunId) ?? null);
-}
-
-/** Moved from `CoordinationStore.runResultExport` (issue #259 slice 1). State: `this._runResultExports`, passed explicitly. */
-export function runResultExport(runResultExports, runId, nodeKey) {
-  if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run result export coordinates are invalid');
-  const state = [...runResultExports.values()].find((item) => item.runId === runId && item.nodeKey === nodeKey);
-  return clone(state ?? null);
 }
 
 /** Moved from `CoordinationStore.runControl` (issue #259 slice 1). State: `this._runControls`, passed explicitly. */

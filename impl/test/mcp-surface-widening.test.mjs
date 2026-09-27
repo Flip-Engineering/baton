@@ -18,7 +18,7 @@ const WIRE_CARD = [
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
   'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
-  'run.review', 'run.integrate', 'run.export', 'run.recover',
+  'run.review', 'run.integrate', 'run.recover',
   'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',

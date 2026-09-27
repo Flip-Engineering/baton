@@ -326,8 +326,6 @@ test('local CLI help topics, default operations, actions, and selectors cannot d
   assert.match(registry.cli.selectorRules.routingDetail.description, /fixed route is never a manual-selector tie-breaker/u);
   assert.match(batonCliHelp('run'), new RegExp(registry.cli.selectorRules.manualRoute.description, 'u'));
   assert.match(batonCliHelp('routing'), new RegExp(registry.cli.selectorRules.routingDetail.description, 'u'));
-  assert.ok(registry.cli.commands.some((command) => command.action === 'export_result'
-    && command.usage === 'baton run export RUN_ID DIR'));
 });
 
 test('bound Pythonic facade cascades start, inspect, semantic action, continuation, and stop', async () => {
@@ -594,7 +592,7 @@ test('bound ordinary start rejects deployment policy and storage plumbing', asyn
   const baton = bindBaton({ command: async () => ({ runId: 'unused' }) }, {});
   await assert.rejects(() => baton.runs.start('Invalid plumbing', { tokens: 10_000 }),
     (error) => error?.code === 'application_client_invalid');
-  await assert.rejects(() => baton.runs.start('Invalid plumbing', { exportRoot: '/tmp/export' }),
+  await assert.rejects(() => baton.runs.start('Invalid plumbing', { internalRoot: '/tmp/private' }),
     (error) => error?.code === 'application_client_invalid');
   await assert.rejects(() => baton.runs.start('No implicit effort', { model: 'gpt-5.6-sol' }),
     (error) => error?.code === 'application_client_invalid' && /model and effort together/u.test(error.message));

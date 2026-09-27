@@ -1164,7 +1164,6 @@ export class BatonRun {
     if (reason !== undefined && !nonempty(reason)) throw clientError('Workflow revision reason is invalid');
     return this.act('revise_candidate', reason === undefined ? {} : { reason });
   }
-  export() { return this.act('export_result'); }
   review(inputs) { return this.act('semantic_review', inputs); }
   integrate(options = {}) { return this.apply(options); }
 

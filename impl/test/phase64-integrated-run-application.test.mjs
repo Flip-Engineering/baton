@@ -446,7 +446,7 @@ test('UA3/UA4: a structured provider failure exposes no adoptable or exportable 
   assert.equal(failed.phase, 'failed');
   assert.equal(failed.result, null);
   assert.equal(failed.nodes[0].state, 'failed');
-  assert.equal(failed.nextActions.some((action) => ['adopt_result', 'export_result'].includes(action.kind)), false);
+  assert.equal(failed.nextActions.some((action) => ['adopt_result'].includes(action.kind)), false);
   const task = driver.coordination.snapshot().tasks.find((row) => row.runId === 'run-provider-failure');
   assert.equal(task.status, 'failed');
   assert.equal(driver.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === task.id)

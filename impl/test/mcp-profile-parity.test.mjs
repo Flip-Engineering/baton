@@ -157,7 +157,7 @@ function principal(overrides = {}) {
   return {
     userId: 'operator-a', sessionId: 'stdio-a',
     capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review',
-      'integrate_result', 'resume_work', 'retry_verification', 'export_result'],
+      'integrate_result', 'resume_work', 'retry_verification'],
     repoIds: [REPO_ID], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false, ...overrides,
   };
 }

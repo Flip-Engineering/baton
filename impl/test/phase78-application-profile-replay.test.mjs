@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
+import { normalizeProfileRegistryEvent } from '../src/application-observation.mjs';
 
 const repoId = 'repo-phase78-profile-replay';
 const route = Object.freeze({ harness: 'mock', model: 'model-a', effort: 'low' });
@@ -47,11 +48,11 @@ const verification = Object.freeze({
   requiredPredecessorEvidence: [],
 });
 
-function profile(maxFiles, maxBytes) {
+function profile(revision) {
   return {
     schemaVersion: 1,
     repoId,
-    definitionOfDone: ['deployment verification passes'],
+    definitionOfDone: [`deployment verification passes revision ${revision}`],
     constraints: ['Keep the change inside the approved repository scope'],
     risk: 'high',
     goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
@@ -62,10 +63,6 @@ function profile(maxFiles, maxBytes) {
     capabilities: ['code', 'test'],
     effects: ['repository_edit'],
     resultPolicy: { mode: 'none', maxAdoptedResults: 0, locator: 'git_ref' },
-    exportPolicy: {
-      mode: 'manual', format: 'directory-v1', maxFiles, maxBytes,
-      requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
-    },
   };
 }
 
@@ -87,9 +84,9 @@ function configuredAdapter(delayMs = 10, scenario = {}) {
   return adapter;
 }
 
-function application(driver, selectedProfile, exportRoot) {
+function application(driver, selectedProfile) {
   return new BatonApplication({
-    driver, repoId, profiles: { deployment: selectedProfile }, exportRoot,
+    driver, repoId, profiles: { deployment: selectedProfile },
     principals: {
       planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer'),
     },
@@ -135,9 +132,7 @@ test('exact close/reopen keeps durable Run evidence but projects only current-in
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const repo = join(fixtureRoot, 'repo');
   const logDir = join(fixtureRoot, 'log');
-  const exportRoot = join(fixtureRoot, 'exports');
   mkdirSync(repo, { mode: 0o700 });
-  mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
   Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
   Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
@@ -145,11 +140,11 @@ test('exact close/reopen keeps durable Run evidence but projects only current-in
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
 
-  const definition = profile(17, 17_000);
+  const definition = profile(17);
   const firstDriver = driver(repo, logDir, {
     delayMs: 0, scenario: { budgetUsed: { tokens: 15_000, usd: 0 } },
   });
-  const first = application(firstDriver, definition, exportRoot);
+  const first = application(firstDriver, definition);
   await first.ready;
   const runId = 'run-replay-local-ownership';
   const proposed = await first.start({
@@ -167,26 +162,24 @@ test('exact close/reopen keeps durable Run evidence but projects only current-in
   assert.deepEqual(closed.ownership, { workers: 0, workerIds: [], closed: true });
 
   const currentDriver = driver(repo, logDir);
-  const current = application(currentDriver, definition, exportRoot);
+  const current = application(currentDriver, definition);
   await assertReplayedRunHasNoLocalOwnership(current, currentDriver, runId, expectedCause);
   await current.shutdown(principal('shutdown'));
 
   const historicalDriver = driver(repo, logDir);
-  const historical = application(historicalDriver, profile(29, 29_000), exportRoot);
+  const historical = application(historicalDriver, profile(29));
   await assertReplayedRunHasNoLocalOwnership(historical, historicalDriver, runId, expectedCause);
-  assert.deepEqual(historical._findRun(runId).profile.exportPolicy, definition.exportPolicy,
+  assert.deepEqual(historical._findRun(runId).profile.definitionOfDone, definition.definitionOfDone,
     'the prior registered profile remains the policy authority');
   await historical.shutdown(principal('shutdown'));
 });
 
-test('deployment-like export-bound drift replays the exact durable historical profile', async (t) => {
+test('deployment definition drift replays the exact durable historical profile', async (t) => {
   const fixtureRoot = root('durable');
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const repo = join(fixtureRoot, 'repo');
   const logDir = join(fixtureRoot, 'log');
-  const exportRoot = join(fixtureRoot, 'exports');
   mkdirSync(repo, { mode: 0o700 });
-  mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
   Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
   Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
@@ -194,9 +187,9 @@ test('deployment-like export-bound drift replays the exact durable historical pr
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
 
-  const priorDefinition = profile(17, 17_000);
+  const priorDefinition = profile(17);
   const firstDriver = driver(repo, logDir);
-  const first = application(firstDriver, priorDefinition, exportRoot);
+  const first = application(firstDriver, priorDefinition);
   await first.ready;
   const priorDigest = first.card().profiles[0].digest;
   const proposed = await first.start({
@@ -207,17 +200,17 @@ test('deployment-like export-bound drift replays the exact durable historical pr
   await first.stop(proposed.runId, 'Finish the historical profile fixture.', principal('stopper'));
   await first.shutdown(principal('shutdown'));
 
-  const currentDefinition = profile(29, 29_000);
+  const currentDefinition = profile(29);
   const secondDriver = driver(repo, logDir);
-  const second = application(secondDriver, currentDefinition, exportRoot);
+  const second = application(secondDriver, currentDefinition);
   await second.ready;
   const currentDigest = second.card().profiles[0].digest;
-  assert.notEqual(currentDigest, priorDigest, 'deployment-derived bounds change the current profile digest');
+  assert.notEqual(currentDigest, priorDigest, 'a changed definition changes the current profile digest');
 
   const replayed = second._findRun('run-prior-profile');
   assert.equal(replayed.profile.digest, priorDigest);
-  assert.deepEqual(replayed.profile.exportPolicy, priorDefinition.exportPolicy);
-  assert.notDeepEqual(replayed.profile.exportPolicy, currentDefinition.exportPolicy);
+  assert.deepEqual(replayed.profile.definitionOfDone, priorDefinition.definitionOfDone);
+  assert.notDeepEqual(replayed.profile.definitionOfDone, currentDefinition.definitionOfDone);
   const status = await second.status('run-prior-profile', principal('observer'));
   assert.equal(status.phase, 'stopped');
   assert.deepEqual(status.profile, { name: 'deployment', digest: priorDigest });
@@ -237,9 +230,7 @@ test('a dispatched legacy Run without a profile body cannot block startup or inh
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const repo = join(fixtureRoot, 'repo');
   const logDir = join(fixtureRoot, 'log');
-  const exportRoot = join(fixtureRoot, 'exports');
   mkdirSync(repo, { mode: 0o700 });
-  mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
   Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
   Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
@@ -293,9 +284,9 @@ test('a dispatched legacy Run without a profile body cannot block startup or inh
   }, gate, { vendor: 'mock', model: 'model-a', effort: 'low' }, auth('dispatcher', 'legacy:dispatch'));
   await seedDriver.closeAsync();
 
-  const currentDefinition = profile(31, 31_000);
+  const currentDefinition = profile(31);
   const selectedDriver = driver(repo, logDir);
-  const app = application(selectedDriver, currentDefinition, exportRoot);
+  const app = application(selectedDriver, currentDefinition);
   await app.ready;
   const currentDigest = app.card().profiles[0].digest;
   assert.notEqual(currentDigest, legacyDigest);
@@ -325,9 +316,7 @@ test('a profile with every optional policy omitted has one canonical self-verify
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const repo = join(fixtureRoot, 'repo');
   const logDir = join(fixtureRoot, 'log');
-  const exportRoot = join(fixtureRoot, 'exports');
   mkdirSync(repo, { mode: 0o700 });
-  mkdirSync(exportRoot, { mode: 0o700 });
   execFileSync('git', ['init', '-q'], { cwd: repo });
   Object.assign(process.env, { GIT_AUTHOR_EMAIL: 'phase78@example.invalid', GIT_COMMITTER_EMAIL: 'phase78@example.invalid' });
   Object.assign(process.env, { GIT_AUTHOR_NAME: 'Phase 78', GIT_COMMITTER_NAME: 'Phase 78' });
@@ -335,26 +324,36 @@ test('a profile with every optional policy omitted has one canonical self-verify
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
 
-  const definition = profile(1, 1);
-  delete definition.exportPolicy;
+  const definition = profile(1);
   const firstDriver = driver(repo, logDir);
-  const first = application(firstDriver, definition, exportRoot);
+  const first = application(firstDriver, definition);
   await first.ready;
   const profileDigest = first.card().profiles[0].digest;
   await first.shutdown(principal('shutdown'));
 
   const secondDriver = driver(repo, logDir);
-  const second = application(secondDriver, definition, exportRoot);
+  const second = application(secondDriver, definition);
   await second.ready;
   const records = secondDriver.coordination.events().filter((event) => event.kind === 'driver.recorded'
     && event.payload?.kind === 'application.profile_registered');
   assert.equal(records.length, 1);
   assert.equal(records[0].payload.profileDigest, profileDigest);
   assert.equal(digest(records[0].payload.profileDefinition), profileDigest);
-  assert.deepEqual(Object.fromEntries(['reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']
+  assert.deepEqual(Object.fromEntries(['reviewPolicy', 'integrationPolicy', 'followPolicy', 'recoveryPolicy']
     .map((name) => [name, records[0].payload.profileDefinition[name].mode])), {
-    reviewPolicy: 'none', integrationPolicy: 'none', followPolicy: 'none',
-    exportPolicy: 'none', recoveryPolicy: 'none',
+    reviewPolicy: 'none', integrationPolicy: 'none', followPolicy: 'none', recoveryPolicy: 'none',
   });
   await second.shutdown(principal('shutdown'));
+});
+
+test('recorded deployment profiles retain their saved definition and digest after export retirement', () => {
+  for (const name of ['deployment-recorded-goal', 'deployment-recorded-settlement']) {
+    const rows = readFileSync(new URL(`./fixtures/ledgers-goal-plan/${name}.jsonl`, import.meta.url), 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    const event = rows.find((row) => row.payload?.kind === 'application.profile_registered');
+    const replayed = normalizeProfileRegistryEvent(event);
+    assert.deepEqual(replayed.profile, {
+      ...event.payload.profileDefinition, digest: event.payload.profileDigest,
+    });
+  }
 });

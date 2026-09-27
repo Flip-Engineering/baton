@@ -278,13 +278,6 @@ export function semanticViewDigest(view) {
   const { cursor: _transportCursor, progressClass: _derivedProgress, requiredAction: _derivedAction, ...semanticView } = view;
   return digest(semanticView);
 }
-export function resultExportArchiveCeiling(policy) {
-  const value = policy.maxBytes + MAX_RUN_VIEW_BYTES + ((policy.maxFiles + 1) * 1_024);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw applicationError('profile export archive ceiling is invalid', 'application_export_policy_stale');
-  }
-  return value;
-}
 export function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 export function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -1076,33 +1069,6 @@ function normalizeIntegrationPolicy(value) {
   }
   return deepFreeze({ ...clone(value), strategies: [...value.strategies].sort() });
 }
-function normalizeExportPolicy(value) {
-  if (value === undefined) return deepFreeze({
-    mode: 'none', format: 'directory-v1', maxFiles: 0, maxBytes: 0,
-    requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
-  });
-  // The profile's export policy is an authority boundary: the export root is the deployment's
-  // decision, so an undeclared field here is a smuggled path grant rather than a
-  // forward-compatible extension (#535's authorization-boundary rule).
-  exactObject(value, [
-    'mode', 'format', 'maxFiles', 'maxBytes',
-    'requireAdoptedResult', 'requireSemanticReview', 'requireIntegration',
-  ], 'application_profile_invalid', 'profile exportPolicy', { rejectUnknown: true });
-  if (value.mode === 'none' && value.format === 'directory-v1' && value.maxFiles === 0 && value.maxBytes === 0
-    && value.requireAdoptedResult === false && value.requireSemanticReview === false
-    && value.requireIntegration === false) {
-    return deepFreeze(clone(value));
-  }
-  if (value.mode !== 'manual' || value.format !== 'directory-v1'
-    || !Number.isSafeInteger(value.maxFiles) || value.maxFiles <= 0
-    || !Number.isSafeInteger(value.maxBytes) || value.maxBytes <= 0
-    || typeof value.requireAdoptedResult !== 'boolean'
-    || typeof value.requireSemanticReview !== 'boolean'
-    || typeof value.requireIntegration !== 'boolean') {
-    throw applicationError('profile exportPolicy is invalid', 'application_profile_invalid');
-  }
-  return deepFreeze(clone(value));
-}
 function normalizeFollowPolicy(value) {
   if (value === undefined) return deepFreeze({
     // Disabled change waiting still permits one bounded semantic inspection. Zero response/item
@@ -1157,7 +1123,7 @@ export function normalizeProfile(name, value, repoId) {
     'nodeBudget', 'pathScope', 'verification', 'routes', 'capabilities', 'effects', 'resultPolicy',
   ];
   if (profileVersion === 2) requiredFields.push('workerPolicy');
-  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
+  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'recoveryPolicy']);
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || requiredFields.some((field) => !Object.hasOwn(value, field))
     || Object.keys(value).some((field) => !allowedFields.has(field))) {
@@ -1198,7 +1164,6 @@ export function normalizeProfile(name, value, repoId) {
     reviewPolicy,
     integrationPolicy: normalizeIntegrationPolicy(value.integrationPolicy),
     followPolicy: normalizeFollowPolicy(value.followPolicy),
-    exportPolicy: normalizeExportPolicy(value.exportPolicy),
     recoveryPolicy: normalizeRecoveryPolicy(value.recoveryPolicy),
   };
   if (normalized.pathScope.some((entry) => !safeScopePath(entry))) {
@@ -1237,15 +1202,11 @@ export function normalizeProfileRegistryEvent(event) {
     || event.idempotencyKey !== profileRegistryKey(payload.repoId, payload.name, payload.profileDigest)) {
     throw applicationError('application profile registry record is invalid', 'application_profile_registry_invalid');
   }
-  let profile;
-  try { profile = normalizeProfile(payload.name, payload.profileDefinition, payload.repoId); }
-  catch (cause) {
-    throw Object.assign(applicationError('application profile registry definition is invalid',
-      'application_profile_registry_invalid'), { cause });
-  }
-  if (profile.digest !== payload.profileDigest) {
+  const profileDigest = digest(payload.profileDefinition);
+  if (profileDigest !== payload.profileDigest) {
     throw applicationError('application profile registry digest is invalid', 'application_profile_registry_invalid');
   }
+  const profile = { ...clone(payload.profileDefinition), digest: profileDigest };
   return deepFreeze({ repoId: payload.repoId, name: payload.name, profile });
 }
 function normalizeGateCauseFeedback(value) {
@@ -1674,10 +1635,10 @@ export function terminalCauseNarrative(cause) {
   if (cause?.kind === 'operator_stop') return 'Run terminated: operator_stop.';
   return null;
 }
-export function runProgress({ phase, approval, node, route, verification, reviewPolicyMode, semanticReview, result, integration, exportResult, resourcesSettled, stop }) {
+export function runProgress({ phase, approval, node, route, verification, reviewPolicyMode, semanticReview, result, integration, resourcesSettled, stop }) {
   const stopped = stop?.state === 'stopped' || phase === 'stopped';
-  // Issue #334: 'inconclusive' is terminal with no accepted result, so the result/export
-  // stages read stopped exactly like the other terminal-without-result phases.
+  // Issue #334: 'inconclusive' is terminal with no accepted result, so the result
+  // stage reads stopped exactly like the other terminal-without-result phases.
   const failed = ['planning_failed', 'failed', 'inconclusive', 'denied', 'cancelled'].includes(phase);
   // Issue #334: a baseline-owned inconclusive names its ownership on the progress summary —
   // the base is red and the candidate is not to blame.
@@ -1741,14 +1702,6 @@ export function runProgress({ phase, approval, node, route, verification, review
     integration?.state === 'integrated' ? `Integrated with ${integration.strategy}`
       : semanticReview?.state === 'semantic_reviewed' ? 'Semantic gate passed; explicit integration available'
         : 'Integration remains gated'),
-    stage('export', 'Accepted-result export', exportResult?.state === 'completed' ? 'complete'
-      : exportResult?.state === 'pending' ? 'active'
-        : exportResult?.state === 'cancelled' ? 'stopped'
-        : result?.sha ? 'pending' : failed || stopped ? 'stopped' : 'pending',
-    exportResult?.state === 'completed' ? 'Exact accepted Git tree materialized and reverified'
-      : exportResult?.state === 'pending' ? 'Durable export admission is reconciling'
-        : exportResult?.state === 'cancelled' ? 'Run stop cancelled the pending export authority'
-        : result?.sha ? 'Materialized export remains an explicit action' : 'No accepted result to export'),
     stage('cleanup', 'Owned-resource cleanup', resourcesSettled || stop?.receipt?.remainingCount === 0 ? 'complete'
       : stopped ? 'blocked' : node?.taskId ? 'active' : 'pending',
     resourcesSettled || stop?.receipt?.remainingCount === 0 ? 'Processes and disposable resources settled'
@@ -2191,149 +2144,6 @@ export function _workflowPlanHistory(application, current) {
     }
     return chain.reverse();
   }
-export function _completedResultExport(application, coordinates) {
-    if (!coordinates || typeof coordinates !== 'object' || Array.isArray(coordinates)
-      || Object.keys(coordinates).sort().join(',') !== ['exportId', 'repoId', 'runId'].join(',')
-      || coordinates.repoId !== application.repoId || !validId(coordinates.runId)
-      || !/^[a-f0-9]{64}$/u.test(coordinates.exportId ?? '')
-      || application.driver.coordination.runStop?.(coordinates.runId)) return null;
-    let current;
-    try { current = application._findRun(coordinates.runId); } catch { return null; }
-    const nodeKey = current.plan?.nodes?.[0]?.key;
-    if (!nodeKey || current.profile.exportPolicy.mode !== 'manual') return null;
-    const state = application.driver.coordination.runResultExport(coordinates.runId, nodeKey);
-    if (state?.status !== 'completed' || state.exportId !== coordinates.exportId
-      || state.receipt?.state !== 'completed') return null;
-    return { current, state, receipt: clone(state.receipt) };
-  }
-export function openResultExportArchive(application, coordinates) {
-    const completed = application._completedResultExport(coordinates);
-    if (!completed || !application.exportRoot) throw applicationError('Run export is not deliverable', 'application_export_unavailable');
-    const archive = application.resultExportLifecycle.deriveArchive({
-      receipt: completed.receipt,
-      maxArchiveBytes: resultExportArchiveCeiling(completed.current.profile.exportPolicy),
-    });
-    const chunkBytes = application.exportDeliveryChunkBytes;
-    return {
-      descriptor: archive.descriptor,
-      chunks: (async function* archiveChunks() {
-        for (let offset = 0; offset < archive.bytes.length; offset += chunkBytes) {
-          yield archive.bytes.subarray(offset, Math.min(offset + chunkBytes, archive.bytes.length));
-        }
-      }()),
-    };
-  }
-export function registerResultExportDelivery(application, { runId, exportId, signal, abort }) {
-    const completed = application._completedResultExport({ repoId: application.repoId, runId, exportId });
-    if (!completed || !(signal instanceof AbortSignal) || typeof abort !== 'function') {
-      throw applicationError('Run export delivery registration is unavailable', 'application_export_unavailable');
-    }
-    const registrations = application._runDeliveryRegistrations.get(runId) ?? new Set();
-    application._runDeliveryRegistrations.set(runId, registrations);
-    let close;
-    const closed = new Promise((resolveClosed) => { close = resolveClosed; });
-    const registration = { exportId, abort, closed };
-    let released = false;
-    const release = () => {
-      if (released) return false;
-      released = true;
-      signal.removeEventListener('abort', release);
-      registrations.delete(registration);
-      if (registrations.size === 0) application._runDeliveryRegistrations.delete(runId);
-      close();
-      return true;
-    };
-    registration.release = release;
-    registrations.add(registration);
-    signal.addEventListener('abort', release, { once: true });
-    return Object.freeze({ release });
-  }
-export function _performResultExport(application, state) {
-    const existing = application._runExportPromises.get(state.exportId);
-    if (existing) return existing;
-    const operation = (async () => {
-      const current = application._findRun(state.runId);
-      const policy = current.profile.exportPolicy;
-      if (policy.mode !== 'manual' || current.profile.digest !== state.profileDigest
-        || digest(policy) !== state.exportPolicyDigest || application.exportRootDigest !== state.exportRootDigest
-        || policy.format !== state.format || policy.maxFiles !== state.maxFiles || policy.maxBytes !== state.maxBytes) {
-        throw applicationError('pending Run export deployment authority changed', 'application_export_policy_stale');
-      }
-      const task = application.driver.coordination.task(state.taskId);
-      if (!task?.assignee || task.runId !== state.runId) {
-        throw applicationError('pending Run export task authority is unavailable', 'application_export_unavailable');
-      }
-      let materialized;
-      try {
-        materialized = await application.resultExportLifecycle.materialize((exportRoot) =>
-          application.driver.coordinator.materializeAcceptedResult(task.assignee, state.resultSha, {
-          exportRoot,
-          exportId: state.exportId,
-          stagingNonce: state.stagingNonce,
-          policy: clone(policy),
-          manifestCore: {
-            repoId: application.repoId,
-            runId: state.runId,
-            nodeKey: state.nodeKey,
-            taskId: state.taskId,
-            resultSha: state.resultSha,
-            evidenceDigest: state.evidenceDigest,
-            profileDigest: state.profileDigest,
-            exportPolicyDigest: state.exportPolicyDigest,
-            goal: clone(state.binding.accepted.goal),
-            plan: {
-              ...clone(state.binding.accepted.plan),
-              approvalDigest: state.binding.accepted.approvalDigest,
-            },
-            adoptionReceiptDigest: state.adoptionReceiptDigest,
-            semanticReviewReceiptDigest: state.semanticReviewReceiptDigest,
-            integrationAfterSha: state.integrationAfterSha,
-          },
-        }));
-      } catch (cause) {
-        const codes = {
-          result_export_root_invalid: 'application_export_root_invalid',
-          result_export_tree_unsafe: 'application_export_tree_unsafe',
-          result_export_tree_oversize: 'application_export_tree_oversize',
-          result_export_source_unavailable: 'application_export_source_unavailable',
-          result_export_output_mismatch: 'application_export_output_mismatch',
-          result_export_invalid: 'application_export_invalid',
-        };
-        throw Object.assign(applicationError('Run result export did not materialize exactly', codes[cause?.code] ?? 'application_export_incomplete'), { cause });
-      }
-      const retained = await application.driver.coordinator.inspectPreservedResult(task.assignee, state.resultSha);
-      if (retained.state !== 'pinned') {
-        throw applicationError('accepted result changed during export', 'application_export_source_unavailable');
-      }
-      const core = {
-        schemaVersion: 1,
-        state: 'completed',
-        format: state.format,
-        runId: state.runId,
-        nodeKey: state.nodeKey,
-        resultSha: state.resultSha,
-        evidenceDigest: state.evidenceDigest,
-        exportId: state.exportId,
-        locator: state.locator,
-        treeOid: materialized.treeOid,
-        manifestDigest: materialized.manifestDigest,
-        fileCount: materialized.fileCount,
-        byteCount: materialized.byteCount,
-        checks: { acceptedResultReverified: true, manifestVerified: true, treeExact: true },
-        effects: { adopted: false, checkoutChanged: false, deployed: false, integrated: false, published: false },
-      };
-      const receipt = deepFreeze({ ...core, receiptDigest: digest(core) });
-      const completed = application.driver.coordination.completeRunResultExport({
-        schemaVersion: 1, exportId: state.exportId, receipt,
-      }, { actor: state.actor, key: `run.result_export.complete:${state.exportId}` });
-      return completed.export.receipt;
-    })();
-    application._runExportPromises.set(state.exportId, operation);
-    operation.finally(() => {
-      if (application._runExportPromises.get(state.exportId) === operation) application._runExportPromises.delete(state.exportId);
-    }).catch(() => {});
-    return operation;
-  }
 export function _semanticTarget(application, current, view) {
     const node = view.nodes[0];
     if (!current.plan || !node?.taskId || !view.result?.sha
@@ -2423,7 +2233,6 @@ export function _performRunStop(application, stop) {
       const targetRunIds = current.targetRunIds ?? [stop.runId];
       const contextOperations = [];
       for (const targetRunId of targetRunIds) {
-        await application._abortResultExportDeliveries(targetRunId);
         for (const operation of application._contextControllers?.get(targetRunId) ?? []) {
           operation.controller.abort();
           contextOperations.push(operation.settled);
@@ -2773,7 +2582,7 @@ export function _planningView(application, current, cause = null, principal = ap
     const progress = runProgress({
       phase, approval: null, node: null, route: null,
       verification: { state: 'pending' }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview, result: null,
-      integration: null, exportResult: null, resourcesSettled: runStop?.receipt?.remainingCount === 0, stop,
+      integration: null, resourcesSettled: runStop?.receipt?.remainingCount === 0, stop,
     });
     const view = {
       schemaVersion: 1,
@@ -2806,7 +2615,6 @@ export function _planningView(application, current, cause = null, principal = ap
       progress,
       result: null,
       integration: null,
-      export: null,
       ownership: { workers: 0, workerIds: [], closed: false },
       evidence: [],
       narrative: runStop?.status === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
@@ -2882,7 +2690,7 @@ export async function _historicalProfileView(application, current, observer, opt
     const progress = runProgress({
       phase, approval: projection?.approval ?? null, node, route,
       verification: { state: verificationState }, reviewPolicyMode: 'unavailable', semanticReview,
-      result: null, integration: null, exportResult: null, resourcesSettled, stop,
+      result: null, integration: null, resourcesSettled, stop,
     });
     const terminalCause = projectTypedTerminalCause({ terminalResult, runStop });
     const planNode = current.plan?.nodes?.[0] ?? null;
@@ -2953,7 +2761,7 @@ export async function _historicalProfileView(application, current, observer, opt
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
-      result: null, integration: null, export: null,
+      result: null, integration: null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
       evidence: [],
@@ -4028,7 +3836,6 @@ export async function _buildWorkflowView(application, current, observer, options
         resultSha: selectedIntegration.resultSha,
         afterSha: selectedIntegration.afterSha,
       } : null,
-      export: null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
       execution: {
@@ -5293,7 +5100,7 @@ export function _semanticActions(application, current, view, principal, context 
       });
     }
     for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
+      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'retry_verification', 'resume_work'].includes(candidate.kind)
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
         candidates.push({ kind: candidate.kind, source: candidate, target: null });
       }
@@ -5637,7 +5444,6 @@ export function _episodeItem(application, current, view, topic, role = null, epi
         ?? authoritativeResult.evidence?.verificationArtifact ?? null),
       stability: authoritativeResult.stability ?? null,
       integration: clone(role === null ? view.integration ?? null : null),
-      export: clone(role === null ? view.export ?? null : null),
     } : null;
     const contradictions = graph.edges.filter((candidate) => candidate.type === 'contradicted_by');
     const derivations = graph.edges.filter((candidate) => (
@@ -5905,7 +5711,7 @@ export function _semanticSectionItems(application, current, view, sectionId, epi
       verification: view.verification,
       semantic_review: view.semanticReview,
       result: view.result,
-      delivery: view.export ?? view.integration,
+      delivery: view.integration,
       cleanup: {
         state: projectedCleanupState(view),
         terminalCause: view.terminalCause ?? null,

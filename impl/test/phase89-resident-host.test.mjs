@@ -380,7 +380,7 @@ test('P92-RH5: the ordinary authenticated local owner can inspect help and invok
   });
   const session = await authenticatedClient.session();
   assert.deepEqual(session.identity.capabilities, [
-    'observe', 'control', 'approve', 'emergency_stop', 'export_result',
+    'observe', 'control', 'approve', 'emergency_stop',
     'retry_verification',
     'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
   ], 'the local owner gains only the missing retry power; adoption, review, integration, and resume remain absent');

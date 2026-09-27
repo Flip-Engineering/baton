@@ -547,7 +547,6 @@ test('DF11: concise complete prepares an adopted result and one explicit apply f
     mode: 'manual', strategies: ['ff-only', 'structured'],
     requireAdoptedResult: true, requireSemanticReview: false,
   });
-  assert.equal(deployment.card().profiles[0].exportPolicy.requireIntegration, true);
   const beforeSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   const run = await deployment.run('Create one result and apply it through the concise Baton surface.', route);
   const prepared = await run.complete();

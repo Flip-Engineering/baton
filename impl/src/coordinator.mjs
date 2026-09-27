@@ -41,7 +41,6 @@ import { ensureLaneBranchAtHead, normalizePhysicalOwnerId, normalizeSparseChecko
 import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, planBriefMatches } from './goal-plan.mjs';
 import { normalizeBrowserUseUrl } from './browser-use.mjs';
 import { addUsd, subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
-import { materializeResultTree } from './result-export.mjs';
 import {
   compareWorkerPolicyObservation, normalizeWorkerPolicyObservation, normalizeWorkerPolicyRequest,
   normalizeWorkerPolicyResolution, resolveWorkerPolicy, workerPolicyObservationRequired,
@@ -3020,37 +3019,6 @@ export class Coordinator {
 
     _completeRetryCancelled(admission, completionAuth) {
     return runtimeObservation._completeRetryCancelled(this, this._recorder, admission, completionAuth);
-  }
-
-  /** Materialize one exact accepted, still-protected Git result under deployment-owned authority. */
-    materializeAcceptedResult(workerId, expectedSha, request) {
-    return runtimeAdmission.materializeAcceptedResult(this, this._recorder, workerId, expectedSha, request);
-  }
-
-  async _materializeAcceptedResult(workerId, expectedSha, request) {
-    this.tick();
-    const handle = this._getWorker(workerId);
-    const task = this._tasks.get(handle.taskId);
-    if (!task || task.status !== 'completed' || task.acceptanceRevocation || task.capturedSha !== expectedSha
-      || !task.retainedResultRef) {
-      throw Object.assign(new Error('result export requires an active accepted protected result'), { code: 'result_export_source_unavailable' });
-    }
-    if (!this._repoRoot || !this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
-      throw Object.assign(new Error('result export Git authority is unavailable'), { code: 'result_export_unavailable' });
-    }
-    const resolved = await this._worktrees.resolveResult(task.retainedResultRef);
-    if (resolved !== expectedSha) {
-      throw Object.assign(new Error('result export protected ref is missing or mismatched'), { code: 'result_export_source_unavailable' });
-    }
-    return materializeResultTree({
-      repoRoot: this._repoRoot,
-      exportRoot: request.exportRoot,
-      exportId: request.exportId,
-      stagingNonce: request.stagingNonce,
-      resultSha: expectedSha,
-      manifestCore: request.manifestCore,
-      policy: request.policy,
-    });
   }
 
   /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */

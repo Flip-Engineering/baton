@@ -361,8 +361,8 @@ const sections = [
   ['rounds', 'Append-only Workflow Plan rounds, immutable Candidate lineage, and current round state.'],
   ['context', 'Immutable Context sessions, pure cells, coverage, and source-grounded evidence.'],
   ['result', 'Accepted and adopted result state.'],
-  ['delivery', 'Integration and export/delivery state.'],
-  ['cleanup', 'Stop, process reaping, worktree, runtime, and export cleanup.'],
+  ['delivery', 'Integration state.'],
+  ['cleanup', 'Stop, process reaping, worktree, and runtime cleanup.'],
   ['knowledge', 'Run-related causal knowledge summaries and evidence links.'],
   ['capabilities', 'Capability work used by this Run and its bounded outcomes.'],
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));
@@ -676,13 +676,6 @@ const actions = {
     destructive: true, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.integrate', expectedDepth: 'outline',
   },
-  export_result: {
-    label: 'Export accepted result', summary: 'Reverify and materialize the exact accepted result under Batons export authority.',
-    inputSchema: objectSchema({}, []),
-    serverDerived: ['nodeKey', 'resultSha', 'evidenceDigest', 'exportId'], effect: 'filesystem_write',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.export_result', expectedDepth: 'outline',
-  },
   retry_verification: {
     label: 'Retry trust-gate verification', summary: 'Re-run the pinned verification of the exact preserved candidate without another provider turn; candidate-failure confirmation is one-shot and instability-preserving.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
@@ -729,7 +722,6 @@ const APPLICATION_ACTION_CAPABILITY_SOURCE = {
   stop_member: ['emergency_stop', 'observe'],
   semantic_review: ['review', 'control', 'observe'],
   integrate: ['integrate_result', 'observe'],
-  export_result: ['export_result', 'observe'],
   retry_verification: ['retry_verification', 'observe'],
   resume_work: ['resume_work', 'observe'],
   stop: ['emergency_stop', 'observe'],
@@ -834,7 +826,6 @@ const ACTION_OPERATIONS = {
   stop_member: 'run.member.stop',
   semantic_review: 'run.review',
   integrate: 'run.integrate',
-  export_result: 'run.export',
   retry_verification: 'run.retry',
   resume_work: 'run.resume',
   stop: 'run.stop',
@@ -901,7 +892,6 @@ const cliCommands = [
   ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
   ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
   ['run.integrate', null, 'integrate', 'baton run integrate RUN_ID --strategy ff-only|structured --reason REASON'],
-  ['run.export', null, 'export_result', 'baton run export RUN_ID DIR'],
 ].map(([id, operation, action, usage]) => ({
   id, subcommand: id.split('.')[1], ...(operation ? { operation } : { compatibility: true }),
   ...(action ? { action } : {}),
@@ -930,7 +920,7 @@ const cli = {
   commands: cliCommands,
   helpTopics: {
     application: {
-      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.export'],
+      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop'],
       usage: [
         'baton serve',
         'baton setup',
@@ -1032,7 +1022,7 @@ const cli = {
         'run.do', 'run.stop', 'run.status', 'run.recover',
         'run.approve', 'run.answer', 'run.send', 'run.interrupt', 'run.evidence', 'run.adopt', 'run.select',
         'run.feedback', 'run.revise', 'run.stop-member', 'run.retry',
-        'run.resume', 'run.review', 'run.integrate', 'run.export'],
+        'run.resume', 'run.review', 'run.integrate'],
       selectorRule: 'manualRoute',
       paragraphs: [
         'Run starts compile explicit change result intent. Use explore for one-route evidence or review for two-route evidence.',
@@ -1434,7 +1424,6 @@ const CANONICAL_OPERATION_SPECS = [
   ['run.review', { action: 'semantic_review', outputView: 'outline', example: 'baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R' }],
   ['run.adopt', { action: 'adopt_result', outputView: 'outline', example: 'baton run adopt RUN_ID --reason R' }],
   ['run.integrate', { action: 'integrate', outputView: 'outline', example: 'baton run integrate RUN_ID --strategy ff-only --reason R' }],
-  ['run.export', { action: 'export_result', outputView: 'outline', example: 'baton run export RUN_ID DIR' }],
   ['run.select', { action: 'select_candidate', outputView: 'outline', example: 'baton run select RUN_ID ROLE --reason R' }],
   ['run.feedback', { action: 'send_feedback', outputView: 'outline', example: 'baton run feedback RUN_ID ROLE --text TEXT' }],
   ['run.revise', { action: 'revise_candidate', outputView: 'outline', example: 'baton run revise RUN_ID --reason R' }],
@@ -2056,7 +2045,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.do', 'embedded', 'BatonRun.act'],
   ['run.evidence', 'embedded', 'BatonRun.evidence'],
   ['run.debug', 'embedded', 'BatonRun.debug'],
-  ['run.export', 'embedded', 'BatonRun.export'],
   ['run.feedback', 'embedded', 'BatonRun.feedback'],
   ['run.feedback', 'embedded', 'BatonRun.sendFeedback'],
   ['run.integrate', 'embedded', 'BatonRun.integrate'],
@@ -2189,7 +2177,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
   ['run.approve', 'mcp.fleet', 'fleet_run_approve'],
   ['run.evidence', 'mcp.fleet', 'fleet_run_evidence'],
-  ['run.export', 'mcp.fleet', 'fleet_run_export'],
   ['run.feedback', 'mcp.fleet', 'fleet_run_feedback'],
   ['run.integrate', 'mcp.fleet', 'fleet_run_integrate'],
   ['run.member.send', 'mcp.fleet', 'fleet_run_workstream_notify'],

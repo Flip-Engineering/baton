@@ -343,7 +343,7 @@ test('RI7: an omitted historical read-only request reuses its exact durable Goal
   assert.equal(fresh.planPreview.node.effects.includes('repository_edit'), true);
 });
 
-test('RI7b: the frozen parent digest crosses pending adopt, integrate, and export validators', async () => {
+test('RI7b: the frozen parent digest crosses pending adopt and integrate validators', async () => {
   const manifest = structuredClone(v1Golden.single.manifest);
   const current = {
     goal: { ...v1Golden.single.current.goal },
@@ -354,10 +354,6 @@ test('RI7b: the frozen parent digest crosses pending adopt, integrate, and expor
       integrationPolicy: {
         mode: 'manual', strategies: ['ff-only'],
         requireAdoptedResult: true, requireSemanticReview: true,
-      },
-      exportPolicy: {
-        mode: 'manual', format: 'directory-v1', maxFiles: 8, maxBytes: 4096,
-        requireAdoptedResult: true, requireSemanticReview: true, requireIntegration: false,
       },
     },
   };
@@ -402,33 +398,8 @@ test('RI7b: the frozen parent digest crosses pending adopt, integrate, and expor
   }, principal('integrator'));
   assert.equal(integrated.result.state, 'adopted');
 
-  const exportHarness = {
-    ...base,
-    exportRoot: 'fixture-export-root', exportRootDigest: 'b'.repeat(64),
-    resultExportLifecycle: {
-      deriveArchive: () => ({ descriptor: { schemaVersion: 1, state: 'delivered' } }),
-    },
-    driver: {
-      ...base.driver,
-      coordination: {
-        ...base.driver.coordination,
-        admitRunResultExport(request) {
-          admitted.push({ seam: 'export', evidenceDigest: request.evidenceDigest });
-          return { result: 'admitted', export: request };
-        },
-      },
-    },
-    async _performResultExport(request) {
-      return { schemaVersion: 1, state: 'completed', exportId: request.exportId };
-    },
-  };
-  const exported = await BatonApplication.prototype._export.call(exportHarness, {
-    runId: manifest.runId, evidenceDigest: manifest.manifestDigest,
-  }, principal('exporter'));
-  assert.equal(exported.export.state, 'completed');
   assert.deepEqual(admitted, [
     { seam: 'adopt', evidenceDigest: manifest.manifestDigest },
-    { seam: 'export', evidenceDigest: manifest.manifestDigest },
   ]);
 });
 

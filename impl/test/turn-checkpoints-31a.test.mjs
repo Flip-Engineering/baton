@@ -489,10 +489,6 @@ const D_PROFILE = Object.freeze({
   routes: [{ harness: 'mock', model: 'model-a', effort: 'low' }],
   capabilities: ['code', 'test'], effects: ['repository_edit'],
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
-  exportPolicy: {
-    mode: 'manual', format: 'directory-v1', maxFiles: 128, maxBytes: 4 * 1024 * 1024,
-    requireAdoptedResult: true, requireSemanticReview: false, requireIntegration: false,
-  },
 });
 
 const dPrincipal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
@@ -534,7 +530,6 @@ function applicationFixture() {
     principals: {
       planner: dPrincipal('planner'), dispatcher: dPrincipal('dispatcher'), observer: dPrincipal('observer'),
     },
-    exportRoot: dir(),
     authorize: async () => true,
   });
   return { application, driver };

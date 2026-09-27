@@ -983,16 +983,6 @@ export class CoordinationStore {
 
   _validateRunResultAdoptionCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunResultAdoptionCompletion(this, p, event, integrity); }
 
-  _runResultExportFailure(message, code = 'run_result_export_integrity', integrity = false) { return coordinationAdmission._runResultExportFailure(message, code, integrity); }
-
-  _normalizeRunResultExportRequest(fields, event, integrity = false) { return coordinationAdmission._normalizeRunResultExportRequest(this, fields, event, integrity); }
-
-  _deriveRunResultExportBinding(request, integrity = false) { return coordinationAdmission._deriveRunResultExportBinding(this, request, integrity); }
-
-  _validateRunResultExportAdmission(p, event, integrity = false) { return coordinationAdmission._validateRunResultExportAdmission(this, p, event, integrity); }
-
-  _validateRunResultExportCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunResultExportCompletion(this, p, event, integrity); }
-
   _contextFailure(message, code, integrity = false) { return coordinationAdmission._contextFailure(message, code, integrity); }
 
   _contextDefinition(manifest, integrity = false) { return coordinationAdmission._contextDefinition(this, manifest, integrity); }
@@ -1570,15 +1560,6 @@ export class CoordinationStore {
   admitRunVerificationRetry(fields, auth) { return coordinationAdmission.admitRunVerificationRetry(this, fields, auth); }
 
   completeRunVerificationRetry(fields, auth) { return coordinationLedger.completeRunVerificationRetry(this, fields, auth); }
-  runResultExport(runId, nodeKey) {
-    return coordinationInternals.runResultExport(this._runResultExports, runId, nodeKey);
-  }
-
-  pendingRunResultExports(limit = 1_000) { return coordinationLedger.pendingRunResultExports(this._runResultExports, limit); }
-
-  admitRunResultExport(fields, auth) { return coordinationAdmission.admitRunResultExport(this, fields, auth); }
-
-  completeRunResultExport(fields, auth) { return coordinationLedger.completeRunResultExport(this, fields, auth); }
   runControl(controlId) {
     return coordinationInternals.runControl(this._runControls, controlId);
   }
