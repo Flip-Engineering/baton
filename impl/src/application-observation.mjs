@@ -3655,9 +3655,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const selection = application._workflowSelection(current, definition, candidates);
     const feedback = application._workflowFeedback(current, definition, candidates);
     const memberStops = application._workflowMemberStops(current, definition);
-    const revisionEligibility = await application._workflowRevisionEligibility(current, {
-      definition, projection, candidates, selection, feedback,
-    });
     const rounds = await application._workflowRoundSummaries(current, observer);
     const runId = current.goal.runId;
     const { workers, ownedWorkers } = runWorkerOwnership(application.driver, runId);
@@ -3819,8 +3816,6 @@ export async function _buildWorkflowView(application, current, observer, options
       && selectedAdopted && !selectedIntegration
       && current.profile.integrationPolicy.mode === 'manual'
       && current.profile.integrationPolicy.requireSemanticReview === false;
-    const canReviseSelected = phase === 'candidate_selected'
-      && revisionEligibility.state === 'eligible';
 
     const runWorkerIds = new Set(workers.map((handle) => handle.id));
     const workerAttention = Object.entries(story.workers)
@@ -3842,13 +3837,6 @@ export async function _buildWorkflowView(application, current, observer, options
       summary: 'Parallel Candidates are verified; operator selection is required.',
       roles: candidates.map((candidate) => candidate.role),
     }] : [];
-    const revisionAttention = phase === 'candidate_selected'
-      && revisionEligibility.state !== 'eligible'
-      && !['feedback_required', 'selection_required'].includes(revisionEligibility.reason)
-      ? [{
-        kind: 'workflow_revision', state: 'blocked', reason: revisionEligibility.reason,
-        summary: `Recursive Candidate revision paused: ${revisionEligibility.reason}.`,
-      }] : [];
     const recoveryAttention = recovery ? [{
       kind: 'workflow_recovery', state: recovery.state, reason: recovery.reason,
       summary: 'Revision provider ownership is unconfirmed after restart; redelivery is forbidden.',
@@ -3862,7 +3850,7 @@ export async function _buildWorkflowView(application, current, observer, options
     // count, and the required-action projection below still reads EVERY row (a truncated display
     // may never hide a required operator action).
     const allWorkflowAttention = [
-      ...workerAttention, ...decisionAttention, ...selectionAttention, ...revisionAttention,
+      ...workerAttention, ...decisionAttention, ...selectionAttention,
       ...recoveryAttention, ...preservationAttention,
     ];
     const attention = byteBoundedPage(allWorkflowAttention, ATTENTION_PAGE_BYTES).page;
@@ -3941,7 +3929,6 @@ export async function _buildWorkflowView(application, current, observer, options
         ]
           : phase === 'stopping' ? [{ kind: 'stop' }, { kind: 'wait' }]
           : phase === 'candidate_selected' ? [
-            ...(canReviseSelected ? [{ kind: 'revise_candidate' }] : []),
             { kind: 'evidence' },
           ] : [{ kind: 'evidence' }],
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
@@ -3955,7 +3942,6 @@ export async function _buildWorkflowView(application, current, observer, options
         strategy: definition.strategy, workspace: definition.workspace, join: definition.join,
         definitionDigest: definition.definitionDigest,
         round: rounds.length, roundCount: rounds.length,
-        revisionEligibility: workflowEligibilityProjection(revisionEligibility),
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
       nodes: boundedPlanNodes(projection.nodes, objectiveLine, objectiveBytes),
@@ -3970,7 +3956,7 @@ export async function _buildWorkflowView(application, current, observer, options
       workerPolicy: { state: 'multiple', attempts: attempts.map(({ role }) => ({ role, request: clone(current.profile.workerPolicy) })) },
       budget: { allocated: clone(current.goal.budget), node: null, termination: terminalCause },
       attention, attentionTruncated: workerAttention.length + selectionAttention.length
-        + revisionAttention.length + recoveryAttention.length + preservationAttention.length
+        + recoveryAttention.length + preservationAttention.length
         > attention.length,
       blockedInteraction,
       waitingOn,
