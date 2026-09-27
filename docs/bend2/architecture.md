@@ -172,8 +172,9 @@ the coordinator does not infer a suite from changed paths.
 The target advances through a compare-and-swap ref update. If it moved during
 the check, the candidate is rebased onto the new target and the existing verdict
 is used. The current implementation makes one rebase attempt and returns a
-blocked result if the target moves again. Conflicts name the paths and retained
-scratch checkout. A target held by a checked-out worktree produces the current
+blocked result if the target moves again. That second-move branch is verified
+by code inspection; the recorded live scenarios move the target once. Conflicts
+name the paths and retained scratch checkout. A target held by a checked-out worktree produces the current
 `target busy` command failure. Worker guidance can resolve the branch against
 the moved target, after which a new landing request judges the revised work.
 

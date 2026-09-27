@@ -11,6 +11,14 @@ Use the native Codex subscription session started by `trial-start.sh`. Your task
 reports and decisions remain in that session. The coordinator stores worker
 identities, messages and turn observations in `$DB`.
 
+The trial repository starts from current master and supplies the JS runner with
+`failures` and `reportedFiles` in its verdict. The Bend2 checkout supplies the
+coordinator and check adapter. Follow the repository's dependency setup for the
+selected tests: packages must resolve from the worker and both checked trees.
+An installation only in the original checkout may not serve linked worktrees.
+Report missing dependencies or an old verdict format to the operator; an
+unjudged check cannot authorize the landing.
+
 ## Recruit and start work
 
 Use OMP `deepseek/deepseek-flash` for implementation. Use Muse

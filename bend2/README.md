@@ -281,13 +281,21 @@ BEND=/path/to/bend sh /path/to/bend2-checkout/bend2/scripts/trial-start.sh \
   /path/to/repository /path/to/bend2-checkout /path/to/trial.db
 ```
 
+The repository path should name a current-master checkout, from which the trial
+branch is created. The Bend2 checkout supplies the tools. The JS check adapter
+requires the repository runner's typed verdict fields, `failures` and
+`reportedFiles`; the historical JS runner on `bend2-rewrite` lacks them.
+
 The launcher builds the coordinator beside the database, creates `bend2-trial`
 from the repository's `HEAD` if that branch is absent, and attaches a Codex
 `gpt-6-astra` root using the existing ChatGPT subscription login. `BATON_CODEX`,
 `BATON_OMP` and `BATON_MUSE` can name native executables or local launch wrappers;
 the defaults are `codex`, `omp` and `muse` on `PATH`. Node, Python 3, Git and the
 native build prerequisites must be available. The repository's test dependencies
-must be available when its selected JS tests run.
+must resolve from the worker and the candidate/target worktrees when selected JS
+tests run. Installing packages only in the original checkout does not establish
+that those other trees can resolve them. A missing module produces an unjudged
+check that blocks landing.
 
 The launcher prints one command to seed the first task. Edit the printed task
 file to select an issue before running that command. The root follows
