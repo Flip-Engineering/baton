@@ -15,7 +15,12 @@
 //                 dispatch) ask `acquire()`; the request is admitted when the derived budget has
 //                 room, and otherwise QUEUED in order with a visible {position, ahead} until
 //                 capacity returns — admission is never refused, for being busy or for having
-//                 waited (#541). A worker's weight is MEASURED (#561): the mean bytes its
+//                 waited (#541). A queued row lives only while its own request polls: the
+//                 waiting request restamps the row, and a row whose restamp is older than the
+//                 derived bound is a request that is gone, so it leaves and the requests behind
+//                 it advance (#619 follow-up: the 2026-09-27 18:53:39Z head row waited 77
+//                 minutes while the lane served newer requests). A worker's weight is MEASURED
+//                 (#561): the mean bytes its
 //                 fleet's leases record their seats holding, so a host cannot stack seats past
 //                 the memory they actually consume; an unmeasured fleet admits its first worker
 //                 weight-free. A standing-tight host (paging headroom or backing disk below one
@@ -36,7 +41,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { FRAME_LIMITS } from './limits.mjs';
 import {
   chmodSync, closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync,
-  readFileSync, realpathSync, renameSync, rmSync, statfsSync, unlinkSync, writeFileSync,
+  readFileSync, realpathSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, utimesSync,
+  writeFileSync,
 } from 'node:fs';
 import { arch, availableParallelism, freemem, hostname, loadavg, platform, tmpdir, totalmem } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -69,6 +75,19 @@ const DEFAULT_POLL_MS = 250;
 // memory report, and available memory moves on the scale of the allocations a suite makes — so a
 // check per few seconds observes the condition while costing a fraction of the work it guards.
 const DEFAULT_SHED_POLL_MS = 5_000;
+
+// #619 follow-up: how often a request that is WAITING restamps its own queue row. The row's
+// modification time is the one fact the lane cannot read from the record — whether the request
+// that wrote the row still polls — so the waiting request restamps it on this cadence. A cadence,
+// not a threshold: the derivation still decides every admission.
+const QUEUE_RESTAMP_MS = 5_000;
+// ... and how long a restamp may be absent before the row is a request that is GONE. The lane
+// admits only the first row, so such a row pins every request behind it: on 2026-09-27 the lane's
+// head row (integrate:swarm-backlog-20260924:contribution-6842140b, enqueued 18:53:39Z) waited 77
+// minutes while a newer request took the verify lease at 20:09:06Z, and only a hand removal or a
+// restart cleared it. Three restamp cadences: a request that polls is restamped long before the
+// bound, and one that stopped polling is named gone within a few seconds.
+const QUEUE_STALE_MS = QUEUE_RESTAMP_MS * 3;
 
 function fsyncDirectory(path) {
   let fd;
@@ -446,6 +465,19 @@ function queueName(entry) {
   return `queue-${entry.enqueuedAt}-${entry.nonce}.json`;
 }
 
+/** #619 follow-up: the row's own liveness stamp — its modification time, on the authority's clock.
+ * The request that wrote the row is the only writer that touches it, so the stamp answers the one
+ * question the lane cannot answer from the record itself: whether that request still polls. */
+function stampQueueRow(path, now) {
+  const stamp = new Date(now);
+  utimesSync(path, stamp, stamp);
+}
+
+/** The stamp above, read back; null when the row is already gone (the ordinary race). */
+function queueRowStampedAt(path) {
+  try { return statSync(path).mtimeMs; } catch { return null; }
+}
+
 function leaseName(record) {
   return `lease-${record.kind}-${record.nonce}.json`;
 }
@@ -723,12 +755,22 @@ export class HostCapacityAuthority {
 
   // ── observation ─────────────────────────────────────────────────────────────────────────────────
 
-  /** Sweep proved-dead holders (crashed residents) so their leases and queue entries return to
-   * the budget. Runs inside the mutex; exact-name removals tolerate a raced release. */
+  /** Sweep records whose holder is gone so their leases and queue entries return to the budget: a
+   * proved-dead pid (a crashed resident, #506), and — for a queue row — a restamp older than the
+   * derived bound (#619 follow-up: the request that wrote the row stopped polling). Runs inside
+   * the mutex; exact-name removals tolerate a raced release. */
   #sweep() {
     for (const [dir, fields] of [[this.leasesDir, LEASE_FIELDS], [this.queueDir, QUEUE_FIELDS]]) {
       for (const record of listRecords(dir, 'host capacity record', fields)) {
-        if (!this.liveness(record.pid)) rmSync(join(dir, record.name), { force: true });
+        const path = join(dir, record.name);
+        if (!this.liveness(record.pid)) { rmSync(path, { force: true }); continue; }
+        // A queue row's pid is its writer's, and a resident stays alive: the dead-pid test above can
+        // never reach a row whose REQUEST is gone, and the lane admits only the first row, so that
+        // row pins every request behind it until the request that wrote it restamps it again.
+        if (fields === QUEUE_FIELDS) {
+          const stampedAt = queueRowStampedAt(path);
+          if (stampedAt !== null && this.now() - stampedAt > QUEUE_STALE_MS) rmSync(path, { force: true });
+        }
       }
     }
   }
@@ -833,6 +875,8 @@ export class HostCapacityAuthority {
    * `onQueued` is called once with {position, ahead}. The wait is not bounded: a request that
    * cannot be admitted now is admitted when the requests ahead of it release, and is never
    * refused for having waited (#541).
+   * While it waits it restamps its own queue row on a cadence, so a request that ends without ever
+   * running an exit still leaves the lane to the requests behind it (#619 follow-up).
    *
    * `durable` (a verify option, #561) changes what a STANDING-tight host answers: a suite a
    * worker seat started takes the same verify lease as a landing gate, so its request queues
@@ -862,6 +906,7 @@ export class HostCapacityAuthority {
     const nonce = randomBytes(16).toString('hex');
     let queuedAt = null;
     let reportedQueue = false;
+    let restampedAt = 0;
     for (;;) {
       if (signal?.aborted) {
         this.#withdrawQueueEntry(nonce);
@@ -909,7 +954,14 @@ export class HostCapacityAuthority {
             schemaVersion: 1, kind, holder, nonce, pid: process.pid,
             residentId: this.residentId, enqueuedAt: new Date(queuedAt).toISOString(),
           };
-          atomicWrite(join(this.queueDir, queueName(entry)), entry);
+          const name = queueName(entry);
+          atomicWrite(join(this.queueDir, name), entry);
+          // The row's own liveness starts with the row, and the restamp below continues it.
+          stampQueueRow(join(this.queueDir, name), queuedAt);
+          restampedAt = queuedAt;
+        } else if (this.now() - restampedAt >= QUEUE_RESTAMP_MS) {
+          restampedAt = this.now();
+          stampQueueRow(join(this.queueDir, mine.name), restampedAt);
         }
         return Object.freeze({
           queued: {
