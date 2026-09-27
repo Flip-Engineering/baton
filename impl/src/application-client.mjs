@@ -1522,14 +1522,6 @@ export class BatonClient {
   get waves() {
     return Object.freeze({
       start: (options = {}) => createWave(this, options),
-      // 93B rule 2: attach-and-harvest over a prior wave's member runs. The callback mints
-      // the exactly-once wave.driver_detached receipt through the run.inspect side gate AND
-      // proves each member's binding (application refuses a waveId mismatch with a typed code).
-      attach: (waveId, members, options = {}) => attachWave(
-        this, waveId, members,
-        (runId) => this.#application.command('run.inspect', { runId, mintWaveDetached: true, waveId }),
-        options?.repoRoot ?? null,
-      ),
       // #170 (D4): the read-only compile seam — a wavefile text lowers to the closed IR object
       // baton.recipes.runWorkflow accepts (the four-surface seam's embedded leg).
       compile: (text, options = {}) => this.#application.command('waves.compile', {

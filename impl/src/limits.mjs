@@ -79,7 +79,7 @@ const ADMISSION = Object.freeze({
   // Issue #66 (D7): the resolve act's own admission bound, enforced at coordinator.resolveDoubt.
   'doubt.resolution.bytes': { lane: 'doubt.resolution.bytes', class: 'admission', value: 4096, unit: 'bytes', graceful: 'refused', enforcedAt: 'coordinator.resolveDoubt', refusalCode: 'doubt_resolution_exceeded' },
   'board.report.body': { lane: 'board.report.body', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.submitBoardReport', refusalCode: 'board_report_exceeded' },
-  'run.legacy_send.body': { lane: 'run.legacy_send.body', class: 'admission', value: 16384, unit: 'bytes', graceful: null, enforcedAt: 'application run.workstream.notify / run.act send / coordination-store run control', refusalCode: 'run_legacy_send_exceeded' },
+  'run.legacy_send.body': { lane: 'run.legacy_send.body', class: 'admission', value: 16384, unit: 'bytes', graceful: null, enforcedAt: 'run.act send / coordination-store run control', refusalCode: 'run_legacy_send_exceeded' },
   'decision.text': { lane: 'decision.text', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionAnswer text', refusalCode: 'decision_text_exceeded' },
   'scratchpad.entry.body': { lane: 'scratchpad.entry.body', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.writeScratchpad', refusalCode: 'scratchpad_entry_exceeded' },
   // Issue #294: one wake-filter token (a class/swarm/participant name) admitted into a subscribe

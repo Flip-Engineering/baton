@@ -3928,7 +3928,6 @@ export async function _buildWorkflowView(application, current, observer, options
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
         : phase === 'selection_required'
           ? [
-            { kind: 'send_feedback', roles: candidates.map((candidate) => candidate.role) },
             { kind: 'select_candidate', roles: candidates.map((candidate) => candidate.role) },
           ]
         : phase === 'interruption_uncertain' ? [{ kind: 'stop' }]
@@ -3938,20 +3937,11 @@ export async function _buildWorkflowView(application, current, observer, options
           { kind: 'stop' }, { kind: 'wait' },
         ]
         : phase === 'running' ? [
-          ...(stoppableRoles.length > 0 ? [{ kind: 'stop_member', roles: stoppableRoles }] : []),
           { kind: 'stop' }, { kind: 'wait' },
         ]
           : phase === 'stopping' ? [{ kind: 'stop' }, { kind: 'wait' }]
           : phase === 'candidate_selected' ? [
-            { kind: 'send_feedback', roles: candidates.map((candidate) => candidate.role) },
             ...(canReviseSelected ? [{ kind: 'revise_candidate' }] : []),
-            ...(canAdoptSelected ? [{
-              kind: 'adopt_result', nodeKey: selectedCandidate.nodeKey,
-              resultSha: selectedCandidate.resultSha,
-            }] : []),
-            ...(canIntegrateSelected ? [{
-              kind: 'integrate', strategies: clone(current.profile.integrationPolicy.strategies),
-            }] : []),
             { kind: 'evidence' },
           ] : [{ kind: 'evidence' }],
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
@@ -5293,7 +5283,7 @@ export function _semanticActions(application, current, view, principal, context 
       });
     }
     for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
+      if (['select_candidate', 'revise_candidate'].includes(candidate.kind)
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
         candidates.push({ kind: candidate.kind, source: candidate, target: null });
       }
@@ -5408,13 +5398,7 @@ export function _semanticActions(application, current, view, principal, context 
     return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
       const inputSchema = clone(definition.inputSchema);
-      if (kind === 'integrate' && source?.strategies) {
-        inputSchema.properties.strategy.enum = clone(source.strategies);
-        inputSchema.properties.strategy.default = source.strategies.includes('ff-only')
-          ? 'ff-only' : source.strategies[0];
-      }
-      if (['select_candidate', 'send_feedback', 'stop_member'].includes(kind)
-        && Array.isArray(source?.roles)) {
+      if (kind === 'select_candidate' && Array.isArray(source?.roles)) {
         inputSchema.properties.role.enum = clone(source.roles);
       }
       if (kind.startsWith('context_') && Array.isArray(source?.roles)) {
@@ -5451,12 +5435,9 @@ export function _semanticActions(application, current, view, principal, context 
         irreversible: definition.irreversible,
         idempotent: definition.idempotent,
         priority: definition.priority,
-        choices: kind === 'semantic_review' ? clone(source?.routes ?? [])
-          : kind === 'integrate' ? clone(source?.strategies ?? [])
-            : ['send', 'interrupt'].includes(kind) ? clone(source?.recipients ?? [])
-            : (['select_candidate', 'send_feedback', 'stop_member'].includes(kind)
-              || kind.startsWith('context_'))
-              ? clone(source?.roles ?? []) : [],
+        choices: ['send', 'interrupt'].includes(kind) ? clone(source?.recipients ?? [])
+          : (kind === 'select_candidate' || kind.startsWith('context_'))
+            ? clone(source?.roles ?? []) : [],
         ...(target ? { target: clone(target) } : {}),
         freshness: {
           registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
