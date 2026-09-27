@@ -502,15 +502,16 @@ test('A3 (RC-03): the depth-exhaustion refusal payload carries {depth, budget, r
     'stage: exhaustion-payload-missing — the refusal must name depth AND budget AND remaining: 0 (D3); at HEAD the payload is {depth} only (coordinator.mjs:12534)');
 });
 
-test('A4 (RC-04): a declared budget outside [1, MAX] refuses AT SEND with message_budget_invalid', async () => {
+test('A4 (RC-04, #530): a declared budget below 1 refuses at send; a large budget is admitted', async () => {
   const fx = laneFixture();
   const coordinator = fx.coordinator;
   const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:a4' });
   const zero = await laneSendCode(coordinator, { kind: 'query', to: { workerId: handle.id }, body: 'x', budget: 0 });
   assert.equal(zero, 'message_budget_invalid',
-    'stage: send-budget-refusal-missing — budget 0 must refuse at the lane with the named code (D3/RC-04); at HEAD the lane ignores budget (sendMessage destructures {kind, to, body})');
+    'budget 0 refuses at the lane with the named code (D3/RC-04)');
   const nine = await laneSendCode(coordinator, { kind: 'query', to: { workerId: handle.id }, body: 'x', budget: 9 });
-  assert.equal(nine, 'message_budget_invalid', 'budget 9 (above MAX_MESSAGE_DEPTH_BUDGET 8) must refuse at the lane');
+  assert.equal(nine, 'resolved',
+    '#530: the closed 8 ceiling is gone — a declared budget above it is admitted at the lane');
 });
 
 test('A5 (RC-05): a non-integer budget refuses AT THE LANE — the lane is the single shape authority', async () => {
@@ -684,14 +685,9 @@ test('D1 (D1/B-3): two sibling branches each get the full depth — the budget i
   assert.equal(s1.remaining, 2, 'the sibling branch\'s hops were not spent by branch 1');
 });
 
-test('D2 (D1): MAX_MESSAGE_DEPTH_BUDGET is the closed 8 ceiling, with the contract\'s derivation pins', () => {
-  assert.equal(limits.MAX_MESSAGE_DEPTH_BUDGET, 8,
-    'stage: max-budget-constant-missing — at HEAD limits.mjs exports no MAX_MESSAGE_DEPTH_BUDGET; D1 pins the closed 8 conversational ceiling');
-  assert.equal(Number.isSafeInteger(limits.MAX_MESSAGE_DEPTH_BUDGET), true, 'the ceiling is a safe integer');
-  assert.equal(limits.MAX_MESSAGE_DEPTH_BUDGET & (limits.MAX_MESSAGE_DEPTH_BUDGET - 1), 0,
-    'derivation: 8 is a power of two');
-  assert.ok(limits.MAX_MESSAGE_DEPTH_BUDGET >= 4 && limits.MAX_MESSAGE_DEPTH_BUDGET <= 8,
-    'derivation: the ceiling is the smallest power of two strictly above the 3-deep acceptance exchange (RC-01), with headroom for the #94 four-surveyor pattern');
+test('D2 (#530): the registry declares no reply-depth ceiling, and the per-frame invariant holds', () => {
+  assert.equal(limits.MAX_MESSAGE_DEPTH_BUDGET, undefined,
+    '#530: the closed 8 conversational ceiling is gone — the lane admits any safe integer budget >= 1');
   assert.ok(limits.FRAME_LIMITS['message.send.body'].value < limits.FRAME_LIMITS['scanner.window.message_send'].value,
     'derivation: the per-frame invariant holds at any depth — the 2,048-byte body admission cap never approaches the 20,480-byte scanner window (B-3 corrected)');
 });
@@ -917,18 +913,17 @@ test('H2 PIN (RC-08/G7): the byte-stable command table is untouched — the eigh
   }
 });
 
-test('H3 (RC-09): baton_run_message_send accepts budget {integer, minimum: 1, maximum: 8, optional}', async (t) => {
+test('H3 (RC-09, #530): baton_run_message_send accepts budget {integer, minimum: 1, optional}', async (t) => {
   const fx = await facadeFixture(t);
   const { server } = await mcpFixture(t, fx);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const sendTool = listed.result.tools.find((tool) => tool.name === 'baton_run_message_send');
   assert.ok(sendTool, 'the message send tool is present in the MCP enumeration');
   const budget = sendTool.inputSchema?.properties?.budget;
-  assert.ok(budget,
-    'stage: mcp-message-budget-missing — at HEAD baton_run_message_send carries no budget schema property (mcp-northbound.mjs:585-593); D7 adds budget {integer, minimum: 1, maximum: 8}');
+  assert.ok(budget, 'the message send tool carries the budget schema property (D7)');
   assert.equal(budget.type, 'integer');
   assert.equal(budget.minimum, 1);
-  assert.equal(budget.maximum, 8);
+  assert.equal(budget.maximum, undefined, '#530: the schema declares no maximum (the ceiling is gone)');
   assert.equal(sendTool.inputSchema?.required?.includes('budget') ?? false, false, 'budget is optional (default 1)');
 });
 
@@ -940,10 +935,10 @@ test('H4 (RC-09/RC-04): an out-of-range budget on baton_run_message_send surface
     jsonrpc: '2.0', id: 3, method: 'tools/call',
     params: { name: 'baton_run_message_send', arguments: { repoId: REPO, workerId: handle.id, kind: 'inform', body: 'x', budget: 9 } },
   });
-  assert.equal(call.result?.isError, true, 'an out-of-range budget draws a tool error');
-  const parsed = JSON.parse(call.result.content[0].text);
-  assert.equal(parsed.error?.code, 'message_budget_invalid',
-    'stage: mcp-message-budget-missing — at HEAD budget is an undeclared field (unknown_argument_field at the key-closure, mcp-northbound.mjs:898) and the code does not exist; D7/D3 surface the lane\'s refusal verbatim, never command_outcome_unknown');
+  assert.equal(call.result?.isError, false,
+    '#530: a budget above the old 8 ceiling is admitted through the MCP surface — the lane refuses only a budget below 1');
+  assert.ok(call.result?.content?.[0]?.text !== undefined || call.result?.structuredContent !== undefined,
+    'the call answered with the lane outcome');
   // N1 (blue-team fold): an IN-RANGE budget must be accepted — the _dispatch branch for
   // baton_run_message_send (mcp-northbound.mjs:1771-1778) builds the CLOSED shape
   // {runId?, workerId, kind, body}, so at HEAD even budget: 3 is stripped and the argument dies

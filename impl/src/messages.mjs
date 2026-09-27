@@ -3,7 +3,7 @@
 // prose). Pure: deterministic given injected now/idGen. No trust is ever implied by shape.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 export class ValidationError extends Error {
   /** @param {string[]} errors */
@@ -223,30 +223,13 @@ export function createResult(fields, opts) {
 // ---------------------------------------------------------------------------
 
 const SAFE_OPTION_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
-// The registry is the single source (Decision 8): the answer text lane's bound is imported, never
-// re-declared. The request's own prose (question, labels, summaries) carries no ceiling.
-const MAX_DECISION_TEXT_BYTES = FRAME_LIMITS['decision.text'].value;
+// The answer text carries no ceiling (Decision 8 reads the registry for the lanes that do).
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.length > 0;
 }
 
-function boundedNonEmpty(value, maxBytes) {
-  return nonEmpty(value) && Buffer.byteLength(value) <= maxBytes;
-}
 
-/** Build a coaching ValidationError (Decision 3): the payload {cap, actual, unit, gracefulPath}
- * rides the thrown error (plus the lane's typed refusal code), and the errors list carries the
- * ONE helper's composed text. */
-function coachingValidationError(errors, row, actual, cap = row.value) {
-  const error = new ValidationError(errors);
-  error.code = row.refusalCode ?? 'size_exceeded';
-  error.cap = cap;
-  error.actual = actual;
-  error.unit = 'bytes';
-  error.gracefulPath = frameLimitRefusalPath(row, cap);
-  return error;
-}
 
 /** @param {{question,options,allowFreeResponse?,recommended?,deadlineMs}} fields
  * @returns {object} a deeply-frozen DecisionRequest @throws {ValidationError}
@@ -316,8 +299,6 @@ export function createDecisionRequest(fields) {
 /** @param {{optionId?,text?}} fields @returns {object} a deeply-frozen DecisionAnswer @throws {ValidationError} */
 export function createDecisionAnswer(fields) {
   const errors = [];
-  let sizeRow = null;
-  let sizeActual = 0;
   const allowedKeys = new Set(['optionId', 'text']);
   for (const key of Object.keys(fields ?? {})) {
     if (!allowedKeys.has(key)) errors.push(`decision answer has an unknown field "${key}"`);
@@ -328,19 +309,8 @@ export function createDecisionAnswer(fields) {
   if (hasOptionId && (typeof fields.optionId !== 'string' || !SAFE_OPTION_ID.test(fields.optionId))) {
     errors.push('optionId must be a safe id');
   }
-  if (hasText && !boundedNonEmpty(fields.text, MAX_DECISION_TEXT_BYTES)) {
-    const textActual = typeof fields.text === 'string' ? Buffer.byteLength(fields.text) : 0;
-    if (textActual > MAX_DECISION_TEXT_BYTES) {
-      sizeRow = { row: FRAME_LIMITS['decision.text'], actual: textActual };
-      errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.text'], textActual, MAX_DECISION_TEXT_BYTES));
-    } else {
-      errors.push(`text must be non-empty, <=${MAX_DECISION_TEXT_BYTES} bytes`);
-    }
-  }
-  if (errors.length) {
-    if (sizeRow) throw coachingValidationError(errors, sizeRow.row, sizeRow.actual, sizeRow.row.value);
-    throw new ValidationError(errors);
-  }
+  if (hasText && !nonEmpty(fields.text)) errors.push('text must be a non-empty string');
+  if (errors.length) throw new ValidationError(errors);
   return deepFreeze(hasOptionId ? { optionId: fields.optionId, text: null } : { optionId: null, text: fields.text });
 }
 
@@ -356,9 +326,7 @@ export function createDecisionAnswer(fields) {
 const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const SAFE_ITEM_ID = /^[A-Za-z0-9_.:-]{1,256}$/;
 const ITEM_DIGEST = /^[a-f0-9]{64}$/;
-// The live board.report.body bound is imported from the registry (Decision 8); a title and a
-// detail carry none.
-const MAX_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
+// A title, a detail and a report body carry no byte ceiling; they are shown whole.
 const MAX_BOARD_EVIDENCE = 8;
 
 function validEvidenceRef(ref) {
@@ -421,7 +389,7 @@ export function createBoardReport(fields) {
   if (typeof fields?.itemId !== 'string' || !SAFE_ITEM_ID.test(fields.itemId)) errors.push('itemId must be a safe id');
   if (!Number.isSafeInteger(fields?.itemVersion) || fields.itemVersion <= 0) errors.push('itemVersion is required and must be a positive safe integer');
   if (typeof fields?.itemDigest !== 'string' || !ITEM_DIGEST.test(fields.itemDigest)) errors.push('itemDigest is required and must be a 64-hex content digest');
-  if (!boundedNonEmpty(fields?.body, MAX_BOARD_REPORT_BYTES)) errors.push(`body is required (non-empty, <=${MAX_BOARD_REPORT_BYTES} bytes)`);
+  if (!nonEmpty(fields?.body)) errors.push('body is required (non-empty string)');
   if (errors.length) throw new ValidationError(errors);
   return deepFreeze({ itemId: fields.itemId, itemVersion: fields.itemVersion, itemDigest: fields.itemDigest, body: fields.body });
 }

@@ -19,7 +19,6 @@ import test from 'node:test';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import {
   MAX_SCRATCHPAD_BATCH_BYTES,
-  MAX_SCRATCHPAD_ENTRY_BYTES,
   MAX_SCRATCHPAD_SHARED_ENTRIES,
   MAX_SCRATCHPAD_SNAPSHOT_REAPS,
   MAX_SCRATCHPAD_WORKER_ENTRIES,
@@ -219,7 +218,6 @@ test('SP2: unknown, missing, and discriminator-inapplicable fields fail scratchp
     linkEntry({ type: 'entry', entryId: `scratchpad-entry:${'a'.repeat(64)}`, entryDigest: 'a'.repeat(63) }),
     { kind: 'note', text: 'null\u0000byte' },
     { kind: 'note', text: '' },
-    { kind: 'note', text: 'x'.repeat(2049) },
   ];
   for (const [index, entry] of rejected.entries()) {
     assert.throws(
@@ -242,19 +240,15 @@ test('SP2: arrays must be real arrays and steps may not be sparse', () => {
   }
 });
 
-test('SP2: total canonical content over MAX_SCRATCHPAD_ENTRY_BYTES is refused before append', () => {
+test('SP2: total canonical content carries no entry ceiling — a large plan entry is admitted', () => {
   const store = freshStore('sp2-entry-bytes');
-  assert.equal(MAX_SCRATCHPAD_ENTRY_BYTES, 8_192);
   const steps = Array.from({ length: 16 }, () => ({ text: 'y'.repeat(512), state: 'todo' }));
-  const oversize = { kind: 'plan', objective: 'o'.repeat(512), steps, supersedes: null };
-  assert.ok(canonicalBytes(oversize) > MAX_SCRATCHPAD_ENTRY_BYTES, 'the fixture really is over the ceiling');
+  const large = { kind: 'plan', objective: 'o'.repeat(512), steps, supersedes: null };
+  assert.ok(canonicalBytes(large) > 8_192, 'the fixture really is past the old 8 KiB ceiling');
   const before = store.snapshot().lastSeq;
-  // Issue #89 Decision 2/3: the canonical entry ceiling gained the Decision-3 coaching shape —
-  // the refusal code is now the registry lane's scratchpad_entry_exceeded (B14 of the
-  // frame-economics suite), with {cap, actual, unit, gracefulPath} on the thrown error.
-  assert.throws(() => write(store, { entry: oversize, key: 'sp2:entry-bytes' }),
-    (error) => error?.code === 'scratchpad_entry_exceeded');
-  assert.equal(store.snapshot().lastSeq, before, 'no event was appended');
+  const written = write(store, { entry: large, key: 'sp2:entry-bytes' });
+  assert.equal(written.entry.content.objective.length, 512, 'the entry lands whole');
+  assert.ok(store.snapshot().lastSeq > before, 'the entry was appended');
 });
 
 test('SP2: a raw request over MAX_SCRATCHPAD_WRITE_REQUEST_BYTES refuses before NFKC/URL parsing', () => {

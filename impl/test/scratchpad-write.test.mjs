@@ -695,30 +695,27 @@ test('A6-1 stage[append-candidacy-shortcut-missing]: the append verb lands as a 
 // A7 — D3 bounds through the surface (OQ4, G8)
 // ---------------------------------------------------------------------------
 
-test('A7-1 stage[append-body-limit-missing]: a body over scratchpad.entry.body (8192 B for a steering-registered run) refuses scratchpad_entry_exceeded', async (t) => {
+test('A7-1: a body past the old scratchpad.entry.body value is WRITTEN, not refused', async (t) => {
   const fx = await lawFixture(t);
-  const limit = FRAME_LIMITS['scratchpad.entry.body'].value;
-  // Fold (blueteam A7-1 SHALLOW): the under-bound half is pinned FIRST — a blanket
-  // scratchpad_entry_exceeded refusal (the bite-tested cheap wrong impl) would fail the written
-  // receipt, and the round-trip read-back proves the surface actually WRITES. At HEAD the first
-  // command throws (application_command_unavailable), so this stage assert is the RED gate.
+  // #530 removed the entry-body ceiling: the append surface writes the note at any length, and the
+  // kernel shared partition reads it back. The worker-partition cap is the only bound left on the
+  // lane, and it is a partition size, not a body size.
   const under = await captureAsync(fx.application.command('run.scratchpad.append',
     { runId: 'run:steer', scope: 'shared', kind: 'note', body: 'within limit', idempotencyKey: 'ik-a7-under' },
     principal('worker:m1')));
   stageAssert(under.ok && under.value?.result === 'written', 'append-body-limit-missing',
-    `the append surface must WRITE a note under the body limit (receipt result:"written"); at HEAD the surface is absent and the command throws ${
+    `the append surface must WRITE a note (receipt result:"written"); at HEAD the surface is absent and the command throws ${
       under.error?.code ?? '?'} (application_command_unavailable)`);
   const readBack = fx.driver.coordination.scratchpadSnapshot('run:steer', 'shared');
   stageAssert(readBack.slices[0].entries.some((e) => e.content?.text === 'within limit' || e.text === 'within limit'),
     'append-body-limit-missing',
     'the written note is READ BACK from the kernel shared partition (scratchpadSnapshot) — a surface that fabricates receipts without writing fails here (the blueteam round-trip fold)');
-  const body = 'x'.repeat(limit + 1);
-  const attempt = await captureAsync(fx.application.command('run.scratchpad.append',
-    { runId: 'run:steer', scope: 'shared', kind: 'note', body },
+  const body = 'x'.repeat(8192 + 1);
+  const large = await captureAsync(fx.application.command('run.scratchpad.append',
+    { runId: 'run:steer', scope: 'shared', kind: 'note', body, idempotencyKey: 'ik-a7-over' },
     principal('worker:m1')));
-  stageAssert(attempt.ok === false && attempt.error?.code === 'scratchpad_entry_exceeded',
-    'append-body-limit-missing',
-    `the append surface must expose the kernel's single refusal verbatim — a body over ${limit} B refuses scratchpad_entry_exceeded (OQ4: the 8192/2048 steering split is a doc note, never a second surface code)`);
+  stageAssert(large.ok && large.value?.result === 'written', 'append-body-limit-missing',
+    'a note past the old 8 KiB value is admitted and written whole — no entry-body ceiling refuses it');
 });
 
 test('A7-2 stage[append-shared-cap-missing]: the 513th shared append refuses scratchpad_partition_exhausted', async (t) => {
@@ -858,9 +855,6 @@ test('P-A7 PIN: the kernel bounds sit at the declared constants — the surface 
   // is killed here.
   assert.equal(WORKER_CAP, 128, 'MAX_SCRATCHPAD_WORKER_ENTRIES stays 128 (coordination-store.mjs:524)');
   assert.equal(SHARED_CAP, 512, 'MAX_SCRATCHPAD_SHARED_ENTRIES stays 512 (coordination-store.mjs:525)');
-  const bodyRow = FRAME_LIMITS['scratchpad.entry.body'];
-  assert.equal(bodyRow.value, 8192, 'scratchpad.entry.body stays 8192 B (limits.mjs:71)');
-  assert.equal(bodyRow.refusalCode, 'scratchpad_entry_exceeded', 'the body limit refusal is the single typed code the surface must expose verbatim (OQ4)');
   // Bluetema §4 law fold: the `14100-14120` window is a line-range absolute anchor — drop it for a
   // presence check inside the seam itself. The worker-partition refusal is raised BY the write path,
   // so the member's own source is the window that must carry it (issue #259 slice 4: the body moved

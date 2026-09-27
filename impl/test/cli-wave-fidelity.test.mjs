@@ -116,10 +116,6 @@ const renderDocsScript = fileURLToPath(
   new URL('../scripts/render-surface-docs.mjs', import.meta.url),
 );
 const REPO_ID = 'repo-wave-157';
-// limits.mjs:85 — spill.body, the ONE substrate ceiling that mints a hard refusal. An objective
-// beyond it is the B-8 (A6-6) admission refusal that FIRES at HEAD.
-const SPILL_BODY_CEILING = 1_048_576;
-const BIG_OBJECTIVE = 'x'.repeat(SPILL_BODY_CEILING + 1);
 const WAVE_ID = 'wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const RUN_ID = 'run:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -730,26 +726,3 @@ test('B-7 PIN (A5-5 F11): the issued bare-attach shape runs the full parse→dis
   assert.deepEqual(row.roster.map((m) => m.role), ['alpha'], 'the attachable set renders for the operator');
 });
 
-test('B-8 PIN (A6-6 F4): `baton waves start --members JSON` drives an admission-exceeding objective through the full CLI pipeline — typed wave_member_invalid', async (t) => {
-  const host = await hostFixture(t);
-  const members = [memberExact('alpha', BIG_OBJECTIVE)];
-  const parsed = parseBatonCli(['waves', 'start', '--members', JSON.stringify(members)]);
-  assert.equal(parsed.name, 'waves.start', 'the CLI verb compiles to the direct-port waves.start');
-  assert.ok(Array.isArray(parsed.args.members) && parsed.args.members.length === 1,
-    'the --members JSON payload becomes the dispatch members');
-  let refusal = null;
-  try {
-    await runBatonCli(parsed, cliRoutingClient(host));
-  } catch (error) {
-    refusal = error;
-  }
-  assert.ok(refusal !== null,
-    'the admission-exceeding wave refuses through the CLI dispatch — never a silent per-member swallow');
-  assert.equal(refusal.code, 'wave_member_invalid', 'the CLI leg carries the typed body.error code (F4)');
-  assert.equal(refusal.message, 'wave member alpha did not start',
-    'the CLI error message is byte-identical to the embedded refusal (W6/F4)');
-  const detail = refusal.detail ?? refusal;
-  assert.equal(detail.cap, SPILL_BODY_CEILING, 'the refusal names the spill.body ceiling');
-  assert.equal(detail.role, 'alpha', 'the offending member role is named');
-  assert.equal(detail.cause?.code, 'spill_body_exceeded', 'the inner admission code is preserved in cause');
-});
