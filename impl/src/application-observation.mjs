@@ -5269,7 +5269,7 @@ export function _semanticActions(application, current, view, principal, context 
       });
     }
     for (const candidate of view.nextActions ?? []) {
-      if (['select_candidate', 'revise_candidate'].includes(candidate.kind)
+      if (candidate.kind === 'select_candidate'
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
         candidates.push({ kind: candidate.kind, source: candidate, target: null });
       }
