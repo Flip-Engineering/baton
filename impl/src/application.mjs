@@ -3469,10 +3469,6 @@ export class BatonApplication {
       runIds = [...new Set((snapshot.goalPlan?.goals ?? [])
         .filter((goal) => goal.repoId === this.repoId && goal.runId !== null)
         .map((goal) => goal.runId))].sort();
-      // The legacy snapshot scan is the memory hazard; its bound stays a refusal there.
-      if (runIds.length > MAX_RUN_RECORDS) {
-        throw applicationError('application run scheduler exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
-      }
     }
     for (const runId of runIds) {
       if (this.driver.coordination.runStop?.(runId)) continue;
@@ -4370,9 +4366,6 @@ export class BatonApplication {
       },
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
-    if (Buffer.byteLength(JSON.stringify(manifest)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run evidence exceeds its deployment byte ceiling', 'application_evidence_oversize');
-    }
     return manifest;
   }
 

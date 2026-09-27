@@ -1430,17 +1430,6 @@ export function validateToolchainProjectionMetadata(repoRoot, taskId, identity) 
     && Array.isArray(meta.toolchainProjectionTargets) && meta.toolchainProjectionTargets.length > 0;
 }
 
-// #500: the sparse-checkout admission bounds (normalizeSparsePaths, sparseCheckoutIdentity). One
-// lane's path set is at most 1 024 paths; one path is at most 2 048 bytes; the set's paths total
-// under 256 KiB; and no single path carries more than 64 segments. An admitted identity is a git
-// sparse-checkout file this module writes and reads whole, so these bound the file and the
-// pathspec list one admission can carry. Operator-declared: no file in the repository derives the
-// numbers.
-const SPARSE_MAX_PATHS = 1024;
-const SPARSE_MAX_PATH_BYTES = 2048;
-const SPARSE_MAX_TOTAL_PATH_BYTES = 256 * 1024;
-const SPARSE_MAX_DEPTH = 64;
-
 function canonicalDigest(value) {
   const canonical = (item) => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
     ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, canonical(item[key])])) : item;
@@ -1473,19 +1462,16 @@ function assertNoPhysicalOwnerCollision(repoRoot, taskId) {
 }
 
 export function normalizeSparsePaths(paths = []) {
-  if (!Array.isArray(paths) || paths.length > SPARSE_MAX_PATHS) throw new TypeError('sparse checkout paths must be a bounded array');
-  let totalBytes = 0;
+  if (!Array.isArray(paths)) throw new TypeError('sparse checkout paths must be an array');
   const normalized = paths.map((path) => {
-    const bytes = typeof path === 'string' ? Buffer.byteLength(path) : 0; totalBytes += bytes;
-    if (typeof path !== 'string' || path.length === 0 || bytes > SPARSE_MAX_PATH_BYTES
+    if (typeof path !== 'string' || path.length === 0
       || path.normalize('NFC') !== path || path.includes('\\') || /[\u0000-\u001f\u007f]/u.test(path)
       || isAbsolute(path) || !/^[A-Za-z0-9._/-]+$/u.test(path)) throw new TypeError('sparse checkout path must be a safe relative literal');
     const parts = path.split('/');
-    if (parts.length > SPARSE_MAX_DEPTH || parts.some((part) => part === '' || part === '.' || part === '..')
+    if (parts.some((part) => part === '' || part === '.' || part === '..')
       || ['.git', '.baton'].includes(foldCanonicalCase(parts[0]))) throw new TypeError('sparse checkout path escapes repository');
     return path;
   }).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-  if (totalBytes > SPARSE_MAX_TOTAL_PATH_BYTES) throw new TypeError('sparse checkout paths exceed the aggregate byte ceiling');
   for (let index = 0; index < normalized.length; index += 1) {
     const left = foldCanonicalCase(normalized[index]);
     for (let other = index + 1; other < normalized.length; other += 1) {

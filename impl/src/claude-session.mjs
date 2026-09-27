@@ -297,7 +297,6 @@ function resultUsage(obj, counterId, priorCumulativeUsdNanos = null) {
   };
 }
 
-const CREDENTIAL_MAX_BYTES = 16 * 1024;
 const KIMI_MODEL = 'kimi-k3[1m]';
 const KIMI_BASE_URL = 'https://api.moonshot.ai/anthropic';
 const KIMI_PROVIDER_ENV = Object.freeze([
@@ -362,7 +361,7 @@ export function loadProviderCredentialFile(path, {
     throw credentialError(providerLabel, 'credential_file_owner');
   }
   if ((before.mode & 0o077) !== 0) throw credentialError(providerLabel, 'credential_file_permissions');
-  if (before.size <= 0 || before.size > CREDENTIAL_MAX_BYTES) throw credentialError(providerLabel, 'credential_file_size');
+  if (before.size <= 0) throw credentialError(providerLabel, 'credential_file_size');
   let descriptor;
   try { descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); }
   catch { throw credentialError(providerLabel, 'credential_file_unavailable'); }
@@ -376,7 +375,7 @@ export function loadProviderCredentialFile(path, {
       throw credentialError(providerLabel, 'credential_file_owner');
     }
     if ((stat.mode & 0o077) !== 0) throw credentialError(providerLabel, 'credential_file_permissions');
-    if (stat.size <= 0 || stat.size > CREDENTIAL_MAX_BYTES) throw credentialError(providerLabel, 'credential_file_size');
+    if (stat.size <= 0) throw credentialError(providerLabel, 'credential_file_size');
     let actualPath;
     try { actualPath = realpathSync(path); } catch { throw credentialError(providerLabel, 'credential_file_changed'); }
     for (const root of forbiddenRoots) {

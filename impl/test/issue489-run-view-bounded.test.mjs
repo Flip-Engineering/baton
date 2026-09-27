@@ -368,19 +368,15 @@ test('489-c: run show answers at every depth for a run whose full view is over t
   const runId = seat.runId;
   const client = transport(application);
 
-  // The full read refuses — naming the section that dominates its own bytes and a remedy that works.
-  const full = await client.command('run.status', { runId }).then(() => null, (error) => error);
-  assert.ok(full, 'the full Run view is over the ceiling and refuses');
-  assert.equal(full.code, 'application_run_view_oversize');
-  assert.match(full.message, /the largest section is \w+ \(\d+ bytes\)/u,
-    'the refusal names the section and its bytes');
-  assert.match(full.message, new RegExp(`baton run show ${runId} --depth outline`, 'u'),
-    'the refusal prescribes the narrowing that works');
-  assert.equal(full.detail?.field, 'depth');
-  assert.equal(full.detail?.cap, MAX_RUN_VIEW_BYTES);
-  assert.ok(Number.isSafeInteger(full.detail?.actual) && full.detail.actual > MAX_RUN_VIEW_BYTES,
-    'the refusal carries the true byte count');
-  assert.equal(full.detail?.gracefulPath, 'depth:outline');
+  // The full read answers with the durable spill's citation (#530: the read spills and continues,
+  // never refuses for the size of what it serves).
+  const full = await client.command('run.status', { runId });
+  assert.equal(full.spilled, true, 'the full Run view is served as a durable spill');
+  assert.ok(full.bytes > MAX_RUN_VIEW_BYTES, 'the citation names the bytes it spilled');
+  assert.match(full.digest, /^[a-f0-9]{64}$/u);
+  assert.ok(typeof full.spill === 'string' && full.spill.length > 0, 'the citation names the durable spill');
+  assert.equal(full.read, 'run.spill.read', 'the citation names the read that resolves it');
+  assert.equal(full.ceiling, MAX_RUN_VIEW_BYTES);
 
   // Every rung of the ladder answers, through the CLI's own parser and client shape.
   for (const argv of [
@@ -438,9 +434,9 @@ test('489-d: a recruit whose brief projects over the ceiling is admitted, and it
   assert.equal(refusal.code, 'context_package_not_found',
     'the attach resolves against the store — never against the Run view the ceiling refuses');
 
-  // The ceiling still holds for a caller that asks for the whole view: the admission did not come
-  // from raising it.
-  const full = await application.status(seat.runId, principal('observer')).then(() => null, (error) => error);
-  assert.equal(full?.code, 'application_run_view_oversize',
-    'the ceiling still holds for a caller that asks for the whole view');
+  // The ceiling still holds for a caller that asks for the whole view: it is served as a spill,
+  // never refused (#530) — the admission did not come from raising the ceiling.
+  const full = await application.status(seat.runId, principal('observer'));
+  assert.equal(full.spilled, true, 'a caller that asks for the whole view gets the spill citation');
+  assert.ok(full.bytes > MAX_RUN_VIEW_BYTES);
 });

@@ -838,18 +838,8 @@ test('343-g: the swarm view tool oversize refusal names the swarm own narrowing 
     method: "tools/call",
     params: { name: "baton_swarm_view", arguments: { repoId: "repo-a", swarmId: "swarm-1" } },
   });
-  const refusal = call.result?.structuredContent?.error ?? {};
-  assert.equal(refusal.code, "application_swarm_view_oversize");
-  assert.match(
-    `${refusal.message ?? ""} ${refusal.action ?? ""}`,
-    /participantId, a projection, or walk the pages with cursor/,
-    "the refusal names the swarm tool's own narrowing axes",
-  );
-  assert.match(`${refusal.message ?? ""}`, /bytes against/, "the refusal names the size it observed");
-  assert.deepEqual(refusal.detail?.narrowing, ["participantId", "projection", "cursor"]);
-  assert.doesNotMatch(
-    `${refusal.message ?? ""} ${refusal.action ?? ""}`,
-    /`?depth`?\/`?section`?\/`?item`?/,
-    "never the Run-view selectors",
-  );
+  const served = call.result?.structuredContent ?? {};
+  assert.equal(served.error ?? null, null, 'the oversize record is answered, never refused');
+  assert.ok(Buffer.byteLength(JSON.stringify(served)) > 64 * 1024,
+    'the answer is served whole — the declared frame no longer refuses a read (#530)');
 });

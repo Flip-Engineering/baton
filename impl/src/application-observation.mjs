@@ -2014,9 +2014,8 @@ export function _findRun(application, runId, { allowUnavailableProfile = false }
       // The fallback stays only for legacy stores without the narrow accessor.
       const snapshot = application.driver.coordination.snapshot();
       const goalPlan = snapshot.goalPlan;
-      if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS || goalPlan.plans.length > MAX_RUN_RECORDS
-        || goalPlan.approvals.length > MAX_RUN_RECORDS || goalPlan.dispatches.length > MAX_RUN_RECORDS) {
-        throw applicationError('application run projection exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
+      if (!goalPlan) {
+        throw applicationError('application run projection is unavailable', 'application_run_history_unavailable');
       }
       const goals = goalPlan.goals.filter((row) => row.repoId === application.repoId && row.runId === runId)
         .sort((a, b) => b.version - a.version);
@@ -2062,10 +2061,6 @@ export function _findRun(application, runId, { allowUnavailableProfile = false }
           throw applicationError('read-only Run Plan history is unavailable',
             'application_run_history_unavailable');
         }
-        if (goalPlan.plans.length > MAX_RUN_RECORDS) {
-          throw applicationError('application run projection exceeds its bounded lookup ceiling',
-            'application_run_lookup_oversize');
-        }
         relevantPlans = goalPlan.plans.filter((candidate) => (
           candidate.repoId === application.repoId && candidate.runId === runId
           && candidate.goal.goalId === goal.goalId && candidate.goal.version === goal.version
@@ -2078,10 +2073,6 @@ export function _findRun(application, runId, { allowUnavailableProfile = false }
       if (!Array.isArray(relevantPlans)) {
         throw applicationError('read-only Run Plan history is unavailable',
           'application_run_history_unavailable');
-      }
-      if (relevantPlans.length > MAX_RUN_RECORDS) {
-        throw applicationError('application run projection exceeds its bounded lookup ceiling',
-          'application_run_lookup_oversize');
       }
     }
     assertResultIntentCoherence(goal, relevantPlans);
@@ -2723,31 +2714,54 @@ export function _cancelRunVerificationRetry(application, pending) {
    * (`options.narrow`, set by the `run.inspect` ladder and by the participant's start) gets the
    * SHED view: the sections the ladder names are replaced by their references, one at a time,
    * until the view fits — and the view SAYS what it shed, what each cost and the read that serves
-   * it. A caller that asked for the whole view keeps the typed refusal, now naming the section
-   * that dominates the view and the narrowing that actually works.
+   * it. A view the ladder cannot narrow is MINTED AS A DURABLE SPILL and the answer carries the
+   * citation its reader follows (#530: the read spills and continues, never refuses).
    */
 export function _finalizeRunView(application, current, view, options = {}) {
     const runId = current?.goal?.runId ?? null;
     const observed = Buffer.byteLength(JSON.stringify(view), 'utf8');
     if (observed <= MAX_RUN_VIEW_BYTES) return deepFreeze(view);
-    if (options.narrow !== true) throw application._runViewOversizeRefusal(runId, view, observed, []);
     const shed = [];
     let narrowed = view;
-    for (const step of RUN_VIEW_SHED_STEPS) {
-      const before = Buffer.byteLength(JSON.stringify(narrowed), 'utf8');
-      if (before <= MAX_RUN_VIEW_BYTES) break;
-      const replacement = step.shed(narrowed);
-      if (replacement === null) continue;
-      const candidate = { ...narrowed, ...replacement };
-      const after = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
-      // A step that did not PAY is rolled back: a reference that costs as much as the value it
-      // replaced is not a narrowing, and the section stays whole.
-      if (after >= before) continue;
-      narrowed = candidate;
-      shed.push(Object.freeze({ section: step.section, bytes: before - after, read: step.read }));
+    if (options.narrow === true) {
+      for (const step of RUN_VIEW_SHED_STEPS) {
+        const before = Buffer.byteLength(JSON.stringify(narrowed), 'utf8');
+        if (before <= MAX_RUN_VIEW_BYTES) break;
+        const replacement = step.shed(narrowed);
+        if (replacement === null) continue;
+        const candidate = { ...narrowed, ...replacement };
+        const after = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+        // A step that did not PAY is rolled back: a reference that costs as much as the value it
+        // replaced is not a narrowing, and the section stays whole.
+        if (after >= before) continue;
+        narrowed = candidate;
+        shed.push(Object.freeze({ section: step.section, bytes: before - after, read: step.read }));
+      }
     }
     const remaining = Buffer.byteLength(JSON.stringify(narrowed), 'utf8');
-    if (remaining > MAX_RUN_VIEW_BYTES) throw application._runViewOversizeRefusal(runId, narrowed, remaining, shed);
+    if (remaining <= MAX_RUN_VIEW_BYTES) {
+      return deepFreeze({ ...narrowed, narrowed: Object.freeze({
+        ceiling: MAX_RUN_VIEW_BYTES, sections: Object.freeze(shed), read: runViewNarrowedRead(runId),
+      }) });
+    }
+    // #530: the view.run.bytes lane is graceful — a view the ladder cannot narrow is ADMITTED as a
+    // durable spill, and the answer carries the citation its reader follows. The read never refuses
+    // for the size of what it serves.
+    const serialized = JSON.stringify(narrowed);
+    const coordination = application?.driver?.coordination ?? null;
+    const minted = typeof coordination?.mintSpill === 'function'
+      ? coordination.mintSpill({ body: serialized, lane: 'view.run.bytes' },
+        { actor: 'application:run-view', key: `view.run.spill:${runId}:${digest(serialized)}` })
+      : null;
+    const spill = minted?.spill ?? null;
+    if (spill !== null) {
+      return deepFreeze({
+        runId, spilled: true, bytes: remaining, digest: spill.digest, spill: spill.spillId,
+        read: 'run.spill.read', ceiling: MAX_RUN_VIEW_BYTES, sections: Object.freeze(shed),
+      });
+    }
+    // A store with no spill facility still serves the read: the narrowed envelope says what the
+    // answer could not carry, and the read the caller follows is named.
     return deepFreeze({ ...narrowed, narrowed: Object.freeze({
       ceiling: MAX_RUN_VIEW_BYTES, sections: Object.freeze(shed), read: runViewNarrowedRead(runId),
     }) });
