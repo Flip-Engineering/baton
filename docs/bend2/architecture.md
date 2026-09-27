@@ -177,9 +177,9 @@ scratch checkout. A target held by a checked-out worktree produces the current
 `target busy` command failure. Worker guidance can resolve the branch against
 the moved target, after which a new landing request judges the revised work.
 
-The successful result names the commit now on the target. Landing retains the
-worker branch and workspace. `push REPO BRANCH REMOTE` then runs Git's ordinary
-push and reports `pushed` or `rejected` with the command output. The acceptance
+`landed` names the new target commit; `already` names the worker commit that
+needs no further landing. Landing retains the worker branch and workspace.
+`push REPO BRANCH REMOTE` then runs Git's ordinary push and reports `pushed` or `rejected` with the command output. The acceptance
 run verifies publication with `git ls-remote` against its declared scratch bare
 remote, including refusal after the remote moves incompatibly. Repository
 network publication is the operator's explicit operation.

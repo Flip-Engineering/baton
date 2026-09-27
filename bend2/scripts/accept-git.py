@@ -249,7 +249,8 @@ def scenario_landing_publishing(config, out, binary):
           "inspect its worktree, branch diff and committed file contents, then acknowledge "
           "the report naming what you reviewed. Do not land, push, edit, or launch workers. "
           "The acceptance driver performs the Git acts after your review. "
-          "Acknowledge review-setup now and wait for the report.")
+          "Acknowledge review-setup and end this turn. Do not poll or wait in a tool. "
+          "The adapter starts your next turn when a worker report is committed.")
     root_attach(binary, db, run_dir, route_omp)
     remote = run_dir / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
