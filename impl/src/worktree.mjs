@@ -1722,6 +1722,114 @@ function hasUnobservedContent(dir) {
 }
 
 /**
+ * Issue #620: whether one owned checkout holds nothing its lane branch does not, read against the
+ * branch tree rather than through the checkout's own Git administration. `git worktree remove
+ * --force` deletes the administration directory `.git/worktrees/<name>` before it walks the
+ * working tree, so a walk it could not finish leaves the checkout on disk with its `.git` file
+ * naming a Git directory that is gone and no command inside the checkout resolving anything. The
+ * reads below name the common Git directory explicitly, which makes Git ignore that `.git` file,
+ * and build a throwaway index from the branch tree so every comparison is against that tree. They
+ * write neither the checkout nor the repository's index.
+ *
+ * The directory is bound to this repository first: its `.git` file must name a Git directory
+ * directly under this repository's own `worktrees` root, and that directory must be gone (the
+ * registration the incident lost). `attestedInfrastructureRoots` of the owner's metadata are the
+ * one infrastructure a checkout may hold without a capture, the same authority the readable path
+ * uses; metadata that is absent or invalid attests nothing.
+ * @param {string} repoRoot
+ * @param {string} taskId
+ * @param {string} dir
+ * @returns {{bound:boolean, decided:boolean, contained:boolean, differingPaths:string[]}}
+ *   `bound` — the `.git` file names an absent administration directory under this repository's
+ *   own root; `decided` — the containment question was answered; `contained` — that answer was
+ *   that the branch tree holds every entry the checkout still has; `differingPaths` — the entries
+ *   the branch tree does not hold, as the retention reports them.
+ */
+function laneBranchTreeContainment(repoRoot, taskId, dir) {
+  const undecided = Object.freeze({ bound: false, decided: false, contained: false, differingPaths: Object.freeze([]) });
+  let ownerMetadata = null;
+  try { ownerMetadata = validatedMetadata(repoRoot, taskId); } catch { ownerMetadata = null; }
+  const generatedRoots = attestedInfrastructureRoots(ownerMetadata);
+  let gitLink = null;
+  try { gitLink = lstatSync(join(dir, '.git')); } catch { return undecided; }
+  if (!gitLink.isFile() || gitLink.isSymbolicLink()) return undecided;
+  let named = null;
+  try { named = /^gitdir:\s*(.+)$/u.exec(readFileSync(join(dir, '.git'), 'utf8').trim()); } catch { return undecided; }
+  if (named === null) return undecided;
+  let common = null;
+  try {
+    const raw = sh('git', ['rev-parse', '--git-common-dir'], repoRoot);
+    common = realpathSync(isAbsolute(raw) ? raw : pathResolve(repoRoot, raw));
+  } catch { return undecided; }
+  const administrationRoot = canonicalPathIncludingMissingLeaf(join(common, 'worktrees'));
+  const administrationDir = canonicalPathIncludingMissingLeaf(
+    isAbsolute(named[1]) ? named[1] : pathResolve(dir, named[1]),
+  );
+  if (dirname(administrationDir) !== administrationRoot) return undecided;
+  if (existsSync(administrationDir)) return undecided;
+  const branch = `baton/${taskId}`;
+  let branchSha = null;
+  try { branchSha = sh('git', ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`], repoRoot); }
+  catch {
+    // No branch names the content, so the checkout holds nothing any ref preserves.
+    return Object.freeze({ bound: true, decided: true, contained: false, differingPaths: Object.freeze([]) });
+  }
+  // Untracked and ignored paths beneath an attested root are the one infrastructure a checkout may
+  // hold without a capture; every other path no ref holds is content.
+  const outsideInfrastructure = (raw) => [...new Set(raw.split('\0').filter(Boolean))]
+    .map((path) => path.replace(/\/+$/u, ''))
+    .filter((path) => !generatedRoots.some((root) => path === root || path.startsWith(`${root}/`)));
+  let indexRoot = null;
+  try {
+    indexRoot = mkdtempSync(join(tmpdir(), 'baton-branch-tree-'));
+    const env = { GIT_INDEX_FILE: join(indexRoot, 'index'), GIT_OPTIONAL_LOCKS: '0' };
+    const against = ['--git-dir', common, '--work-tree', dir];
+    gitFile([...against, 'read-tree', branchSha], repoRoot, { stdio: ['ignore', 'pipe', 'pipe'] }, env);
+    let differingPaths = [];
+    try {
+      gitFile([...against, 'diff', '--quiet', branchSha, '--'], dir, { stdio: ['ignore', 'ignore', 'ignore'] }, env);
+    } catch (error) {
+      if (error?.status !== 1) return Object.freeze({ bound: true, decided: false, contained: false, differingPaths: Object.freeze([]) });
+      // A tracked modification or deletion is somebody's work whatever the metadata attests: this
+      // list is used as read, never filtered by the attested infrastructure roots.
+      differingPaths = gitFile([...against, 'diff', '--name-only', '-z', branchSha, '--'], dir, { encoding: 'utf8' }, env)
+        .split('\0').filter(Boolean);
+    }
+    const untracked = outsideInfrastructure(
+      gitFile([...against, 'ls-files', '--others', '--exclude-standard', '-z'], dir, { encoding: 'utf8' }, env),
+    );
+    const ignored = outsideInfrastructure(
+      gitFile([...against, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z'], dir, { encoding: 'utf8' }, env),
+    );
+    const paths = [...new Set([...differingPaths, ...untracked, ...ignored])].sort();
+    return Object.freeze({
+      bound: true, decided: true, contained: paths.length === 0, differingPaths: Object.freeze(paths),
+    });
+  } catch {
+    return Object.freeze({ bound: true, decided: false, contained: false, differingPaths: Object.freeze([]) });
+  } finally {
+    if (indexRoot !== null) rmSync(indexRoot, { recursive: true, force: true });
+  }
+}
+
+/** The retention for a seatless owner whose lane branch does not carry every entry its checkout
+ * still holds: those entries are content no capture recorded. An empty list means no lane branch
+ * names the content at all. The code and the observation keep the shape the readable path's
+ * un-captured-content retention reports. */
+function seatlessUncontainedRetention(physicalOwnerId, observation, differingPaths) {
+  return new WorkspacePreservationError(
+    `worktree "${physicalOwnerId}" was retained: ${differingPaths.length > 0
+      ? `${differingPaths.length} path(s) its lane branch does not hold`
+      : 'no lane branch names its content'}`,
+    Object.freeze({
+      ...observation, state: 'dirty', removable: false,
+      dirtyPaths: Object.freeze([...differingPaths]),
+      reason: 'differing paths have no recorded capture',
+    }),
+  );
+}
+
+/**
  * Observe whether an owned worktree directory holds content no capture recorded.
  * @param {string} repoRoot
  * @param {string} physicalOwnerId
@@ -3480,6 +3588,25 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       }
     }
   };
+  // One retention shape for every preservation refusal: the un-captured content the boundary
+  // observed, and the owner capacity the still-present checkout keeps consuming.
+  const retainPreservation = (physicalOwnerId, receipt, state, error) => {
+    const observation = error.observation;
+    report.diagnostics.push(Object.freeze({
+      code: error.code, physicalOwnerId,
+      deploymentId: receipt?.deploymentId ?? null,
+      logicalTaskId: receipt?.logicalTaskId ?? null,
+      authority: receipt ? state : 'unproven', retained: true,
+      contentState: observation.state,
+      dirtyPaths: observation.dirtyPaths,
+      headSha: observation.headSha, baseSha: observation.baseSha,
+      ...(error instanceof WorkspaceCustodyError ? { holders: error.holders } : {}),
+    }));
+    if (!report.retainedContentOwners.includes(physicalOwnerId)) {
+      report.retainedContentOwners.push(physicalOwnerId);
+    }
+    retainExpected(physicalOwnerId);
+  };
   const localWorkerCandidates = new Set();
 
   // Publication temps carry the exact opaque owner and controller tuple. They are authority,
@@ -3511,9 +3638,16 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     }
     }
     const workerRoot = pathResolve(repoRoot, '.baton', 'wt');
+    // Issue #620: the `.baton/wt` owners Git still registers. A directory here whose registration
+    // is gone names no checkout of a live seat and no pending landing, so the physical-owner
+    // branch below can reclaim it on the preservation and custody checks alone.
+    const registeredWorkspaceOwners = new Set();
     for (const entry of registrationsBeforePrune) {
       const relative = pathRelative(workerRoot, pathResolve(entry.dir));
-      if (relative !== '' && relative !== '..' && !relative.startsWith(`..${sep}`) && !isAbsolute(relative) && !relative.includes(sep)) candidates.add(relative);
+      if (relative !== '' && relative !== '..' && !relative.startsWith(`..${sep}`) && !isAbsolute(relative) && !relative.includes(sep)) {
+        candidates.add(relative);
+        registeredWorkspaceOwners.add(relative);
+      }
     }
     for (const taskId of candidates) {
       let normalizedTaskId;
@@ -3623,6 +3757,27 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         retainExpected(normalizedTaskId);
         continue;
       }
+      // Issue #620: a physical owner whose checkout Git no longer registers and which no expected
+      // owner names is seatless. Its content custody is the lane branch: for a checkout no Git
+      // command inside it describes, that branch tree is the preservation authority. A directory
+      // with no receipt has no seat left to name it; a directory whose receipt is still there is
+      // reclaimable under the same ended-seat authority every other removal uses — `local_dead`
+      // owner authority plus the caller's proof (`maySnapshotOwner`) that the seat had already
+      // ended when this incarnation began. A live, foreign or ambiguous receipt names a seat, or
+      // an unproven one, and never reaches this read.
+      const laneBranchIsPreservationAuthority = isPhysicalWorkspaceId(normalizedTaskId)
+        && existsSync(fullDir) && !registeredWorkspaceOwners.has(normalizedTaskId)
+        && !expected.has(taskId)
+        && (!ownerReceipt
+          || (ownerState === 'local_dead'
+            && maySnapshotOwner(opts, normalizedTaskId, ownerReceipt, ownerState)));
+      let branchTreeVerdict = null;
+      const readBranchTree = () => {
+        if (branchTreeVerdict === null) {
+          branchTreeVerdict = laneBranchTreeContainment(repoRoot, normalizedTaskId, fullDir);
+        }
+        return branchTreeVerdict;
+      };
       if (existsSync(fullDir)) {
         // Content preservation and custody are decided before owner cleanup: a checkout this
         // boundary retains is never handed to the caller's cleanup callback.
@@ -3666,24 +3821,24 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
                 ), { cause: captureError });
             }
           }
-          if (retainedError !== null) {
-            const observation = retainedError.observation;
-            report.diagnostics.push(Object.freeze({
-              code: retainedError.code, physicalOwnerId: normalizedTaskId,
-              deploymentId: ownerReceipt?.deploymentId ?? null,
-              logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
-              authority: ownerReceipt ? ownerState : 'unproven', retained: true,
-              contentState: observation.state,
-              dirtyPaths: observation.dirtyPaths,
-              headSha: observation.headSha, baseSha: observation.baseSha,
-              ...(retainedError instanceof WorkspaceCustodyError
-                ? { holders: retainedError.holders } : {}),
-            }));
-            if (!report.retainedContentOwners.includes(normalizedTaskId)) {
-              report.retainedContentOwners.push(normalizedTaskId);
+          // Issue #620: no command inside a checkout whose Git administration directory is gone
+          // describes its content, so the readable-path observation retains it as unobservable.
+          // Where the lane branch is this owner's preservation authority and no live holder works
+          // in the checkout, the branch tree decides instead: it holds every entry the checkout
+          // still has, or the retention names the entries it does not.
+          if (retainedError !== null && laneBranchIsPreservationAuthority
+            && retainedError.observation?.state === 'unobservable'
+            && liveWorkspaceHolders(opts, normalizedTaskId).length === 0) {
+            const custody = readBranchTree();
+            if (custody.contained) retainedError = null;
+            else if (custody.decided) {
+              retainedError = seatlessUncontainedRetention(
+                normalizedTaskId, retainedError.observation, custody.differingPaths,
+              );
             }
-            // Joining the retained set keeps a checkout that still exists from being settled.
-            retainExpected(normalizedTaskId);
+          }
+          if (retainedError !== null) {
+            retainPreservation(normalizedTaskId, ownerReceipt, ownerState, retainedError);
             continue;
           }
         }
@@ -3707,7 +3862,22 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         try {
           treeUncaptured = sh('git', ['status', '--porcelain=v1', '--untracked-files=all'], fullDir).length > 0;
         } catch { treeUncaptured = true; } // an unreadable tree state is never proof of containment
-        if (!lane.branchSha || !lane.contained || treeUncaptured) {
+        // Issue #620: a checkout whose Git administration directory is gone answers no `git
+        // status` either; where the branch-tree read above proved that every entry the checkout
+        // still holds is in the branch, that read is the containment proof and the branch tip is
+        // the revision that preserves its content.
+        const custody = laneBranchIsPreservationAuthority ? readBranchTree() : null;
+        const contained = lane.contained || custody?.contained === true;
+        const treeUnproven = treeUncaptured && custody?.contained !== true;
+        if (!lane.branchSha || !contained || treeUnproven) {
+          // Issue #620: for a seatless owner the branch tree is the whole answer, so a checkout it
+          // does not carry is content no ref holds, not a HEAD that failed to be read.
+          if (custody?.decided === true) {
+            retainPreservation(normalizedTaskId, ownerReceipt, ownerState,
+              seatlessUncontainedRetention(normalizedTaskId,
+                observeOwnedWorktreeContent(repoRoot, normalizedTaskId), custody.differingPaths));
+            continue;
+          }
           report.diagnostics.push(Object.freeze({
             code: 'workspace_owner_head_uncontained_retained', physicalOwnerId: normalizedTaskId,
             deploymentId: ownerReceipt?.deploymentId ?? null,
@@ -3730,7 +3900,12 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         });
       }
       if (isPhysicalWorkspaceId(normalizedTaskId)) {
-        if (!ownerReceipt) {
+        // Issue #620: a checkout Git no longer registers and which no expected owner names belongs
+        // to no live seat when it holds no receipt, or when its ended seat is proven above. Its
+        // content is in the lane branch, so the removal below reclaims the directory, releases the
+        // receipt that is still there, and leaves the branch as the custody of that content. Every
+        // other receipt-less owner keeps the retention.
+        if (!ownerReceipt && !laneBranchIsPreservationAuthority) {
           report.diagnostics.push(Object.freeze({
             code: 'workspace_owner_receipt_missing', physicalOwnerId: normalizedTaskId,
             authority: 'unproven', retained: true,
@@ -3761,8 +3936,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         } catch (error) {
           report.diagnostics.push(Object.freeze({
             code: error?.code ?? 'linked_worktree_cleanup_failed',
-            physicalOwnerId: normalizedTaskId, deploymentId: ownerReceipt.deploymentId,
-            logicalTaskId: ownerReceipt.logicalTaskId, authority: ownerState, retained: true,
+            physicalOwnerId: normalizedTaskId,
+            deploymentId: ownerReceipt?.deploymentId ?? null,
+            logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
+            authority: ownerReceipt ? ownerState : 'unproven', retained: true,
             linkedWorktrees: Object.freeze([...(error?.linkedWorktrees ?? [])]),
             ...(Array.isArray(error?.holders)
               ? { holders: Object.freeze([...error.holders]) }
@@ -3789,8 +3966,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           report.diagnostics.push(Object.freeze({
             code: error?.code === 'workspace_owner_capacity_settlement_refused'
               ? error.code : 'workspace_owner_capacity_settlement_failed',
-            physicalOwnerId: normalizedTaskId, deploymentId: ownerReceipt.deploymentId,
-            logicalTaskId: ownerReceipt.logicalTaskId, authority: ownerState, retained: true,
+            physicalOwnerId: normalizedTaskId,
+            deploymentId: ownerReceipt?.deploymentId ?? null,
+            logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
+            authority: ownerReceipt ? ownerState : 'unproven', retained: true,
           }));
           continue;
         }
@@ -3811,8 +3990,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         } catch (error) {
           report.diagnostics.push(Object.freeze({
             code: error?.code ?? 'linked_worktree_cleanup_failed',
-            physicalOwnerId: normalizedTaskId, deploymentId: ownerReceipt.deploymentId,
-            logicalTaskId: ownerReceipt.logicalTaskId, authority: ownerState, retained: true,
+            physicalOwnerId: normalizedTaskId,
+            deploymentId: ownerReceipt?.deploymentId ?? null,
+            logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
+            authority: ownerReceipt ? ownerState : 'unproven', retained: true,
             linkedWorktrees: Object.freeze([...(error?.linkedWorktrees ?? [])]),
             ...(Array.isArray(error?.holders)
               ? { holders: Object.freeze([...error.holders]) }
