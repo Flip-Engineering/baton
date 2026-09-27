@@ -1146,11 +1146,6 @@ export class BatonRun {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow Candidate selection is invalid');
     return this.act('select_candidate', { role, reason });
   }
-  revise(reason) {
-    if (reason !== undefined && !nonempty(reason)) throw clientError('Workflow revision reason is invalid');
-    return this.act('revise_candidate', reason === undefined ? {} : { reason });
-  }
-
   candidates() { return this.inspect({ depth: 'section', section: 'candidates' }); }
 
   feedback() { return this.inspect({ depth: 'section', section: 'feedback' }); }

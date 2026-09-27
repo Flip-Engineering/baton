@@ -4711,21 +4711,6 @@ export function parseBatonCli(rawArgs) {
       inputs: { role, reason }, idempotencyKey,
     };
   }
-  if (action === 'feedback') {
-    const role = id(args.shift(), 'Workflow role');
-    const feedback = take(args, '--text', { required: true }); noRemainder(args);
-    return {
-      kind: 'semantic-action', actionKind: 'send_feedback', runId,
-      inputs: { role, feedback }, idempotencyKey,
-    };
-  }
-  if (action === 'revise') {
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    return {
-      kind: 'semantic-action', actionKind: 'revise_candidate', runId,
-      inputs: { reason }, idempotencyKey,
-    };
-  }
   throw cliError(`unknown run action ${action ?? ''}`);
 }
 
