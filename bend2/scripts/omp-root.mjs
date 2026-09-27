@@ -2,10 +2,9 @@
 // Bend2 OMP root adapter.
 //
 // Bridges the Bend2 coordinator to OMP running as the root session. OMP runs
-// in --print --mode json (the same integration the worker adapter uses) and
-// calls the coordinator CLI through its built-in bash tool. The adapter polls
-// the coordinator database for pending root messages and starts an OMP turn
-// for each batch.
+// in --print --mode json and
+// calls the coordinator CLI through its built-in bash tool. A report writer invokes the adapter for its committed message.
+// --attach records the invocation in the root session and delivers pending messages.
 //
 // Usage: node bend2/scripts/omp-root.mjs <database-path> [coordinator-executable] [omp-executable]
 //
@@ -25,15 +24,28 @@ import { createInterface } from 'node:readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
 
-const dbPath = process.argv[2];
-const coordinatorExe = process.argv[3] || resolve(ROOT, '.scratch/bend2/baton2');
-const ompExe = process.argv[4] || '/opt/homebrew/bin/omp';
+const positional = [];
+let attach = false;
+let messageId = null;
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === '--attach') attach = true;
+  else if (arg === '--once') continue;
+  else if (arg === '--message') {
+    messageId = process.argv[++i];
+    if (!messageId) throw new Error('--message requires a committed message ID');
+  } else if (arg.startsWith('--')) throw new Error(`Unknown option: ${arg}`);
+  else positional.push(arg);
+}
+const dbPath = positional[0];
+const coordinatorExe = positional[1] || resolve(ROOT, '.scratch/bend2/baton2');
+const ompExe = positional[2] || '/opt/homebrew/bin/omp';
 const ompModel = process.env.OMP_ROOT_MODEL || 'zai/glm-5.3-flash';
 const ompThinking = process.env.OMP_ROOT_THINKING || 'high';
 
 if (!dbPath) {
   process.stderr.write(
-    'usage: omp-root.mjs <database-path> [coordinator-executable] [omp-executable]\n' +
+    'usage: omp-root.mjs <database-path> [coordinator-executable] [omp-executable] [--attach | --once]\n' +
     '\nEnvironment:\n' +
     '  OMP_ROOT_MODEL    Model for the OMP root (default: zai/glm-5.3-flash)\n' +
     '  OMP_ROOT_THINKING Thinking level (default: high)\n' +
@@ -89,9 +101,10 @@ function pendingRootMessages() {
       `SELECT m.seq, m.id, m.sender, m.kind, m.body
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
-       WHERE s.parent IS NULL AND m.receipt IS NULL
+       WHERE s.id = 'root' AND s.parent IS NULL AND m.receipt IS NULL
+         AND (? IS NULL OR m.id = ?)
        ORDER BY m.seq`,
-    ).all();
+    ).all(messageId, messageId);
   } catch {
     return [];
   }
@@ -102,13 +115,6 @@ function formatMessages(messages) {
     const prefix = m.kind === 'report' ? 'Worker report' : `Message (${m.kind})`;
     return `${prefix} from ${m.sender} [id: ${m.id}]:\n${m.body}`;
   }).join('\n\n---\n\n');
-}
-
-// Coordinator CLI helper.
-function coord(...args) {
-  return execFileSync(COORD, [DB, ...args], {
-    encoding: 'utf8', timeout: 10000,
-  }).trim();
 }
 
 // Run one OMP turn in --print --mode json. Returns a promise that resolves
@@ -218,6 +224,7 @@ async function runOnce() {
       process.stdout.write(text + '\n');
     }
     process.stderr.write(`omp-root: turn completed (exit ${result.code})\n`);
+    process.exitCode = result.code;
   } catch (e) {
     process.stderr.write(`omp-root: turn failed: ${e.message}\n`);
     process.exitCode = 1;
@@ -226,62 +233,11 @@ async function runOnce() {
   closeDb();
 }
 
-// Poll mode: check for pending messages every interval, start an OMP turn
-// for each batch. Exits when interrupted.
-async function runPoll(intervalMs) {
-  await openDb();
-
-  const notifiedSeqs = new Set();
-  let running = false;
-
-  async function check() {
-    if (running) return;
-    running = true;
-
-    try {
-      // Re-open the database to see new writes.
-      closeDb();
-      await openDb();
-
-      const messages = pendingRootMessages();
-      const newMessages = messages.filter((m) => !notifiedSeqs.has(m.seq));
-      if (newMessages.length === 0) { running = false; return; }
-
-      for (const m of newMessages) notifiedSeqs.add(m.seq);
-
-      const prompt = formatMessages(newMessages);
-      process.stderr.write(`omp-root: ${newMessages.length} new message(s)\n`);
-
-      const result = await runOmpTurn(prompt);
-      const text = extractResult(result.events);
-      if (text) process.stdout.write(text + '\n');
-    } catch (e) {
-      process.stderr.write(`omp-root: error: ${e.message}\n`);
-    }
-
-    running = false;
-  }
-
-  const timer = setInterval(check, intervalMs);
-  check();
-
-  function shutdown() {
-    clearInterval(timer);
-    closeDb();
-    process.exit(0);
-  }
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+if (attach) {
+  const endpoint = JSON.stringify([
+    '/usr/bin/env', `OMP_ROOT_MODEL=${ompModel}`, `OMP_ROOT_THINKING=${ompThinking}`,
+    process.execPath, fileURLToPath(import.meta.url), DB, COORD, ompExe, '--message',
+  ]);
+  execFileSync(COORD, [DB, 'attach', 'root', 'omp', '', endpoint], { stdio: 'inherit' });
 }
-
-// CLI: --once (default) processes pending messages and exits.
-//      --poll [interval-ms] polls continuously.
-const once = process.argv.includes('--once') || !process.argv.includes('--poll');
-if (once) {
-  runOnce();
-} else {
-  const pollIdx = process.argv.indexOf('--poll');
-  const intervalMs = parseInt(process.argv[pollIdx + 1], 10) || 3000;
-  runPoll(intervalMs);
-}
+await runOnce();

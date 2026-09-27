@@ -16,17 +16,34 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { createServer, createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
 
-const dbPath = process.argv[2];
-const coordinatorExe = process.argv[3] || resolve(ROOT, '.scratch/bend2/baton2');
+const dbPath = process.argv[2] ? resolve(process.argv[2]) : null;
+const coordinatorExe = resolve(process.argv[3] || resolve(ROOT, '.scratch/bend2/baton2'));
 
 if (!dbPath) {
   process.stderr.write('usage: mcp-root.mjs <database-path> [coordinator-executable]\n');
   process.exit(1);
+}
+
+// The report writer calls this one-shot client for the attached channel endpoint.
+if (process.argv[4] === '--deliver') {
+  const socketName = process.argv[5];
+  const messageId = process.argv[6];
+  process.chdir(dirname(resolve(dbPath)));
+  await new Promise((done, fail) => {
+    const client = createConnection(socketName);
+    let answer = '';
+    client.on('connect', () => client.end(JSON.stringify(messageId) + '\n'));
+    client.on('data', (chunk) => { answer += chunk; });
+    client.on('error', fail);
+    client.on('end', () => answer === 'ok\n' ? done() : fail(new Error(answer)));
+  });
+  process.exit(0);
 }
 
 // node:sqlite (Node 22+)
@@ -87,7 +104,7 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
-  clearInterval(pollTimer);
+  deliveryServer?.close();
   if (db) { try { db.close(); } catch {} db = null; }
 });
 
@@ -218,10 +235,9 @@ const TOOLS = [
 ];
 
 // State.
-let rootSessionId = null;
 let initialized = false;
 let notifiedSeqs = new Set();
-let pollTimer = null;
+let deliveryServer = null;
 let db = null;
 
 function openDb() {
@@ -231,7 +247,7 @@ function openDb() {
   return db;
 }
 
-function pendingRootMessages() {
+function pendingRootMessages(messageId = null) {
   const conn = openDb();
   if (!conn) return [];
   try {
@@ -239,17 +255,18 @@ function pendingRootMessages() {
       `SELECT m.seq, m.id, m.sender, m.kind, m.body
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
-       WHERE s.parent IS NULL AND m.receipt IS NULL
+       WHERE s.id = 'root' AND s.parent IS NULL AND m.receipt IS NULL
+         AND (? IS NULL OR m.id = ?)
        ORDER BY m.seq`
-    ).all();
+    ).all(messageId, messageId);
     return rows;
   } catch (e) {
     return [];
   }
 }
 
-function pollAndNotify() {
-  const messages = pendingRootMessages();
+function notifyPending(messageId = null) {
+  const messages = pendingRootMessages(messageId);
   const newMessages = messages.filter((m) => !notifiedSeqs.has(m.seq));
   if (newMessages.length === 0) return;
 
@@ -268,9 +285,41 @@ function pollAndNotify() {
   });
 }
 
-function startPolling() {
-  pollAndNotify();
-  pollTimer = setInterval(pollAndNotify, 2000);
+async function startDelivery() {
+  const database = resolve(dbPath);
+  const coordinator = resolve(coordinatorExe);
+  const socketName = `root-${process.pid}.sock`;
+  // A relative socket name also works in deeply nested repository worktrees.
+  process.chdir(dirname(database));
+  deliveryServer = createServer({ allowHalfOpen: true }, (client) => {
+    let input = '';
+    client.on('data', (chunk) => { input += chunk; });
+    client.on('end', () => {
+      try {
+        notifyPending(JSON.parse(input));
+        client.end('ok\n');
+      } catch (error) {
+        client.end(error.message + '\n');
+      }
+    });
+    client.on('error', (error) => process.stderr.write(`mcp-root: ${error.message}\n`));
+  });
+  await new Promise((ready, fail) => {
+    deliveryServer.once('error', fail);
+    deliveryServer.listen(socketName, ready);
+  });
+  const endpoint = JSON.stringify([
+    process.execPath, fileURLToPath(import.meta.url), database, coordinator,
+    '--deliver', socketName,
+  ]);
+  let existing;
+  try { existing = pendingRootSession(); } catch {}
+  coord('attach', 'root', 'claude-code', existing?.native || '', endpoint);
+  notifyPending();
+}
+
+function pendingRootSession() {
+  return openDb()?.prepare("SELECT native FROM sessions WHERE id='root'").get();
 }
 
 // MCP message handler.
@@ -290,7 +339,10 @@ function handleMessage(msg) {
 
   if (msg.method === 'notifications/initialized') {
     initialized = true;
-    startPolling();
+    startDelivery().catch((error) => {
+      process.stderr.write(`mcp-root: ${error.message}\n`);
+      process.exit(1);
+    });
     return;
   }
 
@@ -369,13 +421,13 @@ function handleToolCall(msg) {
 }
 
 process.on('SIGINT', () => {
-  clearInterval(pollTimer);
+  deliveryServer?.close();
   db?.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-  clearInterval(pollTimer);
+  deliveryServer?.close();
   db?.close();
   process.exit(0);
 });

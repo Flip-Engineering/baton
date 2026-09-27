@@ -14,7 +14,7 @@ OMP_EXE = pathlib.Path('/opt/homebrew/bin/omp')
 
 
 class OmpRootAdapter(unittest.TestCase):
-    """Test the OMP root adapter's database polling and message formatting."""
+    """Test the OMP root adapter's report-triggered delivery and message formatting."""
 
     def setUp(self):
         if not EXE.exists():
@@ -33,6 +33,26 @@ class OmpRootAdapter(unittest.TestCase):
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
+
+    def test_report_file_starts_attached_omp_root(self):
+        temp = pathlib.Path(self.temp.name)
+        received = temp / 'received.txt'
+        native = temp / 'root.py'
+        native.write_text('#!/usr/bin/env python3\n' +
+            'import sys,pathlib,subprocess,json\n' +
+            f'pathlib.Path({str(received)!r}).write_text(sys.argv[-1])\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", "root", "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed."}]}}))\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(OMP_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(received.exists())
+        self.coord('worker', 'w1', 'root', 'omp', 'model', 'low', str(temp), 'branch', 'base')
+        report = temp / 'report.txt'
+        report.write_text('Completed task with full report.')
+        self.coord('report-file', 'finished', 'w1', str(report))
+        self.assertIn(report.read_text(), received.read_text())
+        self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
 
     def test_adapter_exits_cleanly_with_no_pending_messages(self):
         """With no root and no messages, the adapter exits 0."""

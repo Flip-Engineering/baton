@@ -123,8 +123,8 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
       do IO<Unit>:
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,line ++ "\n")
         +relevant : Bool <- Guidance.relevant(db,line,String.eq(harness,"omp\n"))
-        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,line,relevant)
         next_cursor : String <- Guidance.observe(db,worker,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
+        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,line,relevant)
         next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
         consume(db,worker,id,log,handle,harness,next_cursor,remember(remember_write(first_error,written),observed),sender,next)
 

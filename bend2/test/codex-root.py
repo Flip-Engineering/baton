@@ -12,7 +12,7 @@ CODEX_ROOT_SCRIPT = ROOT / 'bend2/scripts/codex-root.mjs'
 
 
 class CodexRootAdapter(unittest.TestCase):
-    """Test the Codex root adapter's database polling and message formatting."""
+    """Test the Codex root adapter's report-triggered delivery and message formatting."""
 
     def setUp(self):
         if not EXE.exists():
@@ -31,6 +31,46 @@ class CodexRootAdapter(unittest.TestCase):
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
+
+    def test_worker_terminal_starts_attached_root_without_a_listener(self):
+        temp = pathlib.Path(self.temp.name)
+        received = temp / 'received.txt'
+        native = temp / 'root.py'
+        native.write_text('#!/usr/bin/env python3\n' +
+            'import sys,pathlib,subprocess,json\n' +
+            f'pathlib.Path({str(received)!r}).write_text(sys.stdin.read())\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", "root", "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Reviewed."}}))\n' +
+            'print(json.dumps({"type":"turn.completed"}))\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(received.exists())
+        self.coord('worker', 'w1', 'root', 'claude-code', 'model', 'low', str(temp), 'branch', 'base')
+        worker = temp / 'worker.py'
+        worker.write_text('#!/usr/bin/env python3\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"result","result":"Completed live task."}))\n')
+        worker.chmod(0o700)
+        task = temp / 'task.txt'
+        task.write_text('Task')
+        self.coord('turn', 'w1', 'finished', str(worker), 'model', 'low', str(temp), str(task), str(temp / 'worker.jsonl'), '')
+        self.assertIn('Completed live task.', received.read_text())
+        self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
+        self.assertIn('Reviewed.', pathlib.Path(str(self.db) + '.root.log').read_text())
+
+    def test_failed_native_delivery_keeps_the_committed_report_pending(self):
+        temp = pathlib.Path(self.temp.name)
+        native = temp / 'root.py'
+        native.write_text('#!/usr/bin/env python3\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"turn.failed","error":{"message":"provider failed"}}))\nsys.exit(23)\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.coord('worker', 'w1', 'root', 'codex', 'model', 'low', str(temp), 'branch', 'base')
+        failed = subprocess.run([str(EXE), str(self.db), 'report', 'failed-delivery', 'w1', 'Retained report'], capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn('Message committed; root delivery failed', failed.stderr)
+        pending = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual(pending[0]['body'], 'Retained report')
+        self.assertIsNone(json.loads(self.coord('delivery', 'failed-delivery'))['receipt'])
 
     def test_adapter_exits_cleanly_with_no_pending_messages(self):
         """With no root and no messages, the adapter exits 0."""

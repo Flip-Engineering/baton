@@ -161,40 +161,43 @@ root acceptance receipt are required for the live-slice result.
 
 ## Root adapters
 
-A Codex or OMP root session reviews worker reports and directs their work. Each
-adapter reads the messages addressed to a root session that have no receipt,
-starts one native turn containing them, prints the final assistant text to
-standard output, and writes progress to standard error. Each batch runs as a
-new root turn.
+Attach a Codex or OMP root to the database with its model and native executable:
 
 ```sh
-node bend2/scripts/codex-root.mjs DB [COORDINATOR_EXE] [CODEX_EXE] --once
-node bend2/scripts/codex-root.mjs DB [COORDINATOR_EXE] [CODEX_EXE] --poll [INTERVAL_MS]
-node bend2/scripts/omp-root.mjs DB [COORDINATOR_EXE] [OMP_EXE] --once
-node bend2/scripts/omp-root.mjs DB [COORDINATOR_EXE] [OMP_EXE] --poll [INTERVAL_MS]
+CODEX_ROOT_MODEL=gpt-6-astra node bend2/scripts/codex-root.mjs state.db .scratch/bend2/baton2 codex --attach
+OMP_ROOT_MODEL=deepseek/deepseek-flash OMP_ROOT_THINKING=low node bend2/scripts/omp-root.mjs state.db .scratch/bend2/baton2 omp --attach
 ```
 
-The database path is required and comes first. `COORDINATOR_EXE` defaults to
-`.scratch/bend2/baton2`, `CODEX_EXE` to `codex`, and `OMP_EXE` to
-`/opt/homebrew/bin/omp`. The mode flag follows the positional arguments, and an
-empty string keeps the default for an executable. `--once` processes one batch
-and exits; it is the default. `--poll` re-reads the database every
-`INTERVAL_MS` (default 3000) and starts one turn per new batch until it receives
-SIGINT or SIGTERM.
+Attachment records the adapter invocation in the existing root session's
+`endpoint`, processes pending messages once and exits. When a coordinator
+process commits a report, question or message addressed to that root, it invokes
+the adapter for that message. The adapter starts one native root turn and the
+writer waits for it to finish. Its output is retained at `DATABASE.root.log`.
+A failed delivery leaves the committed message available in the pending inbox
+and makes the writer return an error. Attaching again or running the adapter
+with `--once` delivers pending messages.
 
-The root model comes from the environment. The Codex root reads
-`CODEX_ROOT_MODEL` (default `o4-mini`). The OMP root reads `OMP_ROOT_MODEL`
-(default `zai/glm-5.3-flash`) and `OMP_ROOT_THINKING` (default `high`). `HOME`
-must point to the user home so each harness finds its stored credentials.
+The database path comes first, followed by optional coordinator and native
+executable paths. The coordinator defaults to `.scratch/bend2/baton2`; native
+executables default to `codex` and `/opt/homebrew/bin/omp`. `--once` is the
+mode when no flag is given. Codex reads `CODEX_ROOT_MODEL` (default `o4-mini`).
+OMP reads `OMP_ROOT_MODEL` (default `zai/glm-5.3-flash`) and
+`OMP_ROOT_THINKING` (default `high`). Attachment preserves these selections in
+the invocation. Each harness uses its existing login. Pass a launch wrapper
+as the native executable to set the harness's home or config environment.
 
-Each harness uses its existing login. A launch wrapper can set the harness's
-documented home or config environment before executing its binary.
+A Claude Code root loads `bend2/scripts/mcp-root.mjs` through its Channels MCP
+configuration. Once initialized, the server attaches a local socket endpoint
+and delivers pending messages. Subsequent report writers notify that endpoint;
+the server reads the committed message and emits a Claude channel notification.
+The server stays attached to the Claude process. Its socket is created beside
+the database and closes with the server.
 
-The root turn runs the coordinator CLI through its shell tool. It acknowledges a
-reviewed report with `ack ID root RECEIPT`, sends guidance with `message`, and
-inspects Git state with `worktree`. It lands and publishes reviewed work with
-the `land`, `land-checked` and `push` commands described under Coordinator
-storage.
+The native root reviews the report and records acceptance with
+`ack ID root RECEIPT`. It can send guidance with `message`, inspect Git state
+with `worktree`, and land and publish reviewed work with `land`, `land-checked`
+and `push`. A report's receipt records the root's acceptance; committing the
+report alone leaves that receipt empty.
 
 ## Source layout
 

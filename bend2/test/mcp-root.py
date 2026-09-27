@@ -96,7 +96,14 @@ class McpRoot(unittest.TestCase):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        self.addCleanup(lambda: (proc.terminate(), proc.wait()))
+        def cleanup():
+            proc.terminate()
+            proc.wait()
+            _mcp_buf.pop(proc.stdout.fileno(), None)
+            proc.stdin.close()
+            proc.stdout.close()
+            proc.stderr.close()
+        self.addCleanup(cleanup)
         return proc
 
     def initialize(self, proc):
@@ -126,11 +133,24 @@ class McpRoot(unittest.TestCase):
         self.initialize(proc)
         send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
 
-        # The server polls every 2s; wait for the channel notification.
+        # Initialization replays the pending report.
         notification = read_mcp(proc, timeout=5)
         self.assertEqual(notification['method'], 'notifications/claude/channel')
         self.assertIn('Worker completed the task.', notification['params']['content'])
         self.assertIn('turn-1', notification['params']['meta']['messageIds'])
+
+    def test_report_writer_notifies_an_initialized_channel(self):
+        self.coord('attach', 'root', 'claude-code', 'root-session', '')
+        self.coord('worker', 'w1', 'root', 'omp', 'model', 'low', '/wt', 'br', 'base')
+        self.coord('report', 'before', 'w1', 'Before attachment.')
+        proc = self.start_mcp()
+        self.initialize(proc)
+        send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        self.assertIn('before', read_mcp(proc)['params']['meta']['messageIds'])
+        self.coord('report', 'after', 'w1', 'After attachment.')
+        note = read_mcp(proc)
+        self.assertEqual(note['params']['meta']['messageIds'], ['after'])
+        self.assertIn('After attachment.', note['params']['content'])
 
     def test_tool_status_returns_sessions(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
@@ -311,9 +331,8 @@ class McpRoot(unittest.TestCase):
         notif1 = read_mcp(proc, timeout=5)
         self.assertEqual(notif1['method'], 'notifications/claude/channel')
 
-        # Wait for two poll cycles (2s each = 4s), then send a ping and collect
-        # everything that arrived. No duplicate channel notification should appear.
-        time.sleep(5)
+        # Re-deliver the same committed report to the attached channel.
+        self.coord('report', 'turn-1', 'w1', 'First report.')
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 10, 'method': 'ping', 'params': {}})
 
         msgs = []

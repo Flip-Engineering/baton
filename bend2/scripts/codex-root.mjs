@@ -3,9 +3,8 @@
 //
 // Bridges the Bend2 coordinator to Codex running as the root session. Codex
 // runs in `exec --json` mode (non-interactive, JSONL on stdout) and calls the
-// coordinator CLI through its built-in shell tool. The adapter polls the
-// coordinator database for pending root messages and starts a Codex turn for
-// each batch.
+// coordinator CLI through its built-in shell tool. A report writer invokes the adapter for its committed message.
+// --attach records the invocation in the root session and delivers pending messages.
 //
 // Usage: node bend2/scripts/codex-root.mjs <database-path> [coordinator-executable] [codex-executable]
 //
@@ -24,14 +23,27 @@ import { createInterface } from 'node:readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
 
-const dbPath = process.argv[2];
-const coordinatorExe = process.argv[3] || resolve(ROOT, '.scratch/bend2/baton2');
-const codexExe = process.argv[4] || 'codex';
+const positional = [];
+let attach = false;
+let messageId = null;
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === '--attach') attach = true;
+  else if (arg === '--once') continue;
+  else if (arg === '--message') {
+    messageId = process.argv[++i];
+    if (!messageId) throw new Error('--message requires a committed message ID');
+  } else if (arg.startsWith('--')) throw new Error(`Unknown option: ${arg}`);
+  else positional.push(arg);
+}
+const dbPath = positional[0];
+const coordinatorExe = positional[1] || resolve(ROOT, '.scratch/bend2/baton2');
+const codexExe = positional[2] || 'codex';
 const codexModel = process.env.CODEX_ROOT_MODEL || 'o4-mini';
 
 if (!dbPath) {
   process.stderr.write(
-    'usage: codex-root.mjs <database-path> [coordinator-executable] [codex-executable]\n' +
+    'usage: codex-root.mjs <database-path> [coordinator-executable] [codex-executable] [--attach | --once]\n' +
     '\nEnvironment:\n' +
     '  CODEX_ROOT_MODEL  Model for the Codex root (default: o4-mini)\n' +
     '  HOME              Must point to the user home for Codex credential discovery\n',
@@ -86,9 +98,10 @@ function pendingRootMessages() {
       `SELECT m.seq, m.id, m.sender, m.kind, m.body
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
-       WHERE s.parent IS NULL AND m.receipt IS NULL
+       WHERE s.id = 'root' AND s.parent IS NULL AND m.receipt IS NULL
+         AND (? IS NULL OR m.id = ?)
        ORDER BY m.seq`,
-    ).all();
+    ).all(messageId, messageId);
   } catch {
     return [];
   }
@@ -198,6 +211,7 @@ async function runOnce() {
       process.stdout.write(text + '\n');
     }
     process.stderr.write(`codex-root: turn completed (exit ${result.code})\n`);
+    process.exitCode = result.code;
   } catch (e) {
     process.stderr.write(`codex-root: turn failed: ${e.message}\n`);
     process.exitCode = 1;
@@ -206,61 +220,11 @@ async function runOnce() {
   closeDb();
 }
 
-// Poll mode: check for pending messages every interval, start a Codex turn
-// for each batch. Exits when interrupted.
-async function runPoll(intervalMs) {
-  await openDb();
-
-  const notifiedSeqs = new Set();
-  let running = false;
-
-  async function check() {
-    if (running) return;
-    running = true;
-
-    try {
-      closeDb();
-      await openDb();
-
-      const messages = pendingRootMessages();
-      const newMessages = messages.filter((m) => !notifiedSeqs.has(m.seq));
-      if (newMessages.length === 0) { running = false; return; }
-
-      for (const m of newMessages) notifiedSeqs.add(m.seq);
-
-      const prompt = formatMessages(newMessages);
-      process.stderr.write(`codex-root: ${newMessages.length} new message(s)\n`);
-
-      const result = await runCodexTurn(prompt);
-      const text = extractResult(result.events);
-      if (text) process.stdout.write(text + '\n');
-    } catch (e) {
-      process.stderr.write(`codex-root: error: ${e.message}\n`);
-    }
-
-    running = false;
-  }
-
-  const timer = setInterval(check, intervalMs);
-  check();
-
-  function shutdown() {
-    clearInterval(timer);
-    closeDb();
-    process.exit(0);
-  }
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+if (attach) {
+  const endpoint = JSON.stringify([
+    '/usr/bin/env', `CODEX_ROOT_MODEL=${codexModel}`,
+    process.execPath, fileURLToPath(import.meta.url), DB, COORD, codexExe, '--message',
+  ]);
+  execFileSync(COORD, [DB, 'attach', 'root', 'codex', '', endpoint], { stdio: 'inherit' });
 }
-
-// CLI: --once (default) processes pending messages and exits.
-//      --poll [interval-ms] polls continuously.
-const once = process.argv.includes('--once') || !process.argv.includes('--poll');
-if (once) {
-  runOnce();
-} else {
-  const pollIdx = process.argv.indexOf('--poll');
-  const intervalMs = parseInt(process.argv[pollIdx + 1], 10) || 3000;
-  runPoll(intervalMs);
-}
+await runOnce();
