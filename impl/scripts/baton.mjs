@@ -311,6 +311,13 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
   }
   logLine(flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY }));
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
+  // Issue #589: a terminal host state ends THIS process. The stop is over — its outcome row is
+  // minted, its leases are released, and the line above is its last write — but the event loop can
+  // still hold a handle the stop does not own. Observed 2026-09-25: the resident answered its own
+  // `closed_degraded` and stayed alive until a SECOND SIGTERM took Node's default action, because
+  // the stop's own finally had already removed the signal handlers and nothing else would ever
+  // exit it. Exit with the code the state names instead of waiting for a loop that may never drain.
+  process.exit(process.exitCode ?? 0);
 }
 
 /** The serve leg both `baton serve` and `baton quarantine --restart` (issue #505) run: open
@@ -521,6 +528,8 @@ try {
           });
           process.stderr.write(`${flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY })}\n`);
           if (outcome.closed.state !== 'closed') process.exitCode = 1;
+          // Issue #589: the same terminal-state exit as the deployment arm above.
+          process.exit(process.exitCode ?? 0);
         }
       }
     } else {
