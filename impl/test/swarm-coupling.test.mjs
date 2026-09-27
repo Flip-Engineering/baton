@@ -32,15 +32,6 @@ const verification = Object.freeze({
   command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
   timeoutMs: 10_000, maxOutputBytes: 64 * 1024, requiredPredecessorEvidence: [],
 });
-// One reservation per physical checkout: a deliberately shared checkout must not consume a second.
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024,
-  maxReservedInodes: 10_000,
-  minFreeBytes: 1,
-  minFreeInodes: 1,
-  runtimeReserveBytes: 4 * 1024,
-  runtimeReserveInodes: 4,
-});
 const profile = Object.freeze({
   schemaVersion: 1, repoId: 'repo-swarm-coupling', definitionOfDone: ['done'], constraints: ['scope'], risk: 'high',
   goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
@@ -52,7 +43,7 @@ const profile = Object.freeze({
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['impl/**'] };
 
-async function fixture(t, { sharedCheckout = false } = {}) {
+async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-coupling-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
@@ -71,11 +62,6 @@ async function fixture(t, { sharedCheckout = false } = {}) {
   const driver = createDriver({
     repoRoot: repo, repoId: policy.repoId, logDir: join(directory, 'log'),
     adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true }, stopDeadlineMs: 2000,
-    ...(sharedCheckout ? {
-      worktreeCapacity: capacityPolicy,
-      worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-      worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
-    } : {}),
   });
   const app = new BatonApplication({ driver, repoId: policy.repoId, profiles: { standard: profile },
     principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
@@ -97,8 +83,8 @@ async function fixture(t, { sharedCheckout = false } = {}) {
 
 // The coupled subgroup: a lead (every permission) with two builders in one group, two work items
 // with an active assignment each. Returns the handles the tests drive.
-async function coupling(t, options = {}) {
-  const fixtureHandle = await fixture(t, options);
+async function coupling(t) {
+  const fixtureHandle = await fixture(t);
   const { root, paused, asWorker, driver } = fixtureHandle;
   const swarm = await root.swarms.create('Declared coupling');
   const lead = await swarm.recruit('lead', 'Coordinate', { ...selection, permissions: SWARM_PERMISSIONS });
@@ -241,7 +227,7 @@ test('a released seat never holds a synchronization point open', async (t) => {
 });
 
 test('an exclusive writer over a shared checkout is one claim at a time, and a gone writer names its release', async (t) => {
-  const { swarm, delegated, root, driver, leadWorker, paused } = await coupling(t, { sharedCheckout: true });
+  const { swarm, delegated, root, driver, leadWorker, paused } = await coupling(t);
   // Two holders deliberately adopt the lead's live checkout.
   const adopted = await delegated.recruit('sharer', 'Share the checkout', { ...selection, shareWorkspaceWith: 'lead' });
   await paused(adopted.runId);

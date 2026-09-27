@@ -92,10 +92,6 @@ test('AR80-1: selected Candidate feedback proposes one successor Plan pre-effect
         grok: adapter(routeB, 'candidate-b.txt', tracker),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   };
   deployment = await openBaton(options);
@@ -201,10 +197,6 @@ test('AR80-2: a second feedback round appends Plan v3 and replays from its durab
         grok: adapter(routeB, 'candidate-b.txt', tracker),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   };
   deployment = await openBaton(options);
@@ -304,10 +296,6 @@ test('AR80-3: repeated feedback and explicit contradiction pause recursion witho
         grok: adapter(routeB, 'candidate-b.txt', tracker),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   const workflow = await deployment.workflow('Pause recursive correction on deterministic loop evidence.', {
@@ -374,10 +362,6 @@ test('AR80-4: the bound deployment round ceiling pauses without exposing a calle
         grok: adapter(routeB, 'candidate-b.txt', tracker),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
       workflowPolicy: {
         schemaVersion: 1, maxRounds: 2, maxRevisionAttemptsPerRound: 1,
         maxFeedbackPacketsPerRound: 64, maxFeedbackPacketsTotal: 256,

@@ -22,7 +22,6 @@ function repository(root) {
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
   return repo;
 }
-const capacity = { estimate: () => ({ bytes: 1, inodes: 1 }), observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }) };
 function mockAdapter() {
   const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed' } });
   const card = adapter.card.bind(adapter);
@@ -68,7 +67,7 @@ test('paths and docs are declared together or not at all, and both are validated
   const root = mkdtempSync(join(tmpdir(), 'baton-verification-selection-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = repository(root);
-  const base = { deploymentRoot: join(root, 'deployment'), adapters: { mock: mockAdapter() }, routes: [ROUTE], capacity };
+  const base = { deploymentRoot: join(root, 'deployment'), adapters: { mock: mockAdapter() }, routes: [ROUTE] };
   for (const verification of [
     { command: 'node', arguments: ['--version'], paths: ['impl/**'] },
     { command: 'node', arguments: ['--version'], docs: { command: 'node', arguments: ['--version'] } },

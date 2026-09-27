@@ -1,17 +1,17 @@
-// Deliberate shared physical workspaces: one checkout, one branch, one capacity reservation, and
-// several live participants each with its OWN fresh native session.
+// Deliberate shared physical workspaces: one checkout, one branch, and several live participants
+// each with its OWN fresh native session.
 //
 // Real Git through the real deployment (createDriver + MockAdapter + BatonApplication + the real
 // swarm recruitment lane). Nothing here mocks Git, the coordinator, or the swarm runtime: the
-// assertions read the checkout, the owner receipt, the capacity reservations, the durable task
-// rows, the swarm view, and the real worker log.
+// assertions read the checkout, the owner receipt, the durable task rows, the swarm view, and the
+// real worker log.
 //
 // The claims under test:
 //   T1 one shared checkout, one reservation, two live holders, two independent fresh sessions;
 //   T2 a stop detaches (releases the holder) instead of destroying the resource it shares;
 //   T3 the LAST holder closes a dirty checkout only by retaining it, content and receipt intact,
 //      and never by committing on the shared branch from a peer's staging area;
-//   T4 the last holder closes a clean checkout exactly once, settling capacity and receipt;
+//   T4 the last holder closes a clean checkout exactly once, settling the owner receipt;
 //   T5 the captured revision describes the checkout and its observed HEAD, not exclusive
 //      authorship, in both the contribution receipt and the swarm's durable record;
 //   T6 an absent, departed, self, foreign-swarm, or process-less source refuses the attachment
@@ -69,16 +69,6 @@ const profile = Object.freeze({
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
 });
 
-// One reservation per physical checkout: the second participant must not consume another.
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024,
-  maxReservedInodes: 10_000,
-  minFreeBytes: 1,
-  minFreeInodes: 1,
-  runtimeReserveBytes: 4 * 1024,
-  runtimeReserveInodes: 4,
-});
-
 const selection = Object.freeze({
   exact: { harness: 'mock', model: 'model-a', effort: 'low' },
   scope: ['impl/**'],
@@ -113,7 +103,7 @@ function initRepo(repo) {
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
 }
 
-async function fixture(t, { retained = false } = {}) {
+async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-shared-custody-'));
   const repo = join(directory, 'repo');
   initRepo(repo);
@@ -121,9 +111,6 @@ async function fixture(t, { retained = false } = {}) {
     repoRoot: repo, repoId, logDir: join(directory, 'log'),
     adapters: { mock: configuredAdapter() },
     goalPlanAuthority: { policy, authorize: async () => true },
-    worktreeCapacity: capacityPolicy,
-    worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-    worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
     stopDeadlineMs: 2_000,
   });
   const app = new BatonApplication({
@@ -135,18 +122,7 @@ async function fixture(t, { retained = false } = {}) {
     authorize: async () => true,
   });
   t.after(async () => {
-    const closing = app.shutdown(principal('cleanup'));
-    if (retained) {
-      // A retained checkout keeps its capacity reservation by design: the deployment cannot close
-      // until the existing reconciliation authority settles it. Assert exactly that, rather than
-      // pretending a close that must not happen. Either code means the retained reservation
-      // outlived the fleet drain.
-      await assert.rejects(() => closing, (error) => (
-        error.code === 'coordinator_drain_incomplete' || error.code === 'driver_capacity_active'
-      ));
-    } else {
-      await closing;
-    }
+    await app.shutdown(principal('cleanup'));
     rmSync(directory, { force: true, recursive: true });
   });
   await app.ready;
@@ -214,15 +190,13 @@ function ownerReceipts(repo) {
   return readdirSync(root).filter((name) => /^ws-[a-f0-9]{32}\.json$/u.test(name)).sort();
 }
 
-const reservations = (driver) => driver.worktreeCapacity.snapshot().reservations;
-
 const reaped = (driver, workerId) => driver.log.read(workerId).some((event) => event.kind === 'worktree.reaped');
 
 const deferredEvents = (driver, workerId) => driver.log.read(workerId)
   .filter((event) => event.kind === 'worktree.custody_deferred');
 
-async function attachBuilder(t, { objective = 'Work in the same checkout', participantId = 'builder', retained = false } = {}) {
-  const { app, driver, repo } = await fixture(t, { retained });
+async function attachBuilder(t, { objective = 'Work in the same checkout', participantId = 'builder' } = {}) {
+  const { app, driver, repo } = await fixture(t);
   await createSwarm(app, 'shared');
   const lead = await recruit(app, { swarmId: 'shared', participantId: 'lead', objective: 'Own the first checkout' });
   const leadWorker = await paused(driver, lead.runId);
@@ -236,8 +210,8 @@ test('T1 a recruited participant deliberately shares one live checkout as its ow
   const { app, driver, repo, ownerId, leadWorker, builderWorker } = await attachBuilder(t);
   assert.equal(workspaceDirs(repo).length, 1, 'exactly one physical checkout exists');
   assert.equal(workspaceDirs(repo)[0], ownerId);
-  assert.equal(reservations(driver).length, 1, 'one checkout consumes one reservation');
-  assert.equal(reservations(driver)[0].id, `worker:${ownerId}`);
+  assert.equal(ownerReceipts(repo).length, 1, 'one checkout carries one owner receipt');
+  assert.equal(ownerReceipts(repo)[0], `${ownerId}.json`);
 
   // Same physical resource: one path, one branch, one base, one owner receipt.
   assert.equal(realpathSync(builderWorker.worktree), realpathSync(leadWorker.worktree));
@@ -292,7 +266,7 @@ test('T2 a stop detaches from a shared checkout and leaves the resource to the l
   assert.equal(git(repo, ['rev-parse', `refs/heads/${branch}`]), before.branch);
   assert.equal(readFileSync(ownerReceiptPath(repo, ownerId), 'utf8'), before.receiptBytes);
   assert.deepEqual(workspaceDirs(repo), [ownerId]);
-  assert.equal(reservations(driver).length, 1);
+  assert.equal(ownerReceipts(repo).length, 1);
   assert.equal(driver.coordinator.liveWorkspaceHolders(ownerId).length, 1, 'the peer still holds it');
   const [deferred] = deferredEvents(driver, leadWorker.id);
   assert.equal(deferred.payload.reason, 'holders_remain');
@@ -316,11 +290,10 @@ test('T2 a stop detaches from a shared checkout and leaves the resource to the l
   await stopParticipant(app, { swarmId: 'shared', participantId: 'builder', reason: 'The surviving holder closes it' });
   assert.deepEqual(workspaceDirs(repo), []);
   assert.deepEqual(ownerReceipts(repo), []);
-  assert.equal(reservations(driver).length, 0);
 });
 
 test('T3 the last holder closes a dirty shared checkout only by retaining it, with no commit on the shared branch', async (t) => {
-  const { app, driver, repo, ownerId, leadWorker, builderWorker } = await attachBuilder(t, { retained: true });
+  const { app, driver, repo, ownerId, leadWorker, builderWorker } = await attachBuilder(t);
   const cwd = builderWorker.worktree;
   const branch = leadWorker.sessionContext.branch;
   await stopParticipant(app, { swarmId: 'shared', participantId: 'lead', reason: 'Allocator left first' });
@@ -341,10 +314,10 @@ test('T3 the last holder closes a dirty shared checkout only by retaining it, wi
   assert.equal(retained.code, 'workspace_uncommitted_content_retained');
   assert.deepEqual([...retained.dirtyPaths], ['peer-uncommitted.txt']);
 
-  // Retention, exactly as before sharing existed: checkout, receipt and reservation all survive.
+  // Retention, exactly as before sharing existed: checkout and receipt both survive.
   assert.deepEqual(workspaceDirs(repo), [ownerId]);
   assert.equal(existsSync(ownerReceiptPath(repo, ownerId)), true);
-  assert.equal(reservations(driver).length, 1);
+  assert.equal(ownerReceipts(repo).length, 1);
   assert.equal(readFileSync(join(cwd, 'peer-uncommitted.txt'), 'utf8'), 'uncommitted peer work\n');
   assert.equal(git(repo, ['rev-parse', `refs/heads/${branch}`]), headBefore);
 
@@ -361,12 +334,11 @@ test('T3 the last holder closes a dirty shared checkout only by retaining it, wi
   assert.match(body, new RegExp(`Baton-Head: ${headBefore}`, 'u'));
   assert.equal(reaped(driver, builderWorker.id), false, 'retention is not a reap');
 
-  // Retention is settled by the EXISTING reconciliation authority, never by deleting content: the
-  // retained checkout keeps its receipt and reservation until content preservation can observe it
-  // as clean, which is what the fixture's teardown asserts (a retained resource blocks a clean
-  // close). The checkpoint above is what makes the retained content recoverable meanwhile.
+  // The retained checkout is owned by the reconciliation authority of the next open: this
+  // deployment's stop releases its handle and closes, leaving the checkout and its receipt on
+  // disk. The checkpoint above is what makes the retained content recoverable meanwhile.
   assert.equal(readFileSync(ownerReceiptPath(repo, ownerId), 'utf8').length > 0, true);
-  assert.equal(reservations(driver).length, 1);
+  assert.equal(ownerReceipts(repo).length, 1);
 });
 
 test('T4 the last holder closes a clean shared checkout exactly once', async (t) => {
@@ -378,10 +350,9 @@ test('T4 the last holder closes a clean shared checkout exactly once', async (t)
   await stopParticipant(app, { swarmId: 'shared', participantId: 'builder', reason: 'Last holder closes the checkout' });
 
   assert.deepEqual(workspaceDirs(repo), [], 'the clean checkout is removed exactly once');
-  assert.equal(reservations(driver).length, 0, `capacity is settled exactly once: ${JSON.stringify(reservations(driver).map((row) => row.id))}`);
+  assert.equal(ownerReceipts(repo).length, 0, 'the owner receipt is settled exactly once');
   assert.equal(existsSync(ownerReceiptPath(repo, ownerId)), false, 'the owner receipt is released');
   assert.deepEqual(ownerReceipts(repo), []);
-  assert.equal(reservations(driver).length, 0, 'capacity is settled exactly once');
   let branchGone = false;
   try { git(repo, ['show-ref', '--verify', `refs/heads/${branch}`]); } catch { branchGone = true; }
   assert.equal(branchGone, true);
@@ -389,7 +360,6 @@ test('T4 the last holder closes a clean shared checkout exactly once', async (t)
   // Idempotent on retry: a repeated stop of an already-closed holder re-reports without effects.
   await stopParticipant(app, { swarmId: 'shared', participantId: 'builder', reason: 'Retry the same stop', key: 'stop-retry' });
   assert.deepEqual(workspaceDirs(repo), []);
-  assert.equal(reservations(driver).length, 0);
   assert.equal(workspaceDirs(repo).length, 0);
 });
 
@@ -534,7 +504,7 @@ test('T8 stopping a participant that owns its clean checkout converges and remov
 });
 
 test('T9 residue no capture can record is retained with its refusal event while the stop still converges', async (t) => {
-  const { app, driver, repo } = await fixture(t, { retained: true });
+  const { app, driver, repo } = await fixture(t);
   await createSwarm(app, 'solo');
   const solo = await recruit(app, { swarmId: 'solo', participantId: 'owner', objective: 'Own the only checkout' });
   const soloWorker = await paused(driver, solo.runId);
@@ -565,5 +535,5 @@ test('T9 residue no capture can record is retained with its refusal event while 
   assert.equal(existsSync(join(cwd, 'residue.local.txt')), true, 'the unrecordable content survives');
   assert.equal(existsSync(join(repo, '.baton', 'wt', soloWorker.sessionContext.ownerTaskId)), true,
     'the checkout stays on disk for the reconciliation authority');
-  assert.equal(reservations(driver).length, 1, 'the retained resource keeps its capacity reservation');
+  assert.equal(ownerReceipts(repo).length, 1, 'the retained resource keeps its owner receipt');
 });

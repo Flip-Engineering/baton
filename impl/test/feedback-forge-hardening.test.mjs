@@ -367,10 +367,6 @@ async function openWorkflow(t, { captureDriver = false } = {}) {
       routes: [ROUTE_A, ROUTE_B],
       adapters,
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   };
   let deployment;

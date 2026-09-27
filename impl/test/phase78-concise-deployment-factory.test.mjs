@@ -98,10 +98,6 @@ function advanced(name, selectedRoutes = routes) {
     adapters,
     routes: selectedRoutes,
     verification: { command: 'node', arguments: ['--test'] },
-    capacity: {
-      estimate: () => ({ bytes: 60, inodes: 5 }),
-      observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-    },
   };
 }
 

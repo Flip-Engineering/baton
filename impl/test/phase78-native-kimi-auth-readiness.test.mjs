@@ -312,12 +312,6 @@ test('KA4: a provider Authentication required spawn refusal projects one typed r
       adapters: { 'kimi-code': adapter },
       routes: [ROUTE],
       verification: { command: 'node', arguments: ['--version'] },
-      capacity: {
-        estimate: () => ({ bytes: 1, inodes: 1 }),
-        observe: () => ({
-          freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER,
-        }),
-      },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch {} });

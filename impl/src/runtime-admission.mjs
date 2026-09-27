@@ -469,11 +469,6 @@ export function constructor(coordinator, opts) {
     // #297: the host-wide capacity authority (application-deployment built it once; null when
     // unwired). The contribution operations admit their verdicts through it.
     coordinator._hostCapacity = opts.hostCapacity ?? null;
-    // Issue #450: the capacity authority's own cleanup settlement (`settleForCleanup`), handed in
-    // by the deployment that owns it. The coordinator holds only the worktree façade, which can
-    // settle a reservation only by reaping its checkout; a reservation whose worker is gone and
-    // whose checkout the custody boundary RETAINED has to be settled through the authority itself.
-    coordinator._capacitySettlement = typeof opts.capacitySettlement === 'function' ? opts.capacitySettlement : null;
     coordinator._route = opts.route;
     coordinator._routeLearningPolicy = opts.routeLearningPolicy ? Object.freeze({ ...opts.routeLearningPolicy }) : null;
     if (coordinator._routeLearningPolicy && (typeof opts.coordination.routePolicy !== 'function' || typeof opts.coordination.routeObservations !== 'function' || canonicalDigest(opts.coordination.routePolicy()) !== canonicalDigest(coordinator._routeLearningPolicy))) throw new TypeError('Coordinator route learning policy disagrees with durable coordination');
@@ -1123,14 +1118,6 @@ export function _isAuthorityCheckout(coordinator, recorder, worktree, ownerTaskI
     } catch {
       return false;
     }
-  }
-
-export function _capacityWorkerGone(coordinator, recorder, handle) {
-    if (!handle || !['dead', 'exited', 'orphaned'].includes(handle.status)) return false;
-    if (handle.processRef && handle.processRef.state !== 'closed') return false;
-    if (coordinator._ownsLocalResources(handle)) return false;
-    if (coordinator._capacityOwnerHeld(handle.sessionContext?.ownerTaskId ?? handle.taskId)) return false;
-    return true;
   }
 
 export function _resolveVendor(coordinator, recorder, task) {

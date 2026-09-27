@@ -458,10 +458,6 @@ test('RG5: the repository deployment forwards startMany and close drains all act
         grok: exactAdapter(routeB.harness, routeB.model, routeB.effort),
       },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   assert.equal(typeof deployment.startMany, 'function');

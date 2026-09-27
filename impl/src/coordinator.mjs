@@ -740,16 +740,6 @@ export class Coordinator {
     return runtimeApi.supervisedProcesses(this);
   }
 
-  /** Issue #450: hand this controller the capacity authority's own cleanup settlement. The
-   * deployment that owns the authority wires it here — the coordinator holds only the worktree
-   * façade, which cannot settle a reservation whose checkout the custody boundary RETAINED, and a
-   * reservation with no live worker behind it must never fail the stop it was left to. */
-  attachCapacitySettlement(settle) {
-    if (typeof settle !== 'function') throw new TypeError('capacity settlement must be a function');
-    this._capacitySettlement = settle;
-    return true;
-  }
-
   /** DC2-DC6: irreversibly fence admission, durably bind one fixed target set, and
    * converge every locally-owned resource through the ordinary stop state machine. */
     drain(ctx = {}) {
@@ -799,19 +789,15 @@ export class Coordinator {
     return runtimeAdmission._ownsLocalResources(this, this._recorder, handle);
   }
 
-  /** #265/#360/#450: the ONE derivation of a stop's named waits, shared by the fleet drain and the
+  /** #265/#360: the ONE derivation of a stop's named waits, shared by the fleet drain and the
    * Run-stop leg — a stop and a drain never spell the same wait two ways. Each `waiting` entry
    * carries {resource, reaper, since}; each row carries the `released` rows the stop itself
    * settled for that worker; every named wait is also appended to the worker's durable log
    * (`control.stop_waiting_on`) so a non-convergence is never silent. Workers whose predicates all
-   * hold are omitted; `dispositions` is null for a drain. A reservation whose worker is gone but
-   * whose row the capacity authority still holds is a wait too, and — the case that failed the
-   * resident of issue #450 — it is named even when the target set is EMPTY, because a zero-target
-   * stop still has to say what it is waiting on. */
+   * hold are omitted; `dispositions` is null for a drain. */
   _stopWaitRows(targetWorkerIds, dispositions, actor) {
     this._drainWaitSince ??= new Map();
     this._drainReleased ??= [];
-    const orphanWaits = this._orphanCapacityWaits(targetWorkerIds);
     const rows = [];
     const push = (handle, workerId, waiting) => {
       const released = this._drainReleased.filter((row) => row.workerId === workerId)
@@ -874,14 +860,8 @@ export class Coordinator {
       }
       if (handle.pendingApprovalId) waiting.push(this._drainWaitEntry(`interaction:${handle.pendingApprovalId}`, 'interaction-cancel', null));
       if (handle.pendingQuestionId) waiting.push(this._drainWaitEntry(`interaction:${handle.pendingQuestionId}`, 'interaction-cancel', null));
-      waiting.push(...(orphanWaits.byWorker.get(workerId) ?? []));
       if (waiting.length === 0) continue;
       push(handle, workerId, waiting);
-    }
-    // A worker outside the target set still owns a reservation the stop has to release; the row it
-    // rides is the same shape, so no reader has to special-case the empty target set.
-    for (const { orphan, entry } of orphanWaits.extra) {
-      push(this._workers.get(orphan.workerId) ?? null, orphan.workerId, [entry]);
     }
     return Object.freeze(rows);
   }
@@ -1343,12 +1323,10 @@ export class Coordinator {
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
       // #360: release what a settled holder cannot. A worker whose process is exactly closed
       // and whose seat has left/stopped (a durably admitted run stop) is reaped by the drain
-      // itself — through the #428/#435 custody boundary and with the capacity release through
-      // the capacity authority — instead of being waited on until the deadline; a hold with no
-      // reaper is released with reason `orphaned`, never waited on. A task still verifying
-      // keeps its reaper (the trust gate honors cleanupAfterVerification), and a bare operator
-      // kill without a run stop keeps the named wait (G-21).
-      this._drainWaitObserve(targetWorkerIds);
+      // itself — through the #428/#435 custody boundary — instead of being waited on until the
+      // deadline; a hold with no reaper is released with reason `orphaned`, never waited on. A
+      // task still verifying keeps its reaper (the trust gate honors cleanupAfterVerification),
+      // and a bare operator kill without a run stop keeps the named wait (G-21).
       // Issue #467: a target worker whose stop the kill path SETTLED — the kernel's own ESRCH closed
       // its process, and the reap that follows released what it held — is holding nothing and
       // waiting on nothing. Recording the disposition it actually reached here keeps the drain's own
@@ -1389,17 +1367,6 @@ export class Coordinator {
         .filter((handle) => this._ownsLocalResources(handle) && !handle.stopAbandoned);
       if (globalRemaining.length === 0 && this._authorityOps === 0
         && !this._hasPendingInteractionAuthority() && targetWorkerIds.every((id) => dispositions.has(id))) {
-        // Issue #450: a reservation with no live worker behind it is a leak this stop releases and
-        // names before it claims convergence — the state a zero-target target set would otherwise
-        // carry into the deployment's own capacity quiescence check
-        // ('driver capacity reservations remained after fleet drain'). Evaluated HERE, in the one
-        // branch that mints the receipt, so a busy drain pays for the sweep once; a release that
-        // cannot be settled keeps the loop going until the deadline names the wait.
-        const orphaned = this.orphanedCapacityReservations();
-        if (orphaned.length > 0) {
-          const released = await this.releaseGoneWorkerReservations();
-          if (released.length < orphaned.length) continue;
-        }
         if (!this._drainHistoricalReconciled) {
           if (!this._drainHistoricalReconcilePromise) {
             const reconciliations = [];
@@ -1489,7 +1456,7 @@ export class Coordinator {
    * co-holders — never a bare delete), the runtime scope through its own exact removal, and a
    * hold with NO reaper is released immediately with reason `orphaned` instead of being waited
    * on. Every release is recorded as {workerId, resource, how} — `custody_reaped`, `retained`,
-   * `detached`, `orphaned`, `capacity` — on the durable ledger and on the drain's wait rows. A
+   * `detached`, `orphaned` — on the durable ledger and on the drain's wait rows. A
    * custody refusal that names no settled outcome leaves the holds for the next pass, where
    * the deadline rows name them. */
   async _releaseSettledHolder(handle, task) {
@@ -1538,105 +1505,7 @@ export class Coordinator {
         how: hold === 'worktree' ? (worktreeHow ?? 'custody_reaped') : 'orphaned',
       });
     }
-    // The reservation release through the capacity authority: a reaped checkout settles its
-    // own row inside the worktree authority's removal path; a settled row is named.
-    if (worktreeHow === 'custody_reaped') {
-      const ownerTaskId = handle.sessionContext?.ownerTaskId ?? task?.id ?? null;
-      const snapshot = ownerTaskId && typeof this._worktrees?.capacitySnapshot === 'function'
-        ? this._worktrees.capacitySnapshot() : null;
-      const capacityId = `worker:${ownerTaskId}`;
-      if (snapshot && !snapshot.reservations.some((row) => row.id === capacityId)) {
-        released.push({ workerId: handle.id, resource: capacityId, how: 'capacity' });
-      }
-    }
     this._recordDrainReleases(handle, task, released);
-  }
-
-  /** Issue #450: the physical checkout owners a handle's capacity reservation can be keyed by —
-   * the same derivation `_removeTaskWorktree` removes a checkout under, so the reservation id and
-   * the checkout path always name the same owner. */
-    _capacityOwnerIds(handle, task = null) {
-    return runtimeApi._capacityOwnerIds(this, handle, task);
-  }
-
-  /** Issue #450: whether anything still WORKS in this physical owner. A handle that holds local
-   * resources, a stop in flight, and a still-open process all count. A checkout the custody
-   * boundary retained does NOT count on its own: retention keeps the CONTENT for the reconciliation
-   * authority, and a retained checkout whose worker is gone is exactly the state the resident of
-   * #450 died on — the reservation is a live-worker quota, and the stop that finds nobody behind it
-   * settles it (naming the release) instead of failing. A shared checkout with a live co-holder is
-   * held because that co-holder holds resources. ONE liveness test, read by the reservation sweep
-   * and by nothing else. */
-    _capacityOwnerHeld(ownerTaskId) {
-    return runtimeApi._capacityOwnerHeld(this, ownerTaskId);
-  }
-
-  /** Issue #450: a worker this controller watched die and whose holds are all released — the only
-   * worker whose reservation may be released without destroying anything. */
-    _capacityWorkerGone(handle) {
-    return runtimeAdmission._capacityWorkerGone(this, this._recorder, handle);
-  }
-
-  /** Issue #450: the capacity reservations whose worker is closed/absent — the leak #360's
-   * settled-holder reap cannot see, because there is no holder left to reap. Read from the
-   * capacity authority's OWN projection (never a ledger scan) and attributed to a handle this
-   * controller watched die: an owner no handle ever named belongs to another deployment's fleet
-   * and is never touched. */
-  orphanedCapacityReservations() {
-    return runtimeRecovery.orphanedCapacityReservations(this, this._recorder);
-  }
-
-  /** Issue #450: release the reservations whose worker is gone — the kill path's own leftover and
-   * the one a stop with nothing left to drain would otherwise fail on
-   * ('driver capacity reservations remained after fleet drain'). The worktree façade's removal is
-   * tried first: an absent checkout settles in place through the SAME preserve-then-reap authority
-   * the stop already uses, and a checkout the authority retains refuses (never a bare delete). What
-   * the façade cannot settle — a retained checkout's reservation — goes to the capacity authority's
-   * own cleanup settlement, which the deployment that owns it handed in. Every release is one
-   * durable `drain.resource_released` row with the named reason `worker_gone`, the same
-   * {workerId, resource, how} shape #360 mints. Returns the rows it released. */
-  async releaseGoneWorkerReservations(settle = null) {
-    const orphaned = this.orphanedCapacityReservations();
-    if (orphaned.length === 0) return Object.freeze([]);
-    const released = [];
-    for (const orphan of orphaned) {
-      const handle = this._workers.get(orphan.workerId);
-      if (!handle) continue;
-      const settlement = settle ?? this._capacitySettlement;
-      if (typeof this._worktrees?.remove === 'function') {
-        try {
-          await Promise.resolve(this._worktrees.remove(orphan.ownerTaskId, { excludeHolderId: handle.id }));
-        } catch { /* the authority retained the checkout; the settlement below decides the quota */ }
-      }
-      let held = this._capacityReservationHeld(orphan.resource);
-      if (held && typeof settlement === 'function') {
-        try { await settlement(orphan.resource); } catch { /* the surviving row is named by the wait rows */ }
-        held = this._capacityReservationHeld(orphan.resource);
-      }
-      if (!held) released.push({ workerId: orphan.workerId, resource: orphan.resource, how: 'worker_gone' });
-    }
-    for (const row of released) {
-      const handle = this._workers.get(row.workerId) ?? null;
-      this._recordDrainReleases(handle, handle ? this._tasks.get(handle.taskId) ?? null : null, [row]);
-    }
-    return Object.freeze(released);
-  }
-
-  /** Issue #285 G-42: a capacity release from a SYNCHRONOUS dispatch failure path, which cannot
-   * await the promise-returning worktree façade. The row leaves the ledger on the next microtask;
-   * a refusal (the lock another deployment holds) is recorded under `capacity_release`, and the
-   * reservation is left to the #450 orphan sweep, which settles and names it at the drain. */
-  _releaseCapacityDetached(taskId) {
-    if (typeof this._worktrees?.releaseCapacity !== 'function') return;
-    this._bestEffort(Promise.resolve(this._worktrees.releaseCapacity(taskId)), 'capacity_release');
-  }
-
-  /** Issue #450: the capacity authority's own projection, one question — does it still hold this
-   * reservation? Never a second bookkeeping map the coordinator would have to keep in step. */
-  _capacityReservationHeld(resource) {
-    const snapshot = typeof this._worktrees?.capacitySnapshot === 'function'
-      ? this._worktrees.capacitySnapshot() : null;
-    return Array.isArray(snapshot?.reservations) && snapshot.reservations.some((row) => row.id === resource);
   }
 
   /** #360: durable release rows — one `driver.recorded` row per released resource, idempotent
@@ -1646,10 +1515,9 @@ export class Coordinator {
     return runtimeObservation._recordDrainReleases(this, this._recorder, handle, task, released);
   }
 
-  /** Issue #450: the {workerId, resource, how} release rows THIS incarnation settled — the drain's
-   * own (#360) and the ones a gone worker's reservation was released with (`worker_gone`). The
-   * deployment narrates them beside the stop's outcome; the durable rows are the
-   * `drain.resource_released` records themselves. */
+  /** The {workerId, resource, how} release rows THIS incarnation settled (#360). The deployment
+   * narrates them beside the stop's outcome; the durable rows are the `drain.resource_released`
+   * records themselves. */
     releasedResources() {
     return runtimeApi.releasedResources(this);
   }
@@ -1686,15 +1554,6 @@ export class Coordinator {
    * and released rows the Run-stop leg names. */
   _drainWaitingOn(targetWorkerIds, dispositions, actor) {
     return this._stopWaitRows(targetWorkerIds, dispositions, actor);
-  }
-
-  /** Issue #450: the reservations whose worker is gone while the capacity authority still holds
-   * their rows — the ONE wait a stop takes on a quota release. Entries ride the same
-   * {resource, reaper, since} shape as every other wait; `since` is when THIS epoch first observed
-   * it. Rows for workers the target set does not name are returned separately: a zero-target drain
-   * still has to name what it is waiting on. */
-  _orphanCapacityWaits(targetWorkerIds) {
-    return runtimeRecovery._orphanCapacityWaits(this, this._recorder, targetWorkerIds);
   }
 
     _capabilityRegistry() {
@@ -1910,8 +1769,6 @@ export class Coordinator {
   }
 
   _failInitialProviderAdmission(handle, task, admission) {
-    if (task?.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
-      && typeof this._worktrees?.releaseCapacity === 'function') this._releaseCapacityDetached(task.id);
     const evidence = this._coordMapEvent(admission.event);
     this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_turn:${admission.event.seq}`, evidence);
     task.status = 'failed';
@@ -2248,8 +2105,7 @@ export class Coordinator {
     if (opts.goalPlan && !this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
     if (opts.goalPlan && vendor === 'auto') throw Object.assign(new Error('plan-gated dispatch requires an exact harness'), { code: 'plan_route_mismatch' });
     const workerId = this._allocWorkerId();
-    let planAuth = null; let planState = null; let capacityPrepared = false;
-    let capacityPreflightDone = false;
+    let planAuth = null; let planState = null;
     let revisionParentTaskId = null;
     const routeBinding = { vendor, model: opts.model ?? null, effort: effortRequested ?? null };
     if (opts.goalPlan) {
@@ -2278,8 +2134,7 @@ export class Coordinator {
         revisionParentTaskId = planState.node.revision.parent.taskId;
         worktreeBaseSha = planState.node.revision.parent.resultSha;
         const retainedRef = planState.node.revision.parent.retainedResultRef;
-        if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function'
-          || typeof this._worktrees.reserveCapacity !== 'function') {
+        if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
           throw Object.assign(new Error('Plan revision result-base authority is unavailable'), {
             code: 'plan_revision_base_unavailable',
           });
@@ -2290,17 +2145,6 @@ export class Coordinator {
             code: 'plan_revision_result_ref_mismatch',
           });
         }
-        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
-          runId, attemptId: workerId, processGeneration: 1,
-        });
-        capacityPreflightDone = true;
-        if (prepared?.baseSha && prepared.baseSha !== worktreeBaseSha) {
-          await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
-          throw Object.assign(new Error('Plan revision capacity base differs from its Candidate'), {
-            code: 'plan_revision_base_mismatch',
-          });
-        }
-        capacityPrepared = prepared !== null;
       }
     } else {
       admittedBrief = createBrief(brief);
@@ -2374,33 +2218,13 @@ export class Coordinator {
       );
       coordinationVersion = created.task.version;
     } else if (planState) {
-      try {
-        const created = derivedRevisionAuthorized
-          ? this._coordination.createPlanRevisionTask(taskFields(), opts.goalPlan, routeBinding, planAuth)
-          : this._coordination.createPlanGatedTask(taskFields(), opts.goalPlan, routeBinding, planAuth);
-        coordinationVersion = created.task.version;
-      } catch (error) {
-        if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
-        throw error;
-      }
+      const created = derivedRevisionAuthorized
+        ? this._coordination.createPlanRevisionTask(taskFields(), opts.goalPlan, routeBinding, planAuth)
+        : this._coordination.createPlanGatedTask(taskFields(), opts.goalPlan, routeBinding, planAuth);
+      coordinationVersion = created.task.version;
     }
 
     try {
-      // A session that adopts an existing shared checkout consumes the reservation that checkout
-      // already holds: it must not reserve (or later settle) capacity of its own.
-      if (!capacityPreflightDone && !capacityPrepared && sessionRequest.mode === 'new'
-        && attachedWorkspace === null
-        && typeof this._worktrees?.reserveCapacity === 'function') {
-        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
-          runId, attemptId: workerId, processGeneration: 1,
-        });
-        if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
-        capacityPrepared = prepared !== null;
-        if (this._drainState !== 'open') {
-          if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
-          throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
-        }
-      }
       if (this._coordination && !planState) {
         const created = this._coordination.createTask(taskFields(), { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
         coordinationVersion = created.task.version;
@@ -2411,7 +2235,6 @@ export class Coordinator {
         this._grantOrientationContextPacks(taskId, runId, workerId, coordinationVersion, admittedBrief);
       }
     } catch (error) {
-      if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
       if (planState) {
         // Issue #35: the admission refusal is the only fact that explains this cancellation;
         // carry its typed code on the transition so the Run view and timeline can surface it.
@@ -4358,8 +4181,8 @@ export class Coordinator {
   async _removeTaskWorktree(task, { excludeHolderId = null } = {}) {
     if (!task || !this._worktrees || typeof this._worktrees.remove !== 'function') return;
     const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
-    // The removal row is recorded only for a checkout that actually existed: the facade's
-    // reservation-only paths resolve without touching a worktree, and those are not removals.
+    // The removal row is recorded only for a checkout that actually existed: a facade path that
+    // resolves without touching a worktree is not a removal.
     // #435: a fixture or embedder coordinator may carry no repository root at all; the custody
     // row is derived only for a checkout the worktree authority (rooted there) can own.
     const worktreePath = ownerTaskId && typeof this._repoRoot === 'string'
@@ -4384,16 +4207,16 @@ export class Coordinator {
   }
 
   /** Release one handle's hold on a shared checkout without destroying it. The remaining holder
-   * keeps the receipt, branch, checkout, registration and capacity reservation, so this is a
-   * positive deferred outcome — never `worktree_cleanup_failed` — and the stopping handle is
-   * released exactly as a completed cleanup would release it. */
+   * keeps the receipt, branch, checkout and registration, so this is a positive deferred
+   * outcome — never `worktree_cleanup_failed` — and the stopping handle is released exactly as a
+   * completed cleanup would release it. */
   _detachSharedWorkspace(handle, remainingHolders) {
     return recorderPort.detachSharedWorkspace(this, this._recorder, handle, remainingHolders);
   }
 
   /** Release any holder — the checkout's own allocator or a borrowed holder — whose checkout is
    * retained because it holds content no capture recorded. Preservation keeps the resource
-   * exactly as it is (checkout, receipt, reservation); this handle simply releases its hold, so
+   * exactly as it is (checkout, receipt); this handle simply releases its hold, so
    * the stop and every later drain converge on a resource the handle no longer owns, while the
    * retained resource passes to the existing reconciliation authority. The refusal code remains
    * readable on the handle and in the durable custody event. */
@@ -4414,7 +4237,7 @@ export class Coordinator {
       ? handle.sessionContext.ownerTaskId : null;
     // A deliberate shared checkout outlives any one of its holders. While another live holder
     // still works in it, this stop releases only THIS handle's hold: the receipt, branch,
-    // checkout, registration and capacity reservation stay live for the remaining holder(s).
+    // checkout and registration stay live for the remaining holder(s).
     // Nothing is destroyed here, so preservation is not even consulted.
     const remainingHolders = opaquePhysicalOwner
       ? this.liveWorkspaceHolders(opaquePhysicalOwner, { excludeHandleId: handle.id })
@@ -4493,7 +4316,7 @@ export class Coordinator {
       }
       // Any retention refusal — content no capture recorded, an unobservable checkout — is
       // terminal for THIS HANDLE, owner or borrower alike (#277): the physical resource is
-      // intact with its receipt and reservation, the refusal code stays observable, and the
+      // intact with its receipt, the refusal code stays observable, and the
       // existing reconciliation authority owns it. Retention must never hold a stopping
       // participant's local authority open: that was the own-checkout stop that could never
       // converge. A capture still in flight is awaited before cleanup ever starts, so this
@@ -4536,9 +4359,6 @@ export class Coordinator {
     await this._removeOwnedTaskWorktree(handle, task);
     if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
     handle.localAuthority = false;
-    // Issue #450: an exact process close settles this worker's capacity reservation the same way a
-    // confirmed kill does — the seam that observes the death is where the release is named.
-    await this.releaseGoneWorkerReservations();
   }
 
   // Deployment-issued participant credentials follow the participant across native turns and
@@ -5070,16 +4890,6 @@ export class Coordinator {
    * kept, which is exactly what the stop did NOT release. */
     abandonedWorkers() {
     return runtimeApi.abandonedWorkers(this);
-  }
-
-  /** Issue #472: the capacity reservations the stop's ABANDONED workers still hold — the quota
-   * leash of a worker whose process is unproven and whose checkout is retained. Read from THIS
-   * controller's own handles (never a snapshot scan) and returned in the same row shape #450's
-   * `orphanedCapacityReservations()` publishes, so the deployment's capacity quiescence reads ONE
-   * derivation: a reservation named here is not unreleased authority — the abandonment IS the
-   * release — and leaving it counted would keep the stop from ever minting its outcome. */
-    abandonedCapacityReservations() {
-    return runtimeApi.abandonedCapacityReservations(this);
   }
 
   /** Issue #467: the resident's own absence observation, handed back to the seat whose stop is

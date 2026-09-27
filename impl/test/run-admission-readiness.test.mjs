@@ -158,10 +158,6 @@ async function openMuseDeployment(t, label, { authContents = null } = {}) {
       adapters: { muse: museAdapter(spawnCalls) },
       routes: [{ ...MUSE_ROUTE }],
       verification: { command: process.execPath, arguments: ['--version'] },
-      capacity: {
-        estimate: () => ({ bytes: 1, inodes: 1 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   }));
   t.after(async () => { try { await deployment.close(); } catch {} });

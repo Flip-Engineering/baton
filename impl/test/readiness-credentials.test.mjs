@@ -362,10 +362,6 @@ async function openFixture({ routes = [ROUTE_LOW], adapters, extraAdvanced = {} 
         routes,
         adapters,
         verification: { command: 'true', arguments: [] },
-        capacity: {
-          estimate: () => ({ bytes: 60, inodes: 5 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
         ...extraAdvanced,
       },
     }, (driverOptions) => { driver = createDriver(driverOptions); return driver; }));

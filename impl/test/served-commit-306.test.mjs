@@ -126,10 +126,6 @@ test('#306 (2): the deployment doctor and card carry the served revision, frozen
         routes: DEFAULT_BATON_DEPLOYMENT_ROUTES.filter((route) => route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude'),
         adapters: { 'claude-code:claude': new FixtureAdapter(CLAUDE_CARD) },
         verification: { command: process.execPath, arguments: ['--version'] },
-        capacity: {
-          estimate: () => ({ bytes: 1, inodes: 1 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
       },
     });
     const before = await deployment.doctor();

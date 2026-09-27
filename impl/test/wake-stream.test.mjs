@@ -55,7 +55,7 @@ function adapter() {
   return value;
 }
 
-function options(t, { capacity = null } = {}) {
+function options(t) {
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'bt-wakes-deployment-'));
   const configRoot = mkdtempSync(join(tmpdir(), 'bt-wakes-config-'));
   const home = mkdtempSync(join(tmpdir(), 'bt-wakes-home-'));
@@ -66,7 +66,6 @@ function options(t, { capacity = null } = {}) {
   return {
     advanced: {
       deploymentRoot, adapters: { codex: adapter() }, routes: [ROUTE],
-      ...(capacity === null ? {} : { capacity }),
       verification: { command: 'node', arguments: ['--test'] },
       resident: { env, home, webDrainMs: 2_000, sessionTtlMs: 60_000 },
     },
@@ -246,28 +245,6 @@ test('the cursor resumes from the last seq a consumer saw, with no gap and no du
   await owner.close();
 });
 
-test('a deployment below its capacity floors wakes capacity_pressure at attach, and the CLI names the command that acts on it', { timeout: 120_000 }, async (t) => {
-  const repo = repository(t);
-  // The capacity observation is injected: this test asserts the WAKE, never real disk state.
-  const configured = options(t, { capacity: { observe: () => ({ freeBytes: 0, freeInodes: 0 }) } });
-  const owner = await openBaton({ repo, advanced: configured.advanced });
-  t.after(async () => { try { await owner.close(); } catch { /* closed by the test */ } });
-  await owner.host();
-  // The frame itself is the proof: a deployment whose capacity observation reads ready announces
-  // no capacity_pressure at all, so `until` below would time out.
-
-  const frames = [];
-  const attachment = attach(repo, configured, { filter: { kinds: 'capacity_pressure' }, onFrame: (frame) => frames.push(frame) });
-  t.after(() => attachment.close());
-  await until(() => frames.length >= 1, frames, 'a standing capacity fault is announced at attach');
-  const [wake] = frames;
-  assert.equal(wake.wakeClass, 'capacity_pressure');
-  assert.equal(wake.observation, true, 'a wake with no ledger row says so');
-  assert.equal(wake.subject.id, 'worktree_capacity_exceeded');
-  assert.equal(wake.next, 'baton_deployment_doctor / baton doctor --check');
-  attachment.close();
-  await owner.close();
-});
 
 // ── issue #272: wakes name facts, one wake per row, never bodies ──────────────────────────────
 
@@ -395,7 +372,7 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
       'a wake never carries the request body beside the row');
   }
   for (const [wakeClass, observation] of [
-    ['capacity_pressure', { payload: { code: 'worktree_capacity_exceeded' }, actor: 'deployment' }],
+    ['capacity_pressure', { payload: { state: 'unobserved' }, actor: 'deployment' }],
     ['resident_lifecycle', { payload: { incarnation: 'incarnation-1' }, actor: 'deployment' }],
   ]) {
     const frame = deriveObservationFrame(wakeClassRow(wakeClass), observation, 99, 'T');
@@ -427,7 +404,7 @@ test('#547: a standing observation whose measurements drift is ONE condition, no
   let reads = 0;
   const f = observationFixture({
     observation: () => ({ capacity: {
-      state: 'blocked', code: 'worktree_capacity_exceeded', freeBytes: 100 - reads++,
+      state: 'workspace_unobserved', code: 'workspace_unobserved', freeBytes: 100 - reads++,
     } }),
   });
   const observations = () => f.stream.pull(parseWakeFilter({}), { includeObservations: true })
@@ -441,22 +418,23 @@ test('#547: a standing observation whose measurements drift is ONE condition, no
   assert.equal(announced.length, 1,
     'a standing fault whose free bytes drift is announced once at attach — the drift is not a crossing');
   assert.equal(announced[0].wakeClass, 'capacity_pressure');
-  assert.equal(announced[0].subject.id, 'worktree_capacity_exceeded');
+  assert.equal(announced[0].subject.id, 'workspace_unobserved',
+    'the standing condition keeps the subject it was announced with');
 });
 
 test('#547: a crossing is announced on the append that precedes it, never on the next poll window', { timeout: 30_000 }, () => {
-  let code = 'worktree_capacity_exceeded';
-  const f = observationFixture({ observation: () => ({ capacity: { state: 'blocked', code, freeBytes: 0 } }) });
+  let state = 'workspace_unobserved';
+  const f = observationFixture({ observation: () => ({ capacity: { state, code: 'workspace_unobserved', freeBytes: 0 } }) });
   const observations = () => f.stream.pull(parseWakeFilter({}), { includeObservations: true })
     .frames.filter((frame) => frame.observation === true);
   assert.equal(observations().length, 1, 'the standing fault is announced at attach');
   // The condition CHANGES and the deployment writes: the crossing rides that append. The clock in
   // this fixture never advances, so a stream that re-read on its own timer could not see it.
-  code = 'worktree_capacity_unavailable';
+  state = 'workspace_observed';
   f.append();
   const crossed = observations();
   assert.equal(crossed.length, 1, 'the changed condition is announced with the append that carried it');
-  assert.equal(crossed[0].subject.id, 'worktree_capacity_unavailable');
+  assert.equal(crossed[0].subject.id, 'workspace_observed');
   f.append();
   assert.deepEqual(observations(), [], 'and an unchanged condition re-announces nothing');
 });
