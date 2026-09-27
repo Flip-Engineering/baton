@@ -47,7 +47,7 @@ const HTML = `<!doctype html>
 <body>
   <header class="mast">
     <div class="wordmark"><p class="eyebrow">Human direction / agent execution</p><h1>Baton <span>run desk</span></h1></div>
-    <div class="mast-state"><p id="status" class="status" role="status">Opening the Run application…</p><button id="logout" type="button" class="text-button">Log out</button></div>
+    <div class="mast-state"><p id="status" class="status" role="status">Opening the Run application…</p></div>
   </header>
   <main class="workspace">
     <section class="intent-panel" aria-labelledby="intent-title">
@@ -251,7 +251,6 @@ byId('drain-workers').addEventListener('click',()=>drainWorkers().catch((error)=
 byId('reconnect-activity').addEventListener('click',()=>connectRunActivity().catch((error)=>setStatus(error.message,'error')));
 byId('include-output').addEventListener('click',()=>includeProviderOutput().catch((error)=>setStatus(error.message,'error')));
 byId('connect-stream').addEventListener('click',()=>connectStream().catch((error)=>setStatus(error.message,'error')));
-byId('logout').addEventListener('click',()=>request('/v1/auth/logout',{method:'POST',headers:{'content-type':'application/json','x-baton-csrf':readCookie('__Host-baton_csrf')||''},body:'{}'}).then(()=>location.replace('/control')).catch((error)=>setStatus(error.message,'error')));
 Promise.all([request('/v1/session'),request('/v1/application-card')]).then(([session,card])=>{state.session=session;state.card=card.application;populateProfiles();setStatus('Authenticated as '+session.identity.userId+'. Run application ready.','live');}).catch((error)=>setStatus(error.message,'error'));
 `;
 

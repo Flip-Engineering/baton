@@ -105,9 +105,8 @@ The recruit's context leg (#441, #480): `baton swarm recruit … --issue N [--do
 
 ## Drive a living swarm
 
-`baton swarm` recruits participants, publishes findings, and lets agents DECLARE the coupling
-between them. Coupling is a record the swarm keeps honest — it informs the view, the attention
-rows, and the `swarm watch --follow` wake feed; nothing stops a worker.
+`baton swarm` recruits participants, publishes findings, and records work dependencies and claims.
+The view reports held work, outstanding dependencies, and attention.
 
 ```sh
 # Declare a dependency between units of work: W2 waits for W1's accepted contribution
@@ -118,30 +117,12 @@ baton swarm update SWARM_ID swarm.work_updated \
 baton swarm update SWARM_ID swarm.work_updated \
   --payload '{"workId":"work-integration","objective":"Integrate W1","dependsOn":[{"artifact":"artifact:iface"}]}'
 
-# Declare a synchronization point on a group; members arrive; the lead releases it
-baton swarm update SWARM_ID swarm.coupling_updated \
-  --payload '{"couplingId":"sync-freeze","coupling":"synchronization","action":"declare","groupId":"impl","name":"interface-freeze"}'
-baton swarm update SWARM_ID swarm.coupling_updated \
-  --payload '{"couplingId":"sync-freeze","coupling":"synchronization","action":"arrive"}'
-baton swarm update SWARM_ID swarm.coupling_updated \
-  --payload '{"couplingId":"sync-freeze","coupling":"synchronization","action":"release","reason":"interface frozen"}'
-
-# Claim the shared checkout for one exclusive writer; release ends the window
-baton swarm update SWARM_ID swarm.coupling_updated \
-  --payload '{"couplingId":"writer-impl","coupling":"writer","action":"declare","participantId":"builder-a"}'
-baton swarm update SWARM_ID swarm.coupling_updated \
-  --payload '{"couplingId":"writer-impl","coupling":"writer","action":"release","reason":"turn done"}'
-
-# Declare the group failure policy: independent peers continue, dependents are told
-baton swarm update SWARM_ID swarm.coupling_updated \
-  --payload '{"couplingId":"policy-impl","coupling":"failure","action":"declare","groupId":"impl","policy":"independent"}'
-
-# Read the declared truth: waitsOn per work item, couplings with arrivals/awaiting, attention
+# Read work dependencies, claims, and attention
 baton swarm view SWARM_ID
 baton swarm watch SWARM_ID --follow
 
 # ...or bounded: wait for one wake class (or the deadline) and print the view that woke it
-baton swarm watch SWARM_ID --timeout-ms 30000 --wake-class closed
+baton swarm watch SWARM_ID --timeout-ms 30000 --wake-class left
 ```
 
 Refusals name what is missing: a dependency on unknown work (`work_not_found`), a ring of waits

@@ -91,7 +91,6 @@ async function delegation(t) {
   await delegated.work({ workId: 'W-B', objective: 'Part B', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
   await delegated.assign({ assignmentId: 'as-beta', participantId: 'beta', workId: 'W-B', status: 'active' });
-  await delegated.group({ groupId: 'impl', members: ['alpha', 'beta'], purpose: 'builders' });
   return { ...fixtureHandle, swarm, delegated, alphaWorker, betaWorker };
 }
 
@@ -201,9 +200,6 @@ test('the subtree view: the root and the lead see the same delegation, scoped to
   // group alpha sits on is alpha's business and is shown — with the roster it really has — while a
   // group no member of the subtree sits on is not. An EMPTY roster intersects nobody, so a group
   // emptied by a released holder is carried by no scoped view at all.
-  await delegated.group({ groupId: 'beta-only', members: ['beta'], purpose: 'no alpha here' });
-  assert.deepEqual(alphaScope.groups.find((row) => row.groupId === 'impl').members, ['alpha', 'beta'], 'a group the seat is on is in scope');
-  assert.equal(alphaScope.groups.some((row) => row.groupId === 'beta-only'), false, 'a group the seat is not on is out of scope');
   assert.deepEqual(alphaScope.participants[0].delegation, { children: [], work: ['W-A'], complete: false });
   assert.equal(asRoot.participants.some((row) => row.participantId === 'beta'), true);
   assert.equal(alphaScope.participants.some((row) => row.participantId === 'beta'), false, 'unrelated participants are excluded');
@@ -236,7 +232,6 @@ test('a gone holder is released in one durable batch; a live one refuses', async
   await swarm.holderRelease('alpha', 'runtime is gone; seats released');
   view = await swarm.view();
   assert.equal(view.assignments['as-alpha'].status, 'released');
-  assert.deepEqual(view.groups.find((row) => row.groupId === 'impl').members, ['beta']);
   const batch = driver.coordination.eventsView().slice(before);
   assert.deepEqual(batch.filter((event) => event.kind.startsWith('swarm.')).map((event) => event.kind),
     ['swarm.assignment_updated']);

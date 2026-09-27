@@ -221,14 +221,14 @@ function stubWakeClient(outcome, { frames = [] } = {}) {
   };
 }
 
-test('356-c: the ended frame carries a closed reason — server-named, swarm-closed, caller, or transport — and the CLI prints it', async () => {
+test('356-c: the ended frame carries a closed reason — server-named, caller, or transport — and the CLI prints it', async () => {
   assert.deepEqual([...WAKE_STREAM_END_REASONS],
-    ['swarm_closed', 'stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping'],
+    ['stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping'],
     'the end-reason vocabulary is the closed set the issue names');
 
   const print = [];
   const ended = await followWakes(
-    { swarms: [SWARM_ID], kinds: null, since: null, follow: true, stopOnClosedWake: true },
+    { swarms: [SWARM_ID], kinds: null, since: null, follow: true },
     stubWakeClient({ status: 'ended' }),
     { onFollowPage: async (page) => { print.push(page); } },
   );
@@ -238,37 +238,24 @@ test('356-c: the ended frame carries a closed reason — server-named, swarm-clo
   assert.equal(print.at(-1)?.reason, 'transport_closed', 'the CLI prints the ended frame (as the final page)');
 
   const named = await followWakes(
-    { swarms: [SWARM_ID], kinds: null, since: null, follow: true, stopOnClosedWake: true },
+    { swarms: [SWARM_ID], kinds: null, since: null, follow: true },
     stubWakeClient({ status: 'ended', reason: 'resident_stopping' }),
     { onFollowPage: async () => {} },
   );
   assert.equal(named.reason, 'resident_stopping', 'a reason the resident named rides verbatim');
 
   const behindArchive = await followWakes(
-    { swarms: [SWARM_ID], kinds: null, since: null, follow: true, stopOnClosedWake: true },
+    { swarms: [SWARM_ID], kinds: null, since: null, follow: true },
     stubWakeClient({ status: 'ended', reason: 'stream_cursor_behind_archive' }),
     { onFollowPage: async () => {} },
   );
   assert.equal(behindArchive.reason, 'stream_cursor_behind_archive',
     'the --since-cursor-behind-the-archive end names itself');
 
-  const closedWake = {
-    schemaVersion: 1, kind: 'baton.wake', seq: 7, wakeClass: 'closed', swarmId: SWARM_ID,
-    participantId: null, workerId: null, runId: null, actor: 'root', subject: null, next: null,
-    observation: false, row: { seq: 7, kind: 'swarm.closed' },
-  };
-  const closed = await followWakes(
-    { swarms: [SWARM_ID], kinds: null, since: null, follow: true, stopOnClosedWake: true },
-    stubWakeClient({ status: 'stopped' }, { frames: [closedWake] }),
-    { onFollowPage: async () => {} },
-  );
-  assert.equal(closed.reason, 'swarm_closed', 'the swarm\u2019s own closed wake names the end');
-  assert.deepEqual(closed.closed, { swarmId: SWARM_ID, seq: 7 });
-
   const controller = new AbortController();
   controller.abort();
   const caller = await followWakes(
-    { swarms: [SWARM_ID], kinds: null, since: null, follow: true, stopOnClosedWake: true },
+    { swarms: [SWARM_ID], kinds: null, since: null, follow: true },
     stubWakeClient({ status: 'stopped' }),
     { signal: controller.signal, onFollowPage: async () => {} },
   );

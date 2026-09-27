@@ -171,23 +171,21 @@ test('U-F13: the four authentication outcomes are distinguishable, each naming i
   }
 });
 
-test('U-F13: an expired bearer credential points at the refresh lane, a revoked one at re-login', async () => {
+test('U-F13: expired and revoked bearer credentials point to the deployment owner', async () => {
   const { web, context, principal } = fixture();
   const expired = await web.execute(context({
     principal: principal({ expiresAt: new Date(NOW - 1_000).toISOString() }),
   }), envelope());
   assert.equal(expired.body.error.detail.credential.kind, 'bearer');
   assert.equal(expired.body.error.detail.credential.header, 'authorization');
-  assert.match(expired.body.error.action, /\/v1\/auth\/refresh/u);
+  assert.match(expired.body.error.action, /deployment owner/u);
   assert.equal(expired.body.error.detail.expiresAt, new Date(NOW - 1_000).toISOString(),
     'the expiry the client judged rides the refusal');
 
   const revoked = await web.execute(context({ principal: principal({ revoked: true }) }), envelope({
     commandId: 'cmd-revoked', idempotencyKey: 'key-revoked',
   }));
-  assert.match(revoked.body.error.action, /\/v1\/auth\/login/u);
-  assert.doesNotMatch(revoked.body.error.action, /\/v1\/auth\/refresh/u,
-    'a revoked credential is never sent to the refresh lane — that lane would refuse it too');
+  assert.match(revoked.body.error.action, /deployment owner/u);
 });
 
 test('U-F13: a request with no credential at all names both accepted lanes and where to get one', async () => {
@@ -198,7 +196,7 @@ test('U-F13: a request with no credential at all names both accepted lanes and w
   assert.equal(response.body.error.detail.cause, 'absent');
   const accepted = response.body.error.detail.accepted.map((row) => row.header).sort();
   assert.deepEqual(accepted, ['authorization', 'cookie']);
-  assert.match(response.body.error.action, /\/v1\/auth\/login/u);
+  assert.match(response.body.error.action, /deployment owner/u);
 });
 
 // -------------------------------------------------------------------------------------------
@@ -416,7 +414,7 @@ function swarmFixture() {
   return { coordination, web, swarmRuntime, issued, principal };
 }
 
-test('#336: a group_updated naming a non-member crosses as participant_not_found — the fold\'s own refusal, retryable:false', async () => {
+test('#336: a participant_left naming a non-member crosses as participant_not_found — the fold\'s own refusal, retryable:false', async () => {
   const { coordination, web, swarmRuntime, issued, principal } = swarmFixture();
   await swarmRuntime.command('swarm.create', {
     swarmId: 's-issue336', purpose: 'web refusal envelopes', idempotencyKey: 'issue336:create',
@@ -430,16 +428,15 @@ test('#336: a group_updated naming a non-member crosses as participant_not_found
     body: envelope({
       commandId: 'issue336-cmd-1', idempotencyKey: 'issue336-key-1', command: 'swarm.update',
       args: {
-        swarmId: 's-issue336', event: 'swarm.group_updated',
-        payload: { groupId: 'impl', members: ['ghost'] }, idempotencyKey: 'issue336-swarm-key-1',
+        swarmId: 's-issue336', event: 'swarm.participant_left',
+        payload: { participantId: 'ghost' }, idempotencyKey: 'issue336-swarm-key-1',
       },
     }),
     headers: { authorization: `Bearer ${issued.token}` },
   });
-  assert.equal(response.status, 404, 'a refused group seat names what was not found, at 404');
+  assert.equal(response.status, 404, 'a refused participant leave names what was not found, at 404');
   assert.equal(response.body.ok, false);
   assert.equal(response.body.error.code, 'participant_not_found', 'the fold code crosses as itself');
-  assert.match(response.body.error.message, /impl/, 'the fold\'s own message names the group');
   assert.match(response.body.error.message, /ghost/, 'the fold\'s own message names the seat');
   assert.equal(response.body.error.retryable, false, 'a typed fold refusal is never retryable');
 });

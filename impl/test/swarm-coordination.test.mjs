@@ -21,8 +21,6 @@ test('one coordination log preserves evolving groups, work and reviews across re
   const { directory, store, write } = fixture(t);
   write('swarm.participant_joined', { participantId: 'builder', runId: 'run-builder' });
   write('swarm.participant_joined', { participantId: 'reviewer', runId: 'run-reviewer', role: 'Persistent reviewer' });
-  write('swarm.group_updated', { groupId: 'runtime', members: ['builder', 'reviewer'], expectedVersion: 0 });
-  write('swarm.group_updated', { groupId: 'interface', members: ['reviewer'], expectedVersion: 0 });
   for (const workId of ['first', 'second']) {
     write('swarm.work_updated', { workId, objective: `Investigate ${workId}` });
     write('swarm.assignment_updated', { assignmentId: `review-${workId}`,
@@ -51,22 +49,12 @@ test('conflicting and invalid mutations leave the durable log and projection usa
     { code: 'swarm_replay_conflict' });
   assert.throws(() => write('swarm.context_updated', { ...payload, body: 'stale' }),
     { code: 'version_conflict' });
-  assert.throws(() => write('swarm.group_updated', { groupId: 'outsiders', members: ['unknown'] }));
   assert.equal(readFileSync(join(directory, 'events.jsonl'), 'utf8'), before);
   write('swarm.context_updated', { key: 'decision', body: 'revised', expectedVersion: 1 });
   const replay = new CoordinationStore(directory);
   assert.equal(replay.swarm('self-build').context[swarmContextKey('decision')].body, 'revised');
 });
 
-test('closing organizational membership never changes an existing participant turn protocol', (t) => {
-  const { directory, store, write } = fixture(t);
-  write('swarm.participant_joined', { participantId: 'reviewer', runId: 'run-reviewer' });
-  write('swarm.participant_left', { participantId: 'reviewer', reason: 'Moving to another group' });
-  write('swarm.closed', { reason: 'This group no longer needs coordination' });
-  assert.equal(store.hasSwarmParticipantRun('run-reviewer'), true);
-  assert.equal(store.hasSwarmParticipantRun('unrelated'), false);
-  assert.equal(new CoordinationStore(directory).hasSwarmParticipantRun('run-reviewer'), true);
-});
 
 test('shared JSON context preserves prototype-named keys and distinguishes them during retries', (t) => {
   const { store, write } = fixture(t);

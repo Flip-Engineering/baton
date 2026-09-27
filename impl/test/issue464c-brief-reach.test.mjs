@@ -275,9 +275,6 @@ test('464c-b: the roster class equals the scoped read\'s class for the root, a p
 
   // The ladder's remaining classes derive from the fold's own rows — a shared roster and a
   // shared recorded checkout — and the stronger relation wins.
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'impl', members: ['alpha', 'p1'] } });
-  assert.equal(await rosterClass(peer), 'group', 'a shared group roster reads as `group`');
-  assert.equal(await scopedClass(peer, 'alpha'), 'group', 'and the scoped read answers the SAME class');
   await f.call('recruit', { participantId: 'twin', objective: objective('twin', DEFAULT_OBJECTIVE_BYTES),
     permissions: SWARM_PERMISSIONS, shareWorkspaceWith: 'alpha' });
   const twin = f.asParticipant('twin');

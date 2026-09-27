@@ -106,15 +106,15 @@ test('full asks survive historical prefix matching without losing text or distin
   assert.equal(withReceipt.find((row) => row.ask === prefix + 'second').delivery.state, 'none');
 });
 
-test('historical source rows and failures remain scoped to their swarm and wake class', (t) => {
+test('historical source rows and their receipts remain scoped to their swarm and wake class', (t) => {
   const f = fixture(t);
   const owed = f.driver('swarm.root_attention_owed', {
     participantId: 'author', contributionId: 'missing-source', owed: 'needs_root', ask: 'Root: inspect legacy state',
   });
-  f.driver('wake.root_undelivered', { seq: owed.seq, wakeClass: 'root_owed', code: 'transport_closed' });
   f.driver('wake.root_delivered', { seq: owed.seq, wakeClass: 'another_class' });
   f.driver('wake.root_delivered', { swarmId: 'another-swarm', seq: owed.seq, wakeClass: 'root_owed' });
-  assert.deepEqual(f.read()[0].delivery, { state: 'failed', code: 'transport_closed' });
+  assert.deepEqual(f.read()[0].delivery, { state: 'none', code: null },
+    'a receipt for another class or another swarm never reports this obligation delivered');
   f.driver('wake.root_delivered', { seq: owed.seq, wakeClass: 'root_owed' });
   assert.equal(f.read()[0].delivery.state, 'transport_reported');
   assert.equal(f.read()[0].source.kind, 'swarm.root_attention_owed');

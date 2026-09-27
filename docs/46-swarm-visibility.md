@@ -75,11 +75,11 @@ Rules:
 2. `live` stays `SWARM_LIVE_RUNTIME_STATES.includes(state)` — `lost` is not added to the live
    list; "gone" stays the complement of the one list. A lost seat raises the
    `worker_lost_on_restart` attention (the runtime lane's row) and is treated exactly as a dead
-   runtime by every derivation that reads liveness (`_canAct`, `awaiting`, `closed_with_live_participants`,
+   runtime by every derivation that reads liveness (`_canAct`,
    the Peers section, `scopeOverlap`).
 3. "Can this seat act" is ONE derivation: `_canAct(row) = row.status === 'active' && row.runtime.live`.
-   The outline, the participants projection, the recruit brief's Peers section, the coupling
-   `awaiting` computation and `scopeOverlap` all read it — a seat none of them may list as able
+   The outline, the participants projection, the recruit brief's Peers section and
+   `scopeOverlap` all read it — a seat none of them may list as able
    is a seat none of them list at all as a peer. (Today the Peers section and `scopeOverlap`
    already filter on `_canAct`; the rule pins that this can never be re-opened per surface.)
 4. `turn` keeps its meaning (`paused | running | null`); a paused turn is a property of a LIVE
@@ -209,7 +209,6 @@ Computed per (seat, peer) pair, strongest first:
 | `self` | the brief's own seat (the `resumeFrom` successor seam) |
 | `subtree` | peer is an ancestor or descendant by `parentId` (delegating parent/child) |
 | `checkout` | peer shares the seat's recorded workspace (the binding rows / custody rows, #428) |
-| `group` | peer shares a group roster with the seat |
 | `swarm` | peer is an active member of the same swarm, none of the above |
 | `repository` | peer sits in another swarm of the same repository — the `scopeOverlap` advisory only |
 
@@ -220,7 +219,6 @@ Computed per (seat, peer) pair, strongest first:
 | `self` | the full inheritance block (today's `resumeFrom` rendering, unchanged) |
 | `subtree` | the docs/45 §6 peers-now line in full: identity, role, scope, held work and claims, last checkpoint (sha + ref), liveness word |
 | `checkout` | as `subtree` — a seat you share a checkout with must see what you hold |
-| `group` | identity, role, scope, held work, liveness word |
 | `swarm` | identity, role, liveness word only (`- delta — active`; `- delta — gone since seq 9123`) — never scope, never held work |
 | `repository` | no Peers line at all; the `scopeOverlap` receipt stays the only cross-swarm exposure, and it lists only seats the ONE liveness derivation calls able (§1.1 rule 3) |
 
@@ -311,7 +309,7 @@ writes to the caches and never triggers a refresh — reads are pure over them.
   and `_canAct` stay the one pair (§1.1).
 - **No per-seat process spawn or ledger scan on any read** — §7 is a rule, not an aspiration.
 - **No root membership, root run, or root checkout.** The root row is an actor row for
-  attribution (§5), nothing more; it holds no work and appears in no group roster.
+  attribution (§5), nothing more; it records contribution authorship.
 - **No cross-swarm detail beyond `scopeOverlap`** (§4.2): a peer in another swarm is paths, never
   identity detail.
 - **No rewriting of durable rows.** `reviewerId: null` stays on the fold's review record; the
@@ -348,7 +346,7 @@ writes to the caches and never triggers a refresh — reads are pure over them.
 | `SWARM_PARTICIPANT_RUNTIME_STATES`, `SWARM_LIVE_RUNTIME_STATES`, `swarmParticipantLiveness`, `_canAct` | `impl/src/swarm-runtime.mjs` (the liveness section — one derivation, one live list) |
 | review state (`unreviewed \| accepted \| rejected`) | the derivation extending `_acceptedContribution`, `impl/src/swarm-runtime.mjs` — derived, never stored; `SWARM_REVIEW_DECISIONS` stays in `impl/src/swarm-state.mjs` |
 | attention kinds (adding `unreviewed_contribution`) | the runtime's row-minting sites; enumerated by the generated block (docs/36 §7.4) |
-| relationship classes (`self \| subtree \| checkout \| group \| swarm \| repository`) and their exposure ladder | `_peerExposure`, `impl/src/swarm-runtime.mjs` |
+| relationship classes (`self \| subtree \| checkout \| swarm \| repository`) and their exposure ladder | `_peerExposure`, `impl/src/swarm-runtime.mjs` |
 | the wake block shape (`events`, `pendingSince`, `matchedSeq`) | `_watch`, `impl/src/swarm-runtime.mjs`; rendered by the CLI's one bounded leg (`application-cli.mjs`) |
 | the frame bound for watch/events/pages | `FRAME_LIMITS['wire.frame']`, `impl/src/limits.mjs` — never a fresh constant |
 | usage absence vocabulary (`'unavailable'`) | the coordinator's usage fold (`impl/src/coordinator.mjs`), projected verbatim by the view |

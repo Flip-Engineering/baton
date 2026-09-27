@@ -220,7 +220,7 @@ test('#41 leak 2c: the wake-attachment refusal never carries a private runtime s
   const socketPath = join(root, 'resident.sock');
   const client = webClient(async () => { throw new Error('the wake attachment never rides _json'); }, socketPath);
   await assert.rejects(
-    followWakes({ kinds: null, swarms: null, since: null, stopOnClosedWake: false }, client, {}),
+    followWakes({ kinds: null, swarms: null, since: null }, client, {}),
     (error) => {
       assert.match(error.message, /the deployment wake stream could not be attached/u,
         'positive control: the wake-attachment seam is named');

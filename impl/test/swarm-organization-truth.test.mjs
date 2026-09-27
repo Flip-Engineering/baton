@@ -127,11 +127,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   // runs is named too.
   const guided = await swarm.guide('beta', 'Finish part B');
   assert.equal(guided.result.result, 'nudged');
-  await swarm.close({ reason: 'audit complete' });
-  view = await swarm.view();
-  assert.equal(view.status, 'closed');
-  const closed = view.attention.find((row) => row.kind === 'closed_with_live_participants');
-  assert.ok(closed && closed.participantIds.includes('beta'), 'a closed swarm with a live participant says so');
+
 });
 
 test('work updates: a status-only update keeps the recorded objective, new work needs one, a declared dependency is stored, and a malformed one refuses', async (t) => {

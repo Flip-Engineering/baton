@@ -2,8 +2,8 @@
 // landing lane could not reach from its own files:
 //
 //   443h-a  `baton swarm create <purpose> --policy '{"rerouteOnProviderFault":"auto"}'` OPENS a
-//           swarm with its re-route policy declared: the create records the `swarm.policy_updated`
-//           row through the SAME fold an update takes, the canonical operation names `policy`, the
+//           swarm with its re-route policy declared: the create records the `swarm.created`
+//           row with the initial policy, the canonical operation names `policy`, the
 //           CLI spells it, and `swarm.view` shows the policy from the first row (resolved defaults
 //           included). A policy the fold would refuse refuses BEFORE the swarm exists — no
 //           `swarm.created` row for a create that never happened.
@@ -186,7 +186,7 @@ const seatRow = (coordination, seat) => coordination.swarm(SWARM_ID).participant
 
 // ── 443h-a: the swarm is OPENED with its policy ────────────────────────────────────────────────
 
-test('443h-a: `swarm create --policy` records the policy row, and the view shows it from the first row', async (t) => {
+test('443h-a: `swarm create --policy` records the initial policy, and the view shows it from the first row', async (t) => {
   const f = fixture(t);
   const parsed = parseBatonCli([
     'swarm', 'create', 'Route around a provider fault',
@@ -201,23 +201,19 @@ test('443h-a: `swarm create --policy` records the policy row, and the view shows
   const receipt = await runBatonCli(parsed, f.client);
   assert.equal(receipt.receipt?.event?.kind, 'swarm.created', 'the receipt names the created row');
 
-  // The policy row is the SAME kind `swarm.update {event: 'swarm.policy_updated'}` writes, and it
-  // names the swarm the create just made — one fold, one derivation.
-  const policyRows = swarmRows(f.coordination, 'swarm.policy_updated');
-  assert.equal(policyRows.length, 1, 'the create recorded exactly ONE policy row');
-  assert.deepEqual(policyRows[0].payload, { swarmId: SWARM_ID, rerouteOnProviderFault: 'auto' },
-    'the row carries the declared fields verbatim');
+  assert.deepEqual(swarmRows(f.coordination, 'swarm.created')[0].payload.policy,
+    { rerouteOnProviderFault: 'auto' });
 
   const view = await f.client.command('swarm.view', { swarmId: SWARM_ID }, 'issue443h:view');
   assert.deepEqual(view.policy, { rerouteOnProviderFault: 'auto', reroutePreferApi: false },
     'the view renders the RESOLVED policy (undeclared fields default) from the first row');
 
-  // A create with no policy records no policy row at all: the pre-#443 answer is untouched.
+  // A create with no policy uses the default provider-fault behavior.
   const bare = parseBatonCli(['swarm', 'create', 'No policy declared', '--swarm-id', 's-443h-bare',
     '--idempotency-key', 'issue443h:create-bare']);
   assert.equal(Object.hasOwn(bare.args, 'policy'), false);
   await runBatonCli(bare, f.client);
-  assert.equal(swarmRows(f.coordination, 'swarm.policy_updated').length, 1, 'still only the declared one');
+  assert.equal(swarmRows(f.coordination, 'swarm.created').at(-1).payload.policy, undefined);
 });
 
 test('443h-a2: a policy the fold refuses refuses BEFORE the swarm exists', async (t) => {
@@ -232,7 +228,6 @@ test('443h-a2: a policy the fold refuses refuses BEFORE the swarm exists', async
   });
   assert.equal(swarmRows(f.coordination, 'swarm.created').length, 0,
     'a refused policy never leaves a swarm behind');
-  assert.equal(swarmRows(f.coordination, 'swarm.policy_updated').length, 0);
 });
 
 // ── 443h-b: the canonical operation, and the validator the web bus runs ────────────────────────

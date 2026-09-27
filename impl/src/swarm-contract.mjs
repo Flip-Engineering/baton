@@ -8,27 +8,17 @@ import { FRAME_LIMITS } from './limits.mjs';
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
  * worker binding stay on their own explicit lanes. */
 export const SWARM_EVENT_KINDS = Object.freeze([
-  'swarm.group_updated',
   'swarm.work_updated',
   'swarm.assignment_updated',
-  'swarm.coupling_updated',
-  // Issues #422/#423 (docs/45-open-coordination.md): the joint coupling actions extend
-  // `swarm.coupling_updated`; a claim and a work proposal are their own kinds.
   'swarm.claim_updated',
-  'swarm.proposal_updated',
   'swarm.holder_released',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_reviewed',
-  // Issue #443: the swarm-level policy an orchestrator declares — `rerouteOnProviderFault` and the
-  // billing preference a provider-fault re-route ranks its candidates on. A declaration of the
-  // swarm's own conduct, so it rides the swarm level (one place), never a seat or a group.
-  'swarm.policy_updated',
   'swarm.participant_left',
-  'swarm.closed',
 ]);
 // Update kinds an agent names that the runtime expands into the durable kinds above instead of
-// recording as themselves: `swarm.holder_released` lands as the individual assignment/group
+// recording as themselves: `swarm.holder_released` lands as the individual assignment
 // events, so the log after a release is what a hand-written sequence would have produced.
 export const SWARM_OPERATION_KINDS = Object.freeze(['swarm.holder_released']);
 /** The kinds the coordination store records and replays. */
@@ -71,10 +61,9 @@ export const SWARM_VIEW_DEFAULT_PROJECTION = 'full';
 // and every mutation echo (2026-09-14 audit S-F2) — so they ride the whole record, while `updates`
 // (the kinds this caller may send, with the permission admitting each) rides the frame.
 const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
-  'participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'couplings', 'context',
+  'participants', 'work', 'assignments', 'contributions', 'reviews', 'context',
   'knowledge', 'attention', 'updatePayloads',
-  // Issue #423 (lane 2 hand-back): the two new collections are view fields, sliced like the rest.
-  'claims', 'proposals',
+  'claims',
   // Issue #311: the deployment-level situation block — one derived object, sliced like the rest.
   'situation',
   // Issues #552/#554: the landing pipeline — the one derived block a reader acts on, sliced like
@@ -263,9 +252,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
   // Issue #443 hand-back: `policy` lets a swarm be OPENED with its re-route policy declared —
-  // `{rerouteOnProviderFault, reroutePreferApi}`, the same fields one `swarm.policy_updated` row
-  // carries (the fold's closed sets validate them; this surface checks only the shape, exactly as
-  // the recruit's `options` row does). The runtime writes that row in the same mutation.
+  // `{rerouteOnProviderFault, reroutePreferApi}` is validated before creation.
   'swarm.create': Object.freeze({
     args: Object.freeze(['purpose', 'swarmId', 'policy', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
@@ -361,8 +348,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
-  // Closing a swarm is organizational only; stopping every participant is an explicit per-member
-  // action (each with its own idempotencyKey) and is never implied by `swarm.closed`.
+  // Each participant stop carries its own idempotency key.
   'swarm.stop': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['emergency_stop', 'observe']),
@@ -420,24 +406,17 @@ export function swarmChangedRow(kind, payload = {}) {
   const row = (collection, id) => ({ collection, id });
   switch (kind) {
     case 'swarm.created':
-    case 'swarm.closed':
       return row('swarm', payload.swarmId ?? null);
     case 'swarm.participant_joined':
     case 'swarm.participant_bound':
     case 'swarm.participant_left':
       return row('participants', payload.participantId ?? null);
-    case 'swarm.group_updated':
-      return row('groups', payload.groupId ?? null);
     case 'swarm.work_updated':
       return row('work', payload.workId ?? null);
     case 'swarm.assignment_updated':
       return row('assignments', payload.assignmentId ?? null);
-    case 'swarm.coupling_updated':
-      return row('couplings', payload.couplingId ?? null);
     case 'swarm.claim_updated':
       return row('claims', payload.claimId ?? null);
-    case 'swarm.proposal_updated':
-      return row('proposals', payload.proposalId ?? null);
     case 'swarm.context_updated':
       return row('context', payload.key ?? null);
     case 'swarm.contribution_recorded':
@@ -508,9 +487,7 @@ export function swarmReceiptNext(command, args = {}, outcome = null) {
     case 'swarm.notify':
       return { command: 'swarm.notifications', args: { swarmId } };
     case 'swarm.update':
-      return args.event === 'swarm.closed'
-        ? { command: 'swarm.list', args: {} }
-        : { command: 'swarm.view', args: { swarmId } };
+      return { command: 'swarm.view', args: { swarmId } };
     default:
       return null;
   }
@@ -628,8 +605,7 @@ const SWARM_FIELD_RULES = Object.freeze({
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
   // Issue #443: the re-route policy a swarm may be OPENED with. Only the SHAPE is checked here — the
   // fields a policy row may carry are the fold's closed sets (swarm-state.mjs SWARM_POLICY_FIELDS /
-  // SWARM_REROUTE_MODES), and the runtime validates against those tables before the swarm lands. A
-  // policy declared later rides a `swarm.policy_updated` payload and is judged by the same fold.
+  // SWARM_REROUTE_MODES), and the runtime validates against those tables before the swarm lands.
   policy: Object.freeze({ check: isJsonObject, expectation: 'a JSON object naming the policy fields to declare' }),
   permissions: Object.freeze({ check: (value) => Array.isArray(value) && value.every(isText), expectation: 'an array of permission names' }),
   options: Object.freeze({ check: isJsonObject, expectation: 'a JSON object' }),
@@ -1022,7 +998,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.create',
-    description: 'Create one living swarm for an evolving purpose; an optional policy declares the swarm\'s re-route policy on the first row (rerouteOnProviderFault, reroutePreferApi — the same fields a swarm.policy_updated row carries). Answers with a mutation receipt — the recorded event {kind, seq, ts, actor}, the rows it changed, and next, the step that follows; view: true adds the whole refreshed view.',
+    description: 'Create one living swarm for an evolving purpose; an optional policy declares the swarm\'s re-route policy on the first row (rerouteOnProviderFault, reroutePreferApi). Answers with a mutation receipt — the recorded event {kind, seq, ts, actor}, the rows it changed, and next, the step that follows; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ purpose: TEXT_SCHEMA, swarmId: ID_SCHEMA, policy: JSON_OBJECT_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['purpose']),
@@ -1043,7 +1019,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.update',
-    description: 'Apply one swarm domain update — group, work (including declared dependencies), assignment, coupling record, holder release, shared context, contribution, review, participant leave, or close. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
+    description: 'Apply one swarm domain update — work (including declared dependencies), assignment, claim, holder release, shared context, contribution, review, or participant leave. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA, view: VIEW_SCHEMA,
       payload: Object.freeze({ ...BODY_SCHEMA, description: swarmUpdatePayloadSummary() }) }),
