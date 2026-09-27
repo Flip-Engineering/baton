@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -254,4 +254,75 @@ test('HC-619-e: a landing that ends reclaims the queue row that named it', needs
     idempotencyKey: 'i619:land',
   }, owner).then(() => null, (thrown) => thrown);
   assert.deepEqual(readdirSync(queueDir), [], 'the landing that ended took its row with it');
+});
+
+// ── HC-619-f: a row whose REQUEST is gone leaves, and the lane advances behind it ───────────────
+
+test('HC-619-f: a row whose request stopped restamping it leaves the lane, and the request behind it is admitted', async (t) => {
+  const root = capacityRoot(t);
+  const leaseDir = join(root, 'leases');
+  const queueDir = join(root, 'queue');
+  // The authority's own clock is staged: the row's restamp is what says whether its request polls.
+  let clock = Date.parse('2026-09-27T18:53:39.598Z');
+  const authority = new HostCapacityAuthority({
+    root, residentId: 'issue619',
+    observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
+    pollMs: 10,
+    now: () => clock,
+  });
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const names = () => readdirSync(queueDir).sort();
+
+  // The lane's budget is full: one admitted verify whose holder's pid is live, so #506's dead-pid
+  // sweep never reclaims it.
+  const lease = 'lease-verify-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json';
+  stage(leaseDir, lease, stagedLease({}));
+  // The lane's head, exactly as the 2026-09-27 run left it: a landing's row whose request is gone —
+  // the resident's log shows its client ending by EPIPE, and the resident goes on. The row carries
+  // the resident's own pid, so only the row's own restamp can ever say that request stopped.
+  const deadRow = 'queue-2026-09-27T18:53:39.598Z-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json';
+  stage(queueDir, deadRow, {
+    schemaVersion: 1, kind: 'verify',
+    holder: 'integrate:swarm-backlog-20260924:contribution-6842140b',
+    nonce: 'b'.repeat(32), pid: process.pid, residentId: 'issue619',
+    enqueuedAt: '2026-09-27T18:53:39.598Z',
+  });
+  utimesSync(join(queueDir, deadRow), new Date(clock), new Date(clock));
+  clock += 1_000; // the request behind it queues one second later
+
+  let announce;
+  const announced = new Promise((resolve) => { announce = resolve; });
+  let settled = false;
+  const waiting = authority.acquire('verify', {
+    holder: 'integrate:swarm-rigidity-20260924:contribution-3a3b24de',
+    onQueued: (row) => announce(row),
+  });
+  waiting.then(() => { settled = true; }, () => { settled = true; });
+  const row = await announced;
+  assert.equal(row.position, 2, 'the request queues behind the row the lane already holds');
+  assert.equal(row.ahead, 1);
+
+  // Room appears while the head row is still within the restamp bound: the request behind it waits,
+  // because the lane admits by queue order. On 2026-09-27 the head waited 77 minutes here while a
+  // newer request took the verify lease at 20:09:06Z.
+  rmSync(join(leaseDir, lease), { force: true });
+  await sleep(200);
+  assert.equal(settled, false, 'the lane admits by queue order: room alone does not pass the head row');
+
+  // Time passes with no restamp from the head's request: the row leaves the lane, and the request
+  // behind it is admitted — with no hand removal and no restart.
+  for (let step = 0; step < 40 && names().includes(deadRow); step += 1) {
+    clock += 2_000;
+    await sleep(20);
+  }
+  assert.equal(names().includes(deadRow), false, 'the row whose request stopped polling left the lane');
+  const admitted = await Promise.race([
+    waiting,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('the lane never admitted the request behind the gone one')), 5_000);
+    }),
+  ]);
+  assert.equal(admitted.token.kind, 'verify');
+  assert.equal(admitted.token.holder, 'integrate:swarm-rigidity-20260924:contribution-3a3b24de');
+  assert.deepEqual(names(), [], 'the admitted request took its own row with it');
 });
