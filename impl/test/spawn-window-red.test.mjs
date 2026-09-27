@@ -11,11 +11,11 @@
 //      leaves the drive with the phase it was last observed in, terminal:false. There is NO
 //      confirmation count and no clock of the loop's own — the durable fact is the authority,
 //      and the close remains the act that stops the worker.
-//   2. OPEN, skipped below. The double-spawn window itself: a second lifecycle.spawned for the
-//      same worker is a harness retry the coordinator owns — bind it to the same member
-//      (generation advance), never a new claim and never an attribution kill. On master the
-//      refused attribution kills the live process (the member reads `stopping` where `working`
-//      is required), so SW-2 is skipped with that reason rather than deleted.
+//   2. LANDED. The double-spawn window itself: a second lifecycle.spawned for the same worker is a
+//      harness retry the coordinator owns — inside its own spawn-confirmation window the coordinator
+//      binds it to the same member (the process identity advances, one claim), never a new claim and
+//      never an attribution kill, so a member whose process is alive is never ended by the
+//      attribution.
 //
 // Event shape under test (per the brief): claim -> spawned -> process_started -> second spawned.
 import { test } from 'node:test';
@@ -165,9 +165,7 @@ function setup(overrides = {}) {
 // Contract 2 — the double-spawn window binds to the same member
 // ---------------------------------------------------------------------------
 
-test('SW-2: a SECOND lifecycle.spawned for the same worker is a harness retry the coordinator owns — bound (generation advance), never a new claim, never an attribution kill; evidence advances',
-  { skip: 'the coordinator half of #199 (the spawn-window attribution) is not landed; the drive half is' },
-  async () => {
+test('SW-2: a SECOND lifecycle.spawned for the same worker is a harness retry the coordinator owns — bound (generation advance), never a new claim, never an attribution kill; evidence advances', async () => {
   // The harness emits its lifecycle events INSIDE the coordinator's spawn-confirmation window —
   // exactly what the real adapters do (claude-session emits process_started synchronously in
   // spawn(); its wire lifecycle.spawned can land before the spawn Ack resolves).
