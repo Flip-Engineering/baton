@@ -168,12 +168,10 @@ async function world(t, { gate = {} } = {}) {
   // this file ever queues in the machine's shared verdict namespace (the authority's root is the
   // one thing a deployment names by environment).
   const capacityRoot = join(directory, 'host-capacity');
-  const hostedEnv = { root: process.env.BATON_HOST_CAPACITY_ROOT, wait: process.env.BATON_HOST_CAPACITY_WAIT_MS };
+  const hostedEnv = { root: process.env.BATON_HOST_CAPACITY_ROOT };
   process.env.BATON_HOST_CAPACITY_ROOT = capacityRoot;
-  process.env.BATON_HOST_CAPACITY_WAIT_MS = '300';
   t.after(() => {
-    for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hostedEnv.root],
-      ['BATON_HOST_CAPACITY_WAIT_MS', hostedEnv.wait]]) {
+    for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hostedEnv.root]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });
@@ -231,9 +229,9 @@ async function world(t, { gate = {} } = {}) {
   // constructor that never got built.
   const pool = SupervisedProcesses === undefined ? null : new SupervisedProcesses();
   // The host this landing admits its gate run through: a STAGED one with room for one verdict, so
-  // a row tests the landing's own admission rule and never the machine the suite happens to run on
-  // (`suiteQueueTimeoutDecision` refuses on a live `load`/`budget` shortfall, and this repository's
-  // host may well be saturated). `blockVerifyBudget` fills the lane when a row wants it taken.
+  // a row tests the landing's own admission rule and never the machine the suite happens to run on,
+  // whose budget this repository's own suites and landings may already hold. `blockVerifyBudget`
+  // fills the lane when a row wants it taken.
   const G = 1024 ** 3;
   const hostCapacity = new HostCapacityAuthority({
     root: capacityRoot, residentId: 'issue459-resident', pollMs: 10,

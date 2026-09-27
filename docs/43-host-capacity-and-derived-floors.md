@@ -69,8 +69,9 @@ nor honour this user's locks).
 
 Mutations serialize on the published-owner mutex:
 an owner record published by atomic link, counted only after re-observation, a dead
-holder reclaimed only under an exclusive reaper gate, every wait bounded by a monotonic
-deadline. A crashed resident's leases and queue entries are swept by any live resident's
+holder reclaimed only under an exclusive reaper gate, and the lock taken on the turn its
+holder releases it — a live holder is waited for, a dead one is reaped by the liveness
+check. A crashed resident's leases and queue entries are swept by any live resident's
 next observation (pid proved dead — `EPERM` counts as alive, conservative across
 users). `observe()` reads under the mutex; `observeNow()` is the doctor's non-mutating
 read.
@@ -103,27 +104,28 @@ construction. `run-suite.mjs` therefore holds ONE host-wide `verify` lease for t
 verdict: acquired from the shared authority (the seam lives in
 `impl/scripts/suite-host-lease.mjs` so tests can stage it) before the lanes start,
 released at the verdict whichever way it ends. While the request waits it prints the
-queued row — `position`, `ahead`, `shortfall`, the #329 shape. A spent wait refuses
-BEFORE any lane starts, the way a recruit refuses pre-effect — unless the dimension
-names a limit no wait could cure: a `budget` shortfall (another lease holds the lane)
-or a `load` shortfall (the host is oversubscribed) can resolve, so the run refuses; a
-`memory` shortfall means the host itself cannot fund a full suite's entitled share, a
-standing property of a small host, so the run proceeds degraded without mutual exclusion
-and warns loudly instead of bricking (`suiteQueueTimeoutDecision`; unknown failures
-fail closed to refuse). No lane ever runs starved without saying so.
+queued row — `position`, `ahead`, `shortfall`, the #329 shape. The wait has no bound
+(#541): the run is admitted when the verdicts ahead of it release, and a `budget`
+shortfall (another lease holds the lane) clears the same way, as those holders release. A
+`memory` or `disk` shortfall means the host itself cannot fund a full suite's entitled
+share, a standing property of a small host: a plain verdict is answered degraded at once,
+proceeds without the mutual exclusion a lease would buy and warns loudly instead of
+bricking. A DURABLE request (#561: a seat-run suite, and the landing gate's own start)
+holds in the queue with no deadline until measured memory funds one more suite. An
+admission that fails for a real reason (#512) is terminal — the run stops before any lane
+starts, names the failure and produces no verdict. No lane ever runs starved without
+saying so.
 `BATON_HOST_CAPACITY_DISABLED=1` stays the operator bypass (the run acquires nothing and
-touches no lease directory); a nested runner — one spawned from a test file, carrying
-`BATON_TEST_SUITE_ROOT` — stays unwired the same way deployments do, so the suite's own
-self-checks (which spawn the runner) never queue behind their parent's lease on a host
-that is oversubscribed by design. Every test-file child stays unwired through the
-`BATON_HOST_CAPACITY_DISABLED=1` the runner already pins in the child environment. The
-runner's own wait defaults short (2s): verify leases are held for whole suites and checks
-(minutes), so a longer wait would only delay the same refuse/degrade decision while
-stalling time-bound runs on a host with no room; `BATON_HOST_CAPACITY_WAIT_MS` extends it
-when queuing behind a known-finishing holder and `BATON_HOST_CAPACITY_POLL_MS` sets the
-queue poll. Catchable signals release through the verdict path's `finally`; a SIGKILL-class
-death between acquire and release holds the lease until the authority's dead-holder sweep
-reclaims it — the designed recovery for a crashed resident, not a second release path.
+touches no lease directory); a nested runner — one spawned by a test file whose parent
+HOLDS the lease, proven by the parent's token digest in `BATON_SUITE_VERIFY_LEASE` (#424)
+— stays unwired the same way deployments do, so the suite's own self-checks (which spawn
+the runner) never queue behind their parent's lease on a host that is oversubscribed by
+design. Every test-file child stays unwired through the `BATON_HOST_CAPACITY_DISABLED=1`
+the runner already pins in the child environment, and `BATON_HOST_CAPACITY_POLL_MS` sets
+the queue poll. Catchable signals release through the verdict path's `finally`; a
+SIGKILL-class death between acquire and release holds the lease until the authority's
+dead-holder sweep reclaims it — the designed recovery for a crashed resident, not a second
+release path.
 
 ## 3c. The worker's verify in the deployment summary (#333)
 

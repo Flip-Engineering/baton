@@ -125,14 +125,11 @@ async function world(t, { script }) {
   const capacityRoot = join(directory, 'host-capacity');
   const hosted = {
     root: process.env.BATON_HOST_CAPACITY_ROOT,
-    wait: process.env.BATON_HOST_CAPACITY_WAIT_MS,
     script: process.env.BATON_FIXTURE_GATE_SCRIPT,
   };
   process.env.BATON_HOST_CAPACITY_ROOT = capacityRoot;
-  process.env.BATON_HOST_CAPACITY_WAIT_MS = '300';
   t.after(() => {
     for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hosted.root],
-      ['BATON_HOST_CAPACITY_WAIT_MS', hosted.wait],
       ['BATON_FIXTURE_GATE_SCRIPT', hosted.script]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
