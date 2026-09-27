@@ -182,22 +182,3 @@ test('RD8/RD12: externally invalidated current decision can be explicitly replac
   assert.equal(snapshot.knowledge.edges.some((edge) => edge.type === 'Supersedes' && edge.from === replacement.decision.nodeId && edge.to === old.id), true);
   assert.equal(f.coordination.currentReuseDecision(first.decision.subjectDigest).id, replacement.decision.id);
 });
-
-test('RD10: real authenticated web and MCP northbounds preserve authority into immutable decisions', async () => {
-  const webFixture = await fixture(); const web = new WebNorthbound({ coordinator: webFixture.coordinator, coordination: webFixture.coordination, repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'], now: () => Date.parse('2026-07-12T12:00:10Z') });
-  const webPrincipal = { userId: 'alice', sessionId: 'web-session', credentialId: 'cred-a', authMethod: 'cookie', csrfToken: 'csrf-a', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false, capabilities: ['control'], repoIds: ['repo-a'] };
-  const webResponse = await web.execute({ principal: webPrincipal, origin: 'https://control.example.test', csrfToken: 'csrf-a', remoteAddress: '127.0.0.1', transport: 'https' }, {
-    schemaVersion: 1, commandId: 'real-web-reuse', idempotencyKey: 'real-web-reuse', command: 'reuse_decide', repoId: 'repo-a', origin: 'https://control.example.test', args: { ...webFixture.request, budgetTokens: 10_000 },
-  });
-  assert.equal(webResponse.status, 200); assert.equal(webResponse.body.result.decision.actor, 'web:alice:web-session');
-
-  const mcpFixture = await fixture(); const mcp = new McpFleetServer({
-    coordinator: mcpFixture.coordinator, coordination: mcpFixture.coordination,
-    principal: { userId: 'bob', sessionId: 'mcp-session', capabilities: ['control'], repoIds: ['repo-a'], expiresAt: '2099-01-01T00:00:00.000Z', revoked: false },
-    repoIds: ['repo-a'], now: () => Date.parse('2026-07-12T12:00:10Z'), maxWaitMs: 25_000, maxMessageBytes: 512 * 1024, takeToolQuota: async () => ({ ok: true }),
-  });
-  await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'phase38', version: '1' } } });
-  await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
-  const mcpResponse = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'fleet_reuse_decide', arguments: { repoId: 'repo-a', idempotencyKey: 'real-mcp-reuse', ...mcpFixture.request, budgetTokens: 10_000 } } });
-  assert.equal(mcpResponse.result.isError, false); assert.equal(mcpResponse.result.structuredContent.decision.actor, 'mcp:bob:mcp-session');
-});

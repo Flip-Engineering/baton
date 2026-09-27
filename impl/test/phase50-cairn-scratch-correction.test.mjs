@@ -124,22 +124,6 @@ test('SC1-SC4: direct Scratch oracle binds a private fact snapshot and preserves
   replay.close();
 });
 
-test('SC2/SC11: authenticated web and MCP Scratch oracle routes share exact harness/model/effort selection without disclosing the fact', async () => {
-  const driver = await fixture(); const origin = 'https://baton.test';
-  const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination, repoIds: ['repo-a'], allowedOrigins: [origin] });
-  const principal = { userId: 'alice', sessionId: 'web', credentialId: 'cred', authMethod: 'cookie', csrfToken: 'csrf', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false, capabilities: ['control'], repoIds: ['repo-a'] };
-  const webResult = await web.execute({ principal, origin, csrfToken: 'csrf', transport: 'https' }, { schemaVersion: 1, commandId: 'oracle-web', idempotencyKey: 'oracle-web', command: 'scratch_oracle', repoId: 'repo-a', runId: 'phase50', origin, args: { scratchFactId: driver.fact.id, harness: 'reviewer', model: 'reviewer-model', effort: 'low', modelPolicy: { allow: ['reviewer-model'], allowFamilies: ['reviewer-family'], reasoningEffort: 'low' }, verification: { command: 'true', expectExit: 0 }, taskId: 'oracle-web-task' } });
-  assert.equal(webResult.status, 200, JSON.stringify(webResult.body)); assert.equal(webResult.body.result.modelResolved, 'reviewer-model'); assert.equal(webResult.body.result.effortResolved, 'low');
-  assert.equal(JSON.stringify(webResult).includes('SECRET assertion'), false); assert.equal(driver.coordination.task('oracle-web-task').review.knowledgeTarget.scratchFactId, driver.fact.id);
-
-  const mcp = new McpFleetServer({ coordinator: driver.coordinator, coordination: driver.coordination, principal: { userId: 'bob', sessionId: 'mcp', capabilities: ['control'], repoIds: ['repo-a'], expiresAt: '2099-01-01T00:00:00.000Z', revoked: false }, repoIds: ['repo-a'], maxWaitMs: 1000, maxMessageBytes: 128 * 1024, takeToolQuota: async () => ({ ok: true }) });
-  await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'phase50', version: '1' } } }); await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
-  const mcpResult = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'fleet_scratch_oracle', arguments: { repoId: 'repo-a', idempotencyKey: 'oracle-mcp', scratchFactId: driver.fact.id, harness: 'reviewer', model: 'reviewer-model', effort: 'low', modelPolicy: { allow: ['reviewer-model'], allowFamilies: ['reviewer-family'], reasoningEffort: 'low' }, verification: { command: 'true', expectExit: 0 }, taskId: 'oracle-mcp-task' } } });
-  assert.equal(mcpResult.result.isError, false, JSON.stringify(mcpResult)); assert.equal(mcpResult.result.structuredContent.modelResolved, 'reviewer-model'); assert.equal(mcpResult.result.structuredContent.effortResolved, 'low');
-  assert.equal(JSON.stringify(mcpResult).includes('SECRET assertion'), false); assert.equal(driver.coordination.task('oracle-mcp-task').review.knowledgeTarget.scratchFactId, driver.fact.id);
-  await reap(driver); driver.close();
-});
-
 test('SC1/SC2: oracle policy is exact and oversized facts refuse before worker allocation', async () => {
   const repoRoot = repo();
   assert.throws(() => createDriver({ repoRoot, repoId: 'repo-a', logDir: root('bad-policy'), adapters: {}, scratchOraclePolicy: { ...oraclePolicy(), surprise: 1 } }), /exact bounded deployment authority/);

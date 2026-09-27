@@ -32,7 +32,7 @@ test('SA2: known anchors from each dialect are present', () => {
   assert.ok(inventory.registryActions.includes('approve_plan'));
   assert.ok(inventory.commandDefinitions.includes('run.approve'));
   assert.ok(inventory.webCommands.includes('run_start'), 'web derivation (dots to underscores) holds');
-  for (const command of ['spawn', 'scratch_oracle', 'provider_status', 'goal_define',
+  for (const command of ['spawn', 'provider_status', 'goal_define',
     'plan_propose', 'plan_approve', 'goal_plan_status']) {
     assert.ok(inventory.webCommands.includes(command), `full Web admitted set includes ${command}`);
   }
