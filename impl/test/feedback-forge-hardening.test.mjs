@@ -76,7 +76,7 @@
 //   - `derived` / `gateEventSeq` packet fields       (absent from the 10-field literal at HEAD)
 //   - `wrapHubDerived` provenance discriminator      (B6; asserted only via the D6 push contract text)
 //
-// VERIFIED SPLIT (run `node --test impl/test/feedback-forge-hardening-red.test.mjs` TWICE from repo root)
+// VERIFIED SPLIT (run `node --test impl/test/feedback-forge-hardening.test.mjs` TWICE from repo root)
 //   Run 1: 8 passed / 8 failed   (P1–P8 green; R1–R8 red)   — stable
 //   Run 2: 8 passed / 8 failed   (P1–P8 green; R1–R8 red)   — stable
 //
@@ -171,11 +171,14 @@ class DebugAdapter extends MockAdapter {
     return {
       ...super.card(),
       turnCompletion: 'pausable',
+      // The fixture route carries its own credential state, the way MockAdapter fixtures do;
+      // readiness must never read this host's provider credentials.
+      providerCompatibility: { credentialState: 'available' },
       modelSelection: {
         mode: 'exact', configuredDefault: 'mock-model', available: ['mock-model'],
         family: 'mock', acceptedPrefixes: [], acceptedAliases: [],
         reasoningEffort: ['low'], serviceTier: null,
-        provenance: 'feedback-forge-hardening-red', refreshedAt: null,
+        provenance: 'feedback-forge-hardening', refreshedAt: null,
       },
     };
   }
@@ -321,11 +324,14 @@ function workflowAdapter(route, path) {
   const baseCard = value.card.bind(value);
   value.card = () => ({
     ...baseCard(),
+    // The fixture route carries its own credential state, the way MockAdapter fixtures do;
+    // readiness must never read this host's provider credentials.
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: route.model, available: [route.model],
       family: route.harness, acceptedPrefixes: [], acceptedAliases: [],
       reasoningEffort: [route.effort], serviceTier: null,
-      provenance: 'feedback-forge-hardening-red', refreshedAt: null,
+      provenance: 'feedback-forge-hardening', refreshedAt: null,
     },
     permissions: { mode: 'unattended-full', boundary: 'same-UID test process' },
     workerPolicy: {
@@ -695,378 +701,10 @@ test('P8 (PIN): S2 — the coaching branch refuses secret-shaped summary/message
 // RED rows — fail at NAMED stages at HEAD.
 // ---------------------------------------------------------------------------
 
-test('R1 (RED): forged verdict with no gate referent refuses typed gate-unbound (stage: expect_typed_refusal)', async (t) => {
-  const { workflow } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder?.evidence?.verification?.worker, 'precondition: verified candidate');
 
-  // No gate event exists on this Candidate's task stream — the caller-authored bytes are a forge.
-  const outcome = await workflow.sendFeedback('builder', scopeGatePayload()).then(
-    (value) => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-  assert.equal(
-    outcome.ok,
-    false,
-    'a caller-authored {gate, detail} with no gate event on the Candidate task stream must refuse '
-    + 'at stage: expect_typed_refusal',
-  );
-  assert.equal(
-    outcome.code,
-    'application_workflow_feedback_gate_unbound',
-    `refusal must be the typed gate-unbound code; got ${outcome.code}`,
-  );
 
-  // The refusal must be durable — no record appended.
-  const fb = await workflow.feedback();
-  assert.equal(fb.section?.itemCount ?? 0, 0, 'the refusal must append no record');
-});
 
-test('R2 (RED): validated-or-replaced — a verdict with a REAL gate referent is derived:true, seq-bound (stage: expect_derived_record)', async (t) => {
-  const { workflow, adapters, deploymentRoot } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  const workerId = builder?.evidence?.verification?.worker;
-  const taskId = builder?.taskId;
-  assert.ok(workerId && taskId, 'precondition: verified candidate');
 
-  // stage: emit_real_gate_event — a real scope-gate failure on the candidate's worker stream.
-  emitScopeGateEvent(adapters.codex, workerId);
-  const gateSeq = readWorkerGateSeq(deploymentRoot, workerId, workflow.id, taskId);
-  assert.ok(
-    Number.isSafeInteger(gateSeq) && gateSeq > 0,
-    `precondition: the gate event is durable with a seq; got ${gateSeq}`,
-  );
 
-  // stage: referent_visible — the debug failure leg projects the same {gate, detail} the forge spoofs.
-  const debug = await workflow.debug();
-  const member = debug.members?.find((m) => m.workerId === workerId);
-  const referent = { gate: member?.failure?.gate, detail: member?.failure?.detail };
-  assert.equal(referent.gate, 'scope', 'precondition: the referent gate is scope');
 
-  // stage: submit_matching — the byte-matching {gate, detail} is accepted.
-  const matching = { gate: referent.gate, detail: referent.detail };
-  await workflow.sendFeedback('builder', matching).then(
-    () => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
 
-  // stage: expect_derived_record — the stored packet is the DERIVED verdict with derived:true and
-  // gateEventSeq bound to the source event's per-worker seq.
-  const fb = await workflow.feedback();
-  const packet = fb.section?.items?.find((it) => it.value?.target?.role === 'builder')?.value;
-  assert.ok(packet, 'precondition: the verdict packet read back');
-  assert.equal(
-    packet.derived,
-    true,
-    'stage: expect_derived_record — derived must be hub-set true on the verdict packet',
-  );
-  assert.equal(
-    packet.gateEventSeq,
-    gateSeq,
-    'stage: expect_derived_record — gateEventSeq must bind the source gate event seq',
-  );
-  assert.deepEqual(packet.feedback, referent, 'the stored feedback is the derived {gate, detail}');
-
-  // stage: submit_mismatched — a fabricated verdict is accepted-but-replaced (or refused), never
-  // persisted with the caller's bytes.
-  await workflow.sendFeedback('builder', { gate: 'red_green', detail: { tail: 'x' } }).then(
-    () => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-  const after = await workflow.feedback();
-  const gatePackets = (after.section?.items ?? [])
-    .map((it) => it.value)
-    .filter((value) => value?.feedback && value.feedback.gate !== undefined);
-  for (const value of gatePackets) {
-    // stage: expect_replaced_record — no packet carries the fabricated red_green bytes.
-    assert.equal(value.feedback.gate, 'scope', 'stage: expect_replaced_record — a fabricated verdict is replaced by the derived gate');
-    assert.equal(value.derived, true, 'stage: expect_replaced_record — replacement carries derived:true');
-    assert.equal(value.gateEventSeq, gateSeq, 'stage: expect_replaced_record — replacement binds the same source seq');
-  }
-
-  // stage: second_gate_event — M2 (B4 replay-stability). A SECOND scope-gate event lands on the
-  // same worker stream with DIFFERENT digests after the verdict was recorded.
-  emitScopeGateEvent(adapters.codex, workerId, {
-    digestA: DIGEST_D, digestB: DIGEST_E, digestC: DIGEST_F,
-  });
-  const gateSeqs = readWorkerGateSeqs(deploymentRoot, workerId, workflow.id, taskId);
-  assert.ok(
-    gateSeqs.length === 2 && gateSeqs[1] > gateSeq,
-    `precondition: the second gate event is durable at a LATER seq than the first; got ${JSON.stringify(gateSeqs)}`,
-  );
-
-  // stage: expect_replay_stable — re-reading the projection must NOT move the bound verdict: the
-  // packet count stays >= 1 and the existing verdict still binds the FIRST gate event's seq + bytes.
-  const replayed = await workflow.feedback();
-  const replayedPackets = (replayed.section?.items ?? [])
-    .map((it) => it.value)
-    .filter((value) => value?.feedback && value.feedback.gate !== undefined);
-  assert.ok(
-    replayedPackets.length >= 1,
-    'stage: expect_replay_stable — the verdict packet still projects after the second gate event',
-  );
-  for (const value of replayedPackets) {
-    assert.equal(value.gateEventSeq, gateSeq, 'stage: expect_replay_stable — replay binds the ORIGINAL gate event seq');
-    assert.equal(value.derived, true, 'stage: expect_replay_stable — replay stays derived:true');
-    assert.equal(
-      value.feedback?.detail?.digests?.changedPathsDigest,
-      DIGEST_A,
-      'stage: expect_replay_stable — replay keeps the FIRST gate event bytes, not the second',
-    );
-  }
-});
-
-test('R3 (RED): coaching feedback is recorded derived:false / gateEventSeq:null (stage: expect_coaching_derived_false)', async (t) => {
-  const { workflow } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder, 'precondition: verified candidate');
-
-  await workflow.sendFeedback('builder', {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable delta.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
-  const fb = await workflow.feedback();
-  const packet = fb.section?.items?.find((it) => it.value?.target?.role === 'builder')?.value;
-  assert.ok(packet, 'precondition: the coaching packet read back');
-
-  // PIN: coaching shape is authored and read back intact (GREEN-3 unchanged).
-  assert.equal(packet.feedback?.summary, 'Keep the candidate but document the changed path before synthesis.');
-  assert.equal(packet.feedback?.findings?.[0]?.kind, 'suggestion');
-
-  // RED: the one derived-flag model marks coaching derived:false / gateEventSeq:null (B2).
-  assert.equal(
-    packet.derived,
-    false,
-    'stage: expect_coaching_derived_false — coaching must carry derived:false',
-  );
-  assert.equal(
-    packet.gateEventSeq,
-    null,
-    'stage: expect_coaching_derived_false — coaching must carry gateEventSeq:null',
-  );
-});
-
-test('R4 (RED): consumer safety — a verdict packet in the revision set must not crash select/revise (stage: select_candidate_no_crash)', async (t) => {
-  const { workflow, adapters } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  const workerId = builder?.evidence?.verification?.worker;
-  assert.ok(workerId, 'precondition: verified candidate');
-
-  // A REAL gate referent so the hardened admission can produce a legitimate derived verdict.
-  emitScopeGateEvent(adapters.codex, workerId);
-  await workflow.sendFeedback('builder', scopeGatePayload()).then(
-    () => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-
-  // RED: _workflowRevisionEligibility must not crash on the gate-shaped packet
-  // (packet.feedback.findings.some on undefined).
-  const selected = await workflow.select('builder', 'The builder Candidate is the preferred verified basis.').then(
-    (value) => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-  assert.equal(
-    selected.ok,
-    true,
-    `select must not crash on a gate-shaped verdict packet at stage: select_candidate_no_crash; got ${selected.message ?? ''}`,
-  );
-
-  // Unreachable at HEAD (select crashes first) — revise must also stay crash-free after hardening.
-  const revised = await workflow.revise('Revise the builder candidate.').then(
-    (value) => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-  assert.equal(revised.ok, true, 'revise must not crash on a gate-shaped verdict packet');
-
-  // stage: expect_render_verdict_summary — GREEN-4 render half (S3): the feedback section must
-  // render a non-undefined verdict summary, and no 'undefined' literal may leak into the section.
-  const fb = await workflow.feedback();
-  const verdictItem = (fb.section?.items ?? []).find((it) => it.value?.feedback?.gate !== undefined);
-  assert.ok(verdictItem, 'precondition: the verdict packet projects in the feedback section');
-  assert.equal(
-    typeof verdictItem.summary,
-    'string',
-    'stage: expect_render_verdict_summary — the feedback section renders a verdict summary, '
-    + `not ${JSON.stringify(verdictItem.summary)}`,
-  );
-  assert.ok(
-    verdictItem.summary.length > 0,
-    'stage: expect_render_verdict_summary — the verdict summary is non-empty',
-  );
-  assert.ok(
-    !JSON.stringify(fb.section).includes('undefined'),
-    'stage: expect_render_verdict_summary — no undefined literal leaks into the feedback section',
-  );
-
-  // stage: expect_render_verdict_line — the revision objective carries a distinct verdict line
-  // (the gate name), never `Feedback: undefined`.
-  const plan = await workflow.inspect({ depth: 'section', section: 'plan' });
-  const revisionItem = (plan.section?.items ?? []).find((it) => it.id.includes('plan-node:revision:'));
-  assert.ok(revisionItem, 'precondition: the revision node projects in the plan section');
-  assert.ok(
-    revisionItem.value?.objective?.includes('scope'),
-    'stage: expect_render_verdict_line — the revision objective carries the verdict gate name',
-  );
-  assert.ok(
-    !revisionItem.value?.objective?.includes('Feedback: undefined'),
-    'stage: expect_render_verdict_line — the revision objective never renders Feedback: undefined',
-  );
-});
-
-test('R5 (RED): B2 one derived-flag model — the projection literal is the 12-field closed set (stage: literal_12_field_closed)', () => {
-  const fields = readWorkflowFeedbackFieldsLiteral();
-  assert.deepEqual(
-    fields,
-    CLOSED_PACKET_FIELDS,
-    'stage: literal_12_field_closed — _workflowFeedback must project the 12-field closed sorted-key '
-    + `literal; got ${JSON.stringify(fields)}`,
-  );
-});
-
-test('R6 (RED): B5 per-record degradation — a PERSISTED pre-hardening gate-shaped record is excluded per-record while later records project (stage: expect_pre_hardening_record_excluded)', async (t) => {
-  // M1: stage a GENUINE pre-hardening record through `driver.coordination.recordDriver` — the exact
-  // 10-field shape `sendWorkflowFeedback` records at HEAD — so the migration code path is REACHED,
-  // not vacuous. The capture seam (openBatonDeployment param 2) hands us the driver.
-  const { workflow, driver } = await openWorkflow(t, { captureDriver: true });
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder?.evidence?.verification?.worker, 'precondition: verified candidate');
-  assert.ok(driver?.coordination?.recordDriver, 'precondition: the M1 capture seam produced the driver');
-
-  // The pre-hardening population is PERSISTED STATE — a shape-only gate-shaped packet with no
-  // referent event and no hardening metadata, exactly what the forge wrote at HEAD.
-  const preHardeningFeedback = scopeGatePayload();
-  const stagedSeq = await stagePreHardeningRecord(driver, workflow, builder, preHardeningFeedback);
-  assert.ok(Number.isSafeInteger(stagedSeq), 'precondition: the pre-hardening record is durable');
-
-  // PIN (B5 part 1): reading feedback never throws a map-wide application_workflow_integrity — the
-  // code path must degrade per-record, not refuse the whole projection.
-  const fb = await workflow.feedback();
-
-  // RED (B5 part 2): the pre-hardening gate-shaped record is EXCLUDED per-record from the read.
-  assert.equal(
-    fb.section?.itemCount ?? 0,
-    0,
-    'a persisted pre-hardening gate-shaped record must be excluded per-record (B5) at stage: '
-    + `expect_pre_hardening_record_excluded; got ${fb.section?.itemCount ?? 0} packet(s)`,
-  );
-
-  // RED (B5 part 3): a LATER coaching record still projects — migration is per-record, never
-  // map-wide (the coaching packet lands after the excluded pre-hardening one and reads back intact).
-  await workflow.sendFeedback('builder', {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable delta.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
-  const after = await workflow.feedback();
-  const coachingPacket = after.section?.items?.find((it) => it.value?.target?.role === 'builder')?.value;
-  assert.ok(coachingPacket, 'stage: expect_pre_hardening_record_excluded — the later coaching record projects');
-  assert.equal(
-    coachingPacket.feedback?.summary,
-    'Keep the candidate but document the changed path before synthesis.',
-    'the later coaching record reads back intact alongside the excluded pre-hardening record',
-  );
-});
-
-test('R7 (RED): S1 — the referent boundary is candidate-scoped: run-2 same-shaped submission is not bound by run-1 gate (stage: expect_second_run_refused)', async (t) => {
-  const { deployment, workflow, adapters, deploymentRoot } = await openWorkflow(t);
-  const builder1 = await candidateFor(workflow, 'builder');
-  const worker1 = builder1?.evidence?.verification?.worker;
-  const taskId1 = builder1?.taskId;
-  assert.ok(worker1 && taskId1, 'precondition: verified run-1 builder candidate');
-
-  // Run 1: a REAL gate referent binds a genuine derived verdict — proving a same-shaped record
-  // legitimately exists in this deployment (so run 2's refusal is a scoping fact, not a void).
-  emitScopeGateEvent(adapters.codex, worker1);
-  await workflow.sendFeedback('builder', scopeGatePayload()).then(
-    () => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-  const fb1 = await workflow.feedback();
-  const verdict1 = (fb1.section?.items ?? [])
-    .map((it) => it.value)
-    .find((value) => value?.feedback?.gate !== undefined);
-  assert.ok(verdict1, 'precondition: run-1 recorded a bound gate-shaped verdict');
-
-  // Run 2: the SAME deployment, a SECOND workflow/run. Its builder worker has NO gate event on its
-  // OWN run — run 1's gate must not bind this submission.
-  const w2 = await deployment.workflow(OBJECTIVE_2, {
-    team: [
-      { role: 'builder', exact: ROUTE_A },
-      { role: 'challenger', exact: ROUTE_B },
-    ],
-  });
-  await w2.complete();
-  const builder2 = await candidateFor(w2, 'builder');
-  const worker2 = builder2?.evidence?.verification?.worker;
-  const taskId2 = builder2?.taskId;
-  assert.ok(worker2 && taskId2, 'precondition: verified run-2 builder candidate');
-
-  const w2Events = readFileSync(join(deploymentRoot, 'state', `${worker2}.jsonl`), 'utf8')
-    .trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
-  const w2Gates = w2Events.filter((event) => (
-    event.kind === 'error'
-    && event.payload?.code === 'worker_path_scope_violation'
-    && event.runId === w2.id && event.taskId === taskId2
-  ));
-  assert.equal(
-    w2Gates.length,
-    0,
-    'precondition: run-2 builder worker stream has no gate event on its own run (the referent lookup '
-    + 'is runId+taskId scoped, so run-1 gate cannot bind)',
-  );
-
-  // stage: expect_second_run_refused — the SAME-shaped {gate, detail} for run 2's builder refuses
-  // the typed gate-unbound and appends nothing. (RED at HEAD: the forge accepts it — cross-run
-  // verdict laundering unobserved.)
-  const outcome = await w2.sendFeedback('builder', scopeGatePayload()).then(
-    (value) => ({ ok: true }),
-    (error) => ({ ok: false, code: error?.code, message: error?.message }),
-  );
-  assert.equal(
-    outcome.ok,
-    false,
-    'run-1 gate must not bind run-2 same-shaped submission — the referent boundary is candidate-scoped '
-    + '(runId+taskId) at stage: expect_second_run_refused',
-  );
-  assert.equal(
-    outcome.code,
-    'application_workflow_feedback_gate_unbound',
-    `refusal must be the typed gate-unbound code; got ${outcome.code}`,
-  );
-  const fb2 = await w2.feedback();
-  assert.equal(fb2.section?.itemCount ?? 0, 0, 'stage: expect_second_run_refused — the refusal appends nothing');
-});
-
-test('R8 (RED): M3 — D4 surface constancy: gate_unbound is typed in application.mjs and preserved verbatim through web/MCP facades (stage: expect_gate_unbound_typed)', () => {
-  // RED (D4 part 1): the code is absent from application.mjs at HEAD — the hardened projection must
-  // type it (the R1/R7 refusal path produces it).
-  const applicationSource = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
-  assert.ok(
-    applicationSource.includes('application_workflow_feedback_gate_unbound'),
-    'stage: expect_gate_unbound_typed — the gate-unbound refusal code is typed in application.mjs',
-  );
-
-  // PIN (D4 part 2): the web-northbound mapper preserves ANY application_* code verbatim through its
-  // generic fallthrough (web-northbound.mjs:206-209), so a typed gate_unbound surfaces unchanged.
-  const webSource = readFileSync(new URL('../src/web-northbound.mjs', import.meta.url), 'utf8');
-  assert.match(
-    webSource,
-    /goalPlanCode\.startsWith\(['"]application_['"]\)/u,
-    'D4: web-northbound preserves application_* codes through its generic fallthrough',
-  );
-
-  // PIN (D4 part 3): the mcp-northbound error mapper returns cause.code verbatim for application_*.
-  const mcpSource = readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8');
-  assert.match(
-    mcpSource,
-    /cause\.code\.startsWith\(['"]application_['"]\)/u,
-    'D4: mcp-northbound returns application_* codes verbatim',
-  );
-});

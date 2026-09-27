@@ -49,6 +49,10 @@ function exactAdapter(harness, model, efforts, scenario = {
     ...rawCard(),
     ...cardExtra,
     authPosture: 'subscription',
+    // The fixture route carries its own credential state, the way MockAdapter fixtures do
+    // (capacity-refusal-visibility-red's card, issue276-resident-drain): readiness resolves on the
+    // card, never on this host's provider credentials.
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: model, available: [model], family: harness,
       acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: efforts,

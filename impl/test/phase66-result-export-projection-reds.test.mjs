@@ -445,10 +445,12 @@ test('CE11: Web registry dispatches strict run_export parity and rejects server 
     runId: 'run-web-export', origin: ORIGIN,
   };
   assert.equal(validateWebCommandEnvelope(envelope), null);
-  assert.equal(validateWebCommandEnvelope({
+  // Issue #139: a web envelope refusal that can name the offending field returns the typed
+  // refusal object, not the bare code the row compared before that landing.
+  assert.deepEqual(validateWebCommandEnvelope({
     ...envelope, commandId: 'web-export-forged', idempotencyKey: 'web-export-forged',
     args: { ...envelope.args, exportRoot: '/srv/baton/exports' },
-  }), 'unknown_argument_field');
+  }), { code: 'unknown_argument_field', field: 'exportRoot', message: 'unknown_argument_field' });
   const response = await web.execute({
     principal: {
       userId: 'operator', sessionId: 'browser', credentialId: 'credential', authMethod: 'cookie',

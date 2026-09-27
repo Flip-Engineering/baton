@@ -422,7 +422,7 @@ function stageCompletedTurn(adapter, handle, files) {
 
 // ---------------------------------------------------------------------------
 // Harness — full application (real createDriver + BatonApplication + bindBaton),
-// run.debug rows (mirrors feedback-forge-hardening-red.test.mjs dg1Harness)
+// run.debug rows (mirrors feedback-forge-hardening.test.mjs dg1Harness)
 // ---------------------------------------------------------------------------
 
 const repoId = 'repo-worker-verdict-surface';

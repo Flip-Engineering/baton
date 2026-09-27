@@ -75,6 +75,7 @@ function adapter() {
   value.card = () => ({
     ...card(),
     authPosture: 'subscription',
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: route.model, available: [route.model],
       family: route.harness, acceptedPrefixes: [], acceptedAliases: [],

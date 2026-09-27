@@ -52,6 +52,7 @@ function adapter(route, tracker, {
   const baseCard = value.card.bind(value);
   value.card = () => ({
     ...baseCard(), authPosture: 'subscription',
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: route.model, available: [route.model],
       family: route.harness, acceptedPrefixes: [], acceptedAliases: [],
