@@ -1053,7 +1053,6 @@ function worktreeManager(repoRoot, opts = {}) {
           if (!physicalOwnerReceipt || physicalOwnerReceipt.state !== 'ready'
             || context.ownerReceiptDigest !== physicalOwnerReceipt.receiptDigest
             || context.logicalTaskId !== physicalOwnerReceipt.logicalTaskId
-            || context.branch !== physicalOwnerReceipt.branch
             || context.baseSha !== physicalOwnerReceipt.baseSha
             || worktree !== realpathSync(physicalOwnerReceipt.worktree)) {
             return { ok: false, reason: 'session physical workspace owner receipt mismatch' };
@@ -1061,10 +1060,6 @@ function worktreeManager(repoRoot, opts = {}) {
         }
         const top = localGit(['rev-parse', '--show-toplevel'], worktree, { encoding: 'utf8' }).trim();
         if (realpathSync(top) !== worktree) return { ok: false, reason: 'session path is not the recorded git worktree root' };
-        if (context.branch) {
-          const branch = localGit(['branch', '--show-current'], worktree, { encoding: 'utf8' }).trim();
-          if (branch !== context.branch) return { ok: false, reason: 'session worktree branch mismatch' };
-        }
         // Issue #563: the recorded base is checked so the verdict NAMES which fact failed. A base
         // that is no longer an ancestor of HEAD is three different facts — the commit is not in
         // this repository, the branch was rewound behind it, or the histories diverged — and each
@@ -1119,15 +1114,12 @@ function worktreeManager(repoRoot, opts = {}) {
           expectedPath: physicalOwnerReceipt?.worktree ?? worktree,
           ...(physicalOwnerReceipt || context.baseSha
             ? { expectedBaseSha: physicalOwnerReceipt?.baseSha ?? context.baseSha } : {}),
-          ...(physicalOwnerReceipt || context.branch
-            ? { expectedBranch: physicalOwnerReceipt?.branch ?? context.branch } : {}),
           sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         });
-        if (opts.worktreeCapacity) {
-          const expectedId = `worker:${context.ownerTaskId ?? basename(worktree)}`;
-          const row = opts.worktreeCapacity.snapshot().reservations.find((candidate) => candidate.id === expectedId);
-          if (!context.capacityReservation || !row || canonicalDigest(context.capacityReservation) !== canonicalDigest(capacityReservationIdentity(row))) return { ok: false, reason: 'session worktree capacity reservation mismatch' };
-        } else if (context.capacityReservation) return { ok: false, reason: 'session worktree capacity is not configured' };
+        // #610: a resume-from successor is admitted from its predecessor's workspace. The session
+        // context's own branch and capacity-reservation identities were compared here and refused
+        // a successor whose predecessor's checkout had been re-cut or whose reservation row had
+        // gone; the workspace's own custody checks above are what the admission stands on.
         if (opts.toolchainProjection) {
           if (!context.toolchainProjection || !opts.toolchainProjection.matchesIdentity(context.toolchainProjection)
             || !worktreeMod.validateToolchainProjectionMetadata(repoRoot, context.ownerTaskId ?? basename(worktree), context.toolchainProjection)) return { ok: false, reason: 'session toolchain projection identity mismatch' };
