@@ -7511,9 +7511,6 @@ export function _buildKnowledgeRecall(store, query, policy, opts = {}) {
     || canonicalDigest(query.termDigests) !== canonicalDigest([...query.termDigests].sort()) || canonicalDigest(query.types) !== canonicalDigest([...query.types].sort())
     || canonicalDigest(query.grounding) !== canonicalDigest([...query.grounding].sort()) || canonicalDigest(query.seedNodeIds) !== canonicalDigest([...query.seedNodeIds].sort())) throw new CoordinationRefusal('knowledge recall projection is invalid', 'causal_recall_invalid');
   const allNodes = store.queryKnowledge({ observedSeq: query.observedSeq, asOf: query.asOf });
-  
-  const candidateBytes = allNodes.reduce((sum, node) => sum + Buffer.byteLength(recallBody(node.body)), 0);
-  
   const nodeMap = new Map(allNodes.map((node) => [node.id, node]));
   const eligible = allNodes.filter((node) => (query.types.length === 0 || query.types.includes(node.type)) && (query.grounding.length === 0 || query.grounding.includes(node.grounding)));
   const eligibleIds = new Set(eligible.map((node) => node.id));

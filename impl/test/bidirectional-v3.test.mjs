@@ -307,10 +307,7 @@ test('A6b: the author\'s own task never counts toward minScratchReaders (no self
   void fact;
   store.readScratch('fact:self', { repoId: 'repo-a', treeSha: 'cafe1234' },
     { readerActor: 'worker', readerWorker: 'w-a', taskId: 'a' }, { actor: 'worker:a', key: 'read:self' });
-  const policy = {
-    repoId: 'repo-a', minScratchReaders: 1, maxScanEvents: 1024, maxCandidates: 128,
-    maxCandidateBytes: 256 * 1024, maxEvidenceRefs: 1024, maxBatchBytes: 512 * 1024, maxResultBytes: 128 * 1024,
-  };
+  const policy = { repoId: 'repo-a', minScratchReaders: 1 };
   const first = store.promoteKnowledgeBatch('repo-a', store.snapshot().lastSeq, policy,
     { actor: 'orchestrator', key: 'bd3-a6b-promote' });
   const firstTriggers = (first.projection?.summaries ?? []).map((row) => row.trigger);

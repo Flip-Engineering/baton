@@ -201,7 +201,7 @@ export function freeze(value) {
 
 export function madCanonUnit(unit) { const lower = unit.toLowerCase(); return MAD_UNIT_CANON.get(lower) ?? lower; }
 
-export function madConfidenceOf(body, maxMetrics) {
+export function madConfidenceOf(body, maxMetrics = 100_000) {
   const text = recallBody(body); const groups = new Map(); let count = 0;
   MAD_METRIC.lastIndex = 0;
   for (let match = MAD_METRIC.exec(text); match !== null; match = MAD_METRIC.exec(text)) {

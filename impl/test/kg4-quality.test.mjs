@@ -20,11 +20,7 @@ const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-kg4-${name}-`)
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-recall', reservedWorkerId: `w-${id}` });
 function clock(start = '2026-07-22T00:00:00.000Z') { let now = Date.parse(start); return () => new Date(now++).toISOString(); }
 
-const recallPolicy = (overrides = {}) => ({
-  repoId: 'repo-a', maxQueryBytes: 4_096, maxQueryTerms: 64, maxCandidates: 128,
-  maxCandidateBytes: 256 * 1024, maxResults: 16, maxGraphDepth: 8, maxGraphRows: 256,
-  maxSnippetBytes: 128, maxReceiptBytes: 64 * 1024, maxResultBytes: 128 * 1024, ...overrides,
-});
+const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const previewExtras = (overrides = {}) => ({
   weightTerm: 1, weightEdgeDegree: 1, weightEvidence: 1, weightRecency: 0,
   autoLinkThresholds: { Supports: 50, Refines: 50, Cites: 50 },
