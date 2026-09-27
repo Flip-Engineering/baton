@@ -170,10 +170,10 @@ export class WebEdgePolicy {
     if (this.proxyMode && this.trustedProxies.length === 0) throw new TypeError('proxy mode requires trusted proxies');
     if (!this.proxyMode && (this.trustedProxies.length > 0 || this.forwardedHop !== 0)) throw new TypeError('direct mode cannot configure proxy trust or forwarding hops');
     const now = opts.now ?? Date.now; this.now = now; const windowMs = opts.windowMs ?? 60_000; const maxKeys = opts.maxKeys ?? 10_000;
-    const allowedLimits = new Set(['peer', 'address', 'login', 'principal', 'cost', 'ticket', 'health', 'readiness', 'connection']);
+    const allowedLimits = new Set(['peer', 'address', 'principal', 'cost', 'ticket', 'health', 'readiness', 'connection']);
     const unknownLimit = Object.keys(opts.limits ?? {}).find((name) => !allowedLimits.has(name));
     if (unknownLimit) throw new TypeError(`unknown quota policy: ${unknownLimit}`);
-    const limits = { peer: 100, address: 1000, login: 10, principal: 100, cost: 100, ticket: 30, health: 60, readiness: 60, connection: 4, ...(opts.limits ?? {}) };
+    const limits = { peer: 100, address: 1000, principal: 100, cost: 100, ticket: 30, health: 60, readiness: 60, connection: 4, ...(opts.limits ?? {}) };
     const { connection, ...windowLimits } = limits;
     this.quotas = Object.fromEntries(Object.entries(windowLimits).map(([name, limit]) => [name, new FixedWindowQuota({ limit, windowMs, maxKeys, now })]));
     this.connections = new ConcurrentQuota({ limit: connection, maxKeys });

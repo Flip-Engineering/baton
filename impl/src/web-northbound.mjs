@@ -8,7 +8,6 @@ import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
 import { WebResultExportDelivery } from './web-result-export-delivery.mjs';
 import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
-import { OidcBrowserFlow, csrfCookie } from './web-oidc.mjs';
 import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
@@ -385,9 +384,6 @@ const LEGACY_PLAN_ROUTE_FIELDS = new Set(['harnesses', 'models', 'efforts']);
 const PLAN_VERIFICATION_FIELDS = new Set(['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
 const PLAN_GATE_FIELDS = new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const PLAN_BRIEF_FIELDS = new Set(['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects']);
-const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
-const OIDC_START_PATH = '/v1/auth/oidc/start';
-const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
 
 function json(value) { return JSON.parse(JSON.stringify(value)); }
 function transportCapability(value) {
@@ -473,11 +469,8 @@ function capabilityRefusalDetail(required, held) {
   };
 }
 
-const AUTH_LOGIN_PATH = [...AUTH_PATHS].find((path) => path.endsWith('/login'));
-const AUTH_REFRESH_PATH = [...AUTH_PATHS].find((path) => path.endsWith('/refresh'));
 const BEARER_CREDENTIAL = Object.freeze({ kind: 'bearer', header: 'authorization', source: 'Authorization: Bearer <token>' });
 const COOKIE_CREDENTIAL = Object.freeze({ kind: 'session_cookie', header: 'cookie', source: '__Host-baton_session cookie' });
-const BROWSER_LOGIN_REMEDY = `complete the browser login (GET ${OIDC_START_PATH}, or POST ${AUTH_LOGIN_PATH} when no OIDC provider is configured)`;
 
 // U-F13 (issue #288): the four distinguishable authentication outcomes, each with the rule it
 // violated and the route that obtains a fresh credential — an agent must never have to guess
@@ -485,19 +478,19 @@ const BROWSER_LOGIN_REMEDY = `complete the browser login (GET ${OIDC_START_PATH}
 const AUTHENTICATION_REFUSAL_ROWS = Object.freeze({
   absent: Object.freeze({
     rule: 'no admissible credential was presented',
-    remedy: `send Authorization: Bearer <token> (obtained from POST ${AUTH_LOGIN_PATH}) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it`,
+    remedy: 'obtain the current credential from the deployment owner and re-send the request with Authorization: Bearer <token>',
   }),
   malformed: Object.freeze({
     rule: 'the presented credential carries no usable identity or expiry',
-    remedy: `re-authenticate: POST ${AUTH_LOGIN_PATH} (bearer) or ${BROWSER_LOGIN_REMEDY} (cookie) mints a new credential; this one cannot be repaired in place`,
+    remedy: 'obtain the current credential from the deployment owner and re-send the request with Authorization: Bearer <token>',
   }),
   expired: Object.freeze({
     rule: 'the presented credential\'s expiry has passed',
-    remedy: `renew it: POST ${AUTH_REFRESH_PATH} with the credential (with the x-baton-csrf header for a cookie credential) returns a fresh one`,
+    remedy: 'obtain the current credential from the deployment owner and re-send the request with Authorization: Bearer <token>',
   }),
   revoked: Object.freeze({
     rule: 'the presented credential was revoked',
-    remedy: `re-authenticate: a revoked credential is never refreshed — obtain a new one from POST ${AUTH_LOGIN_PATH} (bearer) or by ${BROWSER_LOGIN_REMEDY} (cookie)`,
+    remedy: 'obtain the current credential from the deployment owner and re-send the request with Authorization: Bearer <token>',
   }),
 });
 
@@ -990,16 +983,6 @@ function planBrief(value) {
     && stringList(value.capabilities) && stringList(value.effects)
     && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
-function validProviderClaims(value) {
-  if (!isRecord(value)) return false;
-  const allowed = new Set(['userId', 'authMethod', 'capabilities', 'repoIds', 'ttlMs']);
-  return !Object.keys(value).some((key) => !allowed.has(key))
-    && string(value.userId) && ['cookie', 'bearer'].includes(value.authMethod)
-    && Array.isArray(value.capabilities) && value.capabilities.length > 0 && value.capabilities.every(string)
-    && Array.isArray(value.repoIds) && value.repoIds.length > 0 && value.repoIds.every(string)
-    && Number.isSafeInteger(value.ttlMs) && value.ttlMs > 0;
-}
-
 function resolveWebCommandEnvelope(envelope) {
   // docs/36 §9 M3/M4 — the Episode fold. A `run_view` envelope carrying a chapter topic resolves to
   // the legacy Episode transport handler; without a topic `run_view` is admitted as a first-class
@@ -1571,13 +1554,6 @@ export class WebNorthbound {
     this.now = opts.now ?? Date.now;
     this.authenticate = opts.authenticate ?? null;
     this.sessions = opts.sessions ?? opts.sessionStore ?? null;
-    this.identityProvider = opts.identityProvider ?? opts.provider ?? null;
-    this.oidc = opts.oidc ?? opts.oidcFlow ?? null;
-    if (this.oidc !== null && !(this.oidc instanceof OidcBrowserFlow)) throw new TypeError('oidc must be an OidcBrowserFlow');
-    if (this.oidc && (!this.allowedOrigins.has(this.oidc.redirectUri.origin)
-      || this.oidc.redirectUri.pathname !== OIDC_CALLBACK_PATH)) {
-      throw new TypeError('OIDC redirectUri must match the served allowed origin and callback path');
-    }
     if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.exportDelivery = opts.exportDelivery ?? (this.application?.exportRoot ? new WebResultExportDelivery({
@@ -2481,20 +2457,11 @@ export class WebNorthbound {
     // Issue #467: the reads above answered while a stop drains; the session mutations below are new
     // WORK and stay closed from the moment the stop closes admission.
     if (req.method === 'POST' && !this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'));
-    if (req.method === 'GET' && url.pathname === OIDC_START_PATH) {
-      return this._handleOidcStart(req, res, url, origin);
-    }
-    if (req.method === 'GET' && url.pathname === OIDC_CALLBACK_PATH) {
-      return this._handleOidcCallback(req, res, url, origin);
-    }
     if (req.method === 'GET' && (['/v1/session', '/v1/application-card'].includes(url.pathname) || operatorAsset(url.pathname))) {
       return this._handleOperatorRead(req, res, url.pathname, origin);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
       return this._handleCommandStatus(req, res, url, origin);
-    }
-    if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
-      return this._handleLifecycle(req, res, url.pathname, origin);
     }
     const exportArchivePreflight = /^\/v1\/exports\/[a-f0-9]{64}\/archive$/u.test(url.pathname);
     if (req.method === 'OPTIONS' && !url.search
@@ -2566,7 +2533,7 @@ export class WebNorthbound {
       if (opened) return this._write(res, opened, origin);
       return;
     }
-    if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets', '/v1/action-authority'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
+    if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets', '/v1/action-authority'].includes(url.pathname)) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
         'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
@@ -2798,7 +2765,7 @@ export class WebNorthbound {
     return this._write(res, response, origin);
   }
 
-  _oidcContext(req, origin) {
+  _requestContext(req, origin) {
     return {
       origin,
       remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null),
@@ -2808,7 +2775,7 @@ export class WebNorthbound {
   }
 
   async _handleOperatorRead(req, res, pathname, origin) {
-    const ctx = this._oidcContext(req, origin);
+    const ctx = this._requestContext(req, origin);
     let principal;
     try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
     const authFailure = this._authenticate({ principal, transport: ctx.transport });
@@ -2874,7 +2841,7 @@ export class WebNorthbound {
   }
 
   async _handleCommandStatus(req, res, url, origin) {
-    const ctx = this._oidcContext(req, origin);
+    const ctx = this._requestContext(req, origin);
     let principal;
     try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
     const authFailure = this._authenticate({ principal, transport: ctx.transport });
@@ -2919,233 +2886,6 @@ export class WebNorthbound {
       return this._write(res, result(outcome.httpStatus, { ...outcome.body, command: record }), origin);
     }
     return this._write(res, result(200, { ok: true, command: record }));
-  }
-
-  _validOidcNavigation(req, origin, callback = false) {
-    if (req.headers?.['sec-fetch-mode'] !== 'navigate') return false;
-    if (req.headers?.['sec-fetch-dest'] !== 'document') return false;
-    const site = req.headers?.['sec-fetch-site'];
-    const allowedSites = callback ? new Set(['cross-site', 'same-origin', 'none']) : new Set(['same-origin', 'none']);
-    if (!allowedSites.has(site)) return false;
-    if (callback) return origin == null;
-    return origin == null || this.allowedOrigins.has(origin);
-  }
-
-  _writeRedirect(res, status, location, setCookie) {
-    const headers = {
-      location, 'content-length': '0', 'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
-      ...(setCookie ? { 'set-cookie': setCookie } : {}),
-    };
-    res.writeHead(status, headers);
-    res.end();
-  }
-
-  _handleOidcStart(req, res, url, origin) {
-    const ctx = this._oidcContext(req, origin);
-    if (!this.oidc) return this._write(res, error(404, 'not_found'));
-    if (ctx.transport !== 'https') {
-      try { this._audit('oidc_start_refused', ctx, { reason: 'request_policy' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-      return this._write(res, secureTransportRefusal());
-    }
-    if (url.search !== '' || !this._validOidcNavigation(req, origin, false)) {
-      try { this._audit('oidc_start_refused', ctx, { reason: 'request_policy' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-      return this._write(res, error(403, 'forbidden', 'forbidden: OIDC start refused by the navigation precondition', 'request'));
-    }
-    if (this.edge) {
-      const quota = this.edge.take('login', ctx.addressDigest);
-      if (!quota.ok) {
-        try { this._audit('quota_refused', ctx, { quota: 'login' }); }
-        catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-        return this._write(res, error(429, 'rate_limited'), null, { 'retry-after': String(quota.retryAfter) });
-      }
-    }
-    try { this._audit('oidc_start_requested', ctx, { providerClass: 'oidc' }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-    let started;
-    try { started = this.oidc.begin(); }
-    catch (cause) {
-      return this._write(res, error(cause?.code === 'flow_capacity' ? 429 : 503, cause?.code === 'flow_capacity' ? 'rate_limited' : 'temporarily_unavailable'));
-    }
-    try {
-      this._writeRedirect(res, 302, started.location, started.setCookie);
-      started.commit();
-    } catch (cause) {
-      started.rollback();
-      throw cause;
-    }
-  }
-
-  async _handleOidcCallback(req, res, url, origin) {
-    const ctx = this._oidcContext(req, origin);
-    const clearCookie = this.oidc?.clearCookie?.();
-    const write = (response, reason) => {
-      try { this._audit('oidc_callback_refused', ctx, { reason }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), null, clearCookie ? { 'set-cookie': clearCookie } : {}); }
-      return this._write(res, response, null, clearCookie ? { 'set-cookie': clearCookie } : {});
-    };
-    const refuse = (status, code, reason) => write(error(status, code), reason);
-    if (!this.oidc) return this._write(res, error(404, 'not_found'));
-    if (ctx.transport !== 'https') return write(secureTransportRefusal(), 'request_policy');
-    if (!this._validOidcNavigation(req, origin, true)) return refuse(403, 'forbidden', 'request_policy');
-    const keys = [...url.searchParams.keys()];
-    if (keys.some((key) => !['code', 'state'].includes(key))
-      || url.searchParams.getAll('code').length !== 1 || url.searchParams.getAll('state').length !== 1) {
-      return refuse(400, 'invalid_request', 'invalid_callback');
-    }
-    let claims;
-    try {
-      claims = await this.oidc.complete({
-        code: url.searchParams.get('code'), state: url.searchParams.get('state'),
-        cookieHeader: req.headers?.cookie,
-      });
-    } catch (cause) {
-      return refuse(cause?.code === 'provider_refused' || cause?.code === 'identity_mismatch' || cause?.code === 'claims_refused' ? 401 : 400,
-        cause?.code === 'provider_refused' || cause?.code === 'identity_mismatch' || cause?.code === 'claims_refused' ? 'unauthenticated' : 'invalid_request',
-        cause?.code ?? 'invalid_flow');
-    }
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), null, { 'set-cookie': clearCookie });
-    if (!this.sessions || !this.sessions.validateIssue?.(claims)) return refuse(401, 'unauthenticated', 'claims_refused');
-    try {
-      this._audit('oidc_callback_authorized', {
-        ...ctx, principal: { userId: claims.userId, sessionId: 'pending', credentialId: 'pending' },
-      }, { authMethod: 'cookie', providerClass: 'oidc' });
-    } catch {
-      return this._write(res, error(503, 'temporarily_unavailable'), null, { 'set-cookie': clearCookie });
-    }
-    let issued;
-    try { issued = this.sessions.issue(claims, { actor: `web:${claims.userId}:oidc` }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), null, { 'set-cookie': clearCookie }); }
-    const maxAge = Math.max(1, Math.floor((Date.parse(issued.expiresAt) - this.now()) / 1000));
-    const cookies = [issued.setCookie, csrfCookie(issued.csrfToken, maxAge), clearCookie];
-    try {
-      this._writeRedirect(res, 303, '/control', cookies);
-    } catch (cause) {
-      try { this.sessions.revoke(issued.sessionId, { actor: `web:${claims.userId}:oidc`, reason: 'delivery_failed' }); } catch { /* durable issue remains visible */ }
-      try { this._audit('oidc_callback_delivery_failed', ctx, { reason: 'response_delivery' }); } catch { /* transport already failed */ }
-      throw cause;
-    }
-  }
-
-  async _handleLifecycle(req, res, pathname, origin) {
-    const ctx = { origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
-    const audit = (kind, principal = null, details = {}) => this._audit(kind, { ...ctx, principal }, details);
-    if (ctx.transport !== 'https') {
-      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'request_policy' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, secureTransportRefusal(), origin);
-    }
-    if (!this.allowedOrigins.has(origin)) {
-      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'request_policy' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(403, 'forbidden', 'forbidden: authentication lifecycle refused by the origin precondition', 'origin'), origin);
-    }
-    if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
-      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'content_type' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(415, 'unsupported_media_type'), origin);
-    }
-    let principal = null;
-    if (pathname !== '/v1/auth/login') {
-      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
-    }
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
-    let body;
-    try { body = await this._readBody(req); }
-    catch (cause) {
-      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: cause?.code ?? 'invalid_json' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_request'), origin);
-    }
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
-    if (!isRecord(body)) {
-      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'invalid_body' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(400, 'invalid_request'), origin);
-    }
-    if (pathname === '/v1/auth/login') return this._login(res, body, ctx);
-    if (!principal) {
-      try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'unauthenticated' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(401, 'unauthenticated'), origin);
-    }
-    if (principal.authMethod === 'cookie') {
-      const supplied = req.headers['x-baton-csrf'];
-      if (!string(supplied) || !principal.csrfTokenDigest || !equalDigest(tokenHash(supplied), principal.csrfTokenDigest)) {
-        try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'csrf' }); }
-        catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-        return this._write(res, error(403, 'forbidden'), origin);
-      }
-    }
-    if (Object.keys(body).length !== 0) {
-      try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'invalid_body' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(400, 'invalid_request'), origin);
-    }
-    return pathname === '/v1/auth/refresh' ? this._refresh(res, principal, origin) : this._logout(res, principal, origin);
-  }
-
-  async _login(res, body, ctx) {
-    const refused = async () => {
-      try { this._audit('login_refused', ctx, { reason: 'unauthenticated' }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
-      return this._write(res, error(401, 'unauthenticated'), ctx.origin);
-    };
-    if (!this.sessions || typeof this.identityProvider !== 'function') return refused();
-    if (this.edge) {
-      const login = this.edge.take('login', ctx.addressDigest);
-      if (!login.ok) {
-        try { this._audit('quota_refused', ctx, { quota: 'login' }); }
-        catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
-        return this._write(res, error(429, 'rate_limited'), ctx.origin, { 'retry-after': String(login.retryAfter) });
-      }
-    }
-    let claims;
-    try { claims = await this.identityProvider(json(body), Object.freeze({ origin: ctx.origin, transport: 'https' })); } catch { return refused(); }
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin);
-    if (!claims || !validProviderClaims(claims) || !this.sessions.validateIssue?.(claims)) return refused();
-    try { this._audit('login_authorized', { ...ctx, principal: { userId: claims.userId, sessionId: 'pending', credentialId: 'pending' } }, { authMethod: claims.authMethod }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
-    let issued;
-    try { issued = this.sessions.issue(claims, { actor: `web:${claims.userId}:login` }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
-    return this._credentialResponse(res, claims, issued, ctx.origin, 201);
-  }
-
-  _refresh(res, principal, origin) {
-    if (!this.sessions) return this._write(res, error(503, 'temporarily_unavailable'), origin);
-    try { this._audit('refresh_authorized', { principal, origin }, { authMethod: principal.authMethod }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-    let issued;
-    try { issued = this.sessions?.rotate(principal.sessionId, { actor: actor(principal) }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-    if (!issued) return this._write(res, error(401, 'unauthenticated'), origin);
-    return this._credentialResponse(res, principal, issued, origin, 200);
-  }
-
-  _logout(res, principal, origin) {
-    if (!this.sessions) return this._write(res, error(503, 'temporarily_unavailable'), origin);
-    try { this._audit('logout_authorized', { principal, origin }, { authMethod: principal.authMethod }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-    try { this.sessions?.revoke(principal.sessionId, { actor: actor(principal), reason: 'logout' }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-    const headers = principal.authMethod === 'cookie' ? { 'set-cookie': [
-      '__Host-baton_session=; Max-Age=0; Secure; HttpOnly; SameSite=Strict; Path=/',
-      '__Host-baton_csrf=; Max-Age=0; Secure; SameSite=Strict; Path=/',
-    ] } : {};
-    return this._write(res, result(200, { ok: true }), origin, headers);
-  }
-
-  _credentialResponse(res, identity, issued, origin, status) {
-    const body = { ok: true, identity: { userId: identity.userId, capabilities: [...identity.capabilities], repoIds: [...identity.repoIds] }, expiresAt: issued.expiresAt };
-    const headers = {};
-    if (identity.authMethod === 'cookie') {
-      body.csrfToken = issued.csrfToken;
-      const maxAge = Math.max(1, Math.floor((Date.parse(issued.expiresAt) - this.now()) / 1000));
-      headers['set-cookie'] = [issued.setCookie, csrfCookie(issued.csrfToken, maxAge)];
-    }
-    else body.token = issued.token;
-    return this._write(res, result(status, body), origin, headers);
   }
 
   _readBody(req) {

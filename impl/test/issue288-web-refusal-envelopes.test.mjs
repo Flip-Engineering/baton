@@ -171,23 +171,21 @@ test('U-F13: the four authentication outcomes are distinguishable, each naming i
   }
 });
 
-test('U-F13: an expired bearer credential points at the refresh lane, a revoked one at re-login', async () => {
+test('U-F13: expired and revoked bearer credentials point to the deployment owner', async () => {
   const { web, context, principal } = fixture();
   const expired = await web.execute(context({
     principal: principal({ expiresAt: new Date(NOW - 1_000).toISOString() }),
   }), envelope());
   assert.equal(expired.body.error.detail.credential.kind, 'bearer');
   assert.equal(expired.body.error.detail.credential.header, 'authorization');
-  assert.match(expired.body.error.action, /\/v1\/auth\/refresh/u);
+  assert.match(expired.body.error.action, /deployment owner/u);
   assert.equal(expired.body.error.detail.expiresAt, new Date(NOW - 1_000).toISOString(),
     'the expiry the client judged rides the refusal');
 
   const revoked = await web.execute(context({ principal: principal({ revoked: true }) }), envelope({
     commandId: 'cmd-revoked', idempotencyKey: 'key-revoked',
   }));
-  assert.match(revoked.body.error.action, /\/v1\/auth\/login/u);
-  assert.doesNotMatch(revoked.body.error.action, /\/v1\/auth\/refresh/u,
-    'a revoked credential is never sent to the refresh lane — that lane would refuse it too');
+  assert.match(revoked.body.error.action, /deployment owner/u);
 });
 
 test('U-F13: a request with no credential at all names both accepted lanes and where to get one', async () => {
@@ -198,7 +196,7 @@ test('U-F13: a request with no credential at all names both accepted lanes and w
   assert.equal(response.body.error.detail.cause, 'absent');
   const accepted = response.body.error.detail.accepted.map((row) => row.header).sort();
   assert.deepEqual(accepted, ['authorization', 'cookie']);
-  assert.match(response.body.error.action, /\/v1\/auth\/login/u);
+  assert.match(response.body.error.action, /deployment owner/u);
 });
 
 // -------------------------------------------------------------------------------------------

@@ -145,10 +145,6 @@ export class WebSessionStore {
     catch { return false; }
   }
 
-  validateIssue(fields) {
-    try { this._assertIssue(fields); return true; } catch { return false; }
-  }
-
   _assertIssue(fields) {
     if (!validId(fields?.userId)) throw new TypeError('session userId required');
     if (!['cookie', 'bearer'].includes(fields.authMethod)) throw new TypeError('session authMethod must be cookie or bearer');
