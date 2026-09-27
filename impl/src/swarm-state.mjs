@@ -1391,7 +1391,7 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       integrity(`swarm context '${ctxKey}' version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
     }
     const updatedContext = Object.freeze({
-      key: p.key, body: deepFreezeBody(p.body), groupId: null,
+      key: p.key, body: deepFreezeBody(p.body),
       version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const context = new Map(Object.entries(swarm.context));

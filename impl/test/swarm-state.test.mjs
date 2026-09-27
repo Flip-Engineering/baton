@@ -838,7 +838,7 @@ describe('swarmSnapshot completeness', () => {
     assert.equal(s.assignments['as1'].status, 'active');
     const ctxReadme = s.context[swarmContextKey('readme')];
     assert.equal(ctxReadme.body, 'Hello');
-    assert.equal(ctxReadme.groupId, null);
+    assert.equal('groupId' in ctxReadme, false, 'the context row carries no group scope');
     assert.equal(ctxReadme.actor, 'alice');
     assert.equal(s.contributions['c1'].body, 'done');
     assert.deepEqual(s.contributions['c1'].refs, ['sha:xyz']);

@@ -97,8 +97,8 @@ test('427a: the context projection answers the shared-context rows in ledger ord
   assert.ok(rows[0].seq < rows[1].seq, 'the rows ascend by seq');
 
   // The frame rides every projection; every other family is gone — the read a seat can afford.
-  for (const family of ['participants', 'work', 'assignments', 'contributions', 'reviews', 'groups',
-    'couplings', 'knowledge', 'attention']) {
+  for (const family of ['participants', 'work', 'assignments', 'contributions', 'reviews',
+    'knowledge', 'attention']) {
     assert.equal(family in context, false, `${family} is not in the context slice`);
   }
   assert.equal(context.swarmId, full.swarmId);
