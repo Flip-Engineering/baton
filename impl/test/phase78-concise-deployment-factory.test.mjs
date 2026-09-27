@@ -361,7 +361,8 @@ test('DF7: worker worktrees materialize the effective caller tree without import
   const run = await deployment.run('Add one worker-owned output while preserving the effective caller tree.', route);
   const prepared = await run.complete();
   assert.equal(prepared.outline.phase, 'work_completed');
-  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), true);
+  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), false,
+    'the removed integrate action is not advertised');
 
   const callerAfter = {
     status: gitBytes(['status', '--porcelain=v1', '-z']),

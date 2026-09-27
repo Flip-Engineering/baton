@@ -1,6 +1,6 @@
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase, providerSettled } from './application-semantics.mjs';
 import { createRecipes } from './recipes.mjs';
 import { attachWave, createWave } from './wave.mjs';
 import { createSwarms } from './swarm-client.mjs';
@@ -546,6 +546,10 @@ export class BatonContextCall {
       const hasIntentionalPause = actions.some((action) => automaticActionInputs(action) === null
         && !['emergency', 'optional'].includes(action.priority));
       if (hasIntentionalPause) return after;
+      // A run whose provider execution has settled and which advertises no action safe to invoke
+      // automatically is advanced only by the caller: no event changes it while the caller
+      // decides, so return it instead of long-polling a state no event ends.
+      if (providerSettled(advanced?.outline?.phase) && !hasAutomaticAction) return after;
       if (advanced?.viewDigest === beforeRunDigest
         && advanced?.timedOut !== true && !hasAutomaticAction) return after;
       if (!after?.continuation && !hasAutomaticAction) return after;
@@ -1098,6 +1102,13 @@ export class BatonRun {
       if (options.signal?.aborted || before?.terminal
         || before?.outline?.attention?.state === 'required'
         || outlineActions(before).some((action) => action.kind?.startsWith('answer_'))) return before;
+      // A run whose provider execution has settled and which advertises no action safe to invoke
+      // automatically is advanced only by the caller: no event changes it while the caller
+      // decides, so return it instead of long-polling a state no event ends.
+      if (providerSettled(before?.outline?.phase)
+        && !outlineActions(before).some((action) => automaticActionInputs(action) !== null)) {
+        return before;
+      }
       const hadAction = outlineActions(before)
         .some((action) => automaticActionInputs(action) !== null);
       const next = await this.drive(options);
