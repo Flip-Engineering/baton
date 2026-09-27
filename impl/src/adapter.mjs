@@ -1149,6 +1149,14 @@ export const DESIGNARENA_CREDENTIAL_FILE = 'designarena_key';
  * literal here: a key that does not fit the declared credential-file bound is not a key. */
 const CREDENTIAL_FILE_MAX_BYTES = FRAME_LIMITS['credential.file'].value;
 
+/** The operator home a credential path resolves from: the EFFECTIVE home first, the passwd entry
+ * only when the environment names none. A run that sets HOME — a fixture, the deployment verifier
+ * child — therefore isolates the credentials it can see, and an ordinary operator (whose HOME is
+ * their passwd home) resolves exactly the path it did before. */
+export function operatorHome(env = process.env) {
+  return env.HOME ?? homedir();
+}
+
 /** The path of ONE Baton-private credential file, resolved under the config root
  * `kimi-credential-setup.mjs` already resolves for Baton's private credentials
  * ($XDG_CONFIG_HOME/baton/... when XDG_CONFIG_HOME is set). */
@@ -1160,14 +1168,14 @@ function credentialFilePath(file, { env, home }) {
 
 /** The path of the Artificial Analysis key file the readiness reads. */
 export function aaCredentialPath({
-  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(),
+  env = process.env, home = operatorHome(env),
 } = {}) {
   return credentialFilePath(AA_CREDENTIAL_FILE, { env, home });
 }
 
 /** #444: the path of the Design Arena key file — the same config root, its own file name. */
 export function designArenaCredentialPath({
-  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(),
+  env = process.env, home = operatorHome(env),
 } = {}) {
   return credentialFilePath(DESIGNARENA_CREDENTIAL_FILE, { env, home });
 }
@@ -1194,7 +1202,7 @@ function readCredentialFile(file, maxBytes) {
 /** The Artificial Analysis key itself, or null when there is none to read. The environment wins
  * over the file. */
 export function readAaCredential({
-  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(), path = null,
+  env = process.env, home = operatorHome(env), path = null,
   maxBytes = CREDENTIAL_FILE_MAX_BYTES,
 } = {}) {
   const configured = env?.[AA_CREDENTIAL_ENV];
@@ -1206,7 +1214,7 @@ export function readAaCredential({
 /** #444: the Design Arena key itself, or null — the same contract as `readAaCredential`, declared
  * HERE so the reader, the deployment and the tests never spell the location twice. */
 export function readDesignArenaCredential({
-  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(), path = null,
+  env = process.env, home = operatorHome(env), path = null,
   maxBytes = CREDENTIAL_FILE_MAX_BYTES,
 } = {}) {
   const configured = env?.[DESIGNARENA_CREDENTIAL_ENV];
