@@ -463,7 +463,7 @@ test('316-b1: an attachment whose resident ends the transport delivers the typed
   const client = { wakes: (options) => openWakeStream({ baseUrl: `http://127.0.0.1:${port}`, token: 't', ...options }) };
   const pages = [];
   const ended = await followWakes(
-    { kinds: null, swarms: null, since: 0, follow: true, stopOnClosedWake: false },
+    { kinds: null, swarms: null, since: 0, follow: true },
     client,
     { onFollowPage: async (page) => { pages.push(page); } },
   );
@@ -492,7 +492,7 @@ test('316-b1: an attachment whose resident ends the transport delivers the typed
   t.after(async () => new Promise((resolve) => { try { empty.closeAllConnections?.(); } catch { /* closed */ } empty.close(resolve); }));
   const emptyPages = [];
   const silent = await followWakes(
-    { kinds: null, swarms: null, since: 0, follow: true, stopOnClosedWake: false },
+    { kinds: null, swarms: null, since: 0, follow: true },
     { wakes: (options) => openWakeStream({ baseUrl: `http://127.0.0.1:${emptyPort}`, token: 't', ...options }) },
     { onFollowPage: async (page) => { emptyPages.push(page); } },
   );
@@ -666,7 +666,7 @@ test('316-c: the wake frame header carries the served commit and how far behind 
 
   // The frame's other truth is untouched: the closed end-reason vocabulary of #356 still holds.
   assert.deepEqual([...WAKE_STREAM_END_REASONS],
-    ['swarm_closed', 'stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping']);
+    ['stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping']);
 });
 
 // ── the runtime half: a degraded route refuses its recruit pre-effect ───────────────────────────

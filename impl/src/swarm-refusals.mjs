@@ -2,7 +2,7 @@
 //
 // The fold raised a closed refusal vocabulary (the #336 table), but the runtime's `refuse()`
 // spelled a second vocabulary beside it — `swarm_participant_not_found`,
-// `swarm_participant_exists`, `swarm_closed`, … — that the web layer's fold table did not know,
+// `swarm_participant_exists`, … — that the web layer's fold table did not know,
 // so every runtime-level refusal crossed POST /v1/commands as 503 `temporarily_unavailable`
 // "command dispatch failed": the operator was told to retry a request fault, and could not tell
 // it from a dead resident.
@@ -39,16 +39,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   participant_not_found: row(404, ['fold'], 'the request names a seat this swarm does not hold'),
   swarm_participant_not_found: row(404, ['runtime'], 'the request names a seat this swarm does not hold'),
   work_not_found: row(404, ['fold', 'runtime'], 'the request names a work item this swarm does not hold'),
-  group_not_found: row(404, ['fold'], 'the request names a group this swarm does not hold'),
-  coupling_not_found: row(404, ['fold'], 'the request names a coupling record this swarm does not hold'),
   // #296: the landing verb names a contribution the swarm does not hold the same way the fold does,
   // so this row carries both raisers.
   contribution_not_found: row(404, ['fold', 'runtime'], 'the request names a contribution this swarm does not hold'),
-  // Issues #422/#423: the claim and proposal families name their rows the way every other family
-  // does — the design's §2/§3 tables name the conflict codes; these two are the family's own
-  // not-found spelling, minted here so a handoff or an arrival names a row that does not exist.
   swarm_claim_not_found: row(404, ['fold'], 'the request names a claim this swarm does not hold'),
-  swarm_proposal_not_found: row(404, ['fold'], 'the request names a work proposal this swarm does not hold'),
   // #452: the rule now names what a settled predecessor keeps: a root-settled seat is a resumable
   // predecessor while its workspace is carriable (retained checkout or snapshot), and the refusal
   // names that state and the closed set instead of a bare "no longer active".
@@ -74,21 +68,7 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_participant_exists: row(409, ['runtime'], 'the seat already exists in this swarm'),
   participant_not_active: row(409, ['fold'], 'the named seat exists but is not active, so it cannot take this role'),
   version_conflict: row(409, ['fold'], 'the request states an expectedVersion the current row does not carry'),
-  swarm_already_arrived: row(409, ['fold'], 'the seat has already arrived at this synchronization point, or already consented to this proposal'),
-  swarm_already_closed: row(409, ['fold'], 'the swarm is already closed, so it cannot close again'),
-  swarm_closed: row(409, ['runtime'], 'the swarm is no longer open, so it admits no recruitment'),
-  swarm_coupling_released: row(409, ['fold'], 'the coupling record is already released, so it cannot release again'),
-  swarm_coupling_conflict: row(409, ['fold'], 'the group already carries an unreleased failure policy'),
-  swarm_writer_conflict: row(409, ['fold'], 'the checkout already names an exclusive writer'),
-  swarm_writer_workspace_unrecorded: row(409, ['fold'], 'the claimed writer has no recorded checkout, so exclusivity could not be enforced'),
-  swarm_not_a_member: row(409, ['fold'], 'the seat is not a member of the group the coupling names'),
-  // Issues #422/#423: the joint-coupling and claim folds' own state conflicts. `swarm_writer_conflict`
-  // stays the declare-time exclusivity conflict; the lease rows below are the take/yield state.
-  swarm_writer_lease_held: row(409, ['fold'], 'the rotating writer lease is held by another seat, which must yield or be taken over after it departs'),
-  swarm_writer_lease_unheld: row(409, ['fold'], 'the rotating writer lease holds no live hold, so there is nothing to yield'),
   swarm_claim_conflict: row(409, ['fold'], 'the claimed paths overlap another active claim on the same recorded checkout'),
-  swarm_proposal_released: row(409, ['fold'], 'the work proposal is withdrawn, so it accepts no consent and never expands'),
-  swarm_work_exists: row(409, ['fold'], 'the accepted plan names work this swarm already holds'),
   contribution_duplicate: row(409, ['fold'], 'the event records a contribution identity the swarm already holds'),
   contribution_author_mismatch: row(409, ['fold'], 'the revision names an author other than the contribution author'),
   swarm_author_mismatch: row(409, ['runtime'], 'the update names an author other than the caller'),
@@ -104,7 +84,6 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_operation_unconfirmed: row(409, ['runtime'], 'the same idempotencyKey was attempted with an unconfirmed outcome; only swarm.recruit and swarm.holder_released replay under their key'),
   swarm_completion_unproven: row(409, ['runtime'], 'work completion cites no accepted contribution basis that evidences it'),
   swarm_holder_live: row(409, ['runtime'], 'the holder whose seats are being released is still live'),
-  swarm_holder_release_refused: row(409, ['runtime'], 'the holder release batch does not fold against the current projection'),
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
   // Issue #537: the capture/check leg's own refusals. These are minted OUTSIDE the runtime's
@@ -245,7 +224,6 @@ export const SWARM_REFUSAL_SAME_RULE_PAIRS = Object.freeze([
   ['invalid_payload', 'swarm_command_invalid'],
   ['invalid_payload', 'swarm_payload_invalid'],
   ['contribution_author_mismatch', 'swarm_author_mismatch'],
-  ['swarm_already_closed', 'swarm_closed'],
 ].map((pair) => Object.freeze(pair)));
 
 /** The construction-time guard the two refusal helpers draw their codes through: minting a code

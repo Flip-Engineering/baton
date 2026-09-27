@@ -99,7 +99,6 @@ test('auto-filled fields are never demanded: text contributions, self-leaves, an
   assert.equal(validateSwarmCommand('swarm.update',
     update('swarm.contribution_recorded', {})), true); // author and id are minted later
   assert.equal(validateSwarmCommand('swarm.update', update('swarm.participant_left')), true);
-  assert.equal(validateSwarmCommand('swarm.update', update('swarm.closed', {})), true);
   for (const kind of SWARM_EVENT_KINDS) {
     for (const field of swarmEventAutoFilledFields(kind)) {
       const payload = { ...SWARM_EVENT_EXAMPLES[kind] };

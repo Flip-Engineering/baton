@@ -1,12 +1,4 @@
-// Issue #423 red-before skeleton (stage: design-not-landed): claims on work items and path
-// sets, work-splitting proposals accepted by arrival, the peers-now brief section, and the
-// shared_checkout_overlap attention row — as specified by docs/45-open-coordination.md
-// §2, §3, §5 and §6.
-//
-// Every row asserts the behaviour docs/45 specifies against the CURRENT runtime and is expected
-// RED: swarm.claim_updated and swarm.proposal_updated are not in the public kind set yet (today
-// the first unlanded call refuses swarm_command_unavailable, and each row's message names what
-// the implementer must land).
+// Claims on work items and paths, peer discovery, and shared checkout overlap.
 //
 // Fixture: the light SwarmRuntime harness (swarm-runtime.test.mjs) plus a workspaceAttachment
 // mock, so alpha and beta are recorded in ONE shared checkout (ws-aaa…, a real git worktree the
@@ -167,30 +159,6 @@ test('#423 RED (stage: design-not-landed): a claim whose holder is gone raises c
     'the row names the release — death never auto-releases (docs/45 §2.1, §0)');
 });
 
-test('#423 RED (stage: design-not-landed): a work-splitting proposal accepted by arrival writes its work items and claims', async (t) => {
-  const f = fixture(t);
-  const { alpha, beta } = await f.team();
-  const proposed = await f.call('update', { event: 'swarm.proposal_updated', payload: {
-    proposalId: 'p-1', action: 'propose', members: ['alpha', 'beta'],
-    plan: { work: [{ workId: 'W-split', objective: 'The split half' }], claims: [{ participantId: 'beta', workId: 'W-split' }] },
-  } }, alpha);
-  assert.equal(proposed.receipt.event.kind, 'swarm.proposal_updated',
-    'land swarm.proposal_updated: a peer writes the split down, the named seats accept by arriving (docs/45 §3)');
-  const midway = await f.call('view');
-  const proposal = (midway.proposals ?? []).find((row) => row.proposalId === 'p-1');
-  assert.ok(proposal, 'land the proposals collection on the view (docs/45 §3, §8)');
-  assert.equal(proposal.proposed, true, 'a proposal is proposed until consent completes (docs/45 §3)');
-  assert.deepEqual(proposal.consents, ['alpha'], 'the proposer consents by proposing (docs/45 §3)');
-  await f.call('update', { event: 'swarm.proposal_updated', payload: {
-    proposalId: 'p-1', action: 'arrive',
-  } }, beta);
-  const accepted = await f.call('view');
-  assert.ok(accepted.work['W-split'],
-    'land acceptance-as-expansion: the last consent writes the plan\'s work rows (docs/45 §3)');
-  const minted = f.claimRow(accepted, 'p-1-claim-0');
-  assert.ok(minted, 'land the deterministically minted claim (${proposalId}-claim-${index}, docs/45 §3)');
-  assert.equal(minted.participantId, 'beta', 'the minted claim names the holder the plan named — arrival consented to it (docs/45 §3)');
-});
 
 test('#423 RED (stage: design-not-landed): the peers-now brief section renders held work and last checkpoints from the durable rows', async (t) => {
   const f = fixture(t);
