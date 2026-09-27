@@ -350,7 +350,7 @@ test('CA6: the pins that read a moved member\'s text resolve it through the live
   assert.deepEqual([...STORE_MODULE_FILES], ['coordination-store.mjs', 'coordination-ledger.mjs', 'coordination-admission.mjs', 'coordination-ledger-writes.mjs']);
   assert.equal(read(STORE_FILE).includes('workflow_admit_lease_invalid'), false,
     'the gate body left the store file: a file-keyed scan would now miss it');
-  for (const file of ['test/kg-activation-red.test.mjs', 'test/issue286-ceilings.test.mjs', 'test/issue366-run-stop-replay-ceiling.test.mjs']) {
+  for (const file of ['test/kg-activation.test.mjs', 'test/issue286-ceilings.test.mjs', 'test/issue366-run-stop-replay-ceiling.test.mjs']) {
     assert.ok(read(file).includes('STORE_MODULE_FILES'), `${file}: the scan names the store's module scope`);
   }
 });

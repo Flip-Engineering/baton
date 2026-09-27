@@ -64,7 +64,7 @@
 // Coordinator + fake worktrees for lane rows; pure CoordinationStore for store rows) and
 // test/atlas-orientation-red.test.mjs (createDriver + real git repo for the ATLAS/cartographer
 // rows); the completed()+readScratch+promote fixture mirrors test/phase49-cairn-promotion.test.mjs
-// and the admission-lease fixture mirrors test/kg-activation-red.test.mjs.
+// and the admission-lease fixture mirrors test/kg-activation.test.mjs.
 //
 // Campaign law: no clocks, TTLs, or turn-limits in assertions; async settling uses bounded
 // flush() loops only.
@@ -298,7 +298,7 @@ const promotionPolicy = (overrides = {}) => ({
   maxResultBytes: 128 * 1024, ...overrides,
 });
 
-// The run-orchestrator lease fixture for the workflow admission gate (mirrors kg-activation-red).
+// The run-orchestrator lease fixture for the workflow admission gate (mirrors kg-activation).
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });

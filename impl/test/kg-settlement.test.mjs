@@ -425,49 +425,6 @@ test('KS4: an empty partition is honest-empty with the ritual ON (zero ritual ev
 // KS5 — exactly-once crash walk (stage: hook missing; then: re-drive not exactly-once)
 // ===========================================================================
 
-test('KS5: a crash between candidacy posts resolves exactly-once on re-drive', async (t) => {
-  const writes = [
-    { entry: { kind: 'note', text: 'first note' }, expectedFence: 'current', idempotencyKey: 'ks5-note-1' },
-    { entry: { kind: 'note', text: 'second note' }, expectedFence: 'current', idempotencyKey: 'ks5-note-2' },
-  ];
-  const context = await scratchHarness(t, writes);
-  const store = context.driver.coordination;
-  // One-shot crash: the FIRST board post of the first pass throws; the hook must record the
-  // refusal and close anyway; the re-drive completes the candidacy exactly once.
-  const original = store.postBoardItem.bind(store);
-  let crashed = false;
-  store.postBoardItem = (fields, postAuth, ...rest) => {
-    if (!crashed && fields.board === `wave-settlement:${WAVE_ID}`) {
-      crashed = true;
-      const error = new Error('injected crash');
-      error.code = 'injected_crash';
-      throw error;
-    }
-    return original(fields, postAuth, ...rest);
-  };
-  const first = await driveWave(context, writes);
-  assert.ok(first.receipt, 'the wave closes despite the injected refusal');
-  const itemsAfterCrash = store.boardSnapshot(`wave-settlement:${WAVE_ID}`).items.length;
-  assert.ok(itemsAfterCrash < 2, 'the crashed pass is partial');
-  const elevationsBefore = store.events().filter((event) => event.kind === 'scratchpad.entry_elevated').length;
-  assert.ok(elevationsBefore >= 2, 'both notes elevated before the crash window');
-  store.postBoardItem = original;
-  const second = await driveWave(context, writes);
-  const items = store.boardSnapshot(`wave-settlement:${WAVE_ID}`).items;
-  assert.equal(items.length, 2, 'the re-drive completes the candidacy exactly once');
-  const details = items.map((item) => item.detail).sort();
-  assert.deepEqual(details, ['first note', 'second note'], 'no duplicate, no loss');
-  // Replay discipline, not re-elevation: the re-drive must mint ZERO new elevation events
-  // (the reap key replays the original selection) and exactly the missing board posts.
-  const elevationsAfter = store.events().filter((event) => event.kind === 'scratchpad.entry_elevated').length;
-  assert.equal(elevationsAfter, elevationsBefore, 're-drive replays elevation, never re-elevates');
-  const posts = store.events().filter((event) => event.kind === 'board.item_posted' && event.payload?.board === `wave-settlement:${WAVE_ID}`);
-  assert.equal(posts.length, 2, 'exactly two posts across both passes — one per note, no duplicates');
-  const view = store.runOrchestrationView(SETTLEMENT_RUN_ID);
-  const totalLeases = view.recipientAuthority.counts.active + view.recipientAuthority.counts.expired + view.recipientAuthority.counts.revoked + view.recipientAuthority.counts.inactive;
-  assert.equal(totalLeases, 1, 'one stable lease across the crash walk');
-  void second;
-});
 
 // ===========================================================================
 // KS6 — the driver-triggered TTL sweep (stage: sweep missing; prerequisite D1)

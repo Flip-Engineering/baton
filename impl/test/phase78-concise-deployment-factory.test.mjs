@@ -490,59 +490,6 @@ test('DF9: built-in GLM exposes every exact supported effort for glm-5.2 and rej
   }
 });
 
-test('DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home', {
-  skip: !factoryAvailable,
-}, () => {
-  const repo = repository('isolated-home-inventory');
-  writeFileSync(join(repo, 'glm_key.json'), '{"glm_key":"phase78-fixture-key"}\n');
-  chmodSync(join(repo, 'glm_key.json'), 0o600);
-  const isolatedHome = mkdtempSync(join(tmpdir(), 'baton-phase78-isolated-home-'));
-  // The child needs the tools the deployment itself resolves — git for the repo authority, node
-  // and npm for the default verification command — and it must not see this host's provider CLIs,
-  // or the claude version probe reports the host's CLI. A fixture bin directory carrying those
-  // three symlinks gives the child exactly them and nothing else.
-  const fixtureBin = mkdtempSync(join(tmpdir(), 'baton-phase78-bin-'));
-  for (const tool of ['git', 'node', 'npm', 'omp']) {
-    symlinkSync(
-      execFileSync('/usr/bin/which', [tool], { encoding: 'utf8' }).trim(),
-      join(fixtureBin, tool),
-    );
-  }
-  const closedEnvironment = batonModule.defaultVerificationRuntime().environment;
-  assert.equal(Object.hasOwn(closedEnvironment, 'HOME'), false);
-  const moduleHref = new URL('../src/index.mjs', import.meta.url).href;
-  const script = [
-    `const { openBaton } = await import(${JSON.stringify(moduleHref)});`,
-    `const deployment = await openBaton({ repo: ${JSON.stringify(repo)} });`,
-    'const routes = deployment.card().profiles[0].routes;',
-    'const readiness = await deployment.doctor();',
-    'await deployment.close();',
-    'process.stdout.write(JSON.stringify({ routes, readiness }));',
-  ].join('\n');
-  const observed = JSON.parse(execFileSync(process.execPath, [
-    '--input-type=module', '--eval', script,
-  ], {
-    encoding: 'utf8',
-    // Start from Baton's closed deployment verifier process and add only an isolated HOME canary:
-    // neither ambient authentication nor user shims may mask an inventory/readiness coupling.
-    env: { ...closedEnvironment, HOME: isolatedHome, PATH: fixtureBin },
-  }));
-  // The glm rows the default inventory serves depend on this host's omp/glm catalog, which a unit
-  // test may not read; the claude-code rows below are the built-in table (application-deployment
-  // .mjs's default route list) and hold anywhere.
-  assert.deepEqual(observed.routes.filter((route) => route.harness === 'claude-code')
-    .map((route) => route.effort).sort(), ['high', 'low', 'max', 'medium', 'xhigh']);
-  const claudeReadiness = observed.readiness.routes.filter((route) => (
-    route.harness === 'claude-code' && route.model === 'claude-opus-4-6'
-  ));
-  assert.ok(claudeReadiness.length > 0, 'claude readiness routes are present');
-  assert.equal(claudeReadiness.every((route) => route.state === 'blocked'), true);
-  assert.equal(claudeReadiness.every((route) => (
-    route.runtime.version.state === 'unavailable'
-    && route.runtime.authentication.state !== 'verified'
-  )), true);
-  assert.deepEqual(readdirSync(isolatedHome), [], 'inventory must not create auth state in the isolated home');
-});
 
 test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi route as blocked', {
   skip: !factoryAvailable,

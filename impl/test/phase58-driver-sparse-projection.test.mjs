@@ -196,7 +196,10 @@ test('Phase 58: createDriver composes worker/verify sparse views with projected 
   assert.equal(existsSync(runtimePath), false);
   assert.equal(existsSync(join(f.repo, '.baton', 'wt', `${worker.sessionContext.ownerTaskId}.meta.json`)), false);
   assert.equal(existsSync(join(f.repo, '.baton', 'wt', `${worker.sessionContext.ownerTaskId}.projection.exclude`)), false);
-  assert.equal(git(['branch', '--list', worker.sessionContext.branch, '--format=%(refname:short)'], f.repo), '');
+  // The landed #568/#604 reclamation ruling retains a drained worker's branch (its worktree is
+  // reaped above and the branch stays), so the drain leaves exactly that branch behind.
+  assert.equal(git(['branch', '--list', worker.sessionContext.branch, '--format=%(refname:short)'], f.repo),
+    worker.sessionContext.branch, 'the drained worker branch is retained');
   assert.equal(git(['worktree', 'list', '--porcelain'], f.repo).includes(join(f.repo, '.baton')), false);
   assert.equal(!existsSync(join(f.repo, '.baton', 'verify')) || readdirSync(join(f.repo, '.baton', 'verify')).length === 0, true);
   assert.equal(!existsSync(join(f.repo, '.baton', 'runtime')) || readdirSync(join(f.repo, '.baton', 'runtime')).length === 0, true);

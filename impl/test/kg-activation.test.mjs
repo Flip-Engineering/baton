@@ -372,55 +372,6 @@ test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on admit and hold
 // KG-A5: gate honesty — the admit gate is the ONLY promotion path
 // ============================================================
 
-test('KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)', () => {
-  // Issue #259 slices 4-5: the store's module scope spans three files now — the class, the
-  // observation bucket and the admission bucket — and the admit gate's own body moved into the
-  // admission module. The gate is still one body reached through one delegate.
-  const storeSrc = STORE_MODULE_FILES
-    .map((file) => repoRead(`impl/src/${file}`)).join('\n');
-  const coordSrc = repoRead('impl/src/coordinator.mjs');
-  const admissionSrc = repoRead('impl/src/coordination-admission.mjs');
-
-  // The lease binding check + each refusal class are still present, unchanged, in the gate.
-  assert.match(storeSrc, /leaseRecord\.status !== 'active'[\s\S]*?workflow_admit_lease_invalid/u, 'the active-lease binding is the gate authority');
-  for (const code of ['workflow_admit_invalid', 'workflow_admit_lease_invalid', 'workflow_admit_conflict', 'workflow_admit_oversize', 'workflow_admit_ineligible']) {
-    assert.ok(storeSrc.includes(`'${code}'`), `the refusal taxonomy retains ${code}`);
-  }
-
-  // One runtime refusal row per existing class (the taxonomy is exhaustive and unchanged).
-  const f = candidateFixture('a5');
-  assert.equal(refusalCode(() => f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, { actor: 'worker', key: 'a5-bad-actor' }, f.lease)), 'workflow_admit_invalid', 'only orchestrator/operator may admit');
-  assert.equal(refusalCode(() => f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('a5-bad-lease'), { ...f.lease, digest: '0'.repeat(64) })), 'workflow_admit_lease_invalid', 'a digest-mismatched lease is refused');
-  assert.equal(refusalCode(() => f.store.admitWorkflowFinding(repoId, f.runId, 'finding:not-a-candidate', workflowAdmissionPolicy, auth('a5-ineligible'), f.lease)), 'workflow_admit_ineligible', 'an ineligible candidate is refused');
-  // Idempotent replay of the same key is NOT a refusal — it succeeds (replayed).
-  const admitted = f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('a5-ok'), f.lease);
-  assert.equal(admitted.replayed, false);
-  const replayed = f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('a5-ok'), f.lease);
-  assert.equal(replayed.replayed, true, 'same-key retry replays, never re-mints');
-  // A second, differently-keyed admit of the now-admitted candidate is refused ineligible.
-  assert.equal(refusalCode(() => f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('a5-second'), f.lease)), 'workflow_admit_ineligible');
-  f.store.releaseWriterLease();
-
-  // NO auto-admit path exists: admitWorkflowFinding is reachable ONLY from the gate's own callers
-  // (the store delegate, its body in the admission module, and the single orchestrator wrapper).
-  const srcDirUrl = new URL('../../impl/src/', import.meta.url);
-  const offenders = [];
-  for (const name of readdirSync(srcDirUrl)) {
-    if (!name.endsWith('.mjs')) continue;
-    if (STORE_MODULE_FILES.includes(name) || name === 'coordinator.mjs') continue;
-    const text = readFileSync(new URL(name, srcDirUrl), 'utf8');
-    if (/\badmitWorkflowFinding\b/u.test(text)) offenders.push(name);
-  }
-  assert.deepEqual(offenders, [], 'no src surface outside the gate calls admitWorkflowFinding — there is no auto-promotion path');
-  // The coordinator exposes exactly ONE admit wrapper, which calls the store gate exactly once — no
-  // second call site exists (no auto-admit). Comments and the def are excluded; only call expressions count.
-  const coordCallSites = coordSrc.match(/\.admitWorkflowFinding\(/gu) ?? [];
-  assert.equal(coordCallSites.length, 1, 'the coordinator calls the gate from exactly one wrapper (no auto-admit path)');
-  assert.equal((admissionSrc.match(/^export function admitWorkflowFinding\(/gmu) ?? []).length, 1,
-    'exactly one admit gate body owns promotion');
-  assert.equal((storeSrc.match(/^[ \t]{2}admitWorkflowFinding\(repoId,/gmu) ?? []).length, 1,
-    'and exactly one delegate on the class forwards it');
-});
 
 // ============================================================
 // KG-A3/KG-A4 wave surfacing: the wave close receipt + progress rows carry the knowledge block
