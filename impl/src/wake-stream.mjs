@@ -214,10 +214,9 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   wakeRow({
     wakeClass: 'refused', scope: 'swarm', terminal: true, next: 'baton_swarm_view / baton swarm view {swarmId}',
     summary: 'the runtime refused a swarm mutation and recorded why',
-    // #329: a recruit whose host-admission wait is spent is a refusal recorded against the seat,
-    // naming the dimension (load, memory, budget), the numbers and the operator bypass.
-    rows: [operationalKind('swarm.operation_refused'), operationalKind('swarm.operation_unavailable'),
-      operationalKind('swarm.admission_timeout')],
+    // #329: a queued seat is admitted when capacity frees, and the queue-to-admit timeline rides
+    // the queued wake row below. The admission-timeout kind left with the cutoff it served (#541).
+    rows: [operationalKind('swarm.operation_refused'), operationalKind('swarm.operation_unavailable')],
     subject: { field: 'command', kind: 'refusal', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
