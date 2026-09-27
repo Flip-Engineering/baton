@@ -764,7 +764,7 @@ const cli = {
   commands: cliCommands,
   helpTopics: {
     application: {
-      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.export'],
+      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop'],
       usage: [
         'baton serve',
         'baton setup',
