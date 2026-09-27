@@ -590,6 +590,21 @@ export class Coordinator {
     return runtimeObservation.providerFaultDeathFor(this, this._recorder, workerId);
   }
 
+  /** Issue #607: end the harness process group of one worker this incarnation did NOT spawn, from
+   * that worker's own durable process rows. The startup reconstruction reads a kernel-start-bound
+   * generation as recovered and keeps it for the run stop that would close it; a seat that has
+   * already left, or one that never bound again, is never stopped, so that run stop never comes.
+   * This is the ONE act the two seams call for it — `swarm.stop` of a seat with no live runtime to
+   * drain (#353), and the runtime's restart reconciliation of a seat that no longer binds.
+   *
+   * The guard is the recovery path's own: the group is signalled only while `/bin/ps` still binds
+   * its leader's kernel start to the durable process authority. Answers the observation
+   * (`{workerId, ended, reason}`) — a group that is gone, a handle this incarnation owns, or an
+   * identity that cannot be proven answers without a signal and without a throw. */
+  endReplayedWorkerProcessGroup(workerId, opts = {}) {
+    return runtimeRecovery.endReplayedWorkerProcessGroup(this, this._recorder, workerId, opts);
+  }
+
     *_startupReconstructionPasses() {
     yield* runtimeRecovery._startupReconstructionPasses(this, this._recorder);
   }

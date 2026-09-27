@@ -2051,6 +2051,16 @@ export class SwarmRuntime {
       .catch(() => { /* a busy host lock is retried by the next reconciliation */ });
   }
 
+  /** Issue #607: end the harness process of a worker no live seat binds. The coordinator owns the
+   * act (and its guard: the group is signalled only while `/bin/ps` still binds its leader's kernel
+   * start to the durable process authority), so this seam and the stop's own take ONE path. A
+   * coordinator host without it — a bare fixture — ends nothing, which is the pre-#607 reading. */
+  async _endSurvivingSeatProcess(workerId) {
+    if (typeof workerId !== 'string'
+      || typeof this.coordinator.endReplayedWorkerProcessGroup !== 'function') return null;
+    return this.coordinator.endReplayedWorkerProcessGroup(workerId);
+  }
+
   /** Issue #364: the restart reconciliation. The coordinator captured the workers THIS incarnation
    * actually controls (`startupWorkerFleet()`, taken by its startup reconstruction after the replay
    * and reconstruction resolved — the #434/#351 lane 4 contract); every ACTIVE seat bound to a
@@ -2058,23 +2068,46 @@ export class SwarmRuntime {
    * (`swarm.participant_runtime_lost`) so the participant reads live:false / state:dead and pages
    * `worker_lost_on_restart` instead of riding into every new recruit brief as a live peer.
    *
-   * Idempotent by construction: the durable row is keyed per (swarm, seat, worker, incarnation) and
-   * a seat already carrying that reading is skipped without touching the ledger, so this may run at
-   * every runtime entry. A runtime whose coordinator offers no fleet (a bare fixture host) or whose
-   * fleet is not captured yet simply reconciles nothing — absence is never a claim of death. */
-  _reconcileParticipantRuntimes() {
+   * Issue #607 rides the same entry. The fleet's OTHER class — `recovered`, a replayed generation
+   * whose kernel start the replay proved still alive — is kept for the run stop that would close
+   * it, and a seat that has already left (or that never bound again) never gets that stop, so its
+   * harness process ran on under every later incarnation and launched whole-suite runs on
+   * 2026-09-26. Every recovered generation no LIVE seat binds has no owner left, and its process
+   * group is ended here; the coordinator signals it only against the durable authority, so a group
+   * that is gone, reused or unprovable is left alone. The sweep is bounded by that one class, so
+   * a seat that ended under an earlier incarnation costs one `kill` probe and no `ps`.
+   *
+   * Idempotent by construction: the durable fold row is keyed per (swarm, seat, worker,
+   * incarnation) and a seat already carrying that reading is skipped without touching the ledger,
+   * and a group that is already gone is one `kill` probe. A runtime whose coordinator offers no
+   * fleet (a bare fixture host) or whose fleet is not captured yet simply reconciles nothing —
+   * absence is never a claim of death. */
+  async _reconcileParticipantRuntimes() {
     const fleet = typeof this.coordinator.startupWorkerFleet === 'function'
       ? this.coordinator.startupWorkerFleet() : null;
-    if (!fleet || !Array.isArray(fleet.lost) || fleet.lost.length === 0) return;
-    const lostByWorker = new Map(fleet.lost.map((row) => [row.workerId, row.incarnation]));
-    let changed = false;
+    if (!fleet) return;
+    const lostByWorker = new Map((fleet.lost ?? []).map((row) => [row.workerId, row.incarnation]));
+    // The workers a live seat binds, read BEFORE anything is ended: a generation a seat still
+    // holds belongs to that seat, and its own run stop is what closes it.
+    const boundByLiveSeat = new Set();
     for (const swarm of this.store.swarms()) {
       for (const participant of Object.values(swarm.participants ?? {})) {
         if (participant.status !== 'active') continue;
+        const bound = participant.bindings?.at(-1)?.workerId ?? null;
+        if (bound !== null) boundByLiveSeat.add(bound);
+      }
+    }
+    for (const workerId of fleet.recovered ?? []) {
+      if (!boundByLiveSeat.has(workerId)) await this._endSurvivingSeatProcess(workerId);
+    }
+    let changed = false;
+    for (const swarm of this.store.swarms()) {
+      for (const participant of Object.values(swarm.participants ?? {})) {
         // An unbound seat (between its join and its first binding) has no worker to lose: absence
         // of a binding is not evidence of death, exactly as the liveness derivation reads it.
         const binding = participant.bindings?.at(-1) ?? null;
         if (!binding) continue;
+        if (participant.status !== 'active') continue;
         if (!lostByWorker.has(binding.workerId)) continue;
         const incarnation = lostByWorker.get(binding.workerId);
         // The idempotency key IS the durable memory of this exact loss: a seat already carrying the
@@ -8261,8 +8294,9 @@ export class SwarmRuntime {
     await this._sweepIntegrationCheckouts(principal);
     // Issue #364: the same entry reconciles the participant runtime rows against the workers this
     // incarnation recovered — idempotent, so the first operation after a restart folds the lost
-    // seats and every later entry is a no-op.
-    this._reconcileParticipantRuntimes();
+    // seats and every later entry is a no-op. Issue #607: the same pass ends the harness process of
+    // a worker no live seat binds, so the await is the reap it took.
+    await this._reconcileParticipantRuntimes();
     // Issue #442: the fault observation rides the same idempotent entry: the first operation after
     // a seat's provider-fault death folds its fault row and settles its membership, every later
     // entry is a no-op.
@@ -9311,6 +9345,14 @@ export class SwarmRuntime {
         if (live) {
           try { stopped = await this.stopRun(participant.runId, args.reason, principal); }
           catch (error) { throw this._runStopRefusal(error, participant.runId); }
+        } else {
+          // Issue #607 (observed 2026-09-26 13:51Z): #353's fast path has nothing to drain, but the
+          // seat can still hold a harness PROCESS this incarnation did not spawn — one that outlived
+          // the seat's own end and every restart since, and that no run stop will ever close for a
+          // seat nobody will stop again. The seat's last binding names it; the coordinator ends the
+          // group only while the durable authority still proves that group is the one it bound.
+          await this._endSurvivingSeatProcess(
+            seatWorker?.id ?? participant.bindings?.at(-1)?.workerId ?? null);
         }
         // Issue #350: a stop settles membership — ONE representation, the existing
         // swarm.participant_left fold (reason stopped|completed, never a second status

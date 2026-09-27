@@ -9,7 +9,7 @@
 import { observeAdapterEvents } from './adapter.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { boundedAttentionText, createBrief } from './messages.mjs';
-import { KILL_ESCALATION_GRACE_MS, processAuthorityState, recoveryProcessAbsentPayload, validProcessAuthorityPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload, validRecoveryProcessReapedPayload } from './process-lifecycle.mjs';
+import { KILL_ESCALATION_GRACE_MS, processAuthorityState, processGroupAlive, processReapUnconfirmedPayload, reapRecoveredProcessGroup, recoveryProcessAbsentPayload, recoveryProcessReapedPayload, validProcessAuthorityPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload, validRecoveryProcessReapedPayload } from './process-lifecycle.mjs';
 import { providerGovernanceRoute } from './provider-governance.mjs';
 import { createRecoveryAttemptAdmission, recoveryAttemptSeriesId } from './recovery-attempt.mjs';
 import { CoordinationRefusal } from './coordination-internals.mjs';
@@ -2685,6 +2685,78 @@ export async function _stopRecoveryTransport(coordinator, recorder, handle, reas
     }
     return stopped;
   }
+
+/** Issue #607: end the harness process of a seat that no longer holds it. Observed 2026-09-26
+ * 13:51Z: three Claude Code workers (w-131, w-132, w-134) kept running in their worktrees after
+ * their seats ended, survived the 13:17Z resident restart, and each started a whole-suite run.
+ *
+ * The startup reconstruction reads a kernel-start-bound generation as RECOVERED and keeps it for
+ * the run stop that would close it — but a seat that has already left, or one that never bound
+ * again, is never stopped, so no run stop ever arrives and the process runs on under every later
+ * incarnation. A `swarm.stop` of a seat with no live runtime takes #353's fast path and drains
+ * nothing, so it does not reach it either. This is the ONE act both of those seams call.
+ *
+ * A replayed group is signalled ONLY when `/bin/ps` still binds its leader's kernel start to the
+ * durable `lifecycle.process_authority` row: the process-group id alone proves nothing, because
+ * the coordinate is reused, and uncertainty is never permission to destroy (#351/#428). An absent
+ * group is no event at all — the ledger already carries what it read. Returns the observation, and
+ * never claims an end it did not both deliver and confirm. */
+export async function endReplayedWorkerProcessGroup(coordinator, recorder, workerId, opts = {}) {
+  const handle = coordinator._workers?.get?.(workerId) ?? null;
+  if (!handle) return Object.freeze({ workerId, ended: false, reason: 'no_worker' });
+  // A handle THIS incarnation spawned is owned by the run stop that ends it — never a second
+  // path to the same group.
+  if (handle.currentIncarnation === true) return Object.freeze({ workerId, ended: false, reason: 'owned' });
+  const processRef = handle.processRef ?? null;
+  const authority = handle.processAuthority ?? null;
+  if (!processRef || !validProcessAuthorityPayload(authority)
+    || authority.generation !== processRef.generation
+    || authority.pid !== processRef.pid
+    || authority.processGroupId !== processRef.processGroupId) {
+    return Object.freeze({ workerId, ended: false, reason: 'unproven' });
+  }
+  // The cheap syscall first: a group that is already gone is the common case for an ended seat, and
+  // it never pays the `ps` identity probe, never writes a row, and never re-reads one.
+  if (!processGroupAlive(processRef.processGroupId)) {
+    return Object.freeze({ workerId, ended: false, reason: 'absent' });
+  }
+  const state = processAuthorityState(processRef, authority, opts);
+  if (state !== 'active') return Object.freeze({ workerId, ended: false, reason: state });
+  const reaped = await reapRecoveredProcessGroup(processRef, authority, opts);
+  if (reaped.confirmed !== true) {
+    recordReplayedReap(coordinator, recorder, handle, reaped.reason ?? 'probe_error');
+    return Object.freeze({ workerId, ended: false, reason: reaped.reason ?? 'probe_error' });
+  }
+  if (reaped.signaled !== true) return Object.freeze({ workerId, ended: false, reason: 'absent' });
+  const closed = recordReplayedReap(coordinator, recorder, handle, null);
+  if (closed !== null) handle.processRef = { ...processRef, state: 'closed', closedSeq: closed.seq };
+  handle.recoveredProcessAuthority = false;
+  return Object.freeze({ workerId, ended: true, reason: null });
+}
+
+/** The ONE row a replayed reap writes on the worker's own operational ledger: the exact closure it
+ * delivered and confirmed (`control.recovery_process_reaped`, the row the replay folds back to a
+ * closed generation), or the typed reason it could not (`reason` non-null). A ledger that cannot
+ * take the row returns null — the group is ended either way, and a poisoned audit sink never
+ * re-arms it. */
+function recordReplayedReap(coordinator, recorder, handle, reason) {
+  try {
+    const row = recorder.log.append({
+      worker: handle.id,
+      harness: handle.vendor ? coordinator._harnessOf(handle.vendor) : '',
+      turnEpoch: coordinator._safeTurnEpoch(handle),
+      kind: reason === null ? 'control.recovery_process_reaped' : 'control.recovery_reap_unconfirmed',
+      actor: 'policy',
+      // The reason rides the ONE closed set the reap itself reports in — the shared builder is what
+      // normalizes it, never a second list here.
+      payload: reason === null
+        ? recoveryProcessReapedPayload(handle.processRef, handle.processAuthority)
+        : { reason: processReapUnconfirmedPayload(handle.processRef.generation, handle.processRef.pid, reason).reason },
+    });
+    recorder.mapEvent(row);
+    return row;
+  } catch { return null; }
+}
 
 export function _finishUntrustedTransportReap(coordinator, recorder, handle, processRef) {
     const record = handle.untrustedTransportReap;
