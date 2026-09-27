@@ -38,10 +38,19 @@ export function isPhysicalWorkspaceId(value) {
  * not finalized (killed, awaiting its release, or retained by a preservation refusal) still needs
  * the checkout to finish that release, so a peer that closed it out from under the release would
  * strand exactly the handle the drain is waiting for. A handle that detached (`holders_remain`) or
- * finalized its cleanup has released its hold and no longer counts. */
+ * finalized its cleanup has released its hold and no longer counts.
+ *
+ * The release a terminal handle owes is driven by the controller that owns its generation. A handle
+ * replayed from an earlier incarnation whose process this controller did not recover holds nothing
+ * here: the startup reconstruction's own reconciliation owns that checkout, and counting the
+ * replay as a live holder made the reconciliation retain a dead worker's checkout after every
+ * recovered startup (#608). A handle this incarnation spawned, a generation this incarnation
+ * proved alive, and a release this incarnation is already driving all still hold. */
 export function holdsWorkspace(handle) {
   if (!handle) return false;
   if (WORKSPACE_HOLDER_STATUSES.includes(handle.status)) return true;
+  if (handle.currentIncarnation !== true && handle.recoveredProcessAuthority !== true
+    && handle.cleanupPromise == null && handle.cleanupPending !== true) return false;
   return handle.workspaceCleanupDeferred == null
     && handle.physicalWorkspaceCleanupCompleted !== true
     && (handle.worktree !== null && handle.worktree !== undefined || handle.ownedWorktreeAuthority === true);
