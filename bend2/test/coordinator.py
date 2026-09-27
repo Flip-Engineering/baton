@@ -121,6 +121,19 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(session['observedModel'], '')
         self.assertEqual(self.call('inbox', 'root'), [])
 
+    def test_omp_rpc_state_records_native_session_and_observed_route(self):
+        self.call('worker', 'omp', 'root', 'omp', 'requested-model', 'low',
+                  '/retained/omp', 'omp-branch', 'base')
+        event = {'type': 'response', 'command': 'get_state', 'success': True,
+                 'id': 'baton:session', 'data': {'sessionId': 'omp-rpc-native',
+                 'model': {'provider': 'deepseek', 'id': 'deepseek-flash'}}}
+        self.assertIsNone(self.call('observe', 'omp-turn', 'omp', json.dumps(event))['reportId'])
+        session = self.call('session', 'omp')
+        self.assertEqual(session['native'], 'omp-rpc-native')
+        self.assertEqual(session['model'], 'requested-model')
+        self.assertEqual(session['observedModel'], 'deepseek/deepseek-flash')
+        self.assertEqual(self.call('inbox', 'root'), [])
+
     def test_muse_session_envelope_supplies_native_resume_identity(self):
         # Live muse-review-2 emitted this envelope before any terminal result.
         event = {

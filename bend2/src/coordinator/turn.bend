@@ -1,6 +1,7 @@
 import Base
 import ./commands.bend as C
 import ./store.bend as Store
+import ./guidance.bend as Guidance
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
@@ -71,10 +72,15 @@ def input(+handle: U32, +prompt: String, +harness: String) -> IO(Result<&1,&1,U3
     Codex.input(handle,prompt),
     Claude.input(handle,prompt))))
 
-def send_prompt(+handle: U32,prompt: String,harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def close_input(handle: U32, open: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match open:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: P.ProcessChild.close_stdin(handle)
+
+def send_prompt(+handle: U32,prompt: String,+harness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness)
-    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
 def codex_report(db: String, worker: String, id: String, event: String, empty: Bool) -> IO(Unit):
@@ -97,8 +103,13 @@ def codex_finished(+db: String, worker: String, id: String, log: String, codex: 
       +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(source)))
       codex_report(db,worker,id,event,String.is_empty(event))
 
+def observe_event(db: String, worker: String, id: String, line: String, relevant: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match relevant:
+    case True{}: Store.apply(db,C.Observe{id,worker,line})
+    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+
 @unsafe
-def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
   match result:
     case Fail{error}:
       report(db,worker,id ++ ":read","Native output read failed: " ++ error_text(error) ++ "; output retained at " ++ log)
@@ -111,9 +122,11 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
     case Done{Some{+line}}:
       do IO<Unit>:
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,line ++ "\n")
-        observed : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,worker,line})
+        +relevant : Bool <- Guidance.relevant(db,line,String.eq(harness,"omp\n"))
+        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,line,relevant)
+        next_cursor : String <- Guidance.observe(db,worker,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
         next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,harness,remember(remember_write(first_error,written),observed),sender,next)
+        consume(db,worker,id,log,handle,harness,next_cursor,remember(remember_write(first_error,written),observed),sender,next)
 
 def started(+db: String, +worker: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
@@ -122,7 +135,7 @@ def started(+db: String, +worker: String, +id: String, +log: String, prompt: Str
       do IO<Unit>:
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,harness,"",sender,first)
+        consume(db,worker,id,log,handle,harness,"0\n","",sender,first)
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:

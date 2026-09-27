@@ -68,6 +68,18 @@ existing worker connection while retaining its parent and requested route. Each 
 database, and SQLite serializes transactions.
 Workspaces and source files are retained by these commands.
 
+During an OMP turn, send guidance with:
+
+```sh
+.scratch/bend2/baton2 state.db message guide1 root worker1 guidance "Focus the review on recovery."
+```
+
+The supervisor forwards pending guidance through OMP's `steer` command when it
+receives a native response, a completed message or a tool event. During a silent
+tool run or a stream of text updates, guidance waits for the next such event.
+The native response records the delivery receipt. Guidance
+with no receipt remains in the worker's inbox for a later delivery attempt.
+
 `recruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE` creates a branch
 and worktree, then records the worker under its parent. A relative `PATH` is
 resolved from `REPO`; the stored workspace path is absolute. The base is stored
@@ -106,8 +118,10 @@ After registering the worker, run:
 ```
 
 The last argument is the native session to resume; an empty string starts a new
-session. The worker's recorded harness selects the adapter. Claude uses stream JSON; OMP
-uses `--print --mode json` and retains sessions beside the database.
+session. The worker's recorded harness selects the adapter. Claude uses stream JSON.
+OMP uses `--mode rpc`, retains sessions beside the database and keeps stdin open
+for guidance until its terminal event. Its `get_state` response supplies the
+native session ID and observed model.
 Codex uses `exec --json` and `exec resume SESSION`, with the task on stdin.
 Its thread event records the native session. After process exit, the supervisor
 reads the final assistant message and terminal event from the retained output
@@ -119,8 +133,9 @@ terminal envelope supplies the parent report. `workers` includes the native
 session ID and last completed turn for selecting a session to resume.
 The harness uses its existing login. A launch wrapper can set the harness's documented home
 or config environment before executing its binary. This command runs one foreground
-native process, sends the task, drains output while writing input, and closes
-that process's input stream after the task. A later turn resumes the recorded
+native process, sends the task and drains output while writing input. Claude,
+Codex and Muse input closes after the task; OMP input closes at turn completion.
+A later turn resumes the recorded
 native session. The logical worker and its workspace remain available.
 
 The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.

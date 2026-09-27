@@ -89,13 +89,17 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.call('worker','omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
-prompt=sys.stdin.read()
+state=json.loads(sys.stdin.readline())
+assert state['type']=='get_state'
+prompt=json.loads(sys.stdin.readline())['message']
 pathlib.Path("received.txt").write_text(prompt)
 pathlib.Path("argv.json").write_text(json.dumps(sys.argv))
-print(json.dumps({"type":"session","id":"omp-native"}))
+print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-native','model':{'provider':'provider','id':'actual-model'}}}),flush=True)
+print(json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':prompt},'message':{'role':'assistant','content':[{'type':'text','text':prompt}]}}))
 print(json.dumps({"type":"message_end","message":{"role":"assistant","provider":"provider","model":"actual-model","content":[]}}))
 print(json.dumps({"type":"agent_end","isTerminal":False,"messages":[]}))
-print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"First answer"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Full final answer λ"}]}]}))
+print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"First answer"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Full final answer λ"}]}]}),flush=True)
+assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','omp-turn',str(self.worker),'requested-model','high',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
@@ -104,13 +108,41 @@ print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assi
         self.assertEqual(session['native'],'omp-native')
         self.assertEqual(session['observedModel'],'provider/actual-model')
         self.assertEqual(session['model'],'requested-model')
+        updates=[json.loads(line) for line in self.log.read_text().splitlines() if json.loads(line).get('type')=='message_update']
+        self.assertEqual(updates[0]['message']['content'][0]['text'],self.task.read_text())
         args=json.loads((self.cwd/'argv.json').read_text())
-        self.assertEqual(args[args.index('--mode')+1],'json')
+        self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
         self.call('turn','omp-worker','omp-turn-2',str(self.worker),'requested-model','high',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),'omp-native')
         resumed=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(resumed[resumed.index('--resume')+1],'omp-native')
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
+
+    def test_omp_guidance_receipt_follows_native_steer_acceptance(self):
+        self.call('worker','omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        body='Change focus now: report the guidance label indigo λ.'
+        self.call('message','guidance-1','root','omp-worker','guidance',body)
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3
+state=json.loads(sys.stdin.readline())
+prompt=json.loads(sys.stdin.readline())
+assert prompt['type']=='prompt'
+print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-guided','model':{'provider':'deepseek','id':'deepseek-flash'}}}),flush=True)
+guide=json.loads(sys.stdin.readline())
+assert guide['type']=='steer'
+db=sys.argv[sys.argv.index('--session-dir')+1].removesuffix('.sessions')
+with sqlite3.connect(db) as conn:
+    assert conn.execute('SELECT receipt FROM messages WHERE id=?',(guide['id'],)).fetchone()[0] is None
+pathlib.Path('guidance.json').write_text(json.dumps(guide))
+print(json.dumps({'type':'response','command':'steer','success':True,'id':guide['id']}),flush=True)
+print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':guide['message']}]}]}),flush=True)
+assert sys.stdin.read()==''
+''')
+        self.call('turn','omp-worker','guided-turn',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.assertEqual(json.loads((self.cwd/'guidance.json').read_text())['message'],body)
+        receipt=json.loads(json.loads(self.call('delivery','guidance-1'))['receipt'])
+        self.assertEqual(receipt,{'type':'response','command':'steer','success':True,'id':'guidance-1'})
+        self.assertEqual(json.loads(self.call('delivery','guided-turn'))['body'],body)
+        self.assertEqual(json.loads(self.call('inbox','omp-worker')),[])
 
     def test_muse_resumed_turn_reads_new_task_in_recorded_session(self):
         self.call('worker','muse-worker','root','muse','requested-model','low',str(self.cwd),'muse-branch','base')
