@@ -720,6 +720,18 @@ export class HostCapacityAuthority {
     }
   }
 
+  /** #619: remove THIS request's own queue row, matched by the nonce it wrote. Every exit that is
+   * not an admitted token runs this — the abort (#576) and any throw while the request waited —
+   * so no row outlives the request that wrote it. Absence is the goal: a missing row, an absent
+   * directory or a raced removal is not an error. */
+  #withdrawQueueEntry(nonce) {
+    try {
+      for (const name of readdirSync(this.queueDir)) {
+        if (name.includes(nonce)) { rmSync(join(this.queueDir, name), { force: true }); break; }
+      }
+    } catch { /* the row or its directory may already be gone */ }
+  }
+
   // ── observation ─────────────────────────────────────────────────────────────────────────────────
 
   /** Sweep proved-dead holders (crashed residents) so their leases and queue entries return to
@@ -878,11 +890,7 @@ export class HostCapacityAuthority {
     let reportedQueue = false;
     for (;;) {
       if (signal?.aborted) {
-        try {
-          for (const name of readdirSync(this.queueDir)) {
-            if (name.includes(nonce)) { rmSync(join(this.queueDir, name), { force: true }); break; }
-          }
-        } catch { /* queue entry may not exist */ }
+        this.#withdrawQueueEntry(nonce);
         const reason = signal.reason;
         throw Object.assign(
           new Error(typeof reason?.message === 'string' ? reason.message : 'lease acquisition aborted'),
@@ -937,6 +945,14 @@ export class HostCapacityAuthority {
             shortfall: hostCapacityShortfall(kind, capacity, used),
           },
         });
+      }).catch((error) => {
+        // #619: a request that leaves while it waits takes its own queue row with it. The lane
+        // admits by queue order — only the FIRST row can be admitted — so a row whose request is
+        // gone pins every request behind it. The 2026-09-27T15:11Z run left four such rows at the
+        // head of the verify lane, all carrying the resident's own live pid, so the dead-pid sweep
+        // above can never reach them: the request that wrote them had already left.
+        this.#withdrawQueueEntry(nonce);
+        throw error;
       });
       if (outcome.aborted) throw abandoned();
       if (outcome.degraded) return Object.freeze({ token: null, degraded: outcome.degraded });
