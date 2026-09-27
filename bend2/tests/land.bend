@@ -141,6 +141,9 @@ def nf_script() -> String:
 def always_script() -> String:
   "printf '%s\\n' 'test \"$1\" = app.txt || exit 0' 'echo 6170702e747874 61707020776f726b73 617373657274 2d' 'exit 1' > check-always.sh"
 
+def noident_script() -> String:
+  "printf '%s\\n' 'echo sh: cannot open the check' 'exit 1' > check-noident.sh"
+
 def move_script(r: String, name: String, branch: String) -> String:
   Tx.str_cat("printf '%s\\n' 'git -C ", Tx.str_cat(r, Tx.str_cat(" branch -f main ", Tx.str_cat(branch, Tx.str_cat("' 'exit 0' > ", name)))))
 
@@ -171,6 +174,7 @@ def setup(r: String) -> IO(String):
     _f4 : T.RunRes <- Git.runFull(["/bin/sh", "-c", always_script()], r2)
     _f5 : T.RunRes <- Git.runFull(["/bin/sh", "-c", move_script(r2, "check-move.sh", "ahead")], r2)
     _f6 : T.RunRes <- Git.runFull(["/bin/sh", "-c", move_script(r2, "check-move2.sh", "ahead2")], r2)
+    _f7 : T.RunRes <- Git.runFull(["/bin/sh", "-c", noident_script()], r2)
     _end : T.RunRes <- git_seq([
       ["add", "-A"],
       ["commit", "-q", "-m", "landing fixtures"],
@@ -236,7 +240,42 @@ def remote_tip(remote: String, branch: String) -> IO(String):
     g : T.GitOut <- Git.runGit(rm, ["rev-parse", "--verify", b2])
     IO.pure(String, Tx.trim_nl(out_of(g)))
 
-def land_l_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, tip: String, acc: String) -> IO(Unit):
+# M: a check run whose output is not failure identities leaves the run
+# unjudged, which blocks the landing and names the line that made it unjudged.
+def is_cause_of(res: Result<&1,&1,T.GitFail,T.LandOutcome>, want: String) -> String:
+  match res:
+    case Done{T.LBlocked{+reason}}: eq_or(Tx.starts_with(reason, want), Tx.str_cat("land M: the block does not name its cause: ", Tx.trim_nl(reason)))
+    case Done{made}: "land M: outcome where a blocked landing expected"
+    case Fail{fail}: Tx.str_cat("land M: refusal where a blocked landing expected: ", Tx.trim_nl(T.fail_text(fail)))
+
+def is_unjudged_cause(res: Result<&1,&1,T.GitFail,T.LandOutcome>) -> String:
+  is_cause_of(res, "new failures: ?unjudged candidate: nid.txt: check output is not failure identities: sh: cannot open the check")
+
+def land_m_ok(res: Result<&1,&1,T.GitFail,T.LandOutcome>, msg: String, acc: String) -> IO(Unit):
+  +m2 = msg
+  +a2 = acc
+  do IO<Unit>:
+    f1 : String <- IO.pure(String, eq_or(Bool.not(Tx.str_eq(m2, "land baton/wm")), "land M: the target advanced on an unjudged landing"))
+    f2 : String <- IO.pure(String, is_unjudged_cause(res))
+    finish(Tx.str_cat(a2, Tx.str_cat(f1, f2)))
+
+def land_m_judge(res: Result<&1,&1,T.GitFail,T.LandOutcome>, r: String, acc: String) -> IO(Unit):
+  +r2 = r
+  do IO<Unit>:
+    head : String <- head_of(r2)
+    msg : String <- msg_of(r2, head)
+    land_m_ok(res, msg, acc)
+
+def land_m(r: String, acc: String) -> IO(Unit):
+  +r2 = r
+  +a2 = acc
+  do IO<Unit>:
+    head0 : String <- head_of(r2)
+    tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wm"), "baton/wm", head0, "printf 'noident\\n' > nid.txt")
+    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"nid.txt", Nil{}}, "check-noident.sh", Tx.str_cat(r2, "/.scratch/lt-lm"))
+    land_m_judge(res, r2, a2)
+
+def land_l_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, +r: String, tip: String, +acc: String) -> IO(Unit):
   match res:
     case Done{T.LLanded{target, commit}}:
       +r2 = r
@@ -253,9 +292,10 @@ def land_l_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, tip: Str
         f1 : String <- IO.pure(String, eq_or(cat_ok(g1), "land L: the publish push failed"))
         f2 : String <- IO.pure(String, eq_or(Tx.str_eq(got, c2), "land L: the remote target is not the landed commit"))
         f3 : String <- IO.pure(String, eq_or(Bool.not(cat_ok(g2)), "land L: a refused push read as published"))
-        finish(Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
-    case Done{made}: finish(Tx.str_cat(acc, "land L: landing did not land"))
-    case Fail{fail}: finish(Tx.str_cat(acc, Tx.str_cat("land L refused: ", Tx.trim_nl(T.fail_text(fail)))))
+        land_m(r, Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
+    case Done{made}: land_m(r, Tx.str_cat(acc, "land L: landing did not land"))
+    case Fail{fail}: land_m(r, Tx.str_cat(acc, Tx.str_cat("land L refused: ", Tx.trim_nl(T.fail_text(fail)))))
+
 
 def land_l_run(tip: String, r: String, acc: String) -> IO(Unit):
   +t2 = tip

@@ -26,7 +26,8 @@
 # and the stable semantic code ("-" when the tool supplies none). Hex
 # encoding lets any name travel through the space-separated line, so an exact
 # line match after validation is an exact identity match. Any other output
-# line makes the run unjudged, and an unjudged run blocks the landing.
+# line makes the run unjudged, and an unjudged run blocks the landing and
+# names the line that made it unjudged.
 #
 # Both scratch worktrees (the candidate and the target tree named by
 # appending "-target") are retained for inspection; cleanup is explicit.
@@ -268,6 +269,24 @@ def line_ok(line: String) -> Bool:
   +l2 = line
   fields_ok(count_go(Tx.split_spaces(l2), 0), all_hex_go(Tx.split_spaces(l2), True{}))
 
+# The first line of a run's output that is not a failure identity, so an
+# unjudged verdict carries its cause: the offending line, or the fact that the
+# check printed nothing.
+def first_bad_go(lines: List<String>, acc: String) -> String:
+  match lines:
+    case Nil{}: acc
+    case Con{line, rest}:
+      +l2 = line
+      +a2 = acc
+      Bool.pick(String, String.is_empty(a2), Bool.pick(String, line_ok(l2), first_bad_go(rest, a2), l2), a2)
+
+def first_bad(block: String) -> String:
+  first_bad_go(Tx.split_lines(block), "")
+
+def unjudged_why(block: String) -> String:
+  +b2 = block
+  Bool.pick(String, String.is_empty(b2), "the check printed nothing", Tx.str_cat("check output is not failure identities: ", first_bad(b2)))
+
 def block_ok_go(lines: List<String>, ok: Bool) -> Bool:
   match lines:
     case Nil{}: ok
@@ -290,10 +309,10 @@ def block_has_go(lines: List<String>, want: String) -> Bool:
 def block_has(block: String, want: String) -> Bool:
   block_has_go(Tx.split_lines(block), want)
 
-def exit_fail_ok(ok: Bool, block: String, file: String) -> FV:
+def exit_fail_ok(ok: Bool, +block: String, file: String) -> FV:
   match ok:
     case True{}: FV{file, VFail{block}}
-    case False{}: FV{file, VNone{"check output is not failure identities"}}
+    case False{}: FV{file, VNone{unjudged_why(block)}}
 
 def exit_fail(block: String, file: String) -> FV:
   +b2 = block
