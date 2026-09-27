@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// Bend2 OMP root adapter.
+// Bend2 OMP session adapter.
 //
-// Bridges the Bend2 coordinator to OMP running as the root session. OMP runs
+// Bridges the Bend2 coordinator to OMP running as a root or recruited lead. OMP runs
 // in --print --mode json and
 // calls the coordinator CLI through its built-in bash tool. A report writer invokes the adapter for its committed message.
-// --attach records the invocation in the root session and delivers pending messages.
+// --attach records the invocation in the selected session and delivers pending messages.
 //
 // Usage: node bend2/scripts/omp-root.mjs <database-path> [coordinator-executable] [omp-executable]
 //
 // Environment:
 //   OMP_ROOT_MODEL    Model (default: zai/glm-5.3-flash)
-//   OMP_ROOT_THINKING Thinking level (default: high)
+//   OMP_ROOT_THINKING Thinking level (default: stored effort or high)
 //   HOME              Must point to the user home for OMP credential discovery
 //
 // No npm dependencies; node stdlib only.
@@ -52,8 +52,8 @@ if (!dbPath) {
   process.stderr.write(
     'usage: omp-root.mjs <database-path> [coordinator-executable] [omp-executable] [--session ID] [--attach | --once]\n' +
     '\nEnvironment:\n' +
-    '  OMP_ROOT_MODEL    Model for the OMP root (default: zai/glm-5.3-flash)\n' +
-    '  OMP_ROOT_THINKING Thinking level (default: high)\n' +
+    '  OMP_ROOT_MODEL    Model for the OMP session (default: zai/glm-5.3-flash)\n' +
+    '  OMP_ROOT_THINKING Thinking level (default: stored effort or high)\n' +
     '  HOME              Must point to the user home for OMP credential discovery\n',
   );
   process.exit(1);
@@ -189,7 +189,7 @@ function runOmpTurn(prompt, sessionDir, nativeSession, workspace) {
 
     child.on('close', (code) => {
       if (code !== 0 && events.length === 0) {
-        reject(new Error(`OMP exited ${code}: ${stderr}`));
+        reject(Object.assign(new Error(`OMP exited ${code}: ${stderr}`), { exitCode: code ?? 1 }));
       } else {
         resolve({ events, code, sessionId: extractSessionId(events) });
       }
@@ -256,14 +256,14 @@ async function runOnce() {
     process.stderr.write(`omp-root: turn completed (exit ${code})\n`);
   } catch (e) {
     text = `OMP turn failed: ${e.message}`;
-    code = 1;
+    code = e.exitCode ?? 1;
     process.stderr.write(`omp-root: ${text}\n`);
   }
 
   // A recruited parent has its own parent. Submit the native outcome through
   // the coordinator's existing observation and delivery path after OMP exits.
   if (session?.parent) {
-    const event = { type: 'result', is_error: code !== 0, model,
+    const event = { type: 'result', is_error: code !== 0, exitCode: code, model,
       result: text || `OMP process ended without assistant text (exit ${code})` };
     execFileSync(COORD, [DB, 'observe-file',
       `omp:${sessionId}:${messages.at(-1).seq}`, sessionId, '-'],

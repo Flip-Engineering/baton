@@ -92,7 +92,8 @@ with python3, importing the sibling module. Cover empty input, ordinary text,
 multiple spaces and Unicode. Review the implementation and run those tests.
 Your lead will send an additional tokenization requirement while you work; include
 it and its test. Keep working through the coordinator's incoming native guidance.
-Commit your two files, report the commit and exact test output, then end your turn.
+Commit your two files and state the commit and exact test output in your final response.
+The supervisor delivers that response; do not send a duplicate report command.
 """)
     (out / 'worker-b.md').write_text(common + """
 Implement the second standalone text-summary utility at
@@ -111,6 +112,7 @@ The native adapter automatically sends your final response to root after each tu
 Do not send a duplicate report manually. Acknowledge messages addressed to lead.
 
 First turn:
+Acknowledge lead-task with `B2 DB ack lead-task lead "Task received; starting both child assignments"`.
 1. Recruit child-a and child-b, both parent lead, harness omp, OMP_MODEL/OMP_EFFORT,
    repository REPO, branches hierarchy-a and hierarchy-b, workspaces STATE/child-a
    and STATE/child-b, base hierarchy-lead. Use `B2 DB recruit ID PARENT HARNESS MODEL
@@ -195,6 +197,7 @@ End your turn. No push, no changes outside the scratch directory.
         connection.row_factory = sqlite3.Row
         sessions = [dict(r) for r in connection.execute('SELECT * FROM sessions')]
         messages = [dict(r) for r in connection.execute('SELECT * FROM messages ORDER BY seq')]
+    assert all(r['exitCode'] == 0 for r in records), records
     by_id = {s['id']: s for s in sessions}
     assert by_id['lead']['parent'] == 'root'
     assert by_id['child-a']['parent'] == by_id['child-b']['parent'] == 'lead'

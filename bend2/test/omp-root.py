@@ -104,6 +104,7 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(reports[0]['sender'], 'lead')
         self.assertIn('23', reports[0]['body'])
+        self.assertEqual(json.loads(reports[0]['body'])['exitCode'], 23)
 
     def test_report_file_starts_attached_omp_root(self):
         temp = pathlib.Path(self.temp.name)

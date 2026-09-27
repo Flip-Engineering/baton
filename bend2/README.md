@@ -230,6 +230,44 @@ with `worktree`, and land and publish reviewed work with `land`, `land-checked`
 and `push`. A report's receipt records the root's acceptance; committing the
 report alone leaves that receipt empty.
 
+## OMP leads
+
+A recruited OMP session can receive reports from its own workers. Recruit the
+lead under the root, then attach the OMP adapter to its existing session:
+
+```sh
+.scratch/bend2/baton2 state.db recruit lead root omp deepseek/deepseek-flash low REPO lead-branch LEAD_WORKTREE BASE
+node bend2/scripts/omp-root.mjs state.db .scratch/bend2/baton2 /path/to/omp --session lead --attach
+```
+
+The adapter uses the lead's recorded model, effort and workspace. The existing
+`OMP_ROOT_MODEL` and `OMP_ROOT_THINKING` environment settings can override the
+native invocation. Attachment preserves the lead's parent, branch and base.
+Messages addressed to the lead invoke its endpoint; subsequent invocations
+resume its native session. Each finished lead turn submits its result through
+the coordinator, which delivers the report to the lead's parent. A failed native
+turn also reports its failure and leaves unacknowledged input available.
+
+Send the lead's task with `message-file ID root lead task TASK_FILE`. The lead
+recruits children by passing `lead` as their parent, reviews their reports and
+lands their branches onto `lead-branch`. Detach the lead's checkout before a
+landing advances that branch. The root can then review and land the lead's
+registered branch through the same landing command.
+
+Keep one foreground native turn per session. Start a child's turn in the
+background and end the parent turn so that its next report can resume the
+parent. Run long message-delivery commands in the background as well: the
+message writer waits for the invoked native turn and its parent delivery.
+The OMP adapter's `inbox`, `ack`, recruitment and guidance examples name the
+selected session. With no `--session`, it selects `root`.
+
+`python3 bend2/scripts/accept-hierarchy.py --config routes.json --output .scratch/hierarchy-run`
+exercises a Codex root, an OMP lead and two OMP workers in a scratch clone.
+The route file uses the `codex` and `omp` executable/model/effort entries described
+below. Build the coordinator first; `--coordinator` selects another executable.
+The run retains native events, process records, SQLite messages, guidance receipts
+and both levels of checked landings in its output directory.
+
 ## Source layout
 
 Application logic belongs in imported Bend2 modules under `src/`. Small C

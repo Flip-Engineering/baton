@@ -67,7 +67,7 @@ class CodexRootAdapter(unittest.TestCase):
         self.coord('worker', 'w1', 'root', 'codex', 'model', 'low', str(temp), 'branch', 'base')
         failed = subprocess.run([str(EXE), str(self.db), 'report', 'failed-delivery', 'w1', 'Retained report'], capture_output=True, text=True)
         self.assertNotEqual(failed.returncode, 0)
-        self.assertIn('Message committed; root delivery failed', failed.stderr)
+        self.assertIn('Message committed; session delivery failed', failed.stderr)
         pending = json.loads(self.coord('inbox', 'root'))
         self.assertEqual(pending[0]['body'], 'Retained report')
         self.assertIsNone(json.loads(self.coord('delivery', 'failed-delivery'))['receipt'])
