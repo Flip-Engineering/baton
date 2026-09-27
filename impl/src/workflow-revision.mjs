@@ -107,7 +107,7 @@ function normalizeCore(value) {
   if (new Set(changedPaths).size !== changedPaths.length
     || digest(value.parent.changedPathsDigest, 'workflow revision paths digest')
       !== workflowRevisionDigest(changedPaths)) fail('workflow revision changed paths changed');
-  if (!Array.isArray(value.feedback) || value.feedback.length === 0 || value.feedback.length > 64) {
+  if (!Array.isArray(value.feedback) || value.feedback.length > 64) {
     fail('workflow revision feedback set is invalid');
   }
   const feedback = value.feedback.map((packet) => {

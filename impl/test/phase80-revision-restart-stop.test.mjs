@@ -170,13 +170,6 @@ async function proposedRevision(fixture) {
     workflow.id, principal('workflow-owner'), { timeoutMs: 5_000 },
   );
   assert.equal(initial.phase, 'selection_required');
-  await workflow.sendFeedback('builder', {
-    summary: 'Correct the selected Candidate without losing its immutable basis.',
-    findings: [{
-      kind: 'defect', severity: 'high', message: 'Revise this exact changed path.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
   await workflow.select('builder', 'Use builder as the correction basis.');
   const proposed = await workflow.revise('Address the recorded defect in a gated correction round.');
   assert.equal(proposed.outline.phase, 'awaiting_plan_approval');

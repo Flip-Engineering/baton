@@ -73,7 +73,7 @@ function adapter(route, path, tracker) {
   return value;
 }
 
-test('AR80-1: selected Candidate feedback proposes one successor Plan pre-effect and replays both rounds', async (t) => {
+test('AR80-1: a selected Candidate revision proposes one successor Plan pre-effect and replays both rounds', async (t) => {
   const repo = repository();
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase80-application-revision-deployment-'));
   const tracker = { calls: [] };
@@ -102,13 +102,6 @@ test('AR80-1: selected Candidate feedback proposes one successor Plan pre-effect
     ],
   });
   assert.equal((await workflow.complete()).outline.phase, 'selection_required');
-  await workflow.sendFeedback('builder', {
-    summary: 'Correct the selected Candidate without losing its immutable basis.',
-    findings: [{
-      kind: 'defect', severity: 'high', message: 'Revise this exact changed path.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
   const selected = await workflow.select('builder', 'Use builder as the correction basis.');
   assert.equal(selected.outline.actions.some((action) => action.kind === 'revise_candidate'), true);
   assert.equal((await workflow.rounds()).section.itemCount, 1);
@@ -166,7 +159,8 @@ test('AR80-1: selected Candidate feedback proposes one successor Plan pre-effect
   assert.equal((await replay.status()).phase, 'awaiting_plan_approval');
   const replayRounds = await replay.rounds();
   assert.equal(replayRounds.section.itemCount, 2);
-  assert.equal(replayRounds.section.items[0].value.feedback.length, 1);
+  assert.equal(replayRounds.section.items[0].value.feedback.length, 0,
+    'the feedback command left with the twelve, so a revision carries no feedback packets');
   assert.equal(replayRounds.section.items[0].value.selection.candidate.role, 'builder');
   await replay.approve();
   assert.equal((await replay.complete()).outline.phase, 'selection_required');
@@ -178,7 +172,7 @@ test('AR80-1: selected Candidate feedback proposes one successor Plan pre-effect
   await replay.stop('Close the revision proposal fixture.');
 });
 
-test('AR80-2: a second feedback round appends Plan v3 and replays from its durable definition', async (t) => {
+test('AR80-2: a second revision appends Plan v3 and replays from its durable definition', async (t) => {
   const repo = repository();
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase80-application-v3-deployment-'));
   const tracker = { calls: [] };
@@ -207,25 +201,11 @@ test('AR80-2: a second feedback round appends Plan v3 and replays from its durab
     ],
   });
   assert.equal((await workflow.complete()).outline.phase, 'selection_required');
-  await workflow.sendFeedback('builder', {
-    summary: 'Correct the first retained Candidate.',
-    findings: [{
-      kind: 'defect', severity: 'high', message: 'Make the first bounded correction.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
   await workflow.select('builder', 'Use builder as the first correction basis.');
   await workflow.revise('Apply the first bounded correction.');
   await workflow.approve();
   assert.equal((await workflow.complete()).outline.phase, 'selection_required');
 
-  await workflow.sendFeedback('builder', {
-    summary: 'Correct the newly verified revision Candidate.',
-    findings: [{
-      kind: 'risk', severity: 'medium', message: 'Make a distinct second bounded correction.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
   const selected = await workflow.select('builder', 'Use the revision Candidate as the next basis.');
   assert.equal(selected.outline.workflow.revisionEligibility.state, 'eligible');
   assert.equal(selected.outline.workflow.revisionEligibility.nextRound, 3);
@@ -277,72 +257,6 @@ test('AR80-2: a second feedback round appends Plan v3 and replays from its durab
   await replay.stop('Close the Plan v3 replay fixture.');
 });
 
-test('AR80-3: repeated feedback and explicit contradiction pause recursion without a Plan effect', async (t) => {
-  const repo = repository();
-  const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase80-loop-stop-deployment-'));
-  const tracker = { calls: [] };
-  let deployment;
-  t.after(async () => {
-    try { await deployment?.close(); } catch {}
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(deploymentRoot, { recursive: true, force: true });
-  });
-  deployment = await openBaton({
-    repo,
-    advanced: {
-      deploymentRoot, routes: [routeA, routeB],
-      adapters: {
-        codex: adapter(routeA, 'candidate-a.txt', tracker),
-        grok: adapter(routeB, 'candidate-b.txt', tracker),
-      },
-      verification: { command: 'node', arguments: ['--test'] },
-    },
-  });
-  const workflow = await deployment.workflow('Pause recursive correction on deterministic loop evidence.', {
-    team: [
-      { role: 'builder', exact: routeA },
-      { role: 'challenger', exact: routeB },
-    ],
-  });
-  assert.equal((await workflow.complete()).outline.phase, 'selection_required');
-  const repeated = {
-    summary: 'Correct this exact Candidate defect.',
-    findings: [{
-      kind: 'defect', severity: 'high', message: 'Correct the exact changed line.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  };
-  await workflow.sendFeedback('builder', repeated);
-  await workflow.select('builder', 'Use builder as the first revision basis.');
-  await workflow.revise('Apply the first bounded correction.');
-  await workflow.approve();
-  assert.equal((await workflow.complete()).outline.phase, 'selection_required');
-
-  await workflow.sendFeedback('builder', repeated);
-  const selected = await workflow.select('builder', 'Evaluate the repeated correction request.');
-  assert.equal(selected.outline.workflow.revisionEligibility.state, 'blocked');
-  assert.equal(selected.outline.workflow.revisionEligibility.reason, 'repeated_feedback');
-  assert.equal(selected.outline.actions.some((action) => action.kind === 'revise_candidate'), false);
-  const plansBefore = (await workflow.rounds()).section.itemCount;
-  await assert.rejects(() => workflow.revise('Do not disguise repeated feedback as progress.'),
-    (error) => error?.code === 'application_action_unavailable'
-      && /revise_candidate is unavailable/u.test(error.message));
-  assert.equal((await workflow.rounds()).section.itemCount, plansBefore);
-
-  await workflow.sendFeedback('builder', {
-    summary: 'The active correction direction contains an unresolved explicit conflict.',
-    findings: [{
-      kind: 'contradiction', severity: 'high', message: 'Resolve this conflict before another provider effect.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
-  const contradicted = await workflow.outline();
-  assert.equal(contradicted.outline.workflow.revisionEligibility.state, 'blocked');
-  assert.equal(contradicted.outline.workflow.revisionEligibility.reason, 'unresolved_contradiction');
-  assert.equal((await workflow.rounds()).section.itemCount, plansBefore);
-  await workflow.stop('Close the deterministic loop-stop fixture.');
-});
-
 test('AR80-4: the bound deployment round ceiling pauses without exposing a caller loop knob', async (t) => {
   const repo = repository();
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase80-round-ceiling-deployment-'));
@@ -380,24 +294,10 @@ test('AR80-4: the bound deployment round ceiling pauses without exposing a calle
     ],
   });
   assert.equal((await workflow.complete()).outline.phase, 'selection_required');
-  await workflow.sendFeedback('builder', {
-    summary: 'Apply the one authorized correction.',
-    findings: [{
-      kind: 'defect', severity: 'high', message: 'Correct this first issue.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
   await workflow.select('builder', 'Use builder as the authorized correction basis.');
   await workflow.revise('Apply the authorized correction.');
   await workflow.approve();
   assert.equal((await workflow.complete()).outline.phase, 'selection_required');
-  await workflow.sendFeedback('builder', {
-    summary: 'A distinct concern remains after the authorized round.',
-    findings: [{
-      kind: 'risk', severity: 'medium', message: 'Record but do not auto-expand authority.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
   const selected = await workflow.select('builder', 'Inspect the bound round ceiling.');
   assert.deepEqual(selected.outline.workflow.revisionEligibility, {
     state: 'blocked', reason: 'round_limit', nextRound: 3, maxRounds: 2,
