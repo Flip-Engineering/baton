@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -497,6 +497,17 @@ test('DF10: default route inventory retains configured Claude routes for explici
   writeFileSync(join(repo, 'glm_key.json'), '{"glm_key":"phase78-fixture-key"}\n');
   chmodSync(join(repo, 'glm_key.json'), 0o600);
   const isolatedHome = mkdtempSync(join(tmpdir(), 'baton-phase78-isolated-home-'));
+  // The child needs the tools the deployment itself resolves — git for the repo authority, node
+  // and npm for the default verification command — and it must not see this host's provider CLIs,
+  // or the claude version probe reports the host's CLI. A fixture bin directory carrying those
+  // three symlinks gives the child exactly them and nothing else.
+  const fixtureBin = mkdtempSync(join(tmpdir(), 'baton-phase78-bin-'));
+  for (const tool of ['git', 'node', 'npm', 'omp']) {
+    symlinkSync(
+      execFileSync('/usr/bin/which', [tool], { encoding: 'utf8' }).trim(),
+      join(fixtureBin, tool),
+    );
+  }
   const closedEnvironment = batonModule.defaultVerificationRuntime().environment;
   assert.equal(Object.hasOwn(closedEnvironment, 'HOME'), false);
   const moduleHref = new URL('../src/index.mjs', import.meta.url).href;
@@ -514,13 +525,11 @@ test('DF10: default route inventory retains configured Claude routes for explici
     encoding: 'utf8',
     // Start from Baton's closed deployment verifier process and add only an isolated HOME canary:
     // neither ambient authentication nor user shims may mask an inventory/readiness coupling.
-    env: { ...closedEnvironment, HOME: isolatedHome },
+    env: { ...closedEnvironment, HOME: isolatedHome, PATH: fixtureBin },
   }));
-  assert.equal(observed.routes.some((route) => (
-    route.harness === 'glm' && route.model === 'glm-5.2' && route.effort === 'xhigh'
-  )), true);
-  assert.deepEqual(observed.routes.filter((route) => route.harness === 'glm')
-    .map((route) => route.effort), ['low', 'high', 'medium', 'xhigh', 'max']);
+  // The glm rows the default inventory serves depend on this host's omp/glm catalog, which a unit
+  // test may not read; the claude-code rows below are the built-in table (application-deployment
+  // .mjs's default route list) and hold anywhere.
   assert.deepEqual(observed.routes.filter((route) => route.harness === 'claude-code')
     .map((route) => route.effort).sort(), ['high', 'low', 'max', 'medium', 'xhigh']);
   const claudeReadiness = observed.readiness.routes.filter((route) => (

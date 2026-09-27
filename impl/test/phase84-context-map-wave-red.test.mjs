@@ -1220,8 +1220,12 @@ test('CM84-W5: a self-consistent forged successor Plan still lacks admitted Cont
   writeFileSync(eventPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
 
   const callsBeforeReplay = tracker.calls.length;
+  // The forged Plan is refused by the Context-call admission itself
+  // (coordination-admission.mjs:3770 'context_call_plan_integrity', message "Context effect Plan
+  // has no exact durable call admission"), not by the goal-plan replay integrity path this row
+  // named before that admission existed.
   await assert.rejects(() => openBaton(deploymentOptions), (error) => (
-    error?.code === 'goal_plan_integrity'
+    error?.code === 'context_call_plan_integrity'
   ));
   assert.equal(tracker.calls.length, callsBeforeReplay,
     'forged Plan replay must fail before adapter/provider effects');
