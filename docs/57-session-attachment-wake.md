@@ -350,9 +350,8 @@ reads, so one attempt carries the whole proof.
    frame is the JSON-RPC notification `notifications/claude/channel`; its text names the turn's
    result and the seat, and its meta is `{recipient: 'root'}`.
 2. `baton deployment wakes-since` answers the frame for that turn. A seat's report rides the wake
-   class `root_owed` (row `swarm.root_attention_owed` with `owed: 'turn_reported'`); a parentless
-   run's rides `root_turn_reported` (row `worker.turn_reported`, whose `next` command is
-   `baton run view <runId>`).
+   class `root_owed` (row `swarm.root_attention_owed` with `owed: 'turn_reported'`), whose next
+   command is `baton swarm view <swarmId>`.
 3. The coordination ledger (`state/coordination/events.jsonl` under the deployment root) carries
    the three rows of the wake in order: the seat's turn end as
    `driver.recorded {kind: 'swarm.turn_reported', …}`; the obligation the same call reconciled, as

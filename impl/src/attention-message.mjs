@@ -49,22 +49,3 @@ export function composeOwedMessage(item, { statusClass = 'root_owed' } = {}) {
   if (command !== null) lines.push(`  next: ${command}`);
   return lines.join('\n');
 }
-
-/**
- * The message for one worker turn report owed to its orchestrator.
- *
- * @param {object} report `{worker, resultStatus, report, runId}`; `resultStatus` falls back to
- *   `report.status`.
- * @param {{statusClass?: string|null}} [options]
- * @returns {string}
- */
-export function composeTurnReportMessage(report, { statusClass = 'root_turn_reported' } = {}) {
-  const status = text(report?.resultStatus) ?? text(report?.report?.status);
-  const subject = [status, text(report?.worker)].filter(Boolean).join(' · ');
-  const lines = [flipHumanLine(`turn reported${subject.length > 0 ? `: ${subject}` : ''}`, { statusClass })];
-  if (text(report?.runId) !== null) {
-    lines.push(`  run: ${report.runId}`);
-    lines.push(`  next: baton run view ${report.runId}`);
-  }
-  return lines.join('\n');
-}
