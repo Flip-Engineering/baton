@@ -406,6 +406,12 @@ function exactAdapter(harness, model, effort) {
   adapter.card = () => ({
     ...baseCard(),
     authPosture: 'subscription',
+    // #327 credential ownership: these caller-supplied adapters bring their own credential, so
+    // each card advertises providerCompatibility.credentialState 'available' — the deployment
+    // trusts that advertisement at readiness and dispatch instead of projecting the operator
+    // credential (the shape phase78-concise-deployment-factory and phase78-deployment-readiness
+    // fixtures use).
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: model, available: [model], family: harness,
       acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: [effort],
