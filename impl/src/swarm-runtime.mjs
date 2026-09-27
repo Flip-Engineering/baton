@@ -1906,6 +1906,10 @@ export class SwarmRuntime {
    * without them refuses the verbs it cannot serve or omits the facts it cannot derive. */
   constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
     hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null, lastCrash = null,
+    // Issue #347: the deployment's tracker reader — `(issue) => {number, title, body, labels, url}`,
+    // the root host's own credential. A recruit that names `issues` resolves them through it before
+    // anything is written; a deployment that holds none refuses the recruit `issue_unreachable`.
+    issueReader = null,
     // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
     // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
     // `swarm_command_unavailable` rather than pretending.
@@ -1914,7 +1918,7 @@ export class SwarmRuntime {
     integration = null, routingExcludedHarnesses = [] }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
-      integration,
+      integration, issueReader,
     });
     // Issue #574: the operator's declared routing rule — harnesses no seat may be routed onto.
     // The ONE eligibility predicate (`_routeEligible`) reads it, so the recruit selection, the
@@ -7173,6 +7177,58 @@ export class SwarmRuntime {
     return ancestor?.participantId ?? null;
   }
 
+  /** Issue #347: the tracker text a recruit names, resolved at recruit time through the
+   * DEPLOYMENT's reader — the root host's own credential — and rendered into the seat's brief, so
+   * a seat works from the tracker's own words and never from a `gh` command its private runtime
+   * cannot run. The block is bounded by the brief's own byte lane (`brief.situation.bytes`), and
+   * what the bound drops is said out loud. An absent reader and a reader that raises BOTH refuse
+   * the recruit typed as `issue_unreachable`, naming the issue: a stale tracker is never a silent
+   * omission. */
+  async _issueBriefBlock(issues) {
+    const reader = this.issueReader ?? null;
+    const cap = FRAME_LIMITS['brief.situation.bytes'].value;
+    const sections = [];
+    const omitted = [];
+    let used = 0;
+    for (const issue of issues) {
+      if (typeof reader !== 'function') {
+        refuse(`Issue ${issue} cannot be read: this deployment holds no tracker reader`,
+          'issue_unreachable', { issue, reason: 'no_tracker_reader' });
+      }
+      let row;
+      try {
+        row = await reader(issue);
+      } catch (cause) {
+        refuse(`Issue ${issue} cannot be read: ${cause?.message ?? String(cause)}`,
+          'issue_unreachable', { issue, reason: `${cause?.code ?? 'issue_reader_failed'}` });
+      }
+      const labels = (row?.labels ?? [])
+        .map((label) => (typeof label === 'string' ? label : label?.name))
+        .filter((name) => typeof name === 'string' && name.length > 0);
+      const section = [
+        `### Issue #${row?.number ?? issue}: ${row?.title ?? ''}`,
+        `- url: ${row?.url ?? ''}`,
+        `- labels: ${labels.length > 0 ? labels.join(', ') : 'none'}`,
+        `- fetched: ${new Date().toISOString()}`,
+        '',
+        typeof row?.body === 'string' ? row.body : '',
+      ].join('\n');
+      if (used + section.length > cap && sections.length > 0) { omitted.push(issue); continue; }
+      const bounded = section.length > cap
+        ? `${section.slice(0, cap)}\n[… ${section.length - cap} further bytes lie outside this brief's brief.situation.bytes bound of ${cap}]`
+        : section;
+      sections.push(bounded);
+      used += bounded.length + 2;
+    }
+    const block = ['## Issues (their text rides this brief; your runtime runs no tracker command)',
+      ...sections];
+    if (omitted.length > 0) {
+      block.push(`- ${omitted.length} further issue${omitted.length === 1 ? '' : 's'} not shown`
+        + ` (this block is bounded by brief.situation.bytes = ${cap}): ${omitted.join(', ')}`);
+    }
+    return block.join('\n\n');
+  }
+
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
    * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
    * far, the commits landed on the target since the base — then, for a seat admitted onto a
@@ -7182,7 +7238,7 @@ export class SwarmRuntime {
    * every surface renders. `ledger` is the CALLER's own coordination read: the peers-now block's
    * rows carry the activity and usage `run.peers.read` serves (docs/46 §1.2, #268) — and a caller
    * without one (the compose-only call) omits those fields rather than scanning one itself. */
-  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, baseAdvisory = null, recruitedScope = null, ledger = null) {
+  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, baseAdvisory = null, recruitedScope = null, ledger = null, issueBlock = null) {
     const blocks = [args.objective];
     // Issue #345: the seat's own assignment — the work item the swarm knows it holds — rides the
     // brief first, so "your work item is work-N" is read from the assignment, never retyped.
@@ -7190,6 +7246,7 @@ export class SwarmRuntime {
       const held = Object.hasOwn(swarm.work ?? {}, args.workId) ? swarm.work[args.workId] : null;
       blocks.push(`Your work item is ${args.workId}${held ? ` — ${held.objective}` : ''}: report progress on it with swarm.work_updated through your bridge.`);
     }
+    if (issueBlock !== null) blocks.push(issueBlock);
     const situation = [];
     const peers = Object.values(swarm.participants)
       .filter((row) => this._canAct(row) && row.participantId !== args.participantId)
@@ -8894,7 +8951,10 @@ export class SwarmRuntime {
         // orchestrator whether to continue a recovered seat, so nothing parks one: the successor
         // works, and the orchestrator's existing levers stay a guide (continue it) or a stop
         // (settle it without work).
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
+        // Issue #347: the issues a recruit names are resolved BEFORE the brief composes, through
+        // the deployment's own reader; an unreachable tracker refuses the recruit here.
+        const issueBlock = Array.isArray(args.issues) ? await this._issueBriefBlock(args.issues) : null;
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger, issueBlock);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is

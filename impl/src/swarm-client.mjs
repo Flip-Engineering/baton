@@ -148,6 +148,9 @@ export class Swarm {
       // Issue #345: the work item the seat holds on join — the runtime validates it names
       // existing work and writes the assignment itself.
       ...(options.workId === undefined ? {} : { workId: options.workId }),
+      // Issue #347: the tracker issues whose text this seat's brief carries, resolved by the
+      // deployment through its own reader.
+      ...(options.issues === undefined ? {} : { issues: options.issues }),
       idempotencyKey: idempotencyOf(options),
     });
   }

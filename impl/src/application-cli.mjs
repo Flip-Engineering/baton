@@ -2893,6 +2893,16 @@ function parseSwarmCli(args, idempotencyKey) {
           `${entry.flag} must be the positive ledger seq this guidance answers`);
       }
       values[entry.field] = value;
+    } else if (entry.field === 'issues') {
+      // Issue #347: the tracker issues a brief carries. The flag takes a comma-separated list so
+      // `--issues 347,203` parses to the array of positive integers the wire schema declares,
+      // instead of crossing as text the contract would refuse.
+      const numbers = token.split(',').map((part) => Number(part.trim()));
+      if (numbers.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+        throw swarmFlagRefusal(entry.flag, 'positive-integer', 'a comma-separated list of issue numbers',
+          `${entry.flag} must be the positive tracker issue numbers this brief carries`);
+      }
+      values[entry.field] = numbers;
     } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy'
       || entry.field === 'autoWake') {
       // Issue #474: the parse's own refusal is typed like #431's argv refusals (the flag, the rule

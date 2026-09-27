@@ -135,6 +135,9 @@ export const SWARM_BRIDGE_GUIDANCE = [
   `A request is one JSON document, {"command":"swarm.update","args":{...}}, POSTed to the bridge URL with the bearer token from the token variable; the client wrapper does this for you — node "$BATON_SWARM_CLIENT" swarm.update '{"event":"...","payload":{...}}'. Arguments are checked against closed schemas, so an unknown field refuses.`,
   'A success answers {"ok":true,"result":...}. swarm.update answers the refreshed view: the contribution it recorded is in it, carrying the seq of the event that recorded it — read the answer and confirm the recorded seq before you call the work published.',
   `A refusal answers {"ok":false,"error":{"message","code","detail"}} on the same stream, and its message begins "${SWARM_BRIDGE_NOTHING_RECORDED}" followed by what to change. node "$BATON_SWARM_CLIENT" --help renders the full command help locally, before any credential is read.`,
+  // Issue #347: the fact a seat needs before it reaches for a tracker command — its own runtime
+  // carries no tracker credential, and the issue text its brief cites is resolved for it.
+  'Your runtime carries no tracker credential. The issue text a brief cites rides that brief: the deployment resolves the issues a recruit names through the host\'s own credential before the brief composes.',
 ].join('\n\n');
 
 /** What the caller must change, from the refusal's own rule: the closed argument vocabulary

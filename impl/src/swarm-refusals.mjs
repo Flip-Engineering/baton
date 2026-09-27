@@ -53,6 +53,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // predecessor while its workspace is carriable (retained checkout or snapshot), and the refusal
   // names that state and the closed set instead of a bare "no longer active".
   swarm_recruit_predecessor_unavailable: row(404, ['runtime'], 'the recruit names a resume-from seat this swarm does not hold, or a settled one whose workspace carries nothing to continue'),
+  // Issue #347: a recruit that names tracker issues resolves them through the deployment's own
+  // reader before anything is written. A deployment that holds no reader, and a reader that cannot
+  // resolve the issue, both refuse here — naming the issue, never a silent omission.
+  issue_unreachable: row(409, ['runtime'], 'the recruit names an issue the deployment\'s tracker reader cannot resolve'),
   // Issue #273: a guide may name the row it answers (`inReplyTo`) by ledger seq. A seq this swarm
   // does not hold — or a row that is not guidance, a seat's message, or a contribution — refuses
   // here instead of landing a thread that points at nothing.

@@ -306,7 +306,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions', 'mode',
-      'shareWorkspaceWith', 'resumeFrom', 'workId', 'autoWake', 'idempotencyKey', 'view']),
+      'shareWorkspaceWith', 'resumeFrom', 'workId', 'autoWake', 'issues', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -615,6 +615,14 @@ const SWARM_FIELD_RULES = Object.freeze({
   objective: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   shareWorkspaceWith: Object.freeze({ check: isId, expectation: 'a participant identity' }),
   workId: Object.freeze({ check: isId, expectation: 'a work identity' }),
+  // Issue #347: the tracker issues a recruit names. The deployment resolves each through its own
+  // reader (the root host's credential) at recruit time and renders the text into the brief, so a
+  // seat works from the tracker's words and its runtime runs no tracker command.
+  issues: Object.freeze({
+    check: (value) => Array.isArray(value) && value.length > 0
+      && value.every((issue) => Number.isSafeInteger(issue) && issue > 0),
+    expectation: 'a non-empty array of positive issue numbers',
+  }),
   message: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   reason: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
@@ -709,7 +717,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
     optional: Object.freeze(['options', 'permissions', 'mode', 'shareWorkspaceWith', 'resumeFrom', 'workId',
-      'autoWake', 'view']),
+      'autoWake', 'issues', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -1053,6 +1061,8 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
       shareWorkspaceWith: ID_SCHEMA,
       resumeFrom: ID_SCHEMA,
       workId: ID_SCHEMA,
+      issues: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }),
+        description: 'tracker issues whose text this brief carries: the deployment resolves each through its own reader (the root host\'s credential) and renders title, url, labels and body into an `## Issues` block, bounded by the brief byte lane (#347)' }),
       autoWake: Object.freeze({ type: 'object', description:
         'the wake narrowing this seat\'s session auto-subscribes with (docs/54 §4.1): kinds names wake classes, participants names seats; the subscription always carries this seat\'s own swarm' }),
     }),

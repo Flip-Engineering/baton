@@ -2331,6 +2331,16 @@ export class BatonApplication {
           return null;
         }
       },
+      // Issue #347: the tracker reader a recruit's `issues` resolve through — the root host's own
+      // `gh issue view`, bound to the deployment's checkout so the read never depends on this
+      // process's cwd. A host without gh, without a resolvable GitHub remote, or with an
+      // unauthenticated gh raises, and the recruit refuses typed (`issue_unreachable`).
+      issueReader: async (issue) => {
+        const { readGitHubIssue, resolveIssueRepository } = await import('./application-cli.mjs');
+        const repo = typeof this.driver?.repoRoot === 'string' && this.driver.repoRoot.length > 0
+          ? resolveIssueRepository({ root: this.driver.repoRoot }) : null;
+        return readGitHubIssue({ issue, repo });
+      },
       // #297: the host-wide capacity authority every resident shares (driver-built); recruits
       // admit through it and the view carries the deployment summary beside the queue.
       hostCapacity: this.driver.hostCapacity ?? null,
