@@ -174,6 +174,38 @@ export function workspaceOwnerExpectation(handle) {
   };
 }
 
+/** Issue #616: the ended-seat proof a startup reconciliation may reclaim on — one predicate over
+ * the durable coordination state this incarnation began from, captured by
+ * `_startupCoordinationSnapshot` BEFORE the replay. An owner is provably ended when every replayed
+ * handle that names its checkout ran a task that was already terminal in that state; an owner no
+ * handle names falls back to the logical task its own owner receipt records. A task that state does
+ * not hold proves nothing, so that owner is retained. A seat whose task was still open when this
+ * incarnation began is NOT ended here: this startup's own replay may end it (a lost native session
+ * whose turn is not reattached), and that seat is exactly the predecessor a `resume-from` successor
+ * carries (#385/#517), so its checkout stays on disk for that carry. */
+function startupOwnerSeatProof(coordinator) {
+  const preexistingTasks = coordinator._startupCoordinationSnapshot;
+  const statusById = new Map((preexistingTasks?.tasks ?? []).map((task) => [task.id, task.status]));
+  const tasksByOwner = new Map();
+  for (const handle of coordinator._workers.values()) {
+    const physicalOwnerId = handle.sessionContext?.ownerTaskId;
+    if (!isPhysicalWorkspaceId(physicalOwnerId) || typeof handle.taskId !== 'string') continue;
+    const tasks = tasksByOwner.get(physicalOwnerId) ?? new Set();
+    tasks.add(handle.taskId);
+    tasksByOwner.set(physicalOwnerId, tasks);
+  }
+  return (physicalOwnerId, ownerReceipt) => {
+    const named = tasksByOwner.get(physicalOwnerId);
+    if (named !== undefined) {
+      return named.size > 0
+        && [...named].every((taskId) => TERMINAL_TASK_STATUSES.has(statusById.get(taskId)));
+    }
+    const logicalTaskId = ownerReceipt?.logicalTaskId;
+    return typeof logicalTaskId === 'string'
+      && TERMINAL_TASK_STATUSES.has(statusById.get(logicalTaskId));
+  };
+}
+
 export class SessionSelectionError extends Error {
   constructor(message, code = 'session_mode_unavailable') {
     super(message);
@@ -745,6 +777,16 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
               // ledger (driver.recorded) too, so the swarm projection derives a seat's
               // workspace story from rows, not from reconstruction.
               for (const row of report?.removedWorkspaces ?? []) {
+                // Issue #616: a removal this reconciliation backed by a lane-branch revision is the
+                // same custody fact a stop's own checkpoint records, and it is what a `resume-from`
+                // successor carries once the checkout is gone (#385/#453). It rides the ledger under
+                // the kind that carry derivation reads, before the removal row that names it.
+                if (typeof row.snapshot === 'string' && row.snapshot.length > 0) {
+                  recorder.recordDriver('worktree.snapshotted', {
+                    workspaceId: row.physicalOwnerId, participantId: null, workerId: null,
+                    sha: row.snapshot, branch: row.branch ?? null, reason: 'crash_reconciliation',
+                  }, `worktree.snapshotted:${row.physicalOwnerId}:${row.snapshot}`);
+                }
                 recorder.recordDriver('worktree.removed', {
                   workspaceId: row.physicalOwnerId, participantId: null, workerId: null,
                   reason: 'crash_reconciliation', snapshot: row.snapshot ?? null,
@@ -764,7 +806,14 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
             const knownPhysicalOwnerIds = [...new Set([...coordinator._workers.values()]
               .map((handle) => handle.sessionContext?.ownerTaskId)
               .filter((owner) => isPhysicalWorkspaceId(owner)))];
-            const result = coordinator._worktrees.reconcile(expectedOwners, knownPhysicalOwnerIds);
+            // Issue #616: seats that had already ended when this incarnation began are reclaimed —
+            // their uncommitted content enters their lane branch first, through the same capture
+            // path every other reconciliation uses. The proof narrows the capture to exactly those
+            // seats; see `startupOwnerSeatProof`.
+            const result = coordinator._worktrees.reconcile(expectedOwners, knownPhysicalOwnerIds, {
+              snapshotUncommitted: true,
+              ownerSeatEndedBeforeStartup: startupOwnerSeatProof(coordinator),
+            });
             return result && typeof result.then === 'function'
               ? Promise.resolve(result).then(applyOwnerAuthority)
               : applyOwnerAuthority(result);
@@ -2393,12 +2442,27 @@ export async function _preserveProgressBeforeReap(coordinator, recorder, handle,
       || typeof manager.resolveCheckpoint !== 'function') return Object.freeze({ state: 'unsupported' });
     handle.cleanupPending = true;
     try {
-      if (task.progressPreservation?.state === 'no_progress') return task.progressPreservation;
-      if (task.checkpoint?.state === 'pinned') {
-        const resolved = await manager.resolveCheckpoint(task.checkpoint.ref);
-        if (resolved !== task.checkpoint.sha) throw Object.assign(new Error('existing progress checkpoint postcheck failed'), { code: 'checkpoint_failed' });
-        return task.checkpoint;
-      }
+      // Issue #616: a recorded revision is not evidence that the checkout still holds nothing more.
+      // Build output, scratch trees and log files written after an earlier capture sit in the
+      // checkout with no capture of their own, and an ended seat reaches this function with such a
+      // record in hand (`task.capturedSha`, a pinned checkpoint, or a `no_progress` receipt). The
+      // checkout is therefore read back through the same capture a stop uses, and the record answers
+      // only whether the checkout moved past it: an unchanged checkout returns its record and mints
+      // no new receipt, and whatever was written since is pinned as its own checkpoint.
+      const bookmarked = task.checkpoint?.state === 'pinned' ? task.checkpoint : null;
+      const recorded = bookmarked?.sha ?? (typeof task.capturedSha === 'string' && task.capturedSha.length > 0
+        ? task.capturedSha : null);
+      const noProgress = bookmarked === null && task.progressPreservation?.state === 'no_progress'
+        ? task.progressPreservation : null;
+      const settled = async () => {
+        if (bookmarked === null) return Object.freeze({ state: 'recorded', sha: recorded });
+        const resolved = await manager.resolveCheckpoint(bookmarked.ref);
+        if (resolved !== bookmarked.sha) throw Object.assign(new Error('existing progress checkpoint postcheck failed'), { code: 'checkpoint_failed' });
+        return bookmarked;
+      };
+      // A capture the checkout refuses leaves a record this seat already holds intact: the earlier
+      // capture stands and the reap below decides what happens to whatever else is on disk.
+      const failed = async (error) => (recorded === null ? Promise.reject(error) : settled());
       // A checkout this handle shares with another live holder is preserved live through the
       // isolated-index snapshot: the paused-turn commit primitive stages the REAL index and commits
       // on the shared branch, which would corrupt a checkout its peers are using. Only a checkout
@@ -2410,7 +2474,9 @@ export async function _preserveProgressBeforeReap(coordinator, recorder, handle,
             code: 'shared_workspace_capture_unavailable',
           });
         }
-        captured = await coordinator._captureTrustWorktree(handle, task, { snapshot: true });
+        try {
+          captured = await coordinator._captureTrustWorktree(handle, task, { snapshot: true });
+        } catch (error) { return await failed(error); }
       } else {
         // Issue #428: before the capture commits anything, the seat's lane branch must be
         // at its checkout's HEAD — a branch that is missing or behind HEAD would leave the
@@ -2423,27 +2489,31 @@ export async function _preserveProgressBeforeReap(coordinator, recorder, handle,
         // checkouts elsewhere has no lane branch for the authority to repair, and running the
         // repair there turned every exact-kill preservation into `preservation_failed`
         // (phase70/71/72 pins) because the authority refuses a path outside its root.
-        if (laneBranch && typeof handle.worktree === 'string' && existsSync(handle.worktree)
-          && coordinator._isAuthorityCheckout(handle.worktree, ownerTaskId)) {
-          await Promise.resolve(ensureLaneBranchAtHead(coordinator._repoRoot, ownerTaskId, {
-            worktree: handle.worktree,
-          }));
-        }
-        captured = await manager.capture(handle.worktree ?? task.worktree, {
-          vendor: handle.vendor,
-          model: handle.modelObserved ?? handle.modelResolved,
-          ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
-          ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
-          ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
-          ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
-          ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
-        });
+        try {
+          if (laneBranch && typeof handle.worktree === 'string' && existsSync(handle.worktree)
+            && coordinator._isAuthorityCheckout(handle.worktree, ownerTaskId)) {
+            await Promise.resolve(ensureLaneBranchAtHead(coordinator._repoRoot, ownerTaskId, {
+              worktree: handle.worktree,
+            }));
+          }
+          captured = await manager.capture(handle.worktree ?? task.worktree, {
+            vendor: handle.vendor,
+            model: handle.modelObserved ?? handle.modelResolved,
+            ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
+            ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
+            ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
+            ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
+            ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
+          });
+        } catch (error) { return await failed(error); }
       }
       const sha = captured?.sha;
       if (!/^[a-f0-9]{40,64}$/u.test(sha ?? '')) {
         throw Object.assign(new Error('progress capture did not produce an exact commit'), { code: 'capture_failed' });
       }
+      if (recorded !== null && sha === recorded) return await settled();
       if (sha === task.sessionContext?.baseSha) {
+        if (noProgress !== null) return noProgress;
         const unchanged = recorder.log.append({
           worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
           kind: 'worktree.progress_unchanged', actor: 'policy', ...coordinator._routeAttribution(handle, task),

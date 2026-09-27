@@ -125,8 +125,10 @@ test('AC0: a provider-native failed result bypasses capture/referee and preserve
   assert.equal(result.verdict, null);
   assert.equal(result.capturedSha, null);
   assert.equal(result.retainedResultRef, null);
-  // The only capture is Phase 70's non-adoptable progress checkpoint; the trust gate never runs.
-  assert.equal(captureCalls, 1);
+  // Phase 70's non-adoptable progress checkpoint is the only capture that pins anything; the ended
+  // seat's reap then reads the checkout back through the same capture (#616), which returns the
+  // recorded sha and mints no second checkpoint. The trust gate never runs.
+  await until(() => captureCalls === 2);
   assert.equal(refereeCalls, 0);
   assert.equal(driver.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
 

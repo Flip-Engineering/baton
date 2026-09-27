@@ -744,3 +744,221 @@ test('568-P: a recovered startup reclaims a dead generation\'s still-registered 
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, context.ownerTaskId), null,
     'the reclaimed checkout leaves no owner receipt');
 });
+
+// Issue #616: 105 registered worktrees (23 GiB) for about 12 live seats. Seats that ended before an
+// earlier restart stayed registered on disk, because the startup reconciliation captured only a
+// checkout whose uncommitted content a capture had already recorded. Observed 2026-09-27 09:30Z on
+// the resident: 311 workspace directories before a restart, 338 after, free disk down to 4.3 GiB.
+// The row below is the reported sequence: a blocking seat with an uncommitted file, a lost
+// incarnation, a restart, another SIGKILL-and-restart. The first recovered startup ends the seat
+// (its session is not reattached) and KEEPS the checkout — that seat is the predecessor a
+// `resume-from` successor carries (#385/#517) — and the next startup, which begins from state that
+// already holds the seat's end, captures the uncommitted content into the lane branch and reclaims
+// the checkout.
+test('568-Q: a later startup reclaims an ended seat\'s dirty checkout and captures its content first', async (t) => {
+  const f = fixture(t, 'ended-dirty');
+  const logDir = join(f.world, 'log');
+  const options = () => ({
+    repoRoot: f.repo, repoId: 'repo-issue568-ended-dirty', logDir,
+    adapters: {
+      mock: new MockAdapter({
+        scenario: {
+          outcome: 'completed', edits: [],
+          ask: { kind: 'question', question: 'hold the checkout', blocking: true, afterEditIndex: 0 },
+        },
+      }),
+    },
+    coordinationAsyncOpen: true,
+  });
+  const first = createDriver(options());
+  await first.coordinationOpened;
+  const handle = await first.coordinator.spawn('mock', createBrief({
+    goal: 'hold a checkout while this incarnation is lost',
+    constraints: [], pathScope: ['**'], definitionOfDone: 'wait for an answer',
+    verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }), { taskId: 'issue568-616', runId: 'run-issue568-616' });
+  const context = await until(() => first.coordinator.list()
+    .find((row) => row.id === handle.id)?.sessionContext ?? null, 'the seat checkout');
+  writeFileSync(join(context.worktree, 'uncommitted.txt'), 'work no capture recorded\n');
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo),
+    [context.worktree], 'Git registers the seat checkout before the restarts');
+
+  // The incarnation is lost with its writer lease released and no drain: the state the SIGKILLs
+  // leave behind.
+  first.coordination.releaseWriterLease();
+
+  const second = createDriver(options());
+  await second.coordinationOpened;
+  await second.coordinator.startupReady();
+  assert.equal(second.coordination.task('issue568-616').status, 'failed',
+    'the recovered startup ends the seat whose session it could not reattach');
+  assert.equal(existsSync(context.worktree), true,
+    'the seat this startup ended keeps its checkout for the successor that may resume from it');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, context.ownerTaskId) !== null, true,
+    'the kept checkout keeps its owner receipt');
+  second.coordination.releaseWriterLease();
+
+  const third = createDriver(options());
+  await third.coordinationOpened;
+  await third.coordinator.startupReady();
+  assert.equal(existsSync(context.worktree), false,
+    'the startup that begins from the seat\'s own end reclaims its checkout');
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo), [],
+    'the reclaimed checkout\'s Git registration is removed');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, context.ownerTaskId), null,
+    'the reclaimed checkout leaves no owner receipt');
+  assert.equal(git(f.repo, ['show', `baton/${context.ownerTaskId}:uncommitted.txt`]),
+    'work no capture recorded', 'the uncommitted content entered the lane branch before removal');
+});
+
+/** Spawn one seat through the production coordinator, wait for the seat's own turn to end, and
+ * return the handle, its session context and the terminal task row. The adapter's scenario commits
+ * the seat's work, so the checkout is clean and its lane branch names that work — the state a seat
+ * reaches before anything is written after its capture. */
+async function seatAfterItsOwnCapture(t, f, { label, edits, logDir }) {
+  const options = () => ({
+    repoRoot: f.repo, repoId: `repo-issue568-${label}`, logDir,
+    adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits } }) },
+    coordinationAsyncOpen: true,
+  });
+  const driver = createDriver(options());
+  await driver.coordinationOpened;
+  await driver.coordinator.startupReady();
+  const handle = await driver.coordinator.spawn('mock', createBrief({
+    goal: 'work, then leave residue', constraints: [], pathScope: ['**'],
+    definitionOfDone: 'the turn ends',
+    verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }), { taskId: `issue568-${label}`, runId: `run-issue568-${label}` });
+  const context = await until(() => driver.coordinator.list()
+    .find((row) => row.id === handle.id)?.sessionContext ?? null, 'the seat checkout');
+  const task = await until(() => {
+    const row = driver.coordination.task(`issue568-${label}`);
+    return row && ['completed', 'failed', 'cancelled'].includes(row.status) ? row : null;
+  }, 'the seat task terminal');
+  return { driver, handle, context, task };
+}
+
+// Issue #616, the path the observed resident actually took (09:30Z 2026-09-27, master f643762f):
+// seats that ended normally did not leave their checkouts behind because the stop could not
+// preserve; they left them behind because the stop DID preserve earlier and then the seat wrote
+// more. The 67 dirty workspaces read out of `baton-resident` held untracked build output, scratch
+// trees and logs written after the seat's own contribution was captured, and a prior capture is not
+// evidence that the checkout holds nothing more. `_removeOwnedTaskWorktree` skipped preservation for
+// exactly those seats (a completed task, or a pinned checkpoint), so the reap refused the content,
+// the handle released its hold, and the registration stayed until a later startup reclaimed it.
+// Here the seat ends by the production stop the operator's own stop uses, and the checkout and its
+// registration must be gone when the stop resolves.
+test('568-R: a seat that writes after its own capture is stopped and its checkout is removed', async (t) => {
+  const f = fixture(t, 'residue-after-capture');
+  const logDir = join(f.world, 'log');
+  const { driver, handle, context, task } = await seatAfterItsOwnCapture(t, f, {
+    label: 'residue', logDir, edits: [{ path: 'seat-work.txt', content: 'captured work\n' }],
+  });
+  assert.equal(task.status, 'completed', 'the seat\'s own turn ended and was accepted');
+  assert.equal(git(context.worktree, ['status', '--porcelain']), '',
+    'the seat\'s own capture left its checkout clean');
+  assert.equal(git(f.repo, ['show', `baton/${context.ownerTaskId}:seat-work.txt`]), 'captured work',
+    'the seat\'s contribution is on its lane branch');
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo),
+    [context.worktree], 'Git registers the seat checkout before it is stopped');
+
+  // The residue the observed resident was full of: build output and scratch trees written after the
+  // contribution was recorded.
+  writeFileSync(join(context.worktree, 'residue.txt'), 'residue no capture recorded\n');
+  const stopped = await driver.coordinator.kill(handle.id, 'policy');
+  assert.equal(stopped.result, 'confirmed', 'the production stop of the seat resolves');
+
+  assert.equal(existsSync(context.worktree), false,
+    'the ended seat\'s checkout is removed when the stop resolves');
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo), [],
+    'its Git registration is removed with it');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, context.ownerTaskId), null,
+    'and it leaves no owner receipt');
+  assert.equal(git(f.repo, ['show', `baton/${context.ownerTaskId}:residue.txt`]),
+    'residue no capture recorded', 'the residue entered the lane branch before removal');
+  assert.equal(git(f.repo, ['show', `baton/${context.ownerTaskId}:seat-work.txt`]), 'captured work',
+    'the seat\'s original contribution stays in the branch history the residue commit was added to');
+  assert.equal(driver.log.read(handle.id).some((event) => event.kind === 'worktree.progress_checkpointed'),
+    true, 'the residual work was preserved as a checkpoint, not only left on disk');
+});
+
+// The other half of the same rule: a seat that ends with nothing written after its capture must keep
+// closing exactly as it closed before — no second checkpoint, no new receipt, the same removal.
+test('568-S: a seat that ends with nothing new mints no second checkpoint and still reclaims', async (t) => {
+  const f = fixture(t, 'nothing-new');
+  const logDir = join(f.world, 'log');
+  const { driver, handle, context } = await seatAfterItsOwnCapture(t, f, {
+    label: 'nothing-new', logDir, edits: [{ path: 'seat-work.txt', content: 'captured work\n' }],
+  });
+  const seatSha = git(f.repo, ['rev-parse', `baton/${context.ownerTaskId}`]);
+
+  const stopped = await driver.coordinator.kill(handle.id, 'policy');
+  assert.equal(stopped.result, 'confirmed', 'the production stop of the seat resolves');
+
+  assert.equal(existsSync(context.worktree), false, 'the seat\'s checkout is still removed');
+  assert.deepEqual(listWorktrees(f.repo).map((row) => row.dir).filter((dir) => dir !== f.repo), [],
+    'and its Git registration with it');
+  assert.equal(git(f.repo, ['rev-parse', `baton/${context.ownerTaskId}`]), seatSha,
+    'the lane branch keeps the revision the seat already had, with no snapshot commit added');
+  assert.deepEqual(driver.log.read(handle.id)
+    .map((event) => event.kind)
+    .filter((kind) => kind.startsWith('worktree.progress_')), [],
+    'a checkout that did not move past its recorded capture mints no checkpoint');
+});
+
+// Issue #616, the checkpoint exclusion the same review named: a stop that already pinned a
+// checkpoint (or recorded `no_progress`) skipped every later preservation, so content written after
+// that checkpoint was stranded in a checkout the reap then refused. The row drives the coordinator's
+// own preservation step — the step every stop, stall reap and crash close runs before the reap —
+// with a real checkout: the first call pins the checkpoint for the work present, and the second call,
+// taken after more work was written, must pin the work that arrived since rather than answer with the
+// earlier checkpoint. In production the second call is the same stop's own cleanup step (a dying
+// seat's children write while the stop drains) and a verification close after a diagnostic
+// checkpoint; the seam is driven directly here because the window between the two is a race.
+test('568-T: a checkout that gained work after its checkpoint is captured before the next reap', async (t) => {
+  const f = fixture(t, 'checkpoint-then-residue');
+  const logDir = join(f.world, 'log');
+  const driver = createDriver({
+    repoRoot: f.repo, repoId: 'repo-issue568-checkpoint-then-residue', logDir,
+    adapters: {
+      mock: new MockAdapter({
+        scenario: {
+          outcome: 'completed', edits: [],
+          ask: { kind: 'question', question: 'hold the checkout', blocking: true, afterEditIndex: 0 },
+        },
+      }),
+    },
+    coordinationAsyncOpen: true,
+  });
+  await driver.coordinationOpened;
+  await driver.coordinator.startupReady();
+  const spawned = await driver.coordinator.spawn('mock', createBrief({
+    goal: 'reach a checkpoint, then write more', constraints: [], pathScope: ['**'],
+    definitionOfDone: 'wait for an answer',
+    verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }), { taskId: 'issue568-checkpoint-then-residue', runId: 'run-issue568-checkpoint-then-residue' });
+  await until(() => driver.coordinator.list().find((row) => row.id === spawned.id)?.worktree ?? null,
+    'the seat checkout');
+  const handle = driver.coordinator._workers.get(spawned.id);
+  const task = driver.coordinator._tasks.get(handle.taskId);
+  const worktree = join(f.repo, '.baton', 'wt', task.sessionContext.ownerTaskId);
+  writeFileSync(join(worktree, 'turn-work.txt'), 'work the checkpoint was pinned for\n');
+
+  const first = await driver.coordinator._preserveProgressBeforeReap(handle, task, null, true);
+  assert.equal(first.state, 'pinned', 'the first capture pins the work the checkout held');
+  assert.equal(git(f.repo, ['show', `${first.sha}:turn-work.txt`]), 'work the checkpoint was pinned for');
+
+  writeFileSync(join(worktree, 'residue.txt'), 'work written after the checkpoint\n');
+  const second = await driver.coordinator._preserveProgressBeforeReap(handle, task, null, true);
+  assert.equal(second.state, 'pinned', 'the second capture pins the work that arrived after it');
+  assert.notEqual(second.sha, first.sha, 'the checkpoint moved past the revision it replaced');
+  assert.equal(git(f.repo, ['show', `${second.sha}:residue.txt`]), 'work written after the checkpoint',
+    'the later work is in the branch, not left to a reap refusal');
+  assert.equal(git(f.repo, ['show', `${second.sha}:turn-work.txt`]),
+    'work the checkpoint was pinned for', 'and the work the earlier checkpoint held is still carried');
+  assert.equal(git(f.repo, ['rev-parse', `${second.sha}^`]), first.sha,
+    'the newer checkpoint builds on the revision the earlier one pinned');
+});
