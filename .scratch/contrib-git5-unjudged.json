@@ -1,0 +1,60 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "An unjudged check run names its cause, and the unjudged branch gets its first native case",
+      "base": {
+        "observedHead": "b6594f5f98734016f438dd9329b9d1a68ef318f1",
+        "rebasedOnto": "b6594f5f98734016f438dd9329b9d1a68ef318f1"
+      },
+      "commit": {
+        "sha": "6073b9bda0673757cfc4c6415cd7b4bdb006456d",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "unjudged-cause",
+          "status": "delivered",
+          "change": "The gate's unjudged verdict was a fixed sentence, so the operator could not see what made the run unjudged. It now names the first output line that is not a failure identity, and says the check printed nothing when it printed nothing - the shape the other unjudged verdicts already carry.",
+          "files": ["bend2/src/git/land.bend"],
+          "test": "sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test && ./.scratch/bend2/land-test",
+          "evidence": "observed in the first landing attempt of the retained live worker: blocked with '?unjudged candidate: bend2/test/coordinator.py: check output is not failure identities' while the check had printed 'sh: cannot open the check'; the verdict now carries that line"
+        },
+        {
+          "id": "unjudged-case",
+          "status": "delivered",
+          "change": "Case M of the native land test covers the unjudged branch for the first time: a check that prints one non-identity line leaves the run unjudged, which blocks the landing, the target does not advance, and the block names the line. The case is red with the old verdict.",
+          "files": ["bend2/tests/land.bend"],
+          "test": "sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test && ./.scratch/bend2/land-test",
+          "evidence": "green at this tip: 'land checks: all green' (A-M); with unjudged_why reverted, the same binary reports 'FAILURES: land M: the block does not name its cause: new failures: ?unjudged candidate: nid.txt: check output is not failure identities'"
+        },
+        {
+          "id": "record-correction",
+          "status": "delivered",
+          "change": "The same branch carries aa757581, the live-worker record correction reported in contribution-7230ce94277047add430ce40a42f60ea, so one landing of this tip delivers both.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "git log --oneline b6594f5f..6073b9bd",
+          "evidence": "aa757581 then 6073b9bd on baton/bend2-git5"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl, the canonical whole suite) was not run by this seat: the root's standing instruction forbids a whole or near-whole suite outside swarm integrate, and this change is bend2 only. bend2/test/land.py (10 rows, including the two push rows) is green, with the lane's two native programs: land checks A-M all green, git-lane checks all green."
+        ]
+      },
+      "carriedForward": [
+        "Landing either contribution of this branch converges, but the tip 6073b9bd is the single commit that carries both; the older one alone delivers only the docs correction.",
+        "The unjudged verdict now embeds the offending line whole and unterminated by any cap; a line the run printed is a line the operator sees."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "land commit 6073b9bda0673757cfc4c6415cd7b4bdb006456d (branch baton/bend2-git5, on top of b6594f5f; it carries aa757581 too) onto bend2-rewrite with swarm integrate; this seat's swarm.integrate refused swarm_permission_required (organize)."
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Rebased onto 3ddc0363, and the ended live worker's checkout is still on disk: the worktree item's precondition, for your ruling",
+      "base": {
+        "observedHead": "3ddc0363e22acf287e23d9364f1195a0cf2e6c5c",
+        "rebasedOnto": "3ddc0363e22acf287e23d9364f1195a0cf2e6c5c"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "rebase-confirmed",
+          "status": "delivered",
+          "change": "baton/bend2-git5 is rebased onto origin/bend2-rewrite as it now stands; the tree carries bend2-architect14's 4f5d53ed under 7283f0d0 (the live-worker record correction) and 3ddc0363 (the unjudged-cause fix). Noted: on bend2-rewrite this seat posts tips and the root pushes them; no swarm integrate attempt will be made there.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "git fetch origin && git log --oneline -3 origin/bend2-rewrite",
+          "evidence": "origin/bend2-rewrite 3ddc0363 An unjudged check run names the line that made it unjudged / 7283f0d0 / 4f5d53ed; local branch at 3ddc0363 with a clean worktree"
+        },
+        {
+          "id": "ended-worker-observation",
+          "status": "delivered",
+          "change": "The conditional item you named - 'a worker's worktree leaves when the worker ends (landed or stopped by its orchestrator); add that only when a real Bend2 run shows worktrees of ended workers left behind' - has one observed instance, reported rather than acted on. The 2026-09-26 live OMP worker ended its turn that day; its checkout is still registered and on disk today, and its branch is now landed through the coordinator (contribution-7230ce94), so the retention's stated purpose, landing through the Git module, is served while the worktree remains. I did not build the removal: the coordinator has no end or stop act, so 'when the worker ends' has no act to key on, and a landing is not the worker's end while the worker may still take turns. A design ruling is needed before any mechanism, on the boot-identity lesson.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "git worktree list --porcelain; git -C <checkout> status --short --branch",
+          "evidence": "worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e5f48a15a91a4090717ba3249aeb39b5/.scratch/bend2/live-omp/worker, HEAD ed87de64afe4b9a3a7b7e6db7bc1f42a23d67555, branch refs/heads/baton/bend2-live-ask; the directory and its .git exist; its status is clean ('## baton/bend2-live-ask')"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "No repository change in this contribution, so no suite ran: the deployment verification command (npm test --prefix impl, the canonical whole suite) is not run by this seat outside swarm integrate; the lane's own programs were last run green at 6073b9bd (land checks A-M, git-lane checks, bend2/test/land.py 10 rows)."
+        ]
+      },
+      "carriedForward": [
+        "Question for the worktree item: does that observation count as the real run it awaits, and what shape should the removal take - an act the orchestrator performs on a worker (there is no end/stop verb today), removal when a landing lands that worker's branch, or nothing? I take it only on your word, and only with the coordinator act it needs.",
+        "Observation without a failure behind it, so no action taken: a blocked landing's reason carries the failure identities as hex-encoded fields (for example '6170702e747874 61707020776f726b73 617373657274 2d'), so an operator must decode them by hand; the check's own human diagnostics cannot travel on stdout without making the run unjudged.",
+        "Observation without a failure behind it: the landed answer names the target and its new commit but not the worker commit, so the tie to the worker is read from the landed commit's message ('land baton/bend2-live-ask')."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "Rule on the worktree item: is the observed ended worker's retained checkout the real run that item awaits, and if so which shape (an end/stop act, removal on the landing that lands that worker's branch, or nothing)? bend2-architect14 has the same question and I will take whatever you decide. Separately: name the next root-day item for the Git lane - the landing and publication path is proven end to end and I hold no unlanded work."
+        }
+      ]
+    }
+  }
+}

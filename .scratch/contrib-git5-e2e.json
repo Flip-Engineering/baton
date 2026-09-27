@@ -1,0 +1,69 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "The retained live worker's branch lands and publishes through the coordinator, end to end",
+      "base": {
+        "observedHead": "b6594f5f98734016f438dd9329b9d1a68ef318f1",
+        "rebasedOnto": "b6594f5f98734016f438dd9329b9d1a68ef318f1"
+      },
+      "commit": {
+        "sha": "aa7575819dc3395129cb8db4405f19029ddfedc7",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "live-worker-landing",
+          "status": "delivered",
+          "change": "The retained branch of the 2026-09-26 live OMP worker (baton/bend2-live-ask at ed87de64, base 3bcfd59b) was landed through the coordinator's gated landing, on a scratch clone as the target repo, with the worker registered from the values its record holds. land-checked answered {'status':'landed','target':'landed-target','commit':'28cb9c6b...'} and the landed target's tree is identical to the worker branch's tree.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "baton2 state.db land-checked ask-worker REPO landed-target /<lane>/bend2/scripts/check-unittest.sh bend2/test/coordinator.py",
+          "evidence": "landed 28cb9c6bc716619dbff8131b7512505288df5413 with subject 'land baton/bend2-live-ask'; `git diff --stat landed-target baton/bend2-live-ask` printed nothing, so the squash carried the worker's whole change"
+        },
+        {
+          "id": "live-worker-publication",
+          "status": "delivered",
+          "change": "The coordinator published the landed target with its push verb: push REPO landed-target e2e-remote answered {'status':'pushed','branch':'landed-target','remote':'e2e-remote'}, and both the bare remote read directly and through the clone advertise refs/heads/landed-target at the landed commit. A remote moved independently makes the next push answer {'status':'rejected','reason':'... non-fast-forward ...'} and the remote keeps the commit that moved it.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "baton2 state.db push REPO landed-target e2e-remote; git ls-remote REMOTE refs/heads/landed-target",
+          "evidence": "28cb9c6bc716619dbff8131b7512505288df5413 in the pushed read and the read through the clone; the rejected push left ed87de64 on the remote"
+        },
+        {
+          "id": "check-script-absolute-path",
+          "status": "delivered",
+          "change": "The first attempt at this landing chose the worker's own base as the target and answered blocked with 'unjudged candidate: ... check output is not failure identities': the tree predates bend2/scripts/check-unittest.sh (2daa03bb), so /bin/sh found no script and produced no verdict. That is the gate's no-verdict rule working. The run then passed the check by absolute path, which the check contract allows, and the landing went green.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "git show 3bcfd59b:bend2/scripts/check-unittest.sh",
+          "evidence": "'fatal: path ... exists on disk, but not in 3bcfd59b'; the blocked answer named the file and the missing identity output"
+        },
+        {
+          "id": "record-correction",
+          "status": "delivered",
+          "change": "docs/bend2/live-worker-2026-09-26.md stops claiming the landing is outstanding: it gains a Landing and publishing the retained branch section with the run's commands and answers, its receipt clause is narrowed to what that run observed, and the closing clause that said root wake and Bend2 Git landing remain required is gone.",
+          "files": ["docs/bend2/live-worker-2026-09-26.md"],
+          "test": "git diff b6594f5f..aa757581 -- docs/bend2/live-worker-2026-09-26.md",
+          "evidence": "the section and the two reworded sentences"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl = the canonical whole suite) was not run by this seat: the root's standing instruction forbids a whole or near-whole suite outside swarm integrate, and this change is docs/bend2 only, which no impl test selects. The landing gate's selection for docs/bend2/live-worker-2026-09-26.md is empty."
+        ]
+      },
+      "carriedForward": [
+        "The coordinator push verb and push_git are bend2-architect14's wiring at b6594f5f; this run exercises them end to end and changes nothing in them.",
+        "No committed test was added: the run needs the historical worker branch and the toolchain, and bend2/test/land.py's rows already cover the gated landing and the push separately. The composition is recorded in docs/bend2.",
+        "The record's other open item, the native root acceptance receipt for the report ask-turn-1, is not mine: bend2-architect14 states bend2-architect6 reported the live-slice closure, and the record now asserts only what that 2026-09-26 run observed."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "land commit aa7575819dc3395129cb8db4405f19029ddfedc7 (branch baton/bend2-git5, on top of b6594f5f) onto bend2-rewrite with swarm integrate; this seat's swarm.integrate refused swarm_permission_required (organize). It is the live-worker record correction only."
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Cutover trial watch: the #608 landing, its push and its report loop all verify; no Bend2 defect in the four watched classes",
+      "base": {
+        "observedHead": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6",
+        "rebasedOnto": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "trial-608-chain-verified",
+          "status": "delivered",
+          "change": "Read-only inspection of the live trial (state/trial.db, state/trial.db.root.log, state/trial.db.trial/, and git reads in its repo; nothing written and no baton2 run against its database). The #608 chain is correct end to end: land-checked answered {'status':'landed','target':'bend2-trial','commit':'22f0947eb4bb2df50ea4a65c16a77b197b6e22de'}, the trial worktree's bend2-trial is that same commit, and origin/bend2-trial advertises the same commit by ls-remote - so the landing verdict is not wrong and the push did not fail.",
+          "files": ["bend2/src/git/land.bend", "bend2/src/coordinator/land.bend"],
+          "test": "sqlite3 -readonly state/trial.db \"SELECT id,sender,kind,length(body),coalesce(receipt,'NULL') FROM messages\"; git -C repo ls-remote origin refs/heads/bend2-trial; git -C repo rev-parse bend2-trial",
+          "evidence": "landed 22f0947e stated by land-checked, held by the target branch, and advertised by the remote"
+        },
+        {
+          "id": "trial-no-lost-report",
+          "status": "delivered",
+          "change": "No report was lost and the completion signal works: the worker's report issue-608-reclaim-turn-1 carries a receipt (the root acknowledged it), and the root's review and landing reports to the operator are the only rows with a null receipt, which is by design since the operator is a terminal session with no adapter to acknowledge them. One observation on report quality, not a defect: the worker ended its turn on tool calls with no closing prose, so the documented fallback stored the terminal envelope as the report body; the root's own review then worked from the commit, and nothing was lost.",
+          "files": ["bend2/src/coordinator/commands.bend"],
+          "test": "sqlite3 -readonly state/trial.db \"SELECT seq,id,sender,recipient,kind,substr(body,1,80),coalesce(receipt,'NULL') FROM messages ORDER BY seq\"",
+          "evidence": "issue-608-reclaim-turn-1 has a receipt; root-to-operator reports are the null ones; the body of the worker report is the agent_end envelope because the turn produced no prose"
+        },
+        {
+          "id": "trial-native-log-size",
+          "status": "delivered",
+          "change": "The one operational risk the live run shows, reported without a mechanism: the running #379 turn's native log is 145327063 bytes over 14008 lines (average 10374 per line, maximum 103485), because the harness's events restate the accumulated conversation; the log had stopped growing when measured, the supervisor process is alive, and the same measurement is a harness verbosity fact rather than a coordinator fault - the coordinator retains the native log by contract. Two workers at this size are affordable; a trial of many turns accumulates gigabytes, so the standing instructions or the launcher are where a bound belongs, and none has failed yet.",
+          "files": ["bend2/src/coordinator/turn.bend"],
+          "test": "wc -lc state/trial.db.trial/issue-379-read-native.jsonl; awk '{n++;s+=length($0);if(length($0)>m)m=length($0)} END{printf \"lines=%d avg=%.0f max=%d\\n\",n,s/n,m}' state/trial.db.trial/issue-379-read-native.jsonl",
+          "evidence": "lines=14008 bytes=145327063 avg=10374 max=103485; 0 bytes grew over a 5 s sample; the turn process and its omp child are alive"
+        },
+        {
+          "id": "trial-supervisor-alive",
+          "status": "delivered",
+          "change": "No stalled supervisor: the live turn process ('baton2 ... turn issue-379-read ...') and its omp child are running, the worker is inside a bash tool call with a 300 s timeout, and its event log is being written - the pause in the log is a tool call in flight, not a stall.",
+          "files": ["bend2/src/coordinator/turn.bend"],
+          "test": "pgrep -fl 'bend2-trial|trial.db'",
+          "evidence": "the turn process and /opt/homebrew/bin/omp --mode rpc ... both listed; the log stopped growing while the tool call runs"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "Nothing was run against the trial: its database was read with sqlite3 -readonly, its logs and repo were read only, and no baton2, landing or push was executed by this seat. The deployment verification command (npm test --prefix impl) is not run by this seat outside swarm integrate."
+        ]
+      },
+      "carriedForward": [
+        "Watch items with no defect yet: a many-turn trial accumulates gigabytes of native logs (harness verbosity; the coordinator retains them by contract), and a worker that ends on tool calls with no prose leaves the root to read the envelope and the commit.",
+        "If the trial later shows a real failure in the four watched classes, the fix belongs in bend2-rewrite and I will take it, on the same evidence standard the last two rulings set."
+      ],
+      "needsFromOthers": []
+    }
+  }
+}

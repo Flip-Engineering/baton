@@ -1,0 +1,488 @@
+worktree /Users/wahargis/Development/Experiments/baton-resident
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+detached
+
+worktree /private/tmp/wake15y-161
+HEAD df8f15d2516784767e12e145a98579d111948730
+branch refs/heads/baton/lead15y-161
+
+worktree /private/tmp/wake15y-165
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+branch refs/heads/baton/lead15y-165
+
+worktree /private/tmp/wake15y-611b
+HEAD d1a55d3f3dd51bef80f09cd37b7b1d61a364642f
+branch refs/heads/baton/lead15y-611b
+
+worktree /private/tmp/wake15y-614
+HEAD be77edd7ec8d5230d0a95467dde4ba757a7efc65
+branch refs/heads/baton/lead15y-614
+
+worktree /private/tmp/wake15y-recut
+HEAD 2fae57ad7ada984455ce4ccc8c75663b324a302e
+branch refs/heads/baton/lead15y-164
+
+worktree /Users/wahargis/Development/Experiments/baton-580
+HEAD 36eb85a25a508b10b28d92ac6600f62daf4c3964
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/verify/contribution-d8d320140c31b7869b352a06f81e998bfdf45ac62f2fc9f0cf4af09ab32b188e-2f93470f
+HEAD 7e2504b3559083b45c0216deea6808ef224eb472
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/verify/contribution-d8d320140c31b7869b352a06f81e998bfdf45ac62f2fc9f0cf4af09ab32b188e-base-e45371a2
+HEAD 67b165685045c8f579fbbaba55d1f95c0f6f30f3
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/integrate-contribution-17u-96-horizon-comment
+HEAD e3f97762eea644bf98ff7e7170ec79c9dc5d07ed
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/integrate-contribution-3e1f73e43363ffe6f27efca795ffe82c
+HEAD 20874a76aa66cd044d2dc647c5a7ae2190849d25
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/integrate-contribution-c7ee50a3f50f07d5e07a2c13e5349985
+HEAD 28a52f697005a7f3def64bacd03992cf1a74c89e
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/integrate-contribution-f722a51895e1ba653e1e248b7b892942
+HEAD ef8492758251813180230a436f27b748e586d3af
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/integrate-contribution-f794e482f31b14df03ef6cfacd97b1ee
+HEAD 661f3f5f668a9ff53ed8c8c4f3c66f78ae8c9605
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0577f0774ef3752b9b7629b6a89c1d2b
+HEAD 56c1c52d99e92d0f542eaee7a9a7f1b3a13e0c30
+branch refs/heads/baton/ws-0577f0774ef3752b9b7629b6a89c1d2b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0693079d745eae05037a947dfd51e38c
+HEAD 180ef3b354bb74a490ba14559d853203cf044c24
+branch refs/heads/baton/ws-0693079d745eae05037a947dfd51e38c
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-06be7aa86ac21634290805e63969bb0c
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+branch refs/heads/baton/ws-06be7aa86ac21634290805e63969bb0c
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-06be7aa86ac21634290805e63969bb0c/.scratch/bend2-lane
+HEAD b6594f5f98734016f438dd9329b9d1a68ef318f1
+branch refs/heads/baton/bend2-git5
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-07a1feca63a26f76cc2f7537e47ab1c3
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/bend2-architect12
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-07d444e5d5a5ecc363c38805bbbdd2b0
+HEAD 25b13d7c3af3d3593aa0450ff84dbe14d972e3d2
+branch refs/heads/baton/ws-07d444e5d5a5ecc363c38805bbbdd2b0
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-08e3e5f46255e962be6d3c9d7a668273
+HEAD f7d08e9e471470e3b90126967a7f2c0cf7738df4
+branch refs/heads/bend2-rewrite
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0bc126aadf7369b109ed248afe41d432
+HEAD 182ae86728ff2f8845141e2e2943143241e41b6f
+branch refs/heads/baton/ws-0bc126aadf7369b109ed248afe41d432
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc
+HEAD 879cf52cd3d73faad406f2e5835c5c4c8d285e78
+branch refs/heads/baton/bend2-architect14
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/claude-recovery
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/bend2-architect14-claude-recovery
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/codex-recovery
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/bend2-architect14-codex-recovery
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/codex-work
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/bend2-architect14-codex
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/muse-recovery
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/bend2-architect14-muse-recovery
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/omp-guidance-after
+HEAD b6594f5f98734016f438dd9329b9d1a68ef318f1
+branch refs/heads/baton/architect14-omp-guidance-after
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/omp-guidance-before
+HEAD b6594f5f98734016f438dd9329b9d1a68ef318f1
+branch refs/heads/baton/architect14-omp-guidance-before
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/omp-guidance-final
+HEAD 879cf52cd3d73faad406f2e5835c5c4c8d285e78
+branch refs/heads/baton/architect14-omp-guidance-final
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0d2d26c1ed4061d88d65a78680ce25cc/.scratch/bend2/architect14/omp-recovery
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/bend2-architect14-omp-recovery
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0e27f06654a3242e06af0120edc0efd1
+HEAD cb52573af9abba3d88cf6119bd008b9a227e7520
+branch refs/heads/baton/ws-0e27f06654a3242e06af0120edc0efd1
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-0f1226e3fc939ff40a1841a4e212abbc
+HEAD f1b7500f1f281425b347e084b645cf0120d84750
+branch refs/heads/baton/ws-0f1226e3fc939ff40a1841a4e212abbc
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-1111ea49ba824015af43c4a739bb3031
+HEAD 8838f7653f9415ba00e3cb41078e708e860a2599
+branch refs/heads/baton/ws-1111ea49ba824015af43c4a739bb3031
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-12eb9775526f193c5a90eb98618e1306
+HEAD 8bf0c1eed16c53ef246fa90c80d78abbfc19f277
+branch refs/heads/baton/ws-12eb9775526f193c5a90eb98618e1306
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-185533e12c741778719efa96608db22b
+HEAD 8a67121ab7200e1168c35606badf1c3b7a4dd56b
+branch refs/heads/baton/ws-185533e12c741778719efa96608db22b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-1e2ac426fd1c3c09042afac236791c0d
+HEAD 2804cad44a0dc27224707a01cded1258e6124cc0
+branch refs/heads/baton/ws-1e2ac426fd1c3c09042afac236791c0d
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-21321b9bd3d97fc7c3e07c6275967de7
+HEAD 2b58e1022507dce6e5b29637952fc798bfb419a9
+branch refs/heads/baton/ws-21321b9bd3d97fc7c3e07c6275967de7
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-23490156cfa2ae78f368670f5f2e2185
+HEAD 1df16e3c242325ab9379efb5402a657694e82691
+branch refs/heads/baton/ws-23490156cfa2ae78f368670f5f2e2185
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-23df824aa00b414c946af36b63761bdf
+HEAD 03aafbe22a9242b1f21b788c2f6982c67aaab834
+branch refs/heads/baton/ws-23df824aa00b414c946af36b63761bdf
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-24d3e9718dfaa32e0871f70a724f02f7
+HEAD 381cd5fb644f8f44bf43092bee9f757538834f15
+branch refs/heads/baton/ws-24d3e9718dfaa32e0871f70a724f02f7
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-2530f91966c033aa220ba99f7f5c5ef1
+HEAD 0b13f4416389e6bf732aa759441a3e78aa4c4013
+branch refs/heads/baton/ws-2530f91966c033aa220ba99f7f5c5ef1
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-2605f295be35548861191b0565f5fca3
+HEAD 590a108509ad8eb13714623467223b7a09d92229
+branch refs/heads/baton/ws-2605f295be35548861191b0565f5fca3
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-2fa723b98bc17dc074c2aea658d779cc
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+branch refs/heads/baton/ws-2fa723b98bc17dc074c2aea658d779cc
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-2fc313fc0e86dfdec5f4d5520b6f3390
+HEAD d05ee6638b13c86d5ab81a06fe000048d6b69eec
+branch refs/heads/bl14-queue
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-359a2055550d7af22e2076680a714f6e
+HEAD 9a7725c62fd328f04a41b45f3325f0ce66ba5e49
+branch refs/heads/baton/ws-359a2055550d7af22e2076680a714f6e
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-365ee384c87ddaefbd0e4cd30bd90adc
+HEAD 457fca04b0617a9a6f6d4474422aec552f1d84f9
+branch refs/heads/baton/ws-365ee384c87ddaefbd0e4cd30bd90adc
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-36bb15aebc4dd13e1b44a6aa3a2de073
+HEAD 5c84e015451ebd3b6152454f42528282b4c793fc
+branch refs/heads/baton/ws-36bb15aebc4dd13e1b44a6aa3a2de073
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-396c43cf54cde39484bdce1b57b15e4c
+HEAD feaf9f0670572035ca67db54945c451d74135573
+branch refs/heads/baton/ws-396c43cf54cde39484bdce1b57b15e4c
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-3ca9a78734796419a5a541ddc29b69e2
+HEAD f710e8dec142ab3d9feef9f16f7912b84e4fa1d8
+branch refs/heads/baton/ws-3ca9a78734796419a5a541ddc29b69e2
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-40ef3abde791cfdaa6f6ddfd8cc243b3
+HEAD 36eb85a25a508b10b28d92ac6600f62daf4c3964
+branch refs/heads/baton/ws-40ef3abde791cfdaa6f6ddfd8cc243b3
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-456d2b129fac747d823de8e3eb12486a
+HEAD 6aed77017edd4a5999e71a6f8bb29cb375f173cf
+branch refs/heads/baton/ws-456d2b129fac747d823de8e3eb12486a
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-47beab856d921bb32c8b2eb8daed2e1b
+HEAD a14b913ab547bae30fb2be9f618f5c243aa86f4f
+branch refs/heads/baton/ws-47beab856d921bb32c8b2eb8daed2e1b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-4a8c42dc94b6e2c26ec0fe674cfee2eb
+HEAD 97b8888bd070f6b3e51253443b73c902493a677f
+branch refs/heads/baton/ws-4a8c42dc94b6e2c26ec0fe674cfee2eb
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-4b546bcbc8271befdd387233389bf491
+HEAD 57d6c81c8168275896aa398504dd8caba077e0cc
+branch refs/heads/baton/ws-4b546bcbc8271befdd387233389bf491
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-4e1ebe048a5b4099c7d5c718bc4b3d28
+HEAD 90c9f2c14d30161dc0e03c2440287d6bfe33ddce
+branch refs/heads/baton/ws-4e1ebe048a5b4099c7d5c718bc4b3d28
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-4e8cce8b88bfe49348e20759d3257a96
+HEAD d139302e9b0f7a187c4f09b16e8dc9cc8ef27cce
+branch refs/heads/baton/ws-4e8cce8b88bfe49348e20759d3257a96
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-4e8cce8b88bfe49348e20759d3257a96/scratch/hostlane-576
+HEAD 84e9987a6585108dc3be621f2f33092e57ac4508
+branch refs/heads/baton/rigidity-hostlane-576
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-56d112b81a44844632a751447b03f06b
+HEAD 0d24fec8619d1cae9bf74ca5d38883e8d42e95de
+branch refs/heads/baton/ws-56d112b81a44844632a751447b03f06b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-5706587c967053db4a5693963e267f1b
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+branch refs/heads/baton/ws-5706587c967053db4a5693963e267f1b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-576eaafd359266a602565c4b529194a5
+HEAD 9741553d26037b285c7d5f1e2d262829cb9d396e
+branch refs/heads/baton/ws-576eaafd359266a602565c4b529194a5
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-5be832cb97e3b1feab121460ea186fc1
+HEAD 9beba0b49688a1968e75debf8467d927049705ae
+branch refs/heads/baton/ws-5be832cb97e3b1feab121460ea186fc1
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-5be832cb97e3b1feab121460ea186fc1/.baton/recovery/base571
+HEAD b8aa626b2700633c499d55418f3d5ffc80155c14
+detached
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-5be832cb97e3b1feab121460ea186fc1/.baton/recovery/non-swarm
+HEAD 051480bf0ba7a3580721bb59f336a8e2bf8188c8
+branch refs/heads/baton/rigidity-turn14-nonswarm
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-5bf79c81966ff220d008838f0bd91e34
+HEAD 5da33efc907e3c820f31d6e9e1f4e282a251f870
+branch refs/heads/baton/ws-5bf79c81966ff220d008838f0bd91e34
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-6531cf37b748b92d1f63e3d74bb19bbd
+HEAD 5290f92ddaac8c67e09003ac67226c87336e751e
+branch refs/heads/mcp15/composition-67b16568
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-6746fdcfa05a2376f47bfddd362ae6bc
+HEAD 8089f3a762346545107562387e2deb9c4cdf6bf5
+branch refs/heads/baton/ws-6746fdcfa05a2376f47bfddd362ae6bc
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-68f59f46d4d04381e2d722ccd5226223
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+branch refs/heads/baton/611-report-half-recut
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-7686d303a5e3647ab120b0ecb5813403
+HEAD f9a49afa068dcf5d4baf895080821089497bb51b
+branch refs/heads/baton/ws-7686d303a5e3647ab120b0ecb5813403
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-7b0536eaecbf98c186e6ca0dab2e02af
+HEAD f793debda622cb10c0b867330c89393da1867826
+branch refs/heads/baton/ws-7b0536eaecbf98c186e6ca0dab2e02af
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-7c4c1a6f6d160becdfb62492b436040a
+HEAD 99434607a8dd64f12d909deab4819784e43eb6b2
+branch refs/heads/baton/ws-7c4c1a6f6d160becdfb62492b436040a
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-7dbf47710cd14fff37f55859172845b8
+HEAD 48d456c11a2498e4d0c450257332285e0297fe61
+branch refs/heads/baton/ws-7dbf47710cd14fff37f55859172845b8
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-8082540d9798ced38251615aa219179d
+HEAD e466a885409694722e576af7ab7b0fe169ed981d
+branch refs/heads/baton/ws-8082540d9798ced38251615aa219179d
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-8370a2c09eabeb6016492e51f3c4c29e
+HEAD 33f9f3c26d299c7dc4f062b826a1950c90208625
+branch refs/heads/baton/ws-8370a2c09eabeb6016492e51f3c4c29e
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-85664db3b198b4e5c4b1e41e8d8f26fb
+HEAD 7d4561961a82b62a6a73871f0a894959b2fd655d
+branch refs/heads/baton/ws-85664db3b198b4e5c4b1e41e8d8f26fb
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-876acfffd2125701a65cfddb17ed73a8
+HEAD cff17bc27ec256854a367f893a1560e59986e883
+branch refs/heads/baton/ws-876acfffd2125701a65cfddb17ed73a8
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-899633ef372cc73e0c7a131ddaa3bc5e
+HEAD f15e673b4fa90104addc1e8f36eca50428cd5171
+branch refs/heads/baton/ws-899633ef372cc73e0c7a131ddaa3bc5e
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-899633ef372cc73e0c7a131ddaa3bc5e/.scratch/bend2-lane
+HEAD 0e41640a89c3f99f7b1f7c72fc4832f7e16072e4
+branch refs/heads/baton/bend2-git3
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-8a6a180a95979942f8302f7d12ba0027
+HEAD 94529d06d688d1e6c318c0cde82c26ef8d3b5340
+branch refs/heads/baton/ws-8a6a180a95979942f8302f7d12ba0027
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-8de207c3e75aa7b2d302cfdd18211d1b
+HEAD e26370e75cdd6df7c945e97f051cc7a800a8a184
+branch refs/heads/baton/ws-8de207c3e75aa7b2d302cfdd18211d1b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-8fb6bc0a21171ecedd2c82347837bf9d
+HEAD 4735960203bc47cbc05e8911c22a48661a775765
+branch refs/heads/baton/ws-8fb6bc0a21171ecedd2c82347837bf9d
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-9665513eb36e3a7f63889fe20754321b
+HEAD c5dc8b3785ae801a647d38dc47c3258e6f6269d1
+branch refs/heads/baton/ws-9665513eb36e3a7f63889fe20754321b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-9665513eb36e3a7f63889fe20754321b/.scratch/bend2/live-worker-wt
+HEAD a11061e969e09a2e61ba583d694d6f42bb8fe18c
+branch refs/heads/live-e2e-worker-2
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-994c590fd33a2cb314714413cadbc591
+HEAD dc1dfe989c2dd22de0dc4f3efba66f05f753528c
+branch refs/heads/baton/ws-994c590fd33a2cb314714413cadbc591
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-9b8884a98842be347c85a8e852929024
+HEAD c5364c9b8f867c79044ded5f30db51f219ad9794
+branch refs/heads/baton/ws-9b8884a98842be347c85a8e852929024
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-9c1694a03340b38a62ef524035af9e41
+HEAD e08ec5712b60cb291dc9855b805453066cbb522e
+branch refs/heads/baton/ws-9c1694a03340b38a62ef524035af9e41
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-9e834d4227f8b5bd9bc5bd400ca20612
+HEAD 7b0a6dfc291ebb0ed3406faec4253a0f959da0ef
+branch refs/heads/baton/ws-9e834d4227f8b5bd9bc5bd400ca20612
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-a12eaa54fc9a8de28756e0884f81a0bc
+HEAD d92b96bcd255d01828c0b13da06e696ccdd2486e
+branch refs/heads/baton/ws-a12eaa54fc9a8de28756e0884f81a0bc
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-a29287cdee27eba2ef373b7e037d38d4
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+branch refs/heads/baton/ws-a29287cdee27eba2ef373b7e037d38d4
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-a815f63faa07bcf37172e69ecd65969c
+HEAD 3ef79b0bd8362c6fe2c33e351188e0eacd9bacb0
+branch refs/heads/baton/ws-a815f63faa07bcf37172e69ecd65969c
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-afc0ccdfbeaf0afeca8fd1ad4727a05c
+HEAD ab013216a4511d3c58f941123c0fbabe7b51a8c4
+branch refs/heads/baton/ws-afc0ccdfbeaf0afeca8fd1ad4727a05c
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-b0b6c3e63ee6cdacbe6eefe5f6b01ab1
+HEAD 806718ffed779de762c4cf45d21d23c65e5ee0a5
+branch refs/heads/baton/ws-b0b6c3e63ee6cdacbe6eefe5f6b01ab1
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-b4b9fee2bbcd8361fce1317e561e7023
+HEAD d343fc542c573b2924ce7e1f7adc220605e08b20
+branch refs/heads/baton/ws-b4b9fee2bbcd8361fce1317e561e7023
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-b599dfbc59d956b5880626eee4cb8e33
+HEAD 26238c65584a78119c9f1b19bf24d1b17e48fbef
+branch refs/heads/baton/ws-b599dfbc59d956b5880626eee4cb8e33
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-b8d83b3412a67c761fe1e798b1fc2b35
+HEAD e2d879c46a2d26f5ff68a4f334b72531111bbc2e
+branch refs/heads/baton/ws-b8d83b3412a67c761fe1e798b1fc2b35
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-bacf482a875c5870fa44f94a627010a1
+HEAD c3201cb8fb3db318d4424eeaff8709aaeb3220b6
+branch refs/heads/baton/ws-bacf482a875c5870fa44f94a627010a1
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-bb964de517ed7cdcfb2ab5bf2ed09021
+HEAD 9ae6ad1541c30dfb763c877669a31a715a692f94
+branch refs/heads/baton/ws-bb964de517ed7cdcfb2ab5bf2ed09021
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-bd3bc48f9e6e8e49ac9ddfa807b1f78f
+HEAD 01ba16fbd6959846276604b31e6e5d658bcb1248
+branch refs/heads/baton/ws-bd3bc48f9e6e8e49ac9ddfa807b1f78f
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-bd3bc48f9e6e8e49ac9ddfa807b1f78f/.scratch/bend2-gate
+HEAD 8df682bfd1ba25af71035529f4959b92177e6fa5
+branch refs/heads/baton/bend2-architect2r-mcp-gate
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-c4d3ffe5a99c4b39174896e477e8eaf1
+HEAD fdbba9ab80559624353085f723c2dcbaf123b3fb
+branch refs/heads/baton/bend2-orchestrator17-r11-application-row
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-c521c2cfc9815d508fb8afa5e541654e
+HEAD 717d450a19ed3b517e8637668fd04d06b6524f48
+branch refs/heads/baton/ws-c521c2cfc9815d508fb8afa5e541654e
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-c8925c1a87eff01f1b733d7e1652e34c
+HEAD e4293dcefc1398d658ec2052b9a1fc5b466fa4be
+branch refs/heads/baton/ws-c8925c1a87eff01f1b733d7e1652e34c
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-ce51806ba9401989cbeb84de4475a0b0
+HEAD 770e89e323cf13537b72ffb271936c43eab84d4f
+branch refs/heads/baton/ws-ce51806ba9401989cbeb84de4475a0b0
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-d2f4558c51f871a29411abfc1f042121
+HEAD 8d7d26fa6bc997fd5d9547436c1c56b4aa786c94
+branch refs/heads/baton/ws-d2f4558c51f871a29411abfc1f042121
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-d372a4ce8aabb2f813481453577b0d82
+HEAD bbc9b37eec8439ebf25df07f888c14f287256f1a
+branch refs/heads/baton/ws-d372a4ce8aabb2f813481453577b0d82
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-d4d3c4eeaefb8cf0b65d34f8762fec2b
+HEAD abcab8dab3b4f1580d7269590e9f9afd7af52f55
+branch refs/heads/baton/ws-d4d3c4eeaefb8cf0b65d34f8762fec2b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-d6d7f9e86291d290912b02577cbb0273
+HEAD 164ea59c330025bb5009705ef88c7eb9e0eb9e53
+branch refs/heads/baton/ws-d6d7f9e86291d290912b02577cbb0273
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-d7162c8723cb8f20b15015533a52a939
+HEAD 0d24fec8619d1cae9bf74ca5d38883e8d42e95de
+branch refs/heads/baton/ws-d7162c8723cb8f20b15015533a52a939
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-db72cdf5fe01e1f2a44485aefc6deb8e
+HEAD ff158b8d46d6eb6f4ca671ff09c1dd989e755c4d
+branch refs/heads/baton/ws-db72cdf5fe01e1f2a44485aefc6deb8e
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-de5e03f4ee239f00e01c1b77cdf31eef
+HEAD 6b6f44dc35a176eb1963bcda78c5134cd774b3a7
+branch refs/heads/baton/ws-de5e03f4ee239f00e01c1b77cdf31eef
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e12714d01ee85adf2824aea52f02fb8b
+HEAD f7135684e0464fde5c6e3876a9156ab54657b56c
+branch refs/heads/baton/ws-e12714d01ee85adf2824aea52f02fb8b
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e1c08874270c256bb95a035ae3c31cff
+HEAD e4293dcefc1398d658ec2052b9a1fc5b466fa4be
+branch refs/heads/baton/ws-e1c08874270c256bb95a035ae3c31cff
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e33c52390c14aa4f42b172e24ce7774a
+HEAD ce8cbca8972764ee01951b216359b3e4dbbcbaf9
+branch refs/heads/baton/ws-e33c52390c14aa4f42b172e24ce7774a
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e5f48a15a91a4090717ba3249aeb39b5
+HEAD 91a4faf631cfd23a7fd5a1cd8e8dfe1b7c2448d8
+branch refs/heads/baton/ws-e5f48a15a91a4090717ba3249aeb39b5
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e5f48a15a91a4090717ba3249aeb39b5/.scratch/bend2/live-omp/worker
+HEAD ed87de64afe4b9a3a7b7e6db7bc1f42a23d67555
+branch refs/heads/baton/bend2-live-ask
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e6afb23583b445eda82d7005c15908c5
+HEAD 077452751157d0278a324a1d8642f9fac61c6dcf
+branch refs/heads/baton/ws-e6afb23583b445eda82d7005c15908c5
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e841bb2356a4b5f9aaab94eb049683e4
+HEAD ea6c3117b6c8af75bedff0a35bd5a7f3494140b1
+branch refs/heads/baton/ws-e841bb2356a4b5f9aaab94eb049683e4
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e8814f6a14e74c38c7d9fcd2df6c131d
+HEAD 493599c2f1d62554f971705460affe63a753921d
+branch refs/heads/baton/ws-e8814f6a14e74c38c7d9fcd2df6c131d
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-f0ace8b026e963b70fab82a50869f9b0
+HEAD 692a5fb977f58d77c888ed7c1d641e40a66ac9fd
+branch refs/heads/baton/ws-f0ace8b026e963b70fab82a50869f9b0
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-f526982a412401edd6f70906ae85460d
+HEAD 1f859d5737c3b648de00edfd490329f3ffa17f0e
+branch refs/heads/baton/ws-f526982a412401edd6f70906ae85460d
+
+worktree /Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-ffc6040329c77dc9595466c54cf58b8a
+HEAD 95bb990e290067308ce83d61fc363f97923b4685
+branch refs/heads/baton/ws-ffc6040329c77dc9595466c54cf58b8a
+
+worktree /Users/wahargis/Development/Experiments/baton-routewalk
+HEAD bd4014d4314c49f118a74e769fbc3ff5c0e31c7b
+detached
+

@@ -1,0 +1,60 @@
+{
+  "receipt": {
+    "command": "swarm.guide",
+    "event": {
+      "kind": "swarm.guidance_sent",
+      "seq": 233451,
+      "ts": "2026-09-27T03:25:23.022Z",
+      "actor": "swarm-native:swarm-bend2-20260924:bend2-git5"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "bend2-architect14",
+        "seq": 233451,
+        "ts": "2026-09-27T03:25:23.022Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.watch",
+    "args": {
+      "swarmId": "swarm-bend2-20260924"
+    },
+    "observation": {
+      "wakeClass": "paused",
+      "participantId": "bend2-architect14"
+    }
+  },
+  "participantId": "bend2-architect14",
+  "result": {
+    "ok": true,
+    "result": "ok",
+    "emulated": false
+  },
+  "guide": {
+    "seq": 233451,
+    "kind": "swarm.guidance_sent",
+    "participantId": "bend2-architect14",
+    "from": {
+      "kind": "peer",
+      "participantId": "bend2-git5"
+    },
+    "sentAt": "2026-09-27T03:25:23.022Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "messageId": "message:0fc5d9b8cd2618e8b04f4bf5d6975e85d4ff640c778b4341b68ddef38a0faf9d",
+    "delivery": {
+      "state": "delivered",
+      "lane": {
+        "seq": 233450,
+        "kind": "steer",
+        "ts": "2026-09-27T03:25:22.989Z",
+        "messageId": "message:0fc5d9b8cd2618e8b04f4bf5d6975e85d4ff640c778b4341b68ddef38a0faf9d"
+      }
+    }
+  },
+  "commandReceipt": {
+    "idempotencyKey": "9f1f8e1a-be4b-4a1d-8b8c-5f212af193fd"
+  }
+}

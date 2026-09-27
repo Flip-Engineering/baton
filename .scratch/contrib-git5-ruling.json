@@ -1,0 +1,44 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Ruling needed: the host-life reclamation against the accepted session-resume recovery",
+      "base": {
+        "observedHead": "896aec0298fa2ec6af01f5e1de65ab863632f74b",
+        "rebasedOnto": "896aec0298fa2ec6af01f5e1de65ab863632f74b"
+      },
+      "commit": {
+        "sha": "2add959f3f1a95b748b6a49a7a92a66392a973dc",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "host-life-reclamation-hold",
+          "status": "partial",
+          "change": "The host-life reclamation you directed at 03:12Z is implemented and proven (commit 2add959f, contribution-55470efcea5fdc3e8c91d2d6d485bf35) and is HELD UNLANDED. bend2-architect14 objects on two grounds and I ask you to rule: (1) evidence - no bend2-coordinator run has been observed failing this way; the observed run is the swarm/resident side of the host restart of 2026-09-26/27 (dead seats' worktrees survived, including this lane's bend2-lane1 held by the dead bend2-git3, which refused my capture with workspace_owner_binding_changed), while the resident's own equivalent was fixed on master with two halves (#568, #603, #608); (2) compatibility - the accepted recovery resumes native sessions in their RETAINED workspaces (turn takes CWD from the caller), and a settle that runs before every command removes that directory before a resume turn can run. bend2 has no re-materialization path: recruit for a known worker records the path without creating a worktree, so nothing re-cuts a checkout for a resumed successor. Verified in the tree at this tip.",
+          "files": ["bend2/src/coordinator/turn.bend", "bend2/src/coordinator/recruit.bend"],
+          "test": "sed -n '141,156p' bend2/src/coordinator/turn.bend; sed -n '55,61p' bend2/src/coordinator/recruit.bend",
+          "evidence": "turn.bend run/worker_checked take CWD and SESSION from the caller; recruit.create's exists branch registers G.WCreated{branch,path,base} without running git worktree add; commit 2add959f touches no impl/ file and is on baton/bend2-git5 only"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "The mechanism's risk surface, stated exactly: a clean worktree's content is on its surviving branch, and a worktree holding uncommitted changes is retained by git's refusal, so the loss the removal can cause is a resumed session's working directory, not committed or uncommitted work.",
+        "If you keep the mechanism, the compatible shape is the resident's two halves: the reclamation plus a re-materialization path for a known worker whose recorded workspace is gone (recruit re-creating the worktree from its recorded branch and base, as #603 does for a resume-from successor).",
+        "A second compatible shape: an explicit act instead of a startup step, so removal happens when the operator has decided no resume is wanted.",
+        "push_git (contribution-73228162, 896aec02) still has no caller; the coordinator publish verb is the remaining Git-lane item."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "Rule on commit 2add959f (contribution-55470efcea5fdc3e8c91d2d6d485bf35) and make LANDING IT THE DEFAULT ONLY IF YOU RULE FOR IT: (a) drop it - I revert and publish nothing further; (b) keep it and I add the re-materialization half so a resumed successor re-binds its checkout; (c) keep the removal but gate it behind an explicit act rather than a startup settle; (d) rule it out under AGENTS.md (no mechanism without an observed failure) - I remove it. Until then I hold it unlanded and edit nothing further in the coordinator. My earlier request to land it (in contribution-55470efc) is superseded by this one."
+        }
+      ]
+    }
+  }
+}

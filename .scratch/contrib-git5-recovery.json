@@ -1,0 +1,69 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Host recovery reclaims a dead worker's worktree, proven by a real run",
+      "base": {
+        "observedHead": "896aec0298fa2ec6af01f5e1de65ab863632f74b",
+        "rebasedOnto": "896aec0298fa2ec6af01f5e1de65ab863632f74b"
+      },
+      "commit": {
+        "sha": "2add959f3f1a95b748b6a49a7a92a66392a973dc",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "host-life-records",
+          "status": "delivered",
+          "change": "The coordinator records the host life it handed each recruited worktree out in: a new lives(worker, boot, repo) row written in the same transaction as the worker row, so no crash can leave a worktree with no life. The identity is read from BATON2_HOST_BOOT, else the Linux boot id file, else the Darwin boot time.",
+          "files": ["bend2/src/coordinator/boot.bend", "bend2/src/coordinator/commands.bend", "bend2/src/coordinator/recruit.bend"],
+          "test": "sh bend2/scripts/build-native.sh && /usr/bin/python3 -m unittest discover -s bend2/test -p 'recruit.py'",
+          "evidence": "6 recruit rows green, including the two host-recovery rows"
+        },
+        {
+          "id": "reclaim-dead-worktree",
+          "status": "delivered",
+          "change": "Every invocation settles the host life before its command runs. A worker of an earlier life cannot have a live process after the host restart, so its worktree is removed with git worktree remove in the recorded repository, its branch stays, and its row stops naming a workspace. A registration whose directory is gone is pruned; a host that names no life reclaims nothing.",
+          "files": ["bend2/src/coordinator/recover.bend", "bend2/src/git/reclaim.bend", "bend2/src/coordinator/main.bend"],
+          "test": "sh .scratch/proof-recovery.sh",
+          "evidence": "real run: recruit under host-life-1, then a run under host-life-2 prints 'reclaimed the worktree of worker w1: /private/tmp/bend2-recovery-proof.zxCdKn/repo/wt' on stderr, `git worktree list` then holds only the main tree, `git rev-parse --verify w1-branch` answers 0c7cf83dc078062b64cf17daa6c99b282ad98841, and `worktree w1` answers 'The worker has no recorded workspace.'"
+        },
+        {
+          "id": "dirty-worktree-retained",
+          "status": "delivered",
+          "change": "A dead worker's worktree holding uncommitted changes is retained: git refuses the removal, the refusal is reported on stderr, the worker row keeps naming the worktree, and nothing on disk is touched.",
+          "files": ["bend2/src/git/reclaim.bend", "bend2/src/coordinator/recover.bend"],
+          "test": "/usr/bin/python3 -m unittest discover -s bend2/test -p 'recruit.py'",
+          "evidence": "same real run: 'retained the worktree of worker w2: .../repo/wt2: git refused to remove it: fatal: ... contains modified or untracked files, use --force to delete it', wt2 still listed, partial.txt still reads 'uncommitted work in progress', and the lives row w2|host-life-1|/private/tmp/... remains"
+        },
+        {
+          "id": "worktree-answer-for-a-reclaimed-worker",
+          "status": "delivered",
+          "change": "worktree ID answers that a reclaimed worker has no recorded workspace instead of reading a git status on an empty path.",
+          "files": ["bend2/src/coordinator/recruit.bend", "bend2/README.md"],
+          "test": "/usr/bin/python3 -m unittest discover -s bend2/test -p 'recruit.py'",
+          "evidence": "'The worker has no recorded workspace.' on exit 2 after the reclaim, asserted by the first host-recovery row"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl = node impl/scripts/run-suite.mjs --all, the canonical whole suite) was not run by this seat: the root's standing instruction forbids a whole or near-whole suite outside swarm integrate, and this change touches only bend2/. The bend2 Python suite was run only for the three files that cover the changed paths: recruit.py (6), coordinator.py (16) and land.py (8), all green. bend2.scripts/run-checks.mjs was not run: neither .bend/bin/bend nor node_modules/.bend/bin/bend exists in this checkout and it would install a toolchain into the tree."
+        ]
+      },
+      "carriedForward": [
+        "The reclaim fires when the host life changes. A worker whose process died without a host restart keeps its worktree, which is the retention the lane's failed-worker row pins (test_failed_worker_leaves_dirty_work_available).",
+        "push_git (896aec02) still has no caller: the coordinator has no publish verb.",
+        "The prune path (a registered worktree whose directory the host no longer has) is implemented and not exercised by a real run in this lane; the dirty-worktree refusal is the exercised refusal."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "land contribution for commit 2add959f3f1a95b748b6a49a7a92a66392a973dc (branch baton/bend2-git5, on top of 896aec02) onto bend2-rewrite with swarm integrate; this seat's swarm.integrate refused swarm_permission_required (organize). bend2-architect14 was told to rebase baton/bend2-architect12 onto 896aec02."
+        }
+      ]
+    }
+  }
+}

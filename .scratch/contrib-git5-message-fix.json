@@ -1,0 +1,68 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "A landed commit carries the worker commit's own message; and the trial's per-turn logs have filled the disk",
+      "base": {
+        "observedHead": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6",
+        "rebasedOnto": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6"
+      },
+      "commit": {
+        "sha": "787a35f89347106c6b7349348e34fd6ae2a229ff",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "landed-message-fix",
+          "status": "delivered",
+          "change": "land-checked wrote a synthetic subject ('land <worker>'). The candidate now takes the worker commit's own message, subject and body, and appends the landing's own facts to the body: the worker branch it came from, and any added path the landing dropped (Deb.debris_note, unchanged).",
+          "files": [
+            "bend2/src/git/land.bend",
+            "bend2/tests/land.bend"
+          ],
+          "test": "sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test && ./.scratch/bend2/land-test; /usr/bin/python3 -m unittest discover -s bend2/test -p 'land.py'",
+          "evidence": "land checks A-M all green (case K asserts the worker's subject, the worker's body, 'landed from baton/wj', and the drop line); bend2/test/land.py 13 rows OK"
+        },
+        {
+          "id": "landed-message-real-run",
+          "status": "delivered",
+          "change": "The real run the fix needed: a real OMP turn (deepseek/deepseek-flash, low) commits 'w1 makes the trial change' with the body 'The body states what changed and why.'; land-checked answers landed a957e0d929f69572c58b6a48fe7e176435c41120, and the landed commit's message is the worker's subject, then the worker's body, then 'landed from wa'; the landed subject is the worker's subject.",
+          "files": [
+            "bend2/src/git/land.bend"
+          ],
+          "test": "sh .scratch/message-run.sh",
+          "evidence": "'worker commit: w1 makes the trial change | The body states what changed and why.'; landed message read back with git log -1 --format=%B main; all three assertions ok"
+        },
+        {
+          "id": "trial-disk-finding",
+          "status": "delivered",
+          "change": "A live, trial-halting condition found while running that proof: the volume is at 100% (235 MiB free of 228 GiB) and the trial's own state is the driver - state/ is 3.3 GB, of which the two worker native logs are issue-608-reclaim-native.jsonl 1.24 GB and issue-379-read-native.jsonl 1.99 GB, the second having grown from 145 MB to 2 GB within the hour. My own proof build failed with 'No space left on device' until I deleted my session's scratch (three earlier acceptance run directories and a clone, about 2.4 GB); free space is now 2.8 GiB. The coordinator retains the harness's event stream verbatim by contract, and the events restate the accumulated conversation, so a many-turn trial writes gigabytes per worker.",
+          "files": [
+            "bend2/src/coordinator/turn.bend"
+          ],
+          "test": "df -h /Users/wahargis; du -sh /Users/wahargis/Development/Experiments/bend2-trial/state; du -sh /tmp/bend2-*",
+          "evidence": "df: 228Gi size, 196Gi used, 235Mi avail, 100%; trial state 3.3G; the two logs 1239365405 and 1991226536 bytes; my native build's ENOSPC error before the cleanup"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl) is not run by this seat outside swarm integrate. The proof for this fix is the lane's own: native land checks A-M, bend2/test/land.py 13 rows, and one real worker turn landed end to end."
+        ]
+      },
+      "carriedForward": [
+        "The trial's disk is the pressing item: the two native logs are 3.2 GB and the volume sits at 99-100%, so the next worker turn, landing or push can fail on space. A bound or rotation belongs to the launcher or the standing instructions (the coordinator retains the stream by contract), or to the coordinator if the root rules the record may be capped; I did not build one, but this is now an observed failure, not a hypothesis.",
+        "The landed-message fix leaves older run records (docs/bend2/target-move-2026-09-27.md, the acceptance transcripts) quoting the old synthetic subjects; they are measurements at their own tips and stay as they are.",
+        "I deleted only my own session scratch; nothing in the trial was written or removed."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "push tip 787a35f89347106c6b7349348e34fd6ae2a229ff (baton/bend2-git5, on top of 3f288fd2) and rule on the trial's log size: bound or rotate the per-turn native logs in the launcher/instructions, or let the coordinator cap the retained stream. The disk is at 99% now and the trial's own logs are the driver."
+        }
+      ]
+    }
+  }
+}

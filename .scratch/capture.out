@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Snapshot workspace custody changed",
+    "code": "workspace_owner_binding_changed",
+    "detail": {}
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "receipt": {
+    "command": "swarm.update",
+    "event": {
+      "kind": "swarm.contribution_recorded",
+      "seq": 234114,
+      "ts": "2026-09-27T03:45:17.655Z",
+      "actor": "swarm-native:swarm-bend2-20260924:bend2-git5"
+    },
+    "changed": [
+      {
+        "collection": "contributions",
+        "id": "contribution-c2a86d9ec8f8cdb2da3c03f432232494",
+        "seq": 234114,
+        "ts": "2026-09-27T03:45:17.655Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.view",
+    "args": {
+      "swarmId": "swarm-bend2-20260924"
+    }
+  },
+  "commandReceipt": {
+    "idempotencyKey": "3192c6c4-06f9-4571-b73e-cc8b34ef19c5"
+  }
+}

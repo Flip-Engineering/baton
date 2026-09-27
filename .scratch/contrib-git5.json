@@ -1,0 +1,46 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Git lane: the landed target is published to the declared remote, and a refused push is named",
+      "base": {
+        "observedHead": "99434607a8dd64f12d909deab4819784e43eb6b2",
+        "rebasedOnto": "99434607a8dd64f12d909deab4819784e43eb6b2"
+      },
+      "commit": {
+        "sha": "896aec0298fa2ec6af01f5e1de65ab863632f74b",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "git-publish-primitive",
+          "status": "delivered",
+          "change": "push_git(repo, branch, remote) pushes that branch to that remote and answers the push's own exit code and output, so a refused push (a non-fast-forward is the common one) is the caller's to name and is never read as a published landing. The module header states publication as the step after the landing.",
+          "files": ["bend2/src/git/land.bend", "bend2/tests/land.bend"],
+          "test": "sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test && ./.scratch/bend2/land-test",
+          "evidence": "land checks: all green - case L proves the landed target reaches a bare remote at the branch tip, and that a remote moved independently makes the next push fail rather than pass as published"
+        },
+        {
+          "id": "git-lane-carried-commits",
+          "status": "delivered",
+          "change": "carries the lane's two delivered commits the reboot left unlanded: 9fb08b9b (the checked landing drops every added path the repository's own ignore rules exclude and names the drop on the candidate message) and 0e41640a (the module header states that judgement).",
+          "files": ["bend2/src/git/land.bend", "bend2/tests/land.bend"],
+          "test": "sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test && ./.scratch/bend2/git-test",
+          "evidence": "git-lane checks: all green"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "push_git has no caller in the tree yet: the coordinator has no publish verb, so publication is a module primitive with its native proof only, the same shape land_checked had before the coordinator's land-checked command.",
+        "The bend2 Python suite (check-native.sh: unittest discover over bend2/test, then mcp-root and end-to-end) was not run: the root's instruction forbids a whole or near-whole suite outside swarm integrate. The landing gate of swarm integrate is the run that judges it.",
+        "bend2/scripts/run-checks.mjs was not run here: neither node_modules/.bend/bin/bend nor .bend/bin/bend exists in this checkout, and running it would install the toolchain into the tree. The direct bend commands above are the reported verification."
+      ],
+      "needsFromOthers": []
+    }
+  }
+}

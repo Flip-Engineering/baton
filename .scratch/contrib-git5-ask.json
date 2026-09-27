@@ -1,0 +1,45 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Git lane landing pre-flight: the landing gate has nothing to run, and the landing needs the root",
+      "base": {
+        "observedHead": "99434607a8dd64f12d909deab4819784e43eb6b2",
+        "rebasedOnto": "99434607a8dd64f12d909deab4819784e43eb6b2"
+      },
+      "commit": {
+        "sha": "896aec0298fa2ec6af01f5e1de65ab863632f74b",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "git-landing-preflight",
+          "status": "delivered",
+          "change": "Pre-flight of the landing gate for contribution-73228162a57dabedc1fafc23dd4c1709 at tip 896aec02: the deployment's own selection over the changed paths answers no test file, so the targeted gate set is empty and the squash is the whole landing cost. swarm.integrate for this contribution refused swarm_permission_required (organize) for this seat; no live participant in the swarm holds organize (only the bend2-orchestrator seats do, and their runtimes are lost), so the root is the party that can land it.",
+          "files": ["bend2/src/git/land.bend", "bend2/tests/land.bend"],
+          "test": "node --input-type=module -e \"import {selectFromRepository} from './impl/src/verification-selection.mjs'; console.log(JSON.stringify(selectFromRepository({root:process.cwd(),changedPaths:['bend2/src/git/land.bend','bend2/tests/land.bend']})))\"",
+          "evidence": "{\"files\":[],\"provenance\":[],\"reason\":\"2 changed path(s) affect no test file: nothing runs for this change\"}"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl = node impl/scripts/run-suite.mjs --all, the canonical whole suite) was not run by this seat: the root's standing instruction forbids a whole or near-whole suite outside swarm integrate, this change touches only bend2/ so that suite carries no verdict about it, and the host is saturated (load1m 117, memoryTight). The hub's own independent run of that command is the evidence; the swarm's records already carry that the canonical suite is red on master by design since #580."
+        ]
+      },
+      "carriedForward": [
+        "push_git has no caller in the tree yet: the coordinator has no publish verb, so publication is a module primitive with its native proof only, the same shape land_checked had before the coordinator's land-checked command.",
+        "The bend2 Python suite (check-native.sh: unittest discover over bend2/test, then mcp-root and end-to-end) was not run: the root's instruction forbids a whole or near-whole suite outside swarm integrate. The landing gate of swarm integrate is the run that judges it.",
+        "swarm.capture by this seat refused workspace_owner_binding_changed: the lane worktree (bend2-lane1) that carries branch baton/bend2-git5 is bound to bend2-git3; bend2-git3's workspace ws-899633ef372cc73e0c7a131ddaa3bc5e holds the preserved revision 0e41640a."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "land contribution-73228162a57dabedc1fafc23dd4c1709 (branch baton/bend2-git5, tip 896aec0298fa2ec6af01f5e1de65ab863632f74b) onto bend2-rewrite with swarm integrate; this seat's swarm.integrate refused swarm_permission_required (organize) and no live participant holds organize. Granting organize to bend2-git5 and letting this seat run it is equally acceptable."
+        }
+      ]
+    }
+  }
+}

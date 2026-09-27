@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "error": {
+    "message": "This swarm has not granted organize authority to this participant",
+    "code": "swarm_permission_required",
+    "detail": {
+      "permission": "organize",
+      "participantId": "bend2-git5"
+    }
+  }
+}

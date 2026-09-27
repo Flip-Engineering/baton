@@ -1,0 +1,40 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Pre-flight for the two tips awaiting push: they compose cleanly and the composed tree is green",
+      "base": {
+        "observedHead": "475b12883c9c8865896db12471b78399d53c539d",
+        "rebasedOnto": "475b12883c9c8865896db12471b78399d53c539d"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "composition-preflight",
+          "status": "delivered",
+          "change": "Two tips are waiting for the root's push on the same base 475b1288: bend2-git5's 9e149046 (the conflict-recovery run: docs/bend2/target-move-2026-09-27.md, bend2/test/land.py) and bend2-architect14's 935cac3b (root adapters, their tests, README, docs/bend2/root-recovery-2026-09-27.md). Their file sets are disjoint, and the composition was verified rather than assumed: a real merge of the two tips is clean - merge commit 5727b257af18024b4bf74624f9eb7db78bb538f6 - the coordinator builds in the composed tree, and bend2/test/land.py is green there at 13 rows, so the Git rows hold alongside the root-adapter changes. Either push order composes.",
+          "files": ["bend2/test/land.py", "docs/bend2/target-move-2026-09-27.md"],
+          "test": "git worktree add --detach S 9e149046 && git -C S merge --no-ff baton/bend2-architect14 && sh S/bend2/scripts/build-native.sh && (cd S && /usr/bin/python3 -m unittest discover -s bend2/test -p 'land.py')",
+          "evidence": "MERGE_OK 5727b257, BUILD_OK, 13 rows OK in the composed tree; the scratch worktree was removed afterwards"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl, the canonical whole suite) was not run by this seat: the standing instruction keeps whole suites inside swarm integrate, and the composition check runs the coordinator's own landing rows in a scratch worktree of the composed tree. bend2-architect14 reports 28 touched tests passing on its own tip for its half."
+        ]
+      },
+      "carriedForward": [
+        "The composed tree's sha names a merge made in a scratch worktree that no longer exists; it is evidence of the composition, not a branch."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "push 9e1490465ac637683ba42abb58cd8e6867f35b02 (bend2-git5) and bend2-architect14's 935cac3bb5f9164bdde8b5a94aa89195de9edc7a in either order: they compose cleanly, verified above. My earlier push asks are superseded by this one."
+        }
+      ]
+    }
+  }
+}

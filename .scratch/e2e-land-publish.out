@@ -1,0 +1,25 @@
+=== scratch root /tmp/bend2-e2e-publish.vG4nY4 ===
+=== target repo: a clone of the lane repository, worker branch as a local ref ===
+branch 'baton/bend2-live-ask' set up to track 'origin/baton/bend2-live-ask'.
+worker branch at ed87de64afe4b9a3a7b7e6db7bc1f42a23d67555
+target landed-target at 3bcfd59b541b1670264e659274932eff62102088
+=== the coordinator registers the retained worker ===
+{"id":"ask-worker","parent":"root","harness":"omp","model":"zai/glm-5.3-flash","effort":"high","native":"","observedHarness":"","observedModel":"","observedEffort":"","endpoint":"","workspace":"/Users/wahargis/Development/Experiments/baton-resident/.baton/wt/ws-e5f48a15a91a4090717ba3249aeb39b5/.scratch/bend2/live-omp/worker","branch":"baton/bend2-live-ask","base":"3bcfd59b541b1670264e659274932eff62102088"}
+=== the gated landing: the lane's check script over the worker's own test file ===
+(the check path is absolute: the worker's tree predates bend2/scripts/check-unittest.sh, added in 2daa03bb)
+{"status":"landed","target":"landed-target","commit":"28cb9c6bc716619dbff8131b7512505288df5413"}
+=== the landed target carries exactly the worker's tree ===
+landed target commit 28cb9c6bc716619dbff8131b7512505288df5413
+land baton/bend2-live-ask
+--- diff against the worker's branch (empty means the same content) ---
+=== publication: the coordinator pushes the landed target to the declared remote ===
+{"status":"pushed","branch":"landed-target","remote":"e2e-remote"}
+--- the remote's advertised ref ---
+28cb9c6bc716619dbff8131b7512505288df5413	refs/heads/landed-target
+--- and the same read through the clone ---
+28cb9c6bc716619dbff8131b7512505288df5413	refs/heads/landed-target
+=== a remote that moved independently: the coordinator reports the refusal ===
+{"status":"rejected","reason":"To /tmp/bend2-e2e-publish.vG4nY4/remote.git\n ! [rejected]          landed-target -> landed-target (non-fast-forward)\nerror: failed to push some refs to '/tmp/bend2-e2e-publish.vG4nY4/remote.git'\nhint: Updates were rejected because a pushed branch tip is behind its remote\nhint: counterpart. If you want to integrate the remote changes, use 'git pull'\nhint: before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details."}
+--- the remote still advertises the branch that moved it ---
+ed87de64afe4b9a3a7b7e6db7bc1f42a23d67555	refs/heads/landed-target
+=== end to end complete at /tmp/bend2-e2e-publish.vG4nY4 ===

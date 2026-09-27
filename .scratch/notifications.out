@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-bend2-20260924",
+  "caller": {
+    "participantId": "bend2-git5"
+  },
+  "at": {
+    "seq": 231290,
+    "ts": "2026-09-27T02:59:33.003Z"
+  },
+  "notifications": [],
+  "truncated": false,
+  "cursor": null
+}

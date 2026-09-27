@@ -1,0 +1,52 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "A conflicted worker is guided by the root, rebases, resolves, and its revised branch lands",
+      "base": {
+        "observedHead": "475b12883c9c8865896db12471b78399d53c539d",
+        "rebasedOnto": "475b12883c9c8865896db12471b78399d53c539d"
+      },
+      "commit": {
+        "sha": "9e1490465ac637683ba42abb58cd8e6867f35b02",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "conflict-guided-recovery",
+          "status": "delivered",
+          "change": "The recovery through the coordinator with a real worker: two OMP turns from the same target (w3 on wc 048d501, w4 on wd 4214b51, both writing the single line of data/shared.txt); w4's landing started first conflicts when w3's landing moves the target and answers {'status':'conflict','files':'data/shared.txt','dir':'…'}; the root guides the worker with message g1 root w4 guidance, which the worker reads from its own inbox; the worker's next turn resumes its native session (01a0e135-b640-7000-9212-d091e6124789), rebases wd onto the moved target, resolves the file to 'three and four', and reports done w4; wd becomes 38ad70b with the moved target 024de4f6 as its parent; landing the revised branch answers landed 2cf7ba1c and the target reads 2cf7ba1 land wd / 024de4f land wc / 820cad9 seed with data/shared.txt 'three and four'.",
+          "files": ["docs/bend2/target-move-2026-09-27.md"],
+          "test": "sh .scratch/conflict-resolve-run.sh",
+          "evidence": "transcript .scratch/conflict-resolve-run.out: the conflict answer, the guidance row and the worker's inbox listing it, the guided turn's report, wd's rewritten history with parent 024de4f6, the landed answer, and the target log with both landings"
+        },
+        {
+          "id": "conflict-recovery-row",
+          "status": "delivered",
+          "change": "bend2/test/land.py carries the same recovery as a fixture row: the conflict, the worker's rebase and resolution performed in its working tree, and the revised branch landing.",
+          "files": ["bend2/test/land.py"],
+          "test": "/usr/bin/python3 -m unittest discover -s bend2/test -p 'land.py'",
+          "evidence": "13 rows green, including test_conflicted_worker_relands_after_its_branch_is_rebased"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl, the canonical whole suite) was not run by this seat: the standing instruction keeps whole suites inside swarm integrate, and this change is a bend2 docs record plus one test file. bend2/test/land.py is green at 13 rows with the coordinator rebuilt at this tip; no module file is touched."
+        ]
+      },
+      "carriedForward": [
+        "The guidance reaches the worker as a coordinator message row it reads from its inbox; the prompt that tells the worker to read the inbox is the root's turn task, so the loop the run proves is: conflict answer, root's message, worker's turn with the inbox read, rebase and resolution by the worker, revised landing.",
+        "The worker resolves the conflict by content the root named in the guidance; nothing in the coordinator checks the resolution, and the landing judges it the same way any landing judges a change."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "push tip 9e1490465ac637683ba42abb58cd8e6867f35b02 (branch baton/bend2-git5, on top of 475b1288) onto bend2-rewrite."
+        }
+      ]
+    }
+  }
+}

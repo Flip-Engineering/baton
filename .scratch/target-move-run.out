@@ -1,0 +1,35 @@
+=== scenario 1: clean rebase onto the moved target ===
+target T0 = 9ffe63b5575a66e8ce01363c529ead58bacd9989
+w1: branch wa at 45acdab from base 9ffe63b5575a66e8ce01363c529ead58bacd9989
+w2: branch wb at 4f37578 from base 9ffe63b5575a66e8ce01363c529ead58bacd9989
+[s1] w2's candidate prepared: /tmp/bend2-target-move.jgKvVk/repo/.scratch/bend2-land-w2-84E15F7E7B5BAFD7
+[s1] w1 lands, moving the target under w2's gate:
+{"status":"landed","target":"main","commit":"e5831aeb89bbb84f3163db0d6539294868d4876f"}
+[s1] w2 answered: {"status":"landed","target":"main","commit":"1823d05046ae2fc7de2a1adda0674d79f0a84251"}
+[s1] what the gate's check observed:
+tree 4f7c5187e0e3fef56da2198fbab9e4d44a1b375e saw the target move from 9ffe63b5575a66e8ce01363c529ead58bacd9989 to e5831aeb89bbb84f3163db0d6539294868d4876f
+[s1] target after both landings TA = 1823d05046ae2fc7de2a1adda0674d79f0a84251
+* 1823d05 land wb
+* e5831ae land wa
+* 9ffe63b seed
+[s1] both workers' files on the landed target:
+alpha
+beta
+[s1] w2's landing parent = e5831aeb89bbb84f3163db0d6539294868d4876f
+
+=== scenario 2: the rebase cannot apply, the landing names the conflict ===
+target TA = 1823d05046ae2fc7de2a1adda0674d79f0a84251
+w3: branch wc at 2209c71 from base 1823d05046ae2fc7de2a1adda0674d79f0a84251
+w4: branch wd at 25a5d50 from base 1823d05046ae2fc7de2a1adda0674d79f0a84251
+[s2] w4's candidate prepared: /tmp/bend2-target-move.jgKvVk/repo/.scratch/bend2-land-w4-7965139631F2C9BD
+[s2] w3 lands, moving the target under w4's gate:
+{"status":"landed","target":"main","commit":"340c82b1efd99c790ff30fca2e09fcfb7d087810"}
+[s2] w4 answered: {"status":"conflict","files":"data/shared.txt","dir":"/tmp/bend2-target-move.jgKvVk/repo/.scratch/bend2-land-w4-7965139631F2C9BD"}
+[s2] what the gate's check observed:
+tree 7b07402c34e40b601a68aa406a117187e5055bb3 saw the target move from 1823d05046ae2fc7de2a1adda0674d79f0a84251 to 340c82b1efd99c790ff30fca2e09fcfb7d087810
+[s2] target after the conflict TB = 340c82b1efd99c790ff30fca2e09fcfb7d087810
+[s2] shared.txt on the target: three
+[s2] the retained candidate the conflict answer names:
+/tmp/bend2-target-move.jgKvVk/repo/.scratch/bend2-land-w4-7965139631F2C9BD
+/tmp/bend2-target-move.jgKvVk/repo/.scratch/bend2-land-w4-7965139631F2C9BD-target
+=== run complete at /tmp/bend2-target-move.jgKvVk ===

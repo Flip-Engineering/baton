@@ -1,0 +1,34 @@
+=== setup: two real workers from the same target 820cad95535a723081ab4f072b4a7ac4514839e1, same file ===
+w3: branch wc at 048d501 (three)
+w4: branch wd at 4214b51 (four)
+
+=== w4's landing conflicts when the target moves under it ===
+{"status":"landed","target":"main","commit":"024de4f6a35ad5bb867be963d4515560e19ca926"}
+w3 landing:    (see below)
+w4 answered:   {"status":"conflict","files":"data/shared.txt","dir":"/tmp/bend2-conflict-resolve.TufKQ5/repo/.scratch/bend2-land-w4-B2CC4394DCB1FBA7"}
+target TB = 024de4f6a35ad5bb867be963d4515560e19ca926 with data/shared.txt = three
+check observed: tree ca46b6c25ad3a782b9b932c4506f148d8bbe65cb saw the target move from 820cad95535a723081ab4f072b4a7ac4514839e1 to 024de4f6a35ad5bb867be963d4515560e19ca926
+
+=== the root guides the conflicted worker ===
+guidance row: {"id":"g1","sender":"root","recipient":"w4","kind":"guidance","body":"Your landing onto main conflicted: the target moved to 024de4f6a35ad5bb867be963d4515560e19ca926 and data/shared.txt now carries another worker's line. Rebase your branch onto main, resolve data/shared.txt so its single line is: three and four, and commit the rebase.","receipt":null}
+the worker's inbox: [{"id":"g1","sender":"root","recipient":"w4","kind":"guidance","body":"Your landing onto main conflicted: the target moved to 024de4f6a35ad5bb867be963d4515560e19ca926 and data/shared.txt now carries another worker's line. Rebase your branch onto main, resolve data/shared.txt so its single line is: three and four, and commit the rebase."}]
+
+=== the worker's guided turn (same native session) ===
+resuming native session 01a0e135-b640-7000-9212-d091e6124789
+guided turn report: {"id":"t3","sender":"w4","recipient":"root","kind":"report","body":"done w4","receipt":null,"harness":"omp","native":"native-root","endpoint":"endpoint"}
+--- w4's branch after the guided turn ---
+38ad70b w4 writes four
+024de4f land wc
+820cad9 seed
+branch wd at 38ad70ba013aeafa41a953a838f2dc255806f048  parent 024de4f6a35ad5bb867be963d4515560e19ca926  target was 024de4f6a35ad5bb867be963d4515560e19ca926
+data/shared.txt on wd = three and four
+worktree status: 
+
+=== the revised branch lands ===
+{"status":"landed","target":"main","commit":"2cf7ba1cc9a165d10f30808a837c7c64f2db9000"}
+--- the target ---
+2cf7ba1 land wd
+024de4f land wc
+820cad9 seed
+data/shared.txt on main = three and four
+=== run complete at /tmp/bend2-conflict-resolve.TufKQ5 ===

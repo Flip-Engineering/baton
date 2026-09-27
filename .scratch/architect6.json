@@ -1,0 +1,160 @@
+{
+  "swarmId": "swarm-bend2-20260924",
+  "purpose": "Issue 539: the Bend2 rewrite on the bend2-rewrite branch, prototype-first. All work integrates onto bend2-rewrite, never master.",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:160a96d8-25bd-44de-9694-213bb4a4f5d0",
+  "seq": 129,
+  "ts": "2026-09-24T17:14:06.069Z",
+  "baseCommit": "0d24fec8619d1cae9bf74ca5d38883e8d42e95de",
+  "policy": {
+    "rerouteOnProviderFault": "auto",
+    "reroutePreferApi": false
+  },
+  "caller": {
+    "participantId": "bend2-git5",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute"
+    ],
+    "lastRefusal": null
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.notify",
+    "swarm.notifications",
+    "swarm.stop",
+    "swarm.update",
+    "run.knowledge.seed",
+    "run.board.post",
+    "run.board.read",
+    "run.scratchpad.append",
+    "run.scratchpad.read",
+    "run.scratchpad.elevate",
+    "evidence.search"
+  ],
+  "admission": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "bend2-git5"
+      ]
+    }
+  },
+  "updates": [
+    {
+      "event": "swarm.claim_updated",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.proposal_updated",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.context_updated",
+      "permission": "communicate"
+    },
+    {
+      "event": "swarm.contribution_recorded",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.participant_left",
+      "permission": "read"
+    },
+    {
+      "command": "run.knowledge.seed",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.post",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.append",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.scratchpad.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.elevate",
+      "permission": "contribute"
+    },
+    {
+      "command": "evidence.search",
+      "permission": "read"
+    }
+  ],
+  "deployment": {
+    "workspace": {
+      "state": "ready",
+      "freeBytes": 12549357568,
+      "freeInodes": 122890000,
+      "minFreeBytes": null,
+      "minFreeInodes": null,
+      "floorBytes": 841503341,
+      "floorInodes": 14950,
+      "floorSource": "derived",
+      "estimateHighWater": {
+        "bytes": 195665847,
+        "inodes": 14677
+      },
+      "runtimeFootprint": {
+        "bytes": 645837494,
+        "inodes": 273
+      }
+    },
+    "hostCapacity": {
+      "capacity": {
+        "cores": 10,
+        "totalBytes": 17179869184,
+        "freeBytes": 268435456,
+        "availableBytes": 268435456,
+        "load1m": 21,
+        "hubCores": 1,
+        "usableCores": 9,
+        "suiteCores": 9,
+        "verdictLanes": 1,
+        "coreShareBytes": 1717986918,
+        "suiteBytes": 15461882262,
+        "usableBytes": 15461882266,
+        "saturated": true,
+        "memoryTight": true
+      },
+      "used": {
+        "cores": 0,
+        "bytes": 0,
+        "leases": {
+          "verify": 0,
+          "worker": 9
+        }
+      },
+      "queue": [],
+      "roomForVerify": false,
+      "roomForWorker": true
+    },
+    "served": {
+      "commit": "bd4014d4314c49f118a74e769fbc3ff5c0e31c7b",
+      "branch": null,
+      "target": {
+        "ref": "origin/master",
+        "commit": "4ed4d5efe96c86c0edb4b0d2ce7d51ae40910892",
+        "behind": 1
+      }
+    }
+  },
+  "cursor": 233874,
+  "contributions": [],
+  "reviews": {},
+  "projection": "contributions"
+}

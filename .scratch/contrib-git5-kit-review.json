@@ -1,0 +1,74 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Review: the trial's JS check blocks everything on bend2-rewrite's runner; the composed Git acceptance and the architecture Git section check out",
+      "base": {
+        "observedHead": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6",
+        "rebasedOnto": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "check-node-test-blocking-finding",
+          "status": "delivered",
+          "change": "Independent validation of bend2-architect14's bend2/scripts/check-node-test.sh (its 09555f2e) on a scratch clone of bend2-rewrite 3f288fd2, run inside the checked tree: an unavailable selected file answers 'unjudged: selected test file is unavailable' on stdout with exit 2, so it blocks as required. Every other run answers 'unjudged: the runner verdict lacks typed failures or reportedFiles; use the current repository runner' - including the selected file that passes (impl/test/usd.test.mjs, which the runner itself reports green). The adapter requires document.failures and document.reportedFiles; the runner on this branch writes schemaVersion, green, passed, expectedRed, expectedRedByClass, codeRed, environmentRed, unexpected, stale, unseen, hung, skipped, environment, coverage, and no failures or reportedFiles. On this branch the check therefore blocks every landing, so the cutover trial cannot land anything until either the trial runs against a checkout whose runner writes the typed document (which is what the adapter's own message asks for) or the adapter reads this branch's verdict vocabulary. This is a prerequisite decision for the root, not a defect in the adapter's shape: its stdout is identity-only, it selects one file, it never runs the suite, and its four-field mapping (file, test name or '-', failure kind, failure type) matches the gate's contract.",
+          "files": [
+            "bend2/scripts/check-node-test.sh",
+            "impl/scripts/run-suite.mjs"
+          ],
+          "test": "V=$(mktemp -d) && git clone -q --no-hardlinks . $V && ln -s <repo>/impl/node_modules $V/impl/node_modules && cd $V && sh bend2/scripts/check-node-test.sh impl/test/usd.test.mjs; BATON_SUITE_VERDICT_FILE=/tmp/v.json node impl/scripts/run-suite.mjs $PWD/impl/test/usd.test.mjs",
+          "evidence": "adapter: 'unjudged: the runner verdict lacks typed failures or reportedFiles' with exit 2; runner verdict keys listed above with green true"
+        },
+        {
+          "id": "clone-prerequisite",
+          "status": "delivered",
+          "change": "A fresh clone cannot run the selected JS file at all without the installed dependencies: the runner dies with ERR_MODULE_NOT_FOUND for 'yaml' from impl/src/credential-projection.mjs. Linking the repository's impl/node_modules into the clone makes the runner run. The trial kit's instructions and launcher should name that prerequisite, since the trial's checkout is where the check runs.",
+          "files": [
+            "impl/package.json"
+          ],
+          "test": "cd $V && node impl/scripts/run-suite.mjs $PWD/impl/test/usd.test.mjs",
+          "evidence": "without the link: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'yaml' imported from impl/src/credential-projection.mjs; with it: runner exits 0 with a green verdict"
+        },
+        {
+          "id": "composed-git-acceptance-review",
+          "status": "delivered",
+          "change": "Review of the composed Git acceptance at the tip (bend2/scripts/accept-git.py): the setup review guidance is seeded before any worker report ('review-setup': inspect the worktree, branch diff and committed contents, acknowledge, and do not land, push, edit or launch workers), the conflict scenario's guidance and resumed session are present, and no range or poll bound remains in the code I read. My own earlier draft hung on the check staging (the target-side check read a fresh target basis), so my review of its staged runs rests on its reported green --stage git run plus the code, not on a run of my own; my stale sh draft is deleted from my checkout.",
+          "files": [
+            "bend2/scripts/accept-git.py"
+          ],
+          "test": "git show 3f288fd2:bend2/scripts/accept-git.py",
+          "evidence": "review-setup guidance at line 247 with 'Do not land, push, edit, or launch workers'; conflict guidance at 387; no range() or 600-loop bound in the file"
+        },
+        {
+          "id": "architecture-git-section-review",
+          "status": "delivered",
+          "change": "Review of the architecture document's Landing and publication section against the module and my runs: the compare-and-swap advance and the rebase of the candidate onto a moved target with the existing verdict match land.bend's contract; 'Conflicts name the paths and retained scratch checkout' matches my run (conflict answer naming data/shared.txt and the candidate directory); 'A target held by a checked-out worktree produces the current target busy command failure' matches my own first attempt exactly; 'landed names the new target commit' and 'already names the worker commit' match my runs. One claim my runs do not support: 'returns a blocked result if the target moves again' - my scenarios move the target once, so the second move inside one landing is unverified by a run; the document states the bound, which is right for a design of record, and it is the one sentence I would mark as unexercised.",
+          "files": [
+            "docs/bend2/architecture.md"
+          ],
+          "test": "sed -n '154,186p' docs/bend2/architecture.md",
+          "evidence": "the section's claims above, each checked against land.bend's header and my acceptance runs"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "No whole suite ran: the JS runner was invoked for one selected file only, inside a scratch clone, and the file I added to that clone was a two-test probe. The deployment verification command (npm test --prefix impl) is not run by this seat outside swarm integrate."
+        ]
+      },
+      "carriedForward": [
+        "My stuck acceptance run is gone: no process of mine holds a check or the coordinator open, and the draft that hung is deleted. bend2-architect14's composed segment is the one to keep.",
+        "The trial kit's blocking prerequisite is the runner verdict schema; the kit's own check adapter is otherwise sound and its stdout stays identity-only."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "Decide the trial's runner: either the trial's checkout carries the runner that writes typed failures and reportedFiles (what check-node-test.sh asks for), or the adapter is adapted to bend2-rewrite's current verdict vocabulary. Until then the trial's every landing blocks as unjudged on this branch."
+        }
+      ]
+    }
+  }
+}

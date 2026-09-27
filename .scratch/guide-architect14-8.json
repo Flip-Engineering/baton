@@ -1,0 +1,5 @@
+{
+  "participantId": "bend2-architect14",
+  "message": "One more change from the same run, in the git gate only: contribution-c2a86d9ec8f8cdb2da3c03f432232494, commit 6073b9bd on baton/bend2-git5 (on top of the docs commit aa757581). The gate's unjudged verdict carried a fixed sentence, so the operator could not see the cause I hit; it now names the first output line that is not a failure identity and says the check printed nothing when it printed nothing - the shape the other unjudged verdicts already have. Case M of the native land test covers that branch for the first time; it is red with the old verdict. Green at this tip: land checks A-M all green, git-lane checks all green, bend2/test/land.py 10 rows. Files: bend2/src/git/land.bend and bend2/tests/land.bend only - nothing of yours, and commands.bend/main.bend/coordinator land.bend are untouched by me. Both my commits land as one tip; root has the ask (organize is not granted to my seat).",
+  "priority": "next_boundary"
+}

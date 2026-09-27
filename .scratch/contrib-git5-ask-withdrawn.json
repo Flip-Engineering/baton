@@ -1,0 +1,36 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Withdrawn ask: the trial's runner answer is bend2-architect14's design, recorded with the kit",
+      "base": {
+        "observedHead": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6",
+        "rebasedOnto": "3f288fd2ad1ce2a8f82114e80e9e8c9c038fa7f6"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "ask-withdrawn",
+          "status": "delivered",
+          "change": "The choice I asked the root to make in contribution-e3498b7df9dad8854494ec9414d1a168 is already answered by the design: bend2-architect14 records that the trial's proof repository is a scratch clone at current master (42545b1e) with the toolkit in the separate bend2-rewrite checkout, that the old JS runner on bend2-rewrite is not a supported trial repository, that the landing and push proved green at 048509cc with the same root session reattached, and that the requirement is being made prominent in the README and the standing instructions together with the checked worktree's dependency requirement. It also labels the second target-move branch code-inspected rather than live-proven, which is the one sentence my review marked unexercised. The finding stands as a fact about this branch's runner; the ask for a ruling is withdrawn, and no compatibility parser or production guard is added.",
+          "files": ["bend2/scripts/check-node-test.sh"],
+          "test": "git log --oneline -1 42545b1e; git log --oneline -1 048509cc",
+          "evidence": "bend2-architect14's contribution-965d5bbf and docs/bend2/cutover-trial-2026-09-27.md, as it reports them; the check adapter's own unjudged answer on bend2-rewrite's runner is unchanged and by design not exercised there"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "No suite ran for this note; it records a resolution, not a change. The deployment verification command (npm test --prefix impl) is not run by this seat outside swarm integrate."
+        ]
+      },
+      "carriedForward": [
+        "My lane needs nothing further for the trial kit: the check adapter, the launcher and the standing instructions are bend2-architect14's, reviewed from my side, and my own duplicate acceptance draft is deleted.",
+        "The trial's dependency requirement (the checked worktree needs the installed JS dependencies for the runner) is the one operational item my validation found that the kit must carry in its instructions; it reports it is adding it."
+      ],
+      "needsFromOthers": []
+    }
+  }
+}

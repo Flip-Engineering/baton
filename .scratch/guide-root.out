@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Participant is unavailable in this swarm",
+    "code": "swarm_participant_not_found",
+    "detail": {}
+  }
+}

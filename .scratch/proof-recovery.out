@@ -1,0 +1,26 @@
+=== repository /tmp/bend2-recovery-proof.zxCdKn/repo at 0c7cf83dc078062b64cf17daa6c99b282ad98841 ===
+=== recruit under host life 1 ===
+{"id":"w1","parent":"root","harness":"omp","model":"model","effort":"high","native":"","observedHarness":"","observedModel":"","observedEffort":"","endpoint":"","workspace":"/private/tmp/bend2-recovery-proof.zxCdKn/repo/wt","branch":"w1-branch","base":"0c7cf83dc078062b64cf17daa6c99b282ad98841"}
+--- worktrees now ---
+/private/tmp/bend2-recovery-proof.zxCdKn/repo     0c7cf83 [main]
+/private/tmp/bend2-recovery-proof.zxCdKn/repo/wt  0c7cf83 [w1-branch]
+=== the host comes back: the coordinator runs under host life 2 ===
+--- stderr of that run ---
+reclaimed the worktree of worker w1: /private/tmp/bend2-recovery-proof.zxCdKn/repo/wt
+--- worktrees after ---
+/private/tmp/bend2-recovery-proof.zxCdKn/repo  0c7cf83 [main]
+--- the worker's branch keeps its commits ---
+0c7cf83dc078062b64cf17daa6c99b282ad98841
+--- the reclaimed worker's row names no workspace ---
+The worker has no recorded workspace.
+(refused as expected)
+=== a dead worker whose worktree holds uncommitted work is retained ===
+--- stderr of that run ---
+retained the worktree of worker w2: /private/tmp/bend2-recovery-proof.zxCdKn/repo/wt2: git refused to remove it: fatal: '/private/tmp/bend2-recovery-proof.zxCdKn/repo/wt2' contains modified or untracked files, use --force to delete it
+--- the retained worktree and its file ---
+/private/tmp/bend2-recovery-proof.zxCdKn/repo      0c7cf83 [main]
+/private/tmp/bend2-recovery-proof.zxCdKn/repo/wt2  0c7cf83 [w2-branch]
+uncommitted work in progress
+--- the life records left, by worker ---
+w2|host-life-1|/private/tmp/bend2-recovery-proof.zxCdKn/repo
+=== proof complete at /tmp/bend2-recovery-proof.zxCdKn ===

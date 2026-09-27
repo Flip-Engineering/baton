@@ -1,0 +1,60 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Two workers, one moving target: the second landing rebases onto it, or names the conflict",
+      "base": {
+        "observedHead": "3ddc0363e22acf287e23d9364f1195a0cf2e6c5c",
+        "rebasedOnto": "3ddc0363e22acf287e23d9364f1195a0cf2e6c5c"
+      },
+      "commit": {
+        "sha": "56f66315970e53edf4cee982a2d707edc1fbb423",
+        "branch": "baton/bend2-git5"
+      },
+      "items": [
+        {
+          "id": "two-workers-clean-rebase",
+          "status": "delivered",
+          "change": "The #596 case through the coordinator with real workers: two OMP turns branch from the same target (recruit + turn, each committing in its own worktree), the second landing is started first so its candidate is prepared at the old tip, and its gate's check waits for the target to move. The first landing answers landed e5831aeb; the check under the second records the move from 9ffe63b5 to e5831aeb; the second answers landed 1823d050 with parent e5831aeb, carrying both workers' changes.",
+          "files": ["docs/bend2/target-move-2026-09-27.md"],
+          "test": "sh .scratch/target-move-run.sh",
+          "evidence": "transcript .scratch/target-move-run.out: 'tree 4f7c5187… saw the target move from 9ffe63b5… to e5831aeb…'; target log '1823d05 land wb / e5831ae land wa / 9ffe63b seed'; main:a.txt alpha, main:b.txt beta; main^ = e5831aeb"
+        },
+        {
+          "id": "two-workers-conflict",
+          "status": "delivered",
+          "change": "The same sequence where the rebase cannot apply: w3 and w4 both write the single line of data/shared.txt. w3 lands (340c82b1); w4's candidate, rebased onto the moved target, conflicts, and w4 answers {'status':'conflict','files':'data/shared.txt','dir':'…/bend2-land-w4-7965…'} while the target stays at 340c82b1 with shared.txt 'three'.",
+          "files": ["docs/bend2/target-move-2026-09-27.md"],
+          "test": "sh .scratch/target-move-run.sh",
+          "evidence": "transcript .scratch/target-move-run.out: the conflict answer naming data/shared.txt, the unchanged target commit, and the retained candidate directory it names"
+        },
+        {
+          "id": "two-worker-rows",
+          "status": "delivered",
+          "change": "bend2/test/land.py carries the same two-worker sequence as fixture rows (waiting check stages the move; no harness needed), so the composition stands as a contract rather than a one-off run.",
+          "files": ["bend2/test/land.py"],
+          "test": "/usr/bin/python3 -m unittest discover -s bend2/test -p 'land.py'",
+          "evidence": "12 rows green, including test_target_moves_under_the_second_landing_and_it_rebases and ..._and_the_rebase_conflicts"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": [
+          "The deployment verification command (npm test --prefix impl, the canonical whole suite) was not run by this seat: the standing instruction keeps whole suites inside swarm integrate, and this change is bend2 docs and one test file. bend2/test/land.py is green at 12 rows with the coordinator rebuilt at this tip; the lane's native programs are unchanged by this commit (no module file touched)."
+        ]
+      },
+      "carriedForward": [
+        "A refusal, not an outcome, when the target branch is held by a worktree: the first attempt of the run answered 'target busy: main' with a non-zero exit. That is the module's documented rule (a landing advances a target no worktree holds) and the coordinator reports it as a failure line rather than the landed/already/blocked/conflict JSON; the run detaches the fixture worktree, as the native cases do.",
+        "The conflict answer names the unmerged paths and the retained candidate directory; it does not name which side changed what, and the target tree is retained beside it."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "push tip 56f66315970e53edf4cee982a2d707edc1fbb423 (branch baton/bend2-git5, on top of 3ddc0363) onto bend2-rewrite."
+        }
+      ]
+    }
+  }
+}
