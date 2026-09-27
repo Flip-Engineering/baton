@@ -27,8 +27,6 @@ test('#381 seam 2: wire card includes deployment and context-package commands', 
   const card = webCardCommandNames();
   assert.ok(card.includes('deployment.doctor'),
     'wire card must include deployment.doctor');
-  assert.ok(card.includes('deployment.reincarnate'),
-    'wire card must include deployment.reincarnate');
   assert.ok(card.includes('package.admit'),
     'wire card must include package.admit');
   assert.ok(card.includes('package.attach'),

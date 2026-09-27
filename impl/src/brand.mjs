@@ -72,9 +72,9 @@ const STATUS_ROWS = Object.freeze({
 // expose; a new projection class joins by editing this one table.
 const STATUS_DERIVATION = Object.freeze({
   // ready — published, bound, ready routes; an OPEN swarm (its closed sibling is already `done`)
-  // and the resident lifecycle classes (a resident that started or was replaced is serving)
+  // and the resident lifecycle class (a resident that started is serving)
   ready: 'ready', hosted: 'ready', published: 'ready', listening: 'ready',
-  open: 'ready', resident_lifecycle: 'ready', incarnation_changed: 'ready',
+  open: 'ready', resident_lifecycle: 'ready',
   // working — an active run, seat, or wave
   working: 'working', running: 'working', progressing: 'working', executing: 'working',
   // needs you — a human must act (docs/38: the attention class, a parked decision, a paused

@@ -56,7 +56,7 @@ test('ONE function derives the closed status set from the projection classes', (
     capacity_pressure: 'needs you',
     reroute_proposed: 'needs you', root_owed: 'needs you',
     contribution_integrated: 'done', resident_lifecycle: 'ready',
-    incarnation_changed: 'ready', queued: 'idle', open: 'ready',
+    queued: 'idle', open: 'ready',
     awaiting_approval: 'needs you', awaiting_selection: 'needs you',
     awaiting_plan_approval: 'needs you',
   };

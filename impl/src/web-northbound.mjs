@@ -138,21 +138,8 @@ const WAVE_DOT_ARG_FIELDS = Object.freeze(Object.fromEntries(
 // argument authority is the closed empty set — the envelope's top-level repoId is the
 // deployment scope, exactly as the MCP tool's repoId argument is transport-bound there.
 //
-// Issue #306 (the wiring half): deployment.reincarnate rides the SAME admission. The verb itself
-// is lane A's — the RUNNING resident starts a successor over this deployment, hands the published
-// connection over, and exits 0 through its own stop path (application.mjs reincarnate(), whose
-// own rule admits the deployment owner or a lifecycle authority). Both CLI spellings
-// (`baton deployment reincarnate <commit-ish>`, `baton serve --reincarnate <commit-ish>`) send the
-// underscore transport through this table, so without these rows the resident answers
-// 'unsupported command' and neither spelling reaches the verb. Its capability classes are the
-// lifecycle pair — `emergency_stop`, the class the sibling lifecycle act (application.shutdown)
-// requires and which a seat, bridge or worker session does not hold, beside the `observe` class
-// every admitted row carries — and its whole argument authority is the closed {target} set
-// (validateEnvelope skips validateApplicationCommandArgs for direct ports; the deployment resolves
-// the commit-ish itself).
 const DEPLOYMENT_WEB_ROWS = Object.freeze([
   ['deployment.doctor', Object.freeze(['observe']), Object.freeze([])],
-  ['deployment.reincarnate', Object.freeze(['emergency_stop', 'observe']), Object.freeze(['target'])],
 ]);
 const DEPLOYMENT_WEB_ENTRIES = Object.freeze(DEPLOYMENT_WEB_ROWS.flatMap(([name, capabilities, args]) => {
   const { canonical, web } = canonicalAndTransportNames(name);
@@ -332,13 +319,10 @@ const ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(WAVE_ARG_FIELDS)),
   ...Object.fromEntries(Object.entries(WAVE_DOT_ARG_FIELDS)),
   // #233: the deployment rows carry their own closed argument authority (DEPLOYMENT_ARG_FIELDS):
-  // doctor's is the closed empty set, reincarnate's is exactly {target}. It was declared and never
+  // doctor's is the closed empty set. It was declared and never
   // spread, so a doctor envelope carrying any arg crashed the validator on `undefined.has` and the
   // unhandled rejection killed the resident (2026-09-14 audit, U-E4).
   ...Object.fromEntries(Object.entries(DEPLOYMENT_ARG_FIELDS)),
-  // #227/#233: the workflow-eight direct ports carry their closed application-side argument
-  // authority (the application.mjs normalizers); the advertised/accepted set is empty here —
-  // validateEnvelope skips validateApplicationCommandArgs for direct ports.
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(Object.entries(CONTEXT_PACKAGE_ARG_FIELDS)),
@@ -796,26 +780,6 @@ function dispatchFailure(cause, command = null) {
         ...(field !== null ? { field } : {}),
         ...(detail !== null ? { detail } : {}),
       });
-  }
-  // Issue #306 (the wiring half): the reincarnation verb's refusal family crosses AS ITSELF — the
-  // same rule the swarm family's closed set gets above, applied to the deployment lifecycle. The
-  // codes are owned by their mint sites (application.mjs: the authority rule and the unhosted
-  // deployment; application-deployment.mjs: REINCARNATION_REFUSALS and the handoff's own two) and
-  // every one of them is spelled `reincarnation_*`, so the PREFIX is the family — the shape the
-  // workflow_* arm below already reads. Two classes: a target that is not a commit-ish at all is
-  // the caller's own request (400), and every other member is a state conflict (409) — the
-  // deployment does not hold that commit, is already moving, has its serving checkout held, or
-  // carries no reincarnation authority — crossed with the mint site's own message and detail (the
-  // target with the remote/fetched facts, the served commit, the holding workers), so an HTTP
-  // caller learns what an in-process caller learns. Never the transient 503 row below: no member
-  // of this family becomes servable by retrying the identical request.
-  if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('reincarnation_')) {
-    const detail = isRecord(cause?.detail) ? cause.detail : null;
-    const message = typeof cause?.message === 'string' && cause.message.length > 0
-      ? cause.message : 'reincarnation refused';
-    return failure(goalPlanCode === 'reincarnation_target_invalid' ? 400 : 409, goalPlanCode, message, {
-      retryable: false, ...(detail === null ? {} : { detail }),
-    });
   }
   // D5 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): the wave lane's typed refusals
   // carry the lane's OWN message byte-identically (W6/F4) plus the {actual, cap, cause, role}
@@ -3397,28 +3361,6 @@ export class WebNorthbound {
     return Object.freeze({ ok: true, result: 'admission_closed', ...admission });
   }
 
-  /** Issue #478: the INVERSE of `closeWorkAdmission`, and the ONE other act that moves the work
-   * gate of a transport that is still listening. A resident that re-published after a failed
-   * handoff goes on serving over the very socket it never stopped listening on, and the stop its
-   * own handoff window began must not outlive that stop: this reopens the gate the close shut, so
-   * new WORK is admitted again instead of being answered `temporarily_unavailable` for the rest of
-   * the process's life.
-   *
-   * The close is TWO acts and only the FIRST is undone here. The teardown the close also performed
-   * — the audit row, the event stream, the wake attachments, the export delivery — is not
-   * re-created: those are resources a stop really did release, and a caller that reopens the gate
-   * is a resident that never stopped. What IS cleared is the close's own memo, so the next close
-   * performs the whole close again (flags, audit, teardown) instead of answering with the receipt
-   * this call invalidated — a memoized close would leave the gate open through a real stop.
-   * A transport that has already closed for good refuses: the gate it would open is gone. */
-  openWorkAdmission() {
-    if (this._shutdown) return Object.freeze({ ok: false, result: 'transport_closed' });
-    this.admitting = true;
-    this.readOnlyStopping = false;
-    this._admissionClose = null;
-    return Object.freeze({ ok: true, result: 'admission_reopened' });
-  }
-
   /** The admission half, once: new work closed, reads admitted (when `readsOnly`), and the
    * streams/attachments/audit this transport owns settled. */
   _closeAdmission(readsOnly) {
@@ -3512,10 +3454,6 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
   // Issue #467: the WORK half of the close, on its own — a stop closes admission while the reads
   // this transport still admits keep answering over the listening server.
   server.batonCloseWorkAdmission = () => northbound.closeWorkAdmission();
-  // Issue #478: and its inverse, on its own — a resident that re-published after a failed handoff
-  // is serving again on this same listening server, so the gate its own handoff stop closed is
-  // reopened rather than answered `temporarily_unavailable` until the process ends.
-  server.batonOpenWorkAdmission = () => northbound.openWorkAdmission();
   return server;
 }
 
@@ -3541,10 +3479,6 @@ export function createLocalAuthenticatedWebServer(northbound) {
   // Issue #467: the WORK half of the close, on its own — a stop closes admission while the reads
   // this transport still admits keep answering over the listening server.
   server.batonCloseWorkAdmission = () => northbound.closeWorkAdmission();
-  // Issue #478: and its inverse, on its own — a resident that re-published after a failed handoff
-  // is serving again on this same listening server, so the gate its own handoff stop closed is
-  // reopened rather than answered `temporarily_unavailable` until the process ends.
-  server.batonOpenWorkAdmission = () => northbound.openWorkAdmission();
   return server;
 }
 

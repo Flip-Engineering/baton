@@ -3,13 +3,11 @@
 // — with the #306 (2) `{ref, commit, behind}` projection kept beside it — `served.behind
 // {count, commits}` bounded by the ONE registry row, and `upToDate`); a recruit on a resident whose
 // served commit is behind its target is ADMITTED with the typed `base_behind` advisory on its
-// receipt and one line of its brief; and the `host.reincarnated` row the successor records wakes
-// the new closed `incarnation_changed` class instead of nothing. Hermetic: temp repositories under
-// os.tmpdir(), fixture adapters, no provider process.
+// receipt and one line of its brief. Hermetic: temp repositories under os.tmpdir(), fixture
+// adapters, no provider process.
 //
 // Red-before at HEAD (observed, one row at a time): servedBehind absent (link-free namespace read),
-// so (a) and (b) fail on the derivation; (c)/(d)/(e) fail on the absent advisory + brief line;
-// (f) fails on wakeClassRow('incarnation_changed') === null.
+// so (a) and (b) fail on the derivation; (c)/(d)/(e) fail on the absent advisory + brief line.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -275,7 +273,7 @@ test('#306b (d): a recruit on a behind resident is ADMITTED with the typed base_
   assert.equal(recruited.admission.state, 'admitted', 'the advisory never refuses the seat');
   assert.deepEqual(recruited.advisory, {
     kind: 'base_behind', served, target: { ref: 'origin/main', sha: target }, count: 4,
-    next: 'baton deployment reincarnate <target>',
+    next: 'restart the resident on the target commit (`baton serve`)',
   });
   assert.deepEqual(recruited.baseBehind, {
     served, branch: null, target: { ref: 'origin/main', commit: target }, behind: 4,
@@ -320,45 +318,10 @@ test('#306b (e): the doctor and the advisory are ONE derivation — and the runt
     assert.equal(gitSpawns.length, before, 'the advisory path spawns no git — the runtime never re-derives it');
     assert.deepEqual(alone.advisory, {
       kind: 'base_behind', served: servedHead, target: { ref: 'main', sha: tip }, count: 2,
-      next: 'baton deployment reincarnate <target>',
+      next: 'restart the resident on the target commit (`baton serve`)',
     });
   } finally {
     try { await deployment?.close(); } catch { /* fixture tree removed by tmp() */ }
   }
 });
 
-test('#306b (f): a host.reincarnated row wakes the closed incarnation_changed class', () => {
-  const row = wake.wakeClassRow('incarnation_changed');
-  assert.ok(row, 'stage[incarnation-changed-class-missing]: the ONE closed wake-class table must map '
-    + 'the successor\'s host.reincarnated row to a class — never a side list');
-  assert.equal(row.scope, 'deployment', 'the class is a sibling of dead: a deployment-scope row');
-  assert.equal(row.terminal, false, 'the class does not end the watch: the wake is "re-read the view"');
-  assert.equal(row.next, null, 'a non-terminal class names no command (the table invariant)');
-  assert.match(row.summary, /re-read the view/u, 'the guidance the non-terminal class carries is in its summary');
-  assert.ok(wake.WAKE_CLASSES.includes('incarnation_changed'));
-  assert.ok(wake.wakeClassHelpLines().some((line) => line.startsWith('incarnation_changed')),
-    'the CLI help renders it from the table, so --wake-class admits it');
-  // The row the successor records reaches the class through the shape the coordinator really writes.
-  assert.equal(wake.wakeClassFor({ kind: 'driver.recorded', payload: { kind: 'host.reincarnated' } }).wakeClass,
-    'incarnation_changed');
-  assert.equal(wake.wakeClassFor({ kind: 'host.reincarnated' }).wakeClass, 'incarnation_changed');
-  const frame = wake.deriveWakeFrame({
-    seq: 41, ts: '2026-09-18T00:00:00.000Z', kind: 'driver.recorded',
-    actor: 'deployment:repo-fixture:resident',
-    payload: { kind: 'host.reincarnated', from: { incarnation: 'i-1', commit: 'a'.repeat(40) },
-      to: { incarnation: 'i-2', commit: 'b'.repeat(40) } },
-  });
-  // The frame carries the class; the terminality a consumer acts on is the table's (`next` is the
-  // class's own, never the frame's).
-  assert.equal(wake.wakeClassRow(frame.wakeClass).terminal, false);
-  assert.equal(frame.next, null);
-  const filter = wake.parseWakeFilter({ kinds: 'incarnation_changed' });
-  assert.deepEqual([...filter.kinds], ['incarnation_changed'], 'the --wake-class filter admits the new class');
-  assert.equal(wake.wakeMatches(frame, filter), true);
-  const live = new CoordinationStore(tmp('ledger'));
-  live.recordDriver('host.reincarnated',
-    { from: { incarnation: 'i-1', commit: 'a'.repeat(40) }, to: { incarnation: 'i-2', commit: 'b'.repeat(40) } },
-    { actor: 'deployment:repo-fixture:resident', key: 'reincarnated:1' });
-  const recorded = wake.wakeClassFor(live.events().at(-1));
-  assert.equal(recorded?.wakeClass, 'incarnation_changed', 'a real ledger row wakes the class');
-});

@@ -12,10 +12,6 @@
 //   (b) an EPIPE on the SSE leg (the client vanishes mid-write) is recorded as
 //       `host.stream_error {stream: 'sse', code, at}` on the resident's driver lane, and the
 //       resident keeps serving the very next attachment;
-//   (c) on the issue306a fixture, the successor's `host.successor_started {log}` names a PATH —
-//       a file the successor itself opens at open, which receives its `answering` line — and the
-//       successor's own `host.reincarnated {log}` names the same file; the successor outlives the
-//       predecessor whose pipe used to carry (and then lose) its narration;
 //   (d) the last-resort trigger row carries `code` AND the stack head durably, and the narration it
 //       writes is in the incarnation's own log even when stderr is a pipe with no reader.
 //
@@ -80,8 +76,8 @@ function scratch(prefix) {
   return root;
 }
 
-/** A real temporary repository with two commits (the issue306a world): the resident serves the
- * second and reincarnates onto the first, so the handoff has a target that is not the served one. */
+/** A real temporary repository with two commits: the resident serves the second, so a target that
+ * is not the served revision exists. */
 function world(label) {
   const root = scratch(`bt468-${label}`);
   const repo = join(root, 'repo');
@@ -294,7 +290,6 @@ function deploymentModule(fixture, extra = {}) {
     resident: {
       env: { XDG_CONFIG_HOME: ${JSON.stringify(fixture.configRoot)}, HOME: ${JSON.stringify(fixture.home)} },
       home: ${JSON.stringify(fixture.home)}, webDrainMs: 2_000, sessionTtlMs: 120_000,
-      reincarnationWaitMs: 60_000,
       ${extra.resident ?? ''}
     },
   `;
@@ -371,69 +366,6 @@ function serveResident(label, modulePath) {
   });
 }
 
-test('468c: the successor opens its OWN log — the file the predecessor names, carrying its answering line',
-  { timeout: 180_000 }, async () => {
-    // The fixture repository is not Baton's own checkout, so the successor's script path — the ONE
-    // thing production computes from the checkout it serves — is rewritten to the real entry
-    // script. Everything else is the spec production minted: argv tail, cwd, env (the handoff
-    // declaration), stdio.
-    const spawnSuccessor = `
-const REAL_SCRIPT = ${JSON.stringify(SCRIPT)};
-function spawnSuccessor(spec) {
-  const args = [REAL_SCRIPT, ...spec.args.slice(1)];
-  return nodeSpawn(spec.command, args, {
-    cwd: spec.cwd, env: spec.env, detached: spec.detached, stdio: [...spec.stdio],
-  });
-}
-`;
-    const resident = serveResident('c', (fixture) => deploymentModule(fixture, {
-      label: 'reincarnate', resident: 'spawnSuccessor,', preamble: spawnSuccessor,
-    }));
-    await resident.untilReady();
-
-    const receipt = resident.cli(['deployment', 'reincarnate', resident.base]);
-    assert.equal(receipt.status, 0, `the reincarnation was admitted: ${receipt.stdout}${receipt.stderr}`);
-
-    const started = await until(() => hostRow(resident.ledgerPath, 'host.successor_started'),
-      'the host.successor_started row');
-    const logPath = started.payload.log;
-    assert.equal(typeof logPath, 'string', 'the row names the successor\'s log');
-    assert.notEqual(logPath, 'stderr', '#461\'s stream name is replaced by a path');
-    // macOS /private/var vs /var: one file, compared by realpath (the §2.4 rule).
-    assert.equal(realpathOf(logPath), realpathOf(incarnationServeLogPath(resident.deploymentRoot, started.payload.incarnation)),
-      'the path is the successor\'s own derivation — one name for both halves of the handoff');
-
-    // The successor's OWN narration: the flip line it writes at open, written by the successor
-    // process itself into the file the predecessor named.
-    const answering = await until(() => {
-      if (!existsSync(logPath)) return null;
-      const text = readFileSync(logPath, 'utf8');
-      return text.includes('answering') ? text : null;
-    }, 'the successor\'s log to receive its answering line');
-    assert.match(answering, /baton serve: answering \(/u,
-      `the successor narrated into its own log: ${answering.slice(-500)}`);
-
-    // The handoff completes: the predecessor exits by itself (#461), and the successor records the
-    // rows the old could not — naming the same log on its own half of the record.
-    const reincarnated = await until(() => hostRow(resident.ledgerPath, 'host.reincarnated'),
-      'the successor\'s host.reincarnated row');
-    assert.equal(reincarnated.payload.log, logPath,
-      'the successor\'s own row names the log it opened at open');
-    await until(() => resident.child.exitCode !== null, 'the predecessor\'s own exit');
-    // #461: the old incarnation ENDS BY ITSELF after the handoff — nothing it still held keeps its
-    // loop alive, and no signal ends it. (The measured exit code for the real entry script here is
-    // 13, Node's "unsettled top-level await": `serveDeployment`'s signal wait is still pending when
-    // the loop drains. That is the stop path's own fact, reported by this lane rather than pinned
-    // here — this row's contract is the log the successor writes, and the successor's own
-    // `host.reincarnated` row is what observes this exit.)
-    assert.equal(resident.child.signalCode, null, `the old ends by itself, never by a signal: ${resident.state.stderr.slice(-800)}`);
-    // The failure mode of #468: the pipe that used to carry this narration has no reader left.
-    // The successor is still alive and its log still answers.
-    assert.doesNotThrow(() => process.kill(started.payload.pid, 0),
-      'the successor outlives the predecessor whose pipe carried (and then lost) its lines');
-    assert.ok(readFileSync(logPath, 'utf8').includes('answering'),
-      'the log is still there once the predecessor is gone');
-  });
 
 test('468d: the last-resort trigger row names the code and the stack head, and the line survives a dead stderr',
   { timeout: 180_000 }, async () => {

@@ -172,12 +172,11 @@ export function constructor(store, root, opts = {}) {
     store._ledgerSyncFailure = null;
     store._appendWaiters = new Set();
     // Issue #483: this incarnation's own departure — the ONE fact a bounded wait torn down by a
-    // stop or a reincarnation handoff needs. Folded from the deployment's own `host.*` rows on the
-    // LIVE path only (a row replayed at open belongs to an incarnation that is already gone), and
-    // deliberately NOT a projection-checkpoint field: it describes the process serving this store
-    // NOW, so a checkpoint (cache of a replay) can never carry it into the next one.
+    // stop needs. Folded from the deployment's own `host.*` rows on the LIVE path only (a row
+    // replayed at open belongs to an incarnation that is already gone), and deliberately NOT a
+    // projection-checkpoint field: it describes the process serving this store NOW, so a
+    // checkpoint (cache of a replay) can never carry it into the next one.
     store._incarnationDeparture = null;
-    store._incarnationHandoff = null;
     if (Object.hasOwn(opts, 'canonicalOrderMigration')) {
       throw new TypeError('canonical order migration is offline-only; use migrateCanonicalOrderLedger()');
     }

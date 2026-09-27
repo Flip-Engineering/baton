@@ -1,37 +1,26 @@
-// Issue #483 — a bounded `swarm.watch` HELD across a reincarnation handoff crossed the web layer as
+// Issue #483 — a bounded `swarm.watch` HELD across the resident's stop crossed the web layer as
 // 503 `temporarily_unavailable`. The resident's own fallthrough narration named it:
 //   `baton-web dispatch fallthrough: command 'swarm_watch' raised the unmapped refusal code
 //    'coordination_wait_aborted' and crossed as 503 temporarily_unavailable; map the code …`
 // The store mints `coordination_wait_aborted` from `waitAfter` (its abort path) when the runtime
-// holding the wait is closed — which is what a stop, and the handoff's own release, do to the
-// swarm service. The code was in no refusal set, so the ONE class of caller that must learn the
-// incarnation is leaving (a watcher) was told to `retry once` against a process that was gone.
+// holding the wait is closed — which is what a stop does to the swarm service. The code was in no
+// refusal set, so the ONE class of caller that must learn the incarnation is leaving (a watcher) was
+// told to `retry once` against a process that was gone.
 //
-// What this file pins, over the REAL served transport (the 306a/#314 world: a real
-// `openBatonDeployment`, a real publication the client discovers, the issue306a injected-successor
-// stub, real ledger rows) — every await bounded and named (docs/42 §8):
-//   (a) a bounded `swarm.watch` open across a STAGED HANDOFF crosses `coordination_wait_aborted`
-//       as 409, with `detail.reason: 'incarnation_withdrawn'`, the successor incarnation the
-//       handoff minted, and the cursor the caller re-arms from — never the transient 503 row;
-//   (b) the same watch across an ordinary stop (the same world without a handoff) names
-//       `resident_stopping` with `successor: null` — the other half of the closed reason set;
-//   (e) the departure fold itself, row by row: a handoff REQUEST is not a departure (the window is
-//       recoverable), the release is, a failed handoff clears it, and a resident that starts over a
-//       stopped ledger (the rows replayed at open are history) reads none;
-//   (d) the CLI renders the remedy in `next`: re-arm against the successor, or subscribe to the
-//       `incarnation_changed` wake class.
-//
-// Red-before at HEAD (MEASURED, one row at a time, against this file's own fixture): (b) crosses as
-// 503 `temporarily_unavailable` — the fallthrough above; (a) never reaches the caller at all: the
-// client gets `cli_transport_failed` (ECONNRESET), because the handoff closes the transport BEFORE
-// the swarm service's own close can answer — the same unmapped code, one layer out; (c) fails on
-// the absent row and the absent fold member; (d) fails on the absent rendering export.
+// What this file pins, over the REAL served transport (a real `openBatonDeployment`, a real
+// publication the client discovers, real ledger rows) — every await bounded and named (docs/42 §8):
+//   (b) a bounded `swarm.watch` held across an ordinary stop crosses `coordination_wait_aborted`
+//       as 409, with `detail.reason: 'resident_stopping'` and the cursor the caller re-arms from —
+//       never the transient 503 row;
+//   (c) the store's wait-abort code is a row of the ONE refusal set, raised by the runtime, and the
+//       CLI renders a remedy for every reason the store can mint;
+//   (e) the departure fold itself: a stop's own acts are the departure, a resident that starts over
+//       a stopped ledger (the rows replayed at open are history) reads none.
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { MockAdapter, createDriver } from '../src/index.mjs';
@@ -49,10 +38,9 @@ try { ({ swarmWatchRefusalBlock } = await import('../src/application-cli.mjs'));
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const SWARM_ID = 's-issue483';
-// The fixture's three bounds, all shrunk to the test's own scale: the handoff's declared window,
+// The fixture's bounds, all shrunk to the test's own scale: the watch timeout,
 // the bounded watch's own deadline (far past every fixture event), and the largest bound any await
 // in this file may take.
-const HANDOFF_WAIT_MS = 4_000;
 const WATCH_TIMEOUT_MS = 60_000;
 const SETTLE_MS = 20_000;
 const OWNER_UID = typeof process.getuid === 'function' ? process.getuid() : null;
@@ -138,50 +126,11 @@ function adapter() {
   return value;
 }
 
-/** The successor the injected spawner hands back (the issue306a stub): it writes the handoff marker
- * (its readiness), observes the writer lease, and publishes the connection — the deployment never
- * spawns a second resident in these rows. */
-class StubSuccessor extends EventEmitter {
-  static nextPid = 41_000;
-  constructor(spec) {
-    super();
-    this.spec = spec;
-    this.pid = StubSuccessor.nextPid++;
-    this.stderr = new EventEmitter();
-    this.exitCode = null;
-    this.signalCode = null;
-  }
-  writeMarker(state) {
-    writeFileSync(this.spec.markerPath, `${JSON.stringify({
-      schemaVersion: 1, incarnation: this.spec.env.BATON_INCARNATION, pid: this.pid,
-      predecessor: { incarnation: this.spec.env.BATON_PREDECESSOR_INCARNATION, commit: this.spec.env.BATON_PREDECESSOR_COMMIT },
-      target: { sha: this.spec.env.BATON_REINCARNATION_TARGET, ref: null },
-      state, at: new Date().toISOString(),
-    })}\n`);
-  }
-  becomeReady() { this.writeMarker('waiting'); }
-  /** The successor's own open+publish in the order production has it: lease free → take → publish. */
-  async openAndPublish(selector) {
-    await until(() => !existsSync(this.spec.leasePath), { label: 'the writer lease release' });
-    this.writeMarker('opened');
-    writeFileSync(this.spec.selectorPath, `${JSON.stringify(selector)}\n`);
-    writeFileSync(this.spec.profilePath, `${JSON.stringify({
-      schemaVersion: 2, transport: 'local', socketPath: join(this.spec.deploymentRoot, 'successor.sock'),
-      url: 'https://baton.local', origin: 'https://baton.local', tokenFile: this.spec.tokenPath.split('/').at(-1),
-      deploymentId: selector.deploymentId, incarnation: selector.incarnation,
-      registryDigest: selector.registryDigest, startedAt: selector.startedAt,
-      ownerPid: process.pid, ownerPidStart: 'successor',
-    })}\n`);
-    writeFileSync(this.spec.tokenPath, `${'a'.repeat(48)}\n`);
-  }
-}
-
 const selectorOf = (f) => JSON.parse(readFileSync(f.selectorPath, 'utf8'));
 
-/** One open deployment over the fixture world, with the successor spawner injected (the issue306a
- * `resident` helper) — the test owns the driver, so the served transport and the store are the
- * fixture's own. */
-async function resident(t, f, { onSpawn } = {}) {
+/** One open deployment over the fixture world — the test owns the driver, so the served transport
+ * and the store are the fixture's own. */
+async function resident(t, f) {
   let driver = null;
   const deployment = await openBatonDeployment({
     repo: f.repo,
@@ -192,8 +141,7 @@ async function resident(t, f, { onSpawn } = {}) {
       verification: { command: 'node', arguments: ['--test'] },
       resident: {
         env: { XDG_CONFIG_HOME: f.configRoot, HOME: f.home },
-        home: f.home, webDrainMs: 500, sessionTtlMs: 60_000, reincarnationWaitMs: HANDOFF_WAIT_MS,
-        ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
+        home: f.home, webDrainMs: 500, sessionTtlMs: 60_000,
       },
     },
   }, (options) => { driver = createDriver(options); return driver; });
@@ -212,8 +160,8 @@ async function served(f) {
 
 /** The store's armed `waitAfter` waits — THE fact "the bounded watch is blocked in the store's own
  * wait", not still travelling to it. The store is this lane's own file, and the read is what makes
- * the staging deterministic (a handoff triggered while the request was still in flight would pin a
- * different row). It asserts nothing on its own. */
+ * the staging deterministic (a request still in flight would pin a different row). It asserts nothing
+ * on its own. */
 const armedWaits = (driver) => driver.coordination._appendWaiters.size;
 
 /** The bounded read of a held watch: the watch either answers (the row must fail loudly) or refuses
@@ -233,7 +181,7 @@ async function refusalOf(pending, { timeoutMs = SETTLE_MS, label = 'the held wat
 
 /** The refusal the served transport answered with, asserted to be the #483 shape: the code, the
  * 409 class, the reason and the cursor. Returns its `detail` for the row's own assertions. */
-function assertWatchAbortRefusal(outcome, { reason, successor, afterSeq }) {
+function assertWatchAbortRefusal(outcome, { reason, afterSeq }) {
   assert.equal(outcome.answered, undefined,
     `the held watch must REFUSE, never answer a view: ${JSON.stringify(outcome.answered)?.slice(0, 200)}`);
   const error = outcome.error;
@@ -247,58 +195,13 @@ function assertWatchAbortRefusal(outcome, { reason, successor, afterSeq }) {
   assert.ok(detail !== null && typeof detail === 'object',
     `the refusal carries the deployment's own detail: ${JSON.stringify(error?.detail ?? null)}`);
   assert.equal(detail.reason, reason, 'the reason is the closed-set member the departure minted');
-  assert.deepEqual(detail.successor, successor, 'and the successor it names, or null when there is none');
   assert.equal(detail.afterSeq, afterSeq, 'and the caller\'s own cursor, carried so it can re-arm without remembering it');
   return detail;
 }
 
-// ── (a) the served transport: a held watch across a staged handoff ───────────────────────────────
+// ── (b) the served transport: a held watch across an ordinary stop ───────────────────────────────
 
-test('#483 (a): a bounded watch held across a staged handoff crosses coordination_wait_aborted as 409 naming the successor',
-  { timeout: 120_000 }, async (t) => {
-    const f = world('handoff');
-    let stub = null;
-    const { deployment, driver } = await resident(t, f, {
-      onSpawn: (spec) => { stub = new StubSuccessor(spec); stub.becomeReady(); return stub; },
-    });
-    await bounded(deployment.host(), { label: 'the resident host open' });
-    const opened = await served(f);
-    const client = opened.client;
-
-    await client.command('swarm.create', { swarmId: SWARM_ID, purpose: 'issue483 handoff watch', idempotencyKey: 'issue483:create' }, 'issue483:create');
-    const view = await client.command('swarm.view', { swarmId: SWARM_ID }, 'issue483:view');
-    const cursor = view.cursor;
-    assert.ok(Number.isSafeInteger(cursor) && cursor > 0, `the view names the cursor a watch re-arms from: ${cursor}`);
-
-    // The bounded watch, held open past every fixture event: it is the caller the incident killed.
-    const pending = client.command('swarm.watch',
-      { swarmId: SWARM_ID, afterSeq: cursor, timeoutMs: WATCH_TIMEOUT_MS }, 'issue483:watch');
-    pending.catch(() => { /* the row reads it through `refusalOf` */ });
-    await until(() => armedWaits(driver) > 0, { label: 'the bounded watch to reach the store own wait' });
-
-    const receipt = await bounded(deployment.reincarnate({ target: f.base }), { label: 'the reincarnation request' });
-    assert.equal(receipt.state, 'reincarnating', `the handoff was requested: ${JSON.stringify(receipt)}`);
-    assert.equal(receipt.successor.pid, stub?.pid, 'the injected successor is the one the handoff minted');
-    stub.openAndPublish({ ...selectorOf(f), incarnation: receipt.successor.incarnation, startedAt: new Date().toISOString() })
-      .catch(() => { /* the close below is the row's own verdict */ });
-    const closed = await bounded(deployment.close(), { label: 'the handoff close' });
-    assert.equal(closed.state, 'closed', `a completed handoff exits 0: ${JSON.stringify(closed)}`);
-
-    const outcome = await refusalOf(pending, { label: 'the held watch to be refused' });
-    assertWatchAbortRefusal(outcome, {
-      reason: 'incarnation_withdrawn',
-      successor: { incarnation: receipt.successor.incarnation },
-      afterSeq: cursor,
-    });
-    assert.equal(selectorOf(f).incarnation, receipt.successor.incarnation,
-      'the successor the refusal names is the incarnation that published');
-    assert.match(String(outcome.error.message), /withdrawing/u, 'the message says the incarnation is withdrawing');
-    assert.match(String(outcome.error.message), /incarnation_changed/u, 'and names the wake class that carries the change of incarnation');
-  });
-
-// ── (b) the same watch across an ordinary stop ───────────────────────────────────────────────────
-
-test('#483 (b): the same watch across an ordinary stop names resident_stopping with no successor',
+test('#483 (b): the same watch across an ordinary stop names resident_stopping',
   { timeout: 120_000 }, async (t) => {
     const f = world('stop');
     const { deployment, driver } = await resident(t, f);
@@ -319,7 +222,7 @@ test('#483 (b): the same watch across an ordinary stop names resident_stopping w
     assert.equal(closed.state, 'closed', `the stop converged: ${JSON.stringify(closed)}`);
 
     const outcome = await refusalOf(pending, { label: 'the held watch to be refused' });
-    assertWatchAbortRefusal(outcome, { reason: 'resident_stopping', successor: null, afterSeq: cursor });
+    assertWatchAbortRefusal(outcome, { reason: 'resident_stopping', afterSeq: cursor });
     assert.match(String(outcome.error.message), /stopping/u, 'the message says the resident is stopping');
   });
 
@@ -433,8 +336,8 @@ test('#483 (c): the store\'s wait-abort code is a row of the ONE refusal set, ra
   assert.ok(fold !== null && fold.length > 0,
     'the store folds the deployment\'s own host.* rows (the departure the wait crosses with)');
   const minted = new Set([...fold.matchAll(/reason: '([a-z_]+)'/gu)].map((match) => match[1]));
-  assert.deepEqual([...minted].sort(), ['incarnation_withdrawn', 'resident_stopping'],
-    `the store mints exactly these two reasons: ${JSON.stringify([...minted])}`);
+  assert.deepEqual([...minted].sort(), ['resident_stopping'],
+    `the store mints exactly this reason: ${JSON.stringify([...minted])}`);
 
   // The reasons the CLI renders, read from its own block — and the runtime's own third reason.
   const block = moduleFunction(cliSource, 'swarmWatchRefusalBlock');
@@ -446,65 +349,8 @@ test('#483 (c): the store\'s wait-abort code is a row of the ONE refusal set, ra
   assert.ok(runtimeSource.includes("'store_closed'"),
     'the runtime mints store_closed for a wait torn down with no live departure on the ledger');
   assert.ok(rendered.has('store_closed'), 'and the CLI renders a remedy for it too');
-  assert.deepEqual([...rendered].sort(), ['incarnation_withdrawn', 'resident_stopping', 'store_closed'],
+  assert.deepEqual([...rendered].sort(), ['resident_stopping', 'store_closed'],
     `the rendered set is the closed crossing vocabulary: ${JSON.stringify([...rendered])}`);
-});
-
-// ── (d) the CLI renders the reason, the successor and the next step ──────────────────────────────
-
-const SUCCESSOR_INCARNATION = 'instance-483-successor';
-const ABORT_REFUSAL = Object.freeze({
-  code: 'coordination_wait_aborted',
-  message: `the watch was torn down: this incarnation is withdrawing and the successor incarnation ${SUCCESSOR_INCARNATION} takes the deployment over; re-arm the watch against the successor`,
-  retryable: false,
-  detail: { reason: 'incarnation_withdrawn', successor: { incarnation: SUCCESSOR_INCARNATION }, afterSeq: 41 },
-});
-
-/** The wire-shaped refusal the CLI's own client throws (BatonWebClient lifts the resident's error
- * object onto `error.detail` and keeps its own message prefix). */
-function wireRefusalError(detail) {
-  return Object.assign(
-    new Error(`Baton Web request was refused (POST /v1/commands, HTTP 409): ${detail.message}`),
-    { code: detail.code, status: 409, detail },
-  );
-}
-
-test('#483 (d): the CLI prints why the watch was torn down, the successor, and the next step', async () => {
-  assert.notEqual(swarmWatchRefusalBlock, null,
-    'impl/src/application-cli.mjs must export the watch-abort rendering this row reads (#483 item 1)');
-  const block = swarmWatchRefusalBlock(wireRefusalError(ABORT_REFUSAL), { swarmId: SWARM_ID, afterSeq: 41 });
-  assert.ok(block !== null, 'the watch-abort refusal is a shape this leg renders');
-  assert.match(block, /this incarnation is withdrawing/u, 'the block names the departure');
-  assert.match(block, new RegExp(SUCCESSOR_INCARNATION, 'u'), 'and the successor that takes the deployment over');
-  assert.match(block, /next: re-arm/u, 'and the step that restores the watch');
-  assert.match(block, new RegExp(`baton swarm watch ${SWARM_ID} --after-seq 41`, 'u'),
-    'which is the caller\'s own command, re-armed from the cursor the refusal carried');
-  assert.match(block, /incarnation_changed/u, 'with the wake class as the alternative');
-
-  // The stopping half renders its own remedy, and a refusal this leg does not own renders nothing.
-  const stopping = swarmWatchRefusalBlock(
-    wireRefusalError({ ...ABORT_REFUSAL, detail: { reason: 'resident_stopping', successor: null, afterSeq: 41 } }),
-    { swarmId: SWARM_ID, afterSeq: 41 },
-  );
-  assert.match(stopping, /this resident is stopping/u, 'the stop names itself');
-  assert.match(stopping, /resident_lifecycle/u, 'with the class that carries the resident\'s own lifecycle');
-  assert.equal(swarmWatchRefusalBlock(
-    Object.assign(new Error('a refusal this leg does not own'), { code: 'swarm_participant_not_found' }),
-    { swarmId: SWARM_ID, afterSeq: 41 },
-  ), null, 'a refusal without the watch-abort detail renders nothing extra');
-
-  // The whole leg: the parsed `baton swarm watch` reaches the refusal through runBatonCli, and the
-  // message the operator reads carries the block under the refusal line.
-  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--after-seq', '41', '--timeout-ms', '5000']);
-  assert.equal(parsed.name, 'swarm.watch', 'the verb parses to the bounded swarm watch command');
-  let caught = null;
-  try {
-    await runBatonCli(parsed, { command: async () => { throw wireRefusalError(ABORT_REFUSAL); } });
-  } catch (error) { caught = error; }
-  assert.ok(caught !== null, 'the refusal reaches the CLI entry');
-  assert.equal(caught.code, 'coordination_wait_aborted', 'as itself');
-  assert.match(caught.message, /next: re-arm/u, 'and the printed message carries the block');
-  assert.match(caught.message, new RegExp(SUCCESSOR_INCARNATION, 'u'), 'including the successor');
 });
 
 // ── (e) the departure is the LIVE incarnation's own — the rows the fold reads, one at a time ─────
@@ -517,12 +363,12 @@ test('#483 (e): the store folds the deployment\'s own host rows, and only a LIVE
   assert.equal(first.incarnationDeparture(), null, 'a store with no host rows has no departure');
   first.recordDriver('host.stop_requested', { trigger: 'operation_completed' },
     { actor: 'deployment:repo-issue483:resident', key: 'e1' });
-  assert.deepEqual(first.incarnationDeparture(), { reason: 'resident_stopping', successor: null },
+  assert.deepEqual(first.incarnationDeparture(), { reason: 'resident_stopping' },
     'an ordinary stop\'s first act is the departure — before the transport the watch rides ever closes');
   first.recordDriver('host.stopped', { state: 'stopped' },
     { actor: 'deployment:repo-issue483:resident', key: 'e2' });
-  assert.deepEqual(first.incarnationDeparture(), { reason: 'resident_stopping', successor: null },
-    'the release re-states the same stop; it never invents a handoff');
+  assert.deepEqual(first.incarnationDeparture(), { reason: 'resident_stopping' },
+    'the release re-states the same stop');
   first.releaseWriterLease({ requireOwned: true });
 
   // The next incarnation over the SAME ledger is not the one that stopped: the rows it replays at
@@ -534,19 +380,8 @@ test('#483 (e): the store folds the deployment\'s own host rows, and only a LIVE
   });
   assert.equal(next.incarnationDeparture(), null,
     'a resident that starts over a stopped ledger serves its swarms normally');
-  nextHost('host.reincarnation_requested', { from: { incarnation: 'instance-old' }, target: { sha: 'a' } });
-  assert.equal(next.incarnationDeparture(), null,
-    'a handoff REQUEST is not a departure: the window is recoverable and this incarnation may serve on');
-  nextHost('host.successor_started', { incarnation: 'instance-next' });
-  nextHost('host.stop_requested', { trigger: 'operation_completed' });
-  assert.equal(next.incarnationDeparture(), null,
-    'neither is the handoff\'s own stop request — the window still decides');
-  nextHost('host.stopped', { state: 'stopped' });
-  assert.deepEqual(next.incarnationDeparture(),
-    { reason: 'incarnation_withdrawn', successor: { incarnation: 'instance-next' } },
-    'the release decides, and names the successor the handoff minted');
-  nextHost('host.reincarnation_failed', { step: 'publication_handoff' });
-  assert.equal(next.incarnationDeparture(), null,
-    'a handoff that failed re-publishes: this incarnation went on serving, so it has not departed');
+  nextHost('host.stop_waiting', { on: 'worker', ids: ['w-1'] });
+  assert.deepEqual(next.incarnationDeparture(), { reason: 'resident_stopping' },
+    'the stop\'s own named wait is the departure too');
   next.releaseWriterLease({ requireOwned: true });
 });
