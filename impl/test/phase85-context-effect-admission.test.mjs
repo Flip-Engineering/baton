@@ -115,12 +115,6 @@ function options(repo, deploymentRoot, tracker) {
         'kimi-code': adapter(routeB, tracker),
       },
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({
-          freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER,
-        }),
-      },
     },
   };
 }

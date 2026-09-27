@@ -2420,24 +2420,6 @@ const GENERIC_PROVIDER_TERMINAL_GUIDANCE = freeze({
   retryable: true,
 });
 
-// Issue #35: a dispatch admission refusal ends a Run before any provider work exists. Its typed
-// cause is a deployment/workspace condition, never a provider fault, and it is always retryable
-// once the named condition clears.
-const DISPATCH_REFUSAL_GUIDANCE = freeze({
-  worktree_capacity_exceeded: {
-    category: 'workspace_capacity',
-    summary: 'Baton refused to reserve workspace capacity for this dispatch; the repository volume is below the deployment capacity floors or reservations are exhausted.',
-    remediation: 'Free repository volume space or raise the deployment worktree capacity floors, then start a new Run.',
-    retryable: true,
-  },
-  worktree_capacity_unavailable: {
-    category: 'workspace_capacity',
-    summary: 'Baton could not observe workspace capacity for this dispatch.',
-    remediation: 'Check the repository volume health, then start a new Run.',
-    retryable: true,
-  },
-});
-
 const GENERIC_DISPATCH_REFUSAL_GUIDANCE = freeze({
   category: 'dispatch_refused',
   summary: 'Baton refused this dispatch before any provider work started.',
@@ -2476,9 +2458,7 @@ export function projectTypedTerminalCause({
   }
   if (dispatchRefusal) {
     const code = canonicalTerminalCode(dispatchRefusal.code, 'dispatch_refusal_unclassified');
-    const guidance = Object.hasOwn(DISPATCH_REFUSAL_GUIDANCE, code)
-      ? DISPATCH_REFUSAL_GUIDANCE[code] : GENERIC_DISPATCH_REFUSAL_GUIDANCE;
-    return freeze({ kind: 'dispatch_refused', code, ...guidance });
+    return freeze({ kind: 'dispatch_refused', code, ...GENERIC_DISPATCH_REFUSAL_GUIDANCE });
   }
   return runStop ? freeze({ kind: 'operator_stop', code: 'operator_stop' }) : null;
 }

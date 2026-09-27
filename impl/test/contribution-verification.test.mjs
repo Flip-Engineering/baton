@@ -51,7 +51,7 @@ test('checks run independently and leave author and task lifetime untouched', as
 
 test('sandbox setup failure reports unexecuted verification and uncertain creation', async () => {
   const f = fixture();
-  const refused = Object.assign(new Error('materialization response lost'), { code: 'worktree_capacity_unavailable' });
+  const refused = Object.assign(new Error('materialization response lost'), { code: 'worktree_cleanup_failed' });
   f.worktrees.createBaseVerifyWorktree = async () => { throw refused; };
   let calls = 0;
   await assert.rejects(verifyContribution({ ...f, referee: async () => { calls++; } }), (error) => {

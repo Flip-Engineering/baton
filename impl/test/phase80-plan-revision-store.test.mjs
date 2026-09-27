@@ -241,17 +241,10 @@ function coordinatorFixture(name, { resolvedResultSha = resultSha } = {}) {
       assert.equal(refValue, retainedResultRef);
       return resolvedResultSha;
     },
-    async reserveCapacity(taskId, baseSha) {
-      calls.push('reserve');
-      assert.equal(taskId, 'task-revision');
-      assert.equal(baseSha, resultSha);
-      return { baseSha, reservation: { id: 'revision-capacity' } };
-    },
     async create(taskId, baseSha) {
       calls.push('worktree');
       return { path: `/tmp/${taskId}`, branch: `baton/${taskId}`, baseSha };
     },
-    async releaseCapacity() { calls.push('release'); },
     async remove() {},
     async reconcile() {},
   };
@@ -324,21 +317,21 @@ test('RF2: cumulative predecessor Plan totals cannot overspend one individually-
       && /cumulative Plan authority/u.test(error.message));
 });
 
-test('RF3: Coordinator derives revision lineage and preflights retained ref plus exact capacity before ledger', async (t) => {
+test('RF3: Coordinator derives revision lineage and preflights retained ref before ledger', async (t) => {
   const f = coordinatorFixture('coordinator');
   t.after(() => closeCoordinatorFixture(f, 'coordinator'));
   const handle = await f.coordinator.spawnPlanRevision(f.member, f.opts);
-  assert.deepEqual(f.calls.slice(0, 3), ['resolve', 'reserve', 'ledger']);
+  assert.deepEqual(f.calls.slice(0, 2), ['resolve', 'ledger']);
   const task = f.store.task('task-revision');
   assert.equal(handle.taskId, 'task-revision');
   assert.equal(task.relation, 'revision');
   assert.equal(task.refines, 'task-builder');
   assert.equal(task.worktreeBaseSha, resultSha);
   assert.equal(f.coordinator._tasks.get('task-revision').refines, 'task-builder');
-  assert.equal(f.calls.filter((call) => call === 'reserve').length, 1);
+  assert.ok(f.calls.indexOf('worktree') === -1 || f.calls.indexOf('worktree') > f.calls.indexOf('ledger'));
 });
 
-test('RF4: retained result mismatch refuses before capacity, ledger, worktree, or provider effects', async (t) => {
+test('RF4: retained result mismatch refuses before ledger, worktree, or provider effects', async (t) => {
   const f = coordinatorFixture('mismatch', { resolvedResultSha: '0'.repeat(40) });
   t.after(() => closeCoordinatorFixture(f, 'mismatch'));
   const before = f.store.events().length;

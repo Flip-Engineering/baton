@@ -92,8 +92,6 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
     let providerBrief;
     try { providerBrief = coordinator._providerBrief(task.brief, workerId); }
     catch (error) {
-      if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
-        && typeof coordinator._worktrees?.releaseCapacity === 'function') coordinator._releaseCapacityDetached(task.id);
       const crashEvent = recorder.log.append({
         worker: workerId, harness, turnEpoch: coordinator._safeTurnEpoch(handle),
         kind: 'lifecycle.crashed', actor: 'policy', ...coordinator._routeAttribution(handle, task),
@@ -120,8 +118,6 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
       runtime = coordinator._ensureRuntimeScope(handle);
     } catch (err) {
       try { coordinator._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
-      if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
-        && typeof coordinator._worktrees?.releaseCapacity === 'function') coordinator._releaseCapacityDetached(task.id);
       coordinator._releaseProviderTurnAdmission(handle, 'runtime_scope_unavailable');
       const crashEvent = recorder.log.append({
         worker: workerId, harness, turnEpoch: coordinator._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
@@ -165,7 +161,6 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
           ...(task.sessionContext.sparsePaths ? { sparsePaths: task.sessionContext.sparsePaths } : {}),
           ...(task.sessionContext.sparseCheckoutIdentity ? { sparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
           ...(task.sessionContext.toolchainProjection ? { toolchainProjection: task.sessionContext.toolchainProjection } : {}),
-          ...(task.sessionContext.capacityReservation ? { capacityReservation: task.sessionContext.capacityReservation } : {}),
         });
     } else {
       try { worktreeSource = Promise.resolve(coordinator._worktrees.create(task.id, task.worktreeBaseSha ?? null, {
@@ -203,7 +198,6 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
             ...(res.toolchainProjection ? { toolchainProjection: res.toolchainProjection } : {}),
             ...(res.sparsePaths !== undefined ? { sparsePaths: normalizeSparsePaths(res.sparsePaths) } : {}),
             ...(res.sparseCheckoutIdentity !== undefined ? { sparseCheckoutIdentity: normalizeSparseCheckoutIdentity(res.sparseCheckoutIdentity) } : {}),
-            ...(res.capacityReservation ? { capacityReservation: Object.freeze({ ...res.capacityReservation }) } : {}),
             ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
             ...(res.logicalTaskId || task.sessionContext?.logicalTaskId
               ? { logicalTaskId: res.logicalTaskId ?? task.sessionContext.logicalTaskId } : {}),
@@ -469,71 +463,13 @@ export async function _spawnPlanWave(coordinator, recorder, rawMembers, opts = {
       };
     });
 
-    const reservedCapacityTaskIds = [];
-    const releaseWaveCapacity = async () => {
-      const taskIds = [...reservedCapacityTaskIds];
-      if (taskIds.length === 0) return;
-      if (typeof coordinator._worktrees?.releaseCapacityMany === 'function') {
-        const outcomes = await Promise.resolve(coordinator._worktrees.releaseCapacityMany(taskIds));
-        if (!Array.isArray(outcomes) || outcomes.length !== taskIds.length
-          || outcomes.some((released) => released !== true)) {
-          throw Object.assign(new Error('plan wave capacity cleanup is incomplete'), {
-            code: 'plan_wave_cleanup_incomplete', taskIds,
-          });
-        }
-        return;
-      }
-      const outcomes = await Promise.allSettled(taskIds.map((taskId) => (
-        Promise.resolve(coordinator._worktrees?.releaseCapacity?.(taskId))
-      )));
-      if (outcomes.some((outcome) => outcome.status === 'rejected' || outcome.value !== true)) {
-        throw Object.assign(new Error('plan wave capacity cleanup is incomplete'), {
-          code: 'plan_wave_cleanup_incomplete', taskIds,
-        });
-      }
-    };
-    if (typeof coordinator._worktrees?.reserveCapacityMany === 'function') {
-      const reservations = await Promise.resolve(coordinator._worktrees.reserveCapacityMany(prepared.map(({ taskId, runId, workerId }) => ({
-        taskId, requestedBaseSha: null, runId, attemptId: workerId, processGeneration: 1,
-      }))));
-      if (!Array.isArray(reservations) || reservations.length !== prepared.length) {
-        throw Object.assign(new Error('plan wave capacity authority returned an invalid result'), {
-          code: 'plan_wave_capacity_invalid',
-        });
-      }
-      prepared.forEach(({ taskId }, index) => {
-        if (reservations[index] !== null) reservedCapacityTaskIds.push(taskId);
-      });
-    } else if (typeof coordinator._worktrees?.reserveCapacity === 'function') {
-      const reservations = await Promise.allSettled(prepared.map((member) => (
-        coordinator._worktrees.reserveCapacity(member.taskId, null, {
-          runId: member.runId, attemptId: member.workerId, processGeneration: 1,
-        })
-      )));
-      prepared.forEach(({ taskId }, index) => {
-        if (reservations[index].status === 'fulfilled' && reservations[index].value !== null) {
-          reservedCapacityTaskIds.push(taskId);
-        }
-      });
-      const reservationFailure = reservations.find((result) => result.status === 'rejected');
-      if (reservationFailure) {
-        await releaseWaveCapacity();
-        throw reservationFailure.reason;
-      }
-    }
     if (coordinator._drainState !== 'open') {
-      await releaseWaveCapacity();
       throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     }
 
-    try {
-      recorder.coordination.createPlanGatedWave(prepared.map((member) => ({
-        fields: member.fields, gate: member.goalPlan, route: member.route,
-      })), auth);
-    } catch (error) {
-      await releaseWaveCapacity();
-      throw error;
-    }
+    recorder.coordination.createPlanGatedWave(prepared.map((member) => ({
+      fields: member.fields, gate: member.goalPlan, route: member.route,
+    })), auth);
 
     const priorCleanup = recorder.coordination.events?.().find((event) => (
       event.kind === 'driver.recorded' && event.payload?.kind === 'plan.wave_cleanup_completed'
@@ -542,10 +478,6 @@ export async function _spawnPlanWave(coordinator, recorder, rawMembers, opts = {
     ));
     if (priorCleanup) {
       const { kind: _kind, cleanupDigest, ...cleanupCore } = priorCleanup.payload;
-      // A retried admission may have reserved capacity before discovering the durable cleanup
-      // tombstone. Release that reservation even when the tombstone itself proves corrupt; the
-      // poison path must not strand a second resource claim while reporting the first fault.
-      await releaseWaveCapacity();
       if (cleanupDigest !== canonicalDigest(cleanupCore)) {
         throw coordinator._poisonCoordination(Object.assign(new Error('plan wave cleanup receipt is invalid'), {
           code: 'plan_wave_cleanup_integrity',
@@ -578,17 +510,6 @@ export async function _spawnPlanWave(coordinator, recorder, rawMembers, opts = {
         coordinator._seedCoordinationTasks();
         const targetWorkerIds = prepared.map((member) => member.workerId).sort();
         const outcome = await coordinator.stopRunTargets(targetWorkerIds, 'policy');
-        if (typeof coordinator._worktrees?.settleCapacityMany === 'function') {
-          const settled = await Promise.resolve(coordinator._worktrees.settleCapacityMany(
-            prepared.map((member) => member.taskId),
-          ));
-          if (!Array.isArray(settled) || settled.length !== prepared.length
-            || settled.some((value) => value !== true)) {
-            throw Object.assign(new Error('plan wave capacity settlement is incomplete'), {
-              code: 'plan_wave_cleanup_incomplete',
-            });
-          }
-        }
         if (outcome.targetCount !== targetWorkerIds.length || outcome.remainingCount !== 0
           || outcome.counts.pendingCancelled + outcome.counts.killConfirmed
             + outcome.counts.alreadyTerminal !== outcome.targetCount
@@ -1454,12 +1375,6 @@ export function _finalizeStop(coordinator, recorder, workerId, waiter) {
       // The transaction is over the moment its cleanup settles: the waiter must leave the map
       // before anything reads it (a successor delivery, a convergence predicate, a later stop).
       coordinator._stopWaiters.delete(workerId);
-      // Issue #450: the kill path settles the capacity reservation the worker it just confirmed
-      // left behind — the seam that ALREADY observed the confirmation, one durable
-      // `drain.resource_released` row with reason `worker_gone`, never a ledger scan at stop time.
-      // Awaited so this stop's own answer is ordered after its release; a release the authority
-      // refuses leaves the reservation for the fleet drain's pass to name, never fails the stop.
-      try { await coordinator.releaseGoneWorkerReservations(); } catch { /* the stop's result stands */ }
       const preservationReapRequired = waiter.preserveTurn === true && !preservation
         && handle?.localAuthority === true;
       if ((governanceInvalid || preservationReapRequired) && handle) {

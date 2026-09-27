@@ -156,10 +156,6 @@ async function openDeployment(card, home, repoOverride = null) {
         routes: [ROUTE],
         adapters: { omp: new CardAdapter(card) },
         verification: Object.freeze({ command: 'true', arguments: [] }),
-        capacity: {
-          estimate: () => ({ bytes: 60, inodes: 5 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
       },
     });
     return deployment;

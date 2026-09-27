@@ -65,6 +65,11 @@ function adapter(route, tracker) {
     harness: route.harness,
     scenario: {
       outcome: 'completed',
+      // The stop projection this file pins needs the claimed task to still be working when the
+      // Context call is admitted. A dispatch whose worker settles first moves the task to
+      // completed (issue #610 removed the capacity round-trip the dispatch used to carry), so
+      // the turn is held open: the mock's own `turnDelayMs` pacing exists for exactly this.
+      turnDelayMs: 120_000,
       edits: [{ path: `${route.harness}-source.txt`, content: 'source\n', delayMs: 20 }],
     },
   });
@@ -108,12 +113,6 @@ function options(repo, deploymentRoot, tracker) {
         'kimi-code': adapter(routeB, tracker),
       },
       verification: { command: 'true', arguments: [] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({
-          freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER,
-        }),
-      },
     },
   };
 }

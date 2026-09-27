@@ -73,10 +73,6 @@ function configuration(repo) {
       routes: [ROUTE],
       verification: { command: 'node', arguments: ['--test'] },
       resident: { env, home, webDrainMs: 2_000, sessionTtlMs: 60_000 },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
     connection: { repo, advanced: { env, home } },
   };

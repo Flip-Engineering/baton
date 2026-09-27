@@ -239,7 +239,6 @@ const AUTHORITY_RULES = Object.freeze([
   { seam: 'effect', id: 'action_name', weight: 2, name: /^_?(?:spawn|kill|interrupt|dispatch|deliver|materialize|preserve|publish|integrate|adopt|reattach|attach|detach|export|grant|revoke|orient|respond)[A-Z_]/u, note: 'performs or reverses a physical/provider action by name' },
   { seam: 'effect', id: 'capability_invoke', weight: 2, call: /(?:this\._capabilities|capabilities)\.(?:invoke|resume|reverify)\(/u, note: 'invokes a capability that owns its own effects' },
   { seam: 'effect', id: 'external_transport', weight: 2, call: /\bfetch\(|\bpublisher\(|\bgit\(\[|localGit\(/u, note: 'talks to a process, network, or git authority outside the runtime' },
-  { seam: 'effect', id: 'worktree_capacity', weight: 2, call: /worktreeCapacity\.(?:reserve|release|commit|settle)/u, note: 'reserves or settles physical worktree capacity' },
   { seam: 'effect', id: 'timer_arm', weight: 1, call: /\bsetTimeout\(|\bsetInterval\(/u, note: 'arms a real timer' },
 
   // ── admission: what may start ───────────────────────────────────────────────
