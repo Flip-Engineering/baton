@@ -3,12 +3,12 @@
 // red-team fold contract-redteam.md / contract-fold.md, 7 blockers folded;
 // blue-team fold suite-blueteam.md / suite-fold.md, 4 blockers folded).
 //
-// Thirty-seven rows (34 red + 3 guards) over the folded decisions: the eight
-// facade direct ports
-// (run.message.send/receipt, run.attention.watch, run.scratchpad.read/elevate,
-// run.board.post/read, run.knowledge.seed), their six ordinary MCP projections,
-// the CLI verbs + registry rows + conformance regeneration, the #89 cap+actual
-// refusal text, and the Decision 13 scripted-workflow live acceptance (WS-01/WS-02).
+// Thirty-one rows (28 red + 3 guards) over the folded decisions: the six facade
+// direct ports (run.message.send/receipt, run.attention.watch,
+// run.scratchpad.read/elevate, run.knowledge.seed), their six ordinary MCP
+// projections, the CLI verbs + registry rows + conformance regeneration, the #89
+// cap+actual refusal text, and the Decision 13 scripted-workflow live acceptance
+// (WS-01/WS-02).
 //
 // Red-first: written against the v2.1 contract BEFORE implementation; every positive
 // row fails for the named stage and goes green on the contract's implementation ONLY.
@@ -16,7 +16,7 @@
 // conformance mains, static source pins) are green today by construction and MUST
 // stay green; they exist so a wrong implementation has nowhere to hide.
 //
-// Fixture idiom: board-workerhalf-red's waveFixture (a real createDriver stack with
+// Fixture idiom: the full application fixture (a real createDriver stack with
 // a ScriptableAdapter, kernel staging through driver.coordinator/driver.coordination,
 // facade invocation through application.command(name, args, principal, context));
 // mcp-packaging-red's McpFleetServer + initialized()/resultText for the wire rows;
@@ -40,7 +40,6 @@ import {
   APPLICATION_COMMAND_DEFINITIONS,
   BatonApplication,
   applicationCardCommands,
-  projectBoardView,
 } from '../src/application.mjs';
 import { parseBatonCli, CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
@@ -52,7 +51,6 @@ import {
 } from '../src/index.mjs';
 import {
   mcpApplicationToolNames,
-  mcpCombinedToolNames,
 } from '../src/mcp-northbound.mjs';
 import {
   checkSurfaceDocs,
@@ -187,7 +185,7 @@ const GOAL_PLAN_POLICY = Object.freeze({
   }),
 });
 
-// Full application fixture (board-workerhalf-red pattern, trimmed): one real
+// Full application fixture (trimmed): one real
 // createDriver stack so the facade, the kernel lanes, and the durable store share
 // state. Options: authorize (host policy stub — mcp-packaging-red:556 idiom),
 // adapter (defaults to the quiet ScriptableAdapter), goalPlan (adds the goal/plan
@@ -248,8 +246,8 @@ function completeTask(fx, taskId) {
   });
 }
 
-// A stopped run, staged store-directly (the seam's board_run_closed state:
-// _runStops membership). Mirrors admitRunStop's closed envelope.
+// A stopped run, staged store-directly (_runStops membership). Mirrors admitRunStop's closed
+// envelope.
 function stopRun(fx, runId) {
   const reasonDigest = digest({ reason: `ws stop ${runId}` });
   return fx.coordination.admitRunStop({
@@ -258,7 +256,7 @@ function stopRun(fx, runId) {
   }, { actor: 'orchestrator', key: `run.stop:${runId}` });
 }
 
-// The board-authority-red lease ceremony: an orchestrator task on runId, a claimed
+// The run-orchestrator lease ceremony: an orchestrator task on runId, a claimed
 // worker, and an issued run-orchestrator lease; returns the closed sessionAuthority
 // proof plus the principal the lane's review authority recognizes.
 function authorityOn(fx, { runId, principalId, sessionId }) {
@@ -321,7 +319,7 @@ const MSG_ID = `message:${'a'.repeat(64)}`;
 const ENTRY_ID = (n) => `scratchpad-entry:${String(n).padStart(64, '0')}`;
 
 // ===========================================================================
-// Section A — FP-01: the eight commands dispatch as direct ports with closed
+// Section A — FP-01: the six commands dispatch as direct ports with closed
 // shapes (stage: commands absent — every dispatch throws
 // application_command_unavailable today). Closure cases refuse the pinned
 // application_*_invalid code BEFORE any state lookup: the refuse-everything
@@ -432,42 +430,6 @@ test('FP-01-scratchpad (stage: ports absent): run.scratchpad.read/elevate dispat
   }
 });
 
-test('FP-01-board (stage: ports absent): run.board.post/read dispatch with closed board/item shapes', async (t) => {
-  const fx = await facadeFixture(t, { authorize: REFUSE_ALL });
-  const wave = principalOf('wave-owner');
-  const post = await facadeError(() => fx.application.command('run.board.post', {
-    runId: 'run:a4', board: 'ws-a4', title: 'first item',
-  }, wave, null));
-  assert.notEqual(post?.code, 'application_command_unavailable', 'stage: run.board.post must dispatch');
-  assert.equal(post?.code, 'application_unauthorized', 'a shape-valid post reaches the policy seam');
-  const read = await facadeError(() => fx.application.command('run.board.read', {
-    runId: 'run:a4', board: 'ws-a4',
-  }, wave, null));
-  assert.notEqual(read?.code, 'application_command_unavailable', 'stage: run.board.read must dispatch');
-  assert.equal(read?.code, 'application_unauthorized', 'a shape-valid read reaches the policy seam');
-  const postCases = [
-    { runId: 'run:a4', board: 'bad board!', title: 't' }, // board outside SAFE_BOARD_ID
-    { runId: 'run:a4', board: 'ws-a4', title: '' }, // empty title
-    { runId: 'run:a4', board: 'ws-a4', title: 't', detail: 7 }, // non-string detail
-    { runId: 'run:a4', board: 'ws-a4', title: 't', owner: 'bad owner id' }, // malformed owner
-    { runId: 'run:a4', board: 'ws-a4', title: 't', evidence: Array.from({ length: 9 }, (_, i) => ({ coordinationSeq: i })) }, // >8 refs
-    { runId: 'run:a4', board: 'ws-a4' }, // missing title
-  ];
-  for (const args of postCases) {
-    const refusal = await facadeError(() => fx.application.command('run.board.post', args, wave, null));
-    assert.equal(refusal?.code, 'application_board_post_invalid', `post closure: ${JSON.stringify(args)}`);
-  }
-  const readCases = [
-    { runId: 'run:a4' }, // missing board (board is REQUIRED in v1 — Open Question 5)
-    { runId: 'run:a4', board: 'bad board!' },
-    { runId: 'run:a4', board: 'ws-a4', extra: true },
-  ];
-  for (const args of readCases) {
-    const refusal = await facadeError(() => fx.application.command('run.board.read', args, wave, null));
-    assert.equal(refusal?.code, 'application_board_read_invalid', `read closure: ${JSON.stringify(args)}`);
-  }
-});
-
 test('FP-01-knowledge (stage: port absent): run.knowledge.seed dispatches; the Finding-scoped rule and Decision refusal live at validation', async (t) => {
   const fx = await facadeFixture(t, { authorize: REFUSE_ALL });
   const wave = principalOf('wave-owner');
@@ -513,14 +475,14 @@ test('FP-02 (stage: facade send absent): facade send mints and delivers identica
   const handleA = await fx.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:b1' });
   const handleB = await fx.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:b1' });
   const viaFacade = await fx.application.command('run.message.send', {
-    workerId: handleA.id, kind: 'inform', body: 'the candidacy board has two items for you',
+    workerId: handleA.id, kind: 'inform', body: 'the candidacy queue has two items for you',
   }, wave, null);
   assert.equal(viaFacade?.schemaVersion, 1, 'the facade adds ONLY the envelope marker');
   assert.equal(viaFacade?.ok, true);
   assert.equal(viaFacade?.result, 'sent');
   assert.match(viaFacade?.messageId ?? '', /^message:[a-f0-9]{64}$/u, 'the facade send mints the lane id shape (C1)');
   const viaLane = await fx.driver.coordinator.sendMessage({
-    kind: 'inform', to: { workerId: handleB.id }, body: 'the candidacy board has two items for you',
+    kind: 'inform', to: { workerId: handleB.id }, body: 'the candidacy queue has two items for you',
   }, { actor: 'orchestrator' });
   // Outcome identity: every non-id field of the lane outcome arrives untouched.
   assert.deepEqual(Object.keys(viaFacade).sort(), [...Object.keys(viaLane), 'schemaVersion'].sort(),
@@ -735,12 +697,12 @@ test('FP-07 (stage: facade watch absent): candidacy_review discloses only to the
   const wave = principalOf('wave-owner');
   const mallory = principalOf('mallory');
   await fx.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:c2' });
-  // Stage a pending candidacy (the bd3 D2 staging: post + close on a settlement board).
-  const posted = fx.coordination.postBoardItem(
-    { board: 'wave-settlement:wave:c2', title: 'a finding awaits review', detail: 'd' },
-    { actor: 'orchestrator', key: 'ws-c2-post' },
-  );
-  fx.coordination.closeBoardItem(posted.item.itemId, { actor: 'orchestrator', key: 'ws-c2-close' });
+  // Stage a pending candidacy: a Finding carrying a candidate trigger lands in
+  // the store's promotion queue (the D2 staging's durable source).
+  fx.coordination.addKnowledgeNode({
+    id: 'knowledge:ws-c2-candidacy', type: 'Finding', grounding: 'observed',
+    body: 'a finding awaits review', promotion: { kind: 'Finding', trigger: 'package.admitted' },
+  }, { actor: 'policy', key: 'ws-c2-candidacy' });
   const queue = fx.coordination.knowledgeCandidateQueue?.({}) ?? { count: 0 };
   assert.ok((queue.count ?? 0) >= 1, 'the candidacy exists (a vacuous D2 greens nothing)');
   // A non-review principal receives NOTHING — the constant scope refusal, identical
@@ -868,7 +830,7 @@ test('FP-09-budget (stage: facade read absent): the 256 KiB serialized page budg
   assert.equal(allIds.length, 64, 'the full window is staged');
   const page = await fx.application.command('run.scratchpad.read', { runId: 'run:d2', scope: workerScope }, wave, null);
   assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 256 * 1024,
-    'the serialized page never crosses the 256 KiB budget (the mirrored MAX_BOARD_VIEW_BYTES ceiling)');
+    'the serialized page never crosses the 256 KiB budget (the renderer\'s own page ceiling)');
   assert.equal(page?.truncated, true, 'an over-budget page marks truncation explicitly (the renderer doctrine)');
   assert.ok(page.entries.length >= 1 && page.entries.length < 64,
     'rendering stops BEFORE the budget — never a raw overflow dump');
@@ -1075,198 +1037,6 @@ test('FP-10-store-direct (GUARD, green today): the idempotent/conflict pair is a
 });
 
 // ===========================================================================
-// Section F — run.board.post / run.board.read (stage: facade projection absent;
-// the #78 store lanes and the facade's projectBoardView renderer are landed).
-// FP-11: the binding law VERBATIM (foreign-bound ≡ one constant for post and
-// read, decided before any item existence; unbound+empty read refuses;
-// unbound-with-items serves; adoption on first post; run-closed refusal; the
-// idempotent retry with the replay-derived boardRunBinding; the appendGate race
-// row). FP-12: the read view is projectBoardView's exact output, non-evented.
-// ===========================================================================
-
-// A raw store-direct post (no admission record): stages items on an UNBOUND board.
-function postRaw(fx, board, title, key, detail = 'd') {
-  return fx.coordination.postBoardItem({ board, title, detail }, { actor: 'orchestrator', key });
-}
-
-// A store-direct post WITH an admission record: stages a board→run binding the way
-// the S-2 seam records it (replay derives the binding from payload.boardAdmission).
-function postBound(fx, board, runId, title, key) {
-  return fx.coordination.postBoardItem(
-    { board, title, detail: 'd' },
-    { actor: 'orchestrator', key },
-    null,
-    { schemaVersion: 1, runId, requestDigest: digest({ board, title, runId }), adopted: false, leaseId: null },
-  );
-}
-
-test('FP-11-binding (stage: facade board absent): the binding law verbatim — one constant, decided before existence', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  postBound(fx, 'ws-f1-bound', 'run:f1-owner', 'already bound', 'ws-f1-bound-post');
-  // A board bound to a DIFFERENT run: read ≡ post ≡ application_board_scope_forbidden,
-  // identical code AND message, even though the board HAS items (the binding check
-  // precedes any item existence or write — a foreign board is indistinguishable).
-  const readForeign = await facadeError(() => fx.application.command('run.board.read', {
-    runId: 'run:f1-other', board: 'ws-f1-bound',
-  }, wave, null));
-  const postForeign = await facadeError(() => fx.application.command('run.board.post', {
-    runId: 'run:f1-other', board: 'ws-f1-bound', title: 'sneak onto a foreign board',
-  }, wave, null));
-  assert.equal(readForeign?.code, 'application_board_scope_forbidden');
-  assert.equal(postForeign?.code, 'application_board_scope_forbidden');
-  assert.equal(readForeign?.message, postForeign?.message, 'post and read share the one binding-law constant');
-  assert.notEqual(readForeign?.code, 'application_board_not_found', 'binding precedes existence — never a not-found leak');
-  // Unbound AND empty: the read is unknown (the BD3-A context_not_found law).
-  const empty = await facadeError(() => fx.application.command('run.board.read', {
-    runId: 'run:f1-other', board: 'ws-f1-empty',
-  }, wave, null));
-  assert.equal(empty?.code, 'application_board_not_found');
-  // Unbound WITH items: the read SERVES (the unbound-with-items law).
-  postRaw(fx, 'ws-f1-unbound', 'an orphan item', 'ws-f1-orphan');
-  const served = await fx.application.command('run.board.read', { runId: 'run:f1-other', board: 'ws-f1-unbound' }, wave, null);
-  assert.equal(served?.schemaVersion, 1);
-  assert.equal(served?.board, 'ws-f1-unbound');
-  assert.equal(served?.boardRunId, null, 'the view reports the unbound state honestly');
-  assert.ok(served?.view?.items?.length >= 1, 'the unbound board\'s items serve');
-});
-
-test('FP-11-adopt (stage: facade board absent): first post adopts/binds by the seam\'s rule; the binding lands durably', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  // Unbound WITH items: the first admitted write ADOPTS the board into the run.
-  postRaw(fx, 'ws-f2-adopt', 'pre-existing item', 'ws-f2-pre');
-  const adopted = await fx.application.command('run.board.post', {
-    runId: 'run:f2', board: 'ws-f2-adopt', title: 'the adopting post',
-  }, wave, null);
-  assert.equal(adopted?.schemaVersion, 1);
-  assert.equal(adopted?.ok, true);
-  assert.equal(adopted?.result, 'posted');
-  assert.deepEqual(adopted?.boardRunBinding, { runId: 'run:f2', result: 'adopted' },
-    'a first post to an unbound board WITH items adopts it into the run');
-  assert.match(adopted?.item?.itemId ?? '', /^board-item:[a-f0-9]{64}$/u, 'the hub mints the item id');
-  assert.ok(Number.isSafeInteger(adopted?.item?.ordinal));
-  // The binding is durable and replay-derived: the admission record rides the event
-  // payload (no lease field — the orchestrator posture fabricates none).
-  assert.equal(fx.coordination.boardSnapshot('ws-f2-adopt')?.runId, 'run:f2', 'the public projection carries the binding');
-  const admissionEvent = fx.coordination.events().find((event) => event.kind === 'board.item_posted'
-    && event.payload?.board === 'ws-f2-adopt' && event.payload?.boardAdmission);
-  assert.ok(admissionEvent, 'the admission record is durable');
-  assert.equal(admissionEvent.payload.boardAdmission.runId, 'run:f2');
-  assert.equal(admissionEvent.payload.boardAdmission.adopted, true, 'replay derives adopted from the durable record');
-  assert.equal(admissionEvent.payload.boardAdmission.leaseId, null, 'no lease exists in this posture and none is fabricated');
-  // Unbound and EMPTY: the first post BINDS (adopting = !binding && items > 0).
-  const bound = await fx.application.command('run.board.post', {
-    runId: 'run:f2', board: 'ws-f2-bind', title: 'the binding post',
-  }, wave, null);
-  assert.deepEqual(bound?.boardRunBinding, { runId: 'run:f2', result: 'bound' },
-    'a first post to an EMPTY unbound board binds (not adopts) — the seam\'s exact distinction');
-  // A board bound to THIS run serves both verbs.
-  const again = await fx.application.command('run.board.post', {
-    runId: 'run:f2', board: 'ws-f2-bind', title: 'second post on own board',
-  }, wave, null);
-  assert.equal(again?.result, 'posted');
-  assert.deepEqual(again?.boardRunBinding, { runId: 'run:f2', result: 'bound' });
-});
-
-test('FP-11-retry (stage: facade board absent): an exact retry replays idempotent with the DERIVED binding; a closed run refuses', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  postRaw(fx, 'ws-f3', 'pre-existing item', 'ws-f3-pre');
-  const args = { runId: 'run:f3', board: 'ws-f3', title: 'the idempotent post', detail: 'same bytes', owner: 'orchestrator', evidence: [{ coordinationSeq: 1 }] };
-  const first = await fx.application.command('run.board.post', args, wave, null);
-  assert.equal(first?.result, 'posted');
-  const itemsBefore = fx.coordination.boardSnapshot('ws-f3')?.items?.length ?? 0;
-  const retry = await fx.application.command('run.board.post', args, wave, null);
-  assert.equal(retry?.ok, true);
-  assert.equal(retry?.result, 'idempotent', 'an exact retry replays — never a double post (the server-minted digest key)');
-  assert.deepEqual(retry?.boardRunBinding, first?.boardRunBinding,
-    'the replay envelope DERIVES boardRunBinding from the prior event\'s payload.boardAdmission — byte-equal to the fresh derivation (Decision 1 envelope completion)');
-  assert.equal(fx.coordination.boardSnapshot('ws-f3')?.items?.length, itemsBefore, 'no second item lands');
-  // A post to a stopped run refuses application_board_run_closed (the seam's
-  // board_run_closed law, derived through the store's public snapshot()).
-  postRaw(fx, 'ws-f3-closed', 'pre-existing item', 'ws-f3-closed-pre');
-  await fx.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:f3-stopped' });
-  stopRun(fx, 'run:f3-stopped');
-  const closed = await facadeError(() => fx.application.command('run.board.post', {
-    runId: 'run:f3-stopped', board: 'ws-f3-closed', title: 'post onto a stopped run',
-  }, wave, null));
-  assert.equal(closed?.code, 'application_board_run_closed');
-});
-
-test('FP-11-race (stage: facade board absent): the facade passes an appendGate re-validating binding + run-open at append time', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  // Spy on the store seam: the facade must hand postBoardItem an appendGate (the
-  // S-2 no-check-then-write-window law — red-team Decision 8 amendment).
-  const store = fx.coordination;
-  const original = store.postBoardItem.bind(store);
-  const captured = [];
-  store.postBoardItem = (fields, auth, appendGate, boardAdmission) => {
-    captured.push({ fields, appendGate });
-    return original(fields, auth, appendGate, boardAdmission);
-  };
-  let posted;
-  try {
-    posted = await fx.application.command('run.board.post', {
-      runId: 'run:f4', board: 'ws-f4', title: 'the gated post',
-    }, wave, null);
-  } finally {
-    store.postBoardItem = original;
-  }
-  assert.equal(posted?.result, 'posted', 'the gate passes when binding + run-open hold at append time');
-  assert.equal(captured.length, 1, 'the facade drives exactly one store append');
-  assert.equal(typeof captured[0]?.appendGate, 'function',
-    'the facade passes an appendGate — it does NOT check-then-write against a snapshot');
-  // The gate RE-VALIDATES LIVE state at append time (never a cached pre-check
-  // boolean): invoked now it passes; after the run stops it must fail — a post
-  // that loses the race refuses at the gate and never writes (the S-2 law).
-  let livePass;
-  try { livePass = captured[0].appendGate(); } catch { livePass = false; }
-  assert.notEqual(livePass, false, 'the gate reflects the state that held at append time');
-  stopRun(fx, 'run:f4');
-  let gateOutcome;
-  try { gateOutcome = captured[0].appendGate(); } catch { gateOutcome = false; }
-  assert.equal(gateOutcome, false, 'the gate re-reads run-open LIVE — it refuses once the run is closed');
-  // RESIDUAL (blue-team T3, documented, accepted): the gate's BINDING-change revalidation
-  // half is unobserved — a binding moves only unbound→bound, and the facade's own first
-  // post already bound ws-f4 at capture time, so no honest binding flip can be staged
-  // between capture and invocation through the projected path. A gate re-checking
-  // run-open ONLY greens this row; the check-then-write wrong implementation stays
-  // caught (no gate at all → the typeof assert above fails).
-  // And the pre-check half stays honest on every fresh call (no cached liveness):
-  // a post after the stop refuses at the seam and never writes.
-  const afterStop = await facadeError(() => fx.application.command('run.board.post', {
-    runId: 'run:f4', board: 'ws-f4', title: 'post after the run stopped',
-  }, wave, null));
-  assert.equal(afterStop?.code, 'application_board_run_closed');
-  assert.equal(store.boardSnapshot('ws-f4')?.items?.length, 1,
-    'the refused post never wrote — the gate/pre-check pair leaves no check-then-write window');
-});
-
-test('FP-12 (stage: facade board absent): the read view is projectBoardView\'s exact output, fresh and non-evented', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  postBound(fx, 'ws-f5', 'run:f5', 'first', 'ws-f5-a');
-  postRaw(fx, 'ws-f5', 'second', 'ws-f5-b');
-  const expected = projectBoardView(fx.coordination.boardSnapshot('ws-f5'), { role: 'orchestrator', workerId: null });
-  const eventsBefore = fx.coordination.events().length;
-  const read = await fx.application.command('run.board.read', { runId: 'run:f5', board: 'ws-f5' }, wave, null);
-  assert.equal(read?.schemaVersion, 1);
-  assert.equal(read?.board, 'ws-f5');
-  assert.equal(read?.boardRunId, 'run:f5');
-  assert.deepEqual(read?.view, expected,
-    'the view is projectBoardView(snapshot, {role: orchestrator, workerId: null}) — the exact projection the MCP board read serves');
-  assert.equal(fx.coordination.events().length, eventsBefore, 'the read appends no event (NON-EVENTED, no audit class)');
-  // The dual-fence cache law (#78 BW-14): a store-direct post invalidates the cached
-  // view — the next read serves the fresh item, never a stale frame.
-  postRaw(fx, 'ws-f5', 'third — written after the first read', 'ws-f5-c');
-  const fresh = await fx.application.command('run.board.read', { runId: 'run:f5', board: 'ws-f5' }, wave, null);
-  assert.ok(JSON.stringify(fresh?.view).includes('third — written after the first read'),
-    'a claim/report/post invalidates the cached view (the dual-fence law)');
-});
-
-// ===========================================================================
 // Section G — run.knowledge.seed (stage: facade projection absent; the store
 // lane is landed). FP-13: content-addressed identity inside the run's horizon,
 // the idempotency law, the Finding-scoped evidence rule mirrored EXACTLY, and
@@ -1352,7 +1122,7 @@ test('FP-13-codes (stage: facade seed absent): the TRUE evidence codes propagate
 // Section H — the MCP projections (stage: tools absent — mcpApplicationToolNames()
 // is 27 today; the six land 27→33 per the #93 discovery note). FP-14 descriptor
 // rows (closed schemas, _meta digest, capability classes, connection-derived
-// principal dispatch, no self-naming, no board tools); FP-15 refusal constancy
+// principal dispatch, no self-naming); FP-15 refusal constancy
 // to the wire through a descriptor-driven server over a REAL facade; FP-19 the
 // settlement plane byte-identical (guard rows, green today by construction).
 // ===========================================================================
@@ -1439,8 +1209,6 @@ test('FP-14-tools (stage: tools absent): the six ordinary tools register with cl
   // stowaway guard is the membership assertions around it (blue-team D5).
   assert.ok(names.includes('baton_run_scratchpad_append'),
     'baton_run_scratchpad_append rides the #158 scratchpad-write lane, not an unnamed stowaway');
-  assert.equal(names.some((name) => /^baton_(run_)?board_/u.test(name)), false,
-    'no ordinary MCP board tools — boards stay the combined-surface S-2 family (Decision 10)');
   const { server } = mockAppServer();
   await initialized(server);
   const list = await wireRequest(server, 2, 'tools/list', {});
@@ -1656,30 +1424,25 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
     lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
   });
   id += 1;
-  assert.match(resultText(promote), /board_lease_required/u, 'the S-2 envelope requirement is unchanged');
+  assert.match(resultText(promote), /settlement_lease_required/u, 'the S-2 envelope requirement still refuses');
   const lease = await wireCall(server, id, 'baton_knowledge_settlement_lease', {
     repoId: REPO, idempotencyKey: 'ws-h4-lease', waveId: `wave:${'a'.repeat(32)}`,
   });
   assert.match(resultText(lease), /forbidden/u, 'the settlement capability class is never defaulted');
-  // The combined-surface board family stays exactly where it lives (Decision 10).
-  assert.ok(mcpCombinedToolNames().includes('baton_board_post'), 'the S-2 board family still rides the combined surface');
-  assert.ok(mcpCombinedToolNames().includes('baton_board_read'));
-  assert.equal(mcpApplicationToolNames().some((name) => name.startsWith('baton_board_')), false,
-    'the default surface carries no board family');
 });
 
 // ===========================================================================
 // Section I — CLI verbs + registry rows + conformance (stage: verbs absent —
 // today every new spelling THROWS cli_invalid: unexpected argument <verb>, loud;
 // blue-team F7 corrected this banner's stale claim that the spellings fall
-// through to parseStart as a silent run-start objective). FP-16: the nine
+// through to parseStart as a silent run-start objective). FP-16: the seven
 // spellings parse to command dispatches; unknown sub-verbs are parse errors
 // (those negative pins ALREADY PASS today — green regression guards; the row is
 // red via its positive legs); the registry rows carry the pinned shapes; the
 // regeneration mains stay green (guard rows).
 // ===========================================================================
 
-test('FP-16-parse (stage: verbs absent): the nine spellings parse to their command dispatches; bad sub-verbs are parse errors', () => {
+test('FP-16-parse (stage: verbs absent): the seven spellings parse to their command dispatches; bad sub-verbs are parse errors', () => {
   const parses = [
     [['run', 'message', 'send', 'run:i1', '--kind', 'inform', '--body', 'hello'], 'run.message.send', { runId: 'run:i1', kind: 'inform', body: 'hello' }],
     [['run', 'message', 'send', '--worker', 'w-1', '--kind', 'query', '--body', 'status?'], 'run.message.send', { workerId: 'w-1', kind: 'query', body: 'status?' }],
@@ -1687,8 +1450,6 @@ test('FP-16-parse (stage: verbs absent): the nine spellings parse to their comma
     [['run', 'attention', 'watch', 'run:i1', '--kind', 'member_terminal', '--cursor', '3'], 'run.attention.watch', { runId: 'run:i1', kind: 'member_terminal', cursor: 3 }],
     [['run', 'scratchpad', 'read', 'run:i1', '--scope', 'shared', '--cursor', '2'], 'run.scratchpad.read', { runId: 'run:i1', scope: 'shared', cursor: 2 }],
     [['run', 'scratchpad', 'elevate', 'run:i1', '--task', 'task-1', '--entries', `["${ENTRY_ID(1)}"]`], 'run.scratchpad.elevate', { runId: 'run:i1', taskId: 'task-1', entryIds: [ENTRY_ID(1)] }],
-    [['run', 'board', 'post', 'run:i1', '--board', 'ws-i1', '--title', 't', '--detail', 'd', '--owner', 'w-1', '--evidence', '[{"coordinationSeq":1}]'], 'run.board.post', { runId: 'run:i1', board: 'ws-i1', title: 't', detail: 'd', owner: 'w-1', evidence: [{ coordinationSeq: 1 }] }],
-    [['run', 'board', 'read', 'run:i1', '--board', 'ws-i1'], 'run.board.read', { runId: 'run:i1', board: 'ws-i1' }],
     [['run', 'knowledge', 'seed', 'run:i1', '--type', 'Finding', '--grounding', 'observed', '--body', 'x', '--evidence', '[]'], 'run.knowledge.seed', { runId: 'run:i1', type: 'Finding', grounding: 'observed', body: 'x', evidence: [] }],
   ];
   for (const [argv, name, expectedArgs] of parses) {
@@ -1713,7 +1474,6 @@ test('FP-16-parse (stage: verbs absent): the nine spellings parse to their comma
     ['run', 'message', 'teleport', 'run:i1'],
     ['run', 'attention', 'follow', 'run:i1'], // the renamed verb: 'follow' is never a spelling (Decision 2)
     ['run', 'scratchpad', 'burn', 'run:i1'],
-    ['run', 'board', 'burn', 'run:i1'],
     ['run', 'knowledge', 'burn', 'run:i1'],
   ]) {
     assert.throws(() => parseBatonCli(argv), (error) => error?.code === 'cli_invalid',
@@ -1721,7 +1481,7 @@ test('FP-16-parse (stage: verbs absent): the nine spellings parse to their comma
   }
 });
 
-test('FP-16-registry (stage: rows absent): eight canonical operations with the pinned profiles, surfaces, capabilities, and names', () => {
+test('FP-16-registry (stage: rows absent): six canonical operations with the pinned profiles, surfaces, capabilities, and names', () => {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const expectations = [
     ['run.message.send', ['embedded', 'mcp', 'cli'], ['control', 'observe'], false, 'baton run message send', 'baton_run_message_send'],
@@ -1729,15 +1489,13 @@ test('FP-16-registry (stage: rows absent): eight canonical operations with the p
     ['run.attention.watch', ['embedded', 'mcp', 'cli'], ['observe'], true, 'baton run attention watch', 'baton_run_attention_watch'],
     ['run.scratchpad.read', ['embedded', 'mcp', 'cli'], ['observe'], true, 'baton run scratchpad read', 'baton_run_scratchpad_read'],
     ['run.scratchpad.elevate', ['embedded', 'mcp', 'cli'], ['control', 'observe'], true, 'baton run scratchpad elevate', 'baton_run_scratchpad_elevate'],
-    ['run.board.post', ['embedded', 'cli'], ['control', 'observe'], true, 'baton run board post', null],
-    ['run.board.read', ['embedded', 'cli'], ['observe'], true, 'baton run board read', null],
     ['run.knowledge.seed', ['embedded', 'mcp', 'cli'], ['control', 'observe'], true, 'baton run knowledge seed', 'baton_run_knowledge_seed'],
   ];
   for (const [key, surfaces, capabilities, idempotent, cli, mcp] of expectations) {
     const op = registry.canonicalOperations.find((entry) => entry.key === key);
     assert.ok(op, `registry row ${key} exists`);
     assert.equal(op.profile, 'ordinary', `${key} profile`);
-    assert.deepEqual([...op.surfaces].sort(), [...surfaces].sort(), `${key} surfaces (boards are embedded+cli only — Decision 10)`);
+    assert.deepEqual([...op.surfaces].sort(), [...surfaces].sort(), `${key} surfaces`);
     assert.deepEqual([...(op.capabilities ?? [])].sort(), [...capabilities].sort(), `${key} capabilities`);
     assert.equal(op.idempotent ?? true, idempotent, `${key} idempotent (send is NOT — a retry mints a new message honestly)`);
     assert.equal(op.names?.cli, cli, `${key} derived CLI spelling`);
@@ -1793,12 +1551,6 @@ test('FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming ca
       command: 'run.scratchpad.elevate', code: 'application_scratchpad_elevate_invalid', cap: /128/u, actual: /129/u,
     },
     {
-      label: 'board evidence ≤8 refs',
-      atCap: { runId: 'run:j1', board: 'ws-j1', title: 't', evidence: Array.from({ length: 8 }, (_, i) => ({ coordinationSeq: i + 1 })) },
-      overCap: { runId: 'run:j1', board: 'ws-j1', title: 't', evidence: Array.from({ length: 9 }, (_, i) => ({ coordinationSeq: i + 1 })) },
-      command: 'run.board.post', code: 'application_board_post_invalid', cap: /\b8\b/u, actual: /\b9\b/u,
-    },
-    {
       // #436 decision (a) — the pin is stale, the gate order is already right: the
       // 4,096-byte SURFACE cap (OQ-7) moved off with #358, which bounds objectives by
       // the substrate spill ceiling alone; _normalizeKnowledgeSeed now enforces
@@ -1837,8 +1589,8 @@ test('FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming ca
 // behavior is environmental staging, exactly as bd3 interleaves adapter.emit; every
 // ORCHESTRATOR effect rides port.command / port.decisionList, the facade only).
 async function scriptPartA(port) {
-  // Step 1 — seed board + knowledge inside the orchestrator run's horizon (the
-  // board adopts on first post; member briefs will cite both).
+  // Step 1 — seed knowledge inside the orchestrator run's horizon (member briefs
+  // will cite it).
   await port.command('run.start', {
     intent: {
       runId: 'run:ws01-orch', objective: 'orchestrate the survey wave', profile: 'default',
@@ -1849,17 +1601,14 @@ async function scriptPartA(port) {
     runId: 'run:ws01-orch', type: 'Finding', grounding: 'observed',
     body: 'the survey decomposition: four slices, one constraint ledger',
   });
-  const posted = await port.command('run.board.post', {
-    runId: 'run:ws01-orch', board: 'ws01-tasks', title: 'survey task board', detail: 'the swarm\'s task board',
-  });
-  // Step 2 — waves.start (4 members); each brief cites the seeded board and node.
+  // Step 2 — waves.start (4 members); each brief cites the seeded node.
   // The FULL objective text is kept verbatim: waves.attach matches members by EXACT
   // objective equality (blue-team BLOCKER 2 — a truncated objective throws
   // wave_attach_unknown_wave against a correct implementation).
   const roles = ['surveyor', 'mapper', 'sampler', 'scribe'];
   const members = roles.map((role) => ({
     role,
-    objective: `survey slice ${role} — cite board ws01-tasks and node ${seed.nodeId}`,
+    objective: `survey slice ${role} — cite node ${seed.nodeId}`,
     exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'],
   }));
   const wave = await port.command('waves.start', {
@@ -1889,7 +1638,7 @@ async function scriptPartA(port) {
     queries.push({ role: member.role, runId: member.runId, messageId: sent.messageId, objective });
   }
   return {
-    orchRunId: 'run:ws01-orch', seedNodeId: seed.nodeId, boardItemId: posted.item.itemId,
+    orchRunId: 'run:ws01-orch', seedNodeId: seed.nodeId,
     waveId: wave.waveId, memberRunIds: wave.members.map((member) => member.runId), queries,
   };
 }
@@ -1952,13 +1701,12 @@ async function scriptPartC(port, stateA) {
       result: settled.result, elevated: settled.elevated?.length ?? 0,
     });
   }
-  // Step 7 — shared reads: the elevated findings and the triaged board, bounded.
+  // Step 7 — shared reads: the elevated findings, bounded.
   const sharedReads = [];
   for (const query of stateA.queries) {
     const shared = await port.command('run.scratchpad.read', { runId: query.runId, scope: 'shared' });
     sharedReads.push({ role: query.role, entries: shared.entries?.length ?? 0 });
   }
-  const board = await port.command('run.board.read', { runId: stateA.orchRunId, board: 'ws01-tasks' });
   // Step 8 — harvest through the existing waves.attach resume path. The members
   // carry the FULL started objectives verbatim (attachWave matches by EXACT
   // objective equality — blue-team BLOCKER 2).
@@ -1969,7 +1717,6 @@ async function scriptPartC(port, stateA) {
   });
   return {
     pages, elevations, sharedReads,
-    boardItems: board.view?.items?.length ?? 0,
     attach: {
       outcomes: attached.outcomes?.length ?? 0,
       waveDriverDetached: attached.waveDriverDetached ?? null,
@@ -2010,7 +1757,7 @@ test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFL
   assert.equal(stateA.queries.length, 4, 'four members queried');
   for (const query of stateA.queries) {
     assert.match(query.messageId, /^message:[a-f0-9]{64}$/u, 'each query is receipted on its durable message id');
-    assert.match(query.objective ?? '', /^survey slice \w+ — cite board ws01-tasks and node knowledge:Finding:[a-f0-9]{64}$/u,
+    assert.match(query.objective ?? '', /^survey slice \w+ — cite node knowledge:Finding:[a-f0-9]{64}$/u,
       'the attach identity rides the FULL started objective — attachWave matches by exact equality, so a truncated objective throws wave_attach_unknown_wave (BLOCKER 2)');
     assert.equal(query.objective.includes(stateA.seedNodeId), true, 'the objective cites the seeded node verbatim');
   }
@@ -2054,20 +1801,18 @@ test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFL
   for (const shared of stateC.sharedReads) {
     assert.ok(shared.entries >= 1, `elevated findings serve on the shared partition (${shared.role})`);
   }
-  assert.ok(stateC.boardItems >= 1, 'the seeded board serves through run.board.read');
   assert.equal(stateC.attach.outcomes, 4, 'the harvest receipts all four members');
   assert.equal(stateC.attach.waveDriverDetached, true, 'waves.attach harvests the detached wave');
   // The seeded node is inside the orchestrator run's horizon (durable effect).
   assert.ok(fx.driver.coordinator._runHorizonNodeIds(stateA.orchRunId).has(stateA.seedNodeId));
   // Every effect is receipted on durable events/ids — never sleep durations or turn
-  // counts (the campaign control law): the durable trail carries the board item,
-  // the node, the four message ids, and the four reap receipts.
+  // counts (the campaign control law): the durable trail carries the seeded node,
+  // the four message ids, and the four reap receipts.
   const events = fx.coordination.events();
-  assert.ok(events.some((event) => event.payload?.board === 'ws01-tasks' && event.payload?.boardAdmission), 'the board adoption is durable');
   assert.ok(events.filter((event) => event.kind === 'scratchpad.partition_reaped').length >= 4, 'four elevation reaps are durable');
 });
 
-test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands — boards facade-explicit', async (t) => {
+test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands', async (t) => {
   const fx = await facadeFixture(t);
   const wave = principalOf('wave-owner');
   const servedCli = servedCliOrdinaryKeys();
@@ -2076,7 +1821,6 @@ test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to s
   // facade command or MCP tool in the regenerated inventories — never a kernel reach.
   const steps = [
     { step: '1-seed-knowledge', cli: 'run.knowledge.seed', mcp: 'baton_run_knowledge_seed', facade: 'run.knowledge.seed', args: { runId: 'run:w2', type: 'Finding', grounding: 'observed', body: 'x' } },
-    { step: '1-seed-board', cli: 'run.board.post', mcp: null, facade: 'run.board.post', args: { runId: 'run:w2', board: 'ws-w2', title: 't' } },
     { step: '2-wave', cli: 'waves.start', mcp: 'baton_waves_start', facade: null, args: null },
     { step: '3-message', cli: 'run.message.send', mcp: 'baton_run_message_send', facade: 'run.message.send', args: { runId: 'run:w2', kind: 'inform', body: 'x' } },
     { step: '4-receipt', cli: 'run.message.receipt', mcp: 'baton_run_message_receipt', facade: 'run.message.receipt', args: { messageId: MSG_ID } },
@@ -2084,18 +1828,12 @@ test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to s
     { step: '5-answer', cli: 'run.answer', mcp: 'baton_decision_answer', facade: null, args: null },
     { step: '6-elevate', cli: 'run.scratchpad.elevate', mcp: 'baton_run_scratchpad_elevate', facade: 'run.scratchpad.elevate', args: { runId: 'run:w2', taskId: 'task-1', entryIds: [ENTRY_ID(1)] } },
     { step: '7-scratchpad', cli: 'run.scratchpad.read', mcp: 'baton_run_scratchpad_read', facade: 'run.scratchpad.read', args: { runId: 'run:w2', scope: 'shared' } },
-    { step: '7-board', cli: 'run.board.read', mcp: null, facade: 'run.board.read', args: { runId: 'run:w2', board: 'ws-w2' } },
     { step: '8-harvest', cli: 'waves.attach', mcp: 'baton_waves_attach', facade: null, args: null },
   ];
   for (const step of steps) {
     assert.ok(servedCli.includes(step.cli), `step ${step.step} resolves to a served CLI verb (${step.cli})`);
     if (step.mcp !== null) assert.ok(servedMcp.includes(step.mcp), `step ${step.step} resolves to a served MCP tool (${step.mcp})`);
   }
-  // The board steps are FACADE/CLI-pinned EXPLICITLY (ground truth 11, Decision 10):
-  // the facade-or-MCP disjunction cannot green them on an MCP surface that cannot
-  // serve boards — no ordinary baton_run_board_* tool exists to green them with.
-  assert.equal(servedMcp.some((name) => /^baton_(run_)?board_/u.test(name)), false,
-    'no MCP board tool exists to green the board steps — they are facade/CLI only');
   for (const step of steps.filter((entry) => entry.facade !== null)) {
     const refusal = await facadeError(() => fx.application.command(step.facade, step.args, wave, null));
     assert.notEqual(refusal?.code, 'application_command_unavailable',
@@ -2106,7 +1844,7 @@ test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to s
 // ===========================================================================
 // Section L — FP-18 static pins: the byte-stable command table is untouched, the
 // wave driver stays free of the inbox (D5), the ONE permitted kernel addition is
-// the read-only authorization accessor, and the eight ports dispatch AHEAD of the
+// the read-only authorization accessor, and the six ports dispatch AHEAD of the
 // recursive-session gate (a live run-orchestrator lease holder keeps the
 // lane-admitted review authority).
 // ===========================================================================
@@ -2114,9 +1852,9 @@ test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to s
 test('FP-18 (mixed: guards + the accessor and pre-gate rows red today): the projection smuggles no semantics', async (t) => {
   // Guards (green today, must stay green): the byte-stable table gains no keys, and
   // the wave driver's stall machinery is NOT consumed by the inbox.
-  const EIGHT = ['run.message.send', 'run.message.receipt', 'run.attention.watch',
-    'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed'];
-  for (const key of EIGHT) {
+  const SIX = ['run.message.send', 'run.message.receipt', 'run.attention.watch',
+    'run.scratchpad.read', 'run.scratchpad.elevate', 'run.knowledge.seed'];
+  for (const key of SIX) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, key), false,
       `${key} is a DIRECT PORT — the byte-stable command table is untouched (grammar-m3 stays green)`);
   }
@@ -2135,7 +1873,7 @@ test('FP-18 (mixed: guards + the accessor and pre-gate rows red today): the proj
     'the accessor resolves the message\'s target run through durable records');
   assert.equal(fx.driver.coordinator.messageRunId(MSG_ID), null,
     'unknown resolves to null — resolve-to-null ≡ forbidden, never a leak (Decision 4)');
-  // The eight ports dispatch AHEAD of the recursive-session gate: with a live
+  // The six ports dispatch AHEAD of the recursive-session gate: with a live
   // sessionAuthority context, shape failures are the commands' own codes — never
   // run_orchestrator_command_forbidden (a behind-gate port would refuse first).
   const lease = authorityOn(fx, { runId: 'run:l1', principalId: 'reviewer', sessionId: 'session-reviewer' });
@@ -2150,8 +1888,6 @@ test('FP-18 (mixed: guards + the accessor and pre-gate rows red today): the proj
     'run.attention.watch': 'application_attention_watch_invalid',
     'run.scratchpad.read': 'application_scratchpad_read_invalid',
     'run.scratchpad.elevate': 'application_scratchpad_elevate_invalid',
-    'run.board.post': 'application_board_post_invalid',
-    'run.board.read': 'application_board_read_invalid',
     'run.knowledge.seed': 'application_knowledge_seed_invalid',
   };
   for (const [name, code] of Object.entries(expectedCodes)) {

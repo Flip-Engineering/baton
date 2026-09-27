@@ -43,12 +43,6 @@ test('the catalog preserves application, live MCP-native, CLI-native and embedde
   assert.equal(fleetSpawn.surfaces.cli.reachable, true);
   assert.ok(fleetSpawn.surfaces.cli.via.includes('mcp_descriptor'));
 
-  const workerClaim = resolveUnifiedCapability('board.claim');
-  assert.equal(workerClaim.remotePosture, 'worker_internal');
-  assert.equal(workerClaim.operatorFacing, false);
-  assert.equal(workerClaim.surfaces.cli.reachable, false);
-  assert.equal(workerClaim.surfaces.mcp.reachable, false);
-  assert.equal(workerClaim.surfaces.embedded.reachable, true);
 });
 
 test('action-dispatched operations use the existing run.do authority and require action coordinates', () => {

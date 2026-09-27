@@ -404,7 +404,7 @@ async function dispatchedWorker(fx, runId) {
   );
 }
 
-// The board-authority-red lease ceremony: an orchestrator task on runId, a claimed worker,
+// The authority-red lease ceremony: an orchestrator task on runId, a claimed worker,
 // and an issued run-orchestrator lease; the closed sessionAuthority proof plus the principal
 // the review authority recognizes (D3: run-scoped admits the live lease holder).
 function authorityOn(fx, { runId, principalId, sessionId }) {
@@ -445,10 +445,10 @@ const CANDIDACY_NODE = (n) => ({
   type: 'Finding',
   grounding: 'observed',
   body: `candidacy seed ${n}`,
-  promotion: { kind: 'Finding', trigger: 'board.item_closed' },
+  promotion: { kind: 'Finding', trigger: 'package.admitted' },
 });
 
-// Admit a knowledge node as a board-close candidacy. The evidence coordinationSeq must
+// Admit a knowledge node as a candidacy. The evidence coordinationSeq must
 // reference a PRIOR store event, so it is bound to the current head at admission time
 // (verified: knowledgeCandidateQueue surfaces the repo-scoped count).
 function admitCandidacy(fx, n) {

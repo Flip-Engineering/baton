@@ -71,7 +71,7 @@ const CLI_CARD_WAVE_PORTS = Object.freeze([
 ]);
 const CLI_CARD_LEDGERED_PORTS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
-  'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'run.scratchpad.elevate', 'run.knowledge.seed',
   'waves.compile',
   // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
   'run.resultpin', 'waves.harvest',
@@ -1995,12 +1995,12 @@ export function projectBatonCliResult(parsed, result) {
   return Object.freeze(compact);
 }
 
-// The run-branch facade nouns (message, attention, scratchpad, board, knowledge) handled in the
+// The run-branch facade nouns (message, attention, scratchpad, knowledge) handled in the
 // earlier `if (action === '<noun>')` dispatch windows. Declared as a Set literal? No: the
 // CLI-parser suite's maximal-set source-scan (extractLifecycleVerbs) takes the LARGEST all-lowercase
 // `new Set([...])` literal in this file as the lifecycle verb set, so this one stays an ARRAY.
 const FACADE_NOUNS = [
-  'message', 'attention', 'scratchpad', 'board', 'knowledge',
+  'message', 'attention', 'scratchpad', 'knowledge',
 ];
 // The canonical alias first-tokens that are not otherwise recognized: the spellings
 // APPLICATION_SEMANTIC_REGISTRY.aliases.cli rewrites (`run view` → run show, `run list` → runs
@@ -4395,45 +4395,6 @@ export function parseBatonCli(rawArgs) {
         args: { runId: runIdValue, taskId, entryIds },
         idempotencyKey,
       };
-    }
-    throw cliError(`unexpected argument ${sub}`);
-  }
-  if (action === 'board') {
-    const sub = args.shift();
-    if (sub === 'post') {
-      const runIdValue = id(args.shift(), 'Run ID');
-      const board = take(args, '--board', { required: true });
-      const title = take(args, '--title', { required: true });
-      const detail = take(args, '--detail');
-      const owner = take(args, '--owner');
-      const evidenceRaw = take(args, '--evidence');
-      noRemainder(args);
-      if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(board ?? '')) throw cliError('--board is invalid');
-      if (!nonempty(title)) throw cliError('--title is required');
-      if (detail !== null && !nonempty(detail)) throw cliError('--detail is invalid');
-      if (owner !== null) id(owner, 'owner ID');
-      let evidence = [];
-      if (evidenceRaw !== null) {
-        try { evidence = JSON.parse(evidenceRaw); } catch { throw cliError('--evidence must be JSON'); }
-        if (!Array.isArray(evidence)) throw cliError('--evidence must be a JSON array');
-      }
-      return {
-        kind: 'command', name: 'run.board.post',
-        args: {
-          runId: runIdValue, board, title,
-          ...(detail === null ? {} : { detail }),
-          ...(owner === null ? {} : { owner }),
-          evidence,
-        },
-        idempotencyKey,
-      };
-    }
-    if (sub === 'read') {
-      const runIdValue = id(args.shift(), 'Run ID');
-      const board = take(args, '--board', { required: true });
-      noRemainder(args);
-      if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(board ?? '')) throw cliError('--board is invalid');
-      return { kind: 'command', name: 'run.board.read', args: { runId: runIdValue, board }, idempotencyKey };
     }
     throw cliError(`unexpected argument ${sub}`);
   }

@@ -134,7 +134,7 @@ instructions line, and that greeting names the served `repoId` (`Served repoId: 
 value every tool call takes, stated by the server so it never has to be guessed. `baton_deployment`
 `doctor` is the quota-free route-picking prerequisite — call it before starting work, passing the
 greeted coordinate verbatim. The descriptor's `surface: "application"` (the documented default)
-serves the ordinary inventory below; `combined` adds the board/package/REPL/knowledge families for
+serves the ordinary inventory below; `combined` adds the package/REPL/knowledge families for
 kernel-control deployments.
 
 ## One tool table, two entries
@@ -288,14 +288,14 @@ Every wave tool takes the repository coordinate first (`repoId`).
 
 The four settlement ops work through MCP behind the S-2 `sessionAuthority` envelope.
 
-- `baton_scratchpad_elevate` elevates terminal scratchpad entries into a board candidacy.
+- `baton_scratchpad_elevate` elevates terminal scratchpad entries into candidate Findings.
 - `baton_scratchpad_settle` settles the shared scratchpad partition with explicit skips.
 - `baton_knowledge_promote` admits one candidate Finding (the envelope is REQUIRED).
 - `baton_knowledge_settlement_lease` mints the wave settlement lease (settlement capability).
 
 - `baton_knowledge_promote` REQUIRES the envelope bound to the settlement lease — presenter
-  authentication is the lease's session binding (XB), validated exactly as `admitBoardCommand`
-  does. The session gate precedes any idempotent replay: a replayed admit with a foreign/expired
+  authentication is the lease's session binding (XB), validated through the S-2 lease proof
+  The session gate precedes any idempotent replay: a replayed admit with a foreign/expired
   session refuses with `run_orchestrator_session_mismatch`, never a replay shortcut.
 - `baton_knowledge_settlement_lease` derives the session from the host's FIXED principal and is
   enabled ONLY when the descriptor's principal carries an explicit `settlement` capability class

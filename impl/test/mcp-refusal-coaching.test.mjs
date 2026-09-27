@@ -158,8 +158,8 @@ test('RC-05: cap/actual on a NON-size code never ride the wire (the marker is co
   const { server } = fixture(t, {
     command: async (name) => {
       if (name === 'run.message.send') {
-        throw Object.assign(new Error('board internals exploded'), {
-          code: 'application_board_internal', cap: 2048, actual: 3075, unit: 'bytes', gracefulPath: 'x',
+        throw Object.assign(new Error('internal exception exploded'), {
+          code: 'application_internal_boom', cap: 2048, actual: 3075, unit: 'bytes', gracefulPath: 'x',
         });
       }
       return { schemaVersion: 1, ok: true };
@@ -168,7 +168,7 @@ test('RC-05: cap/actual on a NON-size code never ride the wire (the marker is co
   await initialized(server);
   const response = await send(server, 2, { repoId: REPO, runId: 'run:rc5', kind: 'inform', body: 'small' });
   const error = mcpError(response);
-  assert.equal(error.code, 'application_board_internal', 'the typed code still rides (application_* passes through)');
+  assert.equal(error.code, 'application_internal_boom', 'the typed code still rides (application_* passes through)');
   assert.equal(Object.hasOwn(error, 'detail'), false, 'a forged triple on another code is not exposed');
   assert.equal(Object.hasOwn(error, 'message'), false);
 });

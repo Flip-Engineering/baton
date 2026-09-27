@@ -215,7 +215,7 @@ test('CL2: the committed map, the delegates, the exports and the store imports a
     assert.ok(movedNames.has(member), `${member}: the delegate must carry the ledger_port evidence`);
     assert.ok(Object.hasOwn(MODULE.exports, delegate.helper), `${member}: ${MODULE.namespace}.${delegate.helper} must be exported`);
   }
-  // The module also exports the relocated primitives (board bounds, knowledge vocabularies, digest
+  // The module also exports the relocated primitives (fence inputs, knowledge vocabularies, digest
   // helpers) the store imports back, so the claim is: N distinct delegate-reached helpers, one
   // delegate each — and every name the store imports from the module exists.
   const helpers = [...wired.values()].map((delegate) => delegate.helper);

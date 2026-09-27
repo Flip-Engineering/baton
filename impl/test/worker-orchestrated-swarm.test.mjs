@@ -1,6 +1,6 @@
 // Issue #74 — the worker-orchestrated swarm rung. Red-first acceptance suite for the folded
 // #74 contract v1.1 (the heavy coordinator member over cheap swarm rows, coordinated through the
-// collaboration lanes — scratchpad read/elevate, boards, messages, DECISION_REQUEST — never
+// collaboration lanes — scratchpad read/elevate, messages, DECISION_REQUEST — never
 // driving baton itself).
 //
 // Binding contract: docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/

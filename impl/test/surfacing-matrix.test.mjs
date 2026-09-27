@@ -22,12 +22,6 @@ const MATRIX = Object.freeze([
   // surfaces that serve each row, and surface-resolution.mjs proves it at the gate.
   ['run.scratchpad', 'ordinary', ['embedded'], 'observe', 'projectScratchpadView'],
   ['decision.list', 'ordinary', ['embedded', 'mcp'], 'observe', 'application.decisionList'],
-  ['board.read', 'ordinary', ['embedded', 'mcp'], 'observe', 'boardSnapshot + projectBoardView'],
-  ['board.post', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → postBoardItem'],
-  ['board.retitle', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → retitleBoardItem'],
-  ['board.reorder', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → reorderBoardItem'],
-  ['board.close', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → closeBoardItem'],
-  ['board.drop', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → dropBoardItem'],
   // MCP-W2 fold (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
   // knowledge.promote LEAVE the reflex matrix — they are the ordinary-surface settlement tools.
   ['package.admit', 'ordinary', ['embedded', 'mcp'], 'control', 'admitContextPackage'],
@@ -43,7 +37,7 @@ const MATRIX = Object.freeze([
 const rows = new Map(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
   .filter((row) => SURFACING_MATRIX_KEYS.includes(row.key)).map((row) => [row.key, row]));
 
-test('SM-1 schema truth: all sixteen rows are closed, exact live-method mappings', () => {
+test('SM-1 schema truth: all ten rows are closed, exact live-method mappings', () => {
   assert.deepEqual([...SURFACING_MATRIX_KEYS], MATRIX.map(([key]) => key));
   assert.equal(rows.size, SURFACING_MATRIX_KEYS.length);
   for (const [key, profile, surfaces, effect, liveMethod] of MATRIX) {
@@ -60,12 +54,6 @@ test('SM-1 schema truth: all sixteen rows are closed, exact live-method mappings
     assert.ok(Array.isArray(row.authorityFields));
     assert.ok(Array.isArray(row.serverDerived));
   }
-  const post = rows.get('board.post').inputSchema;
-  assert.ok(post.required.includes('sessionAuthority'));
-  assert.ok(post.required.includes('expectedBoardFence'));
-  assert.equal(Object.hasOwn(post.properties, 'entryId'), false, 'ghost board shape retired');
-  assert.deepEqual(rows.get('board.drop').inputSchema.required,
-    ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']);
 });
 
 test('SM-2 surface honesty: negative inventory is closed per row and profile', () => {
@@ -76,16 +64,6 @@ test('SM-2 surface honesty: negative inventory is closed per row and profile', (
       assert.deepEqual([...row.surfaces], ['embedded'], `${key} is absent from ordinary MCP`);
     }
   }
-});
-
-test('SM-3 S-2 riding: every board mutation maps only to the admission primitive', () => {
-  const mcp = readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8');
-  for (const key of ['post', 'retitle', 'reorder', 'close', 'drop']) {
-    assert.match(rows.get(`board.${key}`).liveMethod, /^admitBoardCommand/u);
-  }
-  assert.doesNotMatch(mcp, /coordination\.(?:post|retitle|reorder|close|drop)BoardItem\s*\(/u,
-    'MCP has no adapter-side board mutation path around S-2');
-  assert.match(mcp, /admitBoardCommand\s*\(/u);
 });
 
 test('SM-4 read rows: scratchpad projection, decision deadline, and horizon viewer scope stay live', () => {

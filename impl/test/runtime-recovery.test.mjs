@@ -120,7 +120,7 @@ test('RR3: a fake recorder observes exactly what _replay records, and log.append
   //        (log.append control.recovery_terminalized -> mapEvent -> coordination.transitionTask,
   //        keyed by the appended event's seq);
   //   w2 — a replay that never reattached: the session_not_reattached path (the same acts, plus
-  //        the scratch/board claim expiry the terminal transition carries);
+  //        the scratch claim expiry the terminal transition carries);
   //   the message lane — an unmarked alias receipt: one recordDriver row keyed by the row it names.
   const appended = [];
   const acts = [];
@@ -201,7 +201,6 @@ test('RR3: a fake recorder observes exactly what _replay records, and log.append
     _providerFaultOf: () => null,
     _bestEffortSync: (operation) => operation(),
     _expireScratchClaims: (...args) => acts.push({ recorder: 'expireScratchClaims', args: args.at(-1) }),
-    _expireBoardClaims: (...args) => acts.push({ recorder: 'expireBoardClaims', args: args.at(-1) }),
     _bumpInteractionGeneration: () => {},
     _bumpDecisionSettleCount: () => {},
     _replayedIds: { workers: new Set(), requests: new Set(), tasks: new Set() },
@@ -224,7 +223,7 @@ test('RR3: a fake recorder observes exactly what _replay records, and log.append
   const recordingActs = acts.filter((act) => 'recorder' in act);
   assert.deepEqual(
     [...new Set(recordingActs.map((act) => act.recorder))],
-    ['log.append', 'mapEvent', 'coordination.transitionTask', 'expireScratchClaims', 'expireBoardClaims', 'recordDriver'],
+    ['log.append', 'mapEvent', 'coordination.transitionTask', 'expireScratchClaims', 'recordDriver'],
     'the fold records only through the port surface (log.append, mapEvent, recordDriver) and the raw store transitions',
   );
   // The gap path appended ONE policy row per worker and keyed each durable failure by its seq.
@@ -242,7 +241,6 @@ test('RR3: a fake recorder observes exactly what _replay records, and log.append
   // The not-reattached worker expires its claims with the replay_failed reason — the terminal
   // transition's coordinator-side tail.
   assert.ok(recordingActs.some((act) => act.recorder === 'expireScratchClaims' && act.args === 'replay_failed'));
-  assert.ok(recordingActs.some((act) => act.recorder === 'expireBoardClaims' && act.args === 'replay_failed'));
   // The unmarked lane receipt recorded exactly one durable finding keyed by the row it names.
   assert.equal(recordedRows.length, 1);
   assert.equal(recordedRows[0].kind, 'replay.message_alias_unmarked');

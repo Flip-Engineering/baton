@@ -143,7 +143,7 @@ test('MCP-native invocation requires and uses a configured MCP authority', async
 
 test('embedded-only worker capability remains visible but cannot be promoted by generic invoke', async () => {
   const parsed = parseUnifiedSurfaceCli([
-    'surface', 'invoke', 'board.claim', '--args', '{"grantId":"grant:a"}', '--mcp-config', 'deployment.mjs',
+    'surface', 'invoke', 'run.scratchpad', '--args', '{"workerId":"w-1"}', '--mcp-config', 'deployment.mjs',
   ]);
   await assert.rejects(
     executeUnifiedSurfaceCli(parsed, { mcpCall: async () => ({ ok: true }) }),
