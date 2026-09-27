@@ -49,7 +49,6 @@ export const KILL_RULES = Object.freeze({
   worktreeAuthorityLost: 'worktree_authority_lost',
   spawnRefused: 'spawn_refused',
   protocolViolation: 'protocol_violation',
-  processObservationRefused: 'process_observation_refused',
   terminalObservation: 'terminal_observation',
 });
 

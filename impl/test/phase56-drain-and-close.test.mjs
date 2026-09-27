@@ -195,7 +195,7 @@ test('DC4: drain cannot attest while worktree creation or native spawn remains p
   assert.equal(git(['branch', '--list', 'baton/late-boundaries'], f.directory), '');
 });
 
-test('DC4: a process start after spawn Ack is quarantined behind a fresh exact kill/close boundary', async (t) => {
+test('DC4: a process start after spawn Ack is refused and re-acquired, and the refusal kills nothing', async (t) => {
   const f = repo('late-process-start'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
   driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
@@ -205,11 +205,13 @@ test('DC4: a process start after spawn Ack is quarantined behind a fresh exact k
   adapter._emit(session, 'lifecycle.process_started', { schemaVersion: 1, generation, pid: 424242, processGroupId: 424242, phase: 'initializing' });
   assert.equal(driver.coordinator._workers.get(worker.id).processRef?.state, 'initializing');
   adapter._emit(session, 'lifecycle.process_closed', { schemaVersion: 1, generation, pid: 424242, processGroupId: 424242, code: null, signal: 'SIGKILL', ready: false });
-  await until(() => driver.coordinator._workers.get(worker.id)?.processRef?.state === 'closed' && driver.coordinator._workers.get(worker.id)?.localAuthority === false, 'late-start quarantine kill');
+  await until(() => driver.coordinator._workers.get(worker.id)?.processRef?.state === 'closed', 'refused late start close');
   const events = driver.log.read(worker.id);
   assert.equal(events.some((event) => event.kind === 'lifecycle.process_attribution_refused' && event.payload.code === 'invalid_process_start'), true);
   assert.equal(events.some((event) => event.kind === 'lifecycle.process_started'), false);
   assert.equal(driver.coordinator._workers.get(worker.id).processRef.state, 'closed');
+  assert.equal(events.some((event) => event.kind === 'kill.requested'), false,
+    'issue #611: the refused start is recorded and kills nothing');
   assert.equal((await driver.drainAndClose()).state, 'closed');
 });
 
