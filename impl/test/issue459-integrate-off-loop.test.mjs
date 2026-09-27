@@ -559,12 +559,18 @@ function blockVerifyBudget(root, t, holder = 'seat-busy') {
 }
 
 test('459f: a gate run behind the host verify lease waits in the queue and lands once the lease frees — never refused for waiting (#541)', needsGit, async (t) => {
-  // The landing's gate run honours the operator bypass (BATON_HOST_CAPACITY_DISABLED=1) exactly as
-  // a seat's suite does — under it nothing is acquired and nothing can be busy. This row pins the
-  // STAGED authority's queue, so the ambient bypass a parallel gate runner pins must not win here.
-  const bypass = process.env.BATON_HOST_CAPACITY_DISABLED;
-  delete process.env.BATON_HOST_CAPACITY_DISABLED;
-  t.after(() => { if (bypass !== undefined) process.env.BATON_HOST_CAPACITY_DISABLED = bypass; });
+  // The landing's gate run honours BOTH ambient bypasses a runner hands its files — the operator
+  // pin (BATON_HOST_CAPACITY_DISABLED=1) and the digest of the parent's own verdict lease
+  // (BATON_SUITE_VERIFY_LEASE, #424) — under either, nothing is acquired and nothing can be busy.
+  // This row pins the STAGED authority's queue, so neither ambient bypass may win here. The
+  // 2026-09-27 landing gate of the host lane hung this row for 601 s on the digest alone: it
+  // withdrew the pin, `nested` still answered, and the queue row this row waits for never formed.
+  const ambientBypasses = ['BATON_HOST_CAPACITY_DISABLED', 'BATON_SUITE_VERIFY_LEASE']
+    .map((name) => [name, process.env[name]]);
+  for (const [name] of ambientBypasses) delete process.env[name];
+  t.after(() => {
+    for (const [name, value] of ambientBypasses) { if (value !== undefined) process.env[name] = value; }
+  });
   const w = await world(t, { gate: { sleepMs: 0, green: true } });
   // A host whose verdict lane is already taken: the landing queues behind it, visibly, and no gate
   // run is spawned until the lane frees.
