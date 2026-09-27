@@ -1,8 +1,7 @@
 # Baton in Bend2
 
-The [design](../docs/bend2/target-architecture.md) describes a local coordinator,
-native harness adapters and Git operations. The
-[implementation plan](../docs/bend2/rewrite-plan.md) names the first live slice.
+The [architecture](../docs/bend2/architecture.md) describes the implemented
+coordinator, native harness adapters, Git operations and recovery.
 
 ## Build and check
 
@@ -228,3 +227,46 @@ runner, `node bend2/scripts/run-checks.mjs`, compares interpreted and native
 output with their `.expected.txt` fixtures. It can install Bend locally if
 absent. Application modules need no law annotations, frozen output fixtures or
 independent `main` function.
+
+## Real-route acceptance
+
+Run the root's working day with logged-in native harnesses:
+
+```sh
+python3 bend2/scripts/accept-root-day.py --config routes.json --output .scratch/root-day-run
+```
+
+`--output` names a new directory. The script builds the current coordinator with
+`build-native.sh`; `BEND` selects the installed compiler. `--coordinator /path/to/baton2`
+uses an existing executable when investigating a run. The route file gives each
+native executable or launch wrapper an absolute path:
+
+```json
+{
+  "omp": {"executable": "/path/to/omp", "model": "deepseek/deepseek-flash", "effort": "low"},
+  "codex": {"executable": "/path/to/codex", "model": "gpt-6-astra", "effort": "low"},
+  "claude-code": {"executable": "/path/to/claude", "model": "claude-opus-4-6", "effort": "low"},
+  "muse": {"executable": "/path/to/muse", "model": "muse-spark-1.3-contributor", "effort": "low"}
+}
+```
+
+The sequence starts real workers on all four routes, interrupts and resumes their
+native sessions, guides a running OMP worker, triggers native Codex and OMP roots
+from worker reports, delivers a Claude channel notification, and recovers all
+three roots. The Git stage lands reviewed worker commits, exercises a moving
+target and conflict resolution, and pushes to a scratch bare remote whose ref
+is read with `git ls-remote`.
+
+The Claude stage starts a real interactive terminal and accepts the local
+workspace and development-channel prompts. Its transcript and debug log remain
+in the output directory. Configure the harness login and complete its initial
+onboarding before starting the run. Launch wrappers can keep native session and
+configuration writes in an operator-selected directory.
+
+The script kills only processes started for its recovery cases. It does not
+reboot the host. Databases, native logs, Git worktrees and per-stage evidence
+remain available after the run. `result.json` records the completed selection.
+A failure exits with its cause and retains the evidence; `--stage workers`,
+`guidance`, `native-roots`, `claude-channel` or `git` runs that stage in a new
+output directory during diagnosis. A full acceptance result requires the whole
+sequence.
