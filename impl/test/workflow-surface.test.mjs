@@ -1853,9 +1853,7 @@ async function scriptPartA(port) {
     runId: 'run:ws01-orch', board: 'ws01-tasks', title: 'survey task board', detail: 'the swarm\'s task board',
   });
   // Step 2 — waves.start (4 members); each brief cites the seeded board and node.
-  // The FULL objective text is kept verbatim: waves.attach matches members by EXACT
-  // objective equality (blue-team BLOCKER 2 — a truncated objective throws
-  // wave_attach_unknown_wave against a correct implementation).
+  // The FULL objective text is kept verbatim so each brief cites the seeded node.
   const roles = ['surveyor', 'mapper', 'sampler', 'scribe'];
   const members = roles.map((role) => ({
     role,
@@ -1959,22 +1957,9 @@ async function scriptPartC(port, stateA) {
     sharedReads.push({ role: query.role, entries: shared.entries?.length ?? 0 });
   }
   const board = await port.command('run.board.read', { runId: stateA.orchRunId, board: 'ws01-tasks' });
-  // Step 8 — harvest through the existing waves.attach resume path. The members
-  // carry the FULL started objectives verbatim (attachWave matches by EXACT
-  // objective equality — blue-team BLOCKER 2).
-  const attached = await port.command('waves.attach', {
-    waveId: stateA.waveId,
-    members: stateA.queries.map((query) => ({ role: query.role, objective: query.objective })),
-    timeoutMs: 30000,
-  });
   return {
     pages, elevations, sharedReads,
     boardItems: board.view?.items?.length ?? 0,
-    attach: {
-      outcomes: attached.outcomes?.length ?? 0,
-      waveDriverDetached: attached.waveDriverDetached ?? null,
-      harvestReplayed: attached.harvestReplayed ?? null,
-    },
   };
 }
 
@@ -2011,7 +1996,7 @@ test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFL
   for (const query of stateA.queries) {
     assert.match(query.messageId, /^message:[a-f0-9]{64}$/u, 'each query is receipted on its durable message id');
     assert.match(query.objective ?? '', /^survey slice \w+ — cite board ws01-tasks and node knowledge:Finding:[a-f0-9]{64}$/u,
-      'the attach identity rides the FULL started objective — attachWave matches by exact equality, so a truncated objective throws wave_attach_unknown_wave (BLOCKER 2)');
+      'the query rides the FULL started objective verbatim');
     assert.equal(query.objective.includes(stateA.seedNodeId), true, 'the objective cites the seeded node verbatim');
   }
   // Harness interlude (worker wire behavior, environmental — bd3's adapter.emit
@@ -2055,8 +2040,6 @@ test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFL
     assert.ok(shared.entries >= 1, `elevated findings serve on the shared partition (${shared.role})`);
   }
   assert.ok(stateC.boardItems >= 1, 'the seeded board serves through run.board.read');
-  assert.equal(stateC.attach.outcomes, 4, 'the harvest receipts all four members');
-  assert.equal(stateC.attach.waveDriverDetached, true, 'waves.attach harvests the detached wave');
   // The seeded node is inside the orchestrator run's horizon (durable effect).
   assert.ok(fx.driver.coordinator._runHorizonNodeIds(stateA.orchRunId).has(stateA.seedNodeId));
   // Every effect is receipted on durable events/ids — never sleep durations or turn
@@ -2085,7 +2068,6 @@ test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to s
     { step: '6-elevate', cli: 'run.scratchpad.elevate', mcp: 'baton_run_scratchpad_elevate', facade: 'run.scratchpad.elevate', args: { runId: 'run:w2', taskId: 'task-1', entryIds: [ENTRY_ID(1)] } },
     { step: '7-scratchpad', cli: 'run.scratchpad.read', mcp: 'baton_run_scratchpad_read', facade: 'run.scratchpad.read', args: { runId: 'run:w2', scope: 'shared' } },
     { step: '7-board', cli: 'run.board.read', mcp: null, facade: 'run.board.read', args: { runId: 'run:w2', board: 'ws-w2' } },
-    { step: '8-harvest', cli: 'waves.attach', mcp: 'baton_waves_attach', facade: null, args: null },
   ];
   for (const step of steps) {
     assert.ok(servedCli.includes(step.cli), `step ${step.step} resolves to a served CLI verb (${step.cli})`);

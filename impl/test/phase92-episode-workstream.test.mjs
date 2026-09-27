@@ -16,12 +16,6 @@ function port() {
     if (name === 'application.help') {
       return { schemaVersion: 1, topic: args.topic, depth: args.depth, links: [] };
     }
-    if (name === 'run.workstream.stop') {
-      return { schemaVersion: 1, runId: args.runId, terminal: true };
-    }
-    if (name === 'run.workstream.notify') {
-      return { schemaVersion: 1, runId: args.runId, outline: { actions: [] } };
-    }
     if (name === 'run.workstreams' && args.role === undefined) {
       return {
         schemaVersion: 1, runId: args.runId,
@@ -66,7 +60,7 @@ test('P92-EW1: the registry advertises first-class Episode and workstream comman
   assert.match(sections.get('episode').summary, /evidence-backed|authoritative/iu);
   assert.match(sections.get('workstreams').summary, /semantic|durable/iu);
   for (const command of [
-    'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
+    'run.episode', 'run.workstreams',
   ]) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, command), true, command);
     assert.equal(APPLICATION_COMMAND_DEFINITIONS[command].web, true, command);
@@ -83,8 +77,6 @@ test('P92-EW2: one Run exposes semantic generation handles and the complete Epis
   const workstream = run.workstreams().open('reviewer');
   assert.equal(workstream.id, 'workstream:reviewer');
   assert.equal((await workstream.open()).item.value.role, 'reviewer');
-  await workstream.notify('Check the accepted result lineage.');
-  await workstream.stop();
   const pending = await workstream.result();
   assert.equal(pending.item.id, 'episode:result:reviewer');
   assert.equal(pending.state, 'pending');
@@ -149,16 +141,6 @@ test('P92-EW4: CLI exposes selector-free Episode and workstream commands', () =>
     'run', 'workstreams', 'run-phase92', 'reviewer', '--generation', '2',
     '--cursor', '8', '--wait', '5ms',
   ]).args, { runId: 'run-phase92', role: 'reviewer', generation: 2, cursor: 8, waitMs: 5 });
-  const notify = parseBatonCli([
-    'run', 'notify', 'run-phase92', 'reviewer', 'Check lineage.', '--turn',
-  ]);
-  assert.equal(notify.name, 'run.workstream.notify');
-  assert.deepEqual(notify.args, {
-    runId: 'run-phase92', role: 'reviewer', message: 'Check lineage.', delivery: 'turn',
-  });
-  assert.deepEqual(parseBatonCli([
-    'run', 'stop-member', 'run-phase92', 'reviewer', '--generation', '2',
-  ]).args, { runId: 'run-phase92', role: 'reviewer', generation: 2 });
 });
 
 test('P92-EW5: browser controls execute the same progressive Episode/workstream surface', () => {
@@ -168,11 +150,10 @@ test('P92-EW5: browser controls execute the same progressive Episode/workstream 
   const html = operatorAsset('/control').body;
   const script = operatorAsset('/control/app.js').body;
   for (const id of ['view-member', 'view-section', 'view-detail', 'load-view',
-    'continue-view', 'load-members', 'member-send', 'member-stop']) {
+    'continue-view', 'load-members']) {
     assert.match(html, new RegExp(`id="${id}"`, 'u'), id);
   }
-  for (const operation of ['run_view', 'run_member_view', 'run_member_send',
-    'run_member_stop']) assert.equal(script.includes(`command('${operation}'`), true, operation);
+  for (const operation of ['run_view', 'run_member_view']) assert.equal(script.includes(`command('${operation}'`), true, operation);
   assert.equal(script.includes("continuation.operation.replaceAll('.','_')"), true);
   assert.equal(script.includes('generation:selected.generation'), true);
   assert.equal(script.includes("detail:byId('view-detail').value"), true);

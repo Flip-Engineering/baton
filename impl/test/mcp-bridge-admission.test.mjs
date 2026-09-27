@@ -236,7 +236,7 @@ function refreshedSessionFacade({ renewed, identityOverrides = {} } = {}) {
     identity: {
       userId: SESSION.identity.userId,
       sessionId: SESSION.identity.sessionId,
-      capabilities: [...SESSION.identity.capabilities, 'export_result'],
+      capabilities: [...SESSION.identity.capabilities],
       repoIds: [...SESSION.identity.repoIds],
       ...identityOverrides,
     },

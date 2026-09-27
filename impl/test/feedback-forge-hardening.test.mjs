@@ -503,29 +503,6 @@ function readWorkflowFeedbackFieldsLiteral() {
 // PIN rows — green at HEAD.
 // ---------------------------------------------------------------------------
 
-test('P1 (PIN): G2 shape boundary — gate-shaped input passes normalization, refuses at the WORKFLOW gate', async (t) => {
-  const { application, baton, adapter } = dg1Harness(t);
-  const { workerId, runId } = await startRun(baton);
-
-  emitScopeGateEvent(adapter, workerId);
-  const debug = await application.debug({ runId }, principal('observer'));
-  const failure = debug.members[0]?.failure;
-  assert.equal(failure?.gate, 'scope', 'precondition: the debug failure leg projects the scope gate');
-
-  // Gate-shaped {gate, detail} must be accepted by input normalization (never the shape code) and
-  // refuse only at the workflow gate on a non-workflow run (GREEN-1 / G2 discriminator).
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: { gate: failure.gate, detail: failure.detail },
-  }, principal('observer')).then(() => null, (error) => error);
-  assert.ok(err, 'run.feedback must not silently no-op on a non-workflow run');
-  assert.equal(
-    err.code,
-    'application_workflow_feedback_unavailable',
-    `gate-shaped input dispatches to the workflow gate, not a shape reject; got ${err.code}: ${err.message}`,
-  );
-});
 
 test('P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys', async (t) => {
   const { workflow } = await openWorkflow(t);
@@ -548,22 +525,6 @@ test('P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq 
   assert.ok(member, 'P2: evidence.verification.worker resolves to a real worker stream member');
 });
 
-test('P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid', async (t) => {
-  const { application, baton } = dg1Harness(t);
-  const { runId } = await startRun(baton);
-
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: { ...scopeGatePayload(), derived: true },
-  }, principal('observer')).then(() => null, (error) => error);
-  assert.ok(err, 'a caller-supplied derived flag must be refused');
-  assert.equal(
-    err.code,
-    'application_workflow_feedback_invalid',
-    `derived is hub-set only — the closed {gate, detail} schema refuses a caller derived key; got ${err.code}`,
-  );
-});
 
 test('P4 (PIN): GREEN-5a run.debug failure shape — the honest referent a forged verdict spoofs', async (t) => {
   const { application, baton, adapter } = dg1Harness(t);

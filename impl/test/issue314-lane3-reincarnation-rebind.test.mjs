@@ -428,7 +428,7 @@ test('314e-l3-a: a served bridge session answers from the successor after a stag
     'the notification names the cursor the resumed attachment starts from');
 
   // The session now talks to the successor: the same call answers from ITS endpoint.
-  const answer = await facade.command('run.review', { runId: 'run:l3a' }, await callerOf(facade), CONTEXT);
+  const answer = await facade.command('run.answer', { runId: 'run:l3a' }, await callerOf(facade), CONTEXT);
   assert.equal(answer.via, 'successor', `the next call is answered by the successor: ${JSON.stringify(answer)}`);
   assert.equal(successorSocket.requests.filter((request) => request.path === '/v1/application-card').length, 1,
     'the successor was discovered once — one publication read, one adoption');
@@ -475,14 +475,14 @@ test('314e-l3-b: an in-flight mutation at the boundary is applied once — the r
   await stageHandoff(f, deployment, () => stub);
 
   const principal = await callerOf(facade);
-  const first = await facade.command('run.review', { runId: 'run:l3b' }, principal, CONTEXT);
+  const first = await facade.command('run.answer', { runId: 'run:l3b' }, principal, CONTEXT);
   assert.equal(first.via, 'successor', 'the in-flight mutation is retried against the successor');
   assert.equal(successorSocket.rows().length, 1, 'the shared ledger holds ONE row for it');
   assert.equal(successorSocket.keys.length, 1,
     'exactly one attempt reached the successor: the first — refused by the dead transport — never did');
 
   // The SAME call again: the derived idempotency key is what makes it a replay, never a second row.
-  const second = await facade.command('run.review', { runId: 'run:l3b' }, principal, CONTEXT);
+  const second = await facade.command('run.answer', { runId: 'run:l3b' }, principal, CONTEXT);
   assert.equal(second.replayed, true, `the repeat replays the row it already holds: ${JSON.stringify(second)}`);
   assert.deepEqual(second, { ...first, replayed: true }, 'a replay answers the SAME row');
   assert.equal(successorSocket.keys.length, 2, 'both attempts reached the successor');

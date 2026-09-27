@@ -16,7 +16,7 @@ reapFixtureDirectories();
 const NOW = Date.parse('2026-07-11T21:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
 const principal = (overrides = {}) => ({
-  userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
+  userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
   repoIds: ['repo-a'], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false, ...overrides,
 });
 const runApplicationCard = () => mockApplicationCard('repo-a');
@@ -198,25 +198,21 @@ test('UA5/MN: Run tools map exactly to the application bus and keep status/wait 
     // guard refuses {decision}/{resolution} on BOTH consumers — this row probes the run-tools →
     // application-bus mapping, so the payload rides the conformant optionId form.
     ['fleet_run_answer', { repoId: 'repo-a', idempotencyKey: 'run-answer', runId: 'run-mcp-a', requestId: 'question-1', answer: { optionId: 'opt-1' } }, 'run.answer'],
-    ['fleet_run_feedback', { repoId: 'repo-a', idempotencyKey: 'run-feedback', runId: 'run-mcp-a', role: 'builder', feedback: 'Preserve the exact route evidence.' }, 'run.feedback'],
     ['fleet_run_stop', { repoId: 'repo-a', idempotencyKey: 'run-stop', runId: 'run-mcp-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
     ['fleet_run_evidence', { repoId: 'repo-a', runId: 'run-mcp-a' }, 'run.evidence'],
-    ['fleet_run_adopt', { repoId: 'repo-a', idempotencyKey: 'run-adopt', runId: 'run-mcp-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
-    ['fleet_run_review', { repoId: 'repo-a', idempotencyKey: 'run-review', runId: 'run-mcp-a', route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Independent semantic review.' }, 'run.review'],
-    ['fleet_run_integrate', { repoId: 'repo-a', idempotencyKey: 'run-integrate', runId: 'run-mcp-a', evidenceDigest: 'd'.repeat(64), strategy: 'ff-only', reason: 'Integrate the reviewed result.' }, 'run.integrate'],
   ];
   for (const [index, [name, args, expected]] of calls.entries()) {
     const response = await request(server, 10 + index, 'tools/call', { name, arguments: args });
     assert.equal(response.result.isError, false);
     assert.equal(applicationCalls.at(-1).name, expected);
   }
-  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(12).fill({
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(8).fill({
     actor: 'mcp:operator-a:stdio-a', principalId: 'operator-a', sessionId: 'stdio-a',
   }));
   assert.equal(applicationCalls.some((call) => Object.hasOwn(call.args, 'repoId') || Object.hasOwn(call.args, 'idempotencyKey')), false);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'mcp.call_admitted')
     .map((event) => [event.payload.tool, event.payload.runId]), [
-      ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_feedback', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'], ['fleet_run_adopt', 'run-mcp-a'], ['fleet_run_review', 'run-mcp-a'], ['fleet_run_integrate', 'run-mcp-a'],
+      ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'],
     ]);
   await request(server, 20, 'tools/call', { name: 'fleet_run_status', arguments: { repoId: 'repo-a', runId: 'run-mcp-a' } });
   assert.equal(applicationCalls.filter((call) => call.name === 'run.status').length, 2, 'read-only status is fresh rather than a cached call replay');
@@ -539,6 +535,10 @@ test('UA6/MN2: application-backed stdio EOF invokes host-only deployment shutdow
       applicationCalls.push({ name, args, principal: appPrincipal });
       return { schemaVersion: 1, state: 'closed', ownership: { workers: 0, workerIds: [], closed: true } };
     },
+    async shutdown(appPrincipal) {
+      applicationCalls.push({ name: 'application.shutdown', args: {}, principal: appPrincipal });
+      return { schemaVersion: 1, state: 'closed', ownership: { workers: 0, workerIds: [], closed: true } };
+    },
   };
   const s = setup({ application });
   const input = new PassThrough(); const output = new PassThrough();
@@ -561,8 +561,8 @@ test('UA6/MN2: failed host shutdown is visible and retryable without exposing a 
   const application = {
     repoId: 'repo-a', card: runApplicationCard,
     async authorizeReplay() { return true; },
-    async command(name) {
-      assert.equal(name, 'application.shutdown');
+    async command() { return { schemaVersion: 1 }; },
+    async shutdown() {
       attempts += 1;
       if (attempts === 1) throw new Error('close refused');
       return { state: 'closed' };

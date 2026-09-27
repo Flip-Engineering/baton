@@ -166,14 +166,11 @@ function buildDescriptorFacade(descriptor) {
     repoId,
     card: () => Object.freeze({
       schemaVersion: 1, repoId,
-      commands: Object.freeze([...Object.keys(APPLICATION_COMMAND_DEFINITIONS), 'waves.attach']),
+      commands: Object.freeze(Object.keys(APPLICATION_COMMAND_DEFINITIONS)),
     }),
     async authorizeReplay() { return true; },
     async command(name, args) {
       if (name === 'deployment.doctor') return this.doctorReadiness();
-      if (name === 'application.shutdown') {
-        return Object.freeze({ schemaVersion: 1, state: 'transport_closed', applicationOwned: false });
-      }
       if (name === 'application.help') {
         return Object.freeze({ schemaVersion: 1, topic: args?.topic ?? null, depth: args?.depth ?? 'outline', help: [] });
       }

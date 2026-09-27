@@ -255,7 +255,7 @@ test('W6: stopMember stops exactly that member and the sibling continues to comp
   });
   const stop = await wave.stopMember('beta', { reason: 'selective stop proof' });
   assert.equal(stop.stopped, true, 'plain-run members stop through run.stop (P1-C branch honesty)');
-  assert.notEqual(stop.admitted, true, 'stop_member is a workflow-member path and must not be claimed for plain runs');
+  assert.notEqual(stop.admitted, true, 'a plain-run member stop is claimed through run.stop, never a member-action path');
   const outcomes = await wave.settle({ timeoutMs: 20_000 });
   const alpha = outcomes.find((outcome) => outcome.role === 'alpha');
   const beta = outcomes.find((outcome) => outcome.role === 'beta');
