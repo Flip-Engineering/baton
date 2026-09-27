@@ -400,13 +400,12 @@ test('#336: a coded swarm fold refusal surfaces through the web client as itself
     fetchImpl, clock: () => NOW, sleep: async () => {},
   });
   const refusal = await client.command('swarm.update', {
-    swarmId: 's-issue336', event: 'swarm.group_updated',
-    payload: { groupId: 'impl', members: ['ghost'] }, idempotencyKey: 'issue336-cli-key-1',
+    swarmId: 's-issue336', event: 'swarm.participant_left',
+    payload: { participantId: 'ghost' }, idempotencyKey: 'issue336-cli-key-1',
   }).then(() => null, (error) => error);
 
   assert.equal(refusal?.code, 'participant_not_found', 'the wire code crosses as itself');
   assert.match(refusal?.message ?? '', /HTTP 404/u, 'the refusal is the 4xx class, not the transient 503');
-  assert.match(refusal?.message ?? '', /impl/, 'the fold\'s own message names the group');
   assert.match(refusal?.message ?? '', /ghost/, 'the fold\'s own message names the seat');
   assert.equal(refusal?.detail?.code, 'participant_not_found', 'the full parsed error rides as detail');
   assert.equal(refusal?.detail?.retryable, false, 'the not-retryable verdict crosses');

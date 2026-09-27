@@ -65,7 +65,7 @@ test('ONE function derives the closed status set from the projection classes', (
   }
   // An event is not a state: the classes that only report activity gain no status word.
   for (const klass of ['contribution_recorded', 'reviewed', 'recruited', 'assigned', 'work_updated',
-    'coupling_updated', 'context_updated', 'guidance_delivered', 'knowledge', 'note', 'checkpoint']) {
+    'context_updated', 'guidance_delivered', 'knowledge', 'note', 'checkpoint']) {
     assert.equal(flipStatus(klass), null, `event class ${klass} must not derive a status`);
   }
   // The honesty law: a class with no derivable status does not exist — never invented.

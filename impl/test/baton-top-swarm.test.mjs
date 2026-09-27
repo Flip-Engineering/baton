@@ -52,7 +52,7 @@ function familyClient() {
       if (name === 'swarm.view' && args.swarmId === 'swarm:s1' && args.projection === 'attention') {
         return {
           swarmId: 'swarm:s1',
-          attention: [{ kind: 'coupling_writer_gone', participantId: 'flip2', next: { event: 'swarm.coupling_updated', action: 'release' } }],
+          attention: [{ kind: 'claim_holder_gone', participantId: 'flip2', next: { event: 'swarm.claim_updated', status: 'released' } }],
         };
       }
       throw Object.assign(new Error(`unknown command ${name}`), { code: 'cli_command_unavailable' });
@@ -111,8 +111,8 @@ test('baton top overview carries the resident, the swarm family, and attention w
   // The run attention row names the next action verbatim.
   assert.match(text, /→ baton run answer run:a request:1/u);
   // The family attention row carries its swarm coordinate and the row's own next.
-  assert.match(text, /swarm:s1 .*coupling_writer_gone/u);
-  assert.match(text, /→ baton swarm update swarm:s1 swarm\.coupling_updated \(release\)/u);
+  assert.match(text, /swarm:s1 .*claim_holder_gone/u);
+  assert.match(text, /→ baton swarm update swarm:s1 swarm\.claim_updated/u);
   // The seat status row derives from the same closed set (attention first).
   assert.match(text, /Status  ▲ needs you/u);
   // Non-TTY output is one stable frame with no ANSI.

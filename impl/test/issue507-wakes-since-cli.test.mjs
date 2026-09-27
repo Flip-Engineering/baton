@@ -223,7 +223,7 @@ test('507-b: one bounded page of wake frames over the real socket, cheaper than 
     assert.equal(frame.wakeClass, 'paused');
     assert.equal(frame.participantId, 'worker');
   }
-  const empty = await read(['deployment', 'wakes-since', '--since', '0', '--wake-class', 'closed']);
+  const empty = await read(['deployment', 'wakes-since', '--since', '0', '--wake-class', 'reviewed']);
   assert.deepEqual(empty.frames, [], 'a class this deployment never wrote answers no frames');
 });
 

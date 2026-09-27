@@ -1,6 +1,6 @@
 // Issue #430 — the swarm family's ONE closed refusal set. The runtime's `refuse()` (impl/src/
 // swarm-runtime.mjs) spells codes like `swarm_participant_not_found` / `swarm_participant_exists` /
-// `swarm_closed` that the web layer's #336 fold table does not know, so every runtime-level
+// `swarm_participant_exists` that the web layer's #336 fold table does not know, so every runtime-level
 // refusal crossed as 503 `temporarily_unavailable` "command dispatch failed" — the operator
 // retried as told and could not tell a request fault from a dead resident.
 //
@@ -312,36 +312,6 @@ test('#430 (c): a second recruit of the same seat crosses swarm_participant_exis
   assert.equal(response.body.error.retryable, false, 'retrying the same recruit refuses the same way');
 });
 
-test('#430 (c): the closed-swarm refusal crosses swarm_closed as 409', async () => {
-  // The runtime's closed-swarm raise is the recruit guard (a plain swarm.update mutation does not
-  // refuse on a closed swarm at this HEAD); the fold's spelling of the same rule, a second close,
-  // is asserted beside it — both must cross typed.
-  const { web, call, issued } = swarmFixture();
-  await call('swarm.create', { purpose: 'issue430 live closed' });
-  await call('swarm.update', { event: 'swarm.closed', payload: { swarmId: 's-issue430' } });
-  const recruitResponse = await send(web, {
-    path: '/v1/commands',
-    body: envelope({
-      commandId: 'issue430-closed-recruit', idempotencyKey: 'issue430-closed-recruit',
-      command: 'swarm.recruit',
-      args: { swarmId: 's-issue430', participantId: 'late-seat', objective: 'arrive after the close', idempotencyKey: 'issue430-closed-recruit-args' },
-    }),
-    headers: { authorization: `Bearer ${issued.token}` },
-  });
-  assert.equal(recruitResponse.status, 409, 'recruiting into a closed swarm is a state conflict');
-  assert.equal(recruitResponse.body.error.code, 'swarm_closed', 'the runtime code crosses as itself');
-  const reCloseResponse = await send(web, {
-    path: '/v1/commands',
-    body: envelope({
-      commandId: 'issue430-re-close', idempotencyKey: 'issue430-re-close',
-      command: 'swarm.update',
-      args: { swarmId: 's-issue430', event: 'swarm.closed', payload: { swarmId: 's-issue430' }, idempotencyKey: 'issue430-re-close-args' },
-    }),
-    headers: { authorization: `Bearer ${issued.token}` },
-  });
-  assert.equal(reCloseResponse.status, 409, 'the fold spelling of the closed rule is a state conflict too');
-  assert.equal(reCloseResponse.body.error.code, 'swarm_already_closed', 'the fold code crosses as itself');
-});
 
 // ── (d) the 503 fallthrough narrates the unmapped code and the command, once per code ─────────
 
