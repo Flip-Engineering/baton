@@ -94,6 +94,15 @@ function closeDb() {
   if (db) { try { db.close(); } catch {} db = null; }
 }
 
+function rootSession() {
+  if (!db) return '';
+  try {
+    return db.prepare("SELECT native FROM sessions WHERE id='root' AND harness=?").get('omp')?.native || '';
+  } catch {
+    return '';
+  }
+}
+
 function pendingRootMessages() {
   if (!db) return [];
   try {
@@ -130,14 +139,8 @@ function runOmpTurn(prompt, sessionDir, sessionId) {
       '--system-prompt', systemPrompt(),
     ];
 
-    if (sessionDir) {
-      args.push('--session-dir', sessionDir);
-      if (sessionId) {
-        args.push('--resume', sessionId);
-      }
-    } else {
-      args.push('--no-session');
-    }
+    args.push('--session-dir', sessionDir);
+    if (sessionId) args.push('--resume', sessionId);
 
     args.push(prompt);
 
@@ -151,12 +154,18 @@ function runOmpTurn(prompt, sessionDir, sessionId) {
     const rl = createInterface({ input: child.stdout });
 
     rl.on('line', (line) => {
+      let event;
       try {
-        const event = JSON.parse(line);
-        events.push(event);
-        process.stderr.write(`omp-root: ${event.type}\n`);
+        event = JSON.parse(line);
       } catch {
         process.stderr.write(`omp-root: unparsed: ${line}\n`);
+        return;
+      }
+      events.push(event);
+      process.stderr.write(`omp-root: ${event.type}\n`);
+      const native = event.type === 'session' ? event.id : null;
+      if (native) {
+        execFileSync(COORD, [DB, 'bind', 'root', native, 'omp', '', '']);
       }
     });
 
@@ -218,7 +227,7 @@ async function runOnce() {
   process.stderr.write(`omp-root: ${messages.length} pending message(s), starting OMP turn\n`);
 
   try {
-    const result = await runOmpTurn(prompt);
+    const result = await runOmpTurn(prompt, DB + '.root-sessions', rootSession());
     const text = extractResult(result.events);
     if (text) {
       process.stdout.write(text + '\n');
@@ -234,10 +243,12 @@ async function runOnce() {
 }
 
 if (attach) {
+  await openDb();
+  const native = rootSession();
   const endpoint = JSON.stringify([
     '/usr/bin/env', `OMP_ROOT_MODEL=${ompModel}`, `OMP_ROOT_THINKING=${ompThinking}`,
     process.execPath, fileURLToPath(import.meta.url), DB, COORD, ompExe, '--message',
   ]);
-  execFileSync(COORD, [DB, 'attach', 'root', 'omp', '', endpoint], { stdio: 'inherit' });
+  execFileSync(COORD, [DB, 'attach', 'root', 'omp', native, endpoint], { stdio: 'inherit' });
 }
 await runOnce();

@@ -91,6 +91,15 @@ function closeDb() {
   if (db) { try { db.close(); } catch {} db = null; }
 }
 
+function rootSession() {
+  if (!db) return '';
+  try {
+    return db.prepare("SELECT native FROM sessions WHERE id='root' AND harness=?").get('codex')?.native || '';
+  } catch {
+    return '';
+  }
+}
+
 function pendingRootMessages() {
   if (!db) return [];
   try {
@@ -129,7 +138,6 @@ function runCodexTurn(prompt, threadId) {
       '--json',
       '--model', codexModel,
       '--dangerously-bypass-approvals-and-sandbox',
-      '--ephemeral',
     ];
 
     const stdinContent = systemInstructions() + '\n\n' + prompt;
@@ -147,12 +155,18 @@ function runCodexTurn(prompt, threadId) {
     const rl = createInterface({ input: child.stdout });
 
     rl.on('line', (line) => {
+      let event;
       try {
-        const event = JSON.parse(line);
-        events.push(event);
-        process.stderr.write(`codex-root: ${event.type}\n`);
+        event = JSON.parse(line);
       } catch {
         process.stderr.write(`codex-root: unparsed: ${line}\n`);
+        return;
+      }
+      events.push(event);
+      process.stderr.write(`codex-root: ${event.type}\n`);
+      const native = event.type === 'thread.started' ? event.thread_id : null;
+      if (native) {
+        execFileSync(COORD, [DB, 'bind', 'root', native, 'codex', '', '']);
       }
     });
 
@@ -205,7 +219,7 @@ async function runOnce() {
   process.stderr.write(`codex-root: ${messages.length} pending message(s), starting Codex turn\n`);
 
   try {
-    const result = await runCodexTurn(prompt);
+    const result = await runCodexTurn(prompt, rootSession());
     const text = extractResult(result.events);
     if (text) {
       process.stdout.write(text + '\n');
@@ -221,10 +235,12 @@ async function runOnce() {
 }
 
 if (attach) {
+  await openDb();
+  const native = rootSession();
   const endpoint = JSON.stringify([
     '/usr/bin/env', `CODEX_ROOT_MODEL=${codexModel}`,
     process.execPath, fileURLToPath(import.meta.url), DB, COORD, codexExe, '--message',
   ]);
-  execFileSync(COORD, [DB, 'attach', 'root', 'codex', '', endpoint], { stdio: 'inherit' });
+  execFileSync(COORD, [DB, 'attach', 'root', 'codex', native, endpoint], { stdio: 'inherit' });
 }
 await runOnce();

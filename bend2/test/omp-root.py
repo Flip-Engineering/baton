@@ -54,6 +54,29 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertIn(report.read_text(), received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
 
+    def test_reattachment_preserves_native_session_for_the_next_report(self):
+        temp = pathlib.Path(self.temp.name)
+        calls = temp / 'calls.jsonl'
+        native = temp / 'root.py'
+        native.write_text('#!/usr/bin/env python3\nimport sys,pathlib,json,subprocess\n' +
+            f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n' +
+            'body=sys.argv[-1]\n' +
+            'ident="first" if "[id: first]" in body else "second"\n' +
+            'print(\'{"type": "session", "id": "native-root"}\',flush=True)\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "ack"]!r}+[ident,"root","reviewed"],check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(\'{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Reviewed"}]}}\')\n')
+        native.chmod(0o700)
+        args = ['node', str(OMP_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach']
+        for message in ['first', 'second']:
+            attached = subprocess.run(args, text=True, capture_output=True)
+            self.assertEqual(attached.returncode, 0, attached.stderr)
+            self.coord('message', message, 'root', 'root', 'guidance', 'Review this message.')
+            self.assertEqual(json.loads(self.coord('session', 'root'))['native'], 'native-root')
+        argv = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(len(argv), 2)
+        self.assertEqual(argv[1][argv[1].index('--resume') + 1], 'native-root')
+        self.assertNotIn('--no-session', argv[0])
+
     def test_adapter_exits_cleanly_with_no_pending_messages(self):
         """With no root and no messages, the adapter exits 0."""
         p = subprocess.run(

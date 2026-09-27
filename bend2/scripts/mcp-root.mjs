@@ -12,7 +12,6 @@
 // delivers them as notifications/claude/channel. Tool calls delegate to the
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
-import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -49,11 +48,10 @@ if (process.argv[4] === '--deliver') {
 // node:sqlite (Node 22+)
 const { DatabaseSync } = await import('node:sqlite');
 
-// JSON-RPC framing over stdio (Content-Length delimited, per MCP spec).
+// MCP stdio carries one JSON-RPC message per line.
 function writeMessage(msg) {
   const body = JSON.stringify(msg);
-  const header = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n`;
-  process.stdout.write(header + body);
+  process.stdout.write(body + '\n');
 }
 
 function sendResponse(id, result) {
@@ -68,39 +66,22 @@ function sendNotification(method, params) {
   writeMessage({ jsonrpc: '2.0', method, params });
 }
 
-// Read Content-Length delimited messages from stdin.
-let inputBuffer = Buffer.alloc(0);
-let contentLength = -1;
-
-function processInput() {
-  while (true) {
-    if (contentLength === -1) {
-      const headerEnd = inputBuffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) return;
-      const header = inputBuffer.subarray(0, headerEnd).toString();
-      const match = header.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        inputBuffer = inputBuffer.subarray(headerEnd + 4);
-        continue;
-      }
-      contentLength = parseInt(match[1], 10);
-      inputBuffer = inputBuffer.subarray(headerEnd + 4);
-    }
-    if (inputBuffer.length < contentLength) return;
-    const body = inputBuffer.subarray(0, contentLength).toString();
-    inputBuffer = inputBuffer.subarray(contentLength);
-    contentLength = -1;
+// Claude Code sends newline-delimited initialization and tool requests.
+let inputBuffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  inputBuffer += chunk;
+  let newline;
+  while ((newline = inputBuffer.indexOf('\n')) !== -1) {
+    const body = inputBuffer.slice(0, newline);
+    inputBuffer = inputBuffer.slice(newline + 1);
+    if (!body.trim()) continue;
     try {
       handleMessage(JSON.parse(body));
-    } catch (e) {
-      process.stderr.write(`mcp-root: parse error: ${e.message}\n`);
+    } catch (error) {
+      process.stderr.write(`mcp-root: parse error: ${error.message}\n`);
     }
   }
-}
-
-process.stdin.on('data', (chunk) => {
-  inputBuffer = Buffer.concat([inputBuffer, chunk]);
-  processInput();
 });
 
 process.stdin.on('end', () => {
@@ -235,7 +216,8 @@ const TOOLS = [
 ];
 
 // State.
-let initialized = false;
+let deliveryReady = null;
+let channelReady = false;
 let notifiedSeqs = new Set();
 let deliveryServer = null;
 let db = null;
@@ -266,6 +248,7 @@ function pendingRootMessages(messageId = null) {
 }
 
 function notifyPending(messageId = null) {
+  if (!channelReady) return;
   const messages = pendingRootMessages(messageId);
   const newMessages = messages.filter((m) => !notifiedSeqs.has(m.seq));
   if (newMessages.length === 0) return;
@@ -281,7 +264,7 @@ function notifyPending(messageId = null) {
 
   sendNotification('notifications/claude/channel', {
     content,
-    meta: { recipient: 'root', messageIds: newMessages.map((m) => m.id) },
+    meta: { recipient: 'root', messageIds: JSON.stringify(newMessages.map((m) => m.id)) },
   });
 }
 
@@ -315,7 +298,6 @@ async function startDelivery() {
   let existing;
   try { existing = pendingRootSession(); } catch {}
   coord('attach', 'root', 'claude-code', existing?.native || '', endpoint);
-  notifyPending();
 }
 
 function pendingRootSession() {
@@ -324,6 +306,11 @@ function pendingRootSession() {
 
 // MCP message handler.
 function handleMessage(msg) {
+  if (msg.id === 'root-channel-ready' && msg.result !== undefined) {
+    channelReady = true;
+    notifyPending();
+    return;
+  }
   if (msg.method === 'initialize') {
     sendResponse(msg.id, {
       protocolVersion: '2024-11-05',
@@ -338,8 +325,8 @@ function handleMessage(msg) {
   }
 
   if (msg.method === 'notifications/initialized') {
-    initialized = true;
-    startDelivery().catch((error) => {
+    deliveryReady = startDelivery();
+    deliveryReady.catch((error) => {
       process.stderr.write(`mcp-root: ${error.message}\n`);
       process.exit(1);
     });
@@ -348,6 +335,11 @@ function handleMessage(msg) {
 
   if (msg.method === 'tools/list') {
     sendResponse(msg.id, { tools: TOOLS });
+    // In the native recovery run, replay before the client installed its channel
+    // handler was lost. Complete a round trip after discovery before replaying.
+    if (!channelReady) deliveryReady?.then(() => {
+      writeMessage({ jsonrpc: '2.0', id: 'root-channel-ready', method: 'ping' });
+    });
     return;
   }
 

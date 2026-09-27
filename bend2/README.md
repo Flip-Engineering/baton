@@ -175,7 +175,11 @@ the adapter for that message. The adapter starts one native root turn and the
 writer waits for it to finish. Its output is retained at `DATABASE.root.log`.
 A failed delivery leaves the committed message available in the pending inbox
 and makes the writer return an error. Attaching again or running the adapter
-with `--once` delivers pending messages.
+with `--once` delivers pending messages. Native initialization records the root's
+session ID. Later invocations resume that session, including after process loss.
+Keep the same database and harness configuration when reattaching. Codex retains
+its native session in its configured home; OMP stores root sessions in
+`DATABASE.root-sessions`.
 
 The database path comes first, followed by optional coordinator and native
 executable paths. The coordinator defaults to `.scratch/bend2/baton2`; native
@@ -186,9 +190,23 @@ OMP reads `OMP_ROOT_MODEL` (default `zai/glm-5.3-flash`) and
 the invocation. Each harness uses its existing login. Pass a launch wrapper
 as the native executable to set the harness's home or config environment.
 
-A Claude Code root loads `bend2/scripts/mcp-root.mjs` through its Channels MCP
-configuration. Once initialized, the server attaches a local socket endpoint
-and delivers pending messages. Subsequent report writers notify that endpoint;
+A Claude Code root uses an interactive session with a Channels MCP configuration.
+For example, save this as `root-mcp.json`, replacing `/repo` with absolute paths:
+
+```json
+{"mcpServers":{"baton-root":{"command":"node","args":["/repo/bend2/scripts/mcp-root.mjs","/repo/state.db","/repo/.scratch/bend2/baton2"]}}}
+```
+
+```sh
+claude --mcp-config root-mcp.json --dangerously-load-development-channels server:baton-root
+```
+
+Accept the local development-channel prompt. To recover a root, use the same
+command with `--resume NATIVE_SESSION` and the same database and harness
+configuration. Claude resumes its conversation and the channel delivers pending
+reports. Once initialized, the server attaches a local socket endpoint and
+delivers pending messages after the client's discovery handshake.
+Subsequent report writers notify that endpoint;
 the server reads the committed message and emits a Claude channel notification.
 The server stays attached to the Claude process. Its socket is created beside
 the database and closes with the server.
