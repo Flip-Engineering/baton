@@ -87,14 +87,30 @@ test('PF1/PF2: a bounded full poll returns only a sanitized authenticated proof 
   const serialized = JSON.stringify(result); assert.equal(serialized.includes(pageRaw.toString()), false); assert.equal(items.some((raw) => serialized.includes(raw.toString())), false); assert.equal(serialized.includes('opaque-cursor-3'), false); assert.equal(registry.reverifyPollSync(result.proof).proofDigest, result.proof.proofDigest);
 });
 
-test('PF1/PF2: missing poll authority and page/item max+1 fail before exposing a partial proof', async () => {
+test('PF1/PF2: missing poll authority refuses, and a poll result past the declared maxima is read whole', async () => {
   assert.throws(() => new AdvisoryFeedRegistry({ sources: { 'fixture.osv': { card: () => card(), verifyDelivery: async () => null } } }), /poll/);
-  for (const pages of [
-    [{ raw: Buffer.alloc(1025), items: [Buffer.from('{}')] }],
-    [{ raw: Buffer.from('{}'), items: Array.from({ length: 5 }, () => Buffer.from('{}')) }],
-    [{ raw: Buffer.alloc(1024), items: [Buffer.alloc(1024)] }, { raw: Buffer.alloc(1024), items: [Buffer.alloc(1)] }],
-  ]) {
-    const adapter = source({ poll: { schemaVersion: 1, providerId: 'fixture.osv', pollId: 'poll-over', observedAt: '2026-07-13T04:00:00.000Z', window: { fromSequence: 1, toSequence: 1 }, finalSequence: 1, cursorDigest: sha('cursor'), authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint, pages } }); const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.osv': adapter } });
-    await assert.rejects(registry.pollFull('fixture.osv'), (error) => error.code === 'provider_poll_oversize');
-  }
+  // #530: the registry's page, item and byte oversize refusals left — it judges the poll result's
+  // shape and the proof's integrity, and the provider adapter owns its own wire bound.
+  const items = [1, 2, 3, 4, 5].map((sequence) => Buffer.from(JSON.stringify({ sequence })));
+  const pollOver = {
+    schemaVersion: 1, providerId: 'fixture.osv', pollId: 'poll-over', observedAt: '2026-07-13T04:00:00.000Z',
+    window: { fromSequence: 1, toSequence: 5 }, finalSequence: 5, cursorDigest: sha('cursor'),
+    authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint,
+    // Three pages over the declared maxPages of 2, five items over maxItems of 4, one page over
+    // maxPageBytes of 1024, and 3073 bytes over maxTotalBytes of 2048.
+    pages: [
+      { raw: Buffer.alloc(1025), items: items.slice(0, 2) },
+      { raw: Buffer.alloc(1024), items: items.slice(2, 4) },
+      { raw: Buffer.alloc(1024), items: items.slice(4) },
+    ],
+  };
+  const adapter = source({ poll: pollOver });
+  adapter.verifyDelivery = async ({ raw }) => { const { sequence } = JSON.parse(raw); return receipt(raw, { deliveryId: `delivery-${sequence}`, sequence, advisoryIds: [] }); };
+  const result = await new AdvisoryFeedRegistry({ sources: { 'fixture.osv': adapter } }).pollFull('fixture.osv');
+  assert.deepEqual(result.receipts.map((row) => row.sequence), [1, 2, 3, 4, 5]);
+  assert.equal(result.proof.pageDigests.length, 3);
+  // The shape of a page is still judged: an empty item list refuses.
+  const malformed = source({ poll: { ...pollOver, pages: [{ raw: Buffer.from('{}'), items: [] }] } });
+  await assert.rejects(new AdvisoryFeedRegistry({ sources: { 'fixture.osv': malformed } }).pollFull('fixture.osv'),
+    (error) => error.code === 'provider_poll_invalid');
 });

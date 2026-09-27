@@ -35,7 +35,6 @@ import { createHash } from 'node:crypto';
 
 // View ceilings imported from the registry (Decision 8: the registry is the only source; no
 // module re-declares a cataloged lane's byte literal).
-const MAX_PROFILE_BYTES = FRAME_LIMITS['view.profile.bytes'].value;
 export const APPLICATION_PROFILE_RECORD_KIND = 'application.profile_registered';
 export const APPLICATION_PROFILE_RECORD_ACTOR = 'application:profile-registry';
 export const APPLICATION_WORKFLOW_RECORD_KIND = 'application.workflow_definition_bound';
@@ -1214,9 +1213,6 @@ export function normalizeProfile(name, value, repoId) {
   if (normalized.constraints.some((constraint) => constraint.startsWith('Baton deployment profile '))) {
     throw applicationError(`profile ${name} uses a reserved application constraint`, 'application_profile_invalid');
   }
-  if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_PROFILE_BYTES) {
-    throw applicationError(`profile ${name} exceeds the byte ceiling`, 'application_profile_invalid');
-  }
   return deepFreeze({ ...normalized, digest: digest(normalized) });
 }
 export function profileDefinition(profile) {
@@ -1814,10 +1810,6 @@ export function adoptionState(adoption) {
 export function _loadProfileRegistry(application) {
     const records = application.driver.coordination.eventsView().filter((event) => event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_PROFILE_RECORD_KIND);
-    if (records.length > MAX_RUN_RECORDS) {
-      throw applicationError('application profile registry exceeds its bounded lookup ceiling',
-        'application_profile_registry_oversize');
-    }
     for (const event of records) {
       const registered = normalizeProfileRegistryEvent(event);
       if (registered.repoId !== application.repoId) continue;
