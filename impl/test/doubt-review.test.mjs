@@ -168,7 +168,6 @@ const DOUBT_REFUSAL_CODES_EXPECTED = Object.freeze([
   'doubt_promote_not_authorized',
   'doubt_promote_stale',
   'doubt_promote_unknown',
-  'doubt_resolution_exceeded',
   'doubt_surface_unavailable',
 ]);
 const DISMISSAL_REASONS = Object.freeze(['deferred', 'duplicate', 'out_of_scope', 'unfounded']);
@@ -179,10 +178,6 @@ const OPEN_DOUBTS_ITEMS_ROW = Object.freeze({
 });
 const OPEN_DOUBTS_BYTES_ROW = Object.freeze({
   lane: 'view.open_doubts.bytes', class: 'view', value: 8192, unit: 'bytes', graceful: 'shed-flagged',
-});
-const DOUBT_RESOLUTION_BYTES_ROW = Object.freeze({
-  lane: 'doubt.resolution.bytes', class: 'admission', value: 4096, unit: 'bytes',
-  graceful: 'refused', enforcedAt: 'coordinator.resolveDoubt', refusalCode: 'doubt_resolution_exceeded',
 });
 
 // ---------------------------------------------------------------------------
@@ -506,7 +501,7 @@ test('C4: the read refuses a caller holding neither the lease nor the orchestrat
   assert.equal(ownerRead.ok, true, 'the lease holder reads the wave');
 });
 
-test('C5: the three D7 frame rows land in the ONE registry (RED — rows absent from FRAME_LIMITS)', () => {
+test('C5: the two view rows land in the ONE registry (RED — rows absent from FRAME_LIMITS)', () => {
   assert.deepEqual(
     { ...(FRAME_LIMITS['view.open_doubts.items'] ?? { lane: null }), value: FRAME_LIMITS['view.open_doubts.items']?.value ?? null },
     OPEN_DOUBTS_ITEMS_ROW,
@@ -517,12 +512,8 @@ test('C5: the three D7 frame rows land in the ONE registry (RED — rows absent 
     OPEN_DOUBTS_BYTES_ROW,
     'view.open_doubts.bytes = 8192 (bytes, shed-flagged) — the honest sum that renders one answered record',
   );
-  assert.deepEqual(
-    { ...(FRAME_LIMITS['doubt.resolution.bytes'] ?? { lane: null }), value: FRAME_LIMITS['doubt.resolution.bytes']?.value ?? null },
-    DOUBT_RESOLUTION_BYTES_ROW,
-    'doubt.resolution.bytes = 4096 (bytes, admission) — derived from board.detail',
-  );
-  assert.ok(8192 >= 1024 + 2048 + 4096, 'one answered record (question + context + resolution + wrappers) renders inside view.open_doubts.bytes (HOLE-1)');
+  assert.equal(FRAME_LIMITS['doubt.resolution.bytes'], undefined,
+    '#530: the resolution text carries no ceiling, so the registry declares no doubt.resolution.bytes row');
 });
 
 test('C6: the read is wave-scoped — a cross-run doubt never leaks and every record carries the requested waveId (RED — command missing)', async (t) => {
@@ -871,8 +862,6 @@ test('F1: the resolved event addresses the DOUBTING worker, never a different wo
   assert.equal(resolved.payload.doubtId, doubtId);
   assert.equal(resolved.payload.pushRequested, true);
   assert.equal(resolved.payload.resolution, 'the answer rides the #79 lane');
-  assert.ok(Buffer.byteLength(resolved.payload.resolution) <= (FRAME_LIMITS['doubt.resolution.bytes']?.value ?? 4096),
-    'the resolution is bounded by doubt.resolution.bytes');
   // The #79 durable id is doubt_answer:<doubtId> — the resolve receipt arms the push with the
   // pinned derivation (the render is #79's surface, GT6; the arming is this rung's). An impl that
   // arms a different durable id (e.g. doubt_answer:<workerId>) fails.
@@ -926,13 +915,12 @@ test('K3: the refusal family fires typed in each named scenario (RED — coordin
   // doubt_promote_unknown — a doubtId that is not a raised record.
   assert.equal(refusalCode(() => coordinator.resolveDoubt(receipt.runId, `doubt:${'f'.repeat(64)}`, 'answered', REVIEW_SESSION, { resolution: 'x' })),
     'doubt_promote_unknown', 'an unknown doubtId refuses doubt_promote_unknown');
-  // doubt_resolution_exceeded — the resolution exceeds the doubt.resolution.bytes row (4096);
-  // the doubt is still reviewed (the refusal transitions nothing), so the state guard cannot preempt.
-  const oversized = 'r'.repeat(4097);
-  assert.equal(refusalCode(() => coordinator.resolveDoubt(receipt.runId, doubtId, 'answered', REVIEW_SESSION, { resolution: oversized })),
-    'doubt_resolution_exceeded', 'an over-bound resolution refuses doubt_resolution_exceeded');
-  // doubt_promote_stale — the doubt is no longer in state reviewed (already resolved).
-  coordinator.resolveDoubt(receipt.runId, doubtId, 'answered', REVIEW_SESSION, { resolution: 'first answer' });
+  // doubt_promote_stale — the doubt is no longer in state reviewed (already resolved). #530: the
+  // resolution carries no byte ceiling, so the FIRST resolve below is the one that settles it, and a
+  // 4,097-byte answer is admitted.
+  const long = 'r'.repeat(4097);
+  const settled = coordinator.resolveDoubt(receipt.runId, doubtId, 'answered', REVIEW_SESSION, { resolution: long });
+  assert.equal(settled?.resolution ?? long, long, 'an over-4096-byte resolution is admitted, not refused');
   assert.equal(refusalCode(() => coordinator.resolveDoubt(receipt.runId, doubtId, 'answered', REVIEW_SESSION, { resolution: 'second answer' })),
     'doubt_promote_stale', 'a second resolve on the same doubt refuses doubt_promote_stale');
   // The lease family fires verbatim (M3 — one code per condition); the state guard is never the

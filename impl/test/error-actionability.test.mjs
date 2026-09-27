@@ -358,28 +358,15 @@ test('W6 (F3 × web): _authorize denial per precondition -> 403 + field in {orig
   }
 });
 
-test('W7 (F2 × web): the 503 fallback stays reachable ONLY by untyped internal throws; typed vocabulary codes never degrade to it (B5)', async (t) => {
-  // Leg A (holds at HEAD): an untyped internal throw maps to the sanitized 503 fallback.
+test('W7 (F2 × web): the 503 fallback stays reachable ONLY by untyped internal throws (B5)', async (t) => {
+  // An untyped internal throw maps to the sanitized 503 fallback. (The typed coaching arm is
+  // exercised by W4 with the spill lane's code; the decision.text lane left with #530.)
   const untyped = { web: webFixture(t, { command: async () => { throw new Error('internal provider exploded'); } }).web };
   const fallback = await untyped.web.execute(webContext(), webEnvelope());
   assert.equal(fallback.status, 503, 'W7-A: an untyped internal throw reaches the fallback');
   assert.equal(fallback.body.error.code, 'temporarily_unavailable', 'W7-A: the fallback is the sanitized code');
   assert.equal(fallback.body.error.message, 'command dispatch failed', 'W7-A: the internal message never leaks');
   assert.equal(String(fallback.body.error.message ?? '').includes('internal provider exploded'), false, 'W7-A: MN8 — no private provider detail');
-  // Leg B (RED at HEAD): a typed coaching code maps to its triple arm, never the 503 fallback.
-  const refusal = coachingRefusal({ code: 'decision_text_exceeded', lane: 'decision.text', cap: 4096, actual: 5_000 });
-  const typed = webFixture(t, {
-    command: async (name) => {
-      if (name === 'run.answer') throw refusal;
-      return { schemaVersion: 1, ok: true };
-    },
-  });
-  const typedResponse = await typed.web.execute(webContext(), webEnvelope({
-    command: 'run_answer', args: { runId: 'run-web-a', requestId: 'q-1', answer: { decision: 'allow' } },
-  }));
-  assert.notEqual(typedResponse.status, 503, 'W7-B: a typed vocabulary code never degrades to the fallback');
-  assertActionableTriple(typedResponse.body.error, { code: 'decision_text_exceeded', field: 'decision.text', label: 'W7-B' });
-  assertCoachingTriple(typedResponse.body.error, { cap: 4096, actual: 5_000, label: 'W7-B' });
 });
 
 test('W8 (F1 × web boundary): a route-shape ValidationError stays invalid_command; a vocabulary-code validator failure passes through its named code (R4)', async (t) => {
@@ -426,28 +413,6 @@ test('M1 (F1 × MCP): over-cap objective on baton_run_start -> the coaching code
   assert.notEqual(error.code, 'command_outcome_unknown', 'M1: the coaching code is allowlisted, not the fallthrough');
   assertActionableTriple(error, { code: 'spill_body_exceeded', label: 'M1' });
   assertCoachingTriple(error, { cap: 4096, actual, label: 'M1' });
-});
-
-test('M2 (F6 × MCP): over-cap decision.text on baton_decision_answer -> decision_text_exceeded + {cap, actual, unit, gracefulPath} in detail (R2)', async (t) => {
-  const refusal = coachingRefusal({ code: 'decision_text_exceeded', lane: 'decision.text', cap: 4096, actual: 5_000 });
-  const { server } = mcpFixture(t, {
-    command: async (name) => {
-      if (name === 'run.answer') throw refusal;
-      return { schemaVersion: 1, ok: true };
-    },
-  });
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_decision_answer',
-    arguments: {
-      repoId: REPO_ID, idempotencyKey: 'm2-ik', runId: 'run-a', requestId: 'req-1',
-      answer: { optionId: 'opt-1' },
-    },
-  });
-  const error = mcpError(response);
-  assert.notEqual(error.code, 'command_outcome_unknown', 'M2: the coaching code is allowlisted, not the fallthrough');
-  assertActionableTriple(error, { code: 'decision_text_exceeded', label: 'M2' });
-  assertCoachingTriple(error, { cap: 4096, actual: 5_000, label: 'M2' });
 });
 
 test('M3 (F7 × MCP): invalid_wave_start carries the offending member (index/role) in field (R2)', async (t) => {
@@ -498,38 +463,6 @@ test('M4 (F7/E4 × MCP): observe-path waves.progress refusal carries the same de
     'M4: the observe-path detail matches the stateful-path payload exactly');
 });
 
-test('M5 (F6 × MCP replay, B3/B5): over-cap decision.text replayed on a same-idempotencyKey retry of baton_decision_answer -> decision_text_exceeded with the coaching triple in detail (R2)', async (t) => {
-  const refusal = coachingRefusal({ code: 'decision_text_exceeded', lane: 'decision.text', cap: 4096, actual: 5_000 });
-  const { server, coordination } = mcpFixture(t, {
-    command: async (name) => {
-      if (name === 'run.answer') throw refusal;
-      return { schemaVersion: 1, ok: true };
-    },
-  });
-  await initialized(server);
-  const args = {
-    repoId: REPO_ID, idempotencyKey: 'm5-ik', runId: 'run-a', requestId: 'req-1',
-    answer: { optionId: 'opt-1' },
-  };
-  const first = await request(server, 2, 'tools/call', { name: 'baton_decision_answer', arguments: args });
-  // Fold (blueteam-160 §7.1): the row was BROKEN — this stage marker hard-coded the HEAD-red
-  // stateful-sink fallthrough, but M1/M2 force the SAME sink to allowlist the coaching code, so
-  // after the R2 repair the first call carries `decision_text_exceeded` and the old equality
-  // failed. Relaxed to accept both: the row's TRUE pin is the replay-sink assertions below,
-  // which must never lose the coaching code on a same-idempotencyKey retry.
-  assert.ok(['command_outcome_unknown', 'decision_text_exceeded'].includes(mcpError(first).code),
-    'stage: the first call fails at HEAD via command_outcome_unknown and carries decision_text_exceeded after the R2 repair');
-  // Same idempotencyKey retry — RECONCILABLE (mcp-northbound.mjs:141): the replayed call MUST
-  // carry the coaching code + triple on the replay sink (mcp-northbound.mjs:1587-1591), never
-  // command_outcome_unknown.
-  const replay = await request(server, 3, 'tools/call', { name: 'baton_decision_answer', arguments: args });
-  const replayError = mcpError(replay);
-  assert.notEqual(replayError.code, 'command_outcome_unknown', 'M5: the replay path carries the typed coaching code');
-  assertActionableTriple(replayError, { code: 'decision_text_exceeded', label: 'M5' });
-  assertCoachingTriple(replayError, { cap: 4096, actual: 5_000, label: 'M5' });
-  assert.ok(coordination.events().some((event) => event.kind === 'mcp.call_admitted'),
-    'M5: the first call admitted an mcp.call ledger row');
-});
 
 // -------------------------------------------------------------------------------------------
 // C1-C3 — F4/F8/F9 × CLI

@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { TextDecoder } from 'node:util';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalOperationForCommand, canonicalRunPhase } from './application-semantics.mjs';
 import { parseBatonTopCli } from './baton-top.mjs';
-import { FRAME_LIMITS, FRAME_LIMITS_DIGEST } from './limits.mjs';
+import { FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
@@ -2500,8 +2500,9 @@ export function readGitHubIssue({ issue, exec = execFileSync, repo = null } = {}
   if (typeof repo === 'string' && repo.length > 0) argv.push('--repo', repo);
   let raw;
   try {
-    raw = exec('gh', argv,
-      { encoding: 'utf8', maxBuffer: FRAME_LIMITS['context_package.source_bytes'].value * 2 });
+    // No byte bound on the reader: gh's own answer is what the root read, and the branch's bytes are
+    // the document's.
+    raw = exec('gh', argv, { encoding: 'utf8', maxBuffer: Infinity });
   } catch (cause) {
     const observed = `${cause?.stderr ?? ''}\n${cause?.message ?? ''}`;
     if (cause?.code === 'ENOENT') {
@@ -2550,10 +2551,9 @@ export function readGitHubIssue({ issue, exec = execFileSync, repo = null } = {}
  *   • the path escapes the checkout, or is not a document this reader can use → the
  *     `context_doc_unreadable` refusal naming the path (an operator error: a mistyped or escaping
  *     path is never quietly a gap);
- *   • the document exceeds the branch ceiling → `context_source_oversize` with its measured bytes.
+ *   • the document's size carries no ceiling: the branch is the document the seat must read.
  */
 function readContextDoc(path, repoRoot) {
-  const row = FRAME_LIMITS['context_package.source_bytes'];
   const unreadable = () => contextReadRefusal('context_doc_unreadable',
     `context doc ${path} is outside this checkout or unreadable`,
     { field: 'path', detail: { path } });
@@ -2578,11 +2578,6 @@ function readContextDoc(path, repoRoot) {
   let bytes;
   try { bytes = readFileSync(real); }
   catch { throw unreadable(); }
-  if (bytes.length > row.value) {
-    throw contextReadRefusal('context_source_oversize',
-      `${path} is ${bytes.length} bytes (cap ${row.value}); the context package branch row is ${row.lane}`,
-      { field: 'path', detail: { path, bytes: bytes.length, limit: row.value, lane: row.lane } });
-  }
   return { bytes };
 }
 

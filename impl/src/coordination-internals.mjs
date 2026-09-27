@@ -167,7 +167,7 @@ export const COORDINATION_QUARANTINE_TEMP_PREFIX = 'quarantine-temp-';
 
 export const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
-export function boundedText(value, maxBytes) { return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'); }
+export function boundedText(value, maxBytes = Number.MAX_SAFE_INTEGER) { return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'); }
 
 export function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);

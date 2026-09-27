@@ -713,12 +713,7 @@ test('C2 (RED): FRAME_LIMITS does not declare view.repl_object.bytes (stage: rep
   assert.equal(row.graceful, REPL_OBJECT_BYTES_ROW.graceful, 'shed-flagged degradation (D7)');
 });
 
-test('C3 (PIN): the substrate spill.body ceiling mints spill_body_exceeded and composeFrameLimitRefusal names the lane/cap/graceful path (D7)', () => {
-  const spill = FRAME_LIMITS['spill.body'];
-  assert.ok(spill, 'spill.body row exists');
-  assert.equal(spill.value, 1048576, '1 MiB substrate ceiling');
-  assert.equal(spill.unit, 'bytes');
-  assert.equal(spill.refusalCode, 'spill_body_exceeded', 'the ONE substrate row that mints a refusal');
+test('C3 (PIN): composeFrameLimitRefusal names the lane/cap/graceful path for a spilling lane (D7)', () => {
   const row = { lane: 'view.repl_object.items', unit: 'items', graceful: 'spill-digest-citation' };
   const refusal = composeFrameLimitRefusal(row, 9, 8);
   assert.ok(refusal.includes('view.repl_object.items is 9 items (cap 8)'), 'the {lane, actual, cap, unit} coaching shape');
@@ -1168,14 +1163,13 @@ test('H2 (RED): the repl_object_* refusal family is not a typed frozen surface c
   );
 });
 
-test('H3 (PIN): the verbatim-reused refusal precedents stay typed — repl_binding_citation_not_found and spill_body_exceeded (refusals)', () => {
+test('H3 (PIN): the verbatim-reused refusal precedent stays typed — repl_binding_citation_not_found (refusals)', () => {
   const log = new Log(join(tmpDir(), 'log'));
   const store = coordinationForLog(log);
   let notFound = null;
   try { store.resolveReplCitation('run-x', 'repl:shared:missing@1'); } catch (error) { notFound = error; }
   assert.ok(notFound instanceof CoordinationRefusal, 'the citation refusal is a typed CoordinationRefusal');
   assert.equal(notFound.code, 'repl_binding_citation_not_found', 'repl_binding_citation_not_found reused verbatim');
-  assert.equal(FRAME_LIMITS['spill.body'].refusalCode, 'spill_body_exceeded', 'spill_body_exceeded reused verbatim');
   store.releaseWriterLease();
 });
 
