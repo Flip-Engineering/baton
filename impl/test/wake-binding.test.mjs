@@ -113,7 +113,8 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   const contribution = frames.find((frame) => frame.wakeClass === 'contribution_recorded');
   assert.equal(contribution.swarmId, swarmId);
   assert.equal(contribution.subject.id, 'contribution-1');
-  assert.equal(contribution.next, `baton swarm check ${swarmId} worker contribution-1 CHECK_ID`);
+  assert.equal(contribution.next,
+    `baton_swarm_view / baton swarm view ${swarmId} --projection contributions`);
 
   // The filter is the same one the HTTP feed reads: a class outside it never crosses the binding.
   store.recordSwarm('swarm.closed', { swarmId, reason: 'proof complete' }, { actor: 'test:root', key: 'binding:4' });

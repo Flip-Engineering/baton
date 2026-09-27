@@ -2059,7 +2059,7 @@ function cliRunVerbRefusal(action, recognized, next) {
     const verb = neighbors[0];
     if (verb === 'follow') {
       return {
-        message: 'follow is not shipped by the Run application; use run start OBJECTIVE to begin, or run status RUN_ID to read a Run',
+        message: 'follow is not shipped by the Run application; use run status RUN_ID --follow to follow a Run, or run start OBJECTIVE to begin',
         code: 'cli_command_unavailable',
       };
     }
@@ -3508,23 +3508,6 @@ async function runSwarmGuideCli(parsed, client) {
 
 function swarmHasLiveParticipant(view) {
   return (view.participants ?? []).some((row) => LIVE_RUNTIME_STATES.has(row.runtime?.state));
-}
-
-/** `baton swarm watch --follow`: block on the runtime's own wake (swarm.watch), emit a summary
- * for every matched event, and return when the swarm is closed and nothing in it is alive. */
-export async function followSwarm(parsed, client, options = {}) {
-  let cursor = parsed.afterSeq;
-  let view = null;
-  for (;;) {
-    view = await watchSwarmCommand(client, parsed.swarmId, {
-      swarmId: parsed.swarmId, ...(cursor !== undefined ? { afterSeq: cursor } : {}),
-      ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
-    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
-    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
-    cursor = view?.cursor;
-    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) return view;
-    if (typeof options.shouldStop === 'function' && await options.shouldStop(view)) return view;
-  }
 }
 
 /** Issue #339/#356: the bounded watch under the SAME wake-class filter the follow leg takes. Each
@@ -5754,7 +5737,6 @@ export async function runBatonCli(parsed, client, options = {}) {
   }
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
   if (parsed.kind === 'wake_page') return readDeploymentWakePage(parsed, client);
-  if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);
   if (parsed.kind === 'stream') {
     // Issue #365: the entry passes `{signal, onFollowPage}` for every streaming verb — the SAME

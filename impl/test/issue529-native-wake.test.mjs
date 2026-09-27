@@ -277,7 +277,7 @@ test('529-g: a terminal wake line names the command that acts on it', async (t) 
   await f.recruit('gamma');
   const block = wakeBlockOf(f.seat('gamma').brief);
 
-  assert.match(block, /left[^\n]*· next: baton swarm view wake-529/u,
+  assert.match(block, /left[^\n]*· next: baton_swarm_view \/ baton swarm view wake-529/u,
     'a terminal class carries the command that acts on it, with the swarm filled in from the frame');
   assert.doesNotMatch(block, /recruited[^\n]*· next:/u,
     'a non-terminal class names no follow-up command');
@@ -306,7 +306,7 @@ test('529-h: a deployment-scoped event that resolves to this lane rides the bloc
   const block = wakeBlockOf(f.seat('delta').brief);
   assert.match(block, new RegExp(`seq ${paused.event.seq} · paused`, 'u'),
     'the predecessor lane\'s paused turn rides the successor\'s block');
-  assert.match(block, new RegExp(`paused[^\\n]*· next: baton swarm guide ${SWARM_ID} alpha`, 'u'),
+  assert.match(block, new RegExp(`paused[^\\n]*· next: baton_swarm_guide \\/ baton swarm guide ${SWARM_ID} alpha`, 'u'),
     'the deployment-scoped line names the command that acts on it, with the lane resolved from attribution');
 });
 

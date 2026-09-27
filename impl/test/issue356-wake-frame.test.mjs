@@ -175,7 +175,9 @@ test('356-a: a bounded watch on a swarm larger than the old ceiling answers the 
   assert.equal(typeof answer.watch.event.ts, 'string', 'the wake names when the row landed');
   assert.equal(typeof answer.watch.event.actor, 'string', 'the wake names the actor');
   assert.deepEqual(answer.watch.event.subject, { kind: 'contribution', id: 'c-1' });
-  assert.match(answer.watch.event.next ?? '', /swarm check/, 'the wake names the next command');
+  assert.equal(answer.watch.event.next,
+    `baton_swarm_view / baton swarm view ${SWARM_ID} --projection contributions`,
+    'the wake names the MCP tool and CLI command for reading contributions');
 
   // The view under the DEFAULT projection — outline, not the megabyte full record.
   assert.equal(answer.projection, 'outline', 'the bounded watch defaults the projection to outline');

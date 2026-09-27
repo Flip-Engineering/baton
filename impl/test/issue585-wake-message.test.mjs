@@ -243,7 +243,7 @@ test('585-7 (D6.2): a wake line opens with the derived status; an event-shaped c
   };
   // `left` derives (done), so the seat reads the same word the rest of Baton spells for it.
   assert.match(lineFor('left'), /^- ✓ done — \[seq \d+ · left · ts /u);
-  assert.match(lineFor('left'), /· next: baton swarm view wake-585$/u, 'the follow-up command stays');
+  assert.match(lineFor('left'), /· next: baton_swarm_view \/ baton swarm view wake-585$/u, 'the follow-up command stays');
   // `recruited` is an event, not a state: the line keeps its unprefixed shape.
   assert.match(lineFor('recruited'), /^- \[seq \d+ · recruited · ts /u);
 });

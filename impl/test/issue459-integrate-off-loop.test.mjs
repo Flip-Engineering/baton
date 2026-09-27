@@ -29,9 +29,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -42,6 +42,10 @@ import { validateSwarmCommand } from '../src/swarm-contract.mjs';
 import { wakeClassFor } from '../src/wake-stream.mjs';
 import { HostCapacityAuthority } from '../src/host-capacity.mjs';
 import { parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { WebNorthbound, createLocalAuthenticatedWebServer } from '../src/web-northbound.mjs';
+import { WebSessionStore } from '../src/web-auth.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 // The pool this file's deployments supervise their out-of-process steps with, read through a dynamic
 // import: at HEAD the export does not exist, and a static named import would fail the whole FILE to
@@ -94,7 +98,7 @@ function regeneratorSource(artifact) {
  * sleep the row asked for, records WHEN it finished (the marker the rows date their observations
  * against), then writes the verdict document the gate run records — green, or red with the
  * unexpected rows the row names. */
-function runnerSource({ sleepMs, green, unexpected, markerPath, die = false }) {
+function runnerSource({ sleepMs, green, unexpected, markerPath, die = false, releasePath = null }) {
   // The die mode: stream two REAL per-file result blocks the way run-suite prints them, then
   // kill the runner's own process before any marker or verdict exists — a run that lost its
   // supervisor mid-flight, exactly the shape #546's partial verdict names.
@@ -102,7 +106,9 @@ function runnerSource({ sleepMs, green, unexpected, markerPath, die = false }) {
     ? "process.stderr.write('# file test/gate-a.test.mjs (10 ms)\\n# tests 2\\n# pass 2\\n# fail 0\\n# file test/gate-b.test.mjs (5 ms)\\n# tests 1\\n# pass 0\\n# fail 1\\n');\n"
       + "process.kill(process.pid, 'SIGKILL');\n"
     : '';
-  return "import { writeFileSync } from 'node:fs';\n"
+  return "import { existsSync, writeFileSync } from 'node:fs';\n"
+    + (releasePath === null ? '' : `writeFileSync(${JSON.stringify(`${releasePath}.pid`)}, String(process.pid));\n`
+      + `while (!existsSync(${JSON.stringify(releasePath)})) await new Promise(resolve => setTimeout(resolve, 20));\n`)
     + `await new Promise((resolve) => setTimeout(resolve, ${sleepMs}));\n`
     + dieLeg
     + `writeFileSync(${JSON.stringify(markerPath)}, 'finished\\n');\n`
@@ -161,6 +167,7 @@ async function world(t, { gate = {} } = {}) {
   const repo = join(directory, 'repo');
   const markerPath = join(directory, 'gate-run-finished.marker');
   const leakPidPath = join(directory, 'gate-leak.pid');
+  const releasePath = gate.hold === true ? join(directory, 'release-gate') : null;
   // The host lease namespace this landing admits through: a directory of its own, so no row of
   // this file ever queues in the machine's shared verdict namespace (the authority's root is the
   // one thing a deployment names by environment).
@@ -188,7 +195,7 @@ async function world(t, { gate = {} } = {}) {
     write(repo, script, regeneratorSource(`${script.split('/').at(-1).replace(/\.mjs$/u, '')}.json`));
   }
   write(repo, 'impl/scripts/run-suite.mjs', gate.noVerdict !== true
-    ? runnerSource({ sleepMs, green, unexpected, markerPath, die })
+    ? runnerSource({ sleepMs, green, unexpected, markerPath, die, releasePath })
     : (leak === true ? leakyUnjudgedRunnerSource(markerPath, leakPidPath) : unjudgedRunnerSource(markerPath)));
   // The install the repository actually carries, under a sub-directory (#451): the integration
   // checkout links it and writes the projection-exclude file beside the checkout, which is the
@@ -283,7 +290,7 @@ async function world(t, { gate = {} } = {}) {
     .filter((name) => name.startsWith('integrate-') && !name.endsWith('.projection.exclude'));
   return {
     directory, repo, publishRemote, store, runtime, pool, hostCapacity, capacityRoot, integration, markerPath,
-    tip, targetHead, observedHead,
+    tip, targetHead, observedHead, releasePath,
     driverRows, integrateDriverRows, failureRows, sweptRows, wtRoot, leftoverCheckouts,
   };
 }
@@ -299,6 +306,71 @@ async function observe(probe, boundMs = 5_000) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+// #609: backlog-lead17t reported that the tool host killed its integrate client after 300 s
+// on 2026-09-26. Kill a client while its resident-owned gate is running, then read the outcome.
+test('609: a killed CLI client leaves its landing running through the durable verdict and cleanup', needsGit, async (t) => {
+  const w = await world(t, { gate: { hold: true } });
+  const repoId = 'repo-609';
+  const origin = 'https://control.example.test';
+  const sessions = new WebSessionStore(join(w.directory, 'sessions'));
+  const issued = sessions.issue({
+    userId: 'operator-609', authMethod: 'bearer', capabilities: ['observe', 'control'],
+    repoIds: [repoId], ttlMs: 600_000,
+  }, { actor: 'fixture-609' });
+  const web = new WebNorthbound({
+    coordinator: {}, coordination: w.store, sessions, repoIds: [repoId], allowedOrigins: [origin],
+    application: {
+      repoId,
+      card: () => ({ repoId, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+      authorizeReplay: async () => true,
+      command: (name, args, caller, context) => w.runtime.command(name, args, caller, context),
+    },
+  });
+  const socketDir = fixtureSocketRoot('bt-609-');
+  const socketPath = join(socketDir, 'resident.sock');
+  const server = createLocalAuthenticatedWebServer(web);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(socketPath, resolve);
+  });
+  chmodSync(socketPath, 0o600);
+  t.after(async () => {
+    await server.batonShutdown();
+    rmSync(socketDir, { recursive: true, force: true });
+  });
+  const cliModule = new URL('../src/application-cli.mjs', import.meta.url).href;
+  const transportModule = new URL('../src/local-web-transport.mjs', import.meta.url).href;
+  const config = { baseUrl: 'https://resident.baton.test', origin, repoId, token: issued.token, socketPath };
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `
+    import { BatonWebClient, parseBatonCli, runBatonCli } from ${JSON.stringify(cliModule)};
+    import { createLocalSocketFetch } from ${JSON.stringify(transportModule)};
+    const config = JSON.parse(process.argv[1]);
+    const client = new BatonWebClient({ ...config, commandTimeoutMs: null, pollMs: 20,
+      fetchImpl: createLocalSocketFetch(config), clock: Date.now,
+      sleep: ms => new Promise(resolve => setTimeout(resolve, ms)) });
+    const result = await runBatonCli(parseBatonCli(['swarm', 'integrate', 's1', 'contribution:1', '--onto', 'master']), client);
+    process.stdout.write(JSON.stringify(result));
+  `, JSON.stringify(config)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  t.after(() => child.kill('SIGKILL'));
+  const running = await observe(() => existsSync(`${w.releasePath}.pid`), 20_000);
+  assert.ok(running, `the client started the gate: ${stderr}`);
+  const gatePid = Number(readFileSync(`${w.releasePath}.pid`, 'utf8'));
+  child.kill('SIGKILL');
+  assert.equal((await exited).signal, 'SIGKILL');
+  assert.doesNotThrow(() => process.kill(gatePid, 0), 'the resident still owns a live gate');
+  writeFileSync(w.releasePath, 'continue\n');
+  const landed = await observe(() => w.store.eventsView().find(event =>
+    event.kind === 'swarm.contribution_integrated'), 20_000);
+  assert.ok(landed, `the landing records its outcome after the client dies: ${JSON.stringify(w.failureRows())}`);
+  assert.equal(git(w.repo, 'rev-parse', 'master'), landed.value.payload.targetHeadAfter);
+  assert.deepEqual(w.failureRows(), []);
+  assert.deepEqual(w.leftoverCheckouts(), []);
+  assert.throws(() => process.kill(gatePid, 0), { code: 'ESRCH' }, 'the gate process exited');
+});
 
 // ── (a) the resident answers while a landing's gate run is in flight ─────────────────────────────
 

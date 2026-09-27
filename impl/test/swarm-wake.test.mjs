@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MockAdapter, openBaton } from '../src/index.mjs';
-import { followSwarm, followWakes, parseBatonCli, swarmWakeSummary, watchSwarmFiltered } from '../src/application-cli.mjs';
+import { followWakes, parseBatonCli, swarmWakeSummary, watchSwarmFiltered } from '../src/application-cli.mjs';
 import { openWakeStream } from '../src/wake-stream.mjs';
 import { startWakeResident, wakeFrame } from './wake-resident-double.mjs';
 
@@ -89,23 +89,6 @@ test('the CLI parses swarm watch --follow into the deployment wake stream, pinne
   assert.throws(() => parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--after-seq', '5']),
     (error) => String(error.message).includes('--since'),
     'the stream resumes from the wake cursor, never the old --after-seq spelling');
-});
-
-test('followSwarm emits one summary per matched event and returns when the swarm is closed and nothing is alive', async () => {
-  const views = [
-    { swarmId: 's', status: 'open', cursor: 5, watch: { reason: 'event', event: { seq: 5, kind: 'turn.paused', payloadKind: null } }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'working', turn: 'paused' } }], attention: [], contributions: { c1: {} }, work: {} },
-    { swarmId: 's', status: 'open', cursor: 5, watch: { reason: 'timeout', event: null }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'working', turn: 'paused' } }], attention: [], contributions: { c1: {} }, work: {} },
-    { swarmId: 's', status: 'closed', cursor: 9, watch: { reason: 'event', event: { seq: 9, kind: 'driver.recorded', payloadKind: 'swarm.closed' } }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'dead', turn: null } }], attention: [{ kind: 'participant_runtime_dead', participantId: 'a', state: 'dead' }], contributions: { c1: {} }, work: {} },
-  ];
-  const calls = [];
-  const client = { async command(name, args) { calls.push([name, args.afterSeq ?? null]); return views.shift(); } };
-  const pages = [];
-  const last = await followSwarm({ swarmId: 's', afterSeq: 2, idempotencyKey: 'k' }, client, { onFollowPage: async (page) => { pages.push(page); } });
-  assert.equal(last.status, 'closed');
-  assert.deepEqual(calls, [['swarm.watch', 2], ['swarm.watch', 5], ['swarm.watch', 5]]);
-  assert.deepEqual(pages.map((page) => [page.kind, page.seq, page.event?.kind, page.attention.map((row) => row.kind)]),
-    [['baton.swarm_wake', 5, 'turn.paused', []], ['baton.swarm_wake', 9, 'driver.recorded', ['participant_runtime_dead']]]);
-  assert.deepEqual(swarmWakeSummary(views[0] ?? last).participants[0], { participantId: 'a', status: 'active', state: 'dead', turn: null });
 });
 
 test('a real resident wakes a real `baton swarm watch --follow` child on coordination rows and ends it on close', { timeout: 60_000 }, async (t) => {
