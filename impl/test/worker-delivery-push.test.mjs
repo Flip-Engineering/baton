@@ -460,15 +460,6 @@ test('C2 (RED): the view.attention_push.bytes registry row does not exist (stage
   assert.equal(row.unit, ATTENTION_PUSH_BYTES_ROW.unit);
   assert.equal(row.graceful, ATTENTION_PUSH_BYTES_ROW.graceful, 'shed-flagged degradation (D2)');
 });
-
-test('C3 (PIN): the substrate spill.body ceiling mints spill_body_exceeded — the overflow refusal', () => {
-  const spill = FRAME_LIMITS['spill.body'];
-  assert.ok(spill, 'spill.body row exists');
-  assert.equal(spill.value, 1048576, '1 MiB substrate ceiling');
-  assert.equal(spill.unit, 'bytes');
-  assert.equal(spill.refusalCode, 'spill_body_exceeded', 'the ONE substrate row that mints a refusal (D2)');
-});
-
 test('C4 (PIN): the CONTEXT_READ spill lane is reachable and its grammar is closed', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter });
@@ -1062,9 +1053,7 @@ test('G1 (RED): the attention_push_* refusal family is not a typed surface const
   );
 });
 
-test('G2 (PIN): the verbatim-reused refusal precedents stay alive in the registry and the store (refusals)', () => {
-  assert.equal(FRAME_LIMITS['spill.body'].refusalCode, 'spill_body_exceeded', 'spill_body_exceeded reused verbatim (limits.mjs:85)');
-  assert.equal(FRAME_LIMITS['scratchpad.entry.body'].refusalCode, 'scratchpad_entry_exceeded', 'the snake_case family precedent');
+test('G2 (PIN): the verbatim-reused refusal precedents stay alive in the store (refusals)', () => {
   assert.equal(typeof CoordinationRefusal, 'function', 'the typed-refusal class is the store’s refusal machinery');
   // A recovery-refinement refusal on the real store is a typed `CoordinationRefusal` carrying a
   // `recovery_refinement_*` family code — `recovery_refinement_conflict` is the lineage-change

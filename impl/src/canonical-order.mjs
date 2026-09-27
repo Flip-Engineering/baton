@@ -3,24 +3,11 @@
 
 export const CANONICAL_ORDER_VERSION = 1;
 export const CANONICAL_CASE_FOLD_VERSION = 1;
-// Issue #500: the canonical-order implementation ceilings. A deployment-supplied policy
-// (normalizeCanonicalOrderPolicy) and the in-memory JSON helper are judged against these,
-// never against a caller-supplied bound. The ledger ceiling holds 64 max-size events
-// (1 GiB / 16 MiB), so one full event can never be a sizable fraction of the ledger it lands
-// in; the receipt ceiling is one wire frame (1 MiB), so a receipt composes with the transport
-// frame beside the ledger it attests, and the depth ceiling is twice the JSON helper's own
-// default (128). The numbers themselves are operator-declared: no file in the repository
-// derives them, and moving one moves every policy judged against it.
-//
-// Issue #530: the item ceiling left with the count ceilings it capped. It was the bound the sort
-// helper refused an array past, the value a policy's `maxEvents` could not exceed, and the cap on
-// the JSON helper's `maxNodes` — a count a caller brought, refused for exceeding a number nothing
-// derives. The sort now orders whatever it is given, and a policy or a JSON caller declares its
-// own bounds with no implementation number behind them.
-const MAX_CANONICAL_DEPTH = 256;
-const MAX_LEDGER_BYTES = 1024 * 1024 * 1024;
-const MAX_EVENT_BYTES = 16 * 1024 * 1024;
-const MAX_RECEIPT_BYTES = 1024 * 1024;
+// Issue #530: the implementation ceilings left. The item ceiling went first (the bound the sort
+// helper refused an array past); the JSON helper's `maxDepth`/`maxNodes` and the policy numbers
+// they judged go with them — a caller's structure is serialized whole, and a deployment's declared
+// policy is its own to choose. What stays is shape: a plain JSON value, no cycle, no accessor, no
+// non-finite number.
 
 function closedOptions(value, fields, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -51,9 +38,7 @@ export function normalizeCanonicalOrderPolicy(value) {
   for (const field of ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes']) {
     if (!Number.isSafeInteger(value[field]) || value[field] <= 0) throw new TypeError(`canonical order policy ${field} is invalid`);
   }
-  if (value.maxLedgerBytes > MAX_LEDGER_BYTES || value.maxEventBytes > MAX_EVENT_BYTES
-    || value.maxReceiptBytes > MAX_RECEIPT_BYTES
-    || value.maxEventBytes > value.maxLedgerBytes) throw new TypeError('canonical order policy exceeds implementation ceilings');
+  if (value.maxEventBytes > value.maxLedgerBytes) throw new TypeError('canonical order policy event bound exceeds its ledger bound');
   return Object.freeze({
     maxLedgerBytes: value.maxLedgerBytes, maxEventBytes: value.maxEventBytes,
     maxEvents: value.maxEvents, maxReceiptBytes: value.maxReceiptBytes,
@@ -91,17 +76,9 @@ export function sortCanonicalStrings(values) {
   return [...values].sort(compareCanonicalStrings);
 }
 
-export function canonicalJson(value, options = { maxDepth: 128, maxNodes: 1_000_000 }) {
-  closedOptions(options, ['maxDepth', 'maxNodes'], 'canonical JSON');
-  if (!Number.isSafeInteger(options.maxDepth) || options.maxDepth < 0 || options.maxDepth > MAX_CANONICAL_DEPTH
-    || !Number.isSafeInteger(options.maxNodes) || options.maxNodes <= 0) {
-    throw new RangeError('canonical JSON bounds are invalid');
-  }
-  const active = new Set(); let nodes = 0;
-  const visit = (item, depth) => {
-    nodes += 1;
-    if (nodes > options.maxNodes) throw new RangeError('canonical JSON exceeds its node bound');
-    if (depth > options.maxDepth) throw new RangeError('canonical JSON exceeds its depth bound');
+export function canonicalJson(value) {
+  const active = new Set();
+  const visit = (item) => {
     if (item === null || typeof item === 'string' || typeof item === 'boolean') return item;
     if (typeof item === 'number') {
       if (!Number.isFinite(item)) throw new TypeError('canonical JSON number is not finite');
@@ -117,18 +94,18 @@ export function canonicalJson(value, options = { maxDepth: 128, maxNodes: 1_000_
     }
     active.add(item);
     try {
-      if (Array.isArray(item)) return item.map((child) => visit(child, depth + 1));
+      if (Array.isArray(item)) return item.map((child) => visit(child));
       const result = {};
       for (const key of Object.keys(item).sort(compareCanonicalStrings)) {
         if (item[key] === undefined || typeof item[key] === 'function' || typeof item[key] === 'symbol') {
           throw new TypeError('canonical JSON contains a non-JSON value');
         }
         Object.defineProperty(result, key, {
-          value: visit(item[key], depth + 1), enumerable: true, writable: true, configurable: true,
+          value: visit(item[key]), enumerable: true, writable: true, configurable: true,
         });
       }
       return result;
     } finally { active.delete(item); }
   };
-  return visit(value, 0);
+  return visit(value);
 }

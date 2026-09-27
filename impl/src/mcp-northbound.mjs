@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { replObjectRefusal } from './messages.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
@@ -872,7 +872,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, runId, workerId: runId, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
       body: { type: 'string', minLength: 1 },
-      budget: { type: 'integer', minimum: 1, maximum: MAX_MESSAGE_DEPTH_BUDGET },
+      budget: { type: 'integer', minimum: 1 },
     }, ['repoId', 'kind', 'body']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -1786,7 +1786,7 @@ function validateArguments(name, args, maxWaitMs = null) {
     if (action === 'resume' && (!record(args.ref) || !nonempty(args.cursor) || args.cursor.length > 4_096 || ['args', 'claim', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
     if (action === 'reverify' && (!record(args.claim) || !record(args.args) || ['ref', 'cursor', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
     if (action === 'push' && (args.name !== 'cartographer-quartermaster' || args.op !== 'orientation.slice'
-      || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note) || Buffer.byteLength(args.note) > FRAME_LIMITS['orientation.note'].value
+      || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note)
       || !Number.isSafeInteger(args.expectedFence) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
   }
   if (name === 'fleet_reuse_decide' && (!nonempty(args.need) || !['borrow', 'build'].includes(args.choice) || !nonempty(args.rationale)

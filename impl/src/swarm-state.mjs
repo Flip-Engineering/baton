@@ -1,7 +1,7 @@
 // Durable domain state for living Baton swarms.
 //
 // Extracted deterministic event fold compatible with CoordinationStore transaction
-// snapshots/replay. Mirrors the orchestrator-plan.mjs coordination lane pattern:
+// snapshots/replay. Mirrors the coordination lane's deterministic-fold pattern:
 // a mutable Map of swarm rows is the projection surface; fold functions produce
 // frozen immutable replacement rows; no external effects in replay.
 //

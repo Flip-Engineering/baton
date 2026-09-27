@@ -37,10 +37,6 @@ export class AcpJsonRpcProcess {
     this.cwd = options.cwd;
     this.env = options.env;
     this.setupTimeoutMs = options.setupTimeoutMs;
-    this.maxFrameBytes = options.maxFrameBytes ?? 1024 * 1024;
-    if (!Number.isSafeInteger(this.maxFrameBytes) || this.maxFrameBytes <= 0) {
-      throw new TypeError('AcpJsonRpcProcess: maxFrameBytes must be a positive safe integer');
-    }
     this.reapTimeoutMs = options.reapTimeoutMs ?? 2000;
     if (!Number.isSafeInteger(this.reapTimeoutMs) || this.reapTimeoutMs <= 0) {
       throw new TypeError('AcpJsonRpcProcess: reapTimeoutMs must be a positive safe integer');
@@ -184,10 +180,6 @@ export class AcpJsonRpcProcess {
       let encoded;
       try { encoded = `${JSON.stringify(frame)}\n`; }
       catch (error) { reject(error); return; }
-      if (Buffer.byteLength(encoded) > this.maxFrameBytes) {
-        reject(new AcpProtocolError('outbound ACP frame exceeds byte ceiling', 'wire_frame_oversize'));
-        return;
-      }
       try { this.child.stdin.write(encoded, (error) => error ? reject(error) : resolve(true)); }
       catch (error) { reject(error); }
     });
@@ -200,11 +192,9 @@ export class AcpJsonRpcProcess {
     while ((newline = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, newline);
       this.buffer = this.buffer.slice(newline + 1);
-      if (Buffer.byteLength(line) > this.maxFrameBytes) { this.#fail(new AcpProtocolError('ACP frame exceeds byte ceiling', 'wire_frame_oversize')); return; }
       if (line.trim()) this.#onFrame(line);
       if (this.failure) return;
     }
-    if (Buffer.byteLength(this.buffer) > this.maxFrameBytes) this.#fail(new AcpProtocolError('ACP frame exceeds byte ceiling', 'wire_frame_oversize'));
   }
 
   #onFrame(line) {

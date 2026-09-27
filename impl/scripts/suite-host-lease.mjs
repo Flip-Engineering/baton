@@ -86,7 +86,7 @@ function positiveInt(value) {
 }
 
 /** The runner's own queue poll interval, when the operator pins one. */
-export function suiteLeasePollMs(env = process.env) {
+function suiteLeasePollMs(env = process.env) {
   return positiveInt(env?.BATON_HOST_CAPACITY_POLL_MS);
 }
 

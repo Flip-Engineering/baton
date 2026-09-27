@@ -25,7 +25,7 @@ export function isHang(failure) {
   return HANG_FAILURE_TYPES.has(failure.failureType);
 }
 
-export function isCancelled(failure) {
+function isCancelled(failure) {
   return failure.failureType === 'cancelledByParent';
 }
 

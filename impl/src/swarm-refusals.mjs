@@ -139,10 +139,6 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // `integrate_gates_red` (a real change whose derived tests ran red) and from `integrate_conflict`
   // (a real change that overlaps a landed one): nothing was ever going to land here.
   integrate_change_invalid: row(400, ['runtime'], 'the named target or the squashed range is not landable'),
-  // Issue #459: the landing's gate run could not take the host verify lease within its bound. The
-  // landing never blocked on it (the resident answers throughout) and never half-ran a gate set:
-  // it refuses typed, naming the holder the request waited behind, and the scratch checkout goes.
-  integrate_gates_busy: row(409, ['runtime'], 'the host verify lease could not be taken within its bound, so the gate run never started'),
   // Issue #576: the resident stopped while the landing was in flight — the drain cancelled and
   // reaped its gate runners, and the abandoned attempt is recorded so the lead can retry it.
   integrate_landing_abandoned: row(409, ['runtime'], 'the resident stopped while this landing was in flight, so its gate run was cancelled and the attempt abandoned'),

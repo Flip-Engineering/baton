@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_STORE_BOARD_EVIDENCE, REPL_DIGEST, SAFE_BOARD_ID, SAFE_BOARD_OWNER, SAFE_REPL_NAME, SAFE_REPL_SCOPE, assertWaveStartedRoster, boardBounded, boardNonEmpty, boardReportRequestDigest, coachingRefusal, contextChildAccepted, contextReadAttemptKey, providerAttemptDelay, replBindingContentDigest, replBindingKey, resourceOverlap, validBoardEvidenceRef, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
+import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_STORE_BOARD_EVIDENCE, REPL_DIGEST, SAFE_BOARD_ID, SAFE_BOARD_OWNER, SAFE_REPL_NAME, SAFE_REPL_SCOPE, assertWaveStartedRoster, boardNonEmpty, boardReportRequestDigest, contextChildAccepted, contextReadAttemptKey, providerAttemptDelay, replBindingContentDigest, replBindingKey, resourceOverlap, validBoardEvidenceRef, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef, normalizeContextAuthority } from './context-authority.mjs';
@@ -170,7 +170,7 @@ export function _validateCanonicalReceipt(store, receipt, bytes, ledger) {
   if (canonicalDigest(receiptPolicy) !== canonicalDigest(store._canonicalOrderPolicy)) store._canonicalOrderFail('canonical-order receipt policy differs from deployment authority');
   if (Object.keys(cutPolicy).some((key) => cutPolicy[key] > receiptPolicy[key])) store._canonicalOrderFail('canonical-order receipt cut exceeds deployment authority');
   const core = Object.fromEntries(Object.entries(receipt).filter(([key]) => key !== 'receiptDigest'));
-  if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core, { maxDepth: 16, maxNodes: 128 })), 'utf8'))) {
+  if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core)), 'utf8'))) {
     store._canonicalOrderFail('canonical-order receipt digest is invalid');
   }
   const canonicalBytesValue = store._receiptBytes(receipt);
@@ -1367,7 +1367,7 @@ export function _validateRunControlAdmission(store, p, event, integrity = false)
     || !/^control:[a-f0-9]{64}$/u.test(p.controlId ?? '')
     || !/^[a-f0-9]{64}$/u.test(p.actionId ?? '')
     || !['send', 'interrupt'].includes(p.operation) || !boundedText(p.recipient, 256)
-    || (p.operation === 'send' && (!boundedText(p.message, FRAME_LIMITS['run.legacy_send.body'].value)
+    || (p.operation === 'send' && (!boundedText(p.message)
       || !['nudge', 'now', 'turn'].includes(p.delivery)))
     || (p.operation === 'interrupt' && (p.message !== null || p.delivery !== null))
     || (version >= 2 && p.turnDisposition !== (p.operation === 'interrupt' ? 'preserve_turn' : null))

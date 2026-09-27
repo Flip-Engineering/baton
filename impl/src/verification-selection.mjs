@@ -25,12 +25,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, posix } from 'node:path';
 
 /** The runtime source directory, repo-relative. */
-export const VERIFICATION_SOURCE_DIR = 'impl/src';
+const VERIFICATION_SOURCE_DIR = 'impl/src';
 
 /** The suite's test directory, repo-relative. Its file set is FLAT: the runner's canonical set is
  * the directory's own entries (`readdirSync(testRoot)` in run-suite.mjs), and `impl/test/fixtures/`
  * holds fixtures, driver scripts and helper data. */
-export const VERIFICATION_TEST_DIR = 'impl/test';
+const VERIFICATION_TEST_DIR = 'impl/test';
 
 /** The directories the import graph is scanned across: runtime source and its tests. An
  * import edge MAY point outside them (a test importing `impl/scripts/x.mjs` counts); the
@@ -46,7 +46,7 @@ export const VERIFICATION_GRAPH_DIRS = Object.freeze([VERIFICATION_SOURCE_DIR, V
  * landing gate had shortened to the fixture's basename (the gate reads the runner's file name as
  * `test/<basename>`), so the 2026-09-26 landing of `impl/test/fixtures/fake-claude.mjs` ran no
  * test at all for the 17 test files that read that fixture. */
-export function isTestDirectoryEntry(path) {
+function isTestDirectoryEntry(path) {
   const named = `${path}`.split('\\').join('/');
   const prefix = `${VERIFICATION_TEST_DIR}/`;
   if (!named.startsWith(prefix)) return false;
@@ -78,7 +78,7 @@ export function resolveImportSpecifier(specifier, importerPath) {
  * returns the file's text or null (absent at the checked revision — the file is skipped, it
  * cannot run there either). Edges to files outside `files` are kept as paths: what matters is
  * that an edge NAMED a changed path, not that the target was scanned. */
-export function collectImportGraph({ files, read }) {
+function collectImportGraph({ files, read }) {
   const graph = new Map();
   for (const path of files) {
     const text = read(path);
@@ -96,7 +96,7 @@ export function collectImportGraph({ files, read }) {
  * path needles may appear anywhere in the text; the basename needle must START a quoted string
  * literal or follow a path boundary (`join(IMPL, 'scripts', 'run-suite.mjs')`) so `a.mjs` does
  * not match every file whose own name merely ends in `a.mjs`. */
-export function fixturePathNeedles(changedPath) {
+function fixturePathNeedles(changedPath) {
   const normalized = changedPath.split('\\').join('/');
   const needles = [{ needle: normalized, bounded: false }];
   if (normalized.startsWith('impl/')) needles.push({ needle: normalized.slice('impl/'.length), bounded: false });

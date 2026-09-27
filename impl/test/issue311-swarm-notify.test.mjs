@@ -49,7 +49,7 @@ const seatPrincipal = (workerId, swarmId, participantId) => ({ actor: `swarm-nat
   principalId: `worker:${workerId}`, sessionId: workerId });
 // A two-argument surface: the recipient's own deliverable is what the 311-n2-i park is about.
 const NOTIFY_BODY_CAP = FRAME_LIMITS['swarm.notify.body'].value;
-const SPILL_CEILING = FRAME_LIMITS['spill.body'].value;
+const SPILL_CEILING = 1_048_576;
 
 function fixture(t, { midTurn = 'supported' } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue311-n2-'));
@@ -319,16 +319,12 @@ test('311-n2-h: an over-cap body rides as a digest-cited spill, and past the cei
   assert.ok(frame.includes('SPILLED'), 'the delivered frame carries the citation');
   assert.ok(frame.includes(receipt.spill), 'and names the artifact');
 
-  await assert.rejects(
-    f.call('notify', {
-      swarmId: 's-one', participantId: 'sibling', toSwarmId: 's-two', message: 'y'.repeat(SPILL_CEILING + 1),
-    }, sender),
-    (error) => {
-      assert.equal(error.code, 'spill_body_exceeded', 'the lane past the spill ceiling refuses coaching');
-      assert.equal(error.cap, SPILL_CEILING);
-      assert.equal(error.gracefulPath, 'over-cap bodies spill to a durable artifact — resend with a digest-citable head');
-      return true;
-    });
+  const huge = await f.call('notify', {
+    swarmId: 's-one', participantId: 'sibling', toSwarmId: 's-two', message: 'y'.repeat(SPILL_CEILING + 1),
+  }, sender);
+  assert.match(huge.notify?.spill ?? '', /^spill:sha256:[a-f0-9]{64}$/u,
+    'a body past the old 1 MiB ceiling is admitted and rides a durable spill');
+  assert.equal(huge.notify?.bytes, SPILL_CEILING + 1, 'the citation names the whole length');
 });
 
 // ── 311-n2-i/j: a one-shot recipient parks in its own swarm, and the read is scoped ───────────

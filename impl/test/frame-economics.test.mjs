@@ -456,18 +456,20 @@ async function shutdownQuietly(application) {
 // ---------------------------------------------------------------------------
 
 const ADMISSION_LANES = Object.freeze([
-  ['message.send.body', 2048, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  ['message.reply.body', 2048, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  // #358 (operator ruling): the objective lanes carry no head cap of their own — they are bounded
-  // by the substrate spill ceiling alone, so a brief reaches the seat whole.
-  ['run.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  ['wave.member.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  ['orientation.note', 2048, 'bytes', null, 'orientation_note_exceeded'],
-  ['steering.focus', 2048, 'bytes', null, 'steering_focus_exceeded'],
-  ['board.report.body', 4096, 'bytes', null, 'board_report_exceeded'],
-  ['run.legacy_send.body', 16384, 'bytes', null, 'run_legacy_send_exceeded'],
-  ['decision.text', 4096, 'bytes', null, 'decision_text_exceeded'],
-  ['scratchpad.entry.body', 8192, 'bytes', null, 'scratchpad_entry_exceeded'],
+  ['message.send.body', 2048, 'bytes', 'spill-digest-citation', null],
+  ['message.reply.body', 2048, 'bytes', 'spill-digest-citation', null],
+  // #358 (operator ruling) and #530: the objective lanes carry no head cap of their own — an
+  // objective past the lane's value rides whole (head inline, body a durable spill).
+  ['run.objective', 1_048_576, 'bytes', 'spill-digest-citation', null],
+  ['wave.member.objective', 1_048_576, 'bytes', 'spill-digest-citation', null],
+]);
+
+// #530: the admission rows that REFUSED an input for its size left the registry — orientation.note,
+// steering.focus, doubt.resolution.bytes, board.report.body, run.legacy_send.body, decision.text,
+// scratchpad.entry.body and wake.filter_token. A2 asserts their absence.
+const REMOVED_ADMISSION_LANES = Object.freeze([
+  'orientation.note', 'steering.focus', 'doubt.resolution.bytes', 'board.report.body',
+  'run.legacy_send.body', 'decision.text', 'scratchpad.entry.body', 'wake.filter_token',
 ]);
 
 const SUBSTRATE_LANES = Object.freeze([
@@ -485,7 +487,7 @@ const SUBSTRATE_LANES = Object.freeze([
   // itself, because A3 reads every listed substrate row as BYTES and an ms row must not weaken it.
   ['route.probe_capture', 2048],
 ]);
-// spill.body (1 MiB) is the one substrate row that mints a refusal (blocker 3).
+// #530: no substrate row mints a refusal — spill.body's 1 MiB hard ceiling left with the class.
 
 const VIEW_LANES = Object.freeze([
   ['view.board.bytes', 262144, 'bytes'],
@@ -536,13 +538,13 @@ test('A2: every admission lane is cataloged with value, unit, graceful class, an
     assert.equal(row.value, value, `${lane} declares ${value}`);
     assert.equal(row.unit, unit, `${lane} is measured in ${unit} (the byte law)`);
     assert.equal(row.graceful ?? null, graceful, `${lane} graceful posture`);
-    assert.equal(row.refusalCode ?? null, refusalCode, `${lane} names its typed refusal code`);
+    assert.equal(row.refusalCode ?? null, refusalCode, `${lane} names its typed refusal code (or none)`);
     assert.equal(typeof row.enforcedAt, 'string', `${lane} names its enforcement seam`);
     assert.ok(row.enforcedAt.length > 0, `${lane} enforcedAt is non-empty`);
   }
 });
 
-test('A3: the substrate guards are declared — and only spill.body mints a refusal', async () => {
+test('A3: the substrate guards are declared, and no substrate row mints a refusal', async () => {
   const limits = assertLimitsModule(await limitsOrError());
   for (const [lane, value] of SUBSTRATE_LANES) {
     const row = limits.FRAME_LIMITS?.[lane];
@@ -553,13 +555,8 @@ test('A3: the substrate guards are declared — and only spill.body mints a refu
     assert.equal(row.graceful ?? null, null, `${lane} is a resource guard — no graceful posture`);
     assert.equal(row.refusalCode ?? null, null, `${lane} mints no refusal (position 4)`);
   }
-  const spill = limits.FRAME_LIMITS?.['spill.body'];
-  assert.ok(spill, 'the registry catalogs spill.body (blocker 3)');
-  assert.equal(spill.class, 'substrate');
-  assert.equal(spill.value, SPILL_BODY_CEILING, 'spill.body = 1 MiB, aligned with wire.frame');
-  assert.equal(spill.unit, 'bytes');
-  assert.equal(spill.refusalCode ?? null, 'spill_body_exceeded',
-    'spill.body is the ONE substrate row that mints a refusal — the beyond-ceiling hard coaching refusal');
+  assert.equal(limits.FRAME_LIMITS?.['spill.body'], undefined,
+    '#530: spill.body left the registry — the durable spill write no longer refuses a body for its size');
 });
 
 test('A4: the view class is declared with shed-flagged graceful degradation', async () => {
@@ -585,26 +582,6 @@ test('A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable acr
     'the digest is byte-stable across processes (the CLI handshake compares it, Acceptance A)');
 });
 
-test('A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1)', async () => {
-  const limits = assertLimitsModule(await limitsOrError());
-  const row = limits.FRAME_LIMITS?.['board.report.body'];
-  assert.ok(row,
-    'the registry catalogs board.report.body — submitBoardReport enforces a LIVE 4,096 bound '
-    + '(MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced :14442 via boardBounded '
-    + ':430-432, refusal invalid_board_report; second door application-semantics.mjs:1426). '
-    + 'Cataloging the LIVE value is the board.title/board.detail disposition; deleting the bound '
-    + 'would smuggle a behavior REMOVAL in as "consolidation" (the inverse of blocker 8)');
-  assert.equal(row.class, 'admission', 'board.report.body is admission class (not substrate)');
-  assert.equal(row.value, 4096, 'the row declares the LIVE store value 4,096 (Decision 8: no value change)');
-  assert.equal(row.unit, 'bytes', 'measured in UTF-8 bytes (the byte law; boardBounded is Buffer.byteLength)');
-  assert.equal(row.graceful ?? null, null, 'hard in v1 — board bodies keep hard bounds with coaching (Non-goals)');
-  assert.equal(row.refusalCode ?? null, 'board_report_exceeded', 'the row names its typed refusal code');
-  assert.equal(typeof row.enforcedAt, 'string' , 'the row names its enforcement seam (submitBoardReport)');
-  assert.equal(limits.FRAME_LIMITS?.['scanner.window.board_report']?.value, 20480,
-    'the substrate row STAYS: the 20,480 scanner window remains the wire-layer resource guard '
-    + 'beside the admission row, so doctor shows both bounds');
-});
-
 // ===========================================================================
 // B — refusal coaching, one row per admission lane (stage: refusal-coaching-missing)
 // ===========================================================================
@@ -617,30 +594,22 @@ async function captureError(promise) {
   }
 }
 
-// The two HARDCODED goldens (blocker 10): a value change or a helper-wording change fails
-// these rows until someone deliberately edits THIS string.
-const GOLDEN_GRACEFUL = 'message.send.body is 1048577 bytes (cap 1048576); over-cap bodies spill to a durable artifact — resend with a digest-citable head';
 
-test('B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal', async () => {
+test('B1 (#530): a send past the old spill ceiling is ADMITTED with a durable spill', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   const body = 'SEND-SECRET-'.padEnd(SPILL_BODY_CEILING + 1, 'm');
-  const { error } = await captureError(coordinator.sendMessage(
+  const receipt = await coordinator.sendMessage(
     { kind: 'inform', to: { workerId: handle.id }, body }, { actor: 'orchestrator' },
-  ));
-  assert.ok(error, 'stage: spill-ceiling-missing — a beyond-ceiling body must be refused, never admitted');
-  assert.equal(error?.code ?? null, 'spill_body_exceeded',
-    'stage: refusal-coaching-missing — today this is a bare TypeError naming only the cap in prose (coordinator.mjs:6634)');
-  assertCoachingPayload(error, { cap: SPILL_BODY_CEILING, actual: SPILL_BODY_CEILING + 1 }, 'B1');
-  assert.equal(error.message, GOLDEN_GRACEFUL,
-    'GOLDEN (blocker 10): the graceful-class refusal text is pinned verbatim — edit deliberately');
-  assert.ok(error.message.endsWith(error.gracefulPath), 'the payload gracefulPath is the message\'s path phrase');
-  assertNoBodyContent(error.message, body, 'B1');
-  void error.gracefulPath;
+  );
+  assert.ok(receipt?.messageId, 'the send is admitted — the hard ceiling left with #530');
+  const sent = coordinator._coordination.events().find((event) => event.kind === 'spill.minted');
+  assert.ok(sent, 'the whole body rides a durable spill artifact');
+  assertNoBodyContent(JSON.stringify(receipt), body.slice(0, 200), 'B1');
 });
 
-test('B2: a reply beyond the spill ceiling lands message.rejected {spill_body_exceeded, cap, actual, unit, gracefulPath} on the worker stream', async () => {
+test('B2 (#530): a reply past the old spill ceiling is ADMITTED and delivers with a spill', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -653,147 +622,30 @@ test('B2: a reply beyond the spill ceiling lands message.rejected {spill_body_ex
     payload: { inReplyTo: parent.messageId, body },
   });
   await flush(40);
-  const rejection = coordinator._log.read(handle.id).find((event) => event.kind === 'message.rejected'
-    && event.payload?.inReplyTo === parent.messageId);
-  assert.ok(rejection, 'stage: refusal-coaching-missing — the reply lane has NO body bound at all today; '
-    + 'a 1 MiB reply is admitted in full (ground truth 2)');
-  assert.equal(rejection.payload?.reason ?? null, 'spill_body_exceeded',
-    'the beyond-ceiling reply draws the spill.body refusal code (Decision 4 item 5)');
-  assertCoachingPayload(rejection.payload, { cap: SPILL_BODY_CEILING, actual: SPILL_BODY_CEILING + 1 }, 'B2');
-  assertNamesBothNumbers(rejection.payload?.message, { cap: SPILL_BODY_CEILING, actual: SPILL_BODY_CEILING + 1 }, 'B2');
-  assertNoBodyContent(rejection.payload?.message, body, 'B2');
   const delivered = coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered'
     && event.payload?.inReplyTo === parent.messageId);
-  assert.equal(delivered.length, 0, 'a beyond-ceiling reply is NOT admitted — nothing delivers');
-  await assertComposedRefusalText(rejection.payload?.message, 'message.reply.body',
-    SPILL_BODY_CEILING + 1, SPILL_BODY_CEILING, 'B2');
+  assert.equal(delivered.length, 1, 'the reply is admitted and delivers — no ceiling refuses it');
+  const rejection = coordinator._log.read(handle.id).filter((event) => event.kind === 'message.rejected'
+    && event.payload?.inReplyTo === parent.messageId);
+  assert.equal(rejection.length, 0, 'no refusal is recorded for the size');
 });
 
-test('B3: a run objective beyond the spill ceiling draws the typed spill_body_exceeded application error', async () => {
+test('B3 (#530): a run objective past the old spill ceiling is ADMITTED with a durable spill', async () => {
   const { application, driver } = appFixture('b3');
   const objective = 'OBJECTIVE-SECRET-'.padEnd(SPILL_BODY_CEILING + 1, 'o');
-  const { error } = await captureError(application.start({
+  // The objective is admitted; the RUN VIEW may still refuse to carry it whole (the view bound is a
+  // kept, shed-flagged frame lane that names the narrowing read), so the admission is read off the
+  // goal record and the spill artifact, not off the returned view.
+  const outcome = await application.start({
     runId: 'run-fe-b3', objective, profile: 'default',
     route: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['**'],
-  }, principal('owner')));
-  assert.ok(error, 'a beyond-ceiling objective must be refused, never admitted');
-  assert.equal(error?.code ?? null, 'spill_body_exceeded',
-    'stage: refusal-coaching-missing — today this is application_intent_invalid with NO number anywhere '
-    + '(application.mjs:1406, the worker-AX error-quality receipt)');
-  assertCoachingPayload(error, { cap: SPILL_BODY_CEILING, actual: SPILL_BODY_CEILING + 1 }, 'B3');
-  assertNamesBothNumbers(error?.message, { cap: SPILL_BODY_CEILING, actual: SPILL_BODY_CEILING + 1 }, 'B3');
-  assertNoBodyContent(error?.message, objective, 'B3');
-  assert.equal(driver.coordination.events().some((event) => event.kind === 'spill.minted'), false,
-    'a beyond-ceiling body mints NO spill artifact (Decision 4 item 5)');
-  await assertComposedRefusalText(error?.message, 'run.objective', SPILL_BODY_CEILING + 1, SPILL_BODY_CEILING, 'B3');
+  }, principal('owner')).then((view) => ({ view }), (error) => ({ error }));
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'spill.minted'), true,
+    'the objective rides a durable spill artifact — the hard 1 MiB ceiling left with #530');
+  assert.ok(outcome.view !== undefined || /view/i.test(String(outcome.error?.message ?? '')),
+    `the objective is admitted; only the run view may refuse it whole (${outcome.error?.code ?? 'no error'})`);
   await shutdownQuietly(application);
 });
-
-test('B7: the orientation push note ceiling carries the coaching shape', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  const note = `NOTE-SECRET-${'n'.repeat(2048)}`;
-  const { error } = await captureError(coordinator.orientWorker(handle.id, {}, note, { expectedFence: 1, actor: 'orchestrator' }));
-  assert.ok(error, 'the orientation note keeps its hard bound');
-  assert.equal(error?.code ?? null, 'orientation_note_exceeded',
-    'stage: refusal-coaching-missing — today a bare TypeError \'orientation push note is invalid\' '
-    + '(coordinator.mjs:6922) names neither number');
-  assertCoachingPayload(error, { cap: 2048, actual: Buffer.byteLength(note) }, 'B7');
-  assertNamesBothNumbers(error?.message, { cap: 2048, actual: Buffer.byteLength(note) }, 'B7');
-  assertNoBodyContent(error?.message, note, 'B7');
-  await assertComposedRefusalText(error?.message, 'orientation.note', Buffer.byteLength(note), 2048, 'B7');
-});
-
-test('B8: the steering-policy focus ceiling carries the coaching shape at injection', async () => {
-  const adapter = new ScriptableAdapter();
-  const focus = `FOCUS-SECRET-${'f'.repeat(2048)}`;
-  let error = null;
-  try {
-    setup({
-      adapter, capture: noDiff,
-      coordinatorOpts: {
-        watchdog: {
-          scopeAction: 'orient',
-          orientation: {
-            indexEpoch: 'a'.repeat(64), focus, budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1,
-          },
-        },
-      },
-    });
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the steering focus keeps its hard bound (coordinator.mjs:1000)');
-  assert.equal(error?.code ?? null, 'steering_focus_exceeded',
-    'stage: refusal-coaching-missing — today a bare TypeError names no number');
-  assertCoachingPayload(error, { cap: 2048, actual: Buffer.byteLength(focus) }, 'B8');
-  assertNamesBothNumbers(error?.message, { cap: 2048, actual: Buffer.byteLength(focus) }, 'B8');
-  assertNoBodyContent(error?.message, focus, 'B8');
-  await assertComposedRefusalText(error?.message, 'steering.focus', Buffer.byteLength(focus), 2048, 'B8');
-});
-
-test('B13: the decision answer-text ceiling carries the coaching shape at 4,096', async () => {
-  const text = `ANSWER-SECRET-${'a'.repeat(4096)}`;
-  let error = null;
-  try {
-    createDecisionAnswer({ text });
-  } catch (caught) { error = caught; }
-  assert.ok(error instanceof ValidationError, 'the factory still refuses with ValidationError');
-  const actual = Buffer.byteLength(text);
-  assertCoachingPayload(error, { cap: 4096, actual }, 'B13');
-  assertNamesBothNumbers((error.errors ?? []).join('\n'), { cap: 4096, actual }, 'B13');
-  assertNoBodyContent((error.errors ?? []).join('\n'), text, 'B13');
-  await assertComposedRefusalText((error.errors ?? []).find((entry) => entry.includes('text')), 'decision.text', actual, 4096, 'B13');
-});
-
-test('B14: the scratchpad entry canonical ceiling gains the coaching shape (numberless today)', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  // Every field stays inside its deliberate-local partition; the CANONICAL total crosses 8,192.
-  const entry = {
-    kind: 'plan', objective: 'o'.repeat(512), supersedes: null,
-    steps: Array.from({ length: 16 }, () => ({ text: 's'.repeat(512), state: 'todo' })),
-  };
-  let error = null;
-  try {
-    store.writeScratchpad(
-      { runId: 'run:fe-b14', taskId: 'task:fe-b14', workerId: 'worker:fe-b14', entry },
-      { actor: 'worker', principalId: 'worker:fe-b14', key: 'fe-b14-scratch' },
-    );
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the store still enforces the entry ceiling (coordination-store.mjs:484, enforced :650)');
-  assert.equal(error?.code ?? null, 'scratchpad_entry_exceeded',
-    'stage: refusal-coaching-missing — today \'scratchpad canonical content exceeds its ceiling\' '
-    + 'names NO number (blocker 7: the lane gains the Decision-3 coaching shape)');
-  assert.equal(error?.cap, 8192, 'B14: the payload carries the registry cap');
-  assert.ok(Number.isSafeInteger(error?.actual) && error.actual > 8192,
-    'B14: the payload names the actual canonical byte count');
-  assert.equal(error?.unit, 'bytes');
-  assert.equal(typeof error?.gracefulPath, 'string');
-  assertNamesBothNumbers(error?.message, { cap: 8192, actual: error.actual }, 'B14');
-  await assertComposedRefusalText(error?.message, 'scratchpad.entry.body', error.actual, 8192, 'B14');
-});
-
-test('B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1)', async () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  const body = `REPORT-SECRET-${'r'.repeat(4096)}`;
-  let error = null;
-  try {
-    // Every other field is well-formed, so the BODY check is the only failing condition
-    // (it fires before the item-history/claim lookups, coordination-store.mjs:14442).
-    store.submitBoardReport(
-      { itemId: 'item-fe-b15', itemVersion: 1, itemDigest: 'a'.repeat(64), body, owner: 'worker:fe-b15' },
-      { actor: 'worker', principalId: 'worker:fe-b15', key: 'fe-b15-report' },
-    );
-  } catch (caught) { error = caught; }
-  assert.ok(error, 'the LIVE store bound still enforces (coordination-store.mjs:416, enforced :14442)');
-  assert.equal(error?.code ?? null, 'board_report_exceeded',
-    'stage: refusal-coaching-missing — today numberless invalid_board_report '
-    + '(\'board report body must be bounded non-empty\', the exact sin class the epic eliminates)');
-  assertCoachingPayload(error, { cap: 4096, actual: Buffer.byteLength(body) }, 'B15');
-  assertNamesBothNumbers(error?.message, { cap: 4096, actual: Buffer.byteLength(body) }, 'B15');
-  assertNoBodyContent(error?.message, body, 'B15');
-  await assertComposedRefusalText(error?.message, 'board.report.body', Buffer.byteLength(body), 4096, 'B15');
-});
-
 // ===========================================================================
 // C — the spill lane (stage: spill-lane-missing / spill-query-kind-missing /
 //     wave-driver-advisory-missing)
@@ -1013,22 +865,19 @@ test('C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISOR
   assert.ok(Number.isSafeInteger(advisory?.bytes) && advisory.bytes >= laneValue + 1, 'the advisory names the byte count');
 });
 
-test('C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and mints NO spill', async () => {
+test('C9 (#530): a body past the old 1 MiB spill ceiling is ADMITTED with a spill', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   const body = 'x'.repeat(SPILL_BODY_CEILING + 1);
-  const { error } = await captureError(coordinator.sendMessage(
+  const receipt = await coordinator.sendMessage(
     { kind: 'inform', to: { workerId: handle.id }, body }, { actor: 'orchestrator' },
-  ));
-  assert.ok(error, 'stage: spill-ceiling-missing — without the ceiling a 1 MiB+ body is ADMITTED into the '
-    + 'durable event log, persisted forever and replayed at every open (blocker 3)');
-  assert.equal(error?.code ?? null, 'spill_body_exceeded', 'the beyond-ceiling refusal is typed');
-  assertCoachingPayload(error, { cap: SPILL_BODY_CEILING, actual: SPILL_BODY_CEILING + 1 }, 'C9');
-  assert.equal(coordinator._coordination.events().some((event) => event.kind === 'spill.minted'), false,
-    'a beyond-ceiling body mints NO spill artifact');
-  assert.equal(coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered').length, 0,
-    'a beyond-ceiling body delivers nothing');
+  );
+  assert.ok(receipt?.messageId, 'the beyond-ceiling body is admitted — the ceiling left with #530');
+  assert.equal(coordinator._coordination.events().some((event) => event.kind === 'spill.minted'), true,
+    'the whole body rides a durable spill artifact');
+  assert.equal(coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered').length, 1,
+    'the body delivers');
 });
 
 test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358)', async () => {
@@ -1284,21 +1133,14 @@ test('E6: the doctor projection covers every registry lane with the closed row s
 // they drive the real store and pin real refusal behavior.
 
 
-test('F2 (pin): the store\'s deliberate-local field caps stay plain shape refusals', () => {
+test('F2 (#530): a note past the old deliberate-local partition is admitted whole', () => {
   const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
-  // note.text 2,049 — over the deliberate-local 2,048 partition, INSIDE the registry's 8,192 entry cap.
-  const refusal = (() => {
-    try {
-      store.writeScratchpad(
-        { runId: 'run:fe-f2', taskId: 'task:fe-f2', workerId: 'worker:fe-f2', entry: { kind: 'note', text: 'n'.repeat(2049) } },
-        { actor: 'worker', principalId: 'worker:fe-f2', key: 'fe-f2-scratch' },
-      );
-      return null;
-    } catch (error) { return error; }
-  })();
-  assert.equal(refusal?.code ?? null, 'scratchpad_entry_invalid',
-    'the field-level 2,048 partitions INSIDE the capped entry are deliberate locals (Decision 2) — '
-    + 'they stay enforced and they are NOT the registry\'s coaching lanes');
+  const written = store.writeScratchpad(
+    { runId: 'run:fe-f2', taskId: 'task:fe-f2', workerId: 'worker:fe-f2', entry: { kind: 'note', text: 'n'.repeat(2049) } },
+    { actor: 'worker', principalId: 'worker:fe-f2', key: 'fe-f2-scratch' },
+  );
+  assert.equal(written?.entry?.content?.text?.length ?? written?.entry?.text?.length, 2049,
+    'the note is written whole — the entry carries no size partition');
 });
 
 test('F3 (pin): context_pack.body keeps its exact substrate refusal — value unchanged, only imported', () => {

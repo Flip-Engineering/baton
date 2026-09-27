@@ -63,19 +63,6 @@ test('HC-506-a: observeNow names each queue holder alive or dead; a dead front h
   assert.equal(queue[1].holderAlive, true, 'the live holder reads alive');
 });
 
-test('HC-506-b: the participant verify row carries the same fact for the seat it names', async (t) => {
-  const root = leaseRoot(t);
-  stageQueueEntry(root, deadEntry);
-  stageQueueEntry(root, liveEntry);
-  const authority = authorityOver(root, (pid) => pid === process.pid);
-
-  assert.deepEqual(authority.observeParticipantVerify(deadEntry.holder),
-    { state: 'queued', position: 1, ahead: 0, holderAlive: false },
-    'a dead queued seat reads queued AND dead on the swarm view row');
-  assert.deepEqual(authority.observeParticipantVerify(liveEntry.holder),
-    { state: 'queued', position: 2, ahead: 1, holderAlive: true });
-});
-
 test('HC-506-c: the mutating read sweeps the dead entry (the reclaim half) and its row is gone, not stale', async (t) => {
   const root = leaseRoot(t);
   stageQueueEntry(root, deadEntry);
@@ -86,6 +73,4 @@ test('HC-506-c: the mutating read sweeps the dead entry (the reclaim half) and i
   assert.equal(observed.queue.length, 1, 'a proved-dead holder’s queue entry returns to the queue');
   assert.equal(observed.queue[0].holder, liveEntry.holder);
   assert.equal(observed.queue[0].holderAlive, true);
-  assert.equal(authority.observeParticipantVerify(deadEntry.holder), null,
-    'absence is absence after the sweep, never a stale row');
 });

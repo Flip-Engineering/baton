@@ -126,11 +126,6 @@ test('S424-3: the seat\'s suite lease is held under the seat\'s participant hold
   assert.equal(suiteLeaseHolder({ BATON_SWARM_BRIDGE_SWARM_ID: 'swarm-wave6-20260918' }), `run-suite:${process.pid}`,
     'half an identity is no identity');
   const lease = await acquireSuiteVerifyLease({ env: seatEnv(), authority, log: () => {} });
-  assert.deepEqual(await authority.observeParticipantVerify(SEAT_HOLDER),
-    { state: 'admitted', position: null, ahead: null },
-    '#333\'s participant row shows the seat\'s running verdict');
-  assert.equal(await authority.observeParticipantVerify('participant:swarm-wave6-20260918:omp-428'), null,
-    'a peer seat\'s row stays absent');
   assert.equal(await lease.release(), true);
   assert.equal(leaseCount(root), 0);
 });

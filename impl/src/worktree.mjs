@@ -1516,7 +1516,7 @@ export function normalizeSparseCheckoutIdentity(value) {
   return expected;
 }
 
-export function sparseCheckoutCoversPath(identity, path) {
+function sparseCheckoutCoversPath(identity, path) {
   const normalized = normalizeSparseCheckoutIdentity(identity);
   if (normalized.mode === 'full') return true;
   return normalized.paths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
@@ -2531,6 +2531,40 @@ export async function sweepIntegrationCheckouts(repoRoot) {
   return Object.freeze(swept);
 }
 
+/**
+ * Issue #619: reclaim ONE landing's scratch checkout, named by the exact directory its own start
+ * row carried.
+ *
+ * `landContribution` removes the checkout on every exit it reaches, so a landing that ENDS leaves
+ * nothing behind — but the exits it cannot reach do exist (a git step that threw between two
+ * prepared attempts, a landing task abandoned with its caller gone), and the only sweep that
+ * covered those was #459's at the NEXT incarnation's open, which leaves the same contribution's
+ * next attempt refusing `WorktreeAlreadyExistsError` for the rest of this incarnation. The
+ * runtime calls this at the landing's own end, with the directory its start row named — so it can
+ * only ever touch the checkout of the landing that just ended, never another landing's and never a
+ * lane worktree. Returns the directory name it reclaimed, or null when there was nothing to
+ * reclaim; an unreadable administration is reported, never silently left.
+ */
+export async function reclaimIntegrationCheckout(repoRoot, dir) {
+  if (typeof dir !== 'string' || dir.length === 0) return null;
+  const root = authorityRoot(repoRoot, 'wt', { create: false });
+  if (root === null || !existsSync(root)) return null;
+  const child = basename(dir);
+  if (!child.startsWith('integrate-')) return null;
+  const candidate = authorityChild(repoRoot, 'wt', child, { kind: 'directory', mustExist: false });
+  if (pathResolve(candidate) !== pathResolve(dir)) return null;
+  const registered = listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(candidate));
+  if (!existsSync(candidate) && !registered) return null;
+  if (existsSync(candidate)) removeIntegrationCheckout(repoRoot, candidate);
+  rmSync(join(root, `${child}.projection.exclude`), { force: true });
+  try { sh('git', ['worktree', 'prune'], repoRoot); }
+  catch (error) { throw new WorktreeCleanupError('integration checkout administration could not be pruned', { cause: error }); }
+  if (existsSync(candidate) || listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(candidate))) {
+    throw new WorktreeCleanupError('integration checkout reclamation did not reach an exact absent state');
+  }
+  return child;
+}
+
 // ---------------------------------------------------------------------------
 // Integration scratch checkout (issue #296)
 // ---------------------------------------------------------------------------
@@ -2665,7 +2699,7 @@ function commitEnv(author, committer) {
 /** The lane scaffolding that is never repository content: the brief the seat was handed, and the
  * deployment's own `.baton/` custody tree. A squash that carried either would land one lane's
  * private scaffolding into every other lane's checkout. */
-export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
+const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
 
 /** Issue #562: the identity the deployment's own effective-tree snapshot commits under. That
  * snapshot is a lane worktree's BASE (application-deployment.mjs `repositorySnapshot`), so its tree

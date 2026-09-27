@@ -2,8 +2,7 @@
 // suite-resource-governance-2026-08-12/suite-resource-governance-contract.md v1.1 — issue #77;
 // fold maps contract-fold.md (the 6 calibration-seam resolutions) and contract-redteam.md (the
 // attack surface) beside it; blue-team suite-blueteam.md; fold-2 map suite-fold-2.md). The
-// v1.2 fold note: `baselineReceiptPath` joins the measureCalibration override set (F3) and the
-// gate honors a BATON_RG_CALIBRATION injection seam (F1).
+// v1.2 fold note: `baselineReceiptPath` joins the measureCalibration override set (F3).
 //
 // Rows over the folded decisions: A the calibration module (measureCalibration / readCalibration /
 // scaledTimeout — D1, RG-03..RG-06); B the gate surface (the calibration line + the
@@ -81,15 +80,6 @@
 //     BASELINE_BASIS frozen ['recorded','unrecorded'] — ACTUAL order (D1.5, §3).
 //     CalibrationRefusal  typed error class; .code is a REFUSAL_CODES member.
 //
-//   GATE INJECTION SEAM (F1 — hermeticity under the exact load the suite governs): the gate honors
-//   a BATON_RG_CALIBRATION env override carrying a full calibration record. When present, the gate
-//   short-circuits its start-of-run measurement (no os.loadavg() read, no event-loop-gap probe) and
-//   uses the injected record verbatim for the line and the child env. The override deliberately
-//   uses the BATON_RG_* observation naming the suite established — a BATON_SUITE_* name would be
-//   stripped by the nested-gate sanitizer (below) and the gate would never see it. Every B/C2 gate
-//   probe injects it, so the nested gate NEVER measures real host load and cannot refuse under load
-//   (the #7-class race F1 removes).
-//
 // G4 MEMBERSHIP ANCHORS (the closed table's documented row set — D1.4, blocker B2):
 //   deployment-settle-deadline  phase56-drain-and-close.test.mjs:268  (< 500)  -> scale
 //   request-timeout-wait        grok-acp.test.mjs:648 / codex-appserver.test.mjs:527
@@ -117,9 +107,11 @@
 //          measurement is never exercised because no row may depend on REAL host load (suite law).
 //
 // SUITE-ORACLE NOTES:
-//   * B1/B2/B3/C2 spawn the real gate (run-suite.mjs) on a single fixture via spawnSync with the
-//     BATON_RG_CALIBRATION injection seam, so after implementation the nested gate measures nothing
-//     real (F1 — a real event-loop probe under load could refuse a CORRECT implementation). The
+//   * B1/B2/B3/C2 spawn the real gate (run-suite.mjs) on a single fixture via spawnSync. The gate
+//     now measures this host, so these rows assert only what is host-independent: the receipt's
+//     presence, its closed key set, that the child env carries the identical record, and (C2) that
+//     the declared flag equals the idle-default derivation. A host whose measurement cannot be
+//     taken refuses the run by design (RG-10), which surfaces as the row's own failure. The
 //     spawnSync timeout is dropped: a 30 s wall bound on the nested gate is itself a #7-class real
 //     race the suite should not carry (F1). The nested gate is given a private BATON_TEST_TMP_PARENT
 //     (hermetic; the suite root it allocates is a descendant and is cleaned with the world dir).
@@ -165,25 +157,6 @@ function assertCalibrationModule(module) {
   return module;
 }
 
-// ===========================================================================
-// The synthetic calibration record the gate probes inject (F1's injection seam).
-// A complete closed-key record used VERBATIM by the nested gate, so no real
-// loadavg / event-loop-gap measurement ever runs in the gate probes.
-// ===========================================================================
-
-function injectedCalibration({ factor = 1, probeMs = 71, baselineProbeMs = 71 } = {}) {
-  return {
-    baselineBasis: 'recorded',
-    baselineProbeMs,
-    cores: availableParallelism(),
-    factor,
-    load: { fifteen: 0, five: 0, one: 0 },
-    measuredAt: '2026-08-12T00:00:00.000Z',
-    probeMs,
-    schemaVersion: 1,
-  };
-}
-
 // The B1/B2 observation channel: the fixture reports what BATON_SUITE_CALIBRATION the child saw.
 const CALIBRATION_OBSERVING_FIXTURE = [
   "import { writeFileSync } from 'node:fs';",
@@ -217,11 +190,11 @@ const ARGV_OBSERVING_FIXTURE = [
 ].join('\n');
 
 /**
- * Spawn the real gate on a single fixture with the calibration injection seam. No spawnSync
- * timeout: a wall bound on the nested gate is a #7-class real race the suite must not carry (F1);
- * the fixtures are trivial (write + exit) and the gate reaps its own child.
+ * Spawn the real gate on a single fixture. No spawnSync timeout: a wall bound on the nested gate
+ * is a #7-class real race the suite must not carry (F1); the fixtures are trivial (write + exit)
+ * and the gate reaps its own child.
  */
-function spawnNestedGate({ fixture, args = [], calibration }) {
+function spawnNestedGate({ fixture, args = [] }) {
   const world = mkdtempSync(join(tmpdir(), 'baton-rg-'));
   worlds.push(world);
   const observed = join(world, 'observed.json');
@@ -229,7 +202,6 @@ function spawnNestedGate({ fixture, args = [], calibration }) {
   const env = {
     ...process.env,
     BATON_RG_OBSERVED: observed,
-    BATON_RG_CALIBRATION: JSON.stringify(calibration),
     BATON_TEST_TMP_PARENT: world,
     TMPDIR: world, TMP: world, TEMP: world,
   };
@@ -251,10 +223,7 @@ function gateProbe() {
   if (!gateProbePromise) {
     gateProbePromise = (() => {
       try {
-        return Promise.resolve(spawnNestedGate({
-          fixture: CALIBRATION_OBSERVING_FIXTURE,
-          calibration: injectedCalibration({ factor: 1 }),
-        }));
+        return Promise.resolve(spawnNestedGate({ fixture: CALIBRATION_OBSERVING_FIXTURE }));
       } catch (error) {
         return Promise.resolve({ world: null, observed: null, stdout: '', stderr: String(error), status: -1 });
       }
@@ -397,10 +366,7 @@ test('B2 (RG-02): the spawned test child receives the identical BATON_SUITE_CALI
 });
 
 test('B3 (RG-07): the load-context receipt survives a failing child — the line and env are outcome-independent', async () => {
-  const probe = spawnNestedGate({
-    fixture: FAILING_FIXTURE,
-    calibration: injectedCalibration({ factor: 1 }),
-  });
+  const probe = spawnNestedGate({ fixture: FAILING_FIXTURE });
   // No status === 0 assertion: the fixture fails by design — this is the exact surface a flake
   // report cites, and the receipt must not depend on the child's outcome (F4).
   const lines = probe.stderr.split('\n').filter((line) => line.startsWith('baton suite calibration: '));
@@ -432,38 +398,26 @@ test('C1 (RG-09): deriveTestConcurrency preserves the idle default and sheds und
 });
 
 test('C2 (RG-09): the gate passes a derived --test-concurrency — behavioral, observed via the child runner argv', async () => {
-  const high = spawnNestedGate({
-    fixture: ARGV_OBSERVING_FIXTURE,
-    calibration: injectedCalibration({ factor: 4, probeMs: 284 }),
-  });
-  assert.equal(high.status, 0, high.stderr);
-  const highParent = JSON.parse(readFileSync(high.observed, 'utf8')).parent ?? '';
-  const match = /--test-concurrency\s+(\d+)/.exec(highParent);
-  assert.ok(match,
-    'stage: gate-concurrency-missing — the gate passes no derived --test-concurrency today (RG-09 red state)');
   const cal = assertCalibrationModule(await calibrationOrError());
   const cores = availableParallelism();
-  assert.equal(Number(match[1]), cal.deriveTestConcurrency(cores, 4),
-    'the child runner received the derived max(1, ceil((cores - 1) / factor)) at factor 4 (D3.1)');
+  const measured = spawnNestedGate({ fixture: ARGV_OBSERVING_FIXTURE });
+  assert.equal(measured.status, 0, measured.stderr);
+  const measuredParent = JSON.parse(readFileSync(measured.observed, 'utf8')).parent ?? '';
+  const match = /--test-concurrency\s+(\d+)/.exec(measuredParent);
+  assert.ok(match,
+    'stage: gate-concurrency-missing — the gate passes no derived --test-concurrency today (RG-09 red state)');
+  assert.equal(Number(match[1]), cal.deriveTestConcurrency(cores, 1),
+    'the declared flag is the idle-default derivation max(1, ceil((cores - 1) / 1)) — the thin re-executing '
+    + 'parent loads no recorded baseline, so the measured factor scales the per-file deadlines instead (D3.1)');
+  assert.ok(Number(match[1]) <= cores - 1,
+    'the derived concurrency preserves the host bound os.availableParallelism() - 1 — never oversubscribes (D3.1, blocker B4)');
 
-  const idle = spawnNestedGate({ fixture: ARGV_OBSERVING_FIXTURE, calibration: injectedCalibration({ factor: 1 }) });
-  assert.equal(idle.status, 0, idle.stderr);
-  const idleParent = JSON.parse(readFileSync(idle.observed, 'utf8')).parent ?? '';
-  const idleMatch = /--test-concurrency\s+(\d+)/.exec(idleParent);
-  assert.ok(idleMatch, 'the factor-1 run still derives the flag');
-  assert.ok(Number(idleMatch[1]) <= availableParallelism() - 1,
-    'at factor 1 the concurrency preserves the host bound os.availableParallelism() - 1 — never oversubscribes (D3.1, blocker B4)');
-
-  const precedence = spawnNestedGate({
-    fixture: ARGV_OBSERVING_FIXTURE,
-    args: ['--test-concurrency', '999'],
-    calibration: injectedCalibration({ factor: 4, probeMs: 284 }),
-  });
+  const precedence = spawnNestedGate({ fixture: ARGV_OBSERVING_FIXTURE, args: ['--test-concurrency', '999'] });
   assert.equal(precedence.status, 0, precedence.stderr);
   const precedenceParent = JSON.parse(readFileSync(precedence.observed, 'utf8')).parent ?? '';
   const last = [...precedenceParent.matchAll(/--test-concurrency\s+(\d+)/g)].at(-1);
   assert.ok(last, 'the precedence leg observed the derived flag');
-  assert.equal(Number(last[1]), cal.deriveTestConcurrency(cores, 4),
+  assert.equal(Number(last[1]), cal.deriveTestConcurrency(cores, 1),
     'the derived flag is appended last and authoritative — a caller --test-concurrency is overridden (D3.1 precedence)');
 });
 
