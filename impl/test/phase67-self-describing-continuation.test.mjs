@@ -34,7 +34,7 @@ function fixture() {
       budget: null, ownership: { workers: 0 }, stop: null,
       nodes: [{ key: 'implement', state: 'running' }],
     }),
-    driver: { coordination: { events: () => [], waitAfter: async () => ({ advanced: false }) } },
+    driver: { coordination: { events: () => [], eventsView: () => [], waitAfter: async () => ({ advanced: false }) } },
   });
   return { app, terminal() { phase = 'completed'; } };
 }

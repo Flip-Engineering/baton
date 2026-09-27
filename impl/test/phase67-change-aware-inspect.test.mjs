@@ -42,6 +42,7 @@ function fixture({ cursor = 7, phase = 'executing', authorize = async () => true
       coordination: {
         waitAfter: waitAfter ?? (async () => ({ advanced: false, upperBound: viewCursor })),
         events: (fromCursor, limit) => events.filter((event) => event.seq >= fromCursor).slice(0, limit),
+        eventsView: (fromSeq = 1, limit = null) => events.filter((event) => event.seq >= fromSeq).slice(0, limit ?? events.length),
         task: () => null,
       },
       drainAndClose: async () => ({ state: 'closed' }),

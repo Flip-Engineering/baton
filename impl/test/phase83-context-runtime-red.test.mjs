@@ -224,6 +224,7 @@ function runtimeSessionAuthority(runtime) {
         definitionDigest: '4'.repeat(64),
       },
     }],
+    eventsView() { return this.events(); },
     snapshot: () => ({ context: { sessions: [] } }),
     admitContextSession: () => ({ session: sessionState }),
     admitContextCell: () => { throw new Error('unused Context cell seam'); },
@@ -357,6 +358,7 @@ test('CR83-4: an executor abort leaves the durable pure cell admitted instead of
       contextCell: () => cell,
       contextCellArtifacts: () => null,
       snapshot: () => ({ context: { cells: cell ? [cell] : [] } }),
+      eventsView: () => [],
     };
     const session = new DurableContextSession({
       coordination, bench, manifest,
