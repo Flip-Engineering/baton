@@ -200,15 +200,7 @@ export function drain(coordinator, recorder, ctx = {}) {
     for (const method of ['fleetDrain', 'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain']) {
       if (typeof recorder.coordination[method] !== 'function') throw Object.assign(new Error('fleet drain coordination authority is unavailable'), { code: 'coordinator_drain_unavailable' });
     }
-    const deadline = coordinator._now() + coordinator._drainPolicy.timeoutMs;
     let targetWorkerIds = null;
-    const assertWithinDeadline = () => {
-      if (coordinator._now() < deadline) return;
-      throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
-        code: 'coordinator_drain_incomplete',
-        detail: { timeoutMs: coordinator._drainPolicy.timeoutMs, waitingOn: coordinator._drainWaitingOn(targetWorkerIds ?? [], null, ctx.actor) },
-      });
-    };
 
     const requestDigest = canonicalDigest({ repoId: ctx.repoId, idempotencyKey: ctx.idempotencyKey });
     const drainId = `fleet-drain:${requestDigest}`;
@@ -218,8 +210,7 @@ export function drain(coordinator, recorder, ctx = {}) {
     // failed-but-resumable — so its durable dispositions and receipt stay exact across
     // attempts (DC5/DC6). When no physical drain exists, the set is computed from the live
     // fleet. Either way the convergence loop below attempts every worker the success test
-    // counts (#277 G-20), so a hold acquired outside this set after computation is released,
-    // never merely observed until the deadline.
+    // counts (#277 G-20), so a hold acquired outside this set after computation is released.
     targetWorkerIds = durable?.targetWorkerIds ?? coordinator._drainTargetIds;
     if (targetWorkerIds === null) {
       targetWorkerIds = [...coordinator._workers.values()]
@@ -228,30 +219,19 @@ export function drain(coordinator, recorder, ctx = {}) {
           return task?.status === 'pending' || handle.status === 'pending' || coordinator._ownsLocalResources(handle);
         })
         .map((handle) => handle.id).sort();
-      if (targetWorkerIds.length > coordinator._drainPolicy.maxWorkers) {
-        throw Object.assign(new Error('fleet drain target set exceeds deployment capacity'), { code: 'coordinator_drain_capacity' });
-      }
     } else {
       targetWorkerIds = [...targetWorkerIds].sort();
       if (coordinator._drainTargetIds !== null && canonicalDigest(targetWorkerIds) !== canonicalDigest(coordinator._drainTargetIds)) {
         throw Object.assign(new Error('fleet drain target set conflicts with active drain'), { code: 'coordinator_drain_incomplete' });
       }
     }
-    if (durable?.status !== 'completed' && coordinator._activeInteractionIds.size > coordinator._drainPolicy.maxInteractions) {
-      throw Object.assign(new Error('fleet drain interaction set exceeds deployment capacity'), { code: 'coordinator_drain_capacity' });
-    }
 
     const admission = Object.freeze({
       schemaVersion: 1, drainId, repoId: ctx.repoId, requestDigest,
       targetWorkerIds: Object.freeze([...targetWorkerIds]), targetDigest: canonicalDigest(targetWorkerIds),
     });
-    assertWithinDeadline();
     try { recorder.coordination.admitFleetDrain(admission, { actor: ctx.actor, key: `fleet.drain:${ctx.idempotencyKey}` }); }
     catch (error) { throw coordinator._drainFailure(error); }
-    // A deadline hit at admission throws its named wait and fences nothing (#277 G-2): no
-    // physical drain exists yet that could ever clear a latched 'draining' state, and the
-    // durable admission above replays on the next attempt with this exact key.
-    assertWithinDeadline();
     const existingRequest = coordinator._drainRequestPromises.get(drainId);
     if (existingRequest) return existingRequest;
     if (durable?.status === 'completed') {
@@ -266,7 +246,7 @@ export function drain(coordinator, recorder, ctx = {}) {
     coordinator._drainState = 'draining';
 
     if (!coordinator._drainPromise) {
-      const physical = coordinator._performDrain(coordinator._drainTargetIds, ctx.repoId, deadline, coordinator._drainPhysicalId, coordinator._drainPhysicalActor);
+      const physical = coordinator._performDrain(coordinator._drainTargetIds, ctx.repoId, coordinator._drainPhysicalId, coordinator._drainPhysicalActor);
       coordinator._drainPromise = physical.then((receipt) => {
         coordinator._drainReceipt = receipt;
         return receipt;
@@ -279,12 +259,9 @@ export function drain(coordinator, recorder, ctx = {}) {
       publicPromise.catch(() => { if (coordinator._drainPromise === publicPromise) coordinator._drainPromise = null; });
     }
     const requestPromise = coordinator._drainPromise.then((receipt) => {
-      assertWithinDeadline();
-      coordinator._mirrorDrainDispositions(coordinator._drainPhysicalId, drainId, ctx.actor, assertWithinDeadline);
-      assertWithinDeadline();
+      coordinator._mirrorDrainDispositions(coordinator._drainPhysicalId, drainId, ctx.actor);
       try { recorder.coordination.completeFleetDrain(drainId, receipt, { actor: ctx.actor, key: `fleet.drain.complete:${ctx.idempotencyKey}` }); }
       catch (error) { throw coordinator._drainFailure(error); }
-      assertWithinDeadline();
       return receipt;
     }, (error) => { throw coordinator._drainFailure(error); });
     coordinator._drainRequestPromises.set(drainId, requestPromise);
@@ -633,35 +610,21 @@ export function _recordDrainDisposition(coordinator, recorder, drainId, actor, w
     recorder.coordination.recordFleetDrainDisposition(drainId, workerId, disposition, { actor, key });
   }
 
-export function _mirrorDrainDispositions(coordinator, recorder, sourceDrainId, targetDrainId, actor, assertWithinDeadline) {
+export function _mirrorDrainDispositions(coordinator, recorder, sourceDrainId, targetDrainId, actor) {
     const source = recorder.coordination.fleetDrain(sourceDrainId);
     if (!source || !['admitted', 'completed'].includes(source.status) || source.dispositions.length !== source.targetWorkerIds.length) {
       throw Object.assign(new Error('fleet drain durable dispositions are incomplete'), { code: 'coordinator_drain_incomplete' });
     }
     for (const row of source.dispositions) {
-      assertWithinDeadline();
       coordinator._recordDrainDisposition(targetDrainId, actor, row.workerId, row.disposition);
     }
   }
 
-export async function _cancelPendingForDrain(coordinator, recorder, deadline) {
+export async function _cancelPendingForDrain(coordinator, recorder) {
     let processed = 0;
     for (const requestId of [...coordinator._activeInteractionIds]) {
       const record = coordinator._pending.get(requestId);
       if (!record) { coordinator._activeInteractionIds.delete(requestId); continue; }
-      if (coordinator._now() >= deadline || processed >= coordinator._drainPolicy.maxInteractions) {
-        throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
-          code: 'coordinator_drain_incomplete',
-          detail: {
-            reason: 'interaction_cancel_deadline',
-            timeoutMs: coordinator._drainPolicy.timeoutMs,
-            processed,
-            ...(coordinator._now() >= deadline
-              ? { waitingOn: coordinator._drainWaitingOn([...coordinator._workers.keys()], null, 'policy') }
-              : { capacity: coordinator._drainPolicy.maxInteractions }),
-          },
-        });
-      }
       processed += 1;
       const handle = coordinator._workers.get(record.worker); const task = handle ? coordinator._tasks.get(handle.taskId) : null;
       const cancelled = recorder.log.append({
@@ -2267,7 +2230,6 @@ export function _observeKillAbsence(coordinator, recorder, waiter) {
     const handle = coordinator._workers.get(waiter.workerId);
     if (!handle) return null;
     const absence = coordinator._processAbsence(handle);
-    if (absence !== null) handle.stopLivenessObserved = absence.alive;
     if (absence?.alive !== false) return null;
     return coordinator._attestAbsentStop(handle, waiter, waiter.rule ?? KILL_RULES.stopRequested, absence);
   }
@@ -2310,35 +2272,6 @@ export function _attestAbsentStop(coordinator, recorder, handle, waiter, rule, a
     return attested;
   }
 
-export function _abandonStopWorker(coordinator, recorder, handle, observation = null) {
-    if (!handle) return null;
-    if (handle.stopAbandoned) return handle.stopAbandoned;
-    const attempts = coordinator._stopAttemptOf(handle);
-    const alive = observation?.alive ?? handle.stopLivenessObserved ?? null;
-    const holds = Object.keys(coordinator._localResourceOwnership(handle));
-    const abandoned = Object.freeze({ at: new Date().toISOString(), attempts, alive, holds: Object.freeze(holds) });
-    handle.stopAbandoned = abandoned;
-    const task = coordinator._tasks.get(handle.taskId) ?? null;
-    try {
-      recorder.log.append({
-        worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-        kind: 'control.stop_abandoned', actor: 'policy', ...coordinator._routeAttribution(handle, task),
-        payload: { rule: KILL_RULES.stopDeadline, attempts, alive, holds: [...holds] },
-      });
-    } catch { /* the outcome row below still names it */ }
-    try {
-      recorder.recordDriver('drain.worker_abandoned', {
-        workerId: handle.id, taskId: task?.id ?? null, attempts, alive, holds: [...holds],
-        reason: 'stop_attempts_exhausted', at: abandoned.at,
-      }, `drain.worker_abandoned:${handle.id}:${attempts}`);
-    } catch { /* the outcome reader below still names it */ }
-    // Issue #472: the abandonment is NOT a release and never rides the release sink (#450's
-    // `released`, or the `host.stopped.released` list minted from it). What the worker keeps is
-    // named right here — the `control.stop_abandoned` row on its own log and the durable
-    // `drain.worker_abandoned` above — and the stop's outcome lists the worker under `abandoned`,
-    // the ONE reader below.
-    return abandoned;
-  }
 
 export function _expireQuestion(coordinator, recorder, requestId, record, effectiveDeadlineAt) {
     if (record.state !== 'pending' || record.acknowledged === true || record.escalated === true) {

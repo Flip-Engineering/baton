@@ -192,7 +192,7 @@ async function resident(t, f, { onSpawn } = {}) {
       verification: { command: 'node', arguments: ['--test'] },
       resident: {
         env: { XDG_CONFIG_HOME: f.configRoot, HOME: f.home },
-        home: f.home, webDrainMs: 500, sessionTtlMs: 60_000, reincarnationWaitMs: HANDOFF_WAIT_MS,
+        home: f.home, webDrainMs: 500, sessionTtlMs: 60_000,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },

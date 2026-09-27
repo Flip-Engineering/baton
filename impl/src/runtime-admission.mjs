@@ -81,31 +81,16 @@ export const COORDINATION_MUTATORS = new Set([
   'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
 ]);
 
-export const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, timeoutMs: 60_000, pollMs: 10 });
+export const DEFAULT_DRAIN_POLICY = Object.freeze({ pollMs: 10 });
 
 export function normalizeDrainPolicy(value) {
-  if (value === undefined) return DEFAULT_DRAIN_POLICY;
-  const requiredFields = ['maxWorkers', 'pollMs', 'timeoutMs'];
-  const optionalFields = ['maxInteractions'];
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new TypeError('drain policy must be a closed bounded deployment policy');
+  const policy = value ?? DEFAULT_DRAIN_POLICY;
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)
+    || Object.keys(policy).length !== 1
+    || !Number.isSafeInteger(policy.pollMs) || policy.pollMs <= 0) {
+    throw new TypeError('drain policy must name one positive poll cadence');
   }
-  const keys = Object.keys(value).sort();
-  const requiredSorted = [...requiredFields].sort();
-  const allowedSorted = [...requiredFields, ...optionalFields].sort();
-  const validField = (field) => Number.isSafeInteger(value[field]) && value[field] > 0;
-  if ((keys.join(',') !== requiredSorted.join(',') && keys.join(',') !== allowedSorted.join(','))
-    || !requiredFields.every(validField)
-    || (value.maxInteractions !== undefined && !validField('maxInteractions'))
-    || value.maxWorkers > 100_000 || value.timeoutMs > 300_000 || value.pollMs > value.timeoutMs) {
-    throw new TypeError('drain policy must be a closed bounded deployment policy');
-  }
-  return Object.freeze({
-    maxWorkers: value.maxWorkers,
-    maxInteractions: value.maxInteractions ?? value.maxWorkers * 16,
-    timeoutMs: value.timeoutMs,
-    pollMs: value.pollMs,
-  });
+  return Object.freeze({ pollMs: policy.pollMs });
 }
 
 export function coachingError(row, actual, cap = row?.value) {
@@ -868,11 +853,10 @@ export function closeAuthority(coordinator, recorder) {
     // Durable replay handles describe prior ownership; they are not native transports owned by
     // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
     // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
-    // Issue #472: a worker the stop STOPPED WAITING ON is not authority this fence still holds —
-    // the abandonment IS the release (its holds are named durably by the #467 rows, its checkout is
-    // the next open's reconciliation's), so a stop that ended with abandoned workers closes exactly.
+    // The local-resource predicate is the whole test: a worker that still holds one is authority
+    // this fence holds, and a reap that released a hold (with the refusal named durably) does not.
     const active = [...coordinator._workers.values()]
-      .filter((worker) => coordinator._ownsLocalResources(worker) && !worker.stopAbandoned);
+      .filter((worker) => coordinator._ownsLocalResources(worker));
     if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
     if (coordinator._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${coordinator._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
     if (coordinator._hasPendingInteractionAuthority()) throw Object.assign(new Error('coordinator still owns pending interaction authority'), { code: 'coordinator_not_drained' });
@@ -889,9 +873,9 @@ export function closeAuthority(coordinator, recorder) {
   }
 
 export function _drainFailure(coordinator, recorder, error) {
-    if (['coordinator_closed', 'coordinator_drain_capacity', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
-    const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
-    // The wrapper names its cause: a deadline that already names the wait keeps it; any other
+    if (['coordinator_closed', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
+    const failure = Object.assign(new Error('the fleet drain did not converge'), { code: 'coordinator_drain_incomplete' });
+    // The wrapper names its cause: a refusal that already names one keeps it; any other
     // failure rides as {code, message} so the drain never reports a bare non-convergence.
     if (error?.detail !== undefined && error?.detail !== null) failure.detail = error.detail;
     else if (error?.code !== undefined) failure.detail = { cause: { code: error.code, message: error?.message ?? null } };
@@ -1933,7 +1917,6 @@ export function observeStopAbsence(coordinator, recorder, workerId, observation 
         ? observation.processGroupId : (handle.processRef?.processGroupId ?? null),
       alive: false,
     });
-    handle.stopLivenessObserved = false;
     const waiter = coordinator._stopWaiters.get(workerId) ?? null;
     const attested = coordinator._attestAbsentStop(handle, waiter, KILL_RULES.stopDeadline, seen);
     if (attested === null) return { ok: false, result: 'attestation_unavailable' };
@@ -2632,7 +2615,7 @@ export function _deriveWorkerStatus(coordinator, recorder, taskStatus) {
   }
 
 export function _admitRunStopTargets(coordinator, recorder, targetWorkerIds, actor, opts) {
-    if (!Array.isArray(targetWorkerIds) || targetWorkerIds.length > coordinator._drainPolicy.maxWorkers
+    if (!Array.isArray(targetWorkerIds)
       || targetWorkerIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(id))
       || new Set(targetWorkerIds).size !== targetWorkerIds.length
       || JSON.stringify([...targetWorkerIds].sort()) !== JSON.stringify(targetWorkerIds)

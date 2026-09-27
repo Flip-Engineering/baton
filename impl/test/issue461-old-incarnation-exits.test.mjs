@@ -221,7 +221,7 @@ test.after(() => { for (const child of realChildren) { try { child.kill('SIGKILL
 
 /** One open deployment over the fixture world, with the successor spawner injected and the handoff
  * bound shrunk to the test's own scale. */
-async function resident(t, f, { onSpawn, reincarnationWaitMs = WAIT_MS } = {}) {
+async function resident(t, f, { onSpawn,  } = {}) {
   let driver = null;
   const deployment = await openBatonDeployment({
     repo: f.repo,
@@ -235,7 +235,6 @@ async function resident(t, f, { onSpawn, reincarnationWaitMs = WAIT_MS } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },
@@ -448,7 +447,6 @@ const deployment = await openBatonDeployment({
       home: world.home,
       webDrainMs: 500,
       sessionTtlMs: 60_000,
-      reincarnationWaitMs: world.waitMs,
       spawnSuccessor: (spec) => {
         // A REAL successor handle that publishes nothing on its own: the test process plays the
         // publishing successor, the readiness marker is written here, and the child exists so the

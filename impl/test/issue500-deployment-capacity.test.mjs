@@ -131,8 +131,7 @@ test('500-caps-A: the open publishes the declared capacity and stop-envelope def
   }, 'the per-runtime reserve stays the shipped 64 MiB / 10 000-inode allowance with a derived floor');
   assert.equal(driverOptions.stopDeadlineMs, 15_000, 'the stop deadline');
   assert.equal(driverOptions.progressNudgeWindowMs, 300_000, 'the steering nudge window');
-  assert.deepEqual(driverOptions.drainPolicy, { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
-    'the drain: 64 workers, a 90 s window, a 10 ms poll');
+  assert.deepEqual(driverOptions.drainPolicy, { pollMs: 10 }, 'the drain: a 10 ms poll cadence');
   assert.deepEqual(driverOptions.budgetPolicy, { terminalGraceMs: 2_000 }, 'the budget terminal grace');
   assert.deepEqual(driverOptions.toolchainProjection.limits, {
     maxMappings: 128, maxFiles: 1_000_000, maxDirectories: 250_000,
@@ -302,7 +301,7 @@ test('500-caps-H: the bounds with no hermetic seam keep their live literals (sou
   count(/commandTimeoutMs: rawResident\.commandTimeoutMs \?\? 30_000,/u, 'resident command deadline default', 1);
   count(/stopDeadlineMs: 15_000,/u, 'stop deadline', 1);
   count(/progressNudgeWindowMs: 300_000,/u, 'steering nudge window', 1);
-  count(/drainPolicy: \{ maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 \},/u, 'drain policy', 1);
+  count(/drainPolicy: \{ pollMs: 10 \},/u, 'drain policy', 1);
   count(/budgetPolicy: \{ terminalGraceMs: 2_000, \.\.\.budgetPolicy \},/u, 'budget terminal grace default', 1);
   count(/const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 \* 1024 \* 1024;/u, 'deployment wire frame default', 1);
   count(/maxOutputBytes: 1024 \* 1024,/u, 'verification capture output ceiling', 1);

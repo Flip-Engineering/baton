@@ -110,7 +110,6 @@ export function describeDrainWait(detail) {
     }).join('; ')}`);
   }
   if (typeof detail.reason === 'string') parts.push(`reason ${detail.reason}`);
-  if (Number.isSafeInteger(detail.timeoutMs)) parts.push(`deadline ${detail.timeoutMs}ms`);
   if (Number.isSafeInteger(detail.count)) parts.push(`count ${detail.count}`);
   if (Number.isSafeInteger(detail.processed)) parts.push(`processed ${detail.processed}`);
   if (typeof detail.cause === 'object' && detail.cause !== null && typeof detail.cause.code === 'string') {
@@ -139,12 +138,6 @@ export function describeStopWait(detail) {
     .map((entry) => Object.freeze({
       resource: entry.resource, reaper: entry.reaper ?? null, since: entry.since ?? null,
     }));
-  const observed = Object.freeze(Object.fromEntries(rows
-    .filter((row) => typeof row.workerId === 'string' && row.workerId.length > 0)
-    .map((row) => [row.workerId, Object.freeze({
-      attempt: Number.isSafeInteger(row.attempt) && row.attempt > 0 ? row.attempt : 0,
-      alive: row.alive === true || row.alive === false ? row.alive : null,
-    })])));
   const released = rows.flatMap((row) => (Array.isArray(row.released) ? row.released : []))
     .filter(record).map((row) => Object.freeze({ ...row }));
   const holds = (row) => (Array.isArray(row.waiting) ? row.waiting : [])
@@ -155,7 +148,7 @@ export function describeStopWait(detail) {
   if (workers.length > 0) {
     return Object.freeze({
       on: 'worker', ids: Object.freeze(workers), entries: Object.freeze(entries),
-      released: Object.freeze(released), observed,
+      released: Object.freeze(released),
     });
   }
   const capacity = entries.filter((entry) => entry.resource.startsWith('capacity:'));
@@ -163,7 +156,7 @@ export function describeStopWait(detail) {
     return Object.freeze({
       on: 'capacity',
       ids: Object.freeze(ids(capacity.map((entry) => entry.resource.slice('capacity:'.length)))),
-      entries: Object.freeze(entries), released: Object.freeze(released), observed,
+      entries: Object.freeze(entries), released: Object.freeze(released),
     });
   }
   // Issue #472: the controller's own historical reconciliation — the step the drain runs once its
@@ -739,64 +732,16 @@ export class BatonWebHost {
       };
       await closeWebAdmission();
       this._say('baton serve: draining the fleet with the served transport open for reads');
-      // #276(1): the drain's progress, at the only cadence this host owns — the grace IT declared
-      // for its own Web leg. One line says the fleet drain has outlived that grace, so a long drain
-      // is visibly alive instead of silent; the deadline itself is the drain's own derivation and
-      // is never re-implemented here.
-      const progressTimer = setTimeout(
-        () => this._say(`baton serve: fleet drain still in flight after ${this.webDrainMs}ms; the drain's own deadline governs`),
-        this.webDrainMs,
-      );
-      if (typeof progressTimer.unref === 'function') progressTimer.unref();
       this._stopStage(STOP_STAGES.fleetDrain);
       let application;
       try { application = await this.application.shutdown(this.shutdownPrincipal); }
       catch (error) {
-        clearTimeout(progressTimer);
-        // #276(2): the deadline names its wait BEFORE this host stops waiting, and the refusal
+        // #276(2): the refusal names its wait BEFORE this host stops waiting, and the refusal
         // carries the drain's own detail onward — never a bare non-convergence.
         this._say(`baton serve: drain did not converge; ${describeDrainWait(error?.detail) ?? 'no named wait was reported'}`);
-        // Issue #351/#467: a stop that cannot converge NAMES ITS WAIT and then acts on it, instead
-        // of leaving the operator to SIGKILL a resident that is still holding a process. The
-        // deployment owns the act (it alone can kill a process group and reap it); when it reports
-        // the named obligations released — or, past its bounded attempts, ABANDONED — the stop has
-        // ended and says so, with the workers it stopped waiting on listed on the outcome.
         const wait = describeStopWait(error?.detail);
         const forced = wait === null ? null : await this._recordStop('waiting', { wait, detail: error?.detail ?? null });
         if (forced?.line) this._say(forced.line);
-        if (forced?.released === true || forced?.bounded === true) {
-          this._stopStage(STOP_STAGES.stopRecord);
-          const webClosed = await closeWebTransport();
-          const stopped = await this._recordStop('stopped', { state: 'stopped_after_deadline', wait });
-          if (stopped?.line) this._say(stopped.line);
-          // Issue #472: the list the stop record just composed its line from is the LIVE read (the
-          // deployment reaches its coordinator), so a worker abandoned between the wait that
-          // returned and this step is still named; the bounded result's own snapshot is the
-          // fallback for a host whose stop records carry none.
-          const abandoned = Array.isArray(stopped?.abandoned) ? stopped.abandoned
-            : Array.isArray(forced.abandoned) ? forced.abandoned : Object.freeze([]);
-          // The EXIT state is this resident's own accounting, and a stop that ended with the workers
-          // it stopped waiting on NAMED abandoned has released it — the abandonment is the named
-          // remainder (the outcome carries the list, its holds are named durably by the #467 rows),
-          // never an unreleased obligation of this incarnation. `closed_degraded` is therefore
-          // reserved for a stop something ELSE still holds: a transport that did not close, or a
-          // bounded stop that named nobody.
-          return Object.freeze({
-            schemaVersion: 1,
-            state: webClosed?.ok === true && abandoned.length > 0 ? 'closed' : 'closed_degraded',
-            wakes,
-            web: webClosed,
-            application: forced.application ?? null,
-            stop: Object.freeze({
-              state: 'stopped_after_deadline',
-              wait,
-              killed: forced.killed ?? Object.freeze([]),
-              // ONE shape: the workers this stop stopped waiting on, empty when it abandoned
-              // nobody — never absent, so a reader of the returned stop never has to guess.
-              abandoned: Object.freeze([...abandoned]),
-            }),
-          });
-        }
         const webClosed = await closeWebTransport();
         throw Object.assign(new Error('Baton application shutdown failed after Web admission closed'), {
           code: error?.code ?? 'application_host_shutdown_failed', web: webClosed,
@@ -804,7 +749,6 @@ export class BatonWebHost {
           cause: error,
         });
       }
-      clearTimeout(progressTimer);
       this._say(`baton serve: drain converged; ${describeDrainOutcome(application)}`);
       this._stopStage(STOP_STAGES.stopRecord);
       const webClosed = await closeWebTransport();

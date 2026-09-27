@@ -213,7 +213,6 @@ async function fixture(t, f, { onSpawn, delayMs = 120_000 } = {}) {
           webDrainMs: 400,
           sessionTtlMs: 60_000,
           commandTimeoutMs: 30_000,
-          reincarnationWaitMs: WAIT_MS,
           spawnSuccessor: (spec) => {
             const stub = new StubSuccessor(spec);
             spawned.push(stub);
@@ -227,12 +226,12 @@ async function fixture(t, f, { onSpawn, delayMs = 120_000 } = {}) {
         ...options, stopDeadlineMs: STOP_DEADLINE_MS,
         // The deployment's DECLARED drain policy, in the shape a real one has: it is what bounds the
         // whole driver close, so it keeps the room a loaded suite needs (see the note above).
-        drainPolicy: { maxWorkers: 8, timeoutMs: DRIVER_CLOSE_MS, pollMs: 10 },
+        drainPolicy: { pollMs: 10 },
       });
       // …and the window the FLEET DRAIN itself is bounded by, shrunk to the test's scale: the
       // coordinator's own policy is the one a handoff's drain and a stop's drain both run under, and
       // this is the knob that makes the first fail while the second still converges.
-      driver.coordinator._drainPolicy = Object.freeze({ maxWorkers: 8, timeoutMs: DRAIN_MS, pollMs: 10 });
+      driver.coordinator._drainPolicy = Object.freeze({ pollMs: 10 });
       return driver;
     });
   } finally {
@@ -353,11 +352,20 @@ async function failedWindow(deployment, f) {
 async function twoSeats(deployment, driver, swarmId) {
   const live = await recruitSeat(deployment, driver, swarmId, 'seat-live');
   const stuck = await recruitSeat(deployment, driver, swarmId, 'seat-stuck');
-  // A recovered authority with no observable pid: nothing for the kill to signal and no close for
-  // it to confirm, so the drain spends its deadline on this worker and never converges.
+  // Issue #583: the drain no longer ends on a window, so the failure the window names is the one a
+  // real defect produces — the historical reconciliation refusing after every worker is disposed.
   stuck.handle.processRef = {
     generation: 0, pid: null, processGroupId: null,
-    state: 'unconfirmed_after_restart', ready: false, startedSeq: null, closedSeq: null,
+    state: 'closed', ready: false, startedSeq: null, closedSeq: null,
+  };
+  const worktrees = driver.coordinator._worktrees;
+  const realReconcile = worktrees.reconcile.bind(worktrees);
+  let injected = false;
+  worktrees.reconcile = async (...args) => {
+    await realReconcile(...args);
+    if (injected) return undefined;
+    injected = true;
+    throw Object.assign(new Error('scripted reconciliation failure'), { code: 'reconcile_unavailable' });
   };
   return { live, stuck };
 }
@@ -439,7 +447,13 @@ test('478b2: a failure past the release reports the authority it RE-TOOK', async
   const { deployment } = await fixture(t, f, {
     // The successor reaches its OPEN and then dies: the window's step 3 released the writer lease,
     // so the re-publish must report the authority it took BACK, not one it never gave up.
-    onSpawn: (stub) => { stub.journal.opened = true; stub.opened(); return stub; },
+    onSpawn: (stub) => {
+      stub.journal.opened = true;
+      stub.opened();
+      // Issue #583: the handoff past the release ends on the successor's own exit.
+      setTimeout(() => stub.crash({ code: 9 }), 10);
+      return stub;
+    },
   });
   await bounded(deployment.reincarnate({ target: f.base }), 20_000, 'the reincarnate request');
   await until(() => !existsSync(f.writerLeasePath), { label: 'the window\'s release of the writer lease' });

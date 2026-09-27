@@ -516,7 +516,7 @@ function stateFailureCode(cause) {
     'plan_node_invalid', 'plan_node_limit', 'plan_node_not_found', 'plan_not_approved', 'plan_predecessor_required', 'plan_risk_mismatch', 'plan_route_mismatch',
     'plan_route_invalid', 'plan_route_authority_legacy_ambiguous',
     'plan_scope_invalid', 'plan_self_approval', 'plan_stale', 'plan_too_large', 'plan_verification_invalid', 'plan_version_limit',
-    'coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
+    'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
   // Part F (R5, typed-error reach) — board/package reflex codes (mcp-reflex-surface-decisions.md
   // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part D/E tools;
   // slice 1 owns the context_eval/decision codes in this same rule. Missing/changed artifact

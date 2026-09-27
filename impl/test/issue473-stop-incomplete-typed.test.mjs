@@ -137,7 +137,7 @@ function stalledStopFixture() {
       locus: 'fresh_sandbox', evidence: [],
     }),
     route: () => 'mock', approvalTimeoutMs: 60_000, stopDeadlineMs: 50,
-    drainPolicy: { maxWorkers: 8, pollMs: 5, timeoutMs: STOP_TIMEOUT_MS },
+    drainPolicy: { pollMs: 5 },
   });
   const sessions = new WebSessionStore(join(directory, 'sessions'), { now: () => NOW });
   const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
@@ -228,51 +228,6 @@ async function crossingOf(code) {
   });
 }
 
-// ── (a) the served transport: a stalled run stop crosses typed ───────────────────────────────────
-
-test('#473 (a): a swarm.stop whose run stop stalls crosses coordinator_run_stop_incomplete as 409 with the run and the wait', async () => {
-  const { web, issued, call } = stalledStopFixture();
-  await call('swarm.create', { purpose: 'issue473 stalled run stop' });
-  const recruited = await call('swarm.recruit', { participantId: SEAT_ID, objective: 'hold a stalled run stop' });
-  const runId = recruited?.runId ?? null;
-  assert.ok(typeof runId === 'string' && runId.length > 0,
-    `the recruit binds the seat to a run: ${JSON.stringify(recruited)}`);
-
-  const response = await send(web, {
-    path: '/v1/commands',
-    body: envelope({
-      commandId: 'issue473-stop-stall', idempotencyKey: 'issue473-stop-stall',
-      command: 'swarm.stop',
-      args: { swarmId: SWARM_ID, participantId: SEAT_ID, reason: 'the audit stop', idempotencyKey: 'issue473-stop-stall-args' },
-    }),
-    headers: { authorization: `Bearer ${issued.token}` },
-  });
-
-  assert.equal(response.status, 409,
-    'a stop that did not converge is a state the caller must observe, not a transport fault');
-  assert.equal(response.body.error.code, 'coordinator_run_stop_incomplete',
-    'the coordinator\'s own code crosses as itself');
-  assert.notEqual(response.body.error.code, 'temporarily_unavailable',
-    'the resident used to answer 503 "retry once" here, which told the operator nothing and converged nothing');
-  assert.equal(response.body.error.retryable, false, 'a typed refusal is never retryable');
-  assert.equal(typeof response.body.error.message, 'string');
-  assert.notEqual(response.body.error.message, 'command dispatch failed', 'the refusal keeps its own message');
-
-  const detail = response.body.error.detail;
-  assert.ok(detail !== null && typeof detail === 'object', `the refusal carries the coordinator's detail: ${JSON.stringify(detail)}`);
-  assert.equal(detail.runId, runId, 'the detail names the RUN the seat\'s stop named (the coordinator never sees it)');
-  assert.equal(detail.timeoutMs, STOP_TIMEOUT_MS, 'and the deadline the leg held');
-  assert.ok(Array.isArray(detail.waitingOn) && detail.waitingOn.length > 0,
-    `and the rows the leg is holding: ${JSON.stringify(detail)}`);
-  const row = detail.waitingOn[0];
-  assert.ok(typeof row.workerId === 'string' && row.workerId.length > 0, 'each held row names its worker');
-  assert.ok(Array.isArray(row.waiting) && row.waiting.length > 0, 'and the resources it is waiting on');
-  for (const entry of row.waiting) {
-    assert.equal(typeof entry.resource, 'string', `every wait entry is the #360 shape: ${JSON.stringify(entry)}`);
-  }
-  assert.ok(row.waiting.some((entry) => entry.resource.startsWith('local_resources:')),
-    `the checkout hold is named: ${JSON.stringify(row.waiting)}`);
-});
 
 // ── (b) the derivation pin over the coordinator's own stop-path refusal sites ────────────────────
 
@@ -292,7 +247,7 @@ const STOP_PATH_LEGS = Object.freeze({
     'stopRunTargets', '_admitRunStopTargets', 'cancelRunStopTarget', 'attemptRunStopTarget',
   ]),
   kill: Object.freeze(['kill']),
-  drain: Object.freeze(['drain', '_drainFailure', '_performDrain', '_beforeDrainDeadline']),
+  drain: Object.freeze(['drain', '_drainFailure', '_performDrain']),
   'terminal resource release': Object.freeze(['releaseTerminalTaskResources']),
 });
 /** Issue #483: the SECOND family the same pin covers — the coordination store's own wait-abort mint
@@ -304,7 +259,6 @@ const WAIT_ABORT_LEGS = Object.freeze({
 });
 const STOP_PATH_CROSSING = Object.freeze({
   coordinator_closed: 'coordinator-lifecycle',
-  coordinator_drain_capacity: 'coordinator-lifecycle',
   coordinator_drain_incomplete: 'coordinator-lifecycle',
   coordinator_drain_invalid: 'transient-fallthrough',
   coordinator_drain_unavailable: 'transient-fallthrough',
@@ -426,10 +380,9 @@ test('#473 (b): every mapped stop-path code crosses the served transport typed �
 
 const RUN_STOP_REFUSAL = Object.freeze({
   code: 'coordinator_run_stop_incomplete',
-  message: 'Run stop did not converge before its deadline',
+  message: 'the run stop has not converged',
   retryable: false,
   detail: {
-    timeoutMs: 90_000,
     runId: 'run-seat-stall-473',
     waitingOn: [{
       workerId: 'w-stall-1', status: 'dead', disposition: null, processState: 'running',
@@ -462,10 +415,10 @@ test('#473 (c): the CLI prints the seat, the run and the wait, and the next step
   assert.match(block, /run-seat-stall-473/u, 'and the run the stop named');
   assert.match(block, /w-stall-1/u, 'and the worker the leg is holding');
   assert.match(block, /local_resources:worktree/u, 'and what that worker is waiting on');
-  assert.match(block, /90000ms/u, 'and the deadline it held');
-  assert.match(block, /next: wait for the deadline/u, 'and that waiting converges it');
+  assert.match(block, /the stop keeps reaping the workers it names until they settle/u,
+    'and that the stop keeps reaping them');
   assert.match(block, new RegExp(`baton swarm stop ${SWARM_ID} ${SEAT_ID}`, 'u'),
-    'and the second stop that re-enters the same bounded convergence');
+    'and the second stop that re-enters the same convergence');
 
   // The whole leg: the parsed `baton swarm stop` reaches the refusal through runBatonCli, and the
   // message the operator reads carries the block under the refusal line.
@@ -478,7 +431,7 @@ test('#473 (c): the CLI prints the seat, the run and the wait, and the next step
   assert.ok(caught !== null, 'the refusal reaches the CLI entry');
   assert.equal(caught.code, 'coordinator_run_stop_incomplete', 'as itself');
   assert.match(caught.message, new RegExp(SEAT_ID, 'u'), 'the printed message carries the block');
-  assert.match(caught.message, /next: wait for the deadline/u, 'including the next step');
+  assert.match(caught.message, /the stop keeps reaping the workers it names until they settle/u, 'including the next step');
 
   // A receipt still renders through #469's own leg, and any other refusal passes through untouched.
   const receipt = { result: { objectiveRef: { kind: 'row', seq: 7 }, objectiveBytes: 12, planPreview: { objective: 'the objective line' } } };

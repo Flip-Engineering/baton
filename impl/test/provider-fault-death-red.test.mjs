@@ -511,7 +511,7 @@ test('#265-2: a participant holding an observed native child still drains the ru
   const adapter = new ScriptableAdapter({ autoConfirmKill: true });
   const { coordinator, log } = setup({
     adapter, repoId: 'repo-pf-drain',
-    drainPolicy: { maxWorkers: 4, timeoutMs: 5_000, pollMs: 5 },
+    drainPolicy: { pollMs: 5 },
   });
   const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:pf-drain' });
   log.append({

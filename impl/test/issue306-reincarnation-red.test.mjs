@@ -197,7 +197,6 @@ async function resident(t, f, { onSpawn } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs: WAIT_MS,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },
@@ -260,15 +259,6 @@ test('#306 §6: the four request refusals are ONE exported closed set', () => {
   }, 'the closed refusal set docs/48 §6 names — exported, never minted ad hoc at the call sites');
 });
 
-test('#306 §9: every handoff bound derives from the limits registry', () => {
-  const wait = FRAME_LIMITS['host.reincarnation.wait_ms'];
-  assert.ok(wait, 'land the ONE handoff bound in the registry (docs/48 §9)');
-  assert.equal(wait.unit, 'ms');
-  assert.ok(Number.isSafeInteger(wait.value) && wait.value > 0);
-  const commits = FRAME_LIMITS['view.served_behind.commits'];
-  assert.ok(commits, 'the behind-commit page bound (docs/48 §4/§9)');
-  assert.equal(commits.unit, 'items');
-});
 
 test('#306 §5: host.reincarnated wakes the incarnation_changed class in the ONE wake table', () => {
   assert.ok(WAKE_CLASSES.includes('incarnation_changed'),

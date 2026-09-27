@@ -654,27 +654,6 @@ export function _freshTurnProgress(coordinator, turnEpoch) {
     };
   }
 
-export function abandonedWorkers(coordinator) {
-    return Object.freeze([...coordinator._workers.values()]
-      .filter((handle) => handle.stopAbandoned)
-      .map((handle) => Object.freeze({
-        workerId: handle.id, attempt: handle.stopAbandoned.attempts,
-        alive: handle.stopAbandoned.alive, holds: Object.freeze([...handle.stopAbandoned.holds]),
-      })));
-  }
-
-export function abandonedCapacityReservations(coordinator) {
-    const rows = [];
-    for (const handle of coordinator._workers.values()) {
-      if (!handle.stopAbandoned) continue;
-      for (const ownerTaskId of coordinator._capacityOwnerIds(handle, coordinator._tasks.get(handle.taskId) ?? null)) {
-        rows.push(Object.freeze({
-          workerId: handle.id, taskId: handle.taskId, ownerTaskId, resource: `worker:${ownerTaskId}`,
-        }));
-      }
-    }
-    return Object.freeze(rows);
-  }
 
 export async function _claimInteraction(coordinator, requestId, opts = {}) {
     if (typeof requestId !== 'string' || requestId.length === 0) return { ok: false, result: 'not_found' };

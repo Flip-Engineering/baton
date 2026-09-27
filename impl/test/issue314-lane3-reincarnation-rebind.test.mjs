@@ -140,7 +140,6 @@ async function resident(t, f, { onSpawn } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs: WAIT_MS,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },

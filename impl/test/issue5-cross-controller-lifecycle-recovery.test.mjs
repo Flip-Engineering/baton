@@ -158,7 +158,7 @@ function driver(repo, logDir, selectedAdapter) {
     worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
     worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
     stopDeadlineMs: 2_000,
-    drainPolicy: { maxWorkers: 32, timeoutMs: 2_000, pollMs: 10 },
+    drainPolicy: { pollMs: 10 },
   });
 }
 

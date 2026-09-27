@@ -74,10 +74,10 @@ function drainReceipt(overrides = {}) {
 
 test('DC1: drain policy is closed and bounded before writer admission', async (t) => {
   const valid = repo('policy-valid'); let driver; t.after(() => { try { driver?.close(); } catch {} rmSync(valid.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: valid.directory, logDir: valid.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  driver = createDriver({ repoRoot: valid.directory, logDir: valid.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   assert.equal(typeof driver.drainAndClose, 'function');
-  assert.throws(() => createDriver({ repoRoot: valid.directory, logDir: join(valid.world, 'unknown'), repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5, path: '/tmp/forged' } }), /drain policy/i);
-  assert.throws(() => createDriver({ repoRoot: valid.directory, logDir: join(valid.world, 'max'), repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 100_001, timeoutMs: 1_000, pollMs: 5 } }), /drain policy/i);
+  assert.throws(() => createDriver({ repoRoot: valid.directory, logDir: join(valid.world, 'unknown'), repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5, path: '/tmp/forged' } }), /drain policy/i);
+  assert.throws(() => createDriver({ repoRoot: valid.directory, logDir: join(valid.world, 'bad'), repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 0 } }), /drain policy/i);
   const receipt = await driver.drainAndClose(); assert.equal(receipt.state, 'closed');
 });
 
@@ -90,7 +90,7 @@ test('DC2-DC7: one drain cancels pending work, kill-confirms active work, fences
   let nativeKills = 0; const kill = adapter.kill.bind(adapter); adapter.kill = async (...args) => { nativeKills += 1; return kill(...args); };
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 2, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
+    drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const active = await driver.coordinator.spawn('mock', brief('active'), { taskId: 'active' });
   const pending = await driver.coordinator.spawn('mock', brief('pending'), { taskId: 'pending' });
@@ -134,12 +134,12 @@ test('DC4: linked-worktree controllers start and drain without reconciling each 
     rmSync(world, { recursive: true, force: true });
   });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driverA = createDriver({ repoRoot: controllerA, logDir: join(world, 'log-a'), repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  driverA = createDriver({ repoRoot: controllerA, logDir: join(world, 'log-a'), repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const worker = await driverA.coordinator.spawn('mock', brief('controller A live work'), { taskId: 'controller-a-live' });
   await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'controller A worker');
   const liveContext = await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.sessionContext, 'controller A workspace');
   const livePath = liveContext.worktree;
-  driverB = createDriver({ repoRoot: controllerB, logDir: join(world, 'log-b'), repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 } });
+  driverB = createDriver({ repoRoot: controllerB, logDir: join(world, 'log-b'), repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   await driverB.ready;
   assert.equal(existsSync(livePath), true);
   assert.equal(git(['branch', '--list', liveContext.branch, '--format=%(refname:short)'], controllerB), liveContext.branch);
@@ -159,7 +159,7 @@ test('DC4: drain cannot attest while worktree creation or native spawn remains p
   adapter.spawn = async (...args) => { const ack = await nativeSpawn(...args); await spawnGate.promise; return ack; };
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
+    drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   await driver.ready;
   // The subject is the drain's pending-boundary attestation, not the cost of `git worktree`: the
@@ -198,7 +198,7 @@ test('DC4: drain cannot attest while worktree creation or native spawn remains p
 test('DC4: a process start after spawn Ack is refused and re-acquired, and the refusal kills nothing', async (t) => {
   const f = repo('late-process-start'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const worker = await driver.coordinator.spawn('mock', brief('late native start'), { taskId: 'late-process-start' });
   await until(() => driver.coordinator._workers.get(worker.id)?.nativeSpawnPending === false && adapter._sessions.has(worker.id), 'spawn Ack boundary');
   const session = adapter._sessions.get(worker.id); const generation = session.opts.processGeneration;
@@ -217,7 +217,7 @@ test('DC4: a process start after spawn Ack is refused and re-acquired, and the r
 
 test('DC4: drain reconciles historical worktree, branch, metadata, and runtime residue outside live handles', async (t) => {
   const f = repo('historical-residue'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   await driver.ready;
   const worktree = await driver.coordinator._worktrees.create('historical');
   driver.coordinator._runtimeScopes.create('historical', 'mock');
@@ -232,7 +232,7 @@ test('DC4: drain reconciles historical worktree, branch, metadata, and runtime r
 test('DC2/DC4: drain policy-resolves pending interaction and publication authority and discards late asks', async (t) => {
   const f = repo('pending-authority'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   // The row proves pending interaction/publication authority resolution and late-ask discard, not
   // the cost of a live stop: a deterministic checkout double keeps the reap inside the drain's
   // deployment budget (DC2-DC7 proves the real reap).
@@ -260,146 +260,15 @@ test('DC2/DC4: drain policy-resolves pending interaction and publication authori
   assert.equal(driver.log.read(worker.id).some((event) => event.kind === 'control.drain_interaction_discarded'), true);
 });
 
-test('DC1/DC5: max+1 refuses before fencing and an exact retry can still close', async (t) => {
-  const f = repo('max-plus-one'); let driver; t.after(async () => { try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  const adapter = new MockAdapter({ scenario: { outcome: 'completed' } });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
-  // This row proves capacity-before-fencing and the exact retry close: the workers run the real
-  // pipeline to a durable settlement first, and the reap of their checkouts is deterministic here
-  // (DC2-DC7 proves the physical reap — real `git worktree` cost outlives any fixed drain budget
-  // under load, and that budget is not what this row asserts).
-  driver.coordinator._worktrees.remove = async () => {};
-  driver.coordinator._worktrees.reconcile = async () => ({});
-  await driver.coordinator.spawn('mock', brief('one'), { taskId: 'one' }); await driver.coordinator.spawn('mock', brief('two'), { taskId: 'two' });
-  await settledTasks(driver, ['one', 'two']);
-  await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_capacity');
-  assert.equal(driver.coordinator.list().length, 2, 'capacity refusal occurs before admission closes');
-  assert.equal(existsSync(join(f.logDir, 'coordination', 'writer.lease')), true);
-  driver.coordinator._drainPolicy = Object.freeze({ maxWorkers: 2, timeoutMs: 1_000, pollMs: 5 });
-  const receipt = await driver.drainAndClose(); assert.equal(receipt.state, 'closed');
-});
 
-test('DC1/DC5: active interaction max+1 refuses before fencing without scanning historical records', async (t) => {
-  const f = repo('interaction-max-plus-one'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
-  await driver.ready;
-  for (let index = 0; index < 17; index += 1) {
-    const requestId = `bounded-${index}`; driver.coordinator._pending.set(requestId, { worker: 'historical', kind: 'question', state: 'pending' }); driver.coordinator._activeInteractionIds.add(requestId);
-  }
-  await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_capacity');
-  assert.equal(driver.coordinator._drainState, 'open');
-  driver.coordinator._activeInteractionIds.clear();
-  const receipt = await driver.drainAndClose(); assert.equal(receipt.state, 'closed');
-});
 
-test('DC4/DC5: a hung cleanup is deadline-bounded, stays red, and retains writer authority', async (t) => {
-  const f = repo('hung-cleanup'); let driver; t.after(() => {
-    try { driver?.coordination.releaseWriterLease(); } catch {}
-    rmSync(f.world, { recursive: true, force: true });
-  });
-  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driver = createDriver({
-    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 40, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
-  });
-  const handle = await driver.coordinator.spawn('mock', brief('hung cleanup'), { taskId: 'hung-cleanup' });
-  await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.status === 'working', 'hung-cleanup worker');
-  driver.coordinator._worktrees.remove = () => new Promise(() => {});
-  // The bound is the drain's own deployment deadline — named, with the hung worker on the wait —
-  // never a stopwatch racing how fast the machine happens to be.
-  const failure = await driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'hung-cleanup' }).catch((error) => error);
-  assert.equal(failure?.code, 'coordinator_drain_incomplete');
-  assert.equal(failure.detail?.reason, 'deadline', 'the refusal names the deadline that bounded the cleanup');
-  assert.equal(failure.detail?.timeoutMs, 40, 'the bound is the deployment drain policy, not a test budget');
-  assert.deepEqual(failure.detail?.waitingOn?.map((row) => row.workerId), [handle.id], 'the wait names the hung worker');
-  assert.equal(existsSync(join(f.logDir, 'coordination', 'writer.lease')), true);
-  assert.equal(driver.coordinator._workers.get(handle.id).localAuthority, true);
-});
 
-test('DC5: synchronous durable admission crossing the deadline is red and retryable, never late success', async (t) => {
-  const f = repo('slow-admission'); const coordinationDir = root('slow-admission-coordination'); const coordination = new CoordinationStore(coordinationDir); let driver;
-  t.after(() => { try { coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); rmSync(coordinationDir, { recursive: true, force: true }); });
-  const admit = coordination.admitFleetDrain.bind(coordination); let delayed = true;
-  coordination.admitFleetDrain = (...args) => { if (delayed) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_150); return admit(...args); };
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', coordination, adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
-  const started = Date.now();
-  await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_incomplete');
-  assert.ok(Date.now() - started >= 1_100); assert.equal(existsSync(coordination._writerLease.path), true);
-  // #277 G-2: a deadline hit at admission fences nothing — no physical drain exists that could
-  // clear a latched state, so the coordinator stays open and the retry replays the admission.
-  assert.equal(driver.coordinator._drainState, 'open');
-  delayed = false; coordination.admitFleetDrain = admit;
-  assert.equal((await driver.drainAndClose()).state, 'closed');
-});
 
-test('DC4/DC5: a timed-out historical reconciliation remains owned and retries join it', async (t) => {
-  const f = repo('historical-reconcile-timeout'); let driver; const gate = deferred();
-  t.after(() => { gate.resolve(); try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
-  await driver.ready; let reconciliations = 0; let lateMutation = false;
-  driver.coordinator._worktrees.reconcile = async () => { reconciliations += 1; await gate.promise; lateMutation = true; };
-  // Only the first attempt runs on a shrink-to-40ms deadline — proof that a timeout retains the
-  // cleanup it could not finish. The retry then keeps the deployment policy's own budget and the
-  // gate, not a wall clock, decides when it can converge.
-  driver.coordinator._drainPolicy = Object.freeze({ maxWorkers: 1, timeoutMs: 40, pollMs: 5 });
-  await assert.rejects(
-    driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'historical-timeout' }),
-    (error) => error.code === 'coordinator_drain_incomplete' && error.detail?.reason === 'historical_reconciliation_pending',
-  );
-  driver.coordinator._drainPolicy = Object.freeze({ maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 });
-  assert.equal(reconciliations, 1); assert.equal(lateMutation, false); assert.ok(driver.coordinator._drainHistoricalReconcilePromise);
-  const retained = driver.coordinator._drainHistoricalReconcilePromise;
-  let settled = false; const closing = driver.drainAndClose().finally(() => { settled = true; });
-  await until(() => driver.coordinator._drainState === 'draining' && driver.coordinator._drainPromise !== null, 'retry drain joins the held cleanup');
-  assert.equal(settled, false, 'the retry cannot attest while the retained cleanup is pending');
-  assert.equal(driver.coordinator._drainHistoricalReconcilePromise, retained, 'the retry joins the original cleanup rather than starting a second mutation');
-  assert.equal(reconciliations, 1);
-  gate.resolve(); const receipt = await closing;
-  assert.equal(receipt.state, 'closed'); assert.equal(lateMutation, true); assert.equal(reconciliations, 1);
-});
 
-for (const [label, retryKey] of [['same identity', 'disposition-first'], ['new identity', 'disposition-second']]) {
-  test(`DC5/DC6: ${label} retry preserves the durable kill disposition across a later timeout`, async (t) => {
-    const f = repo(`disposition-${retryKey}`); const gate = deferred(); let driver;
-    t.after(() => { gate.resolve(); try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-    const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-    let nativeKills = 0; const nativeKill = adapter.kill.bind(adapter); adapter.kill = async (...args) => { nativeKills += 1; return nativeKill(...args); };
-    driver = createDriver({
-      repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-      drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
-    });
-    await driver.ready;
-    // The row proves the durable kill disposition across a timeout, so the live stop it drives must
-    // not race the 100 ms attempt budget against real `git worktree` reap cost: the fixture checkout
-    // reaps deterministically (DC2-DC7 proves the real reap).
-    const checkout = join(f.directory, '.baton', 'wt', `disposition-${retryKey}`);
-    driver.coordinator._worktrees = {
-      create: async (taskId) => { mkdirSync(checkout, { recursive: true }); return { path: checkout, branch: `baton/${taskId}`, baseSha: 'sha-base' }; },
-      remove: async () => { rmSync(checkout, { recursive: true, force: true }); },
-      reconcile: async () => ({}),
-    };
-    const reconcile = driver.coordinator._worktrees.reconcile.bind(driver.coordinator._worktrees); let reconciliations = 0;
-    driver.coordinator._worktrees.reconcile = async (...args) => { reconciliations += 1; await gate.promise; return reconcile(...args); };
-    const handle = await driver.coordinator.spawn('mock', brief('durable disposition'), { taskId: `disposition-${retryKey}` });
-    await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.status === 'working', 'durable-disposition worker');
-    await assert.rejects(driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'disposition-first' }), (error) => error.code === 'coordinator_drain_incomplete');
-    assert.equal(nativeKills, 1); assert.equal(driver.coordinator._workers.get(handle.id).localAuthority, false);
-    assert.equal(driver.log.read(handle.id).filter((event) => event.kind === 'kill.confirmed').length, 1);
-    const physical = driver.coordination.fleetDrain(driver.coordinator._drainPhysicalId);
-    assert.deepEqual(physical.dispositions, [{ workerId: handle.id, disposition: 'killConfirmed' }]);
-    let settled = false;
-    driver.coordinator._drainPolicy = Object.freeze({ ...driver.coordinator._drainPolicy, timeoutMs: 1_000 });
-    const retry = driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: retryKey }).finally(() => { settled = true; });
-    await sleep(10); assert.equal(settled, false); assert.equal(nativeKills, 1); assert.equal(reconciliations, 1);
-    gate.resolve(); const receipt = await retry;
-    assert.equal(receipt.targetCount, 1); assert.equal(receipt.counts.killConfirmed, 1); assert.equal(receipt.counts.alreadyTerminal, 0);
-    assert.equal(nativeKills, 1); assert.equal(reconciliations, 1);
-  });
-}
 
 test('DC5/DC7: driver close can retry exact writer release after coordinator authority closed', async (t) => {
   const f = repo('driver-writer-retry'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   const owned = driver.coordination._writerLease;
   const releaseWriterLease = driver.coordination.releaseWriterLease.bind(driver.coordination);
   driver.coordination.releaseWriterLease = (options) => {
@@ -415,9 +284,9 @@ test('DC5/DC7: driver close can retry exact writer release after coordinator aut
 
 test('DC7: each driver incarnation owns a fresh nested drain and closes after restart', async (t) => {
   const f = repo('driver-restart'); let first; let second; t.after(() => { try { first?.coordination.releaseWriterLease(); } catch {} try { second?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  first = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  first = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   const one = await first.drainAndClose('host:first'); assert.equal(one.state, 'closed');
-  second = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  second = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   const two = await second.drainAndClose();
   assert.equal(two.state, 'closed'); assert.equal(two.authority.coordinatorClosed, true); assert.equal(two.authority.writerReleased, true);
   assert.notEqual(two.fleet.receiptDigest, undefined);
@@ -425,14 +294,14 @@ test('DC7: each driver incarnation owns a fresh nested drain and closes after re
 
 test('DC7: a direct-only driver without an explicit northbound repo ID drains under a fixed local identity', async (t) => {
   const f = repo('driver-local-id'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, adapters: {}, drainPolicy: { pollMs: 5 } });
   const receipt = await driver.drainAndClose();
   assert.equal(receipt.state, 'closed'); assert.equal(receipt.fleet.repoId, 'local');
 });
 
 test('DC2/DC6: identical direct drain callers share the exact request Promise', async (t) => {
   const f = repo('direct-promise'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   const ctx = { actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'direct-promise' };
   const first = driver.coordinator.drain(ctx); const second = driver.coordinator.drain(ctx);
   assert.equal(first, second); assert.equal((await first).state, 'drained');
@@ -440,7 +309,7 @@ test('DC2/DC6: identical direct drain callers share the exact request Promise', 
 
 test('DC6: direct in-flight and completed drain replay is bound to the original actor', async (t) => {
   const f = repo('direct-actor'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   const original = { actor: 'orchestrator:first', repoId: 'repo-a', idempotencyKey: 'actor-bound' };
   const first = driver.coordinator.drain(original);
   assert.throws(() => driver.coordinator.drain({ ...original, actor: 'orchestrator:second' }), (error) => error.code === 'coordinator_drain_incomplete');
@@ -453,10 +322,10 @@ test('DC6/DC7: replaying a completed old drain cannot capture a fresh controller
   const f = repo('completed-replay-epoch'); let first; let second;
   t.after(() => { try { first?.coordination.releaseWriterLease(); } catch {} try { second?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const old = { actor: 'orchestrator:old', repoId: 'repo-a', idempotencyKey: 'completed-old' };
-  first = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  first = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   const oldReceipt = await first.coordinator.drain(old); assert.equal(oldReceipt.state, 'drained');
   assert.equal(first.coordinator.closeAuthority(), true); assert.equal(first.coordination.releaseWriterLease({ requireOwned: true }), true);
-  second = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  second = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { pollMs: 5 } });
   assert.equal((await second.coordinator.drain(old)).state, 'drained');
   assert.equal(second.coordinator._drainPhysicalId, null); assert.equal(second.coordinator._drainState, 'open');
   const closed = await second.drainAndClose('orchestrator:fresh');
@@ -470,7 +339,7 @@ test('DC4/DC7: startup reconciliation failure can never become a drain attestati
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {},
     runtimeScopes: { reconcile() { throw new Error('private cleanup detail'); }, remove() {}, create() { return null; } },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 },
+    drainPolicy: { pollMs: 5 },
   });
   await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_incomplete' && !String(error.message).includes('private cleanup detail'));
   assert.equal(existsSync(join(f.logDir, 'coordination', 'writer.lease')), true);
@@ -723,44 +592,8 @@ test('DC11: aggregate argument bytes are refused before owner-root allocation', 
   assert.equal(outcome.status, 1); assert.match(outcome.stderr, /arguments exceed 65536 bytes/); assert.equal(readdirSync(world).some((entry) => entry.startsWith('baton-evidence-')), false);
 });
 
-// --- #277 drain convergence (G-1, G-2 covered at DC5 above, G-3, G-20, G-21, G-22, G-24, G-28) ---
+// --- #277 drain convergence (G-2 covered at DC5 above, G-3, G-20, G-22, G-24, G-28) ---
 
-test('DC1/#277 G-1: maxInteractions is a deployment field, or a fleet derivation — never milliseconds over four', async (t) => {
-  // Coordinator boundary: the policy accepts a named interaction bound and derives the default
-  // from the fleet.
-  const coordinationFixture = (drainPolicy) => {
-    const dir = root(`policy-${drainPolicy.maxWorkers}-${drainPolicy.timeoutMs}-${drainPolicy.maxInteractions ?? 'derived'}`);
-    // Reap the minted root before anything can throw: the maxInteractions: 0 case below refuses
-    // in the Coordinator constructor, and a reap registered after it never runs for that call.
-    t.after(() => rmSync(dir, { recursive: true, force: true }));
-    const coordination = new CoordinationStore(dir);
-    const log = new Log(join(dir, 'worker-log'));
-    const coordinator = new Coordinator({ log, coordination, adapters: {}, drainPolicy });
-    t.after(() => { try { coordination.releaseWriterLease(); } catch {} });
-    return coordinator._drainPolicy;
-  };
-  assert.equal(coordinationFixture({ maxWorkers: 3, timeoutMs: 1_000, pollMs: 5, maxInteractions: 7 }).maxInteractions, 7,
-    'a named bound is honored exactly');
-  assert.throws(() => coordinationFixture({ maxWorkers: 3, timeoutMs: 1_000, pollMs: 5, maxInteractions: 0 }), /drain policy/i);
-  assert.equal(coordinationFixture({ maxWorkers: 3, timeoutMs: 60_000, pollMs: 5 }).maxInteractions, 48,
-    'the default bound derives from the fleet (16 interactions per reserved worker)');
-  // Deployment surface: the derivation is fleet-scaled, not a duration quotient — at the default
-  // fleet size the old `timeoutMs/4` reading and the literal 15_000 both disagree with the fleet.
-  const valid = repo('policy-interactions'); let driver;
-  t.after(() => { try { driver?.close(); } catch {} try { driver?.closeAsync?.(); } catch {} rmSync(valid.world, { recursive: true, force: true }); });
-  driver = createDriver({
-    repoRoot: valid.directory, logDir: valid.logDir, repoId: 'repo-a', adapters: {},
-  });
-  assert.equal(driver.coordinator._drainPolicy.maxInteractions, 1024 * 16,
-    'the default policy derives its interaction bound from its fleet size');
-  const longWindow = createDriver({
-    repoRoot: valid.directory, logDir: join(valid.world, 'log-2'), repoId: 'repo-a', adapters: {},
-    drainPolicy: { maxWorkers: 1024, timeoutMs: 240_000, pollMs: 10 },
-  });
-  assert.equal(longWindow.coordinator._drainPolicy.maxInteractions, 1024 * 16,
-    'a longer deadline never buys a larger interaction bound: the fleet sets it');
-  longWindow.close();
-});
 test('DC8/#277 G-20: the drain attempts every worker its own success test counts', async (t) => {
   const f = repo('g20-global-attempt'); let driver; t.after(async () => {
     try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
@@ -771,7 +604,7 @@ test('DC8/#277 G-20: the drain attempts every worker its own success test counts
   adapter.kill = async (workerId, ...rest) => { killed.push(workerId); return nativeKill(workerId, ...rest); };
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 4, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 },
+    drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 },
   });
   await driver.ready;
   const active = await driver.coordinator.spawn('mock', brief('active holder'), { taskId: 'g20-active' });
@@ -800,37 +633,6 @@ test('DC8/#277 G-20: the drain attempts every worker its own success test counts
   assert.ok(killed.includes(outsider.id), 'the non-target holder was attempted, not merely counted');
   assert.equal(driver.coordinator._workers.get(outsider.id).localAuthority, false, 'the non-target hold is released');
 });
-test('DC8/#277 G-21: the drain terminal throw names its wait and is never its own cause', async (t) => {
-  const f = repo('g21-named-throw'); let driver; t.after(async () => {
-    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
-  });
-  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driver = createDriver({
-    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 200, pollMs: 5 }, watchdog: { stallMs: 60_000 },
-  });
-  await driver.ready;
-  const handle = await driver.coordinator.spawn('mock', brief('unconverged'), { taskId: 'g21-active' });
-  await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.status === 'working', 'active worker');
-  await driver.coordinator.kill(handle.id);
-  // Attempts settle every pass, but the dead worker still holds local authority and its exact
-  // cleanup keeps failing: the convergence loop exhausts the deployment deadline and throws.
-  driver.coordinator._workers.get(handle.id).localAuthority = true;
-  const originalCleanup = driver.coordinator._cleanupClosedTransport.bind(driver.coordinator);
-  driver.coordinator._cleanupClosedTransport = async () => {
-    throw Object.assign(new Error('scripted cleanup failure'), { code: 'runtime_cleanup_failed' });
-  };
-  await assert.rejects(driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'g21-drain' }),
-    (error) => {
-      assert.equal(error.code, 'coordinator_drain_incomplete');
-      assert.equal(error.detail?.reason, 'deadline', 'the deadline names its stage');
-      assert.ok(Array.isArray(error.detail?.waitingOn) && error.detail.waitingOn.length > 0, 'the throw carries waitingOn');
-      assert.equal(error.detail.waitingOn[0].workerId, handle.id);
-      assert.equal(error.detail.cause, undefined, 'a bare non-convergence is never wrapped as its own cause');
-      return true;
-    });
-  driver.coordinator._cleanupClosedTransport = originalCleanup;
-});
 
 test('DC8/#277 G-22: a durable non-terminal task with no handle gets its disposition without cloning the projection', async (t) => {
   const f = repo('g22-no-handle'); let driver; t.after(async () => {
@@ -838,7 +640,7 @@ test('DC8/#277 G-22: a durable non-terminal task with no handle gets its disposi
   });
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {},
-    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 },
+    drainPolicy: { pollMs: 5 },
   });
   await driver.ready;
   driver.coordination.createTask({
@@ -866,7 +668,7 @@ test('DC8/#277 G-3: terminal resource release is possible during a drain', async
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 2, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 },
+    drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 },
   });
   await driver.ready;
   const reconcile = driver.coordinator._worktrees.reconcile.bind(driver.coordinator._worktrees);
@@ -894,7 +696,7 @@ test('DC8/#277 G-24: the run scratchpad reap yields between passes and fails lou
   });
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {},
-    drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 },
+    drainPolicy: { pollMs: 5 },
   });
   await driver.ready;
   let calls = 0; let ticked = false;
@@ -921,7 +723,7 @@ test('DC8/#277 G-28: a poisoned coordinator still converges a stop through one e
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 },
+    drainPolicy: { pollMs: 5 },
   });
   await driver.ready;
   const handle = await driver.coordinator.spawn('mock', brief('poisoned then stopped'), { taskId: 'g28-worker' });
