@@ -7,7 +7,6 @@ import {
 import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
-import { WebResultExportDelivery } from './web-result-export-delivery.mjs';
 import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
 import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
@@ -1470,25 +1469,6 @@ export class WebNorthbound {
     this.sessions = opts.sessions ?? opts.sessionStore ?? null;
     if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
-    this.exportDelivery = opts.exportDelivery ?? (this.application?.exportRoot ? new WebResultExportDelivery({
-      coordination: this.coordination,
-      allowedOrigins: [...this.allowedOrigins],
-      repoIds: [...this.repoIds],
-      now: this.now,
-      ticketTtlMs: opts.exportTicketTtlMs,
-      maxTickets: opts.maxExportTickets,
-      isPrincipalActive: this.isPrincipalActive ?? (() => true),
-      authorizeExport: (candidate, coordinates) => this.application.authorizeResultExportDelivery(coordinates, {
-        actor: actor(candidate), principalId: candidate.userId, sessionId: candidate.sessionId,
-      }),
-      resolveCompletedExport: (coordinates) => this.application.resolveCompletedResultExport(coordinates),
-      openArchive: (coordinates) => this.application.openResultExportArchive(coordinates),
-      registerDelivery: (registration) => this.application.registerResultExportDelivery(registration),
-    }) : null);
-    if (this.exportDelivery !== null && (typeof this.exportDelivery.authorizeIssue !== 'function'
-      || typeof this.exportDelivery.issue !== 'function' || typeof this.exportDelivery.open !== 'function')) {
-      throw new TypeError('web result export delivery authority is invalid');
-    }
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
     this._drainDispatches = new Map();
     this._applicationDispatches = new Map();
@@ -2362,76 +2342,6 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
       return this._handleCommandStatus(req, res, url, origin);
     }
-    const exportArchivePreflight = /^\/v1\/exports\/[a-f0-9]{64}\/archive$/u.test(url.pathname);
-    if (req.method === 'OPTIONS' && !url.search
-      && (url.pathname === '/v1/export-downloads' || exportArchivePreflight)) {
-      if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
-      const archive = exportArchivePreflight;
-      res.writeHead(204, {
-        'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
-        'access-control-allow-methods': archive ? 'GET' : 'POST',
-        'access-control-allow-headers': archive ? 'x-baton-export-ticket' : 'content-type,x-baton-csrf',
-        'access-control-max-age': '300', vary: 'Origin', 'cache-control': 'no-store',
-      });
-      res.end();
-      return;
-    }
-    if (req.method === 'POST' && url.pathname === '/v1/export-downloads') {
-      if (url.search || req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
-        return this._write(res, error(400, 'invalid_request'), origin);
-      }
-      let principal;
-      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
-      const ctx = {
-        principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
-        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
-      };
-      const authFailure = this._authenticate(ctx);
-      if (authFailure) return this._write(res, authFailure, origin);
-      if (!this.exportDelivery || !this.allowedOrigins.has(origin)
-        || !Array.isArray(principal.repoIds) || !Array.isArray(principal.capabilities)
-        || !principal.capabilities.includes('observe') || !principal.capabilities.includes('export_result')) {
-        return this._write(res, error(403, 'forbidden'), origin);
-      }
-      if (principal.authMethod === 'cookie') {
-        const csrfValid = string(ctx.csrfToken) && (principal.csrfTokenDigest
-          ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
-          : ctx.csrfToken === principal.csrfToken);
-        if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
-      }
-      let body;
-      try { body = await this._readBody(req); } catch { return this._write(res, error(400, 'invalid_request'), origin); }
-      const coordinates = body && typeof body === 'object' && !Array.isArray(body)
-        && Object.keys(body).sort().join(',') === ['exportId', 'repoId', 'runId'].join(',')
-        && /^[a-f0-9]{64}$/u.test(body.exportId ?? '') && string(body.repoId) && string(body.runId)
-        ? body : null;
-      if (!coordinates || !this.repoIds.has(coordinates.repoId) || !principal.repoIds.includes(coordinates.repoId)
-        || !await this.exportDelivery.authorizeIssue(principal, origin, coordinates)) {
-        return this._write(res, error(coordinates ? 403 : 400, coordinates ? 'forbidden' : 'invalid_request'), origin);
-      }
-      return this._write(res, await this.exportDelivery.issue(principal, origin, coordinates), origin);
-    }
-    const archiveMatch = /^\/v1\/exports\/([a-f0-9]{64})\/archive$/u.exec(url.pathname);
-    if (req.method === 'GET' && archiveMatch) {
-      if (url.search || req.headers.range != null || req.headers['x-baton-filename'] != null
-        || !string(req.headers['x-baton-export-ticket'])) {
-        return this._write(res, error(400, 'invalid_request'), origin);
-      }
-      let principal;
-      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
-      const authFailure = this._authenticate({
-        principal, origin,
-        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
-      });
-      if (authFailure) return this._write(res, authFailure, origin);
-      if (!this.exportDelivery || !this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'), origin);
-      const opened = await this.exportDelivery.open({
-        ticket: req.headers['x-baton-export-ticket'], principal, origin,
-        requestHeaders: req.headers, exportId: archiveMatch[1],
-      }, res);
-      if (opened) return this._write(res, opened, origin);
-      return;
-    }
     if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets', '/v1/action-authority'].includes(url.pathname)) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
@@ -3055,9 +2965,7 @@ export class WebNorthbound {
     this._attentionDelivery?.close();
     this.wakes.close?.();
     for (const finish of [...this._wakeConnections]) { try { finish(); } catch { /* already gone */ } }
-    let exportDeliveryOk = true;
-    try { this.exportDelivery?.shutdown?.(); } catch { exportDeliveryOk = false; }
-    this._admissionClose = Object.freeze({ auditOk, streamOk, exportDeliveryOk });
+    this._admissionClose = Object.freeze({ auditOk, streamOk });
     return this._admissionClose;
   }
 
@@ -3080,10 +2988,10 @@ export class WebNorthbound {
         await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, Math.min(1_000, drainMs)))]);
       }
       const outcome = closed ? 'shutdown_completed' : 'shutdown_timed_out';
-      const ok = closed && closing.auditOk && closing.streamOk && closing.exportDeliveryOk;
+      const ok = closed && closing.auditOk && closing.streamOk;
       try {
         this._audit(outcome, {}, {
-          streamShutdownOk: closing.streamOk, exportDeliveryShutdownOk: closing.exportDeliveryOk,
+          streamShutdownOk: closing.streamOk,
         });
       } catch { /* the outcome row is the audit; a refused one never fails the stop it reports */ }
       return {
