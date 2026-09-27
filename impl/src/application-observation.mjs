@@ -1642,6 +1642,28 @@ export function objectiveResultPolicy(resultIntent) {
     acceptance: 'verified_effect_result',
   });
 }
+
+// Issue #38: `baton run` compiles change result intent. The 2026-07-23 dogfood start
+// `baton run 'Report the current git HEAD subject line in one sentence.'` reached the trust gate's
+// `required_effect_absent` after approval. The start response carries one display-only advisory
+// that states the compiled change intent and names `baton explore`. The check reads the objective's
+// leading word; it changes no Goal, Plan, approval, dispatch or result policy. The advisory claims
+// no required edit: the trust gate demands an in-scope diff only when the brief's `requiredEffects`
+// names `repository_edit` and the brief is not `analysis`, which the start-time preview cannot
+// report for every Plan shape.
+const REPORTING_OBJECTIVE_LEAD = /^(?:please\s+)?(?:report|explain|describe|summari[sz]e|list|enumerate|state|tell|show|print|output|quote|transcribe)\b/iu;
+
+/** The start-time advisory for an evidence-shaped objective compiled as change intent, or null. */
+export function objectiveShapeAdvice({ objective, resultIntent }) {
+  if (resultIntent !== 'change' || typeof objective !== 'string') return null;
+  if (!REPORTING_OBJECTIVE_LEAD.test(objective.trimStart())) return null;
+  return deepFreeze({
+    kind: 'evidence_shaped_objective',
+    command: 'baton explore',
+    message: 'Evidence-shaped objective compiled as change result intent. '
+      + 'For evidence or reporting use `baton explore`.',
+  });
+}
 export function terminalCauseNarrative(cause) {
   if (cause?.kind === 'budget_exceeded') {
     return `Run terminated: ${cause.code} (${cause.dimension} ${cause.used}/${cause.limit}, ratio ${cause.ratio}).`;

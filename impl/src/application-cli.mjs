@@ -1966,6 +1966,9 @@ export function projectBatonCliResult(parsed, result) {
     ...(nonempty(result.resultIntent) ? { resultIntent: result.resultIntent } : {}),
     ...(record(result.objectiveResultPolicy)
       ? { objectiveResultPolicy: result.objectiveResultPolicy } : {}),
+    // Issue #38: the ordinary start prints this projection, never the full preview, so the
+    // start-time advisory rides the projection itself.
+    ...(record(result.planPreview?.advice) ? { advice: result.planPreview.advice } : {}),
     phase: result.phase,
     ...(record(result.progress) ? { progress: {
       current: result.progress.current ?? null,
