@@ -1800,14 +1800,6 @@ export class CoordinationStore {
 
   appendWaveClosed(fields, auth) { return coordinationLedger.appendWaveClosed(this, fields, auth); }
 
-  /** #161 (D2/P6): the at-wave-close plan elevation, folded from the closure itself. Completed
-   * tasks keep done and gain DURABLE elevation evidence links (plan.task_evidence_linked on this
-   * ledger, never a hand-edited projection field); a doing task reverts to todo for the next wave
-   * (the honest remainder) through the registered plan_auto_demote batch. No silent
-   * auto-promotion: an unreviewed or incomplete task never reads done. The reviewed-reject
-   * re-open (done -> todo, H4.2) stays the surfaced review-authority write — the hook never
-   * re-opens. Replay re-folds the appended events; this hook runs at admission only. */
-  _planElevationAtWaveClose(waveId, auth, closedEventSeq) { return coordinationLedger._planElevationAtWaveClose(this, waveId, auth, closedEventSeq); }
   waveClosure(waveId) {
     return coordinationInternals.waveClosure(this._waveClosures, waveId);
   }
@@ -1834,8 +1826,6 @@ export class CoordinationStore {
    * spill. */
   _resolvedSpill(spillId) { return coordinationAdmission._resolvedSpill(this, spillId); }
 
-  // #161: the plan-object projection reads — cloned snapshots so a reader never mutates the
-  // replay-derived _campaignPlans map (folds apply events; they never authorize, H2.3).
   /** Validate against current state before appending: rejected edits must never poison replay. */
   recordSwarm(kind, payload, auth) { return coordinationLedger.recordSwarm(this, kind, payload, auth); }
   swarm(swarmId) {
@@ -1848,23 +1838,10 @@ export class CoordinationStore {
   // Membership changes do not change the native session's turn protocol. Once recruited as
   // a continuing participant, a Run remains pausable even after leaving or closing its group.
   hasSwarmParticipantRun(runId) { return coordinationAdmission.hasSwarmParticipantRun(this._swarms, runId); }
-  campaignPlans() {
-    return coordinationInternals.campaignPlans(this._campaignPlans);
-  }
-  campaignPlan(planId) {
-    return coordinationInternals.campaignPlan(this._campaignPlans, planId);
-  }
-
-  // #161 (G4/H1.1): the idempotency-keyed prior event for a plan mutation key — the write lane's
-  // replay adjudication (exactly-once retries) without exposing the raw _byKey index.
+  // The idempotency-keyed prior event for an operation key — exactly-once replay adjudication
+  // without exposing the raw _byKey index.
   priorCoordinationEvent(key) {
     return coordinationInternals.priorCoordinationEvent(this._byKey, key);
-  }
-
-  // #161 (H2.2): the wave-role roster run resolution — ownedBy.run (null, pre-decomposed) resolves
-  // from the steering.registered fold at claim time.
-  waveRoleRun(waveId, waveRole) {
-    return coordinationInternals.waveRoleRun(this._waveRoleRuns, waveId, waveRole);
   }
 
   ledgerHeadSeq() { return coordinationLedger.ledgerHeadSeq(this._events); }

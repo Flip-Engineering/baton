@@ -17,7 +17,6 @@
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import { goalPlanPage } from './goal-plan.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
-import { planObjectSnapshot, readPlanObject, waveRoleRunKey } from './orchestrator-plan.mjs';
 import { readSwarm, swarmSnapshot } from './swarm-state.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -110,8 +109,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // D2.3 (epic #132): replay-derived wave.started registry rows by waveId.
   '_waveRegistry',
   // #286 G-31: the CURRENT run -> wave binding (last write wins), folded from `steering.registered`.
-  // `_waveRoleRuns` above answers "which run holds this (waveId, waveRole) seat"; this answers
-  // "which wave does this run sit in NOW" — the one reading `_waveIdOf`/`_waveRoleOf` share.
+  // It answers "which wave does this run sit in NOW" — the one reading `_waveIdOf`/`_waveRoleOf` share.
   '_waveBindings',
   // #286 G-45: BD3-A orientation receipt heads — the first read per (workerId, packDigest) and the
   // latest read per workerId. Folded so a rating and a freshness check are lookups.
@@ -119,9 +117,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // #367: the O-2 per-attempt receipt counter ({count, bytes} per attempt key) the ceiling
   // admission reads — folded beside the heads above, carried by the checkpoint like them.
   '_contextReadAttemptCounters',
-  // #161: replay-derived campaign-plan objects (planId -> plan) and the (waveId, waveRole) ->
-  // runId roster index the plan lane resolves pre-decomposed ownedBy.run bindings from (H2.2).
-  '_campaignPlans', '_waveRoleRuns', '_swarms',
+  '_swarms',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -785,25 +781,10 @@ export function swarm(state, swarmId) { return readSwarm(state, swarmId); }
 /** Moved from `CoordinationStore.swarms` (issue #259 slice 1). State: `this._swarms`, passed explicitly. */
 export function swarms(state) { return swarmSnapshot(state).swarms; }
 
-/** Moved from `CoordinationStore.campaignPlans` (issue #259 slice 1). State: `this._campaignPlans`, passed explicitly. */
-export function campaignPlans(state) {
-  return planObjectSnapshot(state);
-}
-
-/** Moved from `CoordinationStore.campaignPlan` (issue #259 slice 1). State: `this._campaignPlans`, passed explicitly. */
-export function campaignPlan(state, planId) {
-  return readPlanObject(state, planId);
-}
-
 /** Moved from `CoordinationStore.priorCoordinationEvent` (issue #259 slice 1). State: `this._byKey`, passed explicitly. */
 export function priorCoordinationEvent(state, key) {
   const event = state.get(key) ?? null;
   return event ? clone(event) : null;
-}
-
-/** Moved from `CoordinationStore.waveRoleRun` (issue #259 slice 1). State: `this._waveRoleRuns`, passed explicitly. */
-export function waveRoleRun(state, waveId, waveRole) {
-  return state.get(waveRoleRunKey(waveId, waveRole)) ?? null;
 }
 
 /** Moved from `CoordinationStore.composeBriefingPack` (issue #259 slice 1). Reads no store state. */
