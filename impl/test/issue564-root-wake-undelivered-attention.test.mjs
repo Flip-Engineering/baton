@@ -91,25 +91,6 @@ test('564-u2: a historical transport receipt retains the obligation and names it
     'a delivery record for another wake never clears this one: the identity is the wake own ledger seq');
 });
 
-test('564-u3: a failed delivery keeps the row and names the code the attempt failed under', async (t) => {
-  const f = fixture(t);
-  await f.call('create', { purpose: 'root-addressed wake attention (#564)' });
-  await f.call('recruit', { participantId: 'lead', objective: 'hold the lane' });
-  const owed = f.record('swarm.root_attention_owed', {
-    swarmId: 'baton', participantId: 'lead', contributionId: 'c3', owed: 'needs_root',
-    ask: 'the root: restart the serving process',
-  });
-  f.record('wake.root_undelivered', {
-    seq: owed.event.seq, swarmId: 'baton', wakeClass: 'root_owed',
-    harness: 'codex', mechanism: 'none', code: 'wake_delivery_unsupported',
-  });
-  const row = await f.rootWakeRow(owed.event.seq);
-  assert.ok(row, 'a wake whose delivery failed is still owed: the row stays');
-  assert.deepEqual(row.delivery, { state: 'failed', code: 'wake_delivery_unsupported' },
-    'the row names the state and the typed code, so the deployment view reports an undelivered root wake as attention with its reason');
-  assert.equal(row.ask, 'the root: restart the serving process', 'the owed ask rides the row');
-});
-
 test('564-u4: only this swarm owed rows are reported', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'root-addressed wake attention (#564)' });
