@@ -29,7 +29,7 @@ import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
-import { aaCredentialPath, designArenaCredentialPath } from './adapter.mjs';
+import { aaCredentialPath, designArenaCredentialPath, operatorHome } from './adapter.mjs';
 import { createRecipes } from './recipes.mjs';
 import { SUITE_COMPARISON } from './suite-comparison.mjs';
 import { ResultExportLifecycle } from './result-export.mjs';
@@ -685,7 +685,7 @@ function existingExecutable(path) {
 
 function userConfigRoot() {
   const configured = process.env.XDG_CONFIG_HOME;
-  if (configured === undefined || configured === '') return join(homedir(), '.config');
+  if (configured === undefined || configured === '') return join(operatorHome(), '.config');
   if (!isAbsolute(configured) || configured.includes('\0')) {
     throw deploymentError('XDG_CONFIG_HOME must be an absolute path');
   }
@@ -933,7 +933,7 @@ function kimiAuthenticationState(kimiRoot, nowMs = Date.now()) {
  * the credential and reports the paths it probed — spelled home-relative, because a readiness row
  * never publishes this host's absolute paths. */
 function kimiHarnessAvailability(searchPath = process.env.PATH ?? '') {
-  const preferred = join(homedir(), '.kimi-code', 'bin', 'kimi');
+  const preferred = join(operatorHome(), '.kimi-code', 'bin', 'kimi');
   const onPath = String(searchPath).split(':').filter((entry) => entry.length > 0)
     .some((entry) => existingRegular(join(entry, 'kimi')));
   const present = existingRegular(preferred) || onPath;
@@ -1232,8 +1232,8 @@ function defaultCredentialProjection(repoRoot, {
   museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
 } = {}) {
   const credentials = {};
-  const codex = join(homedir(), '.codex', 'auth.json');
-  const grok = join(homedir(), '.grok', 'auth.json');
+  const codex = join(operatorHome(), '.codex', 'auth.json');
+  const grok = join(operatorHome(), '.grok', 'auth.json');
   if (existingRegular(codex)) credentials.codex = [codex];
   // #328: the muse credential a worker receives is always a file-backed auth.json — the
   // operator's own when their login is file-backed, or the deployment's root-side
@@ -1251,18 +1251,18 @@ function defaultCredentialProjection(repoRoot, {
   } else if (existingRegular(grok)) {
     credentials.grok = [grok];
   }
-  const kimiRoot = join(homedir(), '.kimi-code');
+  const kimiRoot = join(operatorHome(), '.kimi-code');
   const credentialTrees = projectNativeKimi
     ? { 'kimi-code': [{ sourceRoot: kimiRoot, relativeFiles: KIMI_CREDENTIAL_FILES }] } : {};
   // #293: the gate is ompAgentConfigured — the same ONE fact omp route readiness derives from,
   // and the same $HOME-relative paths the readiness declaration below names.
   if (ompAgentConfigured()) {
     const ompRelativeFiles = [OMP_AGENT_DATABASE, OMP_AGENT_CONFIG];
-    if (existingRegular(join(homedir(), OMP_AGENT_MODELS))) {
+    if (existingRegular(join(operatorHome(), OMP_AGENT_MODELS))) {
       ompRelativeFiles.push(OMP_AGENT_MODELS);
     }
     credentialTrees.omp = [{
-      sourceRoot: homedir(), relativeFiles: Object.freeze(ompRelativeFiles),
+      sourceRoot: operatorHome(), relativeFiles: Object.freeze(ompRelativeFiles),
     }];
   }
   const credentialEnv = {};
@@ -1336,7 +1336,7 @@ function normalizeOmpProviderKeyFiles(value) {
 
 /** The omp agent database — the one fact registration, the credential projection and the omp
  * route readiness derivation all resolve. */
-function ompAgentDatabasePath() { return join(homedir(), OMP_AGENT_DATABASE); }
+function ompAgentDatabasePath() { return join(operatorHome(), OMP_AGENT_DATABASE); }
 
 function ompAgentConfigured() { return existingRegular(ompAgentDatabasePath()); }
 
@@ -1393,7 +1393,7 @@ function defaultModelProfileFetch(url, options = {}) {
  * when omp cannot list its models (absent binary, refused run, non-JSON). */
 export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Date.now } = {}) {
   let key = 'no-models-yml';
-  try { key = String(lstatSync(join(homedir(), OMP_AGENT_MODELS)).mtimeMs); } catch { /* absent file: keyed as such */ }
+  try { key = String(lstatSync(join(operatorHome(), OMP_AGENT_MODELS)).mtimeMs); } catch { /* absent file: keyed as such */ }
   if (catalogRead === defaultOmpCatalogRead && ompCatalogMemo && ompCatalogMemo.key === key
     && now() - ompCatalogMemo.at < OMP_CATALOG_MEMO_MS) {
     return ompCatalogMemo.catalog;
@@ -1654,11 +1654,11 @@ export function museCredentialProjection({ keychainRead = null, authPath = museA
 
 function locallyConfiguredRoutes(repoRoot) {
   const configured = {
-    codex: existingRegular(join(homedir(), '.codex', 'auth.json')),
+    codex: existingRegular(join(operatorHome(), '.codex', 'auth.json')),
     muse: existingRegular(museAuthPath()),
-    grok: existingRegular(join(homedir(), '.grok', 'auth.json')),
+    grok: existingRegular(join(operatorHome(), '.grok', 'auth.json')),
     'kimi-code': KIMI_CREDENTIAL_FILES.every(
-      (path) => existingRegular(join(homedir(), '.kimi-code', path)),
+      (path) => existingRegular(join(operatorHome(), '.kimi-code', path)),
     ),
     // ClaudeSessionCli is a built-in adapter, so its advertised route inventory is deployment
     // configuration rather than an ambient executable/authentication observation. The bounded
@@ -1822,8 +1822,8 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
   // null — "no configured limit" — and dispatch admission throttles nothing.
   const ceiling = adapterOptions.concurrencyCeiling;
   const adapters = {};
-  const kimiCommand = existingRegular(join(homedir(), '.kimi-code', 'bin', 'kimi'))
-    ? join(homedir(), '.kimi-code', 'bin', 'kimi') : 'kimi';
+  const kimiCommand = existingRegular(join(operatorHome(), '.kimi-code', 'bin', 'kimi'))
+    ? join(operatorHome(), '.kimi-code', 'bin', 'kimi') : 'kimi';
   const maxWireFrameBytes = resolveSessionWireCeiling(adapterOptions);
   const grouped = new Map();
   for (const route of routes) {
@@ -6474,10 +6474,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   });
   const nativeKimiAuthentication = usesBuiltInAdapters
     && routes.some((route) => route.harness === 'kimi-code')
-    ? kimiAuthenticationState(join(homedir(), '.kimi-code')) : null;
+    ? kimiAuthenticationState(join(operatorHome(), '.kimi-code')) : null;
   const nativeGrokAuthentication = usesBuiltInAdapters
     && routes.some((route) => route.harness === 'grok')
-    ? grokAuthenticationState(join(homedir(), '.grok', 'auth.json')) : null;
+    ? grokAuthenticationState(join(operatorHome(), '.grok', 'auth.json')) : null;
   ensureBatonExcluded(repository.root);
   // The default namespace is an on-disk compatibility boundary. Phase 83 adds durable Context
   // deployment authority and a private repository Context CAS. Older namespaces remain available
@@ -6535,7 +6535,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     && routes.some((route) => route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude'))
     || Object.keys(rawClaudeCredentials).length > 0)
     ? await ClaudeCredentialCache.open({
-      credentialPath: rawClaudeCredentials.credentialPath ?? join(homedir(), '.claude', '.credentials.json'),
+      credentialPath: rawClaudeCredentials.credentialPath ?? join(operatorHome(), '.claude', '.credentials.json'),
       refreshRoot: join(runtimeRoot, 'claude-refresh'),
       // Keychain authority is available only through the deployment-owned shim seam. This keeps
       // tests, embedded deployments, and workers from ever invoking the host Keychain directly.
@@ -6589,7 +6589,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   }
   const grokCredentialCache = Object.keys(rawGrokCredentials).length > 0
     ? await GrokCredentialCache.open({
-      credentialPath: rawGrokCredentials.credentialPath ?? join(homedir(), '.grok', 'auth.json'),
+      credentialPath: rawGrokCredentials.credentialPath ?? join(operatorHome(), '.grok', 'auth.json'),
       refreshRoot: join(runtimeRoot, 'grok-refresh'),
       ...rawGrokCredentials,
     }) : null;
