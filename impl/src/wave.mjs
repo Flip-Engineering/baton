@@ -195,7 +195,7 @@ function validateMember(member, index, repoRoot = null) {
     && (typeof member.objectiveRef !== 'string' || member.objectiveRef.trim().length === 0)) {
     throw waveError(`wave member ${role} objective is invalid`);
   }
-  if (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
+  if (!Array.isArray(member.scope) || member.scope.length === 0
     || member.scope.some((entry) => typeof entry !== 'string' || entry.trim().length === 0)
     || new Set(member.scope).size !== member.scope.length) {
     throw waveError(`wave member ${role} scope is invalid`, 'wave_scope_invalid');
