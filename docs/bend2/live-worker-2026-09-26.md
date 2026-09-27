@@ -35,8 +35,39 @@ turn ID already assigned to another worker. Its native check command passed
 25 tests. The identity regression first reproduced the wrong-worker replay
 before the fix.
 
-The report's receipt remains null. Native root acceptance has not been
-observed. The worker branch and checkout are retained for landing through
-the new Git module. Worktree creation for this run used Git directly. This
-record establishes a real supervised turn and stored report; root wake and
-Bend2 Git landing remain required for the complete slice.
+The report's receipt was null when this run ended, and native root acceptance
+was not observed by it. The worker branch and checkout are retained.
+Worktree creation for this run used Git directly. This record establishes a
+real supervised turn and stored report.
+
+## Landing and publishing the retained branch
+
+On 2026-09-27 the coordinator landed and published the retained branch
+end to end. The worker above was registered from this record (harness `omp`,
+model `zai/glm-5.3-flash`, workspace its retained checkout, branch
+`baton/bend2-live-ask`, base `3bcfd59b`), and
+
+```sh
+baton2 state.db land-checked ask-worker REPO landed-target CHECK bend2/test/coordinator.py
+baton2 state.db push REPO landed-target e2e-remote
+```
+
+landed the branch and published it. `land-checked` answered
+`{"status":"landed","target":"landed-target","commit":"28cb9c6b…"}`, and the
+landed target's tree is identical to the worker branch's tree: the gated
+squash carried the worker's whole change. `push` answered
+`{"status":"pushed","branch":"landed-target","remote":"e2e-remote"}`, and
+`git ls-remote` read the remote's advertised `refs/heads/landed-target` back
+at the landed commit. A remote moved independently makes the next `push`
+answer `{"status":"rejected","reason":"… non-fast-forward …"}` while the
+remote keeps the commit that moved it.
+
+CHECK is the Git lane's `bend2/scripts/check-unittest.sh`, passed by absolute
+path: the worker's tree predates that script, which arrived in `2daa03bb`.
+The landing commits its squash at run time, so a re-run of the same branch
+makes a different commit id.
+
+The run is `.scratch/e2e-land-publish.sh` with its transcript
+`.scratch/e2e-land-publish.out` in the Git seat's worktree; the target repo is
+a scratch clone and the declared remote is a scratch bare repository, so the
+run publishes to no network remote.
