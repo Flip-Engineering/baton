@@ -247,8 +247,8 @@ function acceptedArgs(definition, commandName) {
 }
 
 const COMMAND_CAPABILITY = Object.freeze({
-  spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
-  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
+  spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
+  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control',
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
   // #158 (H2.1): the scratchpad WRITE direct port's capability classes (matches the MCP capability map).
   run_scratchpad_append: ['control', 'observe'],
@@ -288,7 +288,6 @@ const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'comm
 // uses ARG_FIELDS ∪ transportHidden (see acceptedWebArgFields below).
 const ARG_FIELDS = Object.freeze({
   spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines', 'goalPlan']),
-  scratch_oracle: new Set(['scratchFactId', 'harness', 'model', 'effort', 'modelPolicy', 'verification', 'budget', 'constraints', 'goal', 'definitionOfDone', 'taskId']),
   send: new Set(['workerId', 'message', 'mode']),
   interrupt: new Set(['workerId', 'then']),
   kill: new Set(['workerId']),
@@ -300,8 +299,6 @@ const ARG_FIELDS = Object.freeze({
   capabilities: new Set(),
   provider_status: new Set(['providerId', 'after', 'limit']),
   capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim', 'workerId', 'note']),
-  reuse_decide: new Set(['need', 'choice', 'rationale', 'dossier', 'sbom', 'supersedes', 'budgetTokens']),
-  reuse_recheck: new Set(['decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens']),
   goal_define: new Set(['objective', 'definitionOfDone', 'constraints', 'risk', 'budget', 'predecessor']),
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
@@ -1136,33 +1133,14 @@ function validateEnvelope(envelope) {
       || !Number.isSafeInteger(envelope.args.planVersion) || envelope.args.planVersion <= 0 || !/^[a-f0-9]{64}$/.test(envelope.args.planDigest ?? '')
       || !(envelope.args.throughSeq === null || (Number.isSafeInteger(envelope.args.throughSeq) && envelope.args.throughSeq >= 0))) return 'goal_plan_status requires exact bounded coordinates';
   }
-  if (envelope.command === 'scratch_oracle') {
-    if (!string(envelope.args.scratchFactId) || !string(envelope.args.harness) || !isRecord(envelope.args.verification)
-      || !string(envelope.args.verification.command) || typeof envelope.args.verification.expectExit !== 'number'
-      || Object.keys(envelope.args.verification).some((key) => !VERIFICATION_FIELDS.has(key))) return 'scratch_oracle requires fact, explicit harness, and pinned verification';
-    if (Object.hasOwn(envelope.args, 'model') && !string(envelope.args.model)) return 'model must be a non-empty string';
-    if (Object.hasOwn(envelope.args, 'effort') && !string(envelope.args.effort)) return 'effort must be a non-empty string';
-    if (Object.hasOwn(envelope.args, 'modelPolicy') && (!isRecord(envelope.args.modelPolicy) || Object.keys(envelope.args.modelPolicy).some((key) => !MODEL_POLICY_FIELDS.has(key)))) return 'modelPolicy must be a closed object';
-    if (Object.hasOwn(envelope.args, 'budget') && (!isRecord(envelope.args.budget) || Object.keys(envelope.args.budget).some((key) => !BUDGET_FIELDS.has(key)))) return 'budget must be a closed object';
-    if (Object.hasOwn(envelope.args, 'constraints') && (!Array.isArray(envelope.args.constraints) || !envelope.args.constraints.every(string))) return 'constraints must be non-empty strings';
-  }
+
   if (['send', 'interrupt', 'kill', 'result'].includes(envelope.command) && !string(envelope.args.workerId)) return `${envelope.command} requires workerId`;
   if (envelope.command === 'provider_status' && ((Object.hasOwn(envelope.args, 'providerId') && !/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.providerId ?? ''))
     || (Object.hasOwn(envelope.args, 'after') && !/^provider-processing:[a-f0-9]{64}$/.test(envelope.args.after ?? ''))
     || (Object.hasOwn(envelope.args, 'limit') && (!Number.isSafeInteger(envelope.args.limit) || envelope.args.limit <= 0)))) return 'provider_status requires bounded provider, cursor, and limit';
   if (envelope.command === 'send' && (!string(envelope.args.message) || !['turn', 'steer', 'nudge'].includes(envelope.args.mode))) return 'send requires message and a valid mode';
   if (envelope.command === 'respond' && (!string(envelope.args.requestId) || !Object.hasOwn(envelope.args, 'answer'))) return 'respond requires requestId and answer';
-  if (envelope.command === 'reuse_decide' && (!string(envelope.args.need) || !['borrow', 'build'].includes(envelope.args.choice)
-    || !string(envelope.args.rationale) || !isRecord(envelope.args.dossier) || !isRecord(envelope.args.sbom)
-    || !Number.isSafeInteger(envelope.args.budgetTokens) || envelope.args.budgetTokens <= 0
-    || Object.keys(envelope.args.dossier ?? {}).some((key) => !['claim', 'args'].includes(key)) || Object.keys(envelope.args.sbom ?? {}).some((key) => !['claim', 'args'].includes(key))
-    || (Object.hasOwn(envelope.args, 'supersedes') && (!isRecord(envelope.args.supersedes)
-      || Object.keys(envelope.args.supersedes).some((key) => !['decisionId', 'expectedValidityVersion'].includes(key))
-      || !string(envelope.args.supersedes.decisionId) || !Number.isSafeInteger(envelope.args.supersedes.expectedValidityVersion) || envelope.args.supersedes.expectedValidityVersion <= 0)))) return 'reuse_decide requires bounded decision and exact evidence inputs';
-  if (envelope.command === 'reuse_recheck' && (!string(envelope.args.decisionId)
-    || !Number.isSafeInteger(envelope.args.expectedValidityVersion) || envelope.args.expectedValidityVersion <= 0
-    || !['advisory_refresh', 'ttl_expired'].includes(envelope.args.trigger)
-    || !Number.isSafeInteger(envelope.args.budgetTokens) || envelope.args.budgetTokens <= 0)) return 'reuse_recheck requires an exact decision, trigger, version, and budget';
+
   if (envelope.command === 'capability_invoke') {
     if (!Object.hasOwn(envelope.args, 'action')) return 'capability_invoke requires an explicit action';
     const action = envelope.args.action;
@@ -1601,7 +1579,6 @@ export class WebNorthbound {
     }) ?? null;
   }
 
-
   /** The two deployment observations the wake classes read, taken from the card the resident
    * already serves to every reading consumer: the doctor's FRESH workspace capacity observation
    * (issue #35) and the publication identity. A card that cannot be read observes nothing — the
@@ -1917,8 +1894,7 @@ export class WebNorthbound {
     }
     if (this.edge) {
       const key = ctx.principal.credentialId;
-      const commandCost = envelope.command === 'reuse_recheck' ? (envelope.args.trigger === 'advisory_refresh' ? 20 : 2)
-        : ({ spawn: 10, capability_invoke: 10, reuse_decide: 20, drain: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1);
+      const commandCost = ({ spawn: 10, capability_invoke: 10, drain: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1);
       const quota = this.edge.takeCommand(key, commandCost);
       if (!quota.ok) {
         try { this._audit('quota_refused', ctx, { quota: quota.quota }); } catch { return error(503, 'temporarily_unavailable'); }
@@ -2029,9 +2005,7 @@ export class WebNorthbound {
         return { ...replayed, body: { ...replayed.body, replayed: true } };
       }
       if (admission.command.status === 'admitted') return result(202, { ok: true, commandId: admission.command.commandId, status: 'admitted', replayed: true });
-      if (admission.command.status === 'completed' && ['reuse_decide', 'reuse_recheck'].includes(envelope.command)) {
-        try { const refreshed = await this._dispatch(envelope, webActor, ctx.principal); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
-      }
+
       if (admission.command.status === 'completed' && APPLICATION_COMMAND[envelope.command]) {
         try {
           const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
@@ -2191,13 +2165,6 @@ export class WebNorthbound {
       value = await this.coordinator.approvePlan(a, goalPlanCtx);
     } else if (envelope.command === 'goal_plan_status') {
       value = await this.coordinator.goalPlanStatus(a, goalPlanCtx);
-    } else if (envelope.command === 'scratch_oracle') {
-      value = await this.coordinator.spawnScratchOracle(a.scratchFactId, a.harness, {
-        model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, verification: a.verification,
-        budget: a.budget, constraints: a.constraints, goal: a.goal, definitionOfDone: a.definitionOfDone,
-        taskId: a.taskId ?? `web-${envelope.commandId}`,
-        actor: `operator:${webActor}`, idempotencyKey: `web.command:${envelope.commandId}`,
-      });
     } else if (envelope.command === 'send') {
       value = await this.coordinator.send(a.workerId, a.message, a.mode, { expectedFence: envelope.expectedFence, actor: webActor });
     } else if (envelope.command === 'interrupt') {
@@ -2237,10 +2204,6 @@ export class WebNorthbound {
       else if (action === 'reverify') value = typeof this.coordinator.reverifyCapabilityNorthbound === 'function' ? await this.coordinator.reverifyCapabilityNorthbound('web', northboundCapabilityToken('web'), a.name, a.op, a.claim, a.args, capabilityCtx) : await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
       else value = await this.coordinator.orientWorker(a.workerId, a.args, a.note, { ...capabilityCtx, expectedFence: envelope.expectedFence });
       value = transportCapability(value);
-    } else if (envelope.command === 'reuse_decide') {
-      value = await this.coordinator.decideReuse(a, { actor: webActor, repoId: envelope.repoId, budgetTokens: a.budgetTokens, idempotencyKey: `web.command:${envelope.commandId}` });
-    } else if (envelope.command === 'reuse_recheck') {
-      value = await this.coordinator.recheckReuseDecision(a, { actor: webActor, repoId: envelope.repoId, budgetTokens: a.budgetTokens, idempotencyKey: `web.command:${envelope.commandId}` });
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     const projected = GOAL_PLAN_MUTATIONS.has(envelope.command) ? sanitizeGoalPlanProjection(value) : json(value);
@@ -3259,7 +3222,6 @@ export function createLocalAuthenticatedWebServer(northbound) {
   server.batonOpenWorkAdmission = () => northbound.openWorkAdmission();
   return server;
 }
-
 
 /** The commands the RESIDENT serves on its wire card (`/v1/application-card`, doctor): the
  * application table the web lane admits plus the wave and workflow direct ports, dot-spelled.

@@ -198,9 +198,9 @@ test('M4B-6: the canonical transport names are present, mechanically derived fro
   assert.deepEqual(checkWebNameDisjoint(), []);
 });
 
-test('M4B-7: the kernel and authoring surface tables are byte-unchanged (C9 stays green)', async () => {
+test('M4B-7: the advanced and authoring surfaces advertise supported commands', async () => {
   const inventory = collectSurfaceInventory();
-  // The fleet_* kernel tool table is exactly the closed nineteen (unchanged by the ordinary flip).
+  // The advanced endpoint advertises its supported tools.
   const { server } = mcpFixture();
   const advanced = new McpFleetServer({
     coordinator: { async wait() { return { events: [], cursor: 0, more: false }; } },
@@ -219,10 +219,10 @@ test('M4B-7: the kernel and authoring surface tables are byte-unchanged (C9 stay
   await mcpInitialized(advanced);
   const fleetTools = (await mcpRequest(advanced, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
   assert.deepEqual(fleetTools, [
-    'fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve',
+    'fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve',
     'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result',
-    'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke', 'fleet_reuse_decide',
-    'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain',
+    'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke',
+    'fleet_kill', 'fleet_drain',
   ]);
 
   // The kernel/authoring Web literals stay admitted, unchanged, on the Web bus.
