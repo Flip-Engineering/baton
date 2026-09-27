@@ -256,8 +256,8 @@ test('464c-b: the roster class equals the scoped read\'s class for the root, a p
   assert.equal(await rosterClass(owner), 'subtree', 'the root stands in the delegation class');
   assert.equal(await scopedClass(owner, 'alpha'), 'subtree', 'and the scoped read answers the SAME class');
 
-  // A peer: same swarm, no delegation edge, no shared checkout, no shared group (the fixture's p1
-  // is top level, so it is NOT the seat's descendant — siblings are never `subtree`).
+  // A peer: same swarm, no delegation edge, no shared checkout (the fixture's p1 is top level, so
+  // it is NOT the seat's descendant — siblings are never `subtree`).
   const peer = f.asParticipant('p1');
   assert.equal(await rosterClass(peer), 'swarm', 'a peer stands in the swarm class');
   assert.equal(await scopedClass(peer, 'alpha'), 'swarm', 'and the scoped read answers the SAME class');
@@ -273,16 +273,12 @@ test('464c-b: the roster class equals the scoped read\'s class for the root, a p
   assert.equal(reachOf(rowOf(await f.call('view', { projection: 'participants' }, alpha), 'leaf')).exposure, 'subtree',
     'and the relation reads the same from the child\'s side');
 
-  // The ladder's remaining classes derive from the fold's own rows — a shared roster and a
-  // shared recorded checkout — and the stronger relation wins.
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'impl', members: ['alpha', 'p1'] } });
-  assert.equal(await rosterClass(peer), 'group', 'a shared group roster reads as `group`');
-  assert.equal(await scopedClass(peer, 'alpha'), 'group', 'and the scoped read answers the SAME class');
+  // The ladder's remaining class derives from the fold's own rows — a shared recorded checkout.
   await f.call('recruit', { participantId: 'twin', objective: objective('twin', DEFAULT_OBJECTIVE_BYTES),
     permissions: SWARM_PERMISSIONS, shareWorkspaceWith: 'alpha' });
   const twin = f.asParticipant('twin');
   assert.equal(reachOf(rowOf(await f.call('view', { projection: 'participants' }, twin), 'alpha')).exposure, 'checkout',
-    'a seat sharing the recorded checkout reads as `checkout` — stronger than group');
+    'a seat sharing the recorded checkout reads as `checkout`');
 });
 
 // ── 464c-c: a 39-seat roster of live-size rows answers ONE frame through the bridge ────────────

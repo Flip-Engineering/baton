@@ -210,58 +210,29 @@ the work assigned within, their contributions and reviews, and the attention row
 act on; the root sees the same subtree when it names the lead.
 
 A participant whose runtime is dead or exited, or whose membership has ended, otherwise keeps its
-active assignments and its group seats indefinitely. The organizer operation `swarm.update` event
+active assignments indefinitely. The organizer operation `swarm.update` event
 `swarm.holder_released` (`{ participantId, reason }`) releases them in one durable batch: the
-individual `swarm.assignment_updated` (status released) and `swarm.group_updated` events are what
-the coordination log records, so replay stays byte-identical to the hand-written sequence, and
-the request itself — reason included — rides the durable operation record. A live active
-participant refuses with `swarm_holder_live`: stopping it remains the explicit separate act. The
+individual `swarm.assignment_updated` (status released) events are what the coordination log
+records, so replay stays byte-identical to the hand-written sequence, and the request itself —
+reason included — rides the durable operation record. A live active participant refuses with
+`swarm_holder_live`: stopping it remains the explicit separate act.
 `assignment_holder_gone` and `delegation_orphaned` attention rows name this release as their next
 step.
 
-## Declared coupling and session ownership (issue #263 items 2 and 3, 2026-09-13)
+## Declared work dependencies (issue #263 item 2, 2026-09-13)
 
-Coupling is something participants and organizers DECLARE and the swarm keeps honest — never
-something the runtime imposes. The declared choices are exactly the ones this design names:
-
-- **A dependency between units of work** — declared on the work itself
-  (`swarm.update` event `swarm.work_updated`, optional `dependsOn` field):
-  `[{ workId: "W1" }]` waits for W1 to hold an accepted contribution; `[{ artifact: "name" }]`
-  waits for an accepted contribution that references the artifact. The declared set is replaced
-  whole and kept by updates that omit it. The fold refuses unknown target works, a work waiting
-  on itself, and rings of waits, naming what is missing.
-- **A synchronization point** — declared on a group (`swarm.update` event
-  `swarm.coupling_updated`, coupling `synchronization`): members ARRIVE as their own honest
-  report (read authority suffices for one's own arrival) and the point is RELEASED explicitly,
-  with who released and why recorded. Each arrival is a row — `{participantId, actor, seq, ts}` —
-  so "who arrived, and when" is answered by the artifact rather than by a watch log. The view
-  shows `arrivals`, `awaiting` (current live members only — a released or dead seat never holds a
-  point open), `departed` (the seats from the declared roster that no longer count), and the
-  derived `arrived` fact. Re-declaring the point replaces its parameters and CARRIES the arrivals
-  forward, naming them in `carriedArrivals`: a barrier is never wiped silently.
-- **An exclusive writer over a shared checkout** — declared with coupling `writer`: the record
-  names the writer and the checkout that writer is recorded in. A participant's checkout is
-  recorded when it is recruited into one (the deliberate `shareWorkspaceWith` adoption at
-  membership, and the live attachment observed at binding — the first recruit into a checkout is
-  armed by the latter). One writer per checkout: a second claim over the same checkout refuses
-  naming the current writer, and a claim over a participant with NO recorded checkout refuses with
-  `swarm_writer_workspace_unrecorded` — a claim that names no resource can never enforce
-  exclusivity, so it is refused rather than recorded inert. A writer whose runtime dies raises a
-  `coupling_writer_gone` attention row naming the release that frees the checkout.
-- **A group failure policy** — declared with coupling `failure`, policy `independent`: when a
-  member dies or leaves, a `group_member_gone` attention row names the member and the DEPENDENT
-  work (works that declared a dependency on the gone member's work); independent peers continue.
-  Without a declared policy no such row exists — independent activities inherit nothing by
-  sharing a swarm.
+A dependency between units of work is DECLARED on the work itself
+(`swarm.update` event `swarm.work_updated`, optional `dependsOn` field):
+`[{ workId: "W1" }]` waits for W1 to hold an accepted contribution; `[{ artifact: "name" }]`
+waits for an accepted contribution that references the artifact. The declared set is replaced
+whole and kept by updates that omit it. The fold refuses unknown target works, a work waiting
+on itself, and rings of waits, naming what is missing.
 
 These records INFORM rather than fence. Nothing here stops a worker's process: a participant
 that proceeds against an unsettled dependency does so visibly (`waitsOn` shows the wait as
-unsettled, with the evidence that has not arrived), and that is allowed. Every declaration,
-arrival, and release is a durable swarm event, so `swarm.watch` wakes on each of them and a
-scoped (`participantId`) view shows the couplings its subtree can act on — writer records follow
-the writer's subtree, and a synchronization point or group failure policy is shown to every member
-whose group roster intersects the subtree, so a seat listed in `awaiting` can always read the
-point it is expected to arrive at.
+unsettled, with the evidence that has not arrived), and that is allowed. Every declaration is a
+durable swarm event, so `swarm.watch` wakes on it, and a scoped (`participantId`) view shows the
+waits its subtree can act on.
 
 **Who acted** is a fact of every record, never a caller-named seat. `releasedBy` and `reviewerId`
 carry the ACTOR: the participant's own name when a member acts, or the acting principal's label
@@ -497,11 +468,10 @@ brief text is carried by its own row and by no other: another seat's row says
 composed text's length, the ledger row that holds it and the docs/46 §4 relationship class that
 decided what this caller may see (#464 third half: every ROSTER row, paged or whole, carries the
 reach; only the participantId-scoped read carries the text) — because a brief is what a
-recruiter told ONE seat. Records with
-ROSTERS follow the intersection rule (the #292 rule): a group or a declared coupling is in scope
-when any member of the roster is in the subtree, and a group with an empty roster is in scope for
-nobody. Shared context is swarm-wide by construction and is the participant's own reading; an entry
-written for one group follows that group's roster. Attention rows are the ones the subtree can act
+recruiter told ONE seat. Records with ROSTERS follow the intersection rule (the #292 rule): a
+claim is in scope when its holder is in the subtree or it names in-scope work. Shared context is
+swarm-wide by construction and is every participant's own reading. Attention rows are the ones the
+subtree can act
 on, and an in-flight operation names the COMMAND, the seat and the operation key — never the request
 body (2026-09-14 audit S-E6): the text of somebody's private guide is not attention.
 

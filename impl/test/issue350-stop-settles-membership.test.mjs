@@ -123,23 +123,6 @@ test('350c: the brief after the stop omits the seat from Peers and carries the s
     'one separate line names the settled history');
 });
 
-test('350d: a group synchronization point no longer awaits the stopped seat', async (t) => {
-  const f = fixture(t);
-  await f.call('create', { purpose: 'Barriers consume released seats' });
-  await f.recruit('alpha');
-  await f.recruit('beta');
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'g', members: ['alpha', 'beta'] } });
-  await f.call('update', { event: 'swarm.coupling_updated',
-    payload: { couplingId: 'c', coupling: 'synchronization', groupId: 'g', name: 'checkpoint', action: 'declare' } });
-  const open = (await f.call('view')).couplings.find((row) => row.couplingId === 'c');
-  assert.deepEqual(open.awaiting, ['alpha', 'beta']);
-
-  await f.call('stop', { participantId: 'alpha', reason: 'done' });
-  const settled = (await f.call('view')).couplings.find((row) => row.couplingId === 'c');
-  assert.deepEqual(settled.awaiting, ['beta'], 'a stopped seat never holds the point open');
-  assert.deepEqual(settled.departed, ['alpha'], 'a stopped seat is named as departed, never counted');
-});
-
 test('350e: a stopped holder releases — its assignments are freed by holder_released', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Release stopped holders' });

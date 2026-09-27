@@ -51,7 +51,7 @@ const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.stop': 'stop',
 });
 const UPDATE_PERMISSIONS = Object.freeze({
-  'swarm.group_updated': 'organize', 'swarm.work_updated': 'organize',
+  'swarm.work_updated': 'organize',
   'swarm.assignment_updated': 'organize', 'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
@@ -266,7 +266,7 @@ test('an authorized command reaches dispatch with the bridge-minted principal an
     assert.ok(result.availableActions.includes('swarm.guide'));
     assert.ok(result.availableActions.includes('swarm.capture'));
     assert.ok(result.updates.includes('swarm.contribution_recorded'));
-    assert.equal(result.updates.includes('swarm.group_updated'), false);
+    assert.equal(result.updates.includes('swarm.coupling_updated'), false);
     assert.equal(result.availableActions.includes('swarm.stop'), false);
     const recorded = runtime.calls[0];
     assert.deepEqual(recorded.principal, {
@@ -316,19 +316,16 @@ test('an implementer cannot make organizer changes; a delegated organizer can', 
       permissions: ['read', 'communicate', 'contribute', 'organize'] }); // delegated organizer
     const alpha = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const beta = await bridge.issue({ swarmId: 'swarm-1', participantId: 'beta', runId: 'run-beta' });
-    // Well-shaped payloads: contract admission (payload shapes) now refuses BEFORE authority, so
-    // the authority refusal under test needs a payload the contract would admit.
     await assert.rejects(call(alpha, 'swarm.update', {
-      swarmId: 'swarm-1', event: 'swarm.group_updated', idempotencyKey: 'op-g-1',
-      payload: { groupId: 'group-pairs', members: ['alpha'], purpose: 'mutiny' },
+      swarmId: 'swarm-1', event: 'swarm.work_updated', idempotencyKey: 'op-w-1',
+      payload: { workId: 'W-1', objective: 'Mutiny' },
     }), (error) => error.code === 'swarm_permission_required' && error.status === 422
       && error.detail.permission === 'organize');
-    const regroup = await call(beta, 'swarm.update', {
-      swarmId: 'swarm-1', event: 'swarm.group_updated', idempotencyKey: 'op-g-2',
-      payload: { groupId: 'group-pairs', members: ['alpha', 'beta'],
-        purpose: 'split into builder and reviewer pairs' },
+    const declared = await call(beta, 'swarm.update', {
+      swarmId: 'swarm-1', event: 'swarm.work_updated', idempotencyKey: 'op-w-2',
+      payload: { workId: 'W-1', objective: 'Split the lane into builder and reviewer pairs' },
     });
-    assert.equal(regroup.applied, true);
+    assert.equal(declared.applied, true);
     assert.equal(runtime.applied[0].author, 'swarm-native:beta');
   });
 });
@@ -841,14 +838,13 @@ test('the CLI renders family and per-command help locally with no bridge env wha
   for (const argv of [['swarm.update', '--help'], ['-h', 'swarm.update'], ['help', 'swarm.update']]) {
     const command = await execFileAsync(process.execPath, [BRIDGE_MODULE, ...argv], { env: cleanEnv });
     assert.equal(command.stderr, '');
-    for (const kind of ['swarm.group_updated', 'swarm.context_updated', 'swarm.contribution_recorded',
-      'swarm.contribution_reviewed', 'swarm.participant_left', 'swarm.closed']) {
+    for (const kind of ['swarm.work_updated', 'swarm.claim_updated', 'swarm.context_updated',
+      'swarm.contribution_recorded', 'swarm.contribution_reviewed', 'swarm.participant_left', 'swarm.closed']) {
       assert.ok(command.stdout.includes(kind), `${argv.join(' ')} names ${kind}`);
     }
-    assert.match(command.stdout, /groupId/u);
+    assert.match(command.stdout, /claimId/u);
     assert.match(command.stdout, /decision \(one of accept, reject, comment\)/u);
     assert.match(command.stdout, /arbitrary JSON or plain text/u);
-    assert.match(command.stdout, /auto-filled from BATON_SWARM_BRIDGE_SWARM_ID/u);
   }
   const inspect = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', '--help'], { env: cleanEnv });
   assert.match(inspect.stdout, /swarmId — a swarm identity; auto-filled from BATON_SWARM_BRIDGE_SWARM_ID/u);

@@ -66,7 +66,7 @@ function fixture(t, observations) {
 
 const foreign = (overrides = {}) => Object.freeze({
   kind: 'commit', swarmId: 's1', participantId: 'peer', workspaceId: 'ws-' + 'f'.repeat(32),
-  couplingId: '', writer: '', sha: 'a'.repeat(40), at: '2026-09-18T09:00:00Z', paths: ['p1.txt'],
+  sha: 'a'.repeat(40), at: '2026-09-18T09:00:00Z', paths: ['p1.txt'],
   workerId: 'w-fixture', ...overrides,
 });
 

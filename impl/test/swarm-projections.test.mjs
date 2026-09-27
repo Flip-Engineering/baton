@@ -80,8 +80,8 @@ async function fixture(t, { turnDelayMs = 5 } = {}) {
   return { app, driver, adapter, directory, root: bindBaton(app, principal('root')), paused, asWorker };
 }
 
-// A lead with every permission and two builders with work, an assignment, and a group —
-// the smallest swarm that exercises every projected row family.
+// A lead with every permission and two builders with work and an assignment apiece: the smallest
+// swarm that exercises every projected row family.
 async function builders(t, options = {}) {
   const fixtureHandle = await fixture(t, options);
   const { root, paused, asWorker } = fixtureHandle;
@@ -95,7 +95,6 @@ async function builders(t, options = {}) {
   const betaWorker = await paused(beta.runId);
   await delegated.work({ workId: 'W-A', objective: 'Part A', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
-  await delegated.group({ groupId: 'impl', members: ['alpha', 'beta'], purpose: 'builders' });
   return { ...fixtureHandle, swarm, delegated, alpha, beta, leadWorker, alphaWorker, betaWorker,
     leadActor: `worker:${leadWorker.id}` };
 }
@@ -187,7 +186,6 @@ test('every projected row family carries its seq and ts; a solo live checkout sh
   await delegated.work({ workId: 'W-B', objective: 'Part B', status: 'open' });
   await delegated.assign({ assignmentId: 'as-beta', participantId: 'beta', workId: 'W-B', status: 'active' });
   await delegated.context({ key: 'interface', body: 'the interface is frozen' });
-  await delegated.couple({ couplingId: 'sync-rows', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'rows' });
   await asWorker(alphaWorker).swarms.open(swarm.id).contribute({
     contributionId: 'contribution-alpha-1', participantId: 'alpha', workId: 'W-A', body: 'Part A built',
   });
@@ -205,13 +203,11 @@ test('every projected row family carries its seq and ts; a solo live checkout sh
   for (const [contributionId, reviews] of Object.entries(view.reviews)) {
     for (const [index, review] of reviews.entries()) stamped(review, `review ${contributionId}[${index}]`);
   }
-  for (const [couplingId, row] of Object.entries(view.couplings)) stamped(row, `coupling ${couplingId}`);
   assert.equal(Object.keys(view.work).length >= 2, true);
   assert.equal(Object.keys(view.assignments).length >= 2, true);
   assert.equal(Object.keys(view.context).length >= 1, true);
   assert.equal(Object.keys(view.contributions).length >= 1, true);
   assert.equal(Object.keys(view.reviews).length >= 1, true);
-  assert.equal(Object.keys(view.couplings).length >= 1, true);
 
   // Without a deliberate share, every live participant holds its own checkout: custody is
   // projected the same way, with shared: false and exactly one holder.

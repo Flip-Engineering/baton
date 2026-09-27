@@ -9,7 +9,7 @@
 // CAUSE: since #428 the participants composer builds every seat's `workspace` row with LIVE
 // reads (branch/HEAD/status per seat), the #301 base derivation re-reads the checkout and the
 // deployment target per seat, the #357 change-set read spawns one more `git status` per seat,
-// and #425's `_settleCheckoutWriterState` re-projected every checkout's writer state on every
+// and the writer-state settle re-projected every checkout's writer state on every
 // inspect. On a fleet with checkouts on disk that is O(seats) synchronous spawns per read, on
 // the resident's request loop, for every caller (each seat's brief refresh, the root's watch).
 //

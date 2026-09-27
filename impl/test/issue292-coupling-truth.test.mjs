@@ -1,35 +1,26 @@
-// Issue #292 — the declared coupling tells the truth (2026-09-14 audits: swarm-a finding 7 and
-// "what did not" (b); swarm-b findings 5, 7, 9; tight-coupling root §2). Eight guarantees, each
-// proven end to end here:
-//   1. the exclusive-writer guard is never inert: the first recruit into a checkout records it,
-//      and a claim over a participant with no recorded checkout is REFUSED, not recorded inert;
-//   2. re-declaring a synchronization point carries its arrivals forward and says so;
-//   3. releasedBy / reviewerId are the ACTOR — the member's name, or the acting principal's label
-//      for an external orchestrator (the root's acts never land as null);
-//   4. arrivals carry the actor and the timestamp that made them;
-//   5. a member listed in `awaiting` sees the synchronization record in its own scoped view;
-//   6. a retry under a spent idempotencyKey names its remedy (a new key);
-//   7. the bridge tells the truth about keys (covered in swarm-native-bridge.test.mjs);
-//   8. the native guidance names commands that exist.
+// Issue #292 — attribution told by the ACTOR (2026-09-14 audits: swarm-a finding 7 and "what did
+// not" (b); swarm-b findings 5, 7, 9). Three guarantees are proven end to end here:
+//   1. reviewerId is the ACTOR — the reviewing member's name, or the acting principal's label for
+//      an external orchestrator (the root's acts never land as null);
+//   2. a retry under a spent idempotencyKey names its remedy (a new key);
+//   3. a ledger holding a row of a family the runtime no longer folds (#598) replays at startup:
+//      the recorded row is skipped history, and a NEW request naming that event refuses;
+//   4. the native guidance names commands that exist.
 // Fixture style: swarm-coupling.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
-import { SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS } from '../src/swarm-contract.mjs';
+import { SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS, validateSwarmCommand } from '../src/swarm-contract.mjs';
 // #425: the guidance may name a kind the runtime records into the swarm fold (never
 // caller-submittable), so the registered vocabulary includes the fold's own set.
 import { SWARM_EVENT_KINDS as SWARM_FOLD_EVENT_KINDS } from '../src/swarm-state.mjs';
 import { SWARM_NATIVE_GUIDANCE } from '../src/swarm-native-access.mjs';
-
-// The view's coupling collection is an ARRAY of rows (issue #302, one collection shape).
-const couplingRow = (view, couplingId) => (view?.couplings ?? []).find((row) => row.couplingId === couplingId) ?? null;
-
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-coupling-truth', mandatory: true, approvalTtlMs: 60 * 60 * 1000,
   riskClasses: ['low', 'medium', 'high', 'critical'], effectClasses: ['repository_edit', 'provider_call'],
@@ -106,152 +97,45 @@ async function coupling(t) {
   const beta = await delegated.recruit('beta', 'Build B', selection);
   const alphaWorker = await paused(alpha.runId);
   const betaWorker = await paused(beta.runId);
-  await delegated.group({ groupId: 'impl', members: ['alpha', 'beta'], purpose: 'builders' });
   return { ...handle, swarm, delegated, lead, alpha, beta, leadWorker, alphaWorker, betaWorker };
 }
 
-test('the first recruit into a checkout records it, and the writer guard fires for that holder', async (t) => {
-  const { swarm, delegated, paused } = await coupling(t);
-  const view = await swarm.view();
-  const lead = view.participants.find((row) => row.participantId === 'lead');
-  assert.match(lead.workspaceId ?? '', /^ws-[a-f0-9]{32}$/u,
-    'the first recruit into a checkout is recorded in it — the claim below has an identity to enforce');
-  const sharer = await delegated.recruit('sharer', 'Share the checkout', { ...selection, shareWorkspaceWith: 'lead' });
-  await paused(sharer.runId);
-
-  // The lead holds the checkout; a second claim over the SAME recorded checkout refuses by name.
-  await delegated.couple({ couplingId: 'writer-lead', coupling: 'writer', action: 'declare', participantId: 'lead' });
-  const claim = await swarm.view();
-  assert.equal(claim.couplings.find((row) => row.couplingId === 'writer-lead').workspaceId, lead.workspaceId,
-    'the claim names the checkout the holder is recorded in');
-  await assert.rejects(
-    delegated.couple({ couplingId: 'writer-sharer', coupling: 'writer', action: 'declare', participantId: 'sharer' }),
-    (error) => error.code === 'swarm_writer_conflict' && /lead/u.test(error.message),
-    'the guard is live for a freshly recruited holder, not inert behind a null workspaceId');
-});
-
-test('a ledger written before the writer-workspace rule replays at startup instead of refusing the resident its history', async (t) => {
-  // Regression 2026-09-14: the main-clone resident could not start over its deployment after the
-  // #292 landing — the fold refused a recorded writer declare whose holder had no checkout. The
-  // rule guards ADMISSION (the prospective fold before the append); rows read back are history.
+test('a ledger holding a row of a family the runtime no longer folds replays instead of refusing the resident its history', async (t) => {
+  // Regression 2026-09-14, kept across the #598 removal: a resident must start over a deployment
+  // whose ledger holds rows this build cannot fold. The ledger below is written the way an older
+  // resident wrote it — rows at the head of `events.jsonl` — with two surviving rows around the
+  // departed one, so the row is proven skipped rather than merely absent.
   const directory = mkdtempSync(join(tmpdir(), 'baton-coupling-history-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const store = new CoordinationStore(directory);
-  const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
-  const workers = [];
-  const coordinator = { list: () => workers, pausedTurns: () => [], guideParticipant: async () => ({ ok: true }) };
-  const startRun = async (request) => {
-    if (workers.some((row) => row.runId === request.runId)) return;
-    workers.push({ id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`, runId: request.runId, status: 'working' });
-  };
-  const runtime = new SwarmRuntime({
-    store, coordinator, authorize: async () => {}, prepareRun: async () => {}, startRun, stopRun: async () => ({ state: 'closed' }),
-  });
-  await runtime.command('swarm.create', { purpose: 'history', swarmId: 'sw-h', idempotencyKey: 'create' }, owner);
-  await runtime.command('swarm.recruit', { swarmId: 'sw-h', participantId: 'builder', objective: 'build', idempotencyKey: 'recruit' }, owner);
-  // The row as an older resident admitted it: written straight to the ledger, no admission fold.
-  const declared = store._append('swarm.coupling_updated',
-    { swarmId: 'sw-h', couplingId: 'writer-h', coupling: 'writer', action: 'declare', participantId: 'builder' },
-    { actor: 'owner', key: 'history-declare' }, new Date().toISOString());
-  assert.equal(typeof declared.seq, 'number', 'the historical row is on the ledger');
-  // The live store (it holds the writer authority) still judges a NEW claim of that shape at
-  // admission: the rule is intact for requests, relaxed only for recorded history.
-  await assert.rejects(runtime.command('swarm.update', {
+  const ts = new Date().toISOString();
+  const history = [
+    { kind: 'swarm.created', actor: 'owner', idempotencyKey: 'history-create', payload: { swarmId: 'sw-h', purpose: 'history' } },
+    { kind: 'swarm.participant_joined', actor: 'owner', idempotencyKey: 'history-join', payload: { swarmId: 'sw-h', participantId: 'builder', role: 'build' } },
+    { kind: 'swarm.coupling_updated', actor: 'owner', idempotencyKey: 'history-declare', payload: { swarmId: 'sw-h', couplingId: 'writer-h', coupling: 'writer', action: 'declare', participantId: 'builder' } },
+    { kind: 'swarm.work_updated', actor: 'owner', idempotencyKey: 'history-work', payload: { swarmId: 'sw-h', workId: 'W-1', objective: 'survive the removal' } },
+  ].map((row, index) => ({ schemaVersion: 1, seq: index + 1, ts, ...row }));
+  writeFileSync(join(directory, 'events.jsonl'), `${history.map((row) => JSON.stringify(row)).join('\n')}\n`);
+
+  // A NEW request naming the departed family refuses: the closed event set is unchanged, and the
+  // row above is history, not a shape this build admits.
+  assert.throws(() => validateSwarmCommand('swarm.update', {
     swarmId: 'sw-h', event: 'swarm.coupling_updated', idempotencyKey: 'claim-again',
     payload: { couplingId: 'writer-h2', coupling: 'writer', action: 'declare', participantId: 'builder' },
-  }, owner), (error) => error.code === 'swarm_writer_workspace_unrecorded',
-  'a NEW claim of the same shape is still refused at admission');
-  // A resident starting over this deployment reads the ledger back: the historical claim folds
-  // as recorded — no checkout named — and the startup never refuses.
+  }), (error) => error.code === 'swarm_command_invalid' && error.detail.field === 'event',
+  'a NEW request naming the departed event refuses on the closed set');
+
+  // A resident starting over this deployment reads the ledger back: the departed row is skipped
+  // history — the projection carries no such collection — and both surrounding rows folded.
   const reopened = new CoordinationStore(directory);
-  assert.equal(reopened.swarm('sw-h').couplings['writer-h'].workspaceId, null,
-    'the reopened store replays the claim as recorded — no checkout named, no refusal');
-});
-
-test('a writer claim over a participant with no recorded checkout refuses instead of landing inert', async (t) => {
-  // The lane-level case: a deployment whose coordinator has no checkout attachment records none,
-  // and the claim names a resource that does not exist — it must refuse, named, with the remedy.
-  const directory = mkdtempSync(join(tmpdir(), 'baton-coupling-nocheckout-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const store = new CoordinationStore(directory);
-  const workers = [];
-  const runtime = new SwarmRuntime({
-    store,
-    coordinator: { list: () => workers, pausedTurns: () => [], guideParticipant: async () => ({ ok: true }) },
-    authorize: async () => {},
-    prepareRun: async () => {},
-    startRun: async (request) => {
-      if (workers.some((row) => row.runId === request.runId)) return;
-      workers.push({ id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`, runId: request.runId, status: 'working' });
-    },
-    stopRun: async () => ({ state: 'closed' }),
-  });
-  const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
-  await runtime.command('swarm.create', { purpose: 'no checkout', swarmId: 'sw-1', idempotencyKey: 'create' }, owner);
-  await runtime.command('swarm.recruit', {
-    swarmId: 'sw-1', participantId: 'builder', objective: 'build', idempotencyKey: 'recruit',
-  }, owner);
-  const view = await runtime.command('swarm.view', { swarmId: 'sw-1' }, owner);
-  assert.equal(view.participants[0].workspaceId, null, 'this deployment records no checkout for the seat');
-  await assert.rejects(runtime.command('swarm.update', {
-    swarmId: 'sw-1', event: 'swarm.coupling_updated', idempotencyKey: 'claim',
-    payload: { couplingId: 'writer-1', coupling: 'writer', action: 'declare', participantId: 'builder' },
-  }, owner), (error) => error.code === 'swarm_writer_workspace_unrecorded'
-    && /no recorded checkout/u.test(error.message) && /recruited into one/u.test(error.message),
-  'a claim that can never enforce exclusivity refuses, naming the remedy');
-});
-
-// ── 2 and 4. re-declaring carries arrivals; an arrival carries its actor and time ───────────────
-
-test('arrivals carry the actor and the timestamp that made them, and a re-declare carries them forward', async (t) => {
-  const { swarm, delegated, alphaWorker, asWorker } = await coupling(t);
-  await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'interface-freeze' });
-  await asWorker(alphaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'arrive' });
-  let point = couplingRow((await swarm.view()), 'sync-freeze');
-  assert.deepEqual(point.arrivals.map(({ participantId }) => participantId), ['alpha']);
-  assert.equal(typeof point.arrivals[0].ts, 'string', 'the arrival carries WHEN it was made');
-  assert.match(point.arrivals[0].actor ?? '', /^worker:/u, 'and which identity made the report');
-  assert.equal(typeof point.arrivals[0].seq, 'number');
-
-  // Re-declaring the same point (a new name — the innocent edit the audit feared) replaces the
-  // parameters and CARRIES the arrival: a barrier is never wiped silently.
-  await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'interface-freeze-2' });
-  point = couplingRow(await swarm.view(), 'sync-freeze');
-  assert.equal(point.name, 'interface-freeze-2');
-  assert.deepEqual(point.arrivals.map(({ participantId }) => participantId), ['alpha'],
-    'the arrival the member already reported survives the re-declare');
-  assert.deepEqual(point.carriedArrivals, ['alpha'], 'and the record says which arrivals it carried forward');
-  assert.deepEqual(point.awaiting, ['beta'], 'the seat that still owes an arrival is still awaited');
+  assert.equal(reopened.swarm('sw-h').couplings ?? null, null,
+    'the reopened projection carries no couplings collection');
+  assert.equal(reopened.swarm('sw-h').participants.builder.status, 'active',
+    'the row before the departed one folded');
+  assert.equal(reopened.swarm('sw-h').work['W-1'].objective, 'survive the removal',
+    'and the row after it folded too');
 });
 
 // ── 3. attribution is the ACTOR ─────────────────────────────────────────────────────────────────
-
-test('a release is attributed to the ACTOR: the member that released, or the acting principal', async (t) => {
-  const { swarm, delegated, root } = await coupling(t);
-  await delegated.couple({ couplingId: 'sync-x', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'x' });
-
-  // A member releases naming ANOTHER seat (the request is about that seat): the row still names
-  // the member that released — an organizer's act never lands as the seat it touched.
-  await delegated.couple({ couplingId: 'sync-x', coupling: 'synchronization', action: 'release', participantId: 'beta', reason: 'released on beta\'s behalf' });
-  let view = await swarm.view();
-  assert.equal(couplingRow(view, 'sync-x').releasedBy, 'lead');
-  assert.equal(couplingRow(view, 'sync-x').releaseReason, 'released on beta\'s behalf');
-
-  // An external orchestrator (the root, which has no participant row) releases: the row names the
-  // principal, and never lands as null.
-  await delegated.couple({ couplingId: 'sync-y', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'y' });
-  await root.swarms.open(swarm.id).couple({ couplingId: 'sync-y', coupling: 'synchronization', action: 'release', reason: 'the orchestrator released it' });
-  view = await swarm.view();
-  assert.equal(couplingRow(view, 'sync-y').releasedBy, 'direct:root',
-    'the root\'s act is attributed to the root principal, not null');
-
-  // A caller-named releasedBy that is not the actor is a misattribution and refuses.
-  await delegated.couple({ couplingId: 'sync-z', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'z' });
-  await assert.rejects(
-    delegated.couple({ couplingId: 'sync-z', coupling: 'synchronization', action: 'release', releasedBy: 'beta', reason: 'no' }),
-    (error) => error.code === 'swarm_author_mismatch' && error.detail.releasedBy === 'lead',
-    'a release cannot be recorded under another identity');
-});
 
 test('a review is attributed to the ACTOR: the reviewing member, or the acting principal', async (t) => {
   const { swarm, delegated, root, alphaWorker, asWorker } = await coupling(t);
@@ -272,25 +156,6 @@ test('a review is attributed to the ACTOR: the reviewing member, or the acting p
   await assert.rejects(root.swarms.open(swarm.id).review({ contributionId: 'contribution-alpha-1', decision: 'comment', reviewerId: 'lead' }),
     { code: 'swarm_author_mismatch' }, 'an orchestrator cannot review under a member\'s name');
   assert.equal((await swarm.view()).reviews['contribution-alpha-1'].length, 2, 'the refused reviews recorded nothing');
-});
-
-// ── 5. a member listed in awaiting sees the record ───────────────────────────────────────────────
-
-test('a member listed in awaiting sees the synchronization record in its own scoped view', async (t) => {
-  const { swarm, delegated, alphaWorker, asWorker, paused } = await coupling(t);
-  await delegated.couple({ couplingId: 'sync-seen', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'seen' });
-  // alpha is a member of the group and is listed in `awaiting`: it must be able to read the point
-  // it is asked to arrive at, in its OWN scoped view (docs/39 §Declared coupling).
-  await asWorker(alphaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-seen', coupling: 'synchronization', action: 'arrive' });
-  const betaScope = await swarm.view({ participantId: 'beta' });
-  const awaited = couplingRow(betaScope, 'sync-seen');
-  assert.ok(awaited, 'the member still awaited sees the record');
-  assert.deepEqual(awaited.awaiting, ['beta']);
-  assert.deepEqual(awaited.arrivals.map(({ participantId }) => participantId), ['alpha']);
-  // A participant whose roster does not intersect the point sees nothing of it.
-  const scout = await delegated.recruit('scout', 'Outside the group', selection);
-  await paused(scout.runId);
-  assert.deepEqual(Object.keys((await swarm.view({ participantId: 'scout' })).couplings), []);
 });
 
 // ── 6. a spent key names its remedy ─────────────────────────────────────────────────────────────

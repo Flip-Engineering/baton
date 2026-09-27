@@ -381,13 +381,12 @@ test('delegated coordinator: availableActions are the runtime\'s, and the client
       { participantId: 'coord-b', runId: 'run:2', role: 'coordinator', permissions: ['communicate'] },
       { participantId: 'impl-a', runId: 'run:1', role: 'implementer', permissions: ['contribute'] },
     ],
-    groups: { 'group:api': { version: 2, actor: 'coord-b', members: ['impl-a'] } },
     work: { 'work:1': { version: 1, actor: 'coord-b', title: 'Parser' } },
     assignments: {}, context: { notes: { version: 3, actor: 'coord-b', body: 'shared' } },
     contributions: {}, reviews: {},
     caller: { participantId: 'coord-b', permissions: ['communicate'] },
     availableActions: ['swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide'],
-    updates: [{ event: 'swarm.group_updated', seq: 12 }],
+    updates: [{ event: 'swarm.work_updated', seq: 12 }],
     cursor: 12,
   };
   const port = fakePort((name) => (name === 'swarm.view' ? view : { swarmId: 'swarm:one', cursor: 13 }));
@@ -396,13 +395,12 @@ test('delegated coordinator: availableActions are the runtime\'s, and the client
   const inspected = await swarm.view();
   assert.deepEqual(inspected.availableActions, view.availableActions);
   assert.deepEqual(inspected.caller, view.caller);
-  assert.deepEqual(inspected.groups['group:api'], { version: 2, actor: 'coord-b', members: ['impl-a'] });
+  assert.deepEqual(inspected.work['work:1'], { version: 1, actor: 'coord-b', title: 'Parser' });
   assert.equal(inspected.cursor, 12);
 
-  // Coordination is ordinary domain update: the runtime decides whether this caller may do it.
-  // The payload is the store's real shape (validateSwarmEvent demands the full members array) —
-  // the contract's early admission now refuses anything the store would refuse undetailed.
-  await swarm.group({ groupId: 'group:api', members: ['impl-a', 'impl-b'] });
+  // Coordination is ordinary domain update: the runtime decides whether this caller may do it, and
+  // the contract's early admission refuses at the boundary anything the store would refuse.
+  await swarm.work({ workId: 'work:1', objective: 'Parser' });
   await swarm.context({ key: 'notes', body: 'the API contract is frozen at rev 7' });
   assert.equal(port.calls[2].args.event, 'swarm.context_updated');
   assert.equal(port.calls[2].args.payload.body, 'the API contract is frozen at rev 7');
@@ -436,9 +434,8 @@ test('implementer: shared context is readable and a finding is an ordinary contr
   assert.equal(port.calls[3].args.event, 'swarm.participant_left');
   await swarm.close({ reason: 'scope shipped' });
   assert.equal(port.calls[4].args.event, 'swarm.closed');
-  // Issues #422/#423: the joint coupling actions extend swarm.coupling_updated, and the claim
-  // and work-proposal families add their two kinds to the caller-submittable set. #443 adds the
-  // swarm-level policy an orchestrator declares beside them.
+  // Issue #423 adds the claim kind to the caller-submittable set, and #443 adds the swarm-level
+  // policy an orchestrator declares beside it.
   assert.ok(Array.isArray(SWARM_EVENT_KINDS), 'SWARM_EVENT_KINDS is an array');
   assert.ok(Object.isFrozen(SWARM_EVENT_KINDS), 'SWARM_EVENT_KINDS is frozen');
   assert.ok(SWARM_EVENT_KINDS.length > 0, 'SWARM_EVENT_KINDS is non-empty');
@@ -570,6 +567,6 @@ test('the swarm.update payload schema and CLI help expose per-event payload shap
   for (const kind of SWARM_EVENT_KINDS) {
     assert.ok(helpText.includes(kind), `swarm.update help names ${kind}`);
   }
-  assert.match(helpText, /groupId/u);
+  assert.match(helpText, /claimId/u);
   assert.match(helpText, /filled in for you: swarmId, reviewerId/u);
 });

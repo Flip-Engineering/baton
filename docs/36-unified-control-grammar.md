@@ -484,18 +484,15 @@ the MCP tool table, and the web bus gate on.
 | `swarm.integrate` | `swarmId`, `contributionId`, `target`, `dryRun`, `withdraw`, `reason`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey`, `view` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 
-**`swarm.update` kinds (closed set, 13).** Every domain change a caller may name; the payload
+**`swarm.update` kinds (closed set, 10).** Every domain change a caller may name; the payload
 fields each kind requires of the caller are read from the payload schemas
 (`impl/src/swarm-event-schemas.mjs`).
 
 | Kind | Where it lands | Caller-required payload fields |
 |---|---|---|
-| `swarm.group_updated` | recorded by the coordination store and replayed by the fold | `groupId`, `members` |
 | `swarm.work_updated` | recorded by the coordination store and replayed by the fold | `workId` |
 | `swarm.assignment_updated` | recorded by the coordination store and replayed by the fold | `assignmentId`, `participantId`, `workId`, `status` |
-| `swarm.coupling_updated` | recorded by the coordination store and replayed by the fold | `couplingId`, `coupling`, `action` |
 | `swarm.claim_updated` | recorded by the coordination store and replayed by the fold | `claimId` |
-| `swarm.proposal_updated` | recorded by the coordination store and replayed by the fold | `proposalId`, `action` |
 | `swarm.holder_released` | expanded by the runtime into the events it names | `participantId` |
 | `swarm.context_updated` | recorded by the coordination store and replayed by the fold | `key`, `body` |
 | `swarm.contribution_recorded` | recorded by the coordination store and replayed by the fold | — |
@@ -527,7 +524,7 @@ records for itself, disjoint from the caller-submittable set above:
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).
 
-**Attention kinds (closed set, 22).** Each view row is a condition that needs an act, derived by the
+**Attention kinds (closed set, 19).** Each view row is a condition that needs an act, derived by the
 runtime from durable state — never asserted by a caller:
 
 - `worker_lost_on_restart`
@@ -539,9 +536,6 @@ runtime from durable state — never asserted by a caller:
 - `delegation_orphaned`
 - `assignment_holder_gone`
 - `claim_holder_gone`
-- `group_member_gone`
-- `coupling_writer_gone`
-- `coupling_writer_bypassed`
 - `closed_with_live_participants`
 - `recruit_queued`
 - `unreviewed_contribution`
@@ -553,7 +547,7 @@ runtime from durable state — never asserted by a caller:
 - `operation_refused`
 - `operation_unconfirmed`
 
-Semantics, responses and the coupling records behind these rows: [docs/39](39-swarm-runtime.md)
+Semantics and responses behind these rows: [docs/39](39-swarm-runtime.md)
 and the swarm section of `impl/MCP.md`. This block is generated — do not hand-edit it.
 
 <!-- END GENERATED: swarm-family -->

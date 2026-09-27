@@ -1,13 +1,7 @@
-// Issue #423, LANE 1 (state + contract) — the claims and work-proposal folds: a hold a seat
-// takes for itself on a work item or a path set (with the per-checkout conflict rule and the
-// one-row handoff), and a work split the seats it names accept by arriving, as specified by
-// docs/45-open-coordination.md §2, §3 and §11.
-//
-// These rows are the STATE half of `impl/test/issue423-claims-and-peers.test.mjs`: they drive
-// `foldSwarmEvent` directly. The runtime half (permissions, the `claims`/`proposals` view
-// projections, `claim_holder_gone` and `shared_checkout_overlap` attention rows, the peers-now
-// brief section) landed with them: the pairs file's rows are green and its `-red` suffix
-// came off in that change (docs/44 rule 3).
+// Issue #423, LANE 1 (state + contract) — the claim fold: a hold a seat takes for itself on a
+// work item or a path set, with the per-checkout conflict rule and the one-row handoff, as
+// specified by docs/45-open-coordination.md §2. These rows are the STATE half of
+// `impl/test/issue423-claims-and-peers.test.mjs`: they drive `foldSwarmEvent` directly.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -33,7 +27,6 @@ function team() {
   fold('swarm.participant_joined', { swarmId: 'baton', participantId: 'charlie', workspaceId: WS_PRIVATE });
   fold('swarm.work_updated', { swarmId: 'baton', workId: 'W-1', objective: 'the one shared task' });
   const claim = (claimId) => swarms.get('baton').claims[claimId] ?? null;
-  const proposal = (proposalId) => swarms.get('baton').proposals[proposalId] ?? null;
   const refused = (kind, payload, code) => {
     let threw = null;
     try { fold(kind, payload, { admission: true }); } catch (error) { threw = error; }
@@ -41,7 +34,7 @@ function team() {
     assert.equal(threw.code, code);
     return threw;
   };
-  return { swarms, fold, claim, proposal, refused, row: () => swarms.get('baton') };
+  return { swarms, fold, claim, refused, row: () => swarms.get('baton') };
 }
 
 const claimId = (id, extra = {}) => ({ swarmId: 'baton', claimId: id, ...extra });
@@ -142,159 +135,3 @@ test('#423 state: the claim shape refuses a two-target claim, a shape-less path,
   f.refused('swarm.claim_updated', claimId('c-new', { participantId: 'alpha' }), 'invalid_payload');
 });
 
-// ── work proposals (docs/45 §3) ──────────────────────────────────────────────
-
-const splitPlan = {
-  work: [{ workId: 'W-split', objective: 'the split half' }],
-  claims: [{ participantId: 'beta', workId: 'W-split' }],
-};
-
-test('#423 state: a proposal is proposed until the last consent, which expands the plan into its rows', () => {
-  const f = team();
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'propose',
-    participantId: 'alpha', members: ['alpha', 'beta'], plan: splitPlan });
-  const midway = f.proposal('p-1');
-  assert.equal(midway.proposed, true);
-  assert.deepEqual([...midway.consents], ['alpha'], 'the proposer consents by proposing');
-  assert.equal(f.row().work['W-split'], undefined, 'nothing is created before the consent set completes');
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'arrive', participantId: 'beta' });
-  const accepted = f.proposal('p-1');
-  assert.equal(accepted.proposed, false);
-  assert.equal(f.row().work['W-split'].objective, 'the split half', 'the plan\'s work rows are written');
-  const minted = f.claim('p-1-claim-0');
-  assert.equal(minted.participantId, 'beta', 'the minted claim names the holder the plan named');
-  assert.equal(minted.workId, 'W-split');
-  assert.equal(minted.status, 'active');
-  assert.equal(minted.workspaceId, WS_SHARED, 'the minted claim binds its holder\'s recorded checkout');
-});
-
-test('#423 state: an unmatched seat cannot consent, a second consent refuses, and a withdrawal records nothing', () => {
-  const f = team();
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'propose',
-    participantId: 'alpha', members: ['alpha', 'beta'], plan: splitPlan });
-  f.refused('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'arrive', participantId: 'charlie' }, 'swarm_not_a_member');
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'arrive', participantId: 'beta' });
-  f.refused('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'arrive', participantId: 'beta' }, 'swarm_already_arrived');
-  f.refused('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-ghost', action: 'arrive', participantId: 'alpha' }, 'swarm_proposal_not_found');
-  // A fresh proposal, withdrawn before its consent set completes: the plan never lands.
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-2', action: 'propose',
-    participantId: 'alpha', members: ['alpha', 'charlie'], plan: splitPlan });
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-2', action: 'release',
-    releasedBy: 'alpha', reason: 'no longer needed' });
-  assert.equal(f.proposal('p-2').released, true);
-  assert.equal(f.proposal('p-2').proposed, false);
-  f.refused('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-2', action: 'arrive', participantId: 'charlie' }, 'swarm_proposal_released');
-  assert.equal(f.claim('p-2-claim-0'), null, 'a withdrawn proposal never expands');
-});
-
-test('#423 state: an amendment carries consents forward, names them, and expands the amended plan', () => {
-  const f = team();
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'propose',
-    participantId: 'alpha', members: ['alpha', 'beta', 'charlie'], plan: splitPlan });
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'arrive', participantId: 'beta' });
-  assert.equal(f.proposal('p-1').proposed, true, 'charlie has still not consented');
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'propose',
-    participantId: 'alpha', members: ['alpha', 'beta', 'charlie'], plan: splitPlan });
-  const amended = f.proposal('p-1');
-  assert.deepEqual([...amended.carriedConsents], ['beta'], 'the earlier consent is carried and named');
-  assert.equal(amended.proposed, true, 'the member the amendment adds is still outstanding');
-  assert.equal(f.claim('p-1-claim-0'), null, 'the amended plan has not expanded yet');
-  // A roster that drops a consenting member does not carry that consent onto the new plan.
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'propose',
-    participantId: 'alpha', members: ['alpha'], plan: splitPlan });
-  const narrowed = f.proposal('p-1');
-  assert.equal('carriedConsents' in narrowed, false, 'nothing was carried onto the narrowed plan');
-  assert.equal(narrowed.proposed, false, 'the proposer alone completes the narrowed consent set');
-  assert.ok(f.claim('p-1-claim-0'), 'the narrowed plan expanded');
-});
-
-test('#423 state: the acceptance trial-folds the whole plan — an existing work item or a claim conflict refuses it entirely', () => {
-  const existing = team();
-  existing.fold('swarm.claim_updated', claimId('c-1', { participantId: 'alpha', paths: ['impl/src'] }));
-  existing.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-9', action: 'propose',
-    participantId: 'alpha', members: ['alpha', 'beta'],
-    plan: { claims: [{ participantId: 'beta', paths: ['impl/src/held.mjs'] }] } });
-  const clash = existing.refused('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-9', action: 'arrive', participantId: 'beta' }, 'swarm_claim_conflict');
-  assert.equal(clash.detail.holder, 'alpha');
-  assert.equal(existing.claim('p-9-claim-0'), null, 'nothing was minted');
-  assert.equal(existing.proposal('p-9').proposed, true, 'the consent did not land either');
-
-  const dupe = team();
-  const exists = dupe.refused('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-8', action: 'propose',
-    participantId: 'alpha', members: ['alpha'], plan: { work: [{ workId: 'W-1', objective: 'again' }] } }, 'swarm_work_exists');
-  assert.equal(exists.detail.workId, 'W-1');
-  assert.equal(dupe.row().work['W-1'].objective, 'the one shared task', 'the existing work is untouched');
-  assert.equal(dupe.proposal('p-8'), null, 'the refused acceptance recorded no proposal either');
-});
-
-test('#423 state: the minted claim ids are deterministic, and the plan shape is closed', () => {
-  const f = team();
-  f.fold('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-3', action: 'propose',
-    participantId: 'alpha', members: ['alpha'],
-    plan: { work: [{ workId: 'W-a', objective: 'a' }, { workId: 'W-b', objective: 'b' }],
-      claims: [{ participantId: 'alpha', workId: 'W-a' }, { participantId: 'alpha', paths: ['impl/docs'] }] } });
-  assert.ok(f.claim('p-3-claim-0') && f.claim('p-3-claim-1'), 'one claim per plan.claims entry, in plan order');
-  assert.deepEqual([...Object.keys(f.row().claims)].sort(), ['p-3-claim-0', 'p-3-claim-1']);
-  for (const [plan, pattern] of [
-    [{ work: [{ workId: 'W-a', objective: 'a' }, { workId: 'W-a', objective: 'again' }] }, /names W-a twice/u],
-    [{ work: [{ workId: 'W-a' }] }, /workId and an objective/u],
-    [{ claims: [{ participantId: 'alpha', workId: 'W-a', paths: ['x'] }] }, /exactly one target/u],
-    [{ claims: [{ workId: 'W-a' }] }, /names the participant/u],
-    [{ nodes: [] }, /work and claims only/u],
-  ]) {
-    assert.throws(() => validateSwarmEvent('swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-x',
-      action: 'propose', participantId: 'alpha', members: ['alpha'], plan }),
-    (error) => error instanceof SwarmRefusal && error.code === 'invalid_payload' && pattern.test(error.message),
-    `refused: ${JSON.stringify(plan)}`);
-  }
-});
-
-// ── the contract surface ─────────────────────────────────────────────────────
-
-test('#423 state: the two kinds are caller-submittable, addressed by their own rows, and their examples are admitted', () => {
-  for (const kind of ['swarm.claim_updated', 'swarm.proposal_updated']) {
-    assert.ok(SWARM_EVENT_KINDS.includes(kind), `${kind} is in the public update set`);
-    assert.ok(SWARM_COMMAND_ROWS.some((row) => row.command === 'swarm.update'), 'the update verb carries them');
-    assert.equal(validateSwarmCommand('swarm.update', { swarmId: 'baton', event: kind, idempotencyKey: 'k-1',
-      payload: SWARM_EVENT_EXAMPLES[kind] }), true, `${kind}'s shipped example is admissible`);
-    assert.deepEqual([...swarmEventAutoFilledFields(kind)].sort(), ['participantId', 'swarmId'],
-      `${kind} derives the acting seat from the request identity, so the example omits it`);
-  }
-  assert.deepEqual([...swarmEventAgentRequiredFields('swarm.claim_updated')], ['claimId']);
-  assert.deepEqual([...swarmEventAgentRequiredFields('swarm.proposal_updated')], ['proposalId', 'action']);
-  assert.deepEqual(swarmChangedRow('swarm.claim_updated', { claimId: 'c-1' }), { collection: 'claims', id: 'c-1' });
-  assert.deepEqual(swarmChangedRow('swarm.proposal_updated', { proposalId: 'p-1' }), { collection: 'proposals', id: 'p-1' });
-  // A payload field the schemas do not declare is still refused, never dropped.
-  assert.throws(() => validateSwarmCommand('swarm.update', { swarmId: 'baton', event: 'swarm.claim_updated',
-    idempotencyKey: 'k-2', payload: { claimId: 'c-1', workId: 'W-1', handoff: 'beta' } }),
-  (error) => error.code === 'swarm_command_invalid' && error.detail.field === 'payload.handoff');
-});
-
-test('#423 state: the collections are on every swarm row and replay is byte-identical', () => {
-  const events = [
-    ['swarm.created', { swarmId: 'baton', purpose: 'replay' }],
-    ['swarm.participant_joined', { swarmId: 'baton', participantId: 'alpha', workspaceId: WS_SHARED }],
-    ['swarm.participant_joined', { swarmId: 'baton', participantId: 'beta', workspaceId: WS_SHARED }],
-    ['swarm.work_updated', { swarmId: 'baton', workId: 'W-1', objective: 'task' }],
-    ['swarm.claim_updated', { swarmId: 'baton', claimId: 'c-1', participantId: 'alpha', paths: ['impl/src'] }],
-    ['swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'propose', participantId: 'alpha',
-      members: ['alpha', 'beta'], plan: { claims: [{ participantId: 'beta', paths: ['impl/test'] }] } }],
-    ['swarm.proposal_updated', { swarmId: 'baton', proposalId: 'p-1', action: 'arrive', participantId: 'beta' }],
-  ];
-  const replay = () => {
-    const swarms = new Map();
-    events.forEach(([kind, payload], index) => foldSwarmEvent(swarms,
-      { kind, payload, seq: index + 1, ts: `2026-09-18T00:00:${String(index + 1).padStart(2, '0')}.000Z`, actor: 'root' }));
-    return swarms;
-  };
-  const first = replay();
-  assert.deepEqual(swarmSnapshot(replay()), swarmSnapshot(first), 'the same log folds byte-identically');
-  assert.ok(first.get('baton').claims && first.get('baton').proposals,
-    'every swarm row carries the two collections from the start');
-  assert.ok(first.get('baton').claims['p-1-claim-0'], 'the expansion survives a replay');
-  // A replay never re-judges the conflict rules: the same log folds again without an admission fold.
-  const withConflict = new Map();
-  events.forEach(([kind, payload], index) => foldSwarmEvent(withConflict,
-    { kind, payload, seq: index + 1, ts: `2026-09-18T00:00:${String(index + 1).padStart(2, '0')}.000Z`, actor: 'root' }));
-  assert.deepEqual(swarmSnapshot(withConflict), swarmSnapshot(first));
-});

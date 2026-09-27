@@ -115,7 +115,7 @@ test('a refusal the runtime already recorded is never recorded twice, and an una
   const f = await linked(t);
   // The runtime's own refusal (a mutation naming a seat the swarm does not have) travels through
   // the bridge verbatim and stays the runtime's single row — never recorded twice.
-  const runtimeRefusal = await f.send('swarm.update', { swarmId: 'baton', event: 'swarm.group_updated', payload: { groupId: 'g', members: ['ghost'] }, idempotencyKey: 'op-1' })
+  const runtimeRefusal = await f.send('swarm.update', { swarmId: 'baton', event: 'swarm.assignment_updated', payload: { assignmentId: 'a-1', participantId: 'ghost', workId: 'W-1', status: 'active' }, idempotencyKey: 'op-1' })
     .then(() => null, (error) => error);
   assert.equal(runtimeRefusal.code, 'participant_not_found', 'the runtime refusal passes through');
   assert.equal(firstLine(runtimeRefusal.message).startsWith('Nothing was recorded:'), false,

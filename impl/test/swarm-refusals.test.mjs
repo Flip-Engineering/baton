@@ -116,7 +116,7 @@ test('a refused mutation is a durable row that wakes a watch and never enters th
   const parked = await swarm.view();
   const watching = swarm.watch({ afterSeq: parked.cursor, timeoutMs: 5000 });
   await assert.rejects(asWorker(alphaWorker).swarms.open(swarm.id)
-    .group({ groupId: 'impl', members: ['alpha'] }), { code: 'swarm_permission_required' });
+    .work({ workId: 'work:1', objective: 'Parser' }), { code: 'swarm_permission_required' });
 
   const woke = await watching;
   assert.equal(woke.watch.reason, 'event', 'the refusal wakes a parked watcher');
@@ -126,7 +126,8 @@ test('a refused mutation is a durable row that wakes a watch and never enters th
   assert.equal(row.seq, woke.watch.matchedSeq, 'the wake names the refusal row itself');
   assert.deepEqual(row.payload, {
     kind: 'swarm.operation_refused', swarmId: swarm.id, command: 'swarm.update',
-    event: 'swarm.group_updated', code: 'swarm_permission_required', field: null, rule: null, participantId: 'alpha',
+    event: 'swarm.work_updated', code: 'swarm_permission_required', field: 'workId',
+    rule: 'work-holder-or-organize', participantId: 'alpha',
   });
   assert.equal(row.idempotencyKey.startsWith('swarm-refusal:'), true, 'the refusal carries its own deterministic identity');
   assert.equal(JSON.stringify(driver.coordination.swarm(swarm.id)), foldBefore, 'the fold never sees the refusal');
@@ -181,12 +182,12 @@ test('refused reads record nothing, and an identical refusal retried records onc
 
   // The same refused request, retried under its own operation identity, records once.
   const refused = () => asWorker(alphaWorker).swarms.open(swarm.id)
-    .group({ groupId: 'impl', members: ['alpha'] }, { idempotencyKey: 'same-operation' });
+    .work({ workId: 'W-A', objective: 'Part A' }, { idempotencyKey: 'same-operation' });
   await assert.rejects(refused(), { code: 'swarm_permission_required' });
   await assert.rejects(refused(), { code: 'swarm_permission_required' });
   assert.equal(refusalRows(driver.coordination).length, 1, 'the identical retry kept the refusal\'s deterministic identity');
   await assert.rejects(asWorker(alphaWorker).swarms.open(swarm.id)
-    .group({ groupId: 'impl', members: ['alpha'] }, { idempotencyKey: 'another-operation' }),
+    .work({ workId: 'W-A', objective: 'Part A' }, { idempotencyKey: 'another-operation' }),
   { code: 'swarm_permission_required' });
   assert.equal(refusalRows(driver.coordination).length, 2, 'a new operation identity records its own refusal');
 });
@@ -194,7 +195,7 @@ test('refused reads record nothing, and an identical refusal retried records onc
 test('the log replays refusals byte-identically, and no caller can fabricate one', async (t) => {
   const { swarm, delegated, app, driver, directory, alphaWorker, asWorker } = await holders(t);
   await assert.rejects(asWorker(alphaWorker).swarms.open(swarm.id)
-    .group({ groupId: 'impl', members: ['alpha'] }), { code: 'swarm_permission_required' });
+    .work({ workId: 'W-A', objective: 'Part A' }), { code: 'swarm_permission_required' });
   await assert.rejects(delegated.work({ workId: 'W-A', objective: 'Part A', dependsOn: [{ workId: 'W-missing' }] }),
     { code: 'work_not_found' });
 

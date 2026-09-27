@@ -4970,7 +4970,8 @@ export class SwarmRuntime {
       // Issue #427: the rows read in LEDGER order — a rewritten key sorts by the seq of its latest
       // write, not by when the key was first seen — so the `context` projection lists the notes the
       // way the coordination ledger wrote them.
-      context: keep([...Object.entries(swarm.context ?? {})].sort(([, left], [, right]) => left.seq - right.seq)),
+      context: Object.fromEntries([...Object.entries(swarm.context ?? {})]
+        .sort(([, left], [, right]) => left.seq - right.seq)),
       // The swarm's seeded facts are the shared evidence of the WHOLE swarm — the exchange
       // channel a participant reads without the root copying anything — so a scoped view carries
       // them whole, like the swarm-wide context above (#318).

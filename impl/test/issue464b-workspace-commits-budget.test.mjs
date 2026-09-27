@@ -53,7 +53,7 @@ const BRIDGE_FRAME = 64 * 1024;
 const wsId = (index) => `ws-${String(index).padStart(2, '0').repeat(16)}`.slice(0, 35);
 
 /** One attributed commit row as the runtime's fold reads it: the payload the projected wrapper's
- * spool drain records (`worktree.commit_recorded`, swarm-runtime.mjs `_settleCheckoutWriterState`). */
+ * spool drain records (`worktree.commit_recorded`, swarm-runtime.mjs `_drainCommitObservations`). */
 const commitPayload = (participantId, workspaceId, index) => ({
   swarmId: SWARM, participantId, workspaceId,
   sha: `${String(index).padStart(8, '0')}${'a'.repeat(32)}`,

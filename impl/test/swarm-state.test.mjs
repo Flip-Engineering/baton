@@ -8,7 +8,6 @@ import {
   SWARM_REVIEW_DECISIONS,
   SwarmRefusal,
   SwarmIntegrityError,
-  swarmContextKey,
   validateSwarmEvent,
   foldSwarmEvent,
   readSwarm,
@@ -55,11 +54,10 @@ function swarmWithParticipant(swarmId = 'sw1', participantId = 'p1') {
 // ── SWARM_EVENT_KINDS ────────────────────────────────────────────────────────
 
 describe('SWARM_EVENT_KINDS', () => {
-  test('contains all 25 event kinds', () => {
+  test('contains all 21 event kinds', () => {
     const expected = [
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
-      'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
-      'swarm.assignment_updated', 'swarm.coupling_updated', 'swarm.coupling_writer_bypassed',
+      'swarm.participant_left', 'swarm.work_updated', 'swarm.assignment_updated',
       'swarm.participant_runtime_lost', 'swarm.participant_faulted',
       // Issue #443: the swarm-level policy, the re-route decision the provider-fault observation
       // records beside a death, and the performed re-route an `auto` swarm binds.
@@ -69,8 +67,8 @@ describe('SWARM_EVENT_KINDS', () => {
       // Issue #525: the resume-continuation decision — the question a resume-from recruit records
       // and the answer the orchestrator's guide records.
       'swarm.resume_decision_requested', 'swarm.resume_decision_answered',
-      // Issues #422/#423: the joint coupling, claim and work-proposal families.
-      'swarm.claim_updated', 'swarm.proposal_updated',
+      // Issue #423: the claim family — a hold a seat takes for itself on work or a path set.
+      'swarm.claim_updated',
       'swarm.context_updated',
       'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_reviewed', 'swarm.closed',
       // Issue #296: the landing receipt, recorded by `swarm.integrate` (never caller-submittable —
@@ -147,21 +145,6 @@ describe('validateSwarmEvent — shape errors', () => {
     }));
   });
 
-  test('swarm.group_updated requires distinct non-empty members', () => {
-    refusals(() => validateSwarmEvent('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1' }));
-    const err = refusals(() => validateSwarmEvent('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['p1', 'p1'],
-    }));
-    assert.equal(err.code, 'invalid_payload');
-  });
-
-  test('swarm.group_updated rejects invalid expectedVersion', () => {
-    const err = refusals(() => validateSwarmEvent('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: -1,
-    }));
-    assert.equal(err.code, 'invalid_payload');
-  });
-
   test('swarm.work_updated requires valid status if present', () => {
     const err = refusals(() => validateSwarmEvent('swarm.work_updated', {
       swarmId: 'sw1', workId: 'w1', objective: 'do it', status: 'paused',
@@ -208,7 +191,6 @@ describe('evolving empty swarm', () => {
     assert.equal(swarm.purpose, 'Investigate X');
     assert.equal(swarm.status, 'open');
     assert.equal(Object.keys(swarm.participants).length, 0);
-    assert.equal(Object.keys(swarm.groups).length, 0);
     assert.equal(Object.keys(swarm.work).length, 0);
     assert.equal(Object.keys(swarm.assignments).length, 0);
     assert.equal(Object.keys(swarm.context).length, 0);
@@ -311,60 +293,6 @@ describe('recruitment and regrouping', () => {
     assert.equal(err.code, 'participant_not_found');
   });
 
-  test('overlapping group membership — groups are not disjoint', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'b' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'c' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a', 'b'], purpose: 'Impl' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g2', members: ['b', 'c'], purpose: 'Review' }),
-    ]);
-    const swarm = swarms.get('sw1');
-    assert.deepEqual(swarm.groups['g1'].members, ['a', 'b']);
-    assert.deepEqual(swarm.groups['g2'].members, ['b', 'c']);
-    assert.equal(swarm.groups['g1'].version, 1);
-    assert.equal(swarm.groups['g2'].version, 1);
-  });
-
-  test('group regrouping bumps version and updates members', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'b' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'c' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a', 'b'] }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a', 'b', 'c'], expectedVersion: 1 }),
-    ]);
-    const group = swarms.get('sw1').groups['g1'];
-    assert.equal(group.version, 2);
-    assert.deepEqual(group.members, ['a', 'b', 'c']);
-  });
-
-  test('group update with wrong expectedVersion throws', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
-    ]);
-    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['a'], expectedVersion: 99,
-    })));
-    assert.equal(err.code, 'version_conflict');
-  });
-
-  test('group member referential integrity: unknown participant refused', () => {
-    const swarms = fresh();
-    foldSwarmEvent(swarms, e('swarm.created', { swarmId: 'sw1', purpose: 'x' }));
-    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['nobody'],
-    })));
-    assert.equal(err.code, 'participant_not_found');
-  });
-
   test('participant_left retains identity and history', () => {
     const swarms = fresh();
     fold(swarms, [
@@ -437,7 +365,7 @@ describe('context_updated version conflict', () => {
   test('first update sets version 1', () => {
     const swarms = swarmWithParticipant();
     foldSwarmEvent(swarms, e('swarm.context_updated', { swarmId: 'sw1', key: 'plan', body: 'v1' }, { actor: 'p1' }));
-    const ctx = swarms.get('sw1').context[swarmContextKey('plan')];
+    const ctx = swarms.get('sw1').context['plan'];
     assert.equal(ctx.version, 1);
     assert.equal(ctx.body, 'v1');
     assert.equal(ctx.actor, 'p1');
@@ -449,8 +377,8 @@ describe('context_updated version conflict', () => {
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'a' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'b' }),
     ]);
-    assert.equal(swarms.get('sw1').context[swarmContextKey('k')].version, 2);
-    assert.equal(swarms.get('sw1').context[swarmContextKey('k')].body, 'b');
+    assert.equal(swarms.get('sw1').context['k'].version, 2);
+    assert.equal(swarms.get('sw1').context['k'].body, 'b');
   });
 
   test('context update with correct expectedVersion succeeds', () => {
@@ -459,7 +387,7 @@ describe('context_updated version conflict', () => {
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'a' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'b', expectedVersion: 1 }),
     ]);
-    assert.equal(swarms.get('sw1').context[swarmContextKey('k')].version, 2);
+    assert.equal(swarms.get('sw1').context['k'].version, 2);
   });
 
   test('context update with wrong expectedVersion throws version_conflict', () => {
@@ -477,30 +405,10 @@ describe('context_updated version conflict', () => {
       e('swarm.context_updated', { swarmId: 'sw1', key: 'text', body: 'plain text' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'json', body: { x: 1, y: [2, 3] } }),
     ]);
-    assert.equal(swarms.get('sw1').context[swarmContextKey('text')].body, 'plain text');
-    assert.deepEqual(swarms.get('sw1').context[swarmContextKey('json')].body, { x: 1, y: [2, 3] });
+    assert.equal(swarms.get('sw1').context['text'].body, 'plain text');
+    assert.deepEqual(swarms.get('sw1').context['json'].body, { x: 1, y: [2, 3] });
   });
 
-  test('context scoped to group — unknown groupId refused', () => {
-    const swarms = swarmWithParticipant();
-    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.context_updated', {
-      swarmId: 'sw1', key: 'k', body: 'data', groupId: 'no-such-group',
-    })));
-    assert.equal(err.code, 'group_not_found');
-  });
-
-  test('context scoped to an existing group is accepted', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'hi', groupId: 'g1' }),
-    ]);
-    const ctx = swarms.get('sw1').context[swarmContextKey('notes', 'g1')];
-    assert.equal(ctx.groupId, 'g1');
-    assert.equal(ctx.version, 1);
-  });
 });
 
 // ── work / assignments ───────────────────────────────────────────────────────
@@ -621,7 +529,7 @@ describe('persistent reviewer in several assignments', () => {
 // ── accepted contribution with author still active ────────────────────────────
 
 describe('accepted contribution — author still active', () => {
-  test('accept review does not close contributor, work, group, or swarm', () => {
+  test('accept review does not close contributor, work, or swarm', () => {
     const swarms = fresh();
     fold(swarms, [
       e('swarm.created', { swarmId: 'sw1', purpose: 'impl' }),
@@ -786,7 +694,6 @@ describe('deterministic replay', () => {
       e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'alice', role: 'lead', runId: 'run-alice' }),
       e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'bob', parentId: 'alice', permissions: ['code'] }),
       e('swarm.work_updated', { swarmId: 'sw1', workId: 'w1', objective: 'Build feature', status: 'open' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['alice', 'bob'], purpose: 'Core team' }),
       e('swarm.assignment_updated', { swarmId: 'sw1', assignmentId: 'a1', participantId: 'bob', workId: 'w1', status: 'active' }),
       e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'alice', workerId: 'wk1', taskId: 'tk1' }, { seq: 1, actor: 'system' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'brief', body: { goal: 'Ship it' } }, { actor: 'alice', seq: 2 }),
@@ -854,21 +761,6 @@ describe('invalid cross-swarm references', () => {
       swarmId: 'sw2', assignmentId: 'a1', participantId: 'alice', workId: 'w1', status: 'active',
     })));
     assert.equal(err.code, 'participant_not_found');
-  });
-
-  test('context groupId must be a group in the same swarm', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'a' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'alice' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['alice'] }),
-      e('swarm.created', { swarmId: 'sw2', purpose: 'b' }),
-    ]);
-    // g1 is in sw1, not sw2
-    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.context_updated', {
-      swarmId: 'sw2', key: 'k', body: 'data', groupId: 'g1',
-    })));
-    assert.equal(err.code, 'group_not_found');
   });
 
   test('parent from different swarm is unknown identity', () => {
@@ -939,9 +831,8 @@ describe('swarmSnapshot completeness', () => {
       e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'alice', role: 'lead', runId: 'r1', permissions: ['write'] }),
       e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'alice', workerId: 'wk1', taskId: 'tk1', sessionId: 'sess1' }, { seq: 1 }),
       e('swarm.work_updated', { swarmId: 'sw1', workId: 'w1', objective: 'Ship', status: 'open' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['alice'], purpose: 'Leads' }),
       e('swarm.assignment_updated', { swarmId: 'sw1', assignmentId: 'as1', participantId: 'alice', workId: 'w1', status: 'active' }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'readme', body: 'Hello', groupId: 'g1' }, { actor: 'alice', seq: 2 }),
+      e('swarm.context_updated', { swarmId: 'sw1', key: 'readme', body: 'Hello' }, { actor: 'alice', seq: 2 }),
       e('swarm.contribution_recorded', { swarmId: 'sw1', contributionId: 'c1', participantId: 'alice', workId: 'w1', body: 'done', refs: ['sha:xyz'] }),
       e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', reviewerId: 'alice', decision: 'accept' }, { seq: 3 }),
     ]);
@@ -960,12 +851,8 @@ describe('swarmSnapshot completeness', () => {
     assert.equal(alice.bindings[0].seq, 1);
 
     assert.equal(s.work['w1'].status, 'open');
-    assert.equal(s.groups['g1'].purpose, 'Leads');
-    assert.equal(s.assignments['as1'].status, 'active');
-    const ctxReadme = s.context[swarmContextKey('readme', 'g1')];
-    assert.equal(ctxReadme.body, 'Hello');
-    assert.equal(ctxReadme.groupId, 'g1');
-    assert.equal(ctxReadme.actor, 'alice');
+    assert.equal(s.context.readme.body, 'Hello');
+    assert.equal(s.context.readme.actor, 'alice');
     assert.equal(s.contributions['c1'].body, 'done');
     assert.deepEqual(s.contributions['c1'].refs, ['sha:xyz']);
     assert.equal(s.reviews['c1'][0].decision, 'accept');
@@ -982,7 +869,7 @@ describe('nested mutation resistance', () => {
     foldSwarmEvent(swarms, e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body }));
     body.a.b = 999;
     body.extra = 'injected';
-    const stored = swarms.get('sw1').context[swarmContextKey('k')].body;
+    const stored = swarms.get('sw1').context['k'].body;
     assert.equal(stored.a.b, 1, 'nested mutation must not affect stored body');
     assert.equal(stored.extra, undefined, 'injected key must not appear');
   });
@@ -1004,7 +891,7 @@ describe('nested mutation resistance', () => {
     const body = JSON.parse('{"__proto__":{"evil":true},"safe":1}');
     assert.ok(Object.prototype.hasOwnProperty.call(body, '__proto__'), 'fixture has own __proto__');
     foldSwarmEvent(swarms, e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body }));
-    const stored = swarms.get('sw1').context[swarmContextKey('k')].body;
+    const stored = swarms.get('sw1').context['k'].body;
     // __proto__ must be preserved as an own data property, not silently dropped or as a setter side-effect.
     assert.ok(Object.prototype.hasOwnProperty.call(stored, '__proto__'), '__proto__ must survive as own property');
     assert.equal(stored.safe, 1);
@@ -1057,61 +944,6 @@ describe('admission/replay parity', () => {
   });
 });
 
-describe('expectedVersion: 0 create-if-absent CAS', () => {
-  test('expectedVersion:0 on a new group succeeds (create-if-absent)', () => {
-    const swarms = swarmWithParticipant();
-    // version 0 = "I expect no row yet" — must not throw
-    assert.doesNotThrow(() => foldSwarmEvent(swarms, e('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: 0,
-    })));
-    assert.equal(swarms.get('sw1').groups['g1'].version, 1);
-  });
-
-  test('expectedVersion:0 on an existing group throws version_conflict', () => {
-    const swarms = swarmWithParticipant();
-    foldSwarmEvent(swarms, e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['p1'] }));
-    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: 0,
-    })));
-    assert.equal(err.code, 'version_conflict');
-  });
-});
-
-describe('group context isolation', () => {
-  test('same key in two different group scopes are independent', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g2', members: ['a'] }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'for g1', groupId: 'g1' }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'for g2', groupId: 'g2' }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'global' }),
-    ]);
-    const ctx = swarms.get('sw1').context;
-    assert.equal(ctx[swarmContextKey('notes', 'g1')].body, 'for g1');
-    assert.equal(ctx[swarmContextKey('notes', 'g2')].body, 'for g2');
-    assert.equal(ctx[swarmContextKey('notes')].body, 'global');
-    // Three separate entries
-    assert.equal(Object.keys(ctx).length, 3);
-  });
-
-  test('same key in same group bumps version, not a second entry', () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'v1', groupId: 'g1' }),
-      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'v2', groupId: 'g1' }),
-    ]);
-    const ctx = swarms.get('sw1').context;
-    assert.equal(Object.keys(ctx).length, 1);
-    assert.equal(ctx[swarmContextKey('notes', 'g1')].version, 2);
-    assert.equal(ctx[swarmContextKey('notes', 'g1')].body, 'v2');
-  });
-});
 
 describe('reviewer referential validity', () => {
   test('reviewerId must be a known participant', () => {
@@ -1194,7 +1026,7 @@ describe('body validation', () => {
   });
 });
 
-// ── declared coupling and dependencies (issue #263 item 2) ──────────────────
+// ── declared work dependencies (issue #263 item 2) ───────────────────────────
 
 describe('work dependencies', () => {
   test('dependsOn is stored on the work row and preserved by later updates', () => {
@@ -1254,178 +1086,3 @@ describe('work dependencies', () => {
   });
 });
 
-describe('declared couplings', () => {
-  const groupOfTwo = () => {
-    const swarms = fresh();
-    fold(swarms, [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'coupled' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'b' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g', members: ['a', 'b'] }),
-    ]);
-    return swarms;
-  };
-
-  test('a synchronization point records arrivals in order and releases with who and why', () => {
-    const swarms = groupOfTwo();
-    fold(swarms, [e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'declare', groupId: 'g', name: 'freeze',
-    })]);
-    const record = swarms.get('sw1').couplings.sync;
-    assert.deepEqual(record.arrivals, []);
-    assert.equal(record.released, false);
-    fold(swarms, [
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'b' }, { seq: 7, ts: 'ts-7', actor: 'worker:w-b' }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'a' }, { seq: 8, ts: 'ts-8', actor: 'worker:w-a' }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'release', participantId: 'a', reason: 'all arrived' }),
-    ]);
-    const settled = swarms.get('sw1').couplings.sync;
-    // An arrival names its seat, the actor that made the report, and WHEN it was made: the barrier
-    // is answerable from the artifact, not from a watch log.
-    assert.deepEqual(settled.arrivals, [
-      { participantId: 'b', actor: 'worker:w-b', seq: 7, ts: 'ts-7' },
-      { participantId: 'a', actor: 'worker:w-a', seq: 8, ts: 'ts-8' },
-    ], 'arrival order is log order, each arrival carrying its actor and timestamp');
-    assert.equal(settled.released, true);
-    assert.equal(settled.releasedBy, 'a');
-    assert.equal(settled.releaseReason, 'all arrived');
-  });
-
-  test('coupling state errors refuse with the missing fact named', () => {
-    const swarms = groupOfTwo();
-    const declare = (couplingId, extra = {}) => e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId, coupling: 'synchronization', action: 'declare', groupId: 'g', name: 'freeze', ...extra,
-    });
-    let err = integrity(() => foldSwarmEvent(swarms, declare('s', { groupId: 'nope' })));
-    assert.equal(err.code, 'group_not_found');
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'arrive', participantId: 'a',
-    })));
-    assert.equal(err.code, 'coupling_not_found');
-    fold(swarms, [declare('s')]);
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'arrive', participantId: 'stranger',
-    })));
-    assert.equal(err.code, 'participant_not_found');
-    fold(swarms, [e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'stranger' })]);
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'arrive', participantId: 'stranger',
-    })));
-    assert.equal(err.code, 'swarm_not_a_member');
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'arrive', participantId: 'a',
-    }));
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'arrive', participantId: 'a',
-    })));
-    assert.equal(err.code, 'swarm_already_arrived');
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'release', participantId: 'a', reason: 'done',
-    }));
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 's', coupling: 'synchronization', action: 'arrive', participantId: 'b',
-    })));
-    assert.equal(err.code, 'swarm_coupling_released');
-  });
-
-  test('an exclusive writer claims the checkout its participant is recorded in; one writer per checkout', () => {
-    const swarms = groupOfTwo();
-    fold(swarms, [
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'sharer', parentId: 'a', workspaceId: 'ws-' + 'a'.repeat(32) }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'joiner', parentId: 'a', workspaceId: 'ws-' + 'a'.repeat(32) }),
-    ]);
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer', coupling: 'writer', action: 'declare', participantId: 'sharer',
-    }));
-    const record = swarms.get('sw1').couplings.writer;
-    assert.equal(record.writer, 'sharer');
-    let err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer2', coupling: 'writer', action: 'declare', participantId: 'joiner',
-    })));
-    assert.equal(err.code, 'swarm_writer_conflict', 'the same checkout refuses a second writer');
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer3', coupling: 'writer', action: 'declare',
-    })));
-    assert.equal(err.code, 'invalid_payload', 'a claim must name its writer');
-    // A checkout the writer is not recorded in is not a resource this record may name: the claim
-    // refuses instead of landing with no identity to enforce exclusivity over (audit #292).
-    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
-    }), { admission: true }));
-    assert.equal(err.code, 'swarm_writer_workspace_unrecorded');
-    assert.match(err.message, /participant b has no recorded checkout/u, 'the refusal names the unarmed claim');
-    // The same row read back from a ledger written before the rule is history, not a request: it
-    // folds as recorded (no checkout named) instead of refusing the resident its own past. Regression
-    // 2026-09-14: a resident at the #292 landing could not start over a deployment whose ledger
-    // carried such a claim.
-    {
-      const history = groupOfTwo();
-      fold(history, [e('swarm.coupling_updated', {
-        swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
-      })]);
-      assert.equal(history.get('sw1').couplings['writer-private'].writer, 'b', 'recorded history folds');
-      assert.equal(history.get('sw1').couplings['writer-private'].workspaceId, null, 'as it was admitted: no checkout named');
-    }
-    // A participant recorded in ANOTHER checkout is a different resource: one writer per checkout.
-    fold(swarms, [e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'b', workerId: 'w-b', taskId: 't-b',
-      workspaceId: 'ws-' + 'b'.repeat(32) })]);
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
-    }));
-    assert.equal(swarms.get('sw1').couplings['writer-private'].workspaceId, 'ws-' + 'b'.repeat(32));
-    // Releasing the record frees the checkout, and the released checkout is claimable by the next
-    // writer who is recorded in it.
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer', coupling: 'writer', action: 'release', participantId: 'sharer',
-    }));
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer-next', coupling: 'writer', action: 'declare', participantId: 'joiner',
-    }));
-    assert.equal(swarms.get('sw1').couplings['writer-next'].writer, 'joiner');
-    // The release names its ACTOR, not the seat the request happened to name.
-    assert.equal(swarms.get('sw1').couplings.writer.releasedBy, 'sharer');
-  });
-
-  test('a failure policy is one per group until released', () => {
-    const swarms = groupOfTwo();
-    foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'policy', coupling: 'failure', action: 'declare', groupId: 'g', policy: 'independent',
-    }));
-    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'policy-2', coupling: 'failure', action: 'declare', groupId: 'g', policy: 'independent',
-    })));
-    assert.equal(err.code, 'swarm_coupling_conflict');
-    assert.equal(swarms.get('sw1').couplings.policy.policy, 'independent');
-  });
-
-  test('re-declaring replaces the parameters and CARRIES the arrivals forward, saying so on the row', () => {
-    const events = [
-      e('swarm.created', { swarmId: 'sw1', purpose: 'replay' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'b' }),
-      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g', members: ['a', 'b'] }),
-      e('swarm.work_updated', { swarmId: 'sw1', workId: 'W1', objective: 'one' }),
-      e('swarm.work_updated', { swarmId: 'sw1', workId: 'W2', objective: 'two', dependsOn: [{ workId: 'W1' }] }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'declare', groupId: 'g', name: 'freeze' }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'a' }, { seq: 9, ts: 'ts-9' }),
-      e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'a', workerId: 'w-a', taskId: 't-a', workspaceId: 'ws-' + 'a'.repeat(32) }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'writer', coupling: 'writer', action: 'declare', participantId: 'a' }),
-    ];
-    const first = fold(fresh(), events);
-    const second = fold(fresh(), events);
-    assert.equal(JSON.stringify(swarmSnapshot(first)), JSON.stringify(swarmSnapshot(second)),
-      'the same event sequence folds byte-identically');
-    fold(fresh(), events);
-    foldSwarmEvent(first, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'declare', groupId: 'g', name: 'freeze-2',
-    }, { seq: 11, ts: 'ts-11' }));
-    const redeclared = first.get('sw1').couplings.sync;
-    assert.equal(redeclared.name, 'freeze-2', 'the re-declare replaces the point\'s parameters');
-    assert.deepEqual(redeclared.arrivals.map((arrival) => arrival.participantId), ['a'],
-      'the arrival the member already reported survives the re-declare');
-    assert.deepEqual(redeclared.carriedArrivals, ['a'],
-      'and the record says which arrivals this declare carried forward');
-    // A first declare carries nothing, and says exactly that: the field is only a re-declare fact.
-    assert.equal(fold(fresh(), events.slice(0, 7)).get('sw1').couplings.sync.carriedArrivals, null);
-  });
-});

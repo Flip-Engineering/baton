@@ -138,10 +138,10 @@ test('#302 every swarm mutation answers with a receipt, and only view:true carri
   assert.equal(recruited.view.participants.length, 1, 'view: true carries the whole refreshed view');
 
   // update
-  const updated = await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'g', members: ['builder'] } });
+  const updated = await f.call('update', { event: 'swarm.work_updated', payload: { workId: 'W-1', objective: 'One unit of work' } });
   isReceipt(updated.receipt, 'swarm.update');
-  assert.equal(updated.receipt.event.kind, 'swarm.group_updated');
-  assert.deepEqual(updated.receipt.changed, [{ collection: 'groups', id: 'g', seq: updated.receipt.event.seq, ts: updated.receipt.event.ts }]);
+  assert.equal(updated.receipt.event.kind, 'swarm.work_updated');
+  assert.deepEqual(updated.receipt.changed, [{ collection: 'work', id: 'W-1', seq: updated.receipt.event.seq, ts: updated.receipt.event.ts }]);
   assert.deepEqual(updated.next, { command: 'swarm.view', args: { swarmId: 'baton' } });
 
   // guide — the receipt's event is the guide's OWN durable row (#273), which names the lane
@@ -189,14 +189,13 @@ test('#302 one collection shape rides every read path: view, watch, bridge, and 
   const f = fixture(t);
   await f.call('create', { purpose: 'One shape everywhere' });
   await f.recruit('builder', SWARM_PERMISSIONS);
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'g', members: ['builder'] } });
+  await f.call('update', { event: 'swarm.work_updated', payload: { workId: 'W-1', objective: 'One unit of work' } });
   await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c1', participantId: 'builder', body: 'A finding.' } }, { actor: 'worker:w-1', principalId: 'worker:w-1', sessionId: 'w-1' });
 
   const shapeOf = (view) => ({
     participants: Array.isArray(view.participants),
     contributions: Array.isArray(view.contributions),
-    groups: Array.isArray(view.groups),
-    couplings: Array.isArray(view.couplings),
+    claims: Array.isArray(view.claims),
     attention: Array.isArray(view.attention),
     workKeyed: view.work !== null && !Array.isArray(view.work),
     assignmentsKeyed: view.assignments !== null && !Array.isArray(view.assignments),
@@ -204,7 +203,7 @@ test('#302 one collection shape rides every read path: view, watch, bridge, and 
     contextKeyed: view.context !== null && !Array.isArray(view.context),
   });
   const expected = {
-    participants: true, contributions: true, groups: true, couplings: true, attention: true,
+    participants: true, contributions: true, claims: true, attention: true,
     workKeyed: true, assignmentsKeyed: true, reviewsKeyed: true, contextKeyed: true,
   };
 

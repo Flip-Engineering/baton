@@ -84,12 +84,8 @@ function fixture(t) {
   return { world, repo, checkout, scopes, git, initRepo };
 }
 
-/** One lease, with the seat's live writer projection — the checkout identity is the caller's. */
-const seatLease = (scopes, workerId, selection = {}) => {
-  const lease = scopes.create(workerId, { card: { harness: 'omp' }, ...selection });
-  scopes.projectWriterCoupling(workerId, { workspaceId: WORKSPACE, couplingId: '', writer: '' });
-  return lease;
-};
+/** One lease; the checkout identity is the caller's. */
+const seatLease = (scopes, workerId, selection = {}) => scopes.create(workerId, { card: { harness: 'omp' }, ...selection });
 
 /** A commit made by the seat's own hand: the checkout's projected wrapper answers `git`. */
 const commitThrough = (scope, dir, name) => {
@@ -118,12 +114,10 @@ test('447a: a commit in the seat\'s own checkout spools one observation naming t
   assert.deepEqual({
     swarmId: observations[0].swarmId,
     participantId: observations[0].participantId,
-    workspaceId: observations[0].workspaceId,
     paths: observations[0].paths,
   }, {
-    swarmId: SWARM, participantId: SEAT, workspaceId: WORKSPACE, paths: ['own.txt'],
-  }, 'the observation names the seat\'s swarm, participant and workspace');
-  assert.match(observations[0].sha ?? '', /^[0-9a-f]{40,64}$/u, 'and the commit it observed');
+    swarmId: SWARM, participantId: SEAT, paths: ['own.txt'],
+  }, 'the observation names the seat\'s swarm, participant and the paths it committed');
 });
 
 test('447b: a commit in a fixture repository under the checkout spools nothing and succeeds', needsGit, (t) => {
@@ -224,8 +218,6 @@ test('447d: the coordinator records the confirmed checkout on the seat\'s lease'
   assert.equal(seat.worktree, minted, 'the seat\'s checkout is confirmed');
   const lease = seat.runtimeLease;
   assert.ok(lease, 'the spawn installed a runtime lease');
-  scopes.projectWriterCoupling(seat.id, { workspaceId: WORKSPACE, couplingId: '', writer: '' });
-
   // The seat's own commit is attributed...
   const own = commitThrough(lease, seat.worktree, 'seat.txt');
   assert.equal(own.status, 0, own.stderr);

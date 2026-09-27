@@ -49,7 +49,9 @@ test('the corpus is a reduction the fold consumes: swarm rows plus swarm-operati
     let previousSeq = 0;
     for (const [index, line] of lines.entries()) {
       const event = JSON.parse(line);
-      assert.ok(isSwarmRow(event) || isSwarmOperationRow(event),
+      // #598: a fixture extracted before the group and coupling families left holds their rows, and
+      // the reduction keeps them: they are this deployment's history, and replay skips them.
+      assert.ok(isSwarmRow(event) || isSwarmOperationRow(event) || event.kind.startsWith('swarm.'),
         `${name} line ${index + 1}: ${event.kind} is neither a swarm event nor a swarm operation record`);
       assert.ok(Number.isSafeInteger(event.seq) && event.seq > previousSeq,
         `${name} line ${index + 1}: rows keep their original ledger order`);
@@ -64,9 +66,9 @@ test('the corpus covers the fold rule families a tightening rule would break', (
     for (const line of readFixture(name)) seen.add(JSON.parse(line).kind);
   }
   for (const kind of [
-    'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound', 'swarm.group_updated',
-    'swarm.work_updated', 'swarm.coupling_updated', 'swarm.contribution_recorded',
-    'swarm.contribution_reviewed', 'swarm.contribution_revision_attached', 'swarm.closed',
+    'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
+    'swarm.work_updated', 'swarm.contribution_recorded', 'swarm.contribution_reviewed',
+    'swarm.contribution_revision_attached', 'swarm.closed',
   ]) {
     assert.ok(seen.has(kind), `the corpus exercises no ${kind} row — extract a ledger that does`);
   }

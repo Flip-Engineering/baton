@@ -3585,6 +3585,13 @@ export function _apply(store, event) {
     foldPlanObjectEvent(store._campaignPlans, event, {
       resolveRunId: (waveId, role) => store._waveRoleRuns.get(waveRoleRunKey(waveId, role)) ?? null,
     });
+  } else if (store._loading && event.kind.startsWith('swarm.')) {
+    // #598: the families that left the swarm runtime — groups, work proposals, declared couplings
+    // and the writer-coupling bypass — folded collections once, so a ledger written before their
+    // removal still holds their rows. REPLAY skips a swarm row this build cannot fold: the
+    // projection no longer carries those collections, and a resident must never refuse to start on
+    // history it wrote itself. The live append path below still refuses an unknown swarm kind, so
+    // the closed event set keeps governing what may be WRITTEN.
   } else {
     throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
   }

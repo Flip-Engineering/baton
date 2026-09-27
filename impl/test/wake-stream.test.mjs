@@ -331,8 +331,6 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
       payload: { assignmentId: 'a1', swarmId: 's1' } }, null],
     [{ seq: 4, ts: 'T', kind: 'swarm.work_updated', actor: 'root',
       payload: { workId: 'w1', swarmId: 's1' } }, null],
-    [{ seq: 5, ts: 'T', kind: 'swarm.coupling_updated', actor: 'root',
-      payload: { couplingId: 'c1', swarmId: 's1' } }, null],
     [{ seq: 6, ts: 'T', kind: 'swarm.context_updated', actor: 'root',
       payload: { key: 'k', body: {}, swarmId: 's1' } }, null],
     [{ seq: 7, ts: 'T', kind: 'swarm.contribution_recorded', actor: 'p1',
