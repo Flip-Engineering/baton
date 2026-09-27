@@ -225,6 +225,35 @@ const DRIVER_KINDS = Object.freeze(new Set(['wave']));
 const APPLICATION_WAVE_STARTED_KIND = 'wave.started';
 // #173: the detached drive's settlement receipt — minted from runWorkflow's onSettle, keyed on waveId.
 const APPLICATION_WAVE_SETTLED_KIND = 'wave.settled';
+// Issue #370: the seed's evidence refusals are raised by the coordination store's own admission
+// (`_validateKnowledgeEvidence`), which keeps that rule's ONE authority; this boundary attaches
+// the field, the rule name and the next action a seat needs, reading and validating nothing a
+// second time. A code this table does not carry crosses unchanged.
+const EVIDENCE_REFUSAL_DETAIL = Object.freeze({
+  missing_evidence: Object.freeze({
+    rule: 'evidence-reference-known',
+    expectation: 'every evidence reference names something this swarm already holds',
+    correction: 'name an artifactId this run has already recorded, or a coordinationSeq the swarm has already reached — read them from evidence search rows or the swarm view',
+  }),
+  temporal_incoherence: Object.freeze({
+    rule: 'evidence-seq-recorded',
+    expectation: 'a coordinationSeq from an existing row before the row this seed writes',
+    correction: 'take the seq from a row the swarm has already recorded (evidence search answers each row with its seq) instead of one it has not reached',
+  }),
+  invalid_evidence: Object.freeze({
+    rule: 'evidence-reference-shape',
+    expectation: 'each entry is exactly {"artifactId": "..."} or {"coordinationSeq": N}',
+    correction: 'replace the entry with an artifact this run holds or a coordination row the swarm has recorded',
+  }),
+});
+const evidenceRefusal = (error) => {
+  const known = typeof error?.code === 'string' && Object.hasOwn(EVIDENCE_REFUSAL_DETAIL, error.code)
+    ? EVIDENCE_REFUSAL_DETAIL[error.code] : null;
+  // A refusal that already carries its own detail keeps it: this boundary only fills the gap.
+  return known === null || (error.detail ?? null) !== null
+    ? error
+    : applicationError(error.message, error.code, { field: 'evidence', ...known });
+};
 
 
 // docs/36 §9 M1/M3 — the dispatch-layer alias map. Canonical operation names (run.view,
@@ -9171,45 +9200,86 @@ export class BatonApplication {
     return deepFreeze({ runId: value.runId, board: value.board });
   }
 
-  // The 19 landed knowledge node types (coordination-store KNOWLEDGE_NODE_TYPES, minus the
-  // recorded subtraction: Decision is unseedable through the closed shape — a Decision requires
-  // informedBy graph sources the shape does not carry, so the facade refuses at validation what
-  // the lane would refuse as causal_orphan).
+  // The seedable top-level types and the grounding choices ARE the canonical schema's own closed
+  // sets (application-semantics), so the facade's admitted set and the bridge validator's cannot
+  // drift; Decision is subtracted explicitly (it requires informedBy graph sources this shape does
+  // not carry, so the facade refuses at validation what the lane would refuse as causal_orphan).
+  // Every refusal below carries the field, the rule and the next action (#370): a seat that
+  // guessed a field learns the payload from the answer instead of one refusal per guess.
   _normalizeKnowledgeSeed(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['runId', 'type', 'grounding', 'body', 'evidence'].includes(key))
-      || !validId(value.runId)
-      || !['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Question', 'Hypothesis',
-        'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample',
-        'Representation', 'ScratchFact', 'Source'].includes(value.type)
-      || value.type === 'Decision'
-      || !['verified', 'observed', 'derived', 'asserted'].includes(value.grounding)
-      || typeof value.body !== 'string' || value.body.length === 0 || value.body.includes('\0')
-      || (value.evidence !== undefined && !Array.isArray(value.evidence))) {
-      throw applicationError('run knowledge seed request is invalid', 'application_knowledge_seed_invalid');
+    const declared = ['body', 'evidence', 'grounding', 'runId', 'type'];
+    const invalid = (message, detail) => applicationError(message, 'application_knowledge_seed_invalid', detail);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw invalid('run knowledge seed request is invalid', {
+        rule: 'request-shape', expectation: `one object with ${declared.join(', ')}`,
+      });
     }
+    const undeclared = Object.keys(value).find((key) => !declared.includes(key));
+    if (undeclared !== undefined) {
+      throw invalid(`run knowledge seed request carries undeclared field ${undeclared}`, {
+        field: undeclared, rule: 'unknown-field', expectation: `one of ${declared.join(', ')}`,
+      });
+    }
+    if (!validId(value.runId)) {
+      throw invalid('run knowledge seed request is invalid', {
+        field: 'runId', rule: 'run-id', expectation: 'the run id this seed belongs to',
+      });
+    }
+    const seedSchema = canonicalOperationForCommand('run.knowledge.seed').inputSchema.properties;
+    if (value.type === 'Decision') {
+      throw invalid('a Decision is not seedable through this shape: it requires Informed graph sources this shape does not carry', {
+        field: 'type', rule: 'unseedable-type', expectation: `one of ${seedSchema.type.enum.join(', ')}`,
+      });
+    }
+    if (!seedSchema.type.enum.includes(value.type)) {
+      throw invalid(`run knowledge seed request is invalid: type must be one of ${seedSchema.type.enum.join(', ')}`, {
+        field: 'type', rule: 'field-predicate', expectation: `one of ${seedSchema.type.enum.join(', ')}`,
+      });
+    }
+    if (!seedSchema.grounding.enum.includes(value.grounding)) {
+      throw invalid(`run knowledge seed request is invalid: grounding must be one of ${seedSchema.grounding.enum.join(', ')}`, {
+        field: 'grounding', rule: 'field-predicate', expectation: `one of ${seedSchema.grounding.enum.join(', ')}`,
+      });
+    }
+    if (typeof value.body !== 'string' || value.body.length === 0 || value.body.includes('\0')) {
+      throw invalid('run knowledge seed request is invalid: body must be a non-empty string without a NUL byte', {
+        field: 'body', rule: 'field-predicate', expectation: 'a non-empty string with no NUL byte',
+      });
+    }
+    const bodyCap = FRAME_LIMITS['run.objective'].value;
     const bodyBytes = Buffer.byteLength(value.body);
-    if (bodyBytes > FRAME_LIMITS['run.objective'].value) {
-      throw applicationError(
-        `Knowledge seed body exceeds the ${FRAME_LIMITS['run.objective'].value}-byte cap (actual ${bodyBytes} bytes)`,
-        'application_knowledge_seed_invalid',
+    if (bodyBytes > bodyCap) {
+      throw invalid(
+        `Knowledge seed body exceeds the ${bodyCap}-byte cap (actual ${bodyBytes} bytes)`,
+        { field: 'body', rule: 'byte-bound', expectation: `at most ${bodyCap} bytes of UTF-8 text`,
+          correction: `shorten body to ${bodyCap} bytes or fewer, measured as UTF-8 bytes` },
       );
     }
-    const evidence = value.evidence ?? [];
+    const evidence = value.evidence === undefined ? [] : value.evidence;
+    if (!Array.isArray(evidence)) {
+      throw invalid('run knowledge seed request is invalid: evidence must be an array', {
+        field: 'evidence', rule: 'field-predicate', expectation: 'an array of evidence references',
+      });
+    }
     for (const ref of evidence) {
-      if (!ref || typeof ref !== 'object' || Array.isArray(ref)) {
-        throw applicationError('run knowledge seed request is invalid', 'application_knowledge_seed_invalid');
-      }
-      const keys = Object.keys(ref).sort().join(',');
+      const keys = ref && typeof ref === 'object' && !Array.isArray(ref)
+        ? Object.keys(ref).sort().join(',') : null;
       if (!((keys === 'coordinationSeq' && Number.isSafeInteger(ref.coordinationSeq) && ref.coordinationSeq > 0)
         || (keys === 'artifactId' && typeof ref.artifactId === 'string' && ref.artifactId.length > 0))) {
-        throw applicationError('run knowledge seed request is invalid', 'application_knowledge_seed_invalid');
+        throw invalid(
+          'run knowledge seed request is invalid: each evidence entry is exactly {"artifactId": string} or {"coordinationSeq": positive integer}',
+          { field: 'evidence', rule: 'evidence-reference-shape',
+            expectation: 'each entry is exactly {"artifactId": "..."} or {"coordinationSeq": N}',
+            correction: 'name an artifact this run already holds or a coordination row the swarm has already recorded, never a commit or a free-text citation' },
+        );
       }
     }
     // The Finding-scoped rule (mirrored EXACTLY as the lane scopes it — the store's rule is
     // Finding-specific, so a verified Constraint without evidence is lane-legal and NOT refused).
     if (value.type === 'Finding' && value.grounding === 'verified' && evidence.length === 0) {
-      throw applicationError('verified Finding requires evidence', 'application_knowledge_seed_invalid');
+      throw invalid('verified Finding requires evidence', {
+        field: 'evidence', rule: 'verified-finding-requires-evidence', expectation: 'at least one evidence reference',
+        correction: 'add evidence, e.g. [{"artifactId": "..."}] or [{"coordinationSeq": N}], or seed the fact with grounding observed, derived or asserted' });
     }
     return deepFreeze({
       runId: value.runId, type: value.type, grounding: value.grounding, body: value.body,
@@ -9488,14 +9558,21 @@ export class BatonApplication {
     });
     // The node carries runId, so it lands INSIDE the run's horizon by construction. The
     // server-derived key is content-addressed: an exact retry replays idempotent; different
-    // content is honestly a different seed, never a silent overwrite.
-    const outcome = this.driver.coordination.addKnowledgeNode({
-      type: request.type, grounding: request.grounding, body: request.body,
-      runId: request.runId, evidence: request.evidence,
-    }, {
-      actor: principal.actor,
-      key: `run.knowledge.seed:${request.runId}:${digest({ type: request.type, grounding: request.grounding, body: request.body, evidence: request.evidence })}`,
-    });
+    // content is honestly a different seed, never a silent overwrite. A refusal the store's own
+    // evidence admission raises crosses with the field, the rule and the next action (#370): the
+    // store stays the rule's authority, and no second lookup or validation is added here.
+    let outcome;
+    try {
+      outcome = this.driver.coordination.addKnowledgeNode({
+        type: request.type, grounding: request.grounding, body: request.body,
+        runId: request.runId, evidence: request.evidence,
+      }, {
+        actor: principal.actor,
+        key: `run.knowledge.seed:${request.runId}:${digest({ type: request.type, grounding: request.grounding, body: request.body, evidence: request.evidence })}`,
+      });
+    } catch (error) {
+      throw evidenceRefusal(error);
+    }
     return deepFreeze({
       schemaVersion: 1, ok: true,
       result: outcome.result === 'idempotent' ? 'idempotent' : 'added',

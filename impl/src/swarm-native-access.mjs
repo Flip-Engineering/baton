@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createSwarmNativeBridge, SWARM_BRIDGE_GUIDANCE } from './swarm-native-bridge.mjs';
 import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_VIEW_PROJECTION_NAMES } from './swarm-contract.mjs';
+import { knowledgeSeedPayloadLines } from './application-semantics.mjs';
 import { SWARM_SEAT_READ_COMMANDS, SWARM_SEAT_READ_COMMAND_NAMES } from './swarm-runtime.mjs';
 import { EVIDENCE_SEARCH_FILTERS } from './evidence-search.mjs';
 import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from './runtime-isolation.mjs';
@@ -67,7 +68,19 @@ export class SwarmNativeAccess {
 // here; the reason lives in docs/39 (§The knowledge verbs reach the loop).
 const SWARM_KNOWLEDGE_GUIDANCE = [
   'The knowledge layer is part of this loop. Every verb below is callable on this bridge; the permission that admits each is named on swarm.view `updates`, and the swarm section of your brief names the ONE situation each is for:',
-  ...SWARM_KNOWLEDGE_COMMAND_NAMES.map((name) => `- ${name} [${SWARM_KNOWLEDGE_COMMANDS[name].permission}] — ${SWARM_KNOWLEDGE_COMMANDS[name].situation}.`),
+  ...SWARM_KNOWLEDGE_COMMAND_NAMES.flatMap((name) => {
+    const row = SWARM_KNOWLEDGE_COMMANDS[name];
+    const line = `- ${name} [${row.permission}] — ${row.situation}.`;
+    // Issue #370: the seed's payload shape rides its own lines under the verb — the closed type
+    // set, the grounding choices, the evidence reference shapes and the body bound, read from the
+    // canonical schema the bridge validator admits against, so a seat reads the shape once instead
+    // of guessing one field per refusal. It rides THIS block (the provider-facing Swarm section)
+    // rather than the recruit's join brief: the join brief is passed as the Run's objective and is
+    // bounded by the deployment's goal/plan text limit.
+    return name === 'run.knowledge.seed'
+      ? [line, ...knowledgeSeedPayloadLines().map((payload) => `  ${payload}`)]
+      : [line];
+  }),
   'A fact you seed is durable and attributed to your seat: every peer finds it with evidence search, it shows on swarm.view `knowledge` rows, and it lands on the wake stream as a `knowledge` row — nobody\u2019s root has to copy it.',
 ].join('\n');
 
