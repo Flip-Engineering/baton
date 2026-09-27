@@ -20,33 +20,22 @@ import {
 } from '../src/verification-presentation.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
 
-// Issue #77: the load-aware suite calibration. One record per run — measured at start, or
-// injected verbatim through the BATON_RG_CALIBRATION observation seam (a nested gate under
-// test injects its record because a gate probing the exact load the suite governs must never
-// measure real host load) — is printed once on stderr and handed to every test child as
-// BATON_SUITE_CALIBRATION, so a flake report cites the load context its row ran under
-// (RG-01/RG-02/RG-07). A measurement that cannot be taken refuses the run (RG-10, fail-closed).
+// Issue #77: the load-aware suite calibration. One record per run — measured at start — is printed
+// once on stderr and handed to every test child as BATON_SUITE_CALIBRATION, so a flake report cites
+// the load context its row ran under (RG-01/RG-02/RG-07). A measurement that cannot be taken
+// refuses the run (RG-10, fail-closed).
 const { deriveTestConcurrency, measureCalibration } = await import(
   new URL('./suite-calibration.mjs', import.meta.url).href
 );
 
-let suiteCalibration;
-try {
-  suiteCalibration = process.env.BATON_RG_CALIBRATION !== undefined
-    ? JSON.parse(process.env.BATON_RG_CALIBRATION)
-    : null;
-} catch (error) {
-  process.stderr.write(`baton suite calibration refused (${error?.code ?? 'error'}): ${error?.message ?? error}\n`);
-  process.exit(1);
-}
+let suiteCalibration = null;
 
 // D3.1: the file-level concurrency this run declares — max(1, ceil((cores - 1) / factor)); an
 // idle run (factor 1) preserves node's os.availableParallelism() - 1 default.
 // BATON_SUITE_TEST_CONCURRENCY is the operator's explicit override that replaces the
-// derivation (contract-fold.md hole 4). Without an injected record the thin re-executing
-// parent derives from the idle default — the factor scales a row against a RECORDED baseline
-// and this runner loads none, so the real measurement (below, in the runner proper) cannot
-// move the posture the flag declares.
+// derivation (contract-fold.md hole 4). The thin re-executing parent derives from the idle
+// default — the factor scales a row against a RECORDED baseline and this parent loads none, so
+// the real measurement (below, in the runner proper) cannot move the posture the flag declares.
 const overrideConcurrency = Number.parseInt(process.env.BATON_SUITE_TEST_CONCURRENCY ?? '', 10);
 const suiteConcurrency = Number.isInteger(overrideConcurrency) && overrideConcurrency > 0
   ? overrideConcurrency
@@ -80,16 +69,14 @@ if (lastArgValue('--test-concurrency') !== String(suiteConcurrency)) {
   process.exit(forwarded.signal ? (signalStatus[forwarded.signal] ?? 1) : (forwarded.code ?? 1));
 }
 
-// The runner proper carries the ONE real measurement — the load read and the K-sample
-// event-loop-gap probe — for the record it prints and hands to every test child. A measurement
-// that cannot be taken refuses the run (RG-10, fail-closed), never a silent factor 1.
-if (suiteCalibration === null) {
-  try {
-    suiteCalibration = await measureCalibration();
-  } catch (error) {
-    process.stderr.write(`baton suite calibration refused (${error?.code ?? 'error'}): ${error?.message ?? error}\n`);
-    process.exit(1);
-  }
+// The runner carries the ONE real measurement — the load read and the K-sample event-loop-gap
+// probe — for the record it prints and hands to every test child. A measurement that cannot be
+// taken refuses the run (RG-10, fail-closed), never a silent factor 1.
+try {
+  suiteCalibration = await measureCalibration();
+} catch (error) {
+  process.stderr.write(`baton suite calibration refused (${error?.code ?? 'error'}): ${error?.message ?? error}\n`);
+  process.exit(1);
 }
 const suiteCalibrationJson = JSON.stringify(suiteCalibration);
 process.stderr.write(`baton suite calibration: ${suiteCalibrationJson}\n`);
