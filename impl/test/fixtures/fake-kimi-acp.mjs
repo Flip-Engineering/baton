@@ -39,7 +39,7 @@ process.stdin.on('data', (chunk) => {
     record(frame);
     if (frame.method === 'hang') continue;
     if (frame.method === 'malformed') { process.stdout.write('{bad json\n'); continue; }
-    if (frame.method === 'oversize') { process.stdout.write(`${'x'.repeat(2048)}\n`); continue; }
+    if (frame.method === 'big') { write({ id: frame.id, result: { text: 'b'.repeat(256 * 1024) } }); continue; }
     if (frame.method === 'close') { process.exit(7); }
     if (frame.method === 'truncated') { process.stdout.write('{"jsonrpc":"2.0"'); process.exit(8); }
     if (frame.method === 'uncorrelated') { write({ id: Number(frame.id) + 100, result: {} }); continue; }

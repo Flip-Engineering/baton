@@ -302,7 +302,7 @@ export class KimiAcpCli {
       };
       session.process = new AcpJsonRpcProcess({
         command: this._cmd, args: this._args, cwd, env: childEnv,
-        setupTimeoutMs: this._requestTimeoutMs, maxFrameBytes: this._maxWireFrameBytes,
+        setupTimeoutMs: this._requestTimeoutMs,
         reapTimeoutMs: session.processReapTimeoutMs, spawnFn: this._spawnFn,
         processGeneration,
         processReady: () => session.providerReady,
