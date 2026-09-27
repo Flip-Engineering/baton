@@ -1,0 +1,65 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "The message ruling verified independently at 4c2be1c4: green at the tip, red on the source before it, 13 land tests pass, and the demo landing's message matches its branch's commits",
+      "base": {
+        "observedHead": "f643762f5b1578ea5d129c3f0b8ad84978368050",
+        "rebasedOnto": "f643762f5b1578ea5d129c3f0b8ad84978368050"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "native-red-before-green-after",
+          "status": "delivered",
+          "change": "Rebuilt the native land test entry from 4c2be1c4 and from its parent with the tip's test entry, using the existing Bend 2.0.25 compiler and bend2/scripts/build-native.sh, and ran both",
+          "files": ["bend2/tests/land.bend", "bend2/src/git/land.bend"],
+          "test": "BEND=<bend 2.0.25> sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test && ./.scratch/bend2/land-test",
+          "evidence": "At 4c2be1c4: 'land checks: all green', exit 0. At 4c2be1c4^ with the tip's test entry copied in: 'FAILURES:' then 'land K: candidate message differs from the branch history', exit 1 - the line bend2-architect15 recorded in row-k-before.log."
+        },
+        {
+          "id": "python-land-tests",
+          "status": "delivered",
+          "change": "Ran the targeted landing tests against a coordinator built from the tip",
+          "files": ["bend2/test/land.py"],
+          "test": "/usr/bin/python3 bend2/test/land.py (coordinator built by build-native.sh at .scratch/bend2/baton2)",
+          "evidence": "Ran 13 tests in 62.532s; OK; exit 0. Note for any re-run: the host's python3 is an asdf shim that exits 126 without output; /usr/bin/python3 is the interpreter that runs this suite."
+        },
+        {
+          "id": "demo-landing-record",
+          "status": "delivered",
+          "change": "Checked the retained real-worker demonstration read-only against the ruling",
+          "files": [],
+          "test": "read-only git in .scratch/bend2/architect15-message/repo of bend2-architect15's checkout",
+          "evidence": "Worker branch bend2/multi-message runs 2aad832 (base) -> 5b3f8d5 'Implement the data change' -> a969f57 'Correct the data wording', two commits over the merge-base. Landing 37104ff4 has parent 2aad832, subject 'Correct the data wording', body 'Implement the data change' then 'Correct the data wording' then 'landed from bend2/multi-message'. Its tree equals the worker tip's tree (c94d88fb29fd0886e040f49911e9a7ae33efad71), and the message equals the one evidence.json records. Tip subject, all subjects oldest first, branch named: the ruling's shape."
+        },
+        {
+          "id": "code-shape",
+          "status": "delivered",
+          "change": "Read the change against the ruling",
+          "files": ["bend2/src/git/land.bend", "bend2/README.md", "docs/bend2/landing-message-2026-09-27.md"],
+          "test": "no run: source read of 4c2be1c4",
+          "evidence": "ld_msg_read now runs 'merge-base <sha> <tip>' then 'log --topo-order --format=%s <base>..<sha>'; one subject falls back to ld_single_msg_read (the full %B message), several compose the tip subject plus every subject oldest first through ld_message, which appends the 'landed from <branch>' trailer and the dropped-path note once. An empty history and a failed read are named failures before any commit or advance. The module header and README state the rule; the added record documents the run."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "The repair is not on bend2-rewrite: the kit at 831d25b8 lacks 4c2be1c4, so the next trial landing needs the rebuilt kit executable, as the added record states.",
+        "The compiler used is the existing Bend 2.0.25 executable (BEND=/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend); no toolchain was installed and nothing outside this seat's checkout was written.",
+        "My verification ran in two scratch worktrees inside the assigned checkout and both were removed with git worktree remove --force and pruned; the branch is unchanged at f643762f and the kit was read only.",
+        "After the kit is rebuilt, the next trial landing whose worker branch has several commits is the check to run: its message should carry the tip subject and every branch subject oldest first, with the trailer, and its tree should equal the worker tip's."
+      ],
+      "needsFromOthers": [
+        {
+          "to": "root",
+          "ask": "Publish 4c2be1c4 (baton/ws-0d2d26c1ed4061d88d65a78680ce25cc) to bend2-rewrite and rebuild the trial kit executable; bend2-architect15 reports integrate is absent from its grant. The independent check above stands behind the change, and I will check the next multi-commit trial landing's message once the kit carries it."
+        }
+      ]
+    }
+  }
+}
