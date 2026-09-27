@@ -3371,7 +3371,7 @@ export function swarmStopRendering(answer) {
  * (the resident answered the command — the leg's detail rides `error.detail.detail`) or the
  * runtime's own error (an embedded client — the detail IS `error.detail`). The `runId` is the mark
  * of the shape: it is the one field the seat's stop adds (#473) to the coordinator's own
- * `{timeoutMs, waitingOn}` detail. Null for every other refusal, which prints untouched. */
+ * `{waitingOn}` detail. Null for every other refusal, which prints untouched. */
 function runStopIncompleteDetail(error) {
   if (error?.code !== 'coordinator_run_stop_incomplete') return null;
   const outer = record(error.detail) ? error.detail : null;
@@ -3389,8 +3389,7 @@ export function swarmStopRefusalBlock(error, { swarmId = null, participantId = n
   const detail = runStopIncompleteDetail(error);
   if (detail === null) return null;
   const seat = nonempty(participantId) ? participantId : 'the seat';
-  const deadline = Number.isSafeInteger(detail.timeoutMs) ? `${detail.timeoutMs}ms` : 'its deadline';
-  const lines = [`swarm stop for seat ${seat} named run ${detail.runId}: the run stop did not converge inside ${deadline}, so the workers it is reaping are still held`];
+  const lines = [`swarm stop for seat ${seat} named run ${detail.runId}: the run stop did not converge, so the workers it is reaping are still held`];
   for (const row of Array.isArray(detail.waitingOn) ? detail.waitingOn.filter(record) : []) {
     const state = [row.status, row.disposition].filter(nonempty).join('/');
     const holds = (Array.isArray(row.waiting) ? row.waiting : []).filter(record)
@@ -3402,7 +3401,7 @@ export function swarmStopRefusalBlock(error, { swarmId = null, participantId = n
   const again = nonempty(swarmId) && nonempty(participantId)
     ? `run \`baton swarm stop ${swarmId} ${participantId} <REASON>\` again after it`
     : 'run the same `swarm stop` again after it';
-  lines.push(`next: wait for the deadline — the stop keeps reaping the workers it names — or ${again}; a second stop re-enters the same bounded convergence`);
+  lines.push(`next: ${again}; the stop keeps reaping the workers it names until they settle`);
   return lines.join('\n');
 }
 

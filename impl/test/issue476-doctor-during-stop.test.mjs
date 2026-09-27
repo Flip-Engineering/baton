@@ -126,7 +126,7 @@ async function fixture(t, label, { drainTimeoutMs = 8_000, stopDeadlineMs = 400,
     driver = createDriver({
       ...options,
       stopDeadlineMs,
-      drainPolicy: { maxWorkers: 8, timeoutMs: drainTimeoutMs, pollMs: 10 },
+      drainPolicy: { pollMs: 10 },
     });
     return driver;
   });
@@ -230,9 +230,8 @@ function doctorJson(run) {
 
 // ── (a) /readyz carries the stopping row while the drain holds ─────────────────────────────────
 test('476a: GET /readyz during the drain answers 503 with the stopping row in its body', async (t) => {
-  // The drain deadline is what makes a stuck seat a NAMED wait rather than a settled one (the
-  // 467b/467c shape), and the stop deadline bounds how long that wait is held — short here, so the
-  // whole row is over in well under a second.
+  // The seat is one the stop cannot settle on its own (no pid, no group), so the drain waits and
+  // names it — the window in which the resident must still answer its own reads.
   const { deployment, driver, repo, env } = await fixture(t, 'a', { drainTimeoutMs: 400, stopDeadlineMs: 300 });
   const { worker } = await recruitStuckSeat(deployment, driver, 'issue476a');
   const connection = discoverBatonConnection({ cwd: repo, env });
@@ -260,7 +259,7 @@ test('476a: GET /readyz during the drain answers 503 with the stopping row in it
     return wait === null ? null : { read, wait };
   }, 'the wait rows on the readiness answer', 10_000);
   assert.ok(waited.wait.ids.includes(worker.id), `the wait names the seat drained: ${JSON.stringify(waited.wait)}`);
-  assert.ok(Number.isSafeInteger(waited.wait.attempt) && waited.wait.attempt >= 1, JSON.stringify(waited.wait));
+  driver.coordinator.observeStopAbsence(worker.id, { pid: null, processGroupId: null, alive: false });
 
   const receipt = await closing;
   assert.ok(receipt && typeof receipt === 'object', `the stop must end: ${String(receipt)}`);
@@ -268,18 +267,18 @@ test('476a: GET /readyz during the drain answers 503 with the stopping row in it
 
 // ── (b) doctor --check reads the card and renders the stop ────────────────────────────────────
 test('476b: doctor --check during the drain renders state stopping with the waits, never cli_command_failed', async (t) => {
-  // The window this row reads in is the stop's own bounded wait: the drain misses its 400ms
-  // deadline, names the wait, and the stop holds it for its 2.5s deadline — ~5s of a resident that
-  // is stopping and still answering. The real CLI boots in ~1s, so it reads inside that window.
+  // The window this row reads in is the stop's own wait: the drain names the seat it cannot settle,
+  // and the stop holds it while the resident keeps answering. The real CLI boots in ~1s, so it reads
+  // inside that window.
   const { deployment, driver, repo, env } = await fixture(t, 'b', { drainTimeoutMs: 400, stopDeadlineMs: 2_500 });
   const { worker } = await recruitStuckSeat(deployment, driver, 'issue476b');
 
   const closing = deployment.close().catch((error) => error);
-  await until(() => stopRows(driver)
-    .some((row) => row.kind === 'host.stop_waiting' && row.on === 'worker'),
-  'the named worker wait during the drain');
-  const run = await cliDoctor({ repo, env });
+  // The drain names the seat it cannot settle; the doctor read below is taken inside that window.
+  await until(() => driver.coordinator.currentStopWaits().some((row) => row.workerId === worker.id),
+    'the drain to name the worker it waits on');
 
+  const run = await cliDoctor({ repo, env });
   assert.equal(run.stdout.includes('cli_command_failed'), false,
     `the operator's verb never reports the readiness status as the whole answer: ${run.stderr}`);
   const result = doctorJson(run);
@@ -291,9 +290,9 @@ test('476b: doctor --check during the drain renders state stopping with the wait
   const wait = (result.stopping?.waits ?? []).find((row) => row.on === 'worker');
   assert.ok(wait, `the waits ride the doctor read: ${JSON.stringify(result.stopping)}`);
   assert.ok(wait.ids.includes(worker.id), `the wait names the seat being drained: ${JSON.stringify(wait)}`);
-  assert.ok(Number.isSafeInteger(wait.attempt) && wait.attempt >= 1, JSON.stringify(wait));
   assert.ok(Number.isFinite(Date.parse(result.stopping?.at)), JSON.stringify(result.stopping));
-  // `next` names what the operator does about it — wait, on the stop's own bound.
+  driver.coordinator.observeStopAbsence(worker.id, { pid: null, processGroupId: null, alive: false });
+  // `next` names what the operator does about it — wait on the stop.
   assert.equal(result.next?.[0]?.action, 'wait', JSON.stringify(result.next));
   assert.match(result.next?.[0]?.reason ?? '', /stopping/u, JSON.stringify(result.next));
   // The doctor's outline exit contract: `--check` exits 1 for every state that is not ready.

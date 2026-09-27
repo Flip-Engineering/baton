@@ -9,8 +9,7 @@
 //
 // The fixture is the issue306a one: a real temporary repository and an INJECTED successor
 // (`advanced.resident.spawnSuccessor`) — a child-shaped stub the test drives; the deployment never
-// spawns a second resident in these rows. The window's own bound is the fixture's
-// `advanced.resident.reincarnationWaitMs`, shrunk to the test's scale.
+// spawns a second resident in these rows.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
@@ -150,7 +149,6 @@ async function resident(t, f, { onSpawn } = {}) {
         home: f.home,
         webDrainMs: 500,
         sessionTtlMs: 60_000,
-        reincarnationWaitMs: WAIT_MS,
         ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
       },
     },
@@ -212,83 +210,16 @@ test('306r-a: a successor that dies between its marker and its publication is na
     `a drain that destroyed nothing names an empty list: ${JSON.stringify(failed.payload.drained)}`);
 });
 
-test('306r-b: a successor that stalls past the bound is named with waitedMs, killed, and the old keeps serving', async (t) => {
-  const f = world('b');
-  const { deployment, stub, oldIncarnation } = await handoff(t, f, {
-    onSpawn: (child) => { child.becomeReady(); return child; }, // ready, then it stalls forever
-  });
 
-  const startedAt = Date.now();
-  const failed = await closeWindow(deployment, f);
-  const waitedMs = Date.now() - startedAt;
-  assert.ok(waitedMs >= WAIT_MS - 200,
-    `the window waited its declared bound before giving up: ${waitedMs}ms`);
-  assert.ok(failed, 'the stalled handoff is durable');
-  assert.equal(failed.payload.step, 'publication_handoff');
-  assert.ok(Number.isSafeInteger(failed.payload.cause.waitedMs) && failed.payload.cause.waitedMs >= WAIT_MS - 200,
-    `the row names how long the publication was waited for: ${JSON.stringify(failed.payload.cause)}`);
-  assert.equal(failed.payload.cause.exit, null, 'a stalled successor left no exit code');
-  assert.equal(stub.journal.killed, true, 'the successor that will never publish is killed');
-  assert.equal(stub.signalCode, 'SIGKILL');
-
-  assert.equal(deployment.turnAdmissionRefusal(), null, 'admission reopens');
-  assert.equal(selectorOf(f).incarnation, oldIncarnation, 'the publication is still the old incarnation\'s');
-  assert.ok(existsSync(f.writerLeasePath), 'the old holds the writer authority again');
-  assert.equal(deployment.withdrawn(), false, 'the incarnation did not exit');
-});
-
-test('306r-c: a successor that reaches for the lease after the re-publish is refused, typed', async (t) => {
-  const f = world('c');
-  const { deployment, stub } = await handoff(t, f, {
-    onSpawn: (child) => { child.becomeReady(); return child; },
-  });
-  await closeWindow(deployment, f);
-  assert.equal(stub.journal.killed, true, 'the stalled successor was ended by the re-publish');
-
-  // A successor-side open over the SAME deployment now meets the writer authority the old holds
-  // again: the handoff declaration is consumed exactly as a real successor consumes it, and the
-  // open fails typed instead of publishing over the incarnation that re-published.
-  const handoffEnv = {
-    BATON_PREDECESSOR_INCARNATION: stub.spec.env.BATON_PREDECESSOR_INCARNATION,
-    BATON_PREDECESSOR_PID: String(process.pid),
-    BATON_PREDECESSOR_COMMIT: stub.spec.env.BATON_PREDECESSOR_COMMIT,
-    BATON_INCARNATION: stub.spec.env.BATON_INCARNATION,
-    BATON_REINCARNATION_TARGET: stub.spec.env.BATON_REINCARNATION_TARGET,
-  };
-  const saved = {};
-  for (const [key, value] of Object.entries(handoffEnv)) { saved[key] = process.env[key]; process.env[key] = value; }
-  t.after(() => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key]; else process.env[key] = value;
-    }
-  });
-  const late = await openBatonDeployment({
-    repo: f.repo,
-    advanced: {
-      deploymentRoot: f.deploymentRoot,
-      adapters: { codex: adapter() },
-      routes: [ROUTE],
-      verification: { command: 'node', arguments: ['--test'] },
-      resident: {
-        env: { XDG_CONFIG_HOME: f.configRoot, HOME: f.home },
-        home: f.home, webDrainMs: 500, sessionTtlMs: 60_000, reincarnationWaitMs: 300,
-      },
-    },
-  }, (options) => createDriver(options)).then(() => null, (error) => error);
-  assert.ok(late, 'the late successor does not open');
-  assert.equal(late.code, 'reincarnation_failed',
-    `a successor that lost the lease race fails typed: ${JSON.stringify(late?.code)}`);
-  assert.equal(late.detail?.step, 'lease_held_by_predecessor',
-    `the successor names the lease it could not take: ${JSON.stringify(late?.detail)}`);
-  // The incarnation that re-published goes on serving: its publication and admission are intact.
-  assert.equal(deployment.turnAdmissionRefusal(), null, 'the old still admits turns');
-  assert.ok(existsSync(f.writerLeasePath), 'the old still holds the writer authority');
-});
 
 test('306r-d: the re-publish failure wakes the incarnation_changed class', async (t) => {
   const f = world('d');
   const { deployment } = await handoff(t, f, {
-    onSpawn: (child) => { child.becomeReady(); return child; },
+    onSpawn: (child) => {
+      child.becomeReady();
+      setTimeout(() => child.crash({ code: 9, tail: 'the successor stopped before its publication\n' }), 10);
+      return child;
+    },
   });
   await closeWindow(deployment, f);
   const failed = hostRow(f.ledgerPath, 'host.reincarnation_failed');

@@ -797,24 +797,31 @@ export async function stopRunTargets(coordinator, recorder, targetWorkerIds, act
     // exact hop count — a stop must win a preserved-successor delivery racing it.
     await Promise.all(coordinator._startupCleanupPromises);
     if (coordinator._startupCleanupError) throw Object.assign(new Error('Run stop startup reconciliation is incomplete'), { code: 'coordinator_run_stop_incomplete' });
-    const deadline = Date.now() + coordinator._drainPolicy.timeoutMs;
     // A recovered exact-identity reap may signal just before its bounded confirmation probe
     // expires. Preserve that effect across convergence attempts: later authoritative absence is
     // closure of the generation this Run stop targeted, not pre-existing terminal state.
-    const state = { actor, deadline, dispositions: new Map(), recoveredSignals: new Map() };
+    const state = { actor, dispositions: new Map(), recoveredSignals: new Map() };
 
 
     // #360/#450: first-sight bookkeeping for the named waits — `since` is when THIS stop first
-    // observed the wait, so a deadline row reads how long the release has been pending.
+    // observed the wait, so a named wait reads how long the release has been pending.
     coordinator._drainWaitObserve(targetWorkerIds);
-    while (Date.now() <= deadline) {
-      // An attempt that never settles (a cleanup or reap that hangs) must not hide the deadline:
-      // the wait is raced against it and, past the deadline, named below like any other.
-      let deadlineTimer = null;
-      const deadlineElapsed = new Promise((resolve) => { deadlineTimer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now())); });
-      const attemptsSettled = await Promise.race([Promise.all(targetWorkerIds.map((workerId) => attemptRunStopTarget(coordinator, recorder, state, workerId))).then(() => true), deadlineElapsed]);
-      clearTimeout(deadlineTimer);
-      if (!attemptsSettled) break;
+    // Issue #583: this stop waits until it converges, so the narration that names its wait is
+    // keyed on the wait it OBSERVES — a row is written when the set of holds changes.
+    const waitSignature = () => canonicalDigest(targetWorkerIds.map((workerId) => {
+      const handle = coordinator._workers.get(workerId);
+      if (!handle) return [workerId, state.dispositions.get(workerId) ?? null];
+      return [workerId, state.dispositions.get(workerId) ?? null, handle.processRef?.state ?? null,
+        Object.keys(coordinator._localResourceOwnership(handle)).sort()];
+    }));
+    let lastWait = null;
+    for (;;) {
+      const observed = waitSignature();
+      if (observed !== lastWait) {
+        lastWait = observed;
+        coordinator._stopWaitingOn(targetWorkerIds, state.dispositions, actor);
+      }
+      await Promise.all(targetWorkerIds.map((workerId) => attemptRunStopTarget(coordinator, recorder, state, workerId)));
       const targets = targetWorkerIds.map((id) => coordinator._workers.get(id)).filter(Boolean);
       const resourcesReleased = targets.every((handle) => !coordinator._ownsLocalResources(handle)
         && (!handle.processRef || handle.processRef.state === 'closed'));
@@ -837,13 +844,9 @@ export async function stopRunTargets(coordinator, recorder, targetWorkerIds, act
           checks: Object.freeze({ interactionsResolved: true, runAuthorityReleased: true }),
         });
       }
-      await coordinator._sleep(Math.min(coordinator._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+      await coordinator._sleep(coordinator._drainPolicy.pollMs);
     }
-    throw Object.assign(new Error('Run stop did not converge before its deadline'), {
-      code: 'coordinator_run_stop_incomplete',
-      detail: { timeoutMs: coordinator._drainPolicy.timeoutMs, waitingOn: coordinator._stopWaitingOn(targetWorkerIds, state.dispositions, actor) },
-    });
-}
+  }
 
 async function cancelRunStopTarget(coordinator, recorder, state, handle, task, kind) {
       const cancelled = recorder.log.append({
@@ -901,7 +904,7 @@ async function attemptRunStopTarget(coordinator, recorder, state, workerId) {
       if (replayedProcess && handle.recoveredProcessAuthority === true
         && replayedAuthorityState === 'active') {
         const reaped = await reapRecoveredProcessGroup(handle.processRef, handle.processAuthority, {
-          timeoutMs: Math.max(1, Math.min(coordinator._stopDeadlineMs, state.deadline - Date.now())),
+          timeoutMs: coordinator._stopDeadlineMs,
         });
         if (reaped.signaled) state.recoveredSignals.set(workerId, Object.freeze({
           generation: handle.processRef.generation,
@@ -1222,13 +1225,6 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
 export function _finalizeStop(coordinator, recorder, workerId, waiter) {
     if (waiter.finalized) return;
     waiter.finalized = true;
-    // Issue #467: a finalized stop ends its bounded transaction — the attempt count belongs to the
-    // NEXT stop of this worker, never to the worker's whole life.
-    const finalizedHandle = coordinator._workers.get(workerId);
-    if (finalizedHandle) {
-      finalizedHandle.stopDeadlineAttempts = 0;
-      finalizedHandle.stopAbandoned = null;
-    }
     if (waiter.timerHandle != null) coordinator._clearTimeout(waiter.timerHandle);
     if (waiter.reapRetryHandle != null) coordinator._clearTimeout(waiter.reapRetryHandle);
     const handle = coordinator._workers.get(workerId);
