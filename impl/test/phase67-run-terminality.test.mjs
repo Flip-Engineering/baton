@@ -130,5 +130,5 @@ test('compatibility wait and terminal evidence use execution settlement', async 
   const source = await readFile(new URL('../src/application.mjs', import.meta.url), 'utf8');
   assert.match(source, /if \(!PROVIDER_EXECUTION_SETTLED_PHASES\.has\(view\.phase\)\) \{\s*throw applicationError\('Run evidence/);
   assert.match(source, /terminalPlanState: PROVIDER_EXECUTION_SETTLED_PHASES\.has\(view\.phase\)/);
-  assert.match(source, /while \(!PROVIDER_EXECUTION_SETTLED_PHASES\.has\(view\.phase\) && Date\.now\(\) < deadline\)/);
+  assert.match(source, /while \(!PROVIDER_EXECUTION_SETTLED_PHASES\.has\(view\.phase\) && !expired\(\)\)/);
 });

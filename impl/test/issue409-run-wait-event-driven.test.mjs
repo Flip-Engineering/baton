@@ -359,6 +359,40 @@ test('409-b RED: run.wait with an unreachable condition returns at its deadline 
     `the wait holds to its deadline (observed ${elapsed}ms against park budget ${spied.calls[0].timeoutMs}ms)`);
 });
 
+// (d) #541: a wait with no caller-named bound carries no deadline at all — the park asks the
+// primitive for no bound (`null`), and the condition's own durable row ends it.
+test('409-d RED: run.wait with no caller-named bound waits until the condition holds', async (t) => {
+  const f = fixture('409d');
+  t.after(() => cleanupFixture(f));
+  const runId = 'run-issue409-d';
+  const started = await startRun(f, runId, '409d');
+  assert.equal(started.phase, 'awaiting_plan_approval');
+  const spied = spyWaitAfter(f);
+
+  setTimeout(() => {
+    const admitted = admitStop(f, runId, 'Terminalize the run while the wait is unbounded.');
+    f.driver.coordination.completeRunStop(runId, durableStopReceipt(admitted.stop), {
+      actor: 'direct:issue409', key: `run.stop.complete:${runId}`,
+    });
+  }, 100);
+
+  // No `timeoutMs`: the caller named no bound, so the wait holds until `--until terminal` holds.
+  // The guard below is the TEST's own bound, never the wait's.
+  const view = await Promise.race([
+    f.application.command('run.wait', {
+      runId, until: 'terminal',
+    }, f.recursivePrincipal, recursiveContext(f.lease, '409d-wait')),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('the unbounded wait never returned')), 10_000);
+    }),
+  ]);
+
+  assert.equal(view.phase, 'stopped', 'the unbounded wait returns the terminal view');
+  assert.ok(spied.calls.length >= 1, 'the unbounded wait still parks on the change signal');
+  assert.equal(spied.calls[0].timeoutMs, null,
+    'the park carries no deadline — the caller named none and the deployment adds none');
+});
+
 // (c) no sleep cadence literal remains in run.wait: the 100 ms poll bound is gone (a surviving
 // cadence would live as a limits.mjs row with a derivation, never a literal); the parks name
 // the viewed cursor.

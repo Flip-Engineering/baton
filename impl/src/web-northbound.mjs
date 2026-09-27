@@ -664,15 +664,14 @@ function dispatchFailure(cause, command = null) {
   if (goalPlanCode === 'goal_plan_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority forbidden' } } };
   if (goalPlanCode === 'goal_plan_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority unavailable' } } };
   if (goalPlanCode === 'not_found' || goalPlanCode === 'plan_node_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
-  if (['goal_plan_invalid', 'goal_plan_secret_rejected', 'goal_plan_status_invalid', 'goal_reference_invalid', 'plan_reference_invalid', 'goal_too_large',
+  if (['goal_plan_invalid', 'goal_plan_secret_rejected', 'goal_plan_status_invalid', 'goal_reference_invalid', 'plan_reference_invalid',
     'plan_approval_invalid', 'plan_budget_exceeded', 'plan_cycle', 'plan_dangling_dependency', 'plan_duplicate_node',
     'plan_effect_invalid', 'plan_goal_mismatch', 'plan_node_invalid', 'plan_node_limit', 'plan_risk_mismatch', 'plan_scope_invalid',
-    'plan_too_large', 'plan_verification_invalid', 'plan_dispatch_invalid', 'plan_route_invalid',
+    'plan_verification_invalid', 'plan_dispatch_invalid', 'plan_route_invalid',
     'plan_route_authority_legacy_ambiguous'].includes(goalPlanCode)) {
-    // #362 (the #335 rule): a goal/plan refusal that measured something — a text, goal or plan
-    // over its bound — carries a detail record {field, bytes, limit} from the mint site and
-    // crosses with its own message, so the recruiter learns the bytes and the bound instead of
-    // "precondition failed". A refusal with no detail keeps the fixed class message.
+    // #362 (the #335 rule): a goal/plan refusal that carries a detail record crosses with its own
+    // message and field, so the caller learns what was judged instead of "precondition failed".
+    // A refusal with no detail keeps the fixed class message.
     const detail = isRecord(cause?.detail) ? cause.detail : null;
     if (detail !== null && typeof cause?.message === 'string' && cause.message.length > 0) {
       const field = typeof detail.field === 'string' ? safeFieldName(detail.field) : null;
@@ -680,11 +679,11 @@ function dispatchFailure(cause, command = null) {
     }
     return { httpStatus: 400, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan precondition failed' } } };
   }
-  if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_version_limit', 'goal_weakened',
+  if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_weakened',
     'plan_approval_conflict', 'plan_approval_expired', 'plan_approval_stale', 'plan_brief_mismatch', 'plan_conflict',
     'plan_dependency_incomplete', 'plan_dependency_mismatch', 'plan_dispatch_conflict', 'plan_dispatch_stale',
     'plan_effect_mismatch', 'plan_not_approved', 'plan_predecessor_required', 'plan_route_mismatch', 'plan_self_approval',
-    'plan_stale', 'plan_version_limit', 'goal_plan_required'].includes(goalPlanCode)) {
+    'plan_stale', 'goal_plan_required'].includes(goalPlanCode)) {
     return { httpStatus: 409, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan state conflict' } } };
   }
   // #160 R3 (the #170 P10 dependency): the pre-TypeError workflow_* arm — a bare workflow_* throw

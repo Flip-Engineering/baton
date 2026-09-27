@@ -25,15 +25,17 @@ test('541-w1: a null command bound is a valid client — the operator simply dec
   assert.equal(c.commandTimeoutMs, null);
   assert.equal(c.requestTimeoutMs, null);
   assert.equal(c._requestTimeoutForCommand('swarm.view', {}), null,
-    'no bound to stretch over a server wait either');
+    'no bound to apply either');
   assert.equal(c._requestTimeoutForCommand('run.wait', { timeoutMs: 60_000 }), null);
 });
 
-test('541-w2: a DECLARED bound keeps its old laws — positive integer, pollMs inside it, stretch over server waits', () => {
+test('541-w2: a DECLARED bound keeps its old laws — positive integer, pollMs inside it, and no cut over a named server wait', () => {
   const c = client({ commandTimeoutMs: 1_000 });
   assert.equal(c.commandTimeoutMs, 1_000);
-  assert.ok(c._requestTimeoutForCommand('run.wait', { timeoutMs: 60_000 }) > 60_000,
-    'a declared bound still stretches over the server-owned wait plus slack');
+  assert.equal(c._requestTimeoutForCommand('run.wait', { timeoutMs: 60_000 }), null,
+    'a named server wait is answered by the resident, so the client arms no cut over it');
+  assert.equal(c._requestTimeoutForCommand('swarm.view', {}), 1_000,
+    'a command naming no server wait keeps the caller declared bound');
   for (const bad of [0, -1, 1.5]) {
     assert.throws(() => client({ commandTimeoutMs: bad }), /client_configuration_invalid|config/u,
       `a declared bound must still be a positive integer (${bad})`);
