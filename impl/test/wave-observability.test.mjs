@@ -198,11 +198,6 @@ import { BYTE_STABLE_COMMAND_KEYS } from '../scripts/surface-truth.mjs';
 const NOW = Date.parse('2026-08-06T12:00:00.000Z');
 const ORIGIN = 'https://wave-obs.test';
 const REPO_ID = 'repo-wave-132';
-// limits.mjs:85 — spill.body, the ONE substrate ceiling that mints a hard refusal. An objective
-// beyond it is the F7 admission refusal that FIRES at HEAD (never the spill-ADMITTED ≤1 MiB case).
-const SPILL_BODY_CEILING = 1_048_576;
-const BIG_OBJECTIVE = 'x'.repeat(SPILL_BODY_CEILING + 1);
-
 
 let envelopeSeq = 0;
 
@@ -874,74 +869,6 @@ test('A5-5 F11: the issued bare-attach command runs the FULL CLI parse→dispatc
 // §F — #129 typed admission refusal (D5/F3/F4/F5/F8/F10)
 // ===========================================================================
 
-test('A6-1 F3: the DIRECT-PORT waves.start refuses an admission-exceeding wave with wave_member_invalid naming {actual, cap, cause, role} (D5.1)', async (t) => {
-  const host = await hostFixture(t);
-  const members = [memberExact('alpha', BIG_OBJECTIVE)];
-  // Re-aimed at the layer the D5.1/F6 fix owns: the direct-port wave-start admission, NOT the
-  // facade per-member swallow (createWave catches per-member errors into entry.startError and that
-  // swallow is untouched by the fold).
-  await assert.rejects(
-    host.application.command('waves.start', { idempotencyKey: 'a6-1', members }, principal('wave-owner')),
-    (error) => {
-      assert.equal(error.code, 'wave_member_invalid',
-        'stage: member-refusal-catchwrap-missing — at HEAD the direct port rejects with a RAW spill_body_exceeded (no role/cause/detail); D5.1 wraps the admission refusal into wave_member_invalid');
-      assert.equal(error.message, 'wave member alpha did not start',
-        'D5.1 — the refusal message is the pinned applicationError message, byte-identical across every surface (W6/F4)');
-      const detail = error.detail ?? error;
-      assert.equal(detail.cap, SPILL_BODY_CEILING, 'the refusal names the spill.body ceiling');
-      assert.ok(Number.isInteger(detail.actual) && detail.actual > SPILL_BODY_CEILING, 'the refusal names the actual size');
-      assert.equal(detail.role, 'alpha', 'the refusal names the offending member role');
-      assert.equal(detail.cause?.code, 'spill_body_exceeded', 'the inner admission code is preserved in cause');
-      return true;
-    },
-  );
-});
-
-test('A6-2 F4: the web surface refuses wave_member_invalid with the SAME detail shape as A6-1 and the byte-identical message', async (t) => {
-  const host = await hostFixture(t);
-  const { web, webCtx } = webFixture(t, host);
-  const res = await web.execute(webCtx, waveEnvelope('waves_start', {
-    idempotencyKey: 'a6-2',
-    members: [memberExact('alpha', BIG_OBJECTIVE)],
-  }));
-  assert.equal(res.body?.error?.code, 'wave_member_invalid',
-    'stage: web-admission-missing — at HEAD the wave verb is not admitted at all (400 invalid_command "unsupported command"); D5 maps wave_member_invalid onto the admitted web body');
-  assert.equal(res.body?.error?.message, 'wave member alpha did not start',
-    'D5.2 — the web body carries the EMBEDDED refusal message byte-identically, never the fixed mapping string (W6/F4)');
-  const detail = res.body?.error?.detail ?? res.body?.error;
-  assert.equal(detail.cap, SPILL_BODY_CEILING, 'the {actual, cap, cause, role} payload rides the web body (D5.1)');
-  assert.ok(Number.isInteger(detail.actual) && detail.actual > SPILL_BODY_CEILING, 'the actual size is named');
-  assert.equal(detail.role, 'alpha', 'the offending member role is named');
-  assert.equal(detail.cause?.code, 'spill_body_exceeded', 'the inner admission code is preserved in cause');
-});
-
-test('A6-3 F4: the MCP surface refuses baton_waves_start with the SAME detail shape as A6-1 and the byte-identical message', async (t) => {
-  const host = await hostFixture(t);
-  const { server } = await mcpFixture(t, host);
-  const call = await server.handle({
-    jsonrpc: '2.0', id: 3, method: 'tools/call',
-    params: {
-      name: 'baton_waves_start',
-      arguments: {
-        repoId: REPO_ID,
-        idempotencyKey: 'a6-3',
-        members: [memberExact('alpha', BIG_OBJECTIVE)],
-      },
-    },
-  });
-  assert.equal(call.result?.isError, true);
-  const parsed = JSON.parse(call.result.content[0].text);
-  assert.equal(parsed.error?.code, 'wave_member_invalid',
-    'stage: stateFailureCode-degrade — at HEAD the admission refusal degrades to command_outcome_unknown (mcp-northbound.mjs:260); D5 allowlists wave_member_invalid in stateFailureCode');
-  assert.equal(parsed.error?.message, 'wave member alpha did not start',
-    'D5.2 — MCP structuredContent.error carries the embedded refusal message byte-identically (W6/F4)');
-  const detail = parsed.error?.detail ?? parsed.error;
-  assert.equal(detail.cap, SPILL_BODY_CEILING, 'the {actual, cap, cause, role} payload rides structuredContent.error (D5.1)');
-  assert.ok(Number.isInteger(detail.actual) && detail.actual > SPILL_BODY_CEILING, 'the actual size is named');
-  assert.equal(detail.role, 'alpha', 'the offending member role is named');
-  assert.equal(detail.cause?.code, 'spill_body_exceeded', 'the inner admission code is preserved in cause');
-});
-
 test('A6-4 F5: a registry row whose member run no longer resolves refuses wave_not_found — typed on the facade, MCP, and web surfaces (behavioral, never a source grep)', async (t) => {
   const host = await hostFixture(t);
   // Synthetic NEW-shape records carrying THIS deployment's id (a foreign deploymentId row is dropped
@@ -998,39 +925,6 @@ test('A6-5 PIN: wave_registry_invalid stays a STORE-INTEGRITY throw — never an
   );
   assert.ok(!region.includes("'wave_registry_invalid'"),
     'the stateFailureCode allowlist never carries \'wave_registry_invalid\' — the B2 store-integrity code (F8) stays a projection throw, never a per-command surface row (the contract note pins that an explanatory comment must not quote it inside the function)');
-});
-
-test('A6-6 F4: `baton waves start --members JSON` drives an admission-exceeding objective through the FULL CLI pipeline — typed body.error + non-zero exit', async (t) => {
-  const host = await hostFixture(t);
-  const members = [memberExact('alpha', BIG_OBJECTIVE)];
-  let parsed = null;
-  try {
-    parsed = parseBatonCli(['waves', 'start', '--members', JSON.stringify(members)]);
-  } catch { /* HEAD: cli_command_unavailable; parsed stays null */ }
-  assert.ok(parsed !== null,
-    'stage: cli-wave-verbs-missing — at HEAD the plural block only handles attach (application-cli.mjs:1316-1321), so waves start throws cli_command_unavailable; D4.6 parses --members JSON into waves.start');
-  assert.equal(parsed.name, 'waves.start', 'the CLI verb compiles to the direct-port waves.start (D4.6)');
-  assert.ok(Array.isArray(parsed.args.members) && parsed.args.members.length === 1,
-    'the --members JSON payload becomes the dispatch members (parsed.idempotencyKey rides the parse)');
-  let refusal = null;
-  try {
-    await runBatonCli(parsed, cliRoutingClient(host));
-  } catch (error) {
-    refusal = error;
-  }
-  assert.ok(refusal !== null,
-    'the admission-exceeding wave refuses through the CLI dispatch — never a silent per-member swallow');
-  assert.equal(refusal.code, 'wave_member_invalid', 'the CLI leg carries the typed body.error code (F4)');
-  assert.equal(refusal.message, 'wave member alpha did not start',
-    'D5.2 — the CLI error message is byte-identical to the embedded refusal (W6/F4)');
-  const detail = refusal.detail ?? refusal;
-  assert.equal(detail.cap, SPILL_BODY_CEILING, 'the {actual, cap, cause, role} payload rides the CLI refusal (D5.1)');
-  assert.ok(Number.isInteger(detail.actual) && detail.actual > SPILL_BODY_CEILING);
-  assert.equal(detail.role, 'alpha');
-  assert.equal(detail.cause?.code, 'spill_body_exceeded');
-  const exitCode = refusal.code === 'cli_invalid' || refusal.code === 'cli_config_invalid' || refusal.code === 'cli_command_unavailable' ? 2 : 1;
-  assert.ok(exitCode !== 0,
-    'the typed refusal maps to the non-zero exit 1 in the entry mapping (baton.mjs:128-131 — cli_* usage errors exit 2, outcome refusals exit 1)');
 });
 
 test('A6-7 F10: the per-member runId envelope is validated on the negative path — application_wave_member_action_invalid typed on the facade and the web body', async (t) => {

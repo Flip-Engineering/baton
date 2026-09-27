@@ -197,32 +197,23 @@ export const CONTEXT_PACKAGE_BRANCH_CEILING = 64;
  * and one branch document per source the root's CLI pulled (the issue, then each doc it cites).
  * Each branch's text is minted into the deployment's context CAS BY THE PORT: the CLI never hands
  * a content reference it computed itself, so a caller cannot name bytes this deployment does not
- * hold. Bounded by the registry row (never a literal). */
+ * hold. */
 function normalizeContextPackageRequest(raw) {
   const invalid = (message, field) => Object.assign(new Error(message),
     { code: 'context_package_invalid', detail: { field } });
   const name = 'name';
   if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== ['branches', name].sort().join(',')
     || !string(raw.name) || !/^[A-Za-z0-9._:-]{1,512}$/u.test(raw.name)
-    || !Array.isArray(raw.branches) || raw.branches.length === 0
-    || raw.branches.length > CONTEXT_PACKAGE_BRANCH_CEILING) {
-    throw invalid('a context package request carries a name and 1..'
-      + `${CONTEXT_PACKAGE_BRANCH_CEILING} branch documents`, 'branches');
+    || !Array.isArray(raw.branches) || raw.branches.length === 0) {
+    throw invalid('a context package request carries a name and its branch documents', 'branches');
   }
-  const row = FRAME_LIMITS['context_package.source_bytes'];
   const branches = raw.branches.map((branch, index) => {
     if (!isRecord(branch) || Object.keys(branch).sort().join(',') !== ['name', 'text'].sort().join(',')
       || !string(branch.name) || !/^[A-Za-z0-9._:-]{1,512}$/u.test(branch.name)
       || typeof branch.text !== 'string' || branch.text.length === 0) {
       throw invalid(`context package branch ${index + 1} names {name, text}`, `branches[${index}]`);
     }
-    const bytes = Buffer.byteLength(branch.text, 'utf8');
-    if (bytes > row.value) {
-      throw Object.assign(new Error(
-        `${branch.name} is ${bytes} bytes (cap ${row.value}); the context package branch row is ${row.lane}`,
-      ), { code: 'context_package_oversize', detail: { field: `branches[${index}]`, bytes, limit: row.value, lane: row.lane } });
-    }
-    return Object.freeze({ name: branch.name, text: branch.text, bytes });
+    return Object.freeze({ name: branch.name, text: branch.text });
   });
   if (new Set(branches.map((branch) => branch.name)).size !== branches.length) {
     throw invalid('context package branch names must be unique', 'branches');
@@ -861,14 +852,13 @@ function applicationArgField(appCommand, args) {
   const extra = Object.keys(present).find((key) => !allowed.has(key));
   return extra ? safeFieldName(extra) : null;
 }
-// The coaching size family (contract §3): every cataloged byte-lane refusalCode from limits.mjs
-// except the `workflow_*` lane (wave.run.spec_path carries refusalCode workflow_spec_invalid,
-// which the workflow_* arm handles BEFORE this arm). Derived from the closed catalog so a new
-// lane's refusalCode is automatically covered (additive-only).
+// The coaching size family (contract §3): every cataloged byte-lane refusalCode from limits.mjs.
+// Derived from the closed catalog so a new lane's refusalCode is automatically covered
+// (additive-only).
 const COACHING_REFUSAL_CODES = new Set(
   Object.values(FRAME_LIMITS)
     .map((row) => row?.refusalCode)
-    .filter((code) => typeof code === 'string' && !code.startsWith('workflow_')),
+    .filter((code) => typeof code === 'string'),
 );
 // The wire `field` for each byte lane. The web arm reads the cause's `field` (the lane, when the
 // throwing helper carries it) and maps it through this table; `run.objective` names the run_start
@@ -879,24 +869,12 @@ const COACHING_LANE_FIELD = Object.freeze({
   'message.reply.body': 'body',
   'run.objective': 'objective',
   'wave.member.objective': 'objective',
-  'orientation.note': 'note',
-  'steering.focus': 'focus',
-  'board.report.body': 'body',
-  'run.legacy_send.body': 'body',
-  'decision.text': 'decision.text',
-  'scratchpad.entry.body': 'body',
   // Issue #311 (item 2): a peer message's body lane names the argument the caller shortens —
   // `message`, the field `swarm.notify` takes.
   'swarm.notify.body': 'message',
 });
 const COACHING_CODE_FIELD = Object.freeze({
   spill_body_exceeded: 'objective',
-  orientation_note_exceeded: 'note',
-  steering_focus_exceeded: 'focus',
-  board_report_exceeded: 'body',
-  run_legacy_send_exceeded: 'body',
-  decision_text_exceeded: 'decision.text',
-  scratchpad_entry_exceeded: 'body',
 });
 function coachingWireField(cause) {
   const lane = typeof cause?.field === 'string' ? cause.field : null;
@@ -1213,7 +1191,7 @@ function validateEnvelope(envelope) {
     if (action === 'push') {
       if (envelope.args.name !== 'cartographer-quartermaster' || envelope.args.op !== 'orientation.slice'
         || !isRecord(envelope.args.args) || !string(envelope.args.workerId) || !string(envelope.args.note)
-        || Buffer.byteLength(envelope.args.note) > FRAME_LIMITS['orientation.note'].value || !Number.isSafeInteger(envelope.expectedFence)) return 'capability push requires exact orientation target, worker, note, args, and expectedFence';
+        || !Number.isSafeInteger(envelope.expectedFence)) return 'capability push requires exact orientation target, worker, note, args, and expectedFence';
       if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor') || Object.hasOwn(envelope.args, 'claim')) return 'capability push received action-inapplicable fields';
     }
   }

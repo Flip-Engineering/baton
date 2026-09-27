@@ -1842,12 +1842,8 @@ export function _scheduleScopeOrientation(coordinator, recorder, handle, path) {
     }
     state.count += 1; state.lastScheduledAt = now; state.inFlight.add(key);
     const expectedFence = coordinator._fences.current(handle.id).fence;
-    let observed = key.slice(0, 512);
-    let note = `${policy.notePrefix} Observed outside-scope path: ${observed}`;
-    while (Buffer.byteLength(note) > FRAME_LIMITS['orientation.note'].value && observed.length > 0) {
-      observed = observed.slice(0, -1);
-      note = `${policy.notePrefix} Observed outside-scope path: ${observed}`;
-    }
+    const observed = key.slice(0, 512);
+    const note = `${policy.notePrefix} Observed outside-scope path: ${observed}`;
     Promise.resolve().then(() => coordinator.orientWorker(handle.id, {
       indexEpoch: policy.indexEpoch, focus: policy.focus, shape: policy.shape,
     }, note, { actor: 'policy', budgetTokens: policy.budgetTokens, expectedFence })).then((ack) => {

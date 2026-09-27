@@ -571,8 +571,7 @@ test('ATTENTION-TYPES-PIN (§G W-6): the #10-era inbox vocabulary is byte-unchan
 // MAX_ATTENTION actions slice.
 // ===========================================================================
 
-test('LIMITS-PIN (§I W-8): the answer/view limits are byte-unchanged', () => {
-  assert.equal(FRAME_LIMITS['decision.text'].value, 4096, 'decision.text stays 4096');
+test('LIMITS-PIN (§I W-8): the view limits are byte-unchanged', () => {
   assert.equal(FRAME_LIMITS['view.attention_text.bytes'].value, 4096, 'view.attention_text.bytes stays 4096');
 });
 

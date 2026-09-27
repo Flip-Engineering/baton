@@ -152,14 +152,12 @@ function tokenize(command) {
  * path, the legacy string path, and every coverage and mutation command all read THIS derivation,
  * so no execution path can grow a second literal of its own. A legacy string contract (the
  * northbound scratch_oracle shape: command/expectExit/timeoutMs/coverageCommand/mutationCommand)
- * predates the field, and its captured transcript is one durable evidence body — so it is bounded
- * by the frame-limits registry's `spill.body` row, the one declared module for frame bounds,
- * rather than by a number minted here. */
+ * predates the field, so its captured transcript takes the capture default declared here. */
+const LEGACY_OUTPUT_BOUND_BYTES = 1_048_576;
 function outputBoundBytes(verification) {
   const declared = verification?.maxOutputBytes;
-  return Number.isSafeInteger(declared) && declared > 0 ? declared : FRAME_LIMITS['spill.body'].value;
+  return Number.isSafeInteger(declared) && declared > 0 ? declared : LEGACY_OUTPUT_BOUND_BYTES;
 }
-
 /** Bounded capture, shared by both execution paths (issue #266; G-10 gave the string path the same
  * shape). Output is EVIDENCE, never the verdict: the first half of the bound is the head, the last
  * half is a rolling tail, and the bytes between are counted and omitted as such. A verifier that

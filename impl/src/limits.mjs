@@ -50,15 +50,15 @@ export function frameLimitRefusalPath(row, cap = row?.value) {
 // The declared registry. Rows are frozen; the object is keyed by lane name.
 // ---------------------------------------------------------------------------
 
-// The ledger's ceiling on one durable spilled body — declared ONCE and read by every lane that
-// is bounded by it (the substrate row below, and the objective lanes, which carry no head cap of
-// their own: operator ruling 2026-09-18, #358 — a 4096-byte objective cap silently cut the tail
-// off every lane brief of the day and no seat could read the spill it minted).
+// The ledger's ceiling on one durable spilled body — declared ONCE and read by the objective
+// lanes, which carry no head cap of their own (operator ruling 2026-09-18, #358 — a 4096-byte
+// objective cap silently cut the tail off every lane brief of the day and no seat could read the
+// spill it minted).
 const SPILL_BODY_BYTES = 1048576;
 
 const ADMISSION = Object.freeze({
-  'message.send.body': { lane: 'message.send.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator.sendMessage', refusalCode: 'spill_body_exceeded' },
-  'message.reply.body': { lane: 'message.reply.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator message.send reply admission', refusalCode: 'spill_body_exceeded' },
+  'message.send.body': { lane: 'message.send.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator.sendMessage' },
+  'message.reply.body': { lane: 'message.reply.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator message.send reply admission' },
   // #207 (row-admission-align): the workflow interpreter's BY-REFERENCE admission enforces this
   // cap at compile/admit (workflow-interpreter.mjs assertObjectiveAdmissible) — a brief whose
   // rendered objective exceeds the cap refuses workflow_spec_invalid naming both byte counts. The
@@ -66,25 +66,11 @@ const ADMISSION = Object.freeze({
   // durable spill artifact); the by-reference lane renders the full brief into the member objective
   // and does not split, so the cap is the admission bound there. No value change — this row's
   // declared bytes and the FRAME_LIMITS_DIGEST are untouched.
-  // #358: an objective is whatever the recruiter needs to say — bounded by the substrate row
-  // alone (SPILL_BODY_BYTES), never by a head cap that spills the brief's tail into an artifact
-  // the seat cannot read.
-  'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission', refusalCode: 'spill_body_exceeded' },
-  'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission', refusalCode: 'spill_body_exceeded' },
-  'wave.run.spec_path': { lane: 'wave.run.spec_path', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'waves.run admission (the semantic-registry input schema; the interpreter containment re-checks)', refusalCode: 'workflow_spec_invalid' },
-  'waves.harvest.onto': { lane: 'waves.harvest.onto', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'the harvest accessor (registry schema, facade shape normalizer, MCP tool schema)', refusalCode: 'application_waves_harvest_invalid' },
+  // #358: an objective is whatever the recruiter needs to say — no head cap. An objective past
+  // this lane's declared 1 MiB value rides whole (its head inline, its body a durable spill).
+  'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission' },
+  'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission' },
   'view.resultpin.page': { lane: 'view.resultpin.page', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
-  'orientation.note': { lane: 'orientation.note', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordinator.orientWorker', refusalCode: 'orientation_note_exceeded' },
-  'steering.focus': { lane: 'steering.focus', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordinator steering policy injection', refusalCode: 'steering_focus_exceeded' },
-  // Issue #66 (D7): the resolve act's own admission bound, enforced at coordinator.resolveDoubt.
-  'doubt.resolution.bytes': { lane: 'doubt.resolution.bytes', class: 'admission', value: 4096, unit: 'bytes', graceful: 'refused', enforcedAt: 'coordinator.resolveDoubt', refusalCode: 'doubt_resolution_exceeded' },
-  'board.report.body': { lane: 'board.report.body', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.submitBoardReport', refusalCode: 'board_report_exceeded' },
-  'run.legacy_send.body': { lane: 'run.legacy_send.body', class: 'admission', value: 16384, unit: 'bytes', graceful: null, enforcedAt: 'application run.workstream.notify / run.act send / coordination-store run control', refusalCode: 'run_legacy_send_exceeded' },
-  'decision.text': { lane: 'decision.text', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionAnswer text', refusalCode: 'decision_text_exceeded' },
-  'scratchpad.entry.body': { lane: 'scratchpad.entry.body', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.writeScratchpad', refusalCode: 'scratchpad_entry_exceeded' },
-  // Issue #294: one wake-filter token (a class/swarm/participant name) admitted into a subscribe
-  // or since request — the same admission-class bound every other named-token lane uses.
-  'wake.filter_token': { lane: 'wake.filter_token', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'wake-stream.mjs parseWakeFilter', refusalCode: 'invalid_wake_filter' },
   // Issue #366 (with #286 G-41): the ONE bound a run-stop target set is judged against at
   // ADMISSION, and its derivation is the ledger itself. A run stop's target set is a projection of
   // the ledger — every target is a task/worker the ledger already holds, and each such row costs
@@ -169,9 +155,6 @@ const SUBSTRATE = Object.freeze({
   // Issue #568: the ceiling on one seat's linked-worktree ownership record — the private durable
   // JSON-lines file the reclamation pass reads and validates before it removes a linked checkout.
   'worktree.linked_ownership_record': { lane: 'worktree.linked_ownership_record', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
-  // spill.body is the ONE substrate row that mints a refusal (blocker 3): a substrate ceiling
-  // enforced AT ADMISSION — it is a resource ceiling on a durable write, not a scanner window.
-  'spill.body': { lane: 'spill.body', class: 'substrate', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mintSpill / admission spill seam', refusalCode: 'spill_body_exceeded' },
   // #375: the liveness probe's two resource guards (§4.1.2), declared ONCE here like every other
   // substrate bound — the capture a probe verdict is judged over, and the deadline after which a
   // probe settles UNKNOWN (a timer adjudicates no claim: a probe that outlived its bound says
@@ -339,17 +322,12 @@ const VIEW = Object.freeze({
     enforcedAt: 'swarm-runtime.mjs inspect (the participant row\'s workspace.commits tail)' },
 });
 
-// Issue #441 (the reading half): the two bounds a recruited ContextPackage draws. A branch
-// carries ONE document the root pulled at recruit time (the issue, or a doc it cites), so the
-// per-branch ceiling is the durable spilled-body ceiling — the same substrate bound every other
-// durable text write in the ledger uses. The brief's rendered slice is a VIEW bound (a
-// shed-flagged read, never a write): the brief-time knowledge slice KG-3 already injects, times
-// four, because a brief's context slice must carry an issue's opening — its title and first
-// paragraphs — where a knowledge snippet carries one fact.
-const CONTEXT_PACKAGE_SOURCE_BYTES = SPILL_BODY_BYTES;
+// Issue #441 (the reading half): the brief's rendered slice is a VIEW bound (a shed-flagged read,
+// never a write): the brief-time knowledge slice KG-3 already injects, times four, because a
+// brief's context slice must carry an issue's opening — its title and first paragraphs — where a
+// knowledge snippet carries one fact.
 const CONTEXT_PACKAGE_BRIEF_BYTES = VIEW['view.knowledge_slice.bytes'].value * 4;
 const CONTEXT_PACKAGE = Object.freeze({
-  'context_package.source_bytes': { lane: 'context_package.source_bytes', class: 'substrate', value: CONTEXT_PACKAGE_SOURCE_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'web-northbound.mjs context package admit port (one branch document) and application-cli.mjs (the root-side reader)' },
   'context_package.brief_bytes': { lane: 'context_package.brief_bytes', class: 'view', value: CONTEXT_PACKAGE_BRIEF_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the rendered slice per branch)' },
 });
 
@@ -413,14 +391,6 @@ const CHECKPOINT = Object.freeze({
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT });
 
 export const FRAME_LIMITS_VERSION = '1.4.0';
-
-/** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
- * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's
- * MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES window bounds one frame scan, and 8 is the smallest power
- * of two whose per-branch hop ceiling composes with the per-frame invariant; it is a COUNT,
- * never a clock (the campaign control law). */
-export const MAX_MESSAGE_DEPTH_BUDGET = 8;
-
 /** Named-export `code` (a string) so the suite's `assertLimitsModule` helper — which reads
  * `module?.code ?? module` when stringifying its red-stage message — is safe once the module
  * actually loads: an ESM namespace object has a null prototype and would otherwise throw

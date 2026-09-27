@@ -24,7 +24,7 @@ import {
 
 import * as coordinationLedger from './coordination-ledger.mjs';
 import {
-  BRIEFING_FAMILY, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_ENTRY_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, PROJECTION_REFERENCES, SwarmReplayRefusal, normalizedRecallText, recallTerms, validKnowledgePreviewPolicy, validKnowledgeRecallPolicy, writeQuarantineEntry
+  BRIEFING_FAMILY, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, PROJECTION_REFERENCES, SwarmReplayRefusal, normalizedRecallText, recallTerms, validKnowledgePreviewPolicy, validKnowledgeRecallPolicy, writeQuarantineEntry
 } from './coordination-ledger.mjs';
 
 import * as coordinationAdmission from './coordination-admission.mjs';
@@ -32,7 +32,7 @@ import {
   retainedResultRef,
 } from './coordination-admission.mjs';
 
-export { BRIEFING_FAMILY, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_ENTRY_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, SwarmReplayRefusal };
+export { BRIEFING_FAMILY, MAX_SCRATCHPAD_BATCH_BYTES, MAX_SCRATCHPAD_SNAPSHOT_REAPS, MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES, MAX_SCRATCHPAD_WRITE_REQUEST_BYTES, SwarmReplayRefusal };
 
 export {
   BRIEFING_SCHEMA_FIELD_SOURCES,

@@ -632,10 +632,7 @@ export function constructor(coordinator, opts) {
         || !Number.isSafeInteger(policy.cooldownMs) || policy.cooldownMs < 0
         || !Number.isSafeInteger(policy.maxRefreshesPerTurn) || policy.maxRefreshesPerTurn <= 0
         || (policy.notePrefix !== undefined && (typeof policy.notePrefix !== 'string' || policy.notePrefix.length === 0 || Buffer.byteLength(policy.notePrefix) > 1_024 || policy.notePrefix.includes('\0')))) {
-        throw new TypeError('scope orientation policy requires exact epoch, bounded focus/shape/budget/cooldown/maxRefreshesPerTurn');
-      }
-      if (Buffer.byteLength(policy.focus) > FRAME_LIMITS['steering.focus'].value) {
-        throw coachingError(FRAME_LIMITS['steering.focus'], Buffer.byteLength(policy.focus), FRAME_LIMITS['steering.focus'].value);
+        throw new TypeError('scope orientation policy requires exact epoch, focus/shape/budget/cooldown/maxRefreshesPerTurn');
       }
       scopeOrientation = Object.freeze({
         indexEpoch: policy.indexEpoch, focus: policy.focus, shape: policy.shape ?? 'brief', budgetTokens: policy.budgetTokens,

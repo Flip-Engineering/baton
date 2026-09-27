@@ -443,7 +443,7 @@ function capBytesToScalar(text, maxBytes) {
  * the sentence, and the error carries the same {cap, actual, unit, gracefulPath} triple the run
  * layer's send refusal carries — a caller reads what to change, never a bare TypeError. `field`
  * names the LANE, so the wire maps it to the argument the caller must shorten. */
-function peerBodyRefusal(row, actual, cap = FRAME_LIMITS['spill.body'].value) {
+function peerBodyRefusal(row, actual, cap = row?.value) {
   return Object.assign(new Error(composeFrameLimitRefusal(row, actual, cap)), {
     code: row.refusalCode ?? 'size_exceeded', field: row.lane,
     cap, actual, unit: row.unit, gracefulPath: frameLimitRefusalPath(row, cap),
@@ -6399,14 +6399,12 @@ export class SwarmRuntime {
   _notificationBody(row, message) {
     const bytes = Buffer.byteLength(message);
     const cap = FRAME_LIMITS['swarm.notify.body'].value;
-    const ceiling = FRAME_LIMITS['spill.body'].value;
-    if (bytes > ceiling) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, ceiling);
     if (bytes <= cap) return Object.freeze({ head: message, spilled: null });
     const minted = typeof this.store.mintSpill === 'function'
       ? this.store.mintSpill({ body: message, lane: row.lane },
         { actor: row.actor, key: `swarm-notify-spill:${row.receiptId}` }) : null;
     const spill = minted?.spill ?? null;
-    if (spill === null) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, ceiling);
+    if (spill === null) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, cap);
     return Object.freeze({ head: capBytesToScalar(message, cap), spilled: {
       bytes, digest: spill.digest, spill: spill.spillId } });
   }
@@ -6501,14 +6499,12 @@ export class SwarmRuntime {
   _notificationBody(message, receiptId, actor) {
     const bytes = Buffer.byteLength(message);
     const lane = FRAME_LIMITS['swarm.notify.body'];
-    const ceiling = FRAME_LIMITS['spill.body'].value;
-    if (bytes > ceiling) throw peerBodyRefusal(lane, bytes, ceiling);
     if (bytes <= lane.value) return Object.freeze({ head: message, spilled: null });
     const minted = typeof this.store.mintSpill === 'function'
       ? this.store.mintSpill({ body: message, lane: lane.lane },
         { actor, key: `swarm-notify-spill:${receiptId}` }) : null;
     const spill = minted?.spill ?? null;
-    if (spill === null) throw peerBodyRefusal(lane, bytes, ceiling);
+    if (spill === null) throw peerBodyRefusal(lane, bytes, lane.value);
     return Object.freeze({ head: capBytesToScalar(message, lane.value), spilled: {
       bytes, digest: spill.digest, spill: spill.spillId } });
   }
