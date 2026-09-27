@@ -108,7 +108,11 @@ selection is now derived, and both the check's comparison and the landing's gate
   changed module, every changed test file itself, and — for a changed file no test imports —
   the test files that name it in a fixture path (its basename or path suffix in the test's
   source), with the reason recorded per file so the weaker fixture-path signal is visible, never
-  silent.
+  silent. A test file is an entry of `impl/test` itself: a file under `impl/test/fixtures/` is a
+  fixture, so a change to one selects the test files that read it and never selects itself. A
+  fixture that selected itself would suppress the fixture-path rule, and the landing gate would
+  hand the runner `test/<basename>`, a name the checkout does not carry: the 2026-09-26 landing
+  of `impl/test/fixtures/fake-claude.mjs` ran no test for the 17 files that read that fixture.
 - A contribution check derives the selection from the CAPTURED revision through its retained
   checkpoint — a capture may carry imports or tests the hub's own checkout has never seen — and
   caches it per capture commit. The file set rides the contract's own argv (the comparison appends
