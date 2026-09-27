@@ -88,7 +88,6 @@ const WORKFLOW_WEB_ENTRIES = Object.freeze([
   ['run_message_receipt', 'run.message.receipt', Object.freeze(['observe'])],
   ['run_attention_watch', 'run.attention.watch', Object.freeze(['observe'])],
   ['run_scratchpad_read', 'run.scratchpad.read', Object.freeze(['observe'])],
-  ['run_scratchpad_elevate', 'run.scratchpad.elevate', Object.freeze(['control', 'observe'])],
   ['run_knowledge_seed', 'run.knowledge.seed', Object.freeze(['control', 'observe'])],
   // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's web-bus admission.
   // Issue #566: the registry rows claim 'web' beside this admission — the CLI dispatch
