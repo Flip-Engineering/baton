@@ -115,7 +115,7 @@ async function residentDeployment(t) {
   await application.ready;
   const sessions = new WebSessionStore(join(directory, 'sessions'));
   const issued = sessions.issue({ userId: 'local-owner', authMethod: 'bearer',
-    capabilities: ['observe', 'control', 'approve', 'emergency_stop', 'export_result'],
+    capabilities: ['observe', 'control', 'approve', 'emergency_stop'],
     repoIds: [RESIDENT_REPO], ttlMs: 300_000 }, { actor: 'deployment:resident' });
   const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination,
     sessions, application, repoIds: [RESIDENT_REPO], allowedOrigins: [RESIDENT_ORIGIN] });

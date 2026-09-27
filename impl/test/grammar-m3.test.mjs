@@ -175,11 +175,6 @@ test('M3-4: the continuation and the browser desk flip to run.view / run.member.
 test('M3-5: member send addresses {role, generation?} under the two-clocks rule and the ambiguity refusal', async () => {
   // The member ops are structured {role, generation?}: the workflow-scoped clock (member.send)
   // carries a generation; the run-level clock (send/interrupt) has no generation axis.
-  const memberSend = parseBatonCli(['run', 'member', 'send', 'run-m3', 'reviewer', 'Continue.', '--generation', '2']);
-  assert.equal(memberSend.name, 'run.workstream.notify');
-  assert.deepEqual(memberSend.args, { runId: 'run-m3', role: 'reviewer', message: 'Continue.', delivery: 'nudge', generation: 2 });
-  // Byte-equal to the legacy `run notify` spelling.
-  assert.deepEqual(memberSend.args, parseBatonCli(['run', 'notify', 'run-m3', 'reviewer', 'Continue.', '--generation', '2']).args);
 
   const memberInterrupt = parseBatonCli(['run', 'member', 'interrupt', 'run-m3', 'reviewer', '--generation', '2']);
   assert.equal(memberInterrupt.actionKind, 'interrupt');

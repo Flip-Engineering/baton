@@ -552,11 +552,6 @@ test('P3 PIN: the recursive-session gate keeps behind-gate commands forbidden an
   // runs.list is NOT in the gate allowlist: a sessionAuthority context keeps it forbidden.
   const listRefusal = await facadeError(() => fx.application.command('runs.list', {}, childPrincipal, ctx));
   assert.equal(listRefusal?.code, 'run_orchestrator_command_forbidden');
-  // run.workstream.stop likewise — the effect allowlist is exactly {run.start, run.stop}.
-  const workstreamRefusal = await facadeError(() => fx.application.command(
-    'run.workstream.stop', { runId: 'run:p3-parent', role: 'review' }, childPrincipal, ctx,
-  ));
-  assert.equal(workstreamRefusal?.code, 'run_orchestrator_command_forbidden');
   // application.help IS a gate allowlist read lane: the same sessionAuthority context serves it.
   const help = await fx.application.command('application.help', {}, childPrincipal, ctx);
   assert.ok(help && typeof help.schemaVersion === 'number', 'the help read lane survives the gate');

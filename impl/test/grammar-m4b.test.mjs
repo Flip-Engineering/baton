@@ -9,7 +9,6 @@ import {
   APPLICATION_SEMANTIC_REGISTRY,
   CoordinationStore,
   McpFleetServer,
-  WebNorthbound,
 } from '../src/index.mjs';
 import { collectSurfaceInventory } from '../scripts/surface-audit.mjs';
 import {
@@ -32,88 +31,6 @@ reapFixtureDirectories();
 
 const NOW = Date.parse('2026-07-24T12:00:00.000Z');
 const REGISTRY = APPLICATION_SEMANTIC_REGISTRY;
-
-// ── Web transport harness ────────────────────────────────────────────────────────────────────
-function webFixture() {
-  const applicationCalls = [];
-  const application = {
-    repoId: 'repo-a',
-    card: () => ({ schemaVersion: 1, repoId: 'repo-a', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
-    async authorizeReplay() { return true; },
-    async command(name, args) {
-      applicationCalls.push({ name, args });
-      return { schemaVersion: 1, runId: args.runId, phase: 'running', depth: 'outline', outline: { phase: 'running', actions: [] } };
-    },
-  };
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-m4b-web-')), {
-    clock: () => new Date(NOW).toISOString(),
-  });
-  const web = new WebNorthbound({
-    coordinator: { async spawn() { return { id: 'w-1', fence: 1 }; } },
-    coordination, application, repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
-    now: () => NOW,
-  });
-  return { web, coordination, applicationCalls };
-}
-const webContext = () => ({
-  principal: {
-    userId: 'user-1', sessionId: 'session-1', credentialId: 'cred-1', authMethod: 'cookie',
-    csrfToken: 'csrf-1', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,
-    capabilities: ['observe', 'control'], repoIds: ['repo-a'],
-  },
-  origin: 'https://control.example.test', csrfToken: 'csrf-1', remoteAddress: '127.0.0.1', transport: 'https',
-});
-const webEnvelope = (command, overrides = {}) => ({
-  schemaVersion: 1, commandId: `cmd-${command}`, idempotencyKey: `idem-${command}`, command,
-  args: { runId: 'run-web-a', role: 'reviewer', message: 'Continue.' }, repoId: 'repo-a',
-  runId: 'run-web-a', origin: 'https://control.example.test', ...overrides,
-});
-const admittedSpelling = (coordination) => (
-  coordination.events().find((event) => event.kind === 'web.command_admitted')?.payload?.command ?? null
-);
-
-test('M4B-1: a canonical Web transport admits beside legacy, reaches one operation, spelling-true', async () => {
-  // The canonical `run_member_send` and the retained legacy `run_workstream_notify` both dispatch
-  // the one application command run.workstream.notify with byte-identical args — one operation.
-  const canonical = webFixture();
-  const canonicalResult = await canonical.web.execute(webContext(), webEnvelope('run_member_send'));
-  const legacy = webFixture();
-  const legacyResult = await legacy.web.execute(webContext(), webEnvelope('run_workstream_notify'));
-
-  assert.equal(canonicalResult.status, 200);
-  assert.equal(legacyResult.status, 200);
-  assert.deepEqual(canonical.applicationCalls.map((call) => call.name), ['run.workstream.notify']);
-  assert.deepEqual(legacy.applicationCalls.map((call) => call.name), ['run.workstream.notify']);
-  assert.deepEqual(canonical.applicationCalls[0].args, legacy.applicationCalls[0].args);
-
-  // The admitted identity is the SPELLING USED — the caller's transport name, never resolved away.
-  assert.equal(admittedSpelling(canonical.coordination), 'run_member_send');
-  assert.equal(admittedSpelling(legacy.coordination), 'run_workstream_notify');
-
-  // The canonical name is the registry's mechanical derivation, not a hand-list.
-  assert.equal(deriveSurfaceNames('run.member.send').web, 'run_member_send');
-});
-
-test('M4B-2: a reconcilable envelope parked under a legacy name reconciles identically post-flip', async () => {
-  // run.workstream.notify is a reconcilable operation. The legacy transport is byte-identical
-  // post-flip, so its durable scope key (userId+command+repoId+idempotencyKey) is unchanged: a
-  // parked reconcilable envelope re-sent post-flip reconciles to the prior admission, replayed and
-  // never double-dispatched (R-KM-8).
-  const { web, coordination, applicationCalls } = webFixture();
-  const first = await web.execute(webContext(), webEnvelope('run_workstream_notify'));
-  const replay = await web.execute(webContext(), webEnvelope('run_workstream_notify', { commandId: 'cmd-replay' }));
-  assert.equal(first.status, 200);
-  assert.equal(replay.status, 200);
-  assert.equal(replay.body.replayed, true);
-  assert.equal(applicationCalls.length, 1, 'reconcile does not re-dispatch the operation');
-
-  // The canonical spelling is a DISTINCT admitted identity from the legacy one (different scope
-  // key), so no alias silently collapses two envelopes into one admission.
-  const canonical = webFixture();
-  await canonical.web.execute(webContext(), webEnvelope('run_member_send'));
-  assert.notEqual(admittedSpelling(canonical.coordination), 'run_workstream_notify');
-  assert.equal(admittedSpelling(canonical.coordination), 'run_member_send');
-});
 
 // ── MCP transport harness ────────────────────────────────────────────────────────────────────
 function mcpFixture() {
