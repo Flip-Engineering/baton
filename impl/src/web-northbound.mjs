@@ -187,12 +187,6 @@ const CONTEXT_PACKAGE_COMMANDS = new Set(
   [...CONTEXT_PACKAGE_WEB_ENTRIES, ...CONTEXT_PACKAGE_DOT_WEB_ENTRIES].map(([transport]) => transport),
 );
 
-/** Issue #488: the branch ceiling ONE context package request may carry. The port refuses above it,
- * and every writer that composes a package — the root's reading leg (`application-cli.mjs`, which
- * turns each cited document into ordered chunk branches) — reads THIS derivation, so a leg can
- * never hand the port a package it refuses. */
-export const CONTEXT_PACKAGE_BRANCH_CEILING = 64;
-
 /** Issue #441: the closed request the context-package admit port accepts — the package's name
  * and one branch document per source the root's CLI pulled (the issue, then each doc it cites).
  * Each branch's text is minted into the deployment's context CAS BY THE PORT: the CLI never hands
