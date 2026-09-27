@@ -1843,7 +1843,16 @@ export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
     if (realpathSync(opts.expectedPath) !== realDir) throw new UnknownWorktreeError('owned worktree path identity mismatch');
   }
   if (realpathSync(sh('git', ['rev-parse', '--show-toplevel'], dir)) !== realDir) throw new UnknownWorktreeError('owned worktree Git root identity mismatch');
-  if (sh('git', ['branch', '--show-current'], dir) !== meta.branch) throw new UnknownWorktreeError('owned worktree branch identity mismatch');
+  // Issue #610: the checkout's current branch is not part of what ownership proves. The recorded
+  // metadata names the branch this worktree was created on (`validatedMetadata` pins it to
+  // `baton/${taskId}`), and a lane that moves its own checkout onto its lane branch keeps that
+  // metadata; a `--resume-from` successor inherits the checkout in that state. Comparing the live
+  // branch to the creation-time name refused exactly that shape: the 18:27Z restart refused
+  // mcp-lead18za on its predecessor's workspace (coordination seq 328923 and 329381) with
+  // "session context validation failed: owned worktree branch identity mismatch". What the
+  // admission stands on is around this line: the resolved path, the Git root, the recorded
+  // base's ancestry, and the sparse deployment identity. A caller that must pin the branch
+  // states it in `expectedBranch`, checked below.
   if (opts.expectedBranch !== undefined && meta.branch !== opts.expectedBranch) throw sparseError('owned worktree branch metadata disagrees with admitted branch', 'worker_sparse_metadata_invalid');
   if (opts.expectedBaseSha !== undefined && meta.baseSha !== opts.expectedBaseSha) throw sparseError('owned worktree base metadata disagrees with admitted base', 'worker_sparse_metadata_invalid');
   try { gitFile(['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], dir, { stdio: 'ignore' }); }
