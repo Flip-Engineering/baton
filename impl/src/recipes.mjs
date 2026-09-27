@@ -24,13 +24,9 @@ import { createWaveDriver } from './wave-driver.mjs';
 import { runWorkflow } from './workflow-interpreter.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 
-// Rule 1 caps. The descriptor/task/constraint caps are the recipe admission gates; the rendered
-// objective itself rides the machinery's own objective lane (limits.mjs wave.member.objective),
-// read here from the registry — never re-declared — so a fully-maxed card still passes through
-// whole exactly as the wave driver admits it.
-const DESCRIPTOR_MAX_BYTES = 8 * 1024;
-const TASK_MAX_BYTES = 2 * 1024;
-const CONSTRAINT_MAX_BYTES = 240;
+// The rendered objective rides the machinery's own objective lane (limits.mjs
+// wave.member.objective), read here from the registry — never re-declared — so a
+// fully-maxed card still passes through whole exactly as the wave driver admits it.
 const ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 const RECIPE_TOP_FIELDS = Object.freeze(['name', 'version', 'members', 'policy']);
@@ -177,13 +173,6 @@ function admitTemplate(raw, index) {
   if (typeof raw.task !== 'string' || raw.task.trim().length === 0) {
     throw recipeError(`recipe member[${index}] objectiveTemplate "task" must be a non-empty string`, 'recipe_schema_invalid');
   }
-  const taskBytes = Buffer.byteLength(raw.task);
-  if (taskBytes > TASK_MAX_BYTES) {
-    throw recipeError(
-      `recipe member[${index}] objectiveTemplate "task" is ${taskBytes} bytes (limit ${TASK_MAX_BYTES})`,
-      'recipe_oversize',
-    );
-  }
   if (!Array.isArray(raw.constraints)) {
     throw recipeError(
       `recipe member[${index}] objectiveTemplate "constraints" must be an array of strings`,
@@ -193,13 +182,6 @@ function admitTemplate(raw, index) {
   const constraints = raw.constraints.map((constraint, ci) => {
     if (typeof constraint !== 'string' || constraint.trim().length === 0) {
       throw recipeError(`recipe member[${index}] objectiveTemplate constraint[${ci}] must be a non-empty string`, 'recipe_schema_invalid');
-    }
-    const bytes = Buffer.byteLength(constraint);
-    if (bytes > CONSTRAINT_MAX_BYTES) {
-      throw recipeError(
-        `recipe member[${index}] objectiveTemplate constraint[${ci}] is ${bytes} bytes (limit ${CONSTRAINT_MAX_BYTES})`,
-        'recipe_oversize',
-      );
     }
     return constraint;
   });
@@ -267,13 +249,6 @@ export function admitRecipe(raw) {
     throw recipeError(`recipe "members" contains duplicate roles: ${roles.find((role, i) => roles.indexOf(role) !== i)}`, 'recipe_schema_invalid');
   }
   const recipe = { name: raw.name.trim(), version: raw.version.trim(), members, policy };
-  const descriptorBytes = Buffer.byteLength(canonicalJson(recipe));
-  if (descriptorBytes > DESCRIPTOR_MAX_BYTES) {
-    throw recipeError(
-      `recipe descriptor is ${descriptorBytes} bytes (limit ${DESCRIPTOR_MAX_BYTES})`,
-      'recipe_oversize',
-    );
-  }
   return deepFreeze(recipe);
 }
 

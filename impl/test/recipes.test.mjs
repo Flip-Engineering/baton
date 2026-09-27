@@ -160,7 +160,7 @@ const scenarios = { alpha: { outcome: 'completed', edits: [{ path: 'reports/alph
 // RC-1 (schema): the closed-shape battery — unknown fields, oversize descriptor/task/constraint,
 // duplicate roles, non-exact route, function value anywhere in the recipe, all refused with
 // corrective field names; a valid recipe deep-freezes.
-test('RC-1: the recipe is one normative closed schema — unknown/oversize/duplicate/non-exact/function refused; a valid recipe deep-freezes', () => {
+test('RC-1: the recipe is one normative closed schema — unknown/duplicate/non-exact/function refused; a valid recipe deep-freezes', () => {
   // A valid recipe admits and deep-freezes.
   const recipe = admitRecipe(validRecipe());
   assert.equal(Object.isFrozen(recipe), true, 'the admitted recipe is frozen at the top level');
@@ -191,17 +191,19 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
   // EXACT routes only in v2 — a manual route (harness/model/effort) is non-exact AND unknown.
   refused((r) => { r.members[0] = { role: 'alpha', harness: 'mock', model: 'mock-model', effort: 'low', scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }; return r; }, 'exact');
 
-  // Oversize: descriptor > 8KiB, task > 2KiB, constraint > 240B. The count ceilings are gone
-  // (#530): nine constraints and nine member cards are admitted.
-  assert.throws(
-    () => admitRecipe(structuredClone(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 'x'.repeat(2_049), constraints: [] } }] }))),
-    (error) => error?.code === 'recipe_oversize' && /task/u.test(error.message),
-    'oversize task refuses with the cap',
+  // The byte caps are gone (#530): an oversize task, an oversize constraint and a descriptor
+  // over the old 8 KiB are admitted, as are nine constraints and nine member cards.
+  assert.equal(
+    admitRecipe(structuredClone(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 'x'.repeat(2_049), constraints: [] } }] })))
+      .members[0].objectiveTemplate.task.length,
+    2_049,
+    'a 2,049-byte task is admitted — no byte cap refuses it',
   );
-  assert.throws(
-    () => admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: ['y'.repeat(241)] } }] })),
-    (error) => error?.code === 'recipe_oversize' && /constraint/u.test(error.message),
-    'oversize constraint refuses with the cap',
+  assert.equal(
+    admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: ['y'.repeat(241)] } }] }))
+      .members[0].objectiveTemplate.constraints[0].length,
+    241,
+    'a 241-byte constraint is admitted — no byte cap refuses it',
   );
   assert.equal(
     admitRecipe(validRecipe({ members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: Array.from({ length: 9 }, (_, i) => `c${i}`) } }] }))
@@ -215,13 +217,11 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
     9,
     'nine member cards are admitted — no count ceiling refuses them',
   );
-  // The descriptor cap (8KiB) fires when every per-field cap holds but the whole exceeds it —
-  // reachable via many cards (8 × a sub-2KiB task), never via one oversize field (that trips the
-  // field cap first).
-  assert.throws(
-    () => admitRecipe({ name: 'fat', version: '1', members: Array.from({ length: 8 }, (_, i) => ({ role: `m${i}`, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 'd'.repeat(1_100), constraints: [] } })), policy: {} }),
-    (error) => error?.code === 'recipe_oversize' && /descriptor/u.test(error.message),
-    'an oversize descriptor (many valid cards) refuses with the descriptor cap',
+  assert.equal(
+    admitRecipe({ name: 'fat', version: '1', members: Array.from({ length: 8 }, (_, i) => ({ role: `m${i}`, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 'd'.repeat(1_100), constraints: [] } })), policy: {} })
+      .members.length,
+    8,
+    'a descriptor over the old 8 KiB is admitted — no descriptor cap refuses it',
   );
 
   // Duplicate roles refuse.
@@ -371,18 +371,18 @@ test('RC-5: run options never enter the digest; the override allowlist merges + 
   assert.equal(merged.members[0].exact.effort, 'high', 'effort REPLACE');
   assert.deepEqual(merged.members[0].scope, ['other/**'], 'scope REPLACE');
 
-  // A post-merge oversize objective refuses BEFORE any side effect (re-validation, zero starts).
+  // A post-merge invalid override refuses BEFORE any side effect (re-validation, zero starts).
   tracker.calls.length = 0;
   await assert.rejects(
     baton.recipes.run(base, {
-      task: 'feature X', idempotencyKey: 'rc5-oversize', manifestPath: join(manifestDir, 'rc5-oversize.json'),
-      overrides: { constraints: ['z'.repeat(241)] },
+      task: 'feature X', idempotencyKey: 'rc5-invalid', manifestPath: join(manifestDir, 'rc5-invalid.json'),
+      overrides: { constraints: ['ok', 42] },
     }),
-    (error) => error?.code === 'recipe_oversize',
-    'a post-merge oversize constraint re-validates and refuses',
+    (error) => error?.code === 'recipe_override_invalid',
+    'a post-merge invalid constraint re-validates and refuses',
   );
   assert.equal(tracker.calls.length, 0, 'the post-merge refusal happened before any runs.start (zero side effects)');
-  assert.equal(existsSync(join(manifestDir, 'rc5-oversize.json')), false, 'no manifest was persisted for the refused invocation');
+  assert.equal(existsSync(join(manifestDir, 'rc5-invalid.json')), false, 'no manifest was persisted for the refused invocation');
 
   // onDecision passes through unchanged — present only when the bidirectional field exists in live
   // code. The shipped createWaveDriver has no onDecision policy field yet (bidirectional v2 DRIVER

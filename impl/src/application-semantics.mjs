@@ -175,7 +175,7 @@ const resultIntent = {
 const applicationRoute = objectSchema({ harness: id, model: id, effort: id }, []);
 const applicationIntent = objectSchema({
   runId: id,
-  objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+  objective: { type: 'string', minLength: 1 },
   resultIntent,
   profile: id,
   route: applicationRoute,
@@ -183,7 +183,7 @@ const applicationIntent = objectSchema({
     // The intent scope is an array of repository-relative path strings; the array carries
     // whatever number of paths the caller has.
     type: 'array', minItems: 1, uniqueItems: true,
-    items: { type: 'string', minLength: 1, maxLength: 4096 },
+    items: { type: 'string', minLength: 1 },
   },
   composition: objectSchema({
     strategy: { const: 'parallel_attempts' }, workspace: { const: 'isolated' },
@@ -199,10 +199,10 @@ const applicationIntent = objectSchema({
 const depth = {
   type: 'string', enum: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
 };
-const contextField = { type: 'string', minLength: 1, maxLength: 256 };
+const contextField = { type: 'string', minLength: 1 };
 const contextPrimitive = { oneOf: [
   { type: 'null' }, { type: 'boolean' }, { type: 'number' },
-  { type: 'string', maxLength: 16384 },
+  { type: 'string' },
 ] };
 const contextProgramSchema = {
   type: 'object', additionalProperties: false,
@@ -235,7 +235,7 @@ const contextProgramSchema = {
       objectSchema({ op: { const: 'index' }, input: { $ref: '#/properties/program/$defs/expression' },
         after: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0 }] } }),
       objectSchema({ op: { const: 'search' }, input: { $ref: '#/properties/program/$defs/expression' },
-        query: { type: 'string', minLength: 1, maxLength: 4096 },
+        query: { type: 'string', minLength: 1 },
         mode: { type: 'string', enum: ['literal', 'case_insensitive'] } }),
       objectSchema({ op: { const: 'slice' }, input: { $ref: '#/properties/program/$defs/expression' },
         selector: { $ref: '#/properties/program/$defs/selector' } }),
@@ -266,7 +266,7 @@ const contextProgramSchema = {
 
 const operations = {
   'application.help': {
-    inputSchema: objectSchema({ topic: { type: 'string', minLength: 1, maxLength: 256 }, depth, runId: id }, []),
+    inputSchema: objectSchema({ topic: { type: 'string', minLength: 1 }, depth, runId: id }, []),
     helpTopic: 'application.help', idempotent: true, destructive: false,
   },
   'runs.list': {
@@ -315,7 +315,7 @@ const operations = {
   'run.workstream.notify': {
     inputSchema: objectSchema({
       runId: id, role: id, generation: { type: 'integer', minimum: 1 },
-      message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
+      message: { type: 'string', minLength: 1 },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
     }, ['runId', 'role', 'message']),
     helpTopic: 'run.workstreams', idempotent: true, destructive: false,
@@ -323,7 +323,7 @@ const operations = {
   'run.workstream.stop': {
     inputSchema: objectSchema({
       runId: id, role: id, generation: { type: 'integer', minimum: 1 },
-      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+      reason: { type: 'string', minLength: 1 },
     }, ['runId', 'role']),
     helpTopic: 'run.workstreams', idempotent: true, destructive: true,
   },
@@ -332,7 +332,7 @@ const operations = {
     helpTopic: 'run.act', idempotent: true, destructive: true,
   },
   'run.stop': {
-    inputSchema: objectSchema({ runId: id, reason: { type: 'string', minLength: 1, maxLength: 1024 } }),
+    inputSchema: objectSchema({ runId: id, reason: { type: 'string', minLength: 1 } }),
     helpTopic: 'run.stop', idempotent: true, destructive: true, emergency: true,
   },
 };
@@ -373,7 +373,7 @@ const actions = {
     summary: 'Evaluate one closed immutable Context expression through a durable addressed cell.',
     inputSchema: objectSchema({
       program: contextProgramSchema,
-      role: { type: 'string', minLength: 1, maxLength: 256 },
+      role: { type: 'string', minLength: 1 },
     }, ['program']),
     serverDerived: ['session', 'manifest', 'cell', 'ordinal', 'predecessor'],
     effect: 'context_pure_compute', destructive: false, irreversible: false,
@@ -403,8 +403,8 @@ const actions = {
       callId: {
         type: 'string', pattern: '^context-call:[a-f0-9]{64}$',
       },
-      role: { type: 'string', minLength: 1, maxLength: 256 },
-      instruction: { type: 'string', minLength: 1, maxLength: 16384 },
+      role: { type: 'string', minLength: 1 },
+      instruction: { type: 'string', minLength: 1 },
     }, ['callId', 'instruction']),
     serverDerived: [
       'session', 'sourceCall', 'outputRef', 'evidenceRef', 'inputLineage',
@@ -422,8 +422,8 @@ const actions = {
       cellId: {
         type: 'string', pattern: '^cell:[a-f0-9]{64}$',
       },
-      role: { type: 'string', minLength: 1, maxLength: 256 },
-      instruction: { type: 'string', minLength: 1, maxLength: 16384 },
+      role: { type: 'string', minLength: 1 },
+      instruction: { type: 'string', minLength: 1 },
     }, ['cellId', 'instruction']),
     serverDerived: [
       'session', 'manifest', 'sourceProgram', 'outputRef', 'evidenceRef', 'partitions',
@@ -438,12 +438,12 @@ const actions = {
     label: 'Search addressed Context',
     summary: 'Run one pure deterministic search over an immutable Context branch.',
     inputSchema: objectSchema({
-      query: { type: 'string', minLength: 1, maxLength: 4096 },
-      branch: { type: 'string', minLength: 1, maxLength: 256, default: 'repository' },
+      query: { type: 'string', minLength: 1 },
+      branch: { type: 'string', minLength: 1, default: 'repository' },
       mode: {
         type: 'string', enum: ['literal', 'case_insensitive'], default: 'case_insensitive',
       },
-      role: { type: 'string', minLength: 1, maxLength: 256 },
+      role: { type: 'string', minLength: 1 },
     }, ['query']),
     serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
     effect: 'context_pure_compute', destructive: false, irreversible: false,
@@ -455,9 +455,9 @@ const actions = {
     label: 'Chunk addressed Context',
     summary: 'Partition one immutable Context branch by a deterministic field.',
     inputSchema: objectSchema({
-      branch: { type: 'string', minLength: 1, maxLength: 256, default: 'repository' },
-      by: { type: 'string', minLength: 1, maxLength: 256, default: 'item' },
-      role: { type: 'string', minLength: 1, maxLength: 256 },
+      branch: { type: 'string', minLength: 1, default: 'repository' },
+      by: { type: 'string', minLength: 1, default: 'item' },
+      role: { type: 'string', minLength: 1 },
     }, []),
     serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
     effect: 'context_pure_compute', destructive: false, irreversible: false,
@@ -469,8 +469,8 @@ const actions = {
     label: 'Inspect Context coverage',
     summary: 'Measure represented and selected coverage for one immutable Context branch.',
     inputSchema: objectSchema({
-      branch: { type: 'string', minLength: 1, maxLength: 256, default: 'repository' },
-      role: { type: 'string', minLength: 1, maxLength: 256 },
+      branch: { type: 'string', minLength: 1, default: 'repository' },
+      role: { type: 'string', minLength: 1 },
     }, []),
     serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
     effect: 'context_pure_compute', destructive: false, irreversible: false,
@@ -493,7 +493,7 @@ const actions = {
   },
   answer_question: {
     label: 'Answer worker question', summary: 'Send bounded text to the exact pending worker question advertised by this Run.',
-    inputSchema: objectSchema({ text: { type: 'string', minLength: 1, maxLength: 4096 } }, ['text']),
+    inputSchema: objectSchema({ text: { type: 'string', minLength: 1 } }, ['text']),
     serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
     destructive: false, irreversible: false, idempotent: true, priority: 'required',
     helpTopic: 'run.act.answer_question', expectedDepth: 'outline',
@@ -502,8 +502,8 @@ const actions = {
     label: 'Answer worker decision',
     summary: 'Choose an option (or send bounded free-form text, when the request allows it) for the exact pending typed decision request advertised by this Run.',
     inputSchema: objectSchema({
-      optionId: { type: 'string', minLength: 1, maxLength: 128 },
-      text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value },
+      optionId: { type: 'string', minLength: 1 },
+      text: { type: 'string', minLength: 1 },
     }, []),
     serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
     destructive: false, irreversible: false, idempotent: true, priority: 'required',
@@ -513,7 +513,7 @@ const actions = {
     label: 'Nudge paused turn',
     summary: 'Admit a fresh provider turn on the exact paused task and unpark it in place.',
     inputSchema: objectSchema({
-      message: { type: 'string', minLength: 1, maxLength: 4096, default: 'Continue the current turn.' },
+      message: { type: 'string', minLength: 1, default: 'Continue the current turn.' },
     }, []),
     serverDerived: ['pauseId', 'workerId', 'taskId', 'turnEpoch'], effect: 'provider_control',
     destructive: false, irreversible: false, idempotent: true, priority: 'required',
@@ -539,8 +539,8 @@ const actions = {
     label: 'Guide active work',
     summary: 'Send guidance to the current semantic work recipient without exposing worker or fence coordinates.',
     inputSchema: objectSchema({
-      message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
-      recipient: { type: 'string', minLength: 1, maxLength: 256, default: 'work' },
+      message: { type: 'string', minLength: 1 },
+      recipient: { type: 'string', minLength: 1, default: 'work' },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'], default: 'nudge' },
     }, ['message']),
     serverDerived: ['worker', 'task', 'fence', 'control', 'providerRequest'],
@@ -551,9 +551,9 @@ const actions = {
     label: 'Interrupt active work',
     summary: 'Interrupt only the current semantic work recipient while preserving unrelated members and a reusable provider session when supported.',
     inputSchema: objectSchema({
-      recipient: { type: 'string', minLength: 1, maxLength: 256, default: 'work' },
+      recipient: { type: 'string', minLength: 1, default: 'work' },
       reason: {
-        type: 'string', minLength: 1, maxLength: 1024,
+        type: 'string', minLength: 1,
         default: 'Interrupt the current work turn.',
       },
     }, []),
@@ -565,7 +565,7 @@ const actions = {
     label: 'Adopt verified result', summary: 'Reverify and adopt the current accepted result without requiring caller-supplied result coordinates.',
     inputSchema: objectSchema({
       reason: {
-        type: 'string', minLength: 1, maxLength: 1024,
+        type: 'string', minLength: 1,
         default: 'Adopt the verified result.',
       },
     }, ['reason']),
@@ -577,8 +577,8 @@ const actions = {
     label: 'Select verified candidate',
     summary: 'Select one role-labeled immutable verified Workflow candidate for the next gated stage.',
     inputSchema: objectSchema({
-      role: { type: 'string', minLength: 1, maxLength: 256 },
-      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+      role: { type: 'string', minLength: 1 },
+      reason: { type: 'string', minLength: 1 },
     }, ['role', 'reason']),
     serverDerived: ['candidateId', 'candidateDigest', 'taskId', 'resultSha', 'evidenceDigest'],
     effect: 'candidate_selection', destructive: false, irreversible: false,
@@ -589,14 +589,14 @@ const actions = {
     label: 'Send Candidate feedback',
     summary: 'Attach source-bound typed feedback to one immutable verified Workflow candidate.',
     inputSchema: objectSchema({
-      role: { type: 'string', minLength: 1, maxLength: 256 },
+      role: { type: 'string', minLength: 1 },
       feedback: {
         oneOf: [
-          { type: 'string', minLength: 1, maxLength: 4096 },
+          { type: 'string', minLength: 1 },
           {
             type: 'object', additionalProperties: false, required: ['summary', 'findings'],
             properties: {
-              summary: { type: 'string', minLength: 1, maxLength: 4096 },
+              summary: { type: 'string', minLength: 1 },
               findings: {
                 type: 'array', minItems: 1,
                 items: {
@@ -605,8 +605,8 @@ const actions = {
                   properties: {
                     kind: { type: 'string', enum: ['defect', 'risk', 'suggestion', 'question', 'observation'] },
                     severity: { type: 'string', enum: ['info', 'low', 'medium', 'high', 'critical'] },
-                    message: { type: 'string', minLength: 1, maxLength: 4096 },
-                    path: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4096 }, { type: 'null' }] },
+                    message: { type: 'string', minLength: 1 },
+                    path: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'null' }] },
                     line: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
                   },
                 },
@@ -629,7 +629,7 @@ const actions = {
     summary: 'Propose one exact successor Plan that corrects the selected immutable Candidate from its bound feedback.',
     inputSchema: objectSchema({
       reason: {
-        type: 'string', minLength: 1, maxLength: 1024,
+        type: 'string', minLength: 1,
         default: 'Revise the selected Candidate using its recorded feedback.',
       },
     }, ['reason']),
@@ -645,8 +645,8 @@ const actions = {
     label: 'Stop and reap Workflow member',
     summary: 'Durably stop one role-addressed active Workflow member while leaving sibling Attempts untouched.',
     inputSchema: objectSchema({
-      role: { type: 'string', minLength: 1, maxLength: 256 },
-      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+      role: { type: 'string', minLength: 1 },
+      reason: { type: 'string', minLength: 1 },
     }, ['role', 'reason']),
     serverDerived: ['nodeKey', 'taskId', 'workerId', 'targetDigest', 'fence'],
     effect: 'member_cleanup', destructive: true, irreversible: false,
@@ -657,7 +657,7 @@ const actions = {
     label: 'Start semantic review', summary: 'Start an independent review of the exact preserved result using one deployment-authorized route.',
     inputSchema: objectSchema({
       routeIndex: { type: 'integer', minimum: 0 },
-      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+      reason: { type: 'string', minLength: 1 },
     }, ['routeIndex', 'reason']),
     serverDerived: ['route', 'resultSha', 'targetDigest'], effect: 'provider_call',
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
@@ -668,7 +668,7 @@ const actions = {
     inputSchema: objectSchema({
       strategy: { type: 'string', enum: ['ff-only', 'structured'] },
       reason: {
-        type: 'string', minLength: 1, maxLength: 1024,
+        type: 'string', minLength: 1,
         default: 'Apply the adopted verified result.',
       },
     }, ['strategy', 'reason']),
@@ -685,21 +685,21 @@ const actions = {
   },
   retry_verification: {
     label: 'Retry trust-gate verification', summary: 'Re-run the pinned verification of the exact preserved candidate without another provider turn; candidate-failure confirmation is one-shot and instability-preserving.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
     serverDerived: ['checkpointSha', 'checkpointRef', 'planDigest', 'baseSha', 'runtimeDigest', 'toolchainDigest', 'attempt'], effect: 'verification_retry',
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
   },
   resume_work: {
     label: 'Resume preserved work', summary: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
     serverDerived: ['checkpoint', 'planNode', 'routePolicy', 'recoveryLineage'], effect: 'provider_call',
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.resume_work', expectedDepth: 'outline',
   },
   stop: {
     label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
     serverDerived: ['workerIds', 'fences'], effect: 'run_cleanup', destructive: true,
     irreversible: false, idempotent: true, priority: 'emergency', helpTopic: 'run.stop', expectedDepth: 'outline',
   },
@@ -1212,7 +1212,7 @@ const runIdSchema = objectSchema({ runId: id }, ['runId']);
 const sessionAuthoritySchema = objectSchema({
   schemaVersion: { type: 'integer', const: 1 },
   authorityDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-  expiresAt: { type: 'string', minLength: 1, maxLength: 64 },
+  expiresAt: { type: 'string', minLength: 1 },
   orchestratorLeaseId: id,
 }, ['schemaVersion', 'authorityDigest', 'expiresAt', 'orchestratorLeaseId']);
 const boardItemCoordinates = {
@@ -1287,8 +1287,8 @@ const SWARM_OPERATION_EXAMPLES = Object.freeze({
 // (impl/src/wake-stream.mjs owns the one wake-class table); nothing is restated here.
 const wakeFilterTokens = {
   oneOf: [
-    { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wake.filter_token'].value },
-    { type: 'array', items: { type: 'string', minLength: 1, maxLength: 256 } },
+    { type: 'string', minLength: 1 },
+    { type: 'array', items: { type: 'string', minLength: 1 } },
   ],
 };
 
@@ -1306,10 +1306,10 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton evidence search SWARM_ID --query TEXT',
     inputSchema: objectSchema({
       swarmId: id,
-      query: { type: 'string', minLength: 1, maxLength: 4096 },
+      query: { type: 'string', minLength: 1 },
       participantId: id,
       kind: id,
-      path: { type: 'string', minLength: 1, maxLength: 4096 },
+      path: { type: 'string', minLength: 1 },
       afterSeq: { type: 'integer', minimum: 0 },
     }, []),
     authority: 'The deployment reads the coordination ledger under the caller principal; the participant bridge additionally checks current swarm membership and read grants.',
@@ -1323,7 +1323,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['observe'], outputView: 'index', helpTopic: 'services',
     example: 'baton services list --provider zai',
     inputSchema: objectSchema({
-      provider: { type: 'string', minLength: 1, maxLength: 128 },
+      provider: { type: 'string', minLength: 1 },
     }, []),
     authority: 'The deployment reads its own service declarations, route readiness and usage accounting; the model list is pulled live from the service endpoint where one answers.',
   }],
@@ -1350,14 +1350,14 @@ const CANONICAL_OPERATION_SPECS = [
   ['deployment.serve', {
     profile: 'host', surfaces: ['cli'], effect: 'host_serve', capabilities: ['host'],
     outputView: 'outline', helpTopic: 'connection', example: 'baton serve', idempotent: false,
-    inputSchema: objectSchema({ configPath: { type: 'string', minLength: 1, maxLength: 4096 } }, []),
+    inputSchema: objectSchema({ configPath: { type: 'string', minLength: 1 } }, []),
   }],
   ['deployment.shutdown', {
     // 2026-09-14 audit (U-G7): no CLI verb reaches the host shutdown; the claim was a ghost.
     profile: 'host', surfaces: ['embedded'], effect: 'host_shutdown',
     capabilities: ['emergency_stop', 'host'], outputView: 'outline', helpTopic: 'run.stop',
     destructive: true, emergency: true, reconcilable: false,
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, []),
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, []),
   }],
   ['run.list', {
     op: 'runs.list', effect: 'run_read', capabilities: ['observe'], outputView: 'index',
@@ -1427,7 +1427,7 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       runId: id,
       member: id,
-      limit: { type: 'integer', minimum: 1, maximum: 10 },
+      limit: { type: 'integer', minimum: 1 },
     }, ['runId']),
     example: 'baton run debug RUN_ID',
   }],
@@ -1546,7 +1546,7 @@ const CANONICAL_OPERATION_SPECS = [
   ['board.claim', {
     profile: 'worker', effect: 'board_claim', capabilities: ['control', 'observe'],
     outputView: 'outline', helpTopic: 'run', surfaces: ['embedded'], inputSchema: objectSchema({
-      grantId: { type: 'string', minLength: 1, maxLength: 256 },
+      grantId: { type: 'string', minLength: 1 },
       itemId: id, expectedBoardFence: { type: 'integer', minimum: 0 },
       idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
     }, ['grantId', 'itemId', 'expectedBoardFence', 'idempotencyKey']),
@@ -1556,10 +1556,10 @@ const CANONICAL_OPERATION_SPECS = [
   ['board.report', {
     profile: 'worker', effect: 'board_report', capabilities: ['control', 'observe'],
     outputView: 'outline', helpTopic: 'run', surfaces: ['embedded'], inputSchema: objectSchema({
-      grantId: { type: 'string', minLength: 1, maxLength: 256 },
+      grantId: { type: 'string', minLength: 1 },
       itemId: id, itemVersion: { type: 'integer', minimum: 1 }, itemDigest: digest64,
       expectedClaimVersion: { type: 'integer', minimum: 1 },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.report.body'].value },
+      body: { type: 'string', minLength: 1 },
       idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
     }, ['grantId', 'itemId', 'itemVersion', 'itemDigest', 'expectedClaimVersion', 'body', 'idempotencyKey']),
     authorityFields: ['grantId'], serverDerived: ['workerId', 'taskId', 'taskVersion', 'processGeneration'],
@@ -1630,7 +1630,7 @@ const CANONICAL_OPERATION_SPECS = [
   ['repl.cite', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
     capabilities: ['observe'], outputView: 'item', helpTopic: 'run',
-    inputSchema: objectSchema({ runId: id, citation: { type: 'string', minLength: 1, maxLength: 1024 } },
+    inputSchema: objectSchema({ runId: id, citation: { type: 'string', minLength: 1 } },
       ['runId', 'citation']),
     authorityFields: ['runId'], serverDerived: ['viewer'], liveMethod: 'resolveReplCitation',
   }],
@@ -1660,7 +1660,7 @@ const CANONICAL_OPERATION_SPECS = [
     profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, doubtId: id, disposition: { type: 'string', enum: ['answered', 'dismissed'] },
-      resolution: { type: 'string', maxLength: FRAME_LIMITS['doubt.resolution.bytes'].value },
+      resolution: { type: 'string' },
       dismissalReason: { type: 'string', enum: ['deferred', 'duplicate', 'out_of_scope', 'unfounded'] },
     }, ['runId', 'doubtId', 'disposition']),
     authorityFields: ['disposition', 'doubtId', 'runId'], serverDerived: ['actor', 'principalId', 'sessionId'],
@@ -1674,7 +1674,7 @@ const CANONICAL_OPERATION_SPECS = [
     outputView: 'section', helpTopic: 'run', inputSchema: objectSchema({
       waveId: id, state: { type: 'string', enum: ['reviewed', 'answered', 'dismissed', 'carried'] },
       before: { type: 'object' },
-      limit: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['view.open_doubts.items'].value },
+      limit: { type: 'integer', minimum: 1 },
     }, ['waveId']),
     authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
   }],
@@ -1709,11 +1709,11 @@ const CANONICAL_OPERATION_SPECS = [
         type: 'array', minItems: 1,
         items: objectSchema({
           role: id,
-          objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
+          objective: { type: 'string', minLength: 1 },
         }, ['role', 'objective']),
       },
       timeoutMs: { type: 'integer', minimum: 1 },
-      repoRoot: { type: 'string', minLength: 1, maxLength: 4096 },
+      repoRoot: { type: 'string', minLength: 1 },
       mintWaveDetached: { type: 'boolean', const: true },
     }, ['waveId', 'members']),
   }],
@@ -1733,7 +1733,7 @@ const CANONICAL_OPERATION_SPECS = [
         type: 'array', minItems: 1,
         items: objectSchema({
           role: id,
-          objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
+          objective: { type: 'string', minLength: 1 },
           exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
           // #102 Decision 1: a member names EITHER its own exact route OR a closed group seat.
           // The schema advertises both forms; the XOR itself is the wave admission's own typed
@@ -1746,7 +1746,7 @@ const CANONICAL_OPERATION_SPECS = [
             strict: { type: 'boolean' },
             editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
           }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1 } },
         }, ['role', 'objective']),
       },
     }, ['idempotencyKey', 'members']),
@@ -1765,7 +1765,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves send RUN_ID --message TEXT',
     inputSchema: objectSchema({
-      runId: id, message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
+      runId: id, message: { type: 'string', minLength: 1 },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
       // Epic #78 Decision 2: the optional closed claimGrant request. The caller names no grantee
       // and no permissions — the server resolves the member Run and records the selected subset.
@@ -1780,7 +1780,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['emergency_stop', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves stop RUN_ID --reason TEXT', destructive: true,
     inputSchema: objectSchema({
-      runId: id, reason: { type: 'string', minLength: 1, maxLength: 1024 },
+      runId: id, reason: { type: 'string', minLength: 1 },
     }, ['runId']),
   }],
   // D2.5 (wave-observability-2026-08-06/contract.md §D2): waves.list — the observe verb answering
@@ -1806,7 +1806,7 @@ const CANONICAL_OPERATION_SPECS = [
       idempotencyKey: id,
       spec: { type: 'object' },
       specDsl: { type: 'string', minLength: 1 },
-      specPath: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.run.spec_path'].value },
+      specPath: { type: 'string', minLength: 1 },
       driver: { type: 'object' },
     }, ['idempotencyKey']),
   }],
@@ -1820,7 +1820,7 @@ const CANONICAL_OPERATION_SPECS = [
       idempotencyKey: id,
       spec: { type: 'object' },
       specDsl: { type: 'string', minLength: 1 },
-      specPath: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.run.spec_path'].value },
+      specPath: { type: 'string', minLength: 1 },
     }, []),
   }],
   ['deployment.doctor', {
@@ -1843,7 +1843,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves harvest run:1 --onto /srv/checkout',
     inputSchema: objectSchema({
-      onto: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['waves.harvest.onto'].value },
+      onto: { type: 'string', minLength: 1 },
       resultSha: { type: 'string', pattern: '^[a-f0-9]{40}' + String.fromCharCode(36) },
       runId: id,
     }, []),
@@ -1865,7 +1865,7 @@ const CANONICAL_OPERATION_SPECS = [
     idempotent: false,
     example: 'baton deployment reincarnate COMMIT_ISH',
     inputSchema: objectSchema({
-      target: { type: 'string', minLength: 1, maxLength: 1024 },
+      target: { type: 'string', minLength: 1 },
     }, ['target']),
   }],
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface canonical
@@ -1877,7 +1877,7 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton run message send RUN_ID --kind inform --body TEXT',
     inputSchema: objectSchema({
       runId: id, workerId: id, kind: { type: 'string', enum: ['inform', 'query', 'nudge', 'steer'] },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
+      body: { type: 'string', minLength: 1 },
     }, ['kind', 'body']),
   }],
   ['run.message.receipt', {
@@ -1951,7 +1951,7 @@ const CANONICAL_OPERATION_SPECS = [
       runId: id,
       type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
       grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value }, evidence: { type: 'array', items: evidenceRef },
+      body: { type: 'string', minLength: 1 }, evidence: { type: 'array', items: evidenceRef },
     }, ['runId', 'type', 'grounding', 'body']),
   }],
   ['application.help', {
@@ -1977,7 +1977,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['observe'], outputView: 'outline', helpTopic: 'swarm', idempotent: false,
     example: 'baton_wakes_unsubscribe',
     inputSchema: objectSchema({
-      subscriptionId: { type: 'string', minLength: 1, maxLength: 256 },
+      subscriptionId: { type: 'string', minLength: 1 },
     }, []),
   }],
   ['wakes.since', {
@@ -2489,7 +2489,7 @@ export function knowledgeSeedPayloadLines() {
   return freeze([
     `type — one of ${type.enum.join(', ')}`,
     `grounding — one of ${grounding.enum.join(', ')}`,
-    `body — the fact itself: 1 to ${body.maxLength} bytes of UTF-8 text (the run.objective frame bound)`,
+    'body — the fact itself: non-empty UTF-8 text (the run.objective frame lane applies at admission)',
     'evidence — optional; each entry names where a peer checks the fact: {"artifactId": "..."} for an'
       + ' artifact this run already holds, or {"coordinationSeq": N} for a coordination row the swarm'
       + ' has already recorded. grounding names how you know the fact; evidence names where a peer checks it.',
