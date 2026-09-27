@@ -122,6 +122,7 @@ import {
   objectiveFirstLine,
   objectiveReach,
   objectiveResultPolicy,
+  objectiveShapeAdvice,
   parseProfileConstraint,
   profileDefinition,
   profileRegistryCoordinate,
@@ -5696,6 +5697,9 @@ export class BatonApplication {
     // 512 KiB ceiling on a fresh run. The node's own copy is dropped (#469's rule).
     const objectiveBytes = Buffer.byteLength(current.goal.objective, 'utf8');
     const objectiveLine = objectiveFirstLine(current.goal.objective);
+    const objectiveAdvice = objectiveShapeAdvice({
+      objective: current.goal.objective, resultIntent,
+    });
     const planPreviewCore = {
       objective: objectiveLine,
       objectiveRef: objectiveReach(objectiveBytes),
@@ -5721,6 +5725,10 @@ export class BatonApplication {
       ...(resultIdentity.explicit ? { resultIntent } : {}),
       // Compatibility alias for clients predating the closed resultIntent enum.
       objectiveResultPolicy: clone(objectivePolicy),
+      // Issue #38: an evidence-shaped objective compiled as change intent carries the start-time
+      // advisory pointing at `baton explore`, on the plan the operator is about to approve. Absent
+      // for every other objective, so no other preview changes.
+      ...(objectiveAdvice ? { advice: objectiveAdvice } : {}),
     };
     let publicResult = resultSha ? {
       state: result?.integration ? 'integrated' : adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',

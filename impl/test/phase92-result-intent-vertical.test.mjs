@@ -10,6 +10,7 @@ import { gunzipSync } from 'node:zlib';
 import {
   APPLICATION_COMMAND_DEFINITIONS, APPLICATION_SEMANTIC_REGISTRY, BatonApplication,
   CoordinationStore, McpFleetServer, MockAdapter, WebNorthbound, createDriver, operatorAsset,
+  parseBatonCli, projectBatonCliResult,
 } from '../src/index.mjs';
 
 const REPO = 'repo-phase92-result-intent';
@@ -463,6 +464,94 @@ test('RI8: explicit markers produce distinct stable schema-v2 evidence', async (
   assert.deepEqual(await replay.evidence(change.runId, principal('owner')), changeManifest);
   assert.deepEqual(await replay.evidence(evidenceOnly.runId, principal('owner')), evidenceManifest);
   await replay.shutdown(principal('shutdown'));
+});
+
+test('RI10: an evidence-shaped objective compiled as change intent carries start-time advice', async (t) => {
+  const { driver } = applicationFixture(t);
+  const application = applicationFor(driver, {
+    standard: profile,
+    required_edit: { ...profile, requiredEffects: ['repository_edit'] },
+    undeclared_mutation: { ...profile, effects: [] },
+  });
+  await application.ready;
+  const owner = principal('owner');
+  const objective = 'Report the current git HEAD subject line in one sentence.';
+  const message = 'Evidence-shaped objective compiled as change result intent. '
+    + 'For evidence or reporting use `baton explore`.';
+
+  // The dogfood start of 2026-07-23: an evidence-shaped objective through `baton run`, which
+  // compiles explicit change intent.
+  const reported = await application.start(intent({
+    runId: 'run-advice-report', objective, resultIntent: 'change',
+  }), owner);
+  assert.equal(reported.phase, 'awaiting_plan_approval');
+  assert.equal(reported.resultIntent, 'change');
+  assert.deepEqual(reported.objectiveResultPolicy, {
+    mode: 'change', repositoryMutation: 'required_when_declared', acceptance: 'verified_effect_result',
+  });
+  assert.deepEqual(reported.nextActions, [
+    { kind: 'approve_plan', planDigest: reported.plan.digest },
+  ]);
+  assert.equal(reported.plan.approval, null);
+  const advice = reported.planPreview.advice;
+  assert.equal(advice.kind, 'evidence_shaped_objective');
+  assert.equal(advice.command, 'baton explore');
+  const { displayDigest: reportedDigest, ...reportedCore } = reported.planPreview;
+  assert.equal(reportedDigest, digest(reportedCore));
+  assert.equal(driver.coordination.snapshot().goalPlan.goals
+    .find(({ runId }) => runId === reported.runId).constraints
+    .includes(EXPLICIT_CHANGE_MARKER), true);
+
+  // The start's own CLI projection is where an operator reads it — the advice rides it.
+  const parsed = parseBatonCli(['run', objective]);
+  assert.equal(parsed.name, 'run.start');
+  assert.equal(parsed.args.intent.resultIntent, 'change');
+  const compact = projectBatonCliResult(parsed, reported);
+  assert.equal(compact.phase, 'awaiting_plan_approval');
+  assert.equal(compact.advice.command, 'baton explore');
+  assert.match(JSON.stringify(compact), /baton explore/u);
+
+  // The standard profile AUTHORIZES repository_edit and requires nothing: the trust gate demands
+  // an in-scope diff only when requiredEffects names the effect (coordinator.mjs _runTrustGate).
+  // The advisory states the compiled intent and claims no required edit for either shape.
+  assert.deepEqual(reported.planPreview.node.effects, ['repository_edit']);
+  assert.equal(Object.hasOwn(reported.planPreview.node, 'requiredEffects'), false);
+  assert.equal(advice.message, message);
+  assert.doesNotMatch(advice.message, /require/u);
+
+  const required = await application.start(intent({
+    runId: 'run-advice-required', objective, resultIntent: 'change', profile: 'required_edit',
+  }), owner);
+  assert.deepEqual(required.planPreview.node.requiredEffects, ['repository_edit']);
+  assert.equal(required.planPreview.advice.message, message);
+  assert.doesNotMatch(required.planPreview.advice.message, /require/u);
+
+  const clean = await application.start(intent({
+    runId: 'run-advice-undeclared', objective, resultIntent: 'change', profile: 'undeclared_mutation',
+  }), owner);
+  assert.deepEqual(clean.planPreview.node.effects, []);
+  assert.equal(clean.planPreview.advice.message, message);
+
+  // Change-shaped objectives carry no advice, and neither does an explicit evidence start of the
+  // same objective: the advice reads the compiled intent and never rewrites it.
+  const changed = await application.start(intent({
+    runId: 'run-advice-changed', objective: 'Fix the bounded accounting path',
+  }), owner);
+  assert.equal(changed.resultIntent, 'change');
+  assert.equal(Object.hasOwn(changed.planPreview, 'advice'), false);
+  assert.equal(Object.hasOwn(projectBatonCliResult(
+    parseBatonCli(['run', 'Fix the bounded accounting path']), changed,
+  ), 'advice'), false);
+
+  const evidence = await application.start(intent({
+    runId: 'run-advice-evidence', objective, resultIntent: 'read_only_evidence',
+  }), owner);
+  assert.equal(evidence.resultIntent, 'read_only_evidence');
+  assert.equal(Object.hasOwn(evidence.planPreview, 'advice'), false);
+  assert.deepEqual(evidence.objectiveResultPolicy, {
+    mode: 'read_only_evidence', repositoryMutation: 'forbidden',
+    acceptance: 'verified_textual_result_capsule',
+  });
 });
 
 test('RI9: unknown, duplicate, redundant, and conflicting result-policy markers fail closed', async (t) => {
