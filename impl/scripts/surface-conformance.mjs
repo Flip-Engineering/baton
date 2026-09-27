@@ -64,9 +64,9 @@ const WAVE_DIRECT_PORT_VERBS = Object.freeze([
 // the Web bus (bare literal) and the MCP kernel dialect (`fleet_`-prefixed). C9 asserts the derived
 // grammar names stay disjoint from these.
 export const KERNEL_PROFILE_LITERALS = Object.freeze([
-  'spawn', 'scratch_oracle', 'send', 'interrupt', 'kill', 'drain', 'respond',
+  'spawn', 'send', 'interrupt', 'kill', 'drain', 'respond',
   'list', 'result', 'wait', 'capabilities', 'provider_status',
-  'capability_invoke', 'reuse_decide', 'reuse_recheck',
+  'capability_invoke',
 ]);
 export const AUTHORING_PROFILE_LITERALS = Object.freeze([
   'goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status',

@@ -144,11 +144,11 @@ export const SURFACING_MATRIX_MCP_ROWS = Object.freeze(
 
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
-  fleet_spawn: 'control', fleet_scratch_oracle: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
+  fleet_spawn: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
   fleet_interrupt: 'control', fleet_result: 'observe', fleet_list: 'observe', fleet_capabilities: 'observe',
   fleet_provider_status: 'observe',
   fleet_goal_define: 'goal:define', fleet_plan_propose: 'plan:propose', fleet_plan_approve: 'plan:approve', fleet_goal_plan_status: 'goal:observe',
-  fleet_capability_invoke: 'control', fleet_reuse_decide: 'control', fleet_reuse_recheck: 'control', fleet_kill: 'emergency_stop', fleet_drain: 'emergency_stop',
+  fleet_capability_invoke: 'control', fleet_kill: 'emergency_stop', fleet_drain: 'emergency_stop',
   ...Object.fromEntries(MCP_APPLICATION_ENTRIES.map(([tool, , definition]) => [tool, definition.capabilities])),
   ...Object.fromEntries(ORDINARY_APPLICATION_ENTRIES.map(([tool, , definition]) => [tool, definition.capabilities])),
   // Reflex surface contract Part A (docs/reference/evidence/mcp-reflex-live-2026-07-22/
@@ -214,7 +214,7 @@ const REFLEX_TOOL_NAMES = new Set([
   'baton_context_eval', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.map((operation) => operation.names.mcp),
 ]);
-const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain',
+const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_kill', 'fleet_drain',
   'baton_context_eval', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
@@ -1364,7 +1364,7 @@ const CANONICAL_DOT_TOOL_DEFINITIONS = Object.freeze([...new Map(
 ).entries()].map(([dotName, tool]) => Object.freeze({ ...tool, name: dotName })));
 const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, run, and approved Goal/Plan node.', inputSchema: fleetSpawnSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_scratch_oracle', description: 'Spawn an explicitly routed independent oracle over one immutable derived Scratch fact.', inputSchema: schema({ ...repo, ...idem, runId, scratchFactId: text, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), verification: { type: 'object' }, budget: { type: 'object' }, constraints: textArray, goal: text, definitionOfDone: text, taskId: text }, ['repoId', 'idempotencyKey', 'scratchFactId', 'harness', 'verification']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+
   { name: 'fleet_goal_define', description: 'Define one immutable bounded Goal version under the injected repository principal.', inputSchema: schema({
     ...repo, ...idem, runId, objective: text, definitionOfDone: textArray, constraints: textArray, risk: text,
     budget: goalPlanBudgetSchema, predecessor: { oneOf: [goalRefSchema, { type: 'null' }] },
@@ -1404,14 +1404,7 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
       actionShape('push', ['args', 'workerId', 'note', 'expectedFence'], ['ref', 'cursor', 'claim']),
     ],
   }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_reuse_decide', description: 'Record one immutable build-or-borrow decision from freshly reverified dossier and actual-lockfile SBOM evidence.', inputSchema: schema({
-    ...repo, ...idem, need: text, choice: { type: 'string', enum: ['borrow', 'build'] }, rationale: text,
-    dossier: { type: 'object' }, sbom: { type: 'object' }, supersedes: { type: 'object' }, budgetTokens: { type: 'integer', minimum: 1 },
-  }, ['repoId', 'idempotencyKey', 'need', 'choice', 'rationale', 'dossier', 'sbom', 'budgetTokens']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_reuse_recheck', description: 'Expire one reuse Decision or force an official advisory refresh and atomically guard every matching live subject.', inputSchema: schema({
-    ...repo, ...idem, decisionId: text, expectedValidityVersion: { type: 'integer', minimum: 1 },
-    trigger: { type: 'string', enum: ['advisory_refresh', 'ttl_expired'] }, budgetTokens: { type: 'integer', minimum: 1 },
-  }, ['repoId', 'idempotencyKey', 'decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true } },
+
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_drain', description: 'Drain and reap the coordinator-owned local fleet while retaining transport and writer authority.', inputSchema: schema({ ...repo, ...idem }, ['repoId', 'idempotencyKey']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
@@ -1815,16 +1808,7 @@ function validateArguments(name, args, maxWaitMs = null) {
     || !Number.isSafeInteger(args.planVersion) || args.planVersion <= 0 || !/^[a-f0-9]{64}$/.test(args.planDigest ?? '')
     || (args.throughSeq !== null && (!Number.isSafeInteger(args.throughSeq) || args.throughSeq < 0))
     || (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')))) return 'invalid_goal_plan_status';
-  if (name === 'fleet_scratch_oracle') {
-    if (!nonempty(args.scratchFactId) || !nonempty(args.harness) || !record(args.verification) || !nonempty(args.verification.command)
-      || typeof args.verification.expectExit !== 'number' || Object.keys(args.verification).some((key) => !VERIFICATION_FIELDS.has(key))) return 'invalid_scratch_oracle';
-    if (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')) return 'invalid_run_id';
-    if (Object.hasOwn(args, 'model') && !nonempty(args.model)) return 'invalid_model';
-    if (Object.hasOwn(args, 'effort') && !nonempty(args.effort)) return 'invalid_effort';
-    if (Object.hasOwn(args, 'modelPolicy') && (!record(args.modelPolicy) || Object.keys(args.modelPolicy).some((key) => !MODEL_POLICY_FIELDS.has(key)))) return 'invalid_model_policy';
-    if (Object.hasOwn(args, 'budget') && (!record(args.budget) || Object.keys(args.budget).some((key) => !BUDGET_FIELDS.has(key)))) return 'invalid_budget';
-    if (Object.hasOwn(args, 'constraints') && (!Array.isArray(args.constraints) || !args.constraints.every(nonempty))) return 'invalid_constraints';
-  }
+
   if (['fleet_send', 'fleet_interrupt', 'fleet_result', 'fleet_kill'].includes(name) && !nonempty(args.workerId)) return 'invalid_worker';
   if (name === 'fleet_provider_status' && ((Object.hasOwn(args, 'providerId') && !/^[A-Za-z0-9._:-]{1,128}$/.test(args.providerId ?? ''))
     || (Object.hasOwn(args, 'after') && !/^provider-processing:[a-f0-9]{64}$/.test(args.after ?? ''))
@@ -1845,14 +1829,7 @@ function validateArguments(name, args, maxWaitMs = null) {
       || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note) || Buffer.byteLength(args.note) > FRAME_LIMITS['orientation.note'].value
       || !Number.isSafeInteger(args.expectedFence) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
   }
-  if (name === 'fleet_reuse_decide' && (!nonempty(args.need) || !['borrow', 'build'].includes(args.choice) || !nonempty(args.rationale)
-    || !record(args.dossier) || !record(args.sbom) || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0
-    || Object.keys(args.dossier ?? {}).some((key) => !['claim', 'args'].includes(key)) || Object.keys(args.sbom ?? {}).some((key) => !['claim', 'args'].includes(key))
-    || (Object.hasOwn(args, 'supersedes') && (!record(args.supersedes)
-      || Object.keys(args.supersedes).some((key) => !['decisionId', 'expectedValidityVersion'].includes(key))
-      || !nonempty(args.supersedes.decisionId) || !Number.isSafeInteger(args.supersedes.expectedValidityVersion) || args.supersedes.expectedValidityVersion <= 0)))) return 'invalid_reuse_decision';
-  if (name === 'fleet_reuse_recheck' && (!nonempty(args.decisionId) || !Number.isSafeInteger(args.expectedValidityVersion) || args.expectedValidityVersion <= 0
-    || !['advisory_refresh', 'ttl_expired'].includes(args.trigger) || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0)) return 'invalid_reuse_recheck';
+
   // Part D (board tools): a hand-rolled shape check ahead of hub dispatch — the hub's own
   // exact()-style checks (SAFE_BOARD_ID, ...) are the durable authority; this only rejects
   // obviously-malformed calls before an orchestrator-lease lookup.
@@ -2668,9 +2645,7 @@ export class McpFleetServer {
         return outcome;
       }
       if (admission.call.status === 'admitted') return toolError('call_admitted');
-      if (admission.call.status === 'completed' && ['fleet_reuse_decide', 'fleet_reuse_recheck'].includes(name)) {
-        try { return toolResult(await this._dispatch(name, args, actor, admission.call.callId)); } catch { return toolError('temporarily_unavailable'); }
-      }
+
       if (admission.call.status === 'completed' && APPLICATION_TOOL[name]) {
         try {
           const sessionAuthority = this.principal.sessionAuthority ?? null;
@@ -3050,12 +3025,6 @@ export class McpFleetServer {
       actor, principalId: principal.userId, sessionId: principal.sessionId, powers: clone(principal.capabilities),
       idempotencyKey: `mcp.call:${callId}`,
     });
-    else if (name === 'fleet_scratch_oracle') value = await this.coordinator.spawnScratchOracle(args.scratchFactId, args.harness, {
-      model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, verification: args.verification,
-      budget: args.budget, constraints: args.constraints, goal: args.goal, definitionOfDone: args.definitionOfDone,
-      taskId: args.taskId ?? `mcp-${callId}`,
-      actor: `operator:${actor}`, idempotencyKey: `mcp.call:${callId}`,
-    });
     else if (name === 'fleet_goal_define') value = await this.coordinator.defineGoal({
       objective: args.objective, definitionOfDone: args.definitionOfDone, constraints: args.constraints,
       risk: args.risk, budget: args.budget, predecessor: args.predecessor,
@@ -3087,8 +3056,6 @@ export class McpFleetServer {
       else value = await this.coordinator.orientWorker(args.workerId, args.args, args.note, { ...context, expectedFence: args.expectedFence });
       value = transportCapability(value);
     }
-    else if (name === 'fleet_reuse_decide') value = await this.coordinator.decideReuse({ need: args.need, choice: args.choice, rationale: args.rationale, dossier: args.dossier, sbom: args.sbom, ...(args.supersedes ? { supersedes: args.supersedes } : {}) }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });
-    else if (name === 'fleet_reuse_recheck') value = await this.coordinator.recheckReuseDecision({ decisionId: args.decisionId, expectedValidityVersion: args.expectedValidityVersion, trigger: args.trigger, budgetTokens: args.budgetTokens }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_drain') value = await this.coordinator.drain({ actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}` });
     // S-2 v2 board tools are thin translations into the closed admission envelope. Lease proof,
@@ -3376,7 +3343,6 @@ export async function serveMcpStdio(server, opts = {}) {
     await server.close();
   }
 }
-
 
 // CS-1/CS-2: executable MCP profile inventories (never regex extraction alone).
 export function mcpApplicationToolNames() {
