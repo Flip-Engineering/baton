@@ -334,13 +334,12 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'capacity_pressure', scope: 'deployment', terminal: true, next: 'baton_deployment_doctor / baton doctor --check',
-    summary: 'the deployment workspace observation crossed the capacity floor: every dispatch refuses until space is freed',
-    // Deployment observation, never a ledger row: the doctor observes workspace capacity FRESH on
-    // every read (#35), so there is no durable row to project. This is the class that stalled seven
-    // workers for hours with no wake at all.
+    summary: 'the repository volume free space could not be observed; the doctor names the workspace row',
+    // Deployment observation, never a ledger row: the doctor observes the workspace row FRESH on
+    // every read (#35), so there is no durable row to project.
     rows: [],
     observation: 'capacity', announceStanding: true,
-    subject: { field: 'code', kind: 'capacity', fallback: null },
+    subject: { field: 'state', kind: 'capacity', fallback: null },
   }),
   wakeRow({
     wakeClass: 'resident_lifecycle', scope: 'deployment', terminal: true, next: 'baton_deployment_doctor / baton doctor --check',

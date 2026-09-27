@@ -25,14 +25,6 @@ const verification = Object.freeze({
   command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
   timeoutMs: 10_000, maxOutputBytes: 64 * 1024, requiredPredecessorEvidence: [],
 });
-const capacityPolicy = Object.freeze({
-  maxReservedBytes: 64 * 1024 * 1024,
-  maxReservedInodes: 10_000,
-  minFreeBytes: 1,
-  minFreeInodes: 1,
-  runtimeReserveBytes: 4 * 1024,
-  runtimeReserveInodes: 4,
-});
 const profile = Object.freeze({
   schemaVersion: 1, repoId: 'repo-swarm-projection-pins', definitionOfDone: ['done'], constraints: ['scope'], risk: 'high',
   goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
@@ -45,7 +37,7 @@ const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: 
 const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['impl/**'] };
 
 // turnDelayMs keeps the resumed mock turn active for the following mid-turn guides.
-async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
+async function fixture(t, { turnDelayMs = 5 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-projection-pins-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
@@ -64,11 +56,6 @@ async function fixture(t, { sharedCheckout = false, turnDelayMs = 5 } = {}) {
   const driver = createDriver({
     repoRoot: repo, repoId: policy.repoId, logDir: join(directory, 'log'),
     adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true }, stopDeadlineMs: 2000,
-    ...(sharedCheckout ? {
-      worktreeCapacity: capacityPolicy,
-      worktreeCapacityEstimate: () => ({ bytes: 16 * 1024, inodes: 32 }),
-      worktreeCapacityObserve: () => ({ freeBytes: 1024 * 1024 * 1024, freeInodes: 1_000_000 }),
-    } : {}),
   });
   const app = new BatonApplication({ driver, repoId: policy.repoId, profiles: { standard: profile },
     principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
@@ -146,7 +133,7 @@ test('the view pins what a participant was told, and the guide receipt that wrot
 });
 
 test('the view pins live checkout custody against the coordinator attachment it projects', async (t) => {
-  const { swarm, delegated, driver, leadWorker, paused } = await builders(t, { sharedCheckout: true, turnDelayMs: 250 });
+  const { swarm, delegated, driver, leadWorker, paused } = await builders(t, { turnDelayMs: 250 });
   const sharer = await delegated.recruit('sharer', 'Share the checkout', { ...selection, shareWorkspaceWith: 'lead' });
   await paused(sharer.runId);
   const view = await swarm.view();

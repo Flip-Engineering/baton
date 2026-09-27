@@ -274,10 +274,6 @@ test('R28-3: adapterOptions/maxWireFrameBytes ceiling is honored and card report
       adapters: { 'claude-code:claude': adapter },
       adapterOptions: { maxWireFrameBytes: ceiling },
       verification: { command: 'node', arguments: ['--test'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-      },
     },
   });
   try {

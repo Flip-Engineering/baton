@@ -2354,7 +2354,7 @@ export function _validateRecoveryRefinementRequest(store, fields, attribution, p
 export function _validateRecoverySessionRequest(sessionRequest, priorTask, fail) {
   const requestFields = ['context', 'id', 'mode'];
   const contextFields = new Set([
-    'baseSha', 'branch', 'capacityReservation', 'logicalTaskId', 'ownerReceiptDigest', 'ownerTaskId', 'repoRoot',
+    'baseSha', 'branch', 'logicalTaskId', 'ownerReceiptDigest', 'ownerTaskId', 'repoRoot',
     'sparseCheckoutIdentity', 'sparsePaths', 'toolchainProjection', 'worktree',
   ]);
   const context = sessionRequest?.context;
@@ -2374,7 +2374,7 @@ export function _validateRecoverySessionRequest(sessionRequest, priorTask, fail)
     || (context.sparsePaths !== undefined && (!Array.isArray(context.sparsePaths)
       || context.sparsePaths.length > 4_096
       || context.sparsePaths.some((path) => !boundedText(path, 32_768))))
-    || ['sparseCheckoutIdentity', 'toolchainProjection', 'capacityReservation'].some((key) => context[key] !== undefined
+    || ['sparseCheckoutIdentity', 'toolchainProjection'].some((key) => context[key] !== undefined
       && (!context[key] || typeof context[key] !== 'object' || Array.isArray(context[key])))
     || bytes > 1024 * 1024) {
     fail('recovery refinement session context is malformed');

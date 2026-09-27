@@ -1,5 +1,5 @@
 // issue500-deployment-capacity.test.mjs — Issue #500 (deployment group): the disk, memory,
-// artifact-size and worktree-capacity bounds in application-deployment.mjs carried no cited
+// artifact-size and worktree bounds in application-deployment.mjs carried no cited
 // derivation. The module now carries a #500 triage comment at each bound (per the #496
 // registry-roots precedent in limits.mjs: an operator-declared number stays, the comment records
 // the triage), and THIS suite pins each bound's live value and — where a hermetic seam exists —
@@ -7,10 +7,10 @@
 //
 // Rows:
 //   500-caps-A  the open publishes the declared defaults verbatim on the driver options: the
-//               worktree capacity reserves, the stop deadline, the steering nudge window, the
-//               drain policy, the budget terminal grace, and the dependency projection limits
-//   500-caps-B  a capacity observation is quantized down to the observation quanta before any
-//               verdict or published row
+//               stop deadline, the steering nudge window, the drain policy, the budget terminal
+//               grace, and the dependency projection limits
+//   500-caps-B  the doctor workspace row is an observation only — state 'ready' with free bytes
+//               and inodes quantized down to 64 MiB / 10 000, and no verdict field on the row
 //   500-caps-C  the adapter wire frame corridor refuses outside 64 KiB–16 MiB and admits both
 //               bounds exactly
 //   500-caps-D  the resident command deadline default is 30 s: pollMs sits on its boundary and
@@ -121,14 +121,10 @@ async function openFailure(name, advanced) {
 
 const duplicateRoutes = [ROUTE, { ...ROUTE }];
 
-test('500-caps-A: the open publishes the declared capacity and stop-envelope defaults verbatim', async (t) => {
+test('500-caps-A: the open publishes the declared stop-envelope and projection defaults verbatim', async (t) => {
   let driverOptions = null;
   await openDeployment(t, 'defaults', { onDriver: (options) => { driverOptions = options; } });
   assert(driverOptions, 'the open handed the driver its options');
-  assert.deepEqual(driverOptions.worktreeCapacity, {
-    maxReservedBytes: null, maxReservedInodes: null, minFreeBytes: null, minFreeInodes: null,
-    runtimeReserveBytes: 64 * 1024 * 1024, runtimeReserveInodes: 10_000,
-  }, 'the per-runtime reserve stays the shipped 64 MiB / 10 000-inode allowance with a derived floor');
   assert.equal(driverOptions.stopDeadlineMs, 15_000, 'the stop deadline');
   assert.equal(driverOptions.progressNudgeWindowMs, 300_000, 'the steering nudge window');
   assert.deepEqual(driverOptions.drainPolicy, { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
@@ -141,22 +137,37 @@ test('500-caps-A: the open publishes the declared capacity and stop-envelope def
   }, 'the dependency projection limits ride the attested descriptor verbatim');
 });
 
-test('500-caps-B: a capacity observation is quantized down before any verdict or published row', async (t) => {
+test('500-caps-B: the doctor workspace row is a quantized observation only', async (t) => {
   const BYTE_QUANTUM = 64 * 1024 * 1024;
   const INODE_QUANTUM = 10_000;
-  const deployment = await openDeployment(t, 'quantum', {
-    advanced: {
-      capacity: {
-        observe: () => ({
-          freeBytes: 3 * BYTE_QUANTUM + 12_345, freeInodes: 2 * INODE_QUANTUM + 999,
-        }),
-      },
-    },
-  });
+  const deployment = await openDeployment(t, 'quantum');
   const doctor = await deployment.doctor();
   assert.equal(doctor.workspace.state, 'ready');
-  assert.equal(doctor.workspace.freeBytes, 3 * BYTE_QUANTUM, 'free bytes snap down to a 64 MiB step');
-  assert.equal(doctor.workspace.freeInodes, 2 * INODE_QUANTUM, 'free inodes snap down to a 10 000-inode step');
+  assert.equal(doctor.workspace.freeBytes % BYTE_QUANTUM, 0, 'free bytes snap down to a 64 MiB step');
+  assert.equal(doctor.workspace.freeInodes % INODE_QUANTUM, 0, 'free inodes snap down to a 10 000-inode step');
+  assert.equal('code' in doctor.workspace, false, 'an observation row carries no refusal code');
+  assert.equal('floorBytes' in doctor.workspace, false, 'an observation row carries no floor');
+});
+
+test('500-caps-G: advanced.capacity accepts only hostCapacity', async (t) => {
+  const base = {
+    deploymentRoot: join(tmp('caps-option'), 'deployment'),
+    adapters: { [ROUTE.harness]: fixtureAdapter(ROUTE.harness) },
+    routes: [ROUTE],
+    verification: { command: process.execPath, arguments: ['--version'] },
+  };
+  for (const capacity of [
+    { policy: { minFreeBytes: 0 } },
+    { estimate: () => ({ bytes: 1, inodes: 1 }) },
+    { observe: () => ({ freeBytes: 1, freeInodes: 1 }) },
+    { runtimeFootprint: () => ({ bytes: 1, inodes: 1 }) },
+  ]) {
+    await assert.rejects(
+      openFailure('caps-option', { ...base, capacity }),
+      (error) => error?.code === 'deployment_config_invalid' && /advanced capacity/u.test(error.message),
+      'the reservation-ledger options leave advanced.capacity with hostCapacity alone',
+    );
+  }
 });
 
 test('500-caps-C: the adapter wire frame corridor refuses outside 64 KiB–16 MiB and admits the bounds', async (t) => {

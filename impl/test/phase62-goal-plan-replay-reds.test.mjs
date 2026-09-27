@@ -11,6 +11,7 @@ import {
   CoordinationIntegrityError, CoordinationStore, MockAdapter, createDriver,
 } from '../src/index.mjs';
 import { normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest } from '../src/goal-plan.mjs';
+import { listWorktrees } from '../src/worktree.mjs';
 
 import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
 
@@ -672,7 +673,7 @@ test('GP5/GP8: generic createTask cannot bypass mandatory dispatch or smuggle pl
   store.releaseWriterLease();
 });
 
-test('GP5/GP8: caller verification substitution refuses before task, capacity, or adapter effects', async () => {
+test('GP5/GP8: caller verification substitution refuses before task, worktree, or adapter effects', async () => {
   const repo = root('brief-repo');
   const logDir = root('brief-log');
   execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -689,21 +690,12 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   let spawnCalls = 0;
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
-  let capacityObservations = 0;
   const driver = createDriver({
     repoRoot: repo,
     repoId: policy.repoId,
     logDir,
     adapters: { mock: adapter },
     goalPlanAuthority: { policy, authorize: async () => true },
-    worktreeCapacity: {
-      maxReservedBytes: 100_000_000, maxReservedInodes: 100_000,
-      minFreeBytes: 1, minFreeInodes: 1, runtimeReserveBytes: 1, runtimeReserveInodes: 1,
-    },
-    worktreeCapacityObserve: () => {
-      capacityObservations += 1;
-      return { freeBytes: 1_000_000_000, freeInodes: 1_000_000 };
-    },
     stopDeadlineMs: 1_000,
   });
   const ctx = (principalId, powers, idempotencyKey) => ({
@@ -728,8 +720,7 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   }, ctx('approver', ['plan:approve'], 'approval:brief'));
 
   const beforeSeq = driver.coordination.snapshot().lastSeq;
-  const beforeCapacity = driver.worktreeCapacity.snapshot();
-  const beforeObservations = capacityObservations;
+  const beforeWorktrees = await listWorktrees(repo);
   await assert.rejects(
     () => driver.coordinator.spawn('mock', {
       goal: 'Implement the approved slice', constraints: ['No network access'],
@@ -746,8 +737,8 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   );
   assert.equal(driver.coordination.snapshot().lastSeq, beforeSeq);
   assert.equal(driver.coordination.task('brief-substitution'), null);
-  assert.deepEqual(driver.worktreeCapacity.snapshot(), beforeCapacity);
-  assert.equal(capacityObservations, beforeObservations);
+  assert.deepEqual(await listWorktrees(repo), beforeWorktrees,
+    'the refusal precedes any worktree effect');
   assert.equal(spawnCalls, 0);
   assert.deepEqual(driver.coordinator.list(), []);
   const approvedBrief = {
@@ -776,8 +767,8 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
     );
   }
   assert.equal(driver.coordination.snapshot().lastSeq, beforeSeq);
-  assert.deepEqual(driver.worktreeCapacity.snapshot(), beforeCapacity);
-  assert.equal(capacityObservations, beforeObservations);
+  assert.deepEqual(await listWorktrees(repo), beforeWorktrees,
+    'the refusal precedes any worktree effect');
   assert.equal(spawnCalls, 0);
   assert.deepEqual(driver.coordinator.list(), []);
   driver.close();

@@ -102,10 +102,6 @@ test('DS-3: missing deepseek_key.json is an honest not-ready doctor result, not 
       advanced: {
         deploymentRoot: join(fixture.root, 'deployment'),
         verification: { command: process.execPath, arguments: ['--version'] },
-        capacity: {
-          estimate: () => ({ bytes: 1, inodes: 1 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
       },
     });
   } finally {

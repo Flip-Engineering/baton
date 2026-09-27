@@ -441,10 +441,6 @@ async function fileDoctorOver({ repo, home, authContents = null, label, keychain
             'claude-code:claude': new MuseFileRouteCard(CLAUDE_FILE_CARD),
           },
           verification: { command: process.execPath, arguments: ['--version'] },
-          capacity: {
-            estimate: () => ({ bytes: 1, inodes: 1 }),
-            observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-          },
         },
       });
       return await deployment.doctor();
@@ -586,10 +582,6 @@ test('#323: a served deployment constructs its built-in muse adapter live — sp
         deploymentRoot: join(fileTmp('deployment-live'), 'deployment'),
         routes: museRoutes,
         verification: { command: process.execPath, arguments: ['--version'] },
-        capacity: {
-          estimate: () => ({ bytes: 1, inodes: 1 }),
-          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-        },
       },
     }, spyDriver));
     const adapter = captured?.['muse:muse'];

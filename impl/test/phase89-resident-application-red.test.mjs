@@ -475,12 +475,6 @@ test('RA4 RED: openBaton exposes the same Runs collection while preserving conci
       adapters: { mock: adapter() },
       routes: [EXACT_ROUTE],
       verification: { command: 'node', arguments: ['-e', 'process.exit(0)'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({
-          freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER,
-        }),
-      },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch { /* fixture teardown */ } });
@@ -937,12 +931,6 @@ test('RA13 RED: deployment.runs.start and deployment.run share the exact route-r
       adapters: { mock: blocked },
       routes: [EXACT_ROUTE],
       verification: { command: 'node', arguments: ['-e', 'process.exit(0)'] },
-      capacity: {
-        estimate: () => ({ bytes: 60, inodes: 5 }),
-        observe: () => ({
-          freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER,
-        }),
-      },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch { /* fixture teardown */ } });

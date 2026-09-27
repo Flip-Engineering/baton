@@ -777,24 +777,6 @@ function dispatchFailure(cause, command = null) {
   if (cause?.code === 'provider_read_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'provider read unavailable' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   if (['coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'coordinator lifecycle conflict' } } };
-  // #307: the refusal names its numbers — free, reserved, the estimate, the floor (and its
-  // source) — and the remedy that would admit this exact request, so "what defines this limit"
-  // is answered by the refusal itself.
-  if (cause?.code === 'worktree_capacity_exceeded' && Number.isSafeInteger(cause?.floorBytes)) {
-    return { httpStatus: 503, body: { ok: false, error: {
-      code: cause.code,
-      message: 'workspace capacity refused this dispatch: '
-        + `${cause.freeBytes} bytes and ${cause.freeInodes} inodes free, `
-        + `${cause.outstandingBytes} bytes and ${cause.outstandingInodes} inodes already reserved outstanding, `
-        + `this dispatch estimates ${cause.estimateBytes} bytes and ${cause.estimateInodes} inodes; `
-        + `the floor is ${cause.floorBytes} bytes and ${cause.floorInodes} inodes`
-        + (cause.floorSource === 'derived'
-          ? ' (derived: the largest recorded checkout estimate plus the measured runtime footprint)'
-          : ` (configured by advanced.capacity.policy.${cause.floorSource === 'mixed' ? 'minFreeBytes/minFreeInodes overrides' : 'minFreeBytes/minFreeInodes'})`)
-        + `; free at least ${cause.deficitBytes} bytes and ${cause.deficitInodes} inodes, then retry`,
-    } } };
-  }
-  if (['worktree_capacity_exceeded', 'worktree_capacity_unavailable'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'workspace capacity refused this dispatch; free repository volume space or raise the deployment capacity floors, then retry' } } };
   // #329: the host-wide authority's queue timeout names the dimension it waited on (load,
   // memory, budget) with the observed and required numbers and the operator bypass, instead of
   // the transient fallthrough — a recruit that can never be admitted on this host must say so.
@@ -1702,14 +1684,12 @@ export class WebNorthbound {
     const workspace = card.readiness?.workspace ?? null;
     const resident = card.resident ?? null;
     return Object.freeze({
-      // A standing fault: 'blocked' means every dispatch refuses until space is freed, and
-      // 'unobserved' means the volume could not be read at all.
+      // A standing observation: 'unobserved' means the repository volume could not be read at all.
       capacity: workspace && typeof workspace === 'object' && workspace.state !== 'ready'
         ? Object.freeze({
-          state: workspace.state, code: workspace.code ?? 'worktree_capacity_unavailable',
+          state: workspace.state,
           summary: workspace.summary ?? null,
           freeBytes: workspace.freeBytes ?? null, freeInodes: workspace.freeInodes ?? null,
-          minFreeBytes: workspace.minFreeBytes ?? null, minFreeInodes: workspace.minFreeInodes ?? null,
         })
         : null,
       resident: resident && typeof resident === 'object'

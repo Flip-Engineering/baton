@@ -125,10 +125,6 @@ const deployment = await openBaton({
     adapters: { omp: adapter },
     routes: [{ harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort: 'high' }],
     verification: { command: 'node', arguments: ['--version'] },
-    capacity: {
-      estimate: () => ({ bytes: 60, inodes: 5 }),
-      observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-    },
   },
 });
 

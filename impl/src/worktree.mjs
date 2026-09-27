@@ -89,8 +89,8 @@ export class StructuredMergeError extends Error {
 // ---------------------------------------------------------------------------
 
 // G-32: ONE bound for every git invocation whose stdout is a whole-repository listing —
-// `status`, `ls-tree` and `ls-files` at any scope. The two wrappers below and worktree-capacity's
-// `git` all take it from here; no call writes a buffer size of its own. It is derived, not picked:
+// `status`, `ls-tree` and `ls-files` at any scope. The two wrappers below take it from here; no
+// call writes a buffer size of its own. It is derived, not picked:
 // the widest row those commands emit, times the number of paths this deployment serves. That row
 // is `ls-tree -r -l -z`'s — mode, type, object id, size, tab, path, NUL — whose header is under 64
 // bytes and whose path no checkout-able entry exceeds (PATH_MAX, 1024), so 1088 bytes covers any
@@ -2038,9 +2038,8 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
       ...(toolchainProjection ? { toolchainProjection } : {}),
     };
   } catch (err) {
-    // A caller-supplied owner receipt makes creation one outer transaction. In particular, the
-    // capacity authority must settle before any checkout, branch, administration, metadata, or
-    // receipt is removed. Leave every possible post-add effect for that caller's exact reap.
+    // A caller-supplied owner receipt makes creation one outer transaction: leave every possible
+    // post-add effect for that caller's exact reap.
     if (!externallyOwnedReceipt) {
       try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
       catch { rmSync(dir, { recursive: true, force: true }); }
@@ -3322,8 +3321,8 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * whose owner is not expected and whose controller is not live is removed only when it holds no
  * content this repository's captures never recorded AND no other live holder still works in it.
  * Otherwise it is retained with a typed diagnostic, the owner joins `retainedContentOwners`, and
- * it enters the retained set so its capacity reservation evidence and owner receipt are not
- * settled for a resource that still exists.
+ * it enters the retained set so its owner receipt is not settled for a resource that still
+ * exists.
  *
  * @param {string} repoRoot
  * @param {string[]} expectedActiveTaskIds
@@ -3427,8 +3426,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   const localWorkerCandidates = new Set();
 
   // Publication temps carry the exact opaque owner and controller tuple. They are authority,
-  // not disposable scratch: include temp-only response-loss records in the same capacity-gated
-  // reconciliation transaction as final receipts.
+  // not disposable scratch: include temp-only response-loss records in the same reconciliation
+  // transaction as final receipts.
   try {
     const publicationRoot = workspaceOwnerRoot(repoRoot, false);
     if (publicationRoot && existsSync(publicationRoot)) {
@@ -3568,9 +3567,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         continue;
       }
       if (existsSync(fullDir)) {
-        // Content preservation and custody are decided before capacity settlement: a retained
-        // checkout still consumes its reservation, so the settlement callback must never be
-        // consulted for it.
+        // Content preservation and custody are decided before owner cleanup: a checkout this
+        // boundary retains is never handed to the caller's cleanup callback.
         try {
           assertRemovableContent(repoRoot, normalizedTaskId, opts);
         } catch (error) {
@@ -3627,8 +3625,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
             if (!report.retainedContentOwners.includes(normalizedTaskId)) {
               report.retainedContentOwners.push(normalizedTaskId);
             }
-            // A retained checkout keeps consuming its owner's capacity: joining the retained set
-            // is what keeps the reservation row from being settled for a resource that still exists.
+            // Joining the retained set keeps a checkout that still exists from being settled.
             retainExpected(normalizedTaskId);
             continue;
           }
