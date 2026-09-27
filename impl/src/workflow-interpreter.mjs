@@ -554,6 +554,13 @@ async function readView(handle, needStatus = false) {
   // progressClass projects as the { class, silenceMs, meaningfulEventAt } object on the outline;
   // the view flattens the class string.
   const progressProjection = io.progressClass ?? so.progressClass ?? null;
+  // Issue #199: a FAILED phase is terminal only when the read carries the durable cause. A run
+  // view can read `failed` while the member's process is still alive — the harness's double-spawn
+  // (spawn → process_started → session re-spawn) makes a status read that races the window — so a
+  // failed read with no typed cause is a suspect read the drive defers. No count, no clock: the
+  // typed cause (the view's terminalCause, or the plan node's terminalOutcome with accepted:false)
+  // is the authority.
+  const terminalEvidence = failedTerminalEvidence(io, so);
   return {
     phase,
     observationClosed,
@@ -563,7 +570,10 @@ async function readView(handle, needStatus = false) {
     workerId,
     planDigest,
     task: so.task ?? null,
-    terminal: insp?.terminal === true || io.terminal === true || so.terminal === true || TERMINAL_PHASES.has(phase ?? ''),
+    terminal: phase === 'failed'
+      ? terminalEvidence !== null
+      : (insp?.terminal === true || io.terminal === true || so.terminal === true || TERMINAL_PHASES.has(phase ?? '')),
+    terminalEvidence,
     terminalStatus: so.terminalOutcome?.status ?? io.terminalOutcome?.status ?? null,
     lastProgress: io.lastProgress ?? null,
     silenceMs: Number.isSafeInteger(io.silenceMs) ? io.silenceMs
@@ -574,7 +584,25 @@ async function readView(handle, needStatus = false) {
 }
 
 const TERMINAL_PHASES = new Set(['work_completed', 'completed', 'result_ready', 'cancelled', 'failed', 'stopped', 'denied', 'closed']);
-const isTerminal = (v) => v.terminal === true || TERMINAL_PHASES.has(v.phase ?? '') || v.terminalStatus === 'completed';
+
+/** Issue #199: the durable cause a FAILED read must carry to be terminal — the view's typed
+ * `terminalCause`, or a plan node's `terminalOutcome` with `accepted: false`. Null means the read
+ * is suspect and the member keeps being driven. */
+function failedTerminalEvidence(io, so) {
+  const cause = io?.terminalCause ?? so?.terminalCause ?? null;
+  if (cause !== null && typeof cause === 'object'
+    && typeof cause.kind === 'string' && cause.kind.length > 0
+    && typeof cause.code === 'string' && cause.code.length > 0) return cause;
+  const node = Array.isArray(so?.nodes) ? so.nodes[0] : null;
+  const outcome = node?.terminalOutcome ?? null;
+  if (outcome !== null && typeof outcome === 'object' && outcome.accepted === false
+    && typeof outcome.status === 'string' && outcome.status.length > 0) return outcome;
+  return null;
+}
+
+const isTerminal = (v) => v.phase === 'failed'
+  ? v.terminalEvidence != null
+  : (v.terminal === true || TERMINAL_PHASES.has(v.phase ?? '') || v.terminalStatus === 'completed');
 
 // Terminality and success are different facts. Stopped, cancelled, failed and unknown
 // members never establish successful work, even if cleanup later captures their files.
@@ -881,6 +909,10 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
     || st.nudgeOnCheckpoint || st.claimOnStall);
 
   const unreadable = new Set();
+  // Issue #199: the instant each member was first seen in a FAILED phase with no durable cause.
+  // It is not a count and not a verdict — it is how the drive notices that the suspect read has
+  // outlasted the driver's own stall budget.
+  const suspectSince = new Map();
   const closedObservers = new Set();
   let exit = null;
 
@@ -941,6 +973,21 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
       }
       return;
     }
+    // Issue #199: a FAILED read with no durable cause is a suspect read — it can race the harness's
+    // double-spawn window while the member's process is alive, so it never ends the member and it
+    // is never a verdict. The member leaves the drive once the driver's own stall budget has passed
+    // with the phase unchanged; the settle then reports the phase it was last observed in, and the
+    // close remains the act that stops the worker. The budget is the driver's declared policy (the
+    // same one the wave driver adjudicates stalls on) — never a count and never a clock of its own.
+    if (v.phase === 'failed') {
+      if (!suspectSince.has(role)) suspectSince.set(role, Date.now());
+      if (Date.now() - suspectSince.get(role) >= driver.stallTimeoutMs) {
+        pending.delete(role);
+        steering.push({ evidence: 'wave_member_spawn_window', role, phase: 'failed' });
+      }
+      return;
+    }
+    suspectSince.delete(role);
     if (v.phase === null && !unreadable.has(role)) {
       unreadable.add(role);
       steering.push({ evidence: 'wave_member_unreadable', role });

@@ -274,7 +274,27 @@ function preseedReport(repoRoot, member, salt) {
   } catch { /* scaffold — a member writing its own report overrides */ }
 }
 
+/** Issue #199: the durable cause a FAILED read must carry to be terminal — the view's typed
+ * `terminalCause`, or a plan node's `terminalOutcome` with `accepted: false`. Null means the read
+ * is suspect: it can race the harness's double-spawn window while the member's process is alive,
+ * so the drive defers it. */
+function failedTerminalEvidence(outline) {
+  const cause = outline?.terminalCause ?? null;
+  if (cause !== null && typeof cause === 'object'
+    && typeof cause.kind === 'string' && cause.kind.length > 0
+    && typeof cause.code === 'string' && cause.code.length > 0) return cause;
+  const node = Array.isArray(outline?.nodes) ? outline.nodes[0] : null;
+  const outcome = node?.terminalOutcome ?? null;
+  if (outcome !== null && typeof outcome === 'object' && outcome.accepted === false
+    && typeof outcome.status === 'string' && outcome.status.length > 0) return outcome;
+  return null;
+}
+
 function terminalFrom(outline) {
+  // A FAILED phase is the one terminal class a live member's read can produce by racing its own
+  // spawn window, so it is terminal only when the read carries the durable cause. No count, no
+  // clock: the typed cause is the authority, and every other terminal phase is untouched.
+  if (canonicalRunPhase(outline?.phase) === 'failed') return failedTerminalEvidence(outline) !== null;
   return outline?.terminal === true || applicationTerminal(outline?.phase);
 }
 
