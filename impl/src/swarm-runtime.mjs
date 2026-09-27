@@ -1884,6 +1884,18 @@ export function parseRoutingExcludeHarnesses(value) {
   return harnesses;
 }
 
+/** Issue #612 (the second half): the swarm commands whose own dispatch reads route truth — a
+ * view's probe settlement (`_deploymentRouteRows`) and the brief's route section
+ * (`_routeUsageRows`), a watch's frames (the same view), and a recruit's degrade, exhaustion and
+ * selection checks (`_routeUsageRows`). The two legs at the dispatch entry serve exactly those
+ * reads: the #574 re-route check must have performed a pending resume before a route reading
+ * observes the fleet, and the turn-boundary reconcile walks the same worker handles the roster
+ * read does. #486's rule — a route read belongs where a route is read — makes every other command
+ * (`swarm.list`, the seat and knowledge reads, the board and receipt reads: all answered from the
+ * fold) run neither. A name added here must be a command whose served path really reads a route
+ * row; the test that pins this is issue612-route-read-command-entry. */
+const ROUTE_READING_COMMANDS = Object.freeze(new Set(['swarm.view', 'swarm.watch', 'swarm.recruit']));
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -3958,8 +3970,12 @@ export class SwarmRuntime {
    * rewrite per-checkout state when nothing changed, which is why the writer projection above
    * no longer rides this path. The observation it takes is ALSO the workspace observation the
    * roster reads: the seat's wrapper saw this checkout's HEAD at commit time, so the cache is
-   * stamped `wrapper` here and the next view needs no read of its own. */
-  _drainCommitObservations() {
+   * stamped `wrapper` here and the next view needs no read of its own.
+   * Issue #612: `turnBoundaries` is the reconcile below, and it walks every worker handle to read
+   * one epoch. `_dispatch` passes it for the commands that read a route and leaves it out for the
+   * ones that read none; every other caller (a view, a watch, a coupling settle, a test) keeps the
+   * default. */
+  _drainCommitObservations({ turnBoundaries = true } = {}) {
     const scopes = this.coordinator?._runtimeScopes ?? null;
     if (!scopes || typeof scopes.takeCommitObservations !== 'function') return;
     // A lease set that changed since the last projection (a resident restart re-creating its
@@ -4024,7 +4040,7 @@ export class SwarmRuntime {
         this.preserver.preserveCommit({ ...entry, work: 'commit' });
       }
     }
-    this._preserveTurnBoundaries();
+    if (turnBoundaries) this._preserveTurnBoundaries();
   }
 
   /** Issue #594: the turn boundaries this runtime observes, reconciled against the workers
@@ -8131,12 +8147,19 @@ export class SwarmRuntime {
 
   async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
+    // Issue #612 (the second half): the two legs below read the fleet — the #574 re-route check
+    // ranks its candidates off the deployment's route rows, and the turn-boundary reconcile walks
+    // every worker handle to read one epoch. #486's rule puts a route read where a route is read,
+    // so a command that reads no route runs neither (ROUTE_READING_COMMANDS). A turn boundary this
+    // entry does not look at is not lost: the reconcile compares epochs, so the next entry that
+    // reads the fleet sees the same boundary.
+    const readsRoutes = ROUTE_READING_COMMANDS.has(command);
     // Issue #425: every runtime entry drains the commit spools, so a seat's commit is seen at
     // the next operation — and the mutating arms below (a coupling declare/release, a recruit
     // binding) project the writer files again after their writes, before the answer ever returns
     // to the seat. Issue #438: the writer projection is NOT part of a read — it is written by
     // the apply paths that can change it, never on every command.
-    this._drainCommitObservations();
+    this._drainCommitObservations({ turnBoundaries: readsRoutes });
     // Issue #459: the same open entry sweeps the integration checkouts a previous incarnation left
     // behind — once per runtime incarnation, before any landing of this one exists, so the
     // directory a landing is about to create can never collide with a dead one's.
@@ -8155,12 +8178,12 @@ export class SwarmRuntime {
     // command. It rides the route reads that stand on it instead (`_routeUsageRows`, and the
     // deployment facts `inspect` publishes), so a command that reads no route reads no ledger row.
     // Issue #443: the decision that entry recorded is then ANSWERED when the swarm's policy says
-    // the runtime performs the resume itself. It runs here, on the async entry, BEFORE this
-    // command executes — so the view that observes a fault already carries the successor an `auto`
-    // swarm bound, while a `manual` swarm is left exactly as recorded. A decision still pending
-    // after this (its recruit refused, its store unavailable) is not an error: the proposal stays
-    // readable and the refusal lane holds the reason.
-    await this._performAutoReroutes();
+    // the runtime performs the resume itself. It runs here, on the async entry, BEFORE a command
+    // that reads a route executes — so the view that observes a fault already carries the successor
+    // an `auto` swarm bound, while a `manual` swarm is left exactly as recorded. A decision still
+    // pending after this (its recruit refused, its store unavailable) is not an error: the proposal
+    // stays readable and the refusal lane holds the reason.
+    if (readsRoutes) await this._performAutoReroutes();
     // The native bridge's refusal report (issue #283). It reaches the runtime through `dispatch`
     // because that is the bridge's ONLY channel, and it is admitted only from a bridge report: the
     // verb is not a swarm command (swarm-contract asserts it never becomes one), so no surface can
