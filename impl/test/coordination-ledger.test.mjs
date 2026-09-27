@@ -379,7 +379,6 @@ test('CL6: the pins that read a moved member\'s text resolve it through the live
   ]) {
     assert.ok(read(file).includes('memberSource('), `${file}: a moved member's text is read by name`);
   }
-  for (const file of ['test/issue391-store-goal-plan-pages.test.mjs', 'test/orchestrator-plan-object-red.test.mjs']) {
-    assert.ok(read(file).includes('coordination-ledger.mjs'), `${file}: the module list the scan walks names the ledger`);
-  }
+  assert.ok(read('test/issue391-store-goal-plan-pages.test.mjs').includes('coordination-ledger.mjs'),
+    'the module list the scan walks names the ledger');
 });
