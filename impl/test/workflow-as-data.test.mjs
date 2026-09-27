@@ -536,15 +536,14 @@ test('P3 (guard): createWaveDriver accepts the shipped steering/finalization voc
   assert.equal(typeof driver.run, 'function', 'the driver exposes run over the shipped vocabulary');
 });
 
-test('P4 (guard): MAX_WAVE_PROGRESS_BYTES and the 64-member ceiling hold', async () => {
+test('P4 (guard): MAX_WAVE_PROGRESS_BYTES holds, and a 65-member wave is not refused for its count', async () => {
   assert.equal(waveModule.MAX_WAVE_PROGRESS_BYTES, 7 * 1024 * 1024,
     'the progress envelope is 7 MiB (wave.mjs)');
   const dummy = { runs: { start: async () => { throw new Error('unused'); } } };
   const members = Array.from({ length: 65 }, (_, i) => wadMember(`p4-${i}`));
-  await assert.rejects(
+  await assert.doesNotReject(
     () => waveModule.createWave(dummy, { members }),
-    /bounded non-empty array/u,
-    'a 65-member wave is refused by the wave-machinery ceiling (createWave)',
+    'a 65-member wave is not refused for its member count (#530)',
   );
 });
 

@@ -364,8 +364,8 @@ export async function createWave(baton, options = {}) {
   }
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw waveError('wave options are invalid');
   const membersInput = options.members;
-  if (!Array.isArray(membersInput) || membersInput.length === 0 || membersInput.length > 64) {
-    throw waveError('wave members must be one bounded non-empty array');
+  if (!Array.isArray(membersInput) || membersInput.length === 0) {
+    throw waveError('wave members must be one non-empty array');
   }
   const approve = options.approve !== false;
   const repoRoot = typeof options.repoRoot === 'string' && options.repoRoot.length > 0 ? options.repoRoot : null;
@@ -465,8 +465,8 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
     throw waveError('wave attach requires server-side binding proof', 'wave_attach_proof_required');
   }
   if (typeof waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(waveId)) throw waveError('wave id is invalid');
-  if (!Array.isArray(membersInput) || membersInput.length === 0 || membersInput.length > 64) {
-    throw waveError('wave attach members must be one bounded non-empty array');
+  if (!Array.isArray(membersInput) || membersInput.length === 0) {
+    throw waveError('wave attach members must be one non-empty array');
   }
   const members = membersInput.map((member, index) => validateMember(member, index, repoRoot));
   if (new Set(members.map(({ role }) => role)).size !== members.length) {
