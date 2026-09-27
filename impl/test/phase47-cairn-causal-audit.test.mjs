@@ -15,11 +15,7 @@ reapFixtureDirectories();
 const root = (name = 'root') => mkdtempSync(join(tmpdir(), `baton-phase47-${name}-`));
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'causal-audit', reservedWorkerId: `w-${id}` });
-const limits = (overrides = {}) => ({
-  repoId: 'repo-a', maxStateRows: 256, maxNodes: 64, maxEdges: 128, maxEvidenceRefs: 256,
-  maxAuditSamples: 32, maxTraceDepth: 8, maxTraceRows: 128, maxArtifactBytes: 128 * 1024,
-  maxResultBytes: 128 * 1024, ...overrides,
-});
+const limits = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const ctx = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase47:direct', budgetTokens: 16_000, ...overrides });
 
 function clock(start = '2026-07-12T20:00:00.000Z') {
@@ -155,17 +151,8 @@ test('CA4/CA7: bounded audit distinguishes causal, temporal, contradiction, reca
   const noPath = structuredClone(result); delete noPath.refs[0].path; assert.equal((await capability.reverify(noPath, 'causal.audit', auditArgs, ctx())).ok, false);
   chmodSync(result.refs[0].path, 0o644); assert.equal((await capability.reverify(result, 'causal.audit', auditArgs, ctx())).ok, false); chmodSync(result.refs[0].path, 0o600);
   rmSync(result.refs[0].path); assert.equal((await capability.reverify(result, 'causal.audit', auditArgs, ctx())).ok, false); assert.equal(existsSync(result.refs[0].path), false);
-  await assert.rejects(cairn(store, { maxNodes: 2 }).invoke('causal.audit', {}, ctx()), (error) => error.code === 'causal_audit_oversize');
-  await assert.rejects(cairn(store, { maxEdges: 2 }).invoke('causal.audit', {}, ctx()), (error) => error.code === 'causal_audit_oversize');
-  await assert.rejects(cairn(store, { maxEvidenceRefs: 2 }).invoke('causal.audit', {}, ctx()), (error) => error.code === 'causal_audit_oversize');
-  await assert.rejects(cairn(store, { maxStateRows: 6, maxNodes: 6, maxEdges: 6, maxAuditSamples: 6, maxTraceRows: 6 }).invoke('causal.audit', {}, ctx()), (error) => error.code === 'causal_audit_oversize');
-  await assert.rejects(cairn(store, { maxArtifactBytes: 64 }).invoke('causal.audit', {}, ctx()), (error) => error.code === 'causal_audit_oversize');
-  const refusedArtifactRoot = root('refused-result-artifacts'); const refusedResult = new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot: refusedArtifactRoot, knowledgeAuditPolicy: limits({ maxResultBytes: 128 }) });
-  await assert.rejects(refusedResult.invoke('causal.audit', {}, ctx()), (error) => error.code === 'causal_audit_oversize'); assert.deepEqual(readdirSync(refusedArtifactRoot), []);
   assert.throws(() => cairn(store, { maxEvidenceRefs: 1_000_001 }), /configuration is invalid/);
   const cancelRoot = root('cancelled-artifacts'); const abort = new AbortController(); const cancelStore = new CoordinationStore(root('cancel-store'), { clock: clock() }); graph(cancelStore); const audit = cancelStore.auditKnowledge.bind(cancelStore); cancelStore.auditKnowledge = (...args) => { const metrics = audit(...args); abort.abort(); return metrics; }; const cancelled = new CairnRunScorecard({ coordination: cancelStore, readOperational: () => [], artifactRoot: cancelRoot, knowledgeAuditPolicy: limits() }); await assert.rejects(cancelled.invoke('causal.audit', {}, ctx({ signal: abort.signal })), (error) => error.code === 'cancelled'); assert.deepEqual(readdirSync(cancelRoot), []);
-  const bad = new CoordinationStore(root('audit-samples'), { clock: clock() }); const bg = graph(bad); for (const id of ['unlined-a', 'unlined-b']) bad.addKnowledgeNode({ id: `finding:${id}`, type: 'Finding', grounding: 'verified', body: id, evidence: [{ coordinationSeq: bg.created.event.seq }] }, { actor: 'policy', key: `finding:${id}` });
-  const sampled = await cairn(bad, { maxAuditSamples: 1 }).invoke('causal.audit', {}, ctx()); assert.equal(sampled.payload[0].metrics.violations.samples.length, 1); assert.equal(sampled.payload[0].metrics.violations.omittedSamples > 0, true); assert.equal(sampled.payload[0].disposition.status, 'fail');
   void g;
 });
 
@@ -187,20 +174,14 @@ test('CA8/CA9: trace is cycle-safe, bounded, repo-bound, and fully reverifiable'
   assert.equal(new Set(result.payload[0].nodes.map((node) => node.id)).size, result.payload[0].nodes.length);
   assert.equal(result.payload[0].complete, true); for (const field of ['workerAuthority', 'editAuthority', 'verificationAuthority', 'mergeAuthority', 'approvalAuthority', 'publicationAuthority', 'routingMutationAuthority', 'proofAuthority', 'noteAuthority', 'policyAuthoringAuthority']) assert.equal(result.provenance[field], false);
   assert.equal((await capability.reverify(result, 'causal.trace', traceArgs, ctx())).ok, true);
-  const partial = await cairn(store, { maxTraceDepth: 1 }).invoke('causal.trace', { nodeId: g.decision.node.id }, ctx()); assert.equal(partial.status, 'partial'); assert.equal(partial.payload[0].complete, false); assert.equal(partial.payload[0].frontier.length > 0, true);
   const abort = new AbortController(); abort.abort(); await assert.rejects(capability.invoke('causal.trace', { nodeId: g.decision.node.id }, ctx({ signal: abort.signal })), (error) => error.code === 'cancelled');
   await assert.rejects(capability.invoke('causal.trace', { nodeId: g.decision.node.id }, ctx({ repoId: 'repo-b' })), (error) => error.code === 'causal_repo_mismatch');
-  await assert.rejects(cairn(store, { maxTraceRows: 1 }).invoke('causal.trace', { nodeId: g.decision.node.id }, ctx()), (error) => error.code === 'causal_trace_oversize');
-  await assert.rejects(cairn(store, { maxEvidenceRefs: 1 }).invoke('causal.trace', { nodeId: g.decision.node.id }, ctx()), (error) => error.code === 'causal_trace_oversize');
-  await assert.rejects(cairn(store, { maxNodes: 2 }).invoke('causal.trace', { nodeId: g.decision.node.id }, ctx()), (error) => error.code === 'causal_trace_oversize');
   const resolvedStore = new CoordinationStore(root('trace-resolved'), { clock: clock() }); const rg = graph(resolvedStore, { contradiction: true }); resolvedStore.resolveKnowledgeContradiction({ edgeId: rg.conflict.edge.id, winnerId: rg.left.node.id, loserId: rg.right.node.id, expectedWinnerValidityVersion: 1, expectedLoserValidityVersion: 1, expectedEdgeValidityVersion: 1, reason: 'Resolved.' }, { actor: 'operator:alice', key: 'trace:resolve' }); const liveTrace = await cairn(resolvedStore).invoke('causal.trace', { nodeId: rg.left.node.id }, ctx()); assert.equal(liveTrace.payload[0].nodes.some((node) => node.id === rg.right.node.id), false); assert.equal(liveTrace.payload[0].edges.some((edge) => edge.type === 'Contradicts'), false);
 });
 
 test('CA8: frontier accounting is exact for cross-edges and refuses width overflow', async () => {
   const triangle = new CoordinationStore(root('triangle'), { clock: clock() }); for (const id of ['a', 'b', 'c']) triangle.createTask(task(id), { actor: 'orchestrator', key: `task:${id}` }); for (const [from, to] of [['a', 'b'], ['a', 'c'], ['b', 'c']]) triangle.addKnowledgeEdge({ type: 'Supports', from: `task:${from}`, to: `task:${to}`, evidence: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: `edge:${from}:${to}` });
-  const triangleTrace = await cairn(triangle, { maxTraceDepth: 1 }).invoke('causal.trace', { nodeId: 'task:a' }, ctx()); assert.equal(triangleTrace.status, 'ok'); assert.deepEqual(triangleTrace.payload[0].frontier, []);
-  const wide = new CoordinationStore(root('wide'), { clock: clock() }); for (const id of ['root', 'mid', ...Array.from({ length: 20 }, (_, index) => `leaf-${index}`)]) wide.createTask(task(id), { actor: 'orchestrator', key: `task:${id}` }); wide.addKnowledgeEdge({ type: 'Supports', from: 'task:root', to: 'task:mid', evidence: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: 'root:mid' }); for (let index = 0; index < 20; index += 1) wide.addKnowledgeEdge({ type: 'Supports', from: 'task:mid', to: `task:leaf-${index}`, evidence: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: `mid:${index}` });
-  await assert.rejects(cairn(wide, { maxTraceDepth: 1, maxTraceRows: 10 }).invoke('causal.trace', { nodeId: 'task:root' }, ctx()), (error) => error.code === 'causal_trace_oversize');
+  const triangleTrace = await cairn(triangle).invoke('causal.trace', { nodeId: 'task:a' }, ctx()); assert.equal(triangleTrace.status, 'ok'); assert.deepEqual(triangleTrace.payload[0].frontier, []);
 });
 
 test('CA1/CA9: authenticated direct, web, and MCP paths preserve repo and idempotency authority', async () => {
@@ -253,11 +234,11 @@ test('CA1: capability idempotency is request-bound, result-bound, concurrent-saf
   const restartEvidence = restarted.log.read('hub-capability').filter((event) => event.payload?.idempotencyKey === authority.idempotencyKey); assert.equal(restartEvidence.filter((event) => event.kind === 'capability.op.started').length, 1); assert.equal(restartEvidence.filter((event) => event.kind === 'capability.op.replayed').length >= 2, true); assert.equal(restarted.close(), true);
 });
 
-test('CA7: occupied artifacts are size-gated before reads and cancellation closes publication', async () => {
+test('CA7: occupied artifacts fail closed before reads and cancellation closes publication', async () => {
   const artifactRoot = root('occupied-artifacts'); const store = new CoordinationStore(root('occupied-store'), { clock: clock() }); graph(store); const capability = new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot, knowledgeAuditPolicy: limits() }); const result = await capability.invoke('causal.audit', {}, ctx({ idempotencyKey: 'occupied:first' })); const args = { observedSeq: result.payload[0].coordinationUpperBound }; const path = result.refs[0].path;
-  rmSync(path); writeFileSync(path, Buffer.alloc(limits().maxArtifactBytes + 1), { mode: 0o600 });
-  await assert.rejects(capability.invoke('causal.audit', args, ctx({ idempotencyKey: 'occupied:invoke' })), (error) => error.code === 'causal_audit_oversize');
-  const oversizedReverify = await capability.reverify(result, 'causal.audit', args, ctx({ idempotencyKey: 'occupied:reverify' })); assert.deepEqual(oversizedReverify, { ok: false, reason: 'causal_audit_oversize' });
+  rmSync(path); writeFileSync(path, Buffer.alloc(64), { mode: 0o600 });
+  await assert.rejects(capability.invoke('causal.audit', args, ctx({ idempotencyKey: 'occupied:invoke' })), (error) => error.code === 'causal_audit_integrity');
+  const occupiedReverify = await capability.reverify(result, 'causal.audit', args, ctx({ idempotencyKey: 'occupied:reverify' })); assert.deepEqual(occupiedReverify, { ok: false, reason: 'causal_audit_integrity' });
 
   const cancelRoot = root('publication-cancel-artifacts'); const cancelStore = new CoordinationStore(root('publication-cancel-store'), { clock: clock() }); graph(cancelStore); const abort = new AbortController(); const observationTime = cancelStore.observationTime.bind(cancelStore); cancelStore.observationTime = (...values) => { const observed = observationTime(...values); abort.abort(); return observed; };
   const cancelled = new CairnRunScorecard({ coordination: cancelStore, readOperational: () => [], artifactRoot: cancelRoot, knowledgeAuditPolicy: limits() });

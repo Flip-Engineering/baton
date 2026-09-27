@@ -51,58 +51,55 @@ export class CairnRunScorecard {
     if (this.routeAdvisor && (typeof this.routeAdvisor.advice !== 'function' || typeof this.routeAdvisor.policy !== 'function' || typeof this.routeAdvisor.snapshot !== 'function' || typeof this.coordination.routeObservations !== 'function'
       || !this.routeAdvice || Object.keys(this.routeAdvice).sort().join(',') !== ['maxBytes', 'maxCandidates', 'maxRows', 'maxTaskTypeBytes'].sort().join(',')
       || Object.values(this.routeAdvice).some((value) => !Number.isSafeInteger(value) || value <= 0) || this.routeAdvice.maxCandidates > 10_000 || this.routeAdvice.maxRows > 10_000 || this.routeAdvice.maxRows < this.routeAdvice.maxCandidates || this.routeAdvice.maxTaskTypeBytes > 4_096 || this.routeAdvice.maxBytes > 16 * 1024 * 1024)) throw new TypeError('Cairn route advice configuration is invalid');
+    // Issue #530: the six knowledge policies were a stack of caller-declared size and count ceilings
+    // (maxStateRows, maxBatchBytes, maxResultBytes and their siblings), each capped against an
+    // implementation number and each refusing an otherwise-valid operation. They are gone, with the
+    // ledger's reads of them and every refusal they drove. What stays is the identity the deployment
+    // owns — the repository the scorecard answers for — and the one floor a promotion needs
+    // (minScratchReaders), which is not a ceiling on an input.
     this.knowledgeAuditPolicy = opts.knowledgeAuditPolicy ? clone(opts.knowledgeAuditPolicy) : null;
     if (this.knowledgeAuditPolicy) {
-      const names = ['repoId', 'maxStateRows', 'maxNodes', 'maxEdges', 'maxEvidenceRefs', 'maxAuditSamples', 'maxTraceDepth', 'maxTraceRows', 'maxArtifactBytes', 'maxResultBytes'];
-      const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeAuditPolicy;
+      const names = ['repoId']; const p = this.knowledgeAuditPolicy;
       if (Object.keys(p).sort().join(',') !== names.sort().join(',') || typeof p.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(p.repoId)
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxNodes > p.maxStateRows || p.maxEdges > p.maxStateRows || p.maxAuditSamples > p.maxStateRows || p.maxTraceRows > p.maxStateRows || p.maxEvidenceRefs > 1_000_000 || p.maxEvidenceRefs > p.maxStateRows * 64
-        || p.maxTraceDepth > 64 || p.maxStateRows > 1_000_000 || p.maxArtifactBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
         || typeof this.coordination.auditKnowledge !== 'function' || typeof this.coordination.traceKnowledgeBounded !== 'function' || typeof this.coordination.observationTime !== 'function') throw new TypeError('Cairn causal audit configuration is invalid');
       this.knowledgeAuditPolicy = Object.freeze(p); this.knowledgePolicyDigest = sha256(stable(p));
     }
     this.knowledgeRecallPolicy = opts.knowledgeRecallPolicy ? clone(opts.knowledgeRecallPolicy) : null;
     if (this.knowledgeRecallPolicy) {
-      const names = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
-      const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeRecallPolicy;
+      const names = ['repoId']; const p = this.knowledgeRecallPolicy;
       if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
-        || typeof p.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(p.repoId) || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0)
-        || p.maxQueryBytes > 64 * 1024 || p.maxQueryTerms > 1_024 || p.maxCandidates > 100_000 || p.maxCandidateBytes > 64 * 1024 * 1024
-        || p.maxResults > 1_000 || p.maxGraphDepth > 64 || p.maxGraphRows > 1_000_000 || p.maxSnippetBytes > 64 * 1024 || p.maxReceiptBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || typeof p.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(p.repoId)
         || typeof this.coordination.recallKnowledgeBounded !== 'function' || typeof this.coordination.reverifyKnowledgeRecall !== 'function') throw new TypeError('Cairn recall configuration is invalid');
       this.knowledgeRecallPolicy = Object.freeze(p); this.knowledgeRecallPolicyDigest = sha256(stable(p));
     }
     this.knowledgeRecallAssessmentPolicy = opts.knowledgeRecallAssessmentPolicy ? clone(opts.knowledgeRecallAssessmentPolicy) : null;
     if (this.knowledgeRecallAssessmentPolicy) {
-      const names = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeRecallAssessmentPolicy;
+      const names = ['repoId']; const p = this.knowledgeRecallAssessmentPolicy;
       if (!this.knowledgeAuditPolicy || !this.knowledgeRecallPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId || p.repoId !== this.knowledgeRecallPolicy.repoId
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxReceipts > 100_000 || p.maxNodeRefs > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
         || typeof this.coordination.assessKnowledgeRecallBatch !== 'function' || typeof this.coordination.reverifyKnowledgeRecallAssessment !== 'function') throw new TypeError('Cairn recall assessment configuration is invalid');
       this.knowledgeRecallAssessmentPolicy = Object.freeze(p); this.knowledgeRecallAssessmentPolicyDigest = sha256(stable(p));
     }
     this.knowledgePromotionPolicy = opts.knowledgePromotionPolicy ? clone(opts.knowledgePromotionPolicy) : null;
     if (this.knowledgePromotionPolicy) {
-      const names = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+      const names = ['repoId', 'minScratchReaders'];
       const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgePromotionPolicy;
       if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxCandidates > 100_000
-        || p.maxCandidateBytes > 64 * 1024 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0)
         || typeof this.coordination.promoteKnowledgeBatch !== 'function' || typeof this.coordination.reverifyKnowledgePromotion !== 'function' || typeof this.coordination.reverifyKnowledgePromotionNoOp !== 'function') throw new TypeError('Cairn promotion configuration is invalid');
       this.knowledgePromotionPolicy = Object.freeze(p); this.knowledgePromotionPolicyDigest = sha256(stable(p));
     }
     this.knowledgeScratchCorrectionPolicy = opts.knowledgeScratchCorrectionPolicy ? clone(opts.knowledgeScratchCorrectionPolicy) : null;
     if (this.knowledgeScratchCorrectionPolicy) {
-      const names = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeScratchCorrectionPolicy;
+      const names = ['repoId', 'minScratchReaders']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeScratchCorrectionPolicy;
       if (!this.knowledgeAuditPolicy || !this.knowledgePromotionPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId || p.repoId !== this.knowledgePromotionPolicy.repoId || p.minScratchReaders !== this.knowledgePromotionPolicy.minScratchReaders
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0)
         || typeof this.coordination.correctScratchKnowledge !== 'function' || typeof this.coordination.reverifyScratchCorrection !== 'function') throw new TypeError('Cairn Scratch correction configuration is invalid');
       this.knowledgeScratchCorrectionPolicy = Object.freeze(p); this.knowledgeScratchCorrectionPolicyDigest = sha256(stable(p));
     }
     this.knowledgeContradictionPolicy = opts.knowledgeContradictionPolicy ? clone(opts.knowledgeContradictionPolicy) : null;
     if (this.knowledgeContradictionPolicy) {
-      const names = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeContradictionPolicy;
+      const names = ['repoId']; const p = this.knowledgeContradictionPolicy;
       if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxScanEdges > 1_000_000 || p.maxItems > 100_000 || p.maxSnippetBytes > 64 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxReasonBytes > 64 * 1024 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
         || typeof this.coordination.listKnowledgeContradictions !== 'function' || typeof this.coordination.resolveKnowledgeContradictionBounded !== 'function' || typeof this.coordination.reverifyKnowledgeContradictionResolution !== 'function') throw new TypeError('Cairn contradiction configuration is invalid');
       this.knowledgeContradictionPolicy = Object.freeze(p); this.knowledgeContradictionPolicyDigest = sha256(stable(p));
     }
@@ -180,34 +177,28 @@ export class CairnRunScorecard {
     return { kind, repoId: this.knowledgeAuditPolicy.repoId, coordinationUpperBound: upper, policyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: true, workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false };
   }
 
-  _boundedKnowledgeResult(result) {
-    if (Buffer.byteLength(stable(result)) > this.knowledgeAuditPolicy.maxResultBytes) throw typed('causal result exceeded deployment ceiling', result.op === 'causal.audit' ? 'causal_audit_oversize' : 'causal_trace_oversize');
-    return result;
-  }
-
   _readCausalAuditArtifact(path, expectedBytes, packetDigest) {
     let fd;
     try {
       fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = fstatSync(fd);
-      if (stat.size > this.knowledgeAuditPolicy.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
       if (!stat.isFile() || stat.size !== expectedBytes || (stat.mode & 0o777) !== 0o600 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw typed('causal audit artifact path is occupied by invalid content, owner, mode, or size', 'causal_audit_integrity');
       const bytes = readFileSync(fd); if (bytes.length !== expectedBytes || sha256(bytes) !== packetDigest) throw typed('causal audit artifact path is occupied by invalid content', 'causal_audit_integrity');
     } catch (error) {
-      if (error?.code === 'causal_audit_oversize' || error?.code === 'causal_audit_integrity') throw error;
+      if (error?.code === 'causal_audit_integrity') throw error;
       throw typed('causal audit artifact is unavailable or unsafe', 'causal_audit_integrity');
     } finally { if (fd !== undefined) closeSync(fd); }
   }
 
   _causalAudit(args, ctx, override = null, writeArtifact = true) {
     this._knowledgeContext(ctx); const upper = this._causalBoundary(args, ['observedSeq'], override); const p = this.knowledgeAuditPolicy;
-    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    const metrics = this.coordination.auditKnowledge({ observedSeq: upper });
     this._knowledgeContext(ctx);
     const retainedScope = { catalogVersion: 1, capabilityIds: [...RETAINED_GOAL_CATALOG] }; retainedScope.catalogDigest = sha256(stable(retainedScope));
     const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['promotion-breadth', 'playbook-skill-promotion', 'versioned-recall-learning-policy', 'authenticated-contradiction-operator-ux', 'scratch-repl-bench', 'retention-compaction', 'deployment-neutral-export'] };
     this._knowledgeContext(ctx);
-    const bytes = stable(core); if (Buffer.byteLength(bytes) > p.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
+    const bytes = stable(core);
     const packetDigest = sha256(bytes); const path = this._artifactPath(packetDigest); const document = { ...core, auditDigest: packetDigest };
-    const result = this._boundedKnowledgeResult({ op: 'causal.audit', status: 'ok', summary: `attested Cairn causal audit for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-causal-audit', digest: packetDigest, bytes: Buffer.byteLength(bytes), path }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-audit', upper) });
+    const result = { op: 'causal.audit', status: 'ok', summary: `attested Cairn causal audit for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-causal-audit', digest: packetDigest, bytes: Buffer.byteLength(bytes), path }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-audit', upper) };
     this._knowledgeContext(ctx); let created = false;
     try {
       if (existsSync(path)) this._readCausalAuditArtifact(path, Buffer.byteLength(bytes), packetDigest);
@@ -221,14 +212,14 @@ export class CairnRunScorecard {
   _causalTrace(args, ctx, override = null) {
     this._knowledgeContext(ctx); if (typeof args?.nodeId !== 'string' || args.nodeId.length === 0 || Buffer.byteLength(args.nodeId) > 4_096) throw typed('causal trace request is invalid', 'causal_request_invalid');
     const upper = this._causalBoundary(args, ['nodeId', 'observedSeq'], override); const p = this.knowledgeAuditPolicy;
-    const trace = this.coordination.traceKnowledgeBounded(args.nodeId, { observedSeq: upper, maxDepth: p.maxTraceDepth, maxRows: p.maxTraceRows, maxEvidenceRefs: p.maxEvidenceRefs, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges }); this._knowledgeContext(ctx);
+    const trace = this.coordination.traceKnowledgeBounded(args.nodeId, { observedSeq: upper }); this._knowledgeContext(ctx);
     const core = { schemaVersion: 1, kind: 'baton.cairn.causal-trace', repoId: p.repoId, policyDigest: this.knowledgePolicyDigest, ...trace }; const traceDigest = sha256(stable(core)); const document = { ...core, traceDigest };
-    return this._boundedKnowledgeResult({ op: 'causal.trace', status: trace.complete ? 'ok' : 'partial', summary: `bounded Cairn causal trace for ${args.nodeId}`, payload: [document], refs: [{ kind: 'cairn-causal-trace', digest: traceDigest, bytes: Buffer.byteLength(stable(core)) }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-trace', upper) });
+    return { op: 'causal.trace', status: trace.complete ? 'ok' : 'partial', summary: `bounded Cairn causal trace for ${args.nodeId}`, payload: [document], refs: [{ kind: 'cairn-causal-trace', digest: traceDigest, bytes: Buffer.byteLength(stable(core)) }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-trace', upper) };
   }
 
   _recallAudit(upper) {
     const p = this.knowledgeAuditPolicy;
-    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    const metrics = this.coordination.auditKnowledge({ observedSeq: upper });
     if (metrics.violations.critical > 0) throw typed('causal recall audit gate failed', 'causal_recall_audit_failed');
     return { criticalViolations: metrics.violations.critical, metricsDigest: sha256(stable(metrics)) };
   }
@@ -251,10 +242,6 @@ export class CairnRunScorecard {
       cost: { tokens_out: Math.ceil(documentBytes / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
       provenance: { kind: 'causal-recall', repoId: this.knowledgeRecallPolicy.repoId, coordinationUpperBound: projection.observedSeq, policyDigest: this.knowledgeRecallPolicyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: false, coordinationEffect: 'knowledge.read_receipt', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false },
     };
-    const resultBytes = publishedSizes
-      ? Buffer.byteLength(stable(result)) - (2 * Buffer.byteLength('null')) + publishedSizes.nodeBytes + publishedSizes.contradictionBytes
-      : Buffer.byteLength(stable(result));
-    if (resultBytes > this.knowledgeRecallPolicy.maxResultBytes) throw typed('causal recall result exceeded deployment ceiling', 'causal_recall_oversize');
     return result;
   }
 
@@ -282,7 +269,7 @@ export class CairnRunScorecard {
   }
 
   _assessmentAudit(upper) {
-    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper });
     if (metrics.violations.critical > 0) throw typed('causal recall assessment audit gate failed', 'causal_assessment_audit_failed');
     return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
   }
@@ -300,7 +287,7 @@ export class CairnRunScorecard {
       cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
       provenance: { kind: 'recall-assessment', repoId: p.repoId, coordinationUpperBound: p.observedSeq, policyDigest: p.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: assessed.noOp === true, coordinationEffect: assessed.noOp ? 'none' : 'knowledge.recall_assessment_batch', causationClaimed: false, workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false, promotionAuthority: false, validityAuthority: false, confidenceAuthority: false, skillInstallAuthority: false },
     };
-    if (Buffer.byteLength(stable(result)) > this.knowledgeRecallAssessmentPolicy.maxResultBytes) throw typed('causal recall assessment result exceeded deployment ceiling', 'causal_assessment_oversize'); return result;
+    return result;
   }
 
   _preflightAssessmentResult(preview, audit, ctx) {
@@ -326,7 +313,7 @@ export class CairnRunScorecard {
 
   _promotionAudit(upper) {
     const p = this.knowledgeAuditPolicy;
-    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    const metrics = this.coordination.auditKnowledge({ observedSeq: upper });
     if (metrics.violations.critical > 0) throw typed('causal promotion audit gate failed', 'causal_promotion_audit_failed');
     return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
   }
@@ -345,7 +332,6 @@ export class CairnRunScorecard {
       cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
       provenance: { kind: 'causal-promotion', repoId: projection.repoId, coordinationUpperBound: projection.observedSeq, policyDigest: projection.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: promoted.noOp === true, coordinationEffect: promoted.noOp ? 'none' : 'knowledge.promotion_batch', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false },
     };
-    if (Buffer.byteLength(stable(result)) > this.knowledgePromotionPolicy.maxResultBytes) throw typed('causal promotion result exceeded deployment ceiling', 'causal_promotion_oversize');
     return result;
   }
 
@@ -388,7 +374,7 @@ export class CairnRunScorecard {
     if (p.replacement !== null) { document.replacementNodeId = p.replacement.nodeId; document.replacementGrounding = p.replacement.grounding; }
     if (p.oracleTaskId !== null) document.oracleTaskId = p.oracleTaskId;
     const result = { op: 'causal.correct_scratch', status: 'ok', summary: `atomically ${p.action === 'release' ? 'released' : p.action === 'supersede' ? 'superseded' : 'retracted'} one Scratch knowledge claim for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-scratch-correction-receipt', digest: p.receiptDigest, coordinationSeq: p.eventSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: { kind: 'scratch-correction', repoId: p.repoId, coordinationUpperBound: p.observedSeq, policyDigest: p.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: false, coordinationEffect: 'knowledge.scratch_corrected', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false } };
-    if (Buffer.byteLength(stable(result)) > this.knowledgeScratchCorrectionPolicy.maxResultBytes) throw typed('Scratch correction result exceeded deployment ceiling', 'causal_correction_oversize'); return result;
+    return result;
   }
 
   _preflightCorrectionResult(preview, audit, ctx) {
@@ -414,7 +400,7 @@ export class CairnRunScorecard {
   }
 
   _contradictionAudit(upper) {
-    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper });
     if (metrics.violations.critical > 0) throw typed('causal contradiction audit gate failed', 'causal_contradiction_audit_failed'); return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
   }
 
@@ -425,7 +411,7 @@ export class CairnRunScorecard {
   _contradictionListResult(projection, audit) {
     const document = { schemaVersion: 1, kind: 'baton.cairn.contradictions', coordinationUpperBound: projection.observedSeq, coordinationObservedAt: projection.observedAt, audit, ...clone(projection) };
     const result = { op: 'causal.contradictions', status: 'ok', summary: `listed ${projection.items.length} of ${projection.totalUnresolved} unresolved Cairn contradictions for ${projection.repoId}`, payload: [document], refs: [{ kind: 'cairn-contradiction-view', digest: projection.projectionDigest, coordinationUpperBound: projection.observedSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._contradictionProvenance('contradiction-list', projection.observedSeq, true) };
-    if (Buffer.byteLength(stable(result)) > this.knowledgeContradictionPolicy.maxResultBytes) throw typed('causal contradiction list result exceeded deployment ceiling', 'causal_contradiction_oversize'); return result;
+    return result;
   }
 
   _causalContradictions(args, ctx) {
@@ -438,7 +424,7 @@ export class CairnRunScorecard {
   _contradictionResolutionResult(resolved, audit) {
     const p = resolved.projection; const document = { schemaVersion: 1, kind: 'baton.cairn.contradiction-resolution', coordinationUpperBound: p.observedSeq, coordinationObservedAt: p.observedAt, audit, ...clone(p) };
     const result = { op: 'causal.resolve_contradiction', status: 'ok', summary: `atomically resolved Cairn contradiction ${p.edgeId} for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-contradiction-resolution-receipt', digest: p.receiptDigest, coordinationSeq: p.eventSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._contradictionProvenance('contradiction-resolution', p.observedSeq, false, 'knowledge.contradiction_resolved') };
-    if (Buffer.byteLength(stable(result)) > this.knowledgeContradictionPolicy.maxResultBytes) throw typed('causal contradiction resolution result exceeded deployment ceiling', 'causal_contradiction_oversize'); return result;
+    return result;
   }
 
   _preflightContradictionResolution(preview, audit, ctx) {

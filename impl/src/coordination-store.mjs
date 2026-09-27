@@ -2607,27 +2607,23 @@ export class CoordinationStore {
   }
 
   traceKnowledgeBounded(nodeId, options = {}) {
-    const observedSeq = options.observedSeq ?? this._events.length; const maxDepth = options.maxDepth; const maxRows = options.maxRows; const maxEvidenceRefs = options.maxEvidenceRefs; const maxStateRows = options.maxStateRows; const maxNodes = options.maxNodes; const maxEdges = options.maxEdges;
-    if (typeof nodeId !== 'string' || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > this._events.length || !Number.isSafeInteger(maxDepth) || maxDepth < 0 || !Number.isSafeInteger(maxRows) || maxRows <= 0 || !Number.isSafeInteger(maxEvidenceRefs) || maxEvidenceRefs <= 0
-      || !Number.isSafeInteger(maxStateRows) || maxStateRows <= 0 || !Number.isSafeInteger(maxNodes) || maxNodes <= 0 || !Number.isSafeInteger(maxEdges) || maxEdges <= 0) throw new CoordinationRefusal('causal trace request is invalid', 'causal_trace_invalid');
-    if (this._knowledgeNodeHistory.size > maxNodes || this._knowledgeEdgeHistory.size > maxEdges || this._knowledgeNodeHistory.size + this._knowledgeEdgeHistory.size > maxStateRows) throw new CoordinationRefusal('causal trace exceeded deployment state ceiling', 'causal_trace_oversize');
+    const observedSeq = options.observedSeq ?? this._events.length;
+    if (typeof nodeId !== 'string' || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > this._events.length) throw new CoordinationRefusal('causal trace request is invalid', 'causal_trace_invalid');
     const allNodes = this.queryKnowledge({ observedSeq }); const allEdges = this.queryKnowledgeEdges({ observedSeq });
     const nodeMap = new Map(allNodes.map((node) => [node.id, node])); if (!nodeMap.has(nodeId)) throw new CoordinationRefusal(`unknown or non-current knowledge node ${nodeId}`, 'not_found');
     const causalTypes = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
     const incident = new Map(); for (const edge of allEdges.filter((row) => causalTypes.has(row.type) && nodeMap.has(row.from) && nodeMap.has(row.to)).sort((a, b) => compareCanonicalStrings(a.id, b.id))) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
-    const queue = [{ id: nodeId, depth: 0 }]; const seenNodes = new Set(); const seenEdges = new Set(); const selectedNodes = []; const selectedEdges = []; const frontier = new Set(); let evidenceRefs = 0;
-    const assertRows = () => { if (selectedNodes.length + selectedEdges.length + evidenceRefs + frontier.size > maxRows || evidenceRefs > maxEvidenceRefs) throw new CoordinationRefusal('causal trace exceeded deployment ceiling', 'causal_trace_oversize'); };
+    const queue = [{ id: nodeId, depth: 0 }]; const seenNodes = new Set(); const seenEdges = new Set(); const selectedNodes = []; const selectedEdges = []; const frontier = new Set();
     while (queue.length > 0) {
       const current = queue.shift(); if (seenNodes.has(current.id)) continue; const node = nodeMap.get(current.id); if (!node) continue;
-      seenNodes.add(current.id); frontier.delete(current.id); selectedNodes.push(node); evidenceRefs += (node.evidence?.length ?? 0); assertRows();
+      seenNodes.add(current.id); frontier.delete(current.id); selectedNodes.push(node);
       const edges = incident.get(current.id) ?? [];
-      if (current.depth >= maxDepth) { for (const edge of edges) { const next = edge.from === current.id ? edge.to : edge.from; if (!seenNodes.has(next)) frontier.add(next); } continue; }
       for (const edge of edges) {
-        if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); selectedEdges.push(edge); evidenceRefs += (edge.evidence?.length ?? 0); assertRows(); }
+        if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); selectedEdges.push(edge); }
         const next = edge.from === current.id ? edge.to : edge.from; if (!seenNodes.has(next)) queue.push({ id: next, depth: current.depth + 1 });
       }
     }
-    for (const id of seenNodes) frontier.delete(id); assertRows();
+    for (const id of seenNodes) frontier.delete(id);
     const safeNode = (node) => Object.fromEntries(['id', 'type', 'grounding', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion'].filter((key) => Object.hasOwn(node, key)).map((key) => [key, clone(node[key])]));
     const safeEdge = (edge) => Object.fromEntries(['id', 'type', 'from', 'to', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion', 'resolvedBy', 'winnerId', 'loserId'].filter((key) => Object.hasOwn(edge, key)).map((key) => [key, clone(edge[key])]));
     const evidence = [...selectedNodes, ...selectedEdges].flatMap((row) => (row.evidence ?? []).map((ref) => ({ ownerId: row.id, ...clone(ref) })));
