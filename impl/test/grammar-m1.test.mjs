@@ -45,13 +45,13 @@ function webContext() {
   };
 }
 
-function webEnvelope(command, suffix) {
+function webEnvelope(command, suffix, args = null) {
   return {
     schemaVersion: 1,
     commandId: `grammar-${suffix}`,
     idempotencyKey: `grammar-key-${suffix}`,
     command,
-    args: {
+    args: args ?? {
       runId: 'run-grammar',
       role: 'worker',
       message: 'Continue within the approved scope.',
@@ -134,24 +134,23 @@ function webFixture() {
   return { admitted, calls, web };
 }
 
-test('M1-1: canonical Web admission reaches the legacy operation and outcome, spelling-true (M4b)', async () => {
+test('M1-1: canonical Web transport reaches the legacy operation and outcome', async () => {
   const canonical = webFixture();
   const legacy = webFixture();
+  const memberViewArgs = { runId: 'run-grammar' };
   const canonicalResult = await canonical.web.execute(
-    webContext(), webEnvelope('run_member_send', 'canonical'),
+    webContext(), webEnvelope('run_member_view', 'canonical', memberViewArgs),
   );
   const legacyResult = await legacy.web.execute(
-    webContext(), webEnvelope('run_workstream_notify', 'legacy'),
+    webContext(), webEnvelope('run_workstreams', 'legacy', memberViewArgs),
   );
 
   assert.equal(canonicalResult.status, 200);
   assert.equal(legacyResult.status, 200);
   assert.deepEqual(canonicalResult.body.result, legacyResult.body.result);
+  // Both spellings reach ONE operation: the same application command with the same arguments.
   assert.deepEqual(canonical.calls, legacy.calls);
-  // M4b — the transport flip: the canonical name is admitted first-class, its own spelling the
-  // admitted identity (never resolved to the legacy name); both still reach one operation.
-  assert.equal(canonical.admitted[0].command, 'run_member_send');
-  assert.equal(legacy.admitted[0].command, 'run_workstream_notify');
+  assert.deepEqual(canonical.calls, [{ name: 'run.workstreams', args: { runId: 'run-grammar' } }]);
 });
 
 test('M1-2: canonical CLI verbs parse to the same legacy envelopes', () => {
@@ -162,12 +161,8 @@ test('M1-2: canonical CLI verbs parse to the same legacy envelopes', () => {
       ['run', 'show', 'run-grammar', '--depth', 'outline', ...idempotency],
     ],
     [
-      ['run', 'member', 'send', 'run-grammar', 'worker', 'Continue.', ...idempotency],
-      ['run', 'notify', 'run-grammar', 'worker', 'Continue.', ...idempotency],
-    ],
-    [
-      ['run', 'member', 'stop', 'run-grammar', 'worker', ...idempotency],
-      ['run', 'stop-member', 'run-grammar', 'worker', ...idempotency],
+      ['run', 'member', 'view', 'run-grammar', ...idempotency],
+      ['run', 'workstreams', 'run-grammar', ...idempotency],
     ],
   ];
   for (const [canonical, legacy] of pairs) {

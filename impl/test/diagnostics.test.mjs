@@ -1,7 +1,7 @@
 // Diagnostics epic v2 — DG-1 only (DIAG-3 + DIAG-2).
 // Authority: docs/reference/evidence/diagnostics-2026-07-31/diagnostics-decisions.md (v2 top).
 // Red-first: DG-1a (wire.frame_degraded + stream-death whitelisted summaries) and
-// DG-1b (trust-gate {gate, detail} honestly shaped + run.feedback same payload).
+// DG-1b (trust-gate {gate, detail} honestly shaped).
 // Harness mirrors issue53-run-debug-red: real Coordinator + BatonApplication through
 // createDriver, with adapter.emit injection — never via the store directly.
 
@@ -354,50 +354,4 @@ test("DG-1b: unrecognized gate code serializes gate:'unknown'", async (t) => {
   assert.ok(failure);
   assert.equal(failure.gate, 'unknown');
   assert.equal(failure.code, 'some_future_gate_code');
-});
-
-test('DG-1b: run.feedback accepts the same {gate, detail} payload the debug failure leg projects', async (t) => {
-  const { application, baton, adapter } = harness(t);
-  const { workerId, runId } = await startRun(baton);
-
-  emit(adapter, workerId, 'error', {
-    message: 'scope',
-    code: 'worker_path_scope_violation',
-    phase: 'trust_gate',
-    trustPhase: 'path_scope',
-    pathScopeEvidence: {
-      changedPathCount: 1,
-      changedPathsDigest: DIGEST_A,
-      inScopeChangedPathCount: 0,
-      inScopeChangedPathsDigest: DIGEST_B,
-      outOfScopeChangedPathCount: 1,
-      outOfScopeChangedPathsDigest: DIGEST_C,
-    },
-  });
-
-  const debug = await application.debug({ runId }, principal('observer'));
-  const diagnosis = {
-    gate: debug.members[0].failure.gate,
-    detail: debug.members[0].failure.detail,
-  };
-  assert.equal(diagnosis.gate, 'scope');
-
-  // Shape is accepted by run.feedback (R-DG-6: same structured inputs). On a non-workflow
-  // wave run the command refuses at the workflow gate AFTER input normalization — so a shape
-  // reject would be application_workflow_feedback_invalid; acceptance is any other code
-  // (typically application_workflow_feedback_unavailable).
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: diagnosis,
-  }, principal('observer')).then(
-    () => null,
-    (error) => error,
-  );
-  assert.ok(err, 'run.feedback must not silently no-op on a non-workflow run');
-  assert.notEqual(
-    err.code,
-    'application_workflow_feedback_invalid',
-    `gate diagnosis payload must be valid structured feedback inputs; got ${err.code}: ${err.message}`,
-  );
 });

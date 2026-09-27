@@ -39,7 +39,7 @@ const NATIVE_QUERY_TOOLS = new Set([
   'fleet_goal_plan_status', 'baton_decision_list', 'baton_deployment_doctor',
 ]);
 const NATIVE_EMERGENCY_TOOLS = new Set([
-  'fleet_kill', 'fleet_drain', 'baton_waves_stop', 'baton_workstream_stop',
+  'fleet_kill', 'fleet_drain', 'baton_waves_stop',
 ]);
 const QUERY_NAME = /(?:_read|_list|_view|_status|_progress|_compile|_receipt|_watch|_recall|_horizon|_cite|_result|_capabilities|_wait)$/u;
 const MUTATION_NAME = /(?:_post|_close|_drop|_reorder|_retitle|_promote|_admit|_attach|_elevate|_settle|_seed|_append)$/u;

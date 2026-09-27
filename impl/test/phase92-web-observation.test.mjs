@@ -131,17 +131,6 @@ test('P92-WB3: authenticated Web round-trips Episode continuation and exact gene
   assert.equal(streams.status, 200);
   assert.equal(coordination.snapshot().lastSeq, before,
     'authenticated Episode and workstream observations do not amplify the durable ledger');
-  const control = { capabilities: ['observe', 'control', 'emergency_stop'] };
-  assert.equal((await web.execute(context(control), envelope('run_workstream_notify', {
-    runId: 'run-phase92', role: 'reviewer', generation: 2,
-    message: 'Check this exact generation.', delivery: 'turn',
-  }, 'notify'))).status, 200);
-  assert.equal((await web.execute(context(control), envelope('run_workstream_stop', {
-    runId: 'run-phase92', role: 'reviewer', generation: 2,
-  }, 'member-stop'))).status, 200);
-  assert.deepEqual(calls.slice(-2).map(({ name, args }) => [name, args.generation]), [
-    ['run.workstream.notify', 2], ['run.workstream.stop', 2],
-  ]);
 });
 
 test('P92-WB4: authenticated observe authority receives the bounded verifier failure capsule through Episode evidence', async (t) => {

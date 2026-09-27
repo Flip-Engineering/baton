@@ -459,7 +459,7 @@ function mcpSetup({ application, isPrincipalActive, maxWaitMs = 25_000, principa
     isPrincipalActive,
     principal: principalOverride ?? {
       userId: 'mcp-op', sessionId: 'mcp-sess',
-      capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
+      capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
       repoIds: [REPO], expiresAt: new Date(NOW_MS + 60_000).toISOString(), revoked: false,
     },
     repoIds: [REPO], now: () => NOW_MS,

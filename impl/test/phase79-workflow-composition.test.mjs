@@ -168,37 +168,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
     'builder', 'challenger',
   ]);
 
-  await workflow.act('send_feedback', { role: 'builder', feedback: {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable builder delta as the selected basis.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  } });
-  await workflow.sendFeedback('builder', {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable builder delta as the selected basis.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  });
-  const feedback = await workflow.feedback();
-  assert.equal(feedback.section.itemCount, 1, 'identical feedback is idempotent');
-  assert.equal(feedback.section.items[0].value.target.role, 'builder');
-  assert.deepEqual(feedback.section.items[0].value.target.changedPaths, ['candidate-a.txt']);
-  assert.equal(feedback.section.items[0].value.target.retainedResultRef,
-    `refs/baton/results/${feedback.section.items[0].value.target.resultSha}`);
-  assert.match(feedback.section.items[0].value.target.treeIdentityDigest, /^[a-f0-9]{64}$/u);
-  await assert.rejects(workflow.sendFeedback('builder', {
-    summary: 'This attempts to point outside the exact Candidate delta.',
-    findings: [{
-      kind: 'defect', severity: 'high', message: 'Reject this stale path anchor.',
-      path: 'not-in-candidate.txt', line: 1,
-    }],
-  }), (error) => error?.code === 'application_workflow_feedback_anchor_invalid');
-
   const selectedAction = await workflow.select('builder', 'The builder Candidate is the preferred verified basis.');
   assert.equal(selectedAction.outline.phase, 'candidate_selected');
   const selected = await workflow.status();
@@ -221,7 +190,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   assert.equal(manifestDigest, digest(evidenceCore));
   assert.equal(evidence.state, 'provider_settled');
   assert.equal(evidence.candidates.length, 2);
-  assert.equal(evidence.feedback.length, 1);
   assert.equal(evidence.selection.candidate.role, 'builder');
   assert.equal(evidence.checks.candidatesMechanicallyVerified, true);
   assert.equal(evidence.checks.feedbackTargetsBound, true);
@@ -229,16 +197,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   assert.equal(evidence.checks.candidatesRetained, true);
   assert.equal(evidence.checks.selectedResultRefReverified, true);
   assert.equal(evidence.checks.applicationTerminal, false);
-
-  const adopted = await workflow.adopt('Adopt the selected verified Workflow Candidate.');
-  assert.equal(adopted.outline.phase, 'candidate_selected');
-  const adoptedStatus = await workflow.status();
-  assert.equal(adoptedStatus.result.state, 'adopted');
-  const integrated = await workflow.apply({
-    strategy: 'ff-only', reason: 'Apply the explicitly selected and adopted Candidate.',
-  });
-  assert.equal(integrated.outline.phase, 'completed');
-  assert.equal(readFileSync(join(repo, 'candidate-a.txt'), 'utf8'), 'codex\n');
 
   const events = readFileSync(join(deploymentRoot, 'state', 'coordination', 'events.jsonl'), 'utf8')
     .trim().split('\n').map((line) => JSON.parse(line));
@@ -248,9 +206,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
     'plan.node_dispatched', 'task.created', 'plan.node_dispatched', 'task.created',
   ]);
   assert.equal(new Set(wave.map((event) => event.batch.id)).size, 1);
-  assert.equal(events.filter((event) => (
-    event.payload?.kind === 'application.workflow_feedback_recorded'
-  )).length, 1);
   assert.equal(events.filter((event) => (
     event.payload?.kind === 'application.workflow_candidate_selected'
   )).length, 1);
@@ -273,7 +228,7 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   });
   const replayed = await deployment.open(workflow.id).status();
   assert.equal(replayed.phase, 'stopped');
-  assert.equal(replayed.result.state, 'integrated');
+  assert.equal(replayed.result.state, 'selected');
   assert.equal(replayed.result.candidate.role, 'builder');
   assert.equal(replayed.result.retainedResultRef, `refs/baton/results/${replayed.result.sha}`);
   const replayEvidence = await deployment.open(workflow.id).evidence();
@@ -378,80 +333,6 @@ test('WF79-5: operator-selected join preserves and selects a verified survivor a
   const selected = await workflow.select('builder', 'Select the sole mechanically verified survivor.');
   assert.equal(selected.outline.phase, 'candidate_selected');
   await workflow.stop('Reap the survivor Workflow fixture.');
-  const closed = await deployment.close();
-  assert.deepEqual(closed.ownership, { workers: 0, workerIds: [], closed: true });
-});
-
-test('WF79-6: role-addressed member stop is durable, exact, and leaves a sibling Attempt running', async (t) => {
-  const repo = repository();
-  const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-member-stop-'));
-  const tracker = { active: 0, peak: 0, calls: [] };
-  const builder = latchedAdapter(routeA, 'surviving-member.txt', tracker);
-  const codex = builder.value;
-  const grok = adapter(routeB, 'stopped-member.txt', tracker, 60_000);
-  let deployment;
-  t.after(async () => {
-    try { await deployment?.close(); } catch {}
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(deploymentRoot, { recursive: true, force: true });
-  });
-  deployment = await openBaton({
-    repo,
-    advanced: {
-      deploymentRoot, routes: [routeA, routeB], adapters: { codex, grok },
-      verification: { command: 'true', arguments: [] },
-    },
-  });
-  const workflow = await deployment.workflow('Stop only one active role and preserve its sibling.', {
-    team: [
-      { role: 'builder', exact: routeA },
-      { role: 'challenger', exact: routeB },
-    ],
-  });
-  const active = await workflow.approve();
-  assert.equal(active.outline.phase, 'running');
-  assert.deepEqual(active.outline.actions.find((action) => action.kind === 'stop_member').choices,
-    ['builder', 'challenger']);
-  await builder.entered;
-
-  const memberStopped = await workflow.stopMember('challenger', 'The challenger is no longer needed.');
-  assert.notEqual(memberStopped.outline.phase, 'stopped');
-  assert.equal([...grok._sessions.values()].every((session) => session.terminal), true);
-  assert.equal([...codex._sessions.values()].some((session) => !session.terminal), true,
-    'the sibling provider session remains active after selective stop');
-
-  builder.release();
-  const paused = await workflow.complete();
-  assert.equal(paused.outline.phase, 'selection_required');
-  const status = await workflow.status();
-  assert.equal(status.memberStops.length, 1);
-  assert.equal(status.memberStops[0].role, 'challenger');
-  assert.equal(status.memberStops[0].status, 'stopped');
-  assert.equal(status.attempts.find((attempt) => attempt.role === 'challenger').state, 'cancelled');
-  assert.equal(status.attempts.find((attempt) => attempt.role === 'builder').state, 'accepted');
-  const candidates = await workflow.candidates();
-  assert.deepEqual(candidates.section.items.map(({ value }) => value.role), ['builder']);
-
-  const events = readFileSync(join(deploymentRoot, 'state', 'coordination', 'events.jsonl'), 'utf8')
-    .trim().split('\n').map((line) => JSON.parse(line));
-  const stopEvents = events.filter((event) => [
-    'application.workflow_member_stop_admitted',
-    'application.workflow_member_stop_completed',
-  ].includes(event.payload?.kind));
-  assert.deepEqual(stopEvents.map((event) => event.payload.kind), [
-    'application.workflow_member_stop_admitted',
-    'application.workflow_member_stop_completed',
-  ]);
-  assert.equal(stopEvents[0].payload.workerId, stopEvents[1].payload.workerId);
-  assert.equal(stopEvents[0].payload.targetDigest, stopEvents[1].payload.targetDigest);
-
-  await workflow.select('builder', 'Select the surviving mechanically verified builder Candidate.');
-  const evidence = await workflow.evidence();
-  assert.equal(evidence.memberStops.length, 1);
-  assert.equal(evidence.memberStops[0].status, 'stopped');
-  await workflow.stop('Close the remaining Workflow authority after the member-stop test.');
-  assert.equal(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo, encoding: 'utf8' })
-    .split('\n').filter((line) => line.startsWith('worktree ')).length, 1);
   const closed = await deployment.close();
   assert.deepEqual(closed.ownership, { workers: 0, workerIds: [], closed: true });
 });

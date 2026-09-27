@@ -160,14 +160,13 @@ test('M3-4: the continuation and the browser desk flip to run.view / run.member.
   // legacy Episode/workstream spellings.
   const html = operatorAsset('/control').body;
   const script = operatorAsset('/control/app.js').body;
-  for (const operation of ['run_view', 'run_member_view', 'run_member_send', 'run_member_stop']) {
+  for (const operation of ['run_view', 'run_member_view']) {
     assert.equal(script.includes(`command('${operation}'`), true, operation);
   }
   for (const legacy of ['run_episode', 'run_workstreams', 'run_workstream_notify', 'run_workstream_stop']) {
     assert.equal(script.includes(`command('${legacy}'`), false, legacy);
   }
-  for (const id of ['view-member', 'view-section', 'view-detail', 'load-view', 'continue-view',
-    'load-members', 'member-send', 'member-stop']) {
+  for (const id of ['view-member', 'view-section', 'view-detail', 'load-view', 'continue-view']) {
     assert.match(html, new RegExp(`id="${id}"`, 'u'), id);
   }
 });
@@ -175,11 +174,6 @@ test('M3-4: the continuation and the browser desk flip to run.view / run.member.
 test('M3-5: member send addresses {role, generation?} under the two-clocks rule and the ambiguity refusal', async () => {
   // The member ops are structured {role, generation?}: the workflow-scoped clock (member.send)
   // carries a generation; the run-level clock (send/interrupt) has no generation axis.
-  const memberSend = parseBatonCli(['run', 'member', 'send', 'run-m3', 'reviewer', 'Continue.', '--generation', '2']);
-  assert.equal(memberSend.name, 'run.workstream.notify');
-  assert.deepEqual(memberSend.args, { runId: 'run-m3', role: 'reviewer', message: 'Continue.', delivery: 'nudge', generation: 2 });
-  // Byte-equal to the legacy `run notify` spelling.
-  assert.deepEqual(memberSend.args, parseBatonCli(['run', 'notify', 'run-m3', 'reviewer', 'Continue.', '--generation', '2']).args);
 
   const memberInterrupt = parseBatonCli(['run', 'member', 'interrupt', 'run-m3', 'reviewer', '--generation', '2']);
   assert.equal(memberInterrupt.actionKind, 'interrupt');
@@ -197,22 +191,12 @@ test('M3-5: member send addresses {role, generation?} under the two-clocks rule 
   );
 });
 
-test('M3-6: the work sentinel is accepted by run.send only, and refused for member ops and wave roles', async () => {
+test('M3-6: the work sentinel is accepted by run.send and refused for wave roles', async () => {
   // Run-level send resolves the sole live seat through the `work` sentinel.
   assert.doesNotThrow(
     () => controlApp([liveSeat('only')])._resolveSemanticControlTarget(CURRENT, 'work', 'send'),
   );
   assert.equal(parseBatonCli(['run', 'send', 'run-m3', 'Continue.', '--to', 'work']).inputs.recipient, 'work');
-
-  // Member ops refuse the reserved sentinel as a role.
-  await assert.rejects(
-    dispatchApp().command('run.member.send', { runId: 'run-m3', role: 'work', message: 'Continue.' }, PRINCIPAL, null),
-    { code: 'application_workstream_notify_invalid' },
-  );
-  await assert.rejects(
-    dispatchApp().command('run.member.stop', { runId: 'run-m3', role: 'work' }, PRINCIPAL, null),
-    { code: 'application_workstream_stop_invalid' },
-  );
 
   // A workflow role literally named `work` is a wave-admission (registry) lint error.
   await assert.rejects(
