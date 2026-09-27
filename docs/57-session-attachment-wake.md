@@ -325,6 +325,49 @@ local-development path. Protocol tests cover authenticated dispatch and the MCP 
 Idle and busy delivery in the real Claude UI, root reconnect, and resident restart remain native
 acceptance requirements.
 
+**Relaunching the root session with the `baton-root` channel.** The operator runs these steps from
+the repository root the resident serves. Step 4 is the work whose wake the observation below
+reads, so one attempt carries the whole proof.
+
+1. Start the resident: `node impl/scripts/baton.mjs serve`. It publishes the connection selector at
+   `.git/baton/connection.json` inside the repository and the private profile under
+   `$XDG_CONFIG_HOME/baton/connections/`.
+2. Write the MCP configuration the session launches with, for example `/tmp/baton-root-mcp.json`:
+   `{"mcpServers":{"baton-root":{"command":"node","args":["<repo>/impl/scripts/mcp-claude-root.mjs"]}}}`.
+   The repository path is the only value the operator supplies: the entry discovers the resident
+   connection from `HOME`, `XDG_CONFIG_HOME` and its working directory, the same discovery
+   `mcp-web.mjs` uses.
+3. Launch the root session from the repository root with
+   `claude --mcp-config /tmp/baton-root-mcp.json --dangerously-load-development-channels server:baton-root`,
+   and accept Claude Code's development-channel prompt. The entry opens the root attachment when
+   the client sends `notifications/initialized`.
+4. From that session, recruit one seat into a swarm, or let an existing top-level seat finish a
+   turn. A turn whose report has no parent seat is owed to the root.
+
+**The observation.** Five readings of one attempt. Together they show the wake rode the turn end.
+
+1. The session shows a channel message for the turn report while the operator types nothing. The
+   frame is the JSON-RPC notification `notifications/claude/channel`; its text names the turn's
+   result and the seat, and its meta is `{recipient: 'root'}`.
+2. `baton deployment wakes-since` answers the frame for that turn. A seat's report rides the wake
+   class `root_owed` (row `swarm.root_attention_owed` with `owed: 'turn_reported'`); a parentless
+   run's rides `root_turn_reported` (row `worker.turn_reported`, whose `next` command is
+   `baton run view <runId>`).
+3. The coordination ledger (`state/coordination/events.jsonl` under the deployment root) carries
+   the three rows of the wake in order: the seat's turn end as
+   `driver.recorded {kind: 'swarm.turn_reported', …}`; the obligation the same call reconciled, as
+   `driver.recorded {kind: 'swarm.root_attention_owed', owed: 'turn_reported', reportSeq: <that
+   seq>}`; and the write to the attached entry, as `driver.recorded {kind:
+   'attention.delivery_observed', harness: 'claude-code', result: {state: 'offered_unknown',
+   transport: 'resident_channel_stream'}}`.
+4. No clock produced the wake. The delivery row's seq follows the turn-report row's, and the
+   obligation carries the source row's seq in `reportSeq`; the operator runs no loop, and the
+   resident's `serve` invocation declares no heartbeat. A seat whose turn ends before an entry
+   attaches leaves the same wake durable as `attention.undelivered {code: 'root_unattached'}` for
+   the same seqs, and the delivery row is what the attached entry adds for it.
+5. `offered_unknown` is the whole receipt a channel write produces: the row records that the
+   resident wrote the message to the session, and no harness acknowledgment is claimed for it.
+
 **Codex.** `codex --help` and `codex resume --help` expose `--remote` with WebSocket and Unix
 endpoints; the [App Server reference](https://learn.chatgpt.com/docs/app-server) documents the
 native TUI connection. Baton can launch that TUI against its authenticated protocol gateway,
