@@ -5251,15 +5251,14 @@ export class BatonWebClient {
     // dispatches run_watch; the resident answers it under the run.follow wait policy), so the
     // wait tables resolve the alias table the dispatch itself uses.
     const transport = CLI_DISPATCH_ALIASES[name] ?? name;
-    let serverWaitMs = 0;
-    if (['run.follow', 'run.wait'].includes(transport)) serverWaitMs = args.timeoutMs;
-    if (transport === 'swarm.watch') serverWaitMs = args.timeoutMs;
-    if (transport === 'run.inspect' && args.cursor !== undefined) serverWaitMs = args.waitMs;
-    // #541: a caller-named server wait is answered by the server — the resident's own bound ends
-    // the request — so the client arms no transport cut over it. A client bound derived from that
-    // wait (the old serverWaitMs + slack stretch) could only abort the very answer the caller
-    // asked for; the caller's own command bound still governs every command that names no wait.
-    return Number.isSafeInteger(serverWaitMs) && serverWaitMs > 0 ? null : this.requestTimeoutMs;
+    // #541: a wait is answered by the resident — under the bound the caller named, or under the
+    // resident's own wait policy when the caller named none — so the client arms NO transport cut
+    // over it. A client bound derived from the wait (the old serverWaitMs + slack stretch, or the
+    // bare declared command bound) could only abort the very answer the caller asked for. Every
+    // command that is not a wait keeps the caller's declared bound.
+    const waits = ['run.follow', 'run.wait', 'swarm.watch'].includes(transport)
+      || (transport === 'run.inspect' && args.cursor !== undefined);
+    return waits ? null : this.requestTimeoutMs;
   }
 
   async actionAuthority(args, idempotencyKey) {

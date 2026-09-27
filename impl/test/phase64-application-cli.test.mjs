@@ -198,7 +198,7 @@ test('UC2: authenticated CLI client sends the same strict Web envelope and recon
   assert.equal(requests[1].url.endsWith(`/v1/commands/${envelope.commandId}`), true);
 });
 
-test('UC2b: Web client gives server-owned Run waits transport slack instead of racing them', () => {
+test('UC2b: a named server wait is not raced by a client cut; a command naming none keeps the declared bound', () => {
   const client = new BatonWebClient({
     baseUrl: 'https://baton.test', origin: 'https://control.test', repoId: 'repo-a', token: 'private-bearer',
     commandTimeoutMs: 90_000, pollMs: 100,
@@ -208,14 +208,14 @@ test('UC2b: Web client gives server-owned Run waits transport slack instead of r
   assert.equal(client._requestTimeoutForCommand('run.status', { runId: 'run-a' }), 90_000);
   assert.equal(client._requestTimeoutForCommand('run.wait', {
     runId: 'run-a', timeoutMs: 30_000,
-  }), 90_000);
+  }), null, 'the resident answers the named wait, so no client cut races it');
   assert.equal(client._requestTimeoutForCommand('run.inspect', {
     runId: 'run-a', cursor: 4,
-  }), 90_000);
+  }), null, 'the cursor makes it a wait: the resident owns the continuation wait');
   assert.equal(client._requestTimeoutForCommand('run.inspect', {
     runId: 'run-a', cursor: 4, waitMs: 60_000,
-  }), 90_000);
-  assert.equal(client._requestTimeoutForCommand('swarm.watch', { swarmId: 'swarm-a', timeoutMs: 120_000 }), 135_000);
+  }), null);
+  assert.equal(client._requestTimeoutForCommand('swarm.watch', { swarmId: 'swarm-a', timeoutMs: 120_000 }), null);
 });
 
 test('UC3: adopt reads terminal evidence then binds its displayed digest without caller-side Git inspection', async () => {

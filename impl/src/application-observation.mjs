@@ -4669,6 +4669,9 @@ export async function _proposeContextMap(application, current, inputs, caller) {
         'context_output_lineage_required',
       );
     }
+    // The successor Plan is normalised under the deployment policy for its identity and digest —
+    // never for a size or count bound, which the policy no longer carries (#530).
+    const goalPlanPolicy = application.driver.coordination.goalPlanPolicy();
     if (!Array.isArray(items) || items.length < 2) {
       throw applicationError('Context map is parallel and needs at least two immutable items; inspect this cell or use one ordinary Run/review for singleton input',
         'context_map_not_parallel');
