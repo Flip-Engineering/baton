@@ -7,15 +7,20 @@ reservation ledger issue #307 added were removed by #610; section 4 states what 
 The code of record is `impl/src/host-capacity.mjs` (the host-wide authority and the
 derivation), `impl/src/application-deployment.mjs` (the doctor's capacity sections and the
 deployment wiring), `impl/src/contribution-service.mjs` and
-`impl/src/swarm-runtime.mjs` (the typed admission rows for `swarm.recruit`), and
-`impl/scripts/run-suite.mjs` (the suite runner's derived default
-parallelism).
+`impl/src/swarm-runtime.mjs` (the typed admission rows for `swarm.recruit`, and the per-seat
+footprint measurement a worker lease's weight comes from, over the process-group observation
+in `impl/src/process-lifecycle.mjs`), and `impl/scripts/run-suite.mjs` (the suite runner's
+derived default parallelism).
 
 ## 1. The host capacity authority (#297)
 
-Every threshold is a derivation from one observation — `os.availableParallelism()`,
-`os.totalmem()`, `os.freemem()`, `os.loadavg()[0]` — and the module mints no admission
-constant of its own (`deriveHostCapacity`):
+Every threshold is a derivation from ONE observation of the machine — cores
+(`os.availableParallelism()`), total memory (`os.totalmem()`), available memory measured
+the platform's way (darwin `vm_stat`, linux `/proc/meminfo` `MemAvailable`, `os.freemem()`
+as the fallback), the swap report (darwin `sysctl vm.swapusage`, linux `/proc/meminfo`
+`SwapTotal`/`SwapFree`), the free disk of the volume the lease root lives on (`statfs` of
+the system temp root by default), and the load average (`os.loadavg()[0]`) — and the module
+mints no admission constant of its own (`deriveHostCapacity`):
 
 | Threshold | Derivation |
 |---|---|
@@ -23,26 +28,33 @@ constant of its own (`deriveHostCapacity`):
 | `usableCores` | `cores − hubCores` |
 | `suiteCores` | `cores − hubCores` — a full suite uses every core but the hub's (the #269 measurement) |
 | `verdictLanes` | `floor(usableCores / suiteCores)` — the #269 lane formula, generalized host-wide |
-| `coreShareBytes` | `floor(totalBytes / cores)` — one core's equal share of memory, the unit the suite's cost is measured in |
-| `suiteBytes` | `coreShareBytes × suiteCores` |
+| `coreShareBytes` | `floor(totalBytes / cores)` — one core's equal share of memory |
+| `suiteBytes` | `coreShareBytes` — one verdict's memory entitlement is ONE core's share (#561) |
 | `usableBytes` | `totalBytes − coreShareBytes` |
+| `swapGrowthBytes` | `min(swapFreeBytes, diskFreeBytes)` — the swap the OS could actually page into; an unmeasured swap or disk claims no headroom (#561) |
+| `pagingBytes` | `availableBytes + swapGrowthBytes` — the memory the OS can actually hand out |
 | `saturated` | `load1m ≥ cores` — the operator's `uptime` read, derived |
-| `memoryTight` | `availableBytes < suiteBytes` |
+| `memoryTight` | `pagingBytes < suiteBytes` — paging headroom cannot fund one more verdict |
+| `diskTight` | `diskFreeBytes < suiteBytes` — the disk cannot back the paging one verdict may need |
 
 Admission weights: a `verify` lease (a full-suite verdict) charges `suiteCores` cores and
-`suiteBytes` bytes — the one cost the host has measured (#269). A `worker` lease (a
-recruited participant) charges nothing: a seat is not a thread, its footprint is not known
-before it runs, and a derived slot count per core was a hardware analogy rather than a
-measurement (operator ruling, 2026-09-18, retiring #329's one-share-per-worker rule and the
-`workerSlots` / `workerMemoryTight` rows). A worker never waits: it holds no slot,
-`roomFor` admits it unconditionally, and the host's own scheduler is the throttle (#541).
+`suiteBytes` bytes — one core's share, the #269 measurement. A `worker` lease (a recruited
+participant) charges the mean bytes of the fleet's measured worker leases (#561): each
+resident reads the resident-set bytes of every live seat's process group before it admits
+another worker and lands that number on the seat's lease, so the byte budget counts the
+memory the running seats hold. A fleet with no measurement yet admits its first worker
+weight-free, and a worker request the byte budget cannot fund waits IN ORDER like any other
+request. A worker holds no core slot: the operator ruling of 2026-09-18 retired #329's
+one-share-per-worker rule together with the `workerSlots` and `workerMemoryTight` rows.
+
 Admission never refuses for being busy — a request that does not fit waits IN ORDER as a
 visible queue entry (FIFO by enqueued timestamp, same-instant ties broken by a random
 nonce), reporting `{position, ahead}` once. The wait has no bound: a request that cannot be
 admitted now is admitted when the requests ahead of it release, and admission is never
-refused for having waited (#541). A verify on a host whose memory cannot fund one full
-suite is answered at once as degraded, with the shortfall named, and proceeds without a
-lease.
+refused for having waited (#541). A plain verify on a host whose paging headroom or disk
+cannot fund one full suite is answered at once as degraded, with the shortfall named, and
+proceeds without a lease; a `durable` verify (#561: a suite a seat started, and a landing
+gate) holds in that queue instead.
 
 ### Sharing: the host-scoped lease directory
 
