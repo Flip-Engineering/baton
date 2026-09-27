@@ -321,7 +321,7 @@ function promotionPhaseEvent({ worker = 'w-1', seq = 11 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Harness — Coordinator-direct (mirrors worker-delivery-push-red.test.mjs)
+// Harness — Coordinator-direct (mirrors worker-delivery-push.test.mjs)
 // ---------------------------------------------------------------------------
 
 function makeBrief(overrides = {}) {

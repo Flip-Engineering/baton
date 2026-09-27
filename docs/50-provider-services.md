@@ -114,7 +114,7 @@ template exactly:
   no `fleet_` twin, capability classes from the canonical operation);
 - one new family on the shipped core surface: `baton_services` with the single verb `list`,
   dispatching to `baton_services_list`. This grows the #314 core set from seven families to eight;
-  the conformance fixture (issue314-mcp-core-surface-red.test.mjs, which carries the designed core
+  the conformance fixture (issue314-mcp-core-surface.test.mjs, which carries the designed core
   as executable data) gains the family row in the same change. The byte budget row (314-b)
   derives from the table, so it moves by construction.
 

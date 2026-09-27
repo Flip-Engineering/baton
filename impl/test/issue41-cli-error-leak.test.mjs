@@ -1,5 +1,5 @@
 // Issue #41's remaining acceptance clause: a CLI refusal names the seam that failed and a
-// sanitized target, and never the material it was judging. `cli-truthfulness-red.test.mjs` pins
+// sanitized target, and never the material it was judging. `cli-truthfulness.test.mjs` pins
 // the three observed seams (CT1-CT7); this file pins the MATERIAL: a bearer token and a socket path
 // under a private runtime root must appear in no composed message nor in the `detail` a refusal
 // carries. Worker and fence coordinates are pinned at their BOUNDARY instead: two landed contracts

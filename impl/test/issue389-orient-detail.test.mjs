@@ -9,7 +9,7 @@
 //       file's actual line count, and the next action — never ok:true;
 //   (c) packDigest covers the served content (editing the cited text changes it).
 //
-// Harness mirrors impl/test/orientation-red.test.mjs (ScriptableAdapter +
+// Harness mirrors impl/test/orientation.test.mjs (ScriptableAdapter +
 // Coordinator + a real git repo + AtlasCodeIndex through the capabilities seam).
 // Red-first: every row below is red at HEAD (detail serves lines: [] and answers
 // ok:true through every path) and goes green only on the #389 implementation.

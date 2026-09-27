@@ -200,7 +200,7 @@ adapter object — the liveness controller wraps the adapter while the deploymen
 the coordinator registers its own when its deferred startup reconstruction completes (#351 lane 3
 made the deployment open path async). The later registration orphaned the earlier observer on a
 single-slot fixture, the probe's terminal wire reached nobody, the gate's `ensure()` never settled
-and the loop drained: 26 rows of `readiness-credentials-red.test.mjs` and 15 of
+and the loop drained: 26 rows of `readiness-credentials.test.mjs` and 15 of
 `readiness-honesty.test.mjs` were cancelled with zero assertions. The fixtures now deliver
 every event to every registered observer, in registration order.
 

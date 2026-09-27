@@ -29,7 +29,7 @@ import { APPLICATION_TOOL, McpFleetServer } from '../src/mcp-northbound.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 import { swarmBridgeMain } from '../src/swarm-native-bridge.mjs';
 // Issue #338: the real resident deployment the CLI row drives — the real application behind the
-// real authenticated Web host, on the same fixture pattern read-lane-229-red.test.mjs uses.
+// real authenticated Web host, on the same fixture pattern read-lane-229.test.mjs uses.
 import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from '../src/web-northbound.mjs';
 import { WebSessionStore } from '../src/web-auth.mjs';

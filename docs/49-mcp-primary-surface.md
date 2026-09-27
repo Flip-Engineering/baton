@@ -2,13 +2,13 @@
 
 Design direction: 2026-09-18. The core projection, entry points, receipts, wakes, and resident
 reconnection are implemented. Their contracts are covered by
-`impl/test/issue314-core-table.test.mjs`, `issue314-mcp-core-surface-red.test.mjs`,
+`impl/test/issue314-core-table.test.mjs`, `issue314-mcp-core-surface.test.mjs`,
 `issue314-lane2-receipts-wakes.test.mjs`, and `issue314-lane3-reincarnation-rebind.test.mjs`.
 
 The production application surface exposes eight core tools: `baton_deployment`, `baton_run`,
 `baton_swarm`, `baton_waves`, `baton_knowledge`, `baton_wakes`, `baton_services`, and
 `baton_surface`. The raw `McpFleetServer` application table contains 56 tools
-(`impl/test/mcp-profile-parity-red.test.mjs` pins the count); the production wrapper projects
+(`impl/test/mcp-profile-parity.test.mjs` pins the count); the production wrapper projects
 that table into the core families. The startup gate in
 `impl/test/mcp-web-startup-gate.test.mjs` checks the composed entry point and its gate selection
 for application entry-point and bridge changes.
@@ -358,7 +358,7 @@ headless mode for a host without a resident.
 > --write-inventory`), (3) `node impl/scripts/render-surface-docs.mjs`. Until then ES-B is listed in
 > the expected-red manifest under `#314` (it was red at this base and unlisted) and MCP.md's inventory
 > block still documents the flat table — the two rows the pair closes.
-> `mcp-profile-parity-red.test.mjs`'s RG-10b/RG-10c read the flat counterparts out of that same block
+> `mcp-profile-parity.test.mjs`'s RG-10b/RG-10c read the flat counterparts out of that same block
 > and move with it (already tracked under `#156`).
 
 ## 6. Reincarnation survival

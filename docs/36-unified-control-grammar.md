@@ -190,7 +190,7 @@ to the *ordinary* surface, where approval is the only plan verb and it lives on 
 †² `board.claim`/`board.report` are **worker-profile** operations (R-CX-14): they bind a
 worker/owner identity, observed item version/digest, and board fence
 (`coordination-store.mjs:12717-12753`) and are deliberately absent from the ordinary operator
-surface (`mcp-reflex-board-package-red.test.mjs:213-224` pins the absence). They appear here
+surface (`mcp-reflex-board-package.test.mjs:213-224` pins the absence). They appear here
 because the grammar covers every profile; L1 is profile-scoped.
 
 Banned as surface verbs (synonyms; the lint set is **generated from this table with token
@@ -210,13 +210,13 @@ field (§8.1) so no alias can flip a durability class silently.
 ‡ Episode chapters become sections of `run.view` — **the fold is sound only with the episode's
 axes carried over** (R-OP-3, R-KM-3, R-CX-3): `run.view` gains `--role ROLE` (with the explicit
 value `--role none` selecting the run-level aggregate, which is a *distinct projection* —
-`phase92-episode-attribution-red.test.mjs:105-106`) and `--generation N` (the durable workflow
+`phase92-episode-attribution.test.mjs:105-106`) and `--generation N` (the durable workflow
 round, never a Plan version — P92-EA4); episode `detail` maps onto the existing `depth` tail
 (`item|content|evidence` ⊂ depth enum, `application-semantics.mjs:45-47` — the clean half).
 The four cross-argument admission rules (`pageCursor` only for output×content; `content` only
 for output|help; `generation ⇒ role`; `waitMs ⇒ cursor` — `application.mjs:1226-1247`) port
 verbatim into the `run.view` schema. Cross-role and cross-generation evidence isolation
-(`phase92-episode-attribution-red.test.mjs:103-104,133-144`) is a contract **of the fold**.
+(`phase92-episode-attribution.test.mjs:103-104,133-144`) is a contract **of the fold**.
 Registry-owned `--section` values do not count against H7's name depth (R-KM-3). The
 canonical section selector grammar is the dotted spelling `--section episode.CHAPTER`
 (total over the chapter enum; no structured section+item form is carried — R-CX-3).
@@ -281,7 +281,7 @@ canonical section selector grammar is the dotted spelling `--section episode.CHA
   (`mcp-web-bridge.mjs:111-135`); the caller-visible block stays `{kind, inputs}` everywhere.
 - **L3 — Terminals are explained** (R-CX-10): every **non-success** terminal carries a typed
   cause; `completed` carries a non-null accepted result/outcome authority and MAY have
-  `terminalCause: null` (pinned today by `phase92-read-only-result-red.test.mjs:90-103`).
+  `terminalCause: null` (pinned today by `phase92-read-only-result.test.mjs:90-103`).
 - **L4 — One vocabulary per axis.** Exactly the §7 enums, with **generated** legacy mappings
   (R-OP-5: hand-maintained mapping lists are the failure mode this document exists to end). The
   registry owns two predicates — `providerSettled(phase)` and `applicationTerminal(phase)` —
@@ -642,8 +642,8 @@ quiesce point** (R-OP-11).
 - **M3 — Member + read consolidation.** `run.member.*` canonical; `run.view` gains
   `--role/--generation/--until` and the episode fold lands **with** the axes, the ported
   admission matrix, the `continuation.operation` flip (`run.episode` → `run.view`,
-  `phase92-episode-workstream-red.test.mjs:92`), and the browser-desk element-id/bus moves
-  (`phase92-episode-workstream-red.test.mjs:167-175`) in the same commit (R-OP-3); `watch` lands; `steer` retires to kernel profile.
+  `phase92-episode-workstream.test.mjs:92`), and the browser-desk element-id/bus moves
+  (`phase92-episode-workstream.test.mjs:167-175`) in the same commit (R-OP-3); `watch` lands; `steer` retires to kernel profile.
 - **M4 — Generated surfaces.** CLI table, both MCP profiles, web entries (transport-name
   derivation flips here; parked-envelope reconciliation across the boundary is a named
   conformance case — R-KM-8), embedded facade, CLI.md/MCP.md inventories all render from
@@ -662,7 +662,7 @@ operational cost, not a rollback hazard (R-OP-11).
 
 - **C1** (L1): per profile, every registry op × enabled surface resolves under its derived name
   and executes; negative inventory (e.g. board claim/report absent from ordinary MCP,
-  `mcp-reflex-board-package-red.test.mjs:213-224`) asserted per profile (R-CX-14).
+  `mcp-reflex-board-package.test.mjs:213-224`) asserted per profile (R-CX-14).
 - **C2** (L2): property test — for N randomized run states, for every advertised action kind,
   each enabled surface re-derives an executable id for the same `{kind, inputs}` and executing
   it yields the same resulting phase, cause, and attention set (excluding cursor and freshness
@@ -674,7 +674,7 @@ operational cost, not a rollback hazard (R-OP-11).
 - **C5** (L10): the finite phase × attention × next-action matrix — outline alone answers
   what/why/next for **all eight** attention kinds; cause non-null for non-success terminals only
   (R-CX-10, R-OP-7). The three-variant checkpoint response is pinned by
-  `impl/test/turn-checkpoints-31b5-surface-red.test.mjs` (R-CX-6).
+  `impl/test/turn-checkpoints-31b5-surface.test.mjs` (R-CX-6).
 - **C6** (L7): error-shape law over every provokable refusal; leak test that stage/subject never
   carry paths, tokens, or fence coordinates.
 - **C7** (L5): every preset run's durable log carries an expansion record naming the preset and

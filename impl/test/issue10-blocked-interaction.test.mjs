@@ -34,7 +34,7 @@ function principal(id) {
 }
 
 // One MockAdapter whose spawn() selects a scenario by matching a `(marker:x)` fragment
-// embedded in the dispatched brief's goal text — mirrors impl/test/wave-driver-red.test.mjs's
+// embedded in the dispatched brief's goal text — mirrors impl/test/wave-driver.test.mjs's
 // markerAdapter so multiple scenarios can share one driver/adapter instance.
 function markerAdapter(scenariosByMarker) {
   const value = new MockAdapter({ harness: 'mock', scenario: scenariosByMarker.default ?? { outcome: 'completed' } });
@@ -254,7 +254,7 @@ test('AX1-E: runs.list items and the CLI run-status outline render blockedIntera
 // (docs/reference/evidence/reflex-wave-live-2026-07-21/ax1-decisions.md) required a burst of
 // provider thought/tool telemetry to leave `lastProgress.at` unchanged. #236 (2026-08-19) then
 // made that same field the run's liveness basis, so an executing member is never quiescent-silent
-// (pinned green by impl/test/quiescence-activity-red.test.mjs). Forward progress as a polling
+// (pinned green by impl/test/quiescence-activity.test.mjs). Forward progress as a polling
 // agent reads it is the run stage, and the burst never moves it. The burst is staged before the
 // worker's own edit, in a window with a stable stage, so no semantic event interleaves.
 test('AX1-F: a burst of provider tool-call/message telemetry is liveness only — the run stage never advances', async (t) => {

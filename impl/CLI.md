@@ -481,7 +481,7 @@ never a construction failure. The retired Anthropic-compatible `deepseek`/`glm` 
 stay constructible only through an explicit `advanced.routes` configuration. The table above
 renders from the served registry and the deployment's own readiness contract, so it cannot
 disagree with what the deployment serves or gates. Pinned by
-`impl/test/deepseek-routes-red.test.mjs` (DS-1..DS-4) and `impl/test/route-truth.test.mjs`.
+`impl/test/deepseek-routes.test.mjs` (DS-1..DS-4) and `impl/test/route-truth.test.mjs`.
 
 
 `run adopt` first reads `run.evidence` and binds the exact displayed manifest/result coordinates;

@@ -102,7 +102,7 @@ async function fixture(t, label) {
   writeFileSync(join(repo, 'seed.txt'), 'seed\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'seed']);
-  // The deployment's content resolver (reflex3-packages-red.test.mjs's shape): the package
+  // The deployment's content resolver (reflex3-packages.test.mjs's shape): the package
   // admission resolves every branch ref exactly once through it, and resolve-time revalidates.
   const resolver = { sources: new Map(), artifacts: new Map() };
   const store = new CoordinationStore(join(directory, 'coordination'), {

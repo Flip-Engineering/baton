@@ -7,7 +7,7 @@
 // count and next; (b) the same retirement on the settle outcome's per-member row; (c) a
 // member whose delivery succeeds records no retirement row.
 //
-// Fixture mirrors wave-driver-policy-red.test.mjs: the PausableWaveAdapter scripts nudge
+// Fixture mirrors wave-driver-policy.test.mjs: the PausableWaveAdapter scripts nudge
 // delivery failures (failNudge throws in prompt mode 'turn'; the coordinator catches it as
 // delivery_exception and rolls the pause back onto the SAME requestId, so consecutive
 // failures accumulate in the driver's failuresByRequestId).
@@ -35,7 +35,7 @@ function root(label) {
 function principal(id) { return Object.freeze({ actor: 'test', principalId: id, sessionId: `session-${id}` }); }
 
 // Scripted pausable turns; each turn is `{ edits, failNudge? }`. Mirrors
-// wave-driver-policy-red.test.mjs:56-141 (turnEpoch +1 per nudge keeps the fence lockstep;
+// wave-driver-policy.test.mjs:56-141 (turnEpoch +1 per nudge keeps the fence lockstep;
 // a NEW report path per productive turn grows the changedPathsDigest set).
 class PausableWaveAdapter extends MockAdapter {
   constructor({ scriptsByMarker, ...config } = {}) {

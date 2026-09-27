@@ -8,9 +8,9 @@
 // Binding contract: docs/reference/evidence/scratchpad-write-2026-08-13/
 //   contract-fold.md v1.1 (source of truth), contract-redteam.md — the A1-A10 acceptance pins, the
 //   D1/D1.2/D2/D3/D4 folded laws, the refusal vocabulary, the H1.x/H2.x/H3.x blocker folds, and the
-//   OQ resolutions. Idioms: wave-observability-red.test.mjs (the openHost fixture machinery this
+//   OQ resolutions. Idioms: wave-observability.test.mjs (the openHost fixture machinery this
 //   suite drives `application.command`, WebNorthbound and McpFleetServer through), and
-//   worker-orchestrated-swarm-red.test.mjs (the fixture-installed deployment restrictor whose law
+//   worker-orchestrated-swarm.test.mjs (the fixture-installed deployment restrictor whose law
 //   mechanics are provable hermetically while the DEPLOYMENT seam is pinned statically).
 //
 // Rows: 23 (18 red + 5 pin). Red-first: every red row fails today at a NAMED stage and goes green
@@ -189,7 +189,7 @@ function createDriverFor(repo, logDir, adapter) {
     adapters: { mock: adapter },
     stopDeadlineMs: 2_000,
     // Watchdog (the fold-suite law checklist): the driver is armed with a stall watchdog
-    // (stallMs 60_000, kill-on-stall) exactly as worker-orchestrated-swarm-red.test.mjs does.
+    // (stallMs 60_000, kill-on-stall) exactly as worker-orchestrated-swarm.test.mjs does.
     // This suite never launches the interpreter loop (it drives application.command / Web /
     // MCP directly), so the watchdog can never fire — it exists to keep the driver construction
     // honest against the deployment profile, and is the blueteam-158 §4.5 checklist closure.
@@ -485,7 +485,7 @@ async function mcpFixture(t, host) {
   assert.ok(init?.result?.protocolVersion, 'mcp initialize resolves');
   // The fleet server marks the session initialized on this notification; without it every
   // subsequent tools/* call is refused -32002 "Server not initialized" (wave-observability
-  // mcpFixture sends the same handshake, impl/test/wave-observability-red.test.mjs:451).
+  // mcpFixture sends the same handshake, impl/test/wave-observability.test.mjs:451).
   await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
   return { server };
 }

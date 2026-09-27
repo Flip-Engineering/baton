@@ -1,6 +1,6 @@
 // Issue #314 lane 1 (docs/49-mcp-primary-surface.md): the core table's own pins.
 //
-// The red skeleton (issue314-mcp-core-surface-red.test.mjs) pins the four LAWS this lane owns
+// The red skeleton (issue314-mcp-core-surface.test.mjs) pins the four LAWS this lane owns
 // (314-a/b/c/g). This file pins what those laws depend on but do not state: that the core
 // schemas are DERIVED from the landed tables (a field or verb added there appears in the tool,
 // one removed disappears, and a family row that vanishes refuses to project), that a core call

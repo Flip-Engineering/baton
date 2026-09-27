@@ -1,6 +1,6 @@
 # Doc 31 — the Wave surface: first-class orchestration drivers (AX remediation)
 
-*Status: design note, implemented with `impl/src/wave.mjs` and `impl/test/wave-driver-red.test.mjs`.
+*Status: design note, implemented with `impl/src/wave.mjs` and `impl/test/wave-driver.test.mjs`.
 Addresses the agentic-experience defect that every orchestration wave cost a bespoke ~300-line
 driver plus hours of orchestrator-side bugs. Issue-10 AX scope; Program-IR (93B/E) aligned.*
 

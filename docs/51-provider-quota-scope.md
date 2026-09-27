@@ -153,7 +153,7 @@ route stays ready. Each is updated in the same landing, with the inverted assert
 - `issue456-route-degrade-clears.test.mjs` and `issue475-probe-clears-degrade.test.mjs`: the
   degraded/ready route pairs are same-model effort pairs; the ready sibling shares the scope's
   episode, and the probe's success on one effort retires the scope.
-- `route-usage-341-red.test.mjs`, `issue443-reroute-on-provider-fault.test.mjs`: audit every row
+- `route-usage-341.test.mjs`, `issue443-reroute-on-provider-fault.test.mjs`: audit every row
   that builds a refusal or degrade on one exact route and reads a sibling.
 
 ## 6. Verification

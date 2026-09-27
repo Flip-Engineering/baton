@@ -6,7 +6,7 @@ contribution-06f99c82f8a14b50eaee4b1e395fb6a8) and ds-306b (the advisories and w
 master `6bc66bcb`, contribution-3308797739faa1c7f08c6dc5aa1a4d66), with the web-admission
 wiring lane ds-306w landing behind them. Where the landing diverges from the design below, §11
 is the authoritative record. The pin file
-`impl/test/issue306-reincarnation-red.test.mjs` was observed 14/14 red at HEAD 1a830bfe as a
+`impl/test/issue306-reincarnation.test.mjs` was observed 14/14 red at HEAD 1a830bfe as a
 red-before skeleton and then moved to the landed truth (the 374aa9d8 precedent): it now pins
 this document's sections against the landed implementation and is 15/15 green on master
 `34c557d4`. The lane suites (`impl/test/issue306a-*.test.mjs`, `impl/test/issue306b-*.test.mjs`)
@@ -361,7 +361,7 @@ registry's style:
 
 ## 10. Landing order
 
-- The red-before skeleton (`impl/test/issue306-reincarnation-red.test.mjs`) was observed red at
+- The red-before skeleton (`impl/test/issue306-reincarnation.test.mjs`) was observed red at
   HEAD 1a830bfe by the design lane (14/14). The implementation lanes landed BEFORE the design
   package integrated, so the pins moved to the landed truth (the 374aa9d8 precedent) and the
   file is GREEN on master. Its filename keeps the red-before record for archaeology; the header

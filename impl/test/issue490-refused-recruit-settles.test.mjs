@@ -149,7 +149,7 @@ async function seated(driver, runId) {
 // ── the Context Program the package-attach leg needs ───────────────────────────────────────────
 
 /** The content resolver: each branch ref resolves exactly once at admission and every read
- * revalidates through it (the reflex3-packages-red.test.mjs shape, as issue441 reuses it). */
+ * revalidates through it (the reflex3-packages.test.mjs shape, as issue441 reuses it). */
 const sources = new Map();
 const canonical = (value) => (Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object'

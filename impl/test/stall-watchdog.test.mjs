@@ -17,7 +17,7 @@
 // Red-first: every RED row fails at a NAMED stage against the PRE-implementation tree and goes
 // green on the v1.1 implementation ONLY; every PIN row is green today AND green under the
 // correct implementation, but fails a plausible WRONG one (the pin list names what each pin
-// kills). Harness idiom mirrors test/issue10-waiting-vocabulary-red.test.mjs (ScriptableAdapter
+// kills). Harness idiom mirrors test/issue10-waiting-vocabulary.test.mjs (ScriptableAdapter
 // coordinator harness + createDriver/BatonApplication harness). Hermetic: mock adapters, tmp
 // dirs, test.after cleanup, no network, no NUL-bearing file reads. Real timers drive the
 // watchdog exactly as production does; test-side Date.now() is harness timeouts only (SUITE LAW:
