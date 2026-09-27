@@ -216,7 +216,7 @@ test('baton_wakes_since is the pull form: rows after the cursor, the new cursor,
       wakeFrame({ seq: 1, wakeClass: 'recruited', swarmId: 'swarm-a' }),
       wakeFrame({ seq: 2, wakeClass: 'dead', swarmId: 'swarm-a' }),
       wakeFrame({ seq: 3, wakeClass: 'paused', swarmId: 'swarm-b' }),
-      wakeFrame({ seq: 4, wakeClass: 'closed', swarmId: 'swarm-a' }),
+      wakeFrame({ seq: 4, wakeClass: 'left', swarmId: 'swarm-a' }),
     ],
   });
   const page = frameOf(await call(3, 'baton_wakes_since', { since: 1, kinds: ['dead', 'paused'] }));

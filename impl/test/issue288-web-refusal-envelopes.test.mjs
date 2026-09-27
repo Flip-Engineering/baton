@@ -416,7 +416,7 @@ function swarmFixture() {
   return { coordination, web, swarmRuntime, issued, principal };
 }
 
-test('#336: a group_updated naming a non-member crosses as participant_not_found — the fold\'s own refusal, retryable:false', async () => {
+test('#336: a participant_left naming a non-member crosses as participant_not_found — the fold\'s own refusal, retryable:false', async () => {
   const { coordination, web, swarmRuntime, issued, principal } = swarmFixture();
   await swarmRuntime.command('swarm.create', {
     swarmId: 's-issue336', purpose: 'web refusal envelopes', idempotencyKey: 'issue336:create',
@@ -430,16 +430,15 @@ test('#336: a group_updated naming a non-member crosses as participant_not_found
     body: envelope({
       commandId: 'issue336-cmd-1', idempotencyKey: 'issue336-key-1', command: 'swarm.update',
       args: {
-        swarmId: 's-issue336', event: 'swarm.group_updated',
-        payload: { groupId: 'impl', members: ['ghost'] }, idempotencyKey: 'issue336-swarm-key-1',
+        swarmId: 's-issue336', event: 'swarm.participant_left',
+        payload: { participantId: 'ghost' }, idempotencyKey: 'issue336-swarm-key-1',
       },
     }),
     headers: { authorization: `Bearer ${issued.token}` },
   });
-  assert.equal(response.status, 404, 'a refused group seat names what was not found, at 404');
+  assert.equal(response.status, 404, 'a refused participant leave names what was not found, at 404');
   assert.equal(response.body.ok, false);
   assert.equal(response.body.error.code, 'participant_not_found', 'the fold code crosses as itself');
-  assert.match(response.body.error.message, /impl/, 'the fold\'s own message names the group');
   assert.match(response.body.error.message, /ghost/, 'the fold\'s own message names the seat');
   assert.equal(response.body.error.retryable, false, 'a typed fold refusal is never retryable');
 });

@@ -133,7 +133,7 @@ async function servedResident(t, { stream = null, binding = null } = {}) {
   return { coordination, web, host, client, token: issued.token, socketPath };
 }
 
-const FOLLOW = Object.freeze({ kinds: null, swarms: null, follow: true, stopOnClosedWake: false });
+const FOLLOW = Object.freeze({ kinds: null, swarms: null, follow: true });
 
 function recordSwarmRows(coordination) {
   coordination.recordSwarm('swarm.created', { swarmId: SWARM_ID, purpose: 'SSE attachment end' },

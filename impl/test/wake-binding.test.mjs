@@ -39,7 +39,7 @@ async function freePort() {
 
 /** The application surface the host owns: ready, shuttable, and honest about both. */
 function applicationStub() {
-  return { ready: Promise.resolve(true), async shutdown() { return { state: 'closed' }; } };
+  return { ready: Promise.resolve(true), async shutdown() { return { state: 'left' }; } };
 }
 
 function upgradeOutcome(url, headers) {
@@ -63,7 +63,7 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   const principals = new Map([['t0ken-resident-principal', { userId: 'root', sessionId: 's1' }]]);
   server.batonWakes = stream;
   server.batonAuthenticate = (req) => principals.get(`${req.headers.authorization ?? ''}`.replace(/^Bearer /u, '')) ?? null;
-  server.batonShutdown = async () => ({ ok: true, result: 'closed' });
+  server.batonShutdown = async () => ({ ok: true, result: 'left' });
   t.after(() => new Promise((resolve) => { try { server.closeAllConnections?.(); server.close(() => resolve()); } catch { resolve(); } }));
   // The host refuses a Unix-socket path past the kernel's 103-byte sun_path bound, so a fixture
   // under a deep ambient TMPDIR (a deployment runtime dir, or the suite root a parallel gate hands
@@ -117,7 +117,7 @@ test('a declared loopback binding serves the same wake stream to an authenticate
     `baton_swarm_view / baton swarm view ${swarmId} --projection contributions`);
 
   // The filter is the same one the HTTP feed reads: a class outside it never crosses the binding.
-  store.recordSwarm('swarm.closed', { swarmId, reason: 'proof complete' }, { actor: 'test:root', key: 'binding:4' });
+  store.recordSwarm('swarm.participant_left', { swarmId, participantId: 'worker', reason: 'proof complete' }, { actor: 'test:root', key: 'binding:4' });
   await new Promise((resolve) => setTimeout(resolve, 400));
   assert.deepEqual([...new Set(frames.map((frame) => frame.wakeClass))].sort(),
     ['contribution_recorded', 'recruited'], 'only the filtered classes cross the binding');

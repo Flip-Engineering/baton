@@ -2974,7 +2974,7 @@ function parseSwarmCli(args, idempotencyKey) {
     }
     return {
       kind: 'wake_watch', swarms: [values.swarmId], kinds: wakes.kinds, since: wakes.since,
-      follow: true, stopOnClosedWake: true, idempotencyKey,
+      follow: true, idempotencyKey,
     };
   }
   if (verb === 'watch' && wakes.since !== null) {
@@ -3106,7 +3106,7 @@ function parseDeploymentWatch(args, idempotencyKey) {
   }
   return {
     kind: 'wake_watch', swarms: null, kinds: wakes.kinds, since: wakes.since,
-    follow: true, stopOnClosedWake: false, idempotencyKey,
+    follow: true, idempotencyKey,
   };
 }
 
@@ -3217,9 +3217,7 @@ function wakeAttachmentCause(cause) {
 }
 
 /** One attachment, one line per frame, for as long as the caller waits. Returns when the caller
- * stops it (a signal), when the stream ends, or — for the swarm verb — when that swarm's own
- * `closed` wake lands. A refusal is thrown, never swallowed: a watch that cannot attach must not
- * look like a quiet deployment.
+ * stops it (a signal) or when the stream ends. Attachment failures throw their refusal.
  *
  * One wake per coordination row (#272): a coordination row wakes at most once no matter how often
  * the transport delivers it — a replayed row is dropped, never printed twice. Ledger rows key by
@@ -3229,7 +3227,6 @@ export async function followWakes(parsed, client, options = {}) {
   const follow = assertCliFollowOptions(options ?? {}, 'CLI follow options are invalid');
   let frames = 0;
   let cursor = null;
-  let closed = null;
   const delivered = new Set();
   const rowKey = (frame) => (frame?.observation === true
     ? `observation:${frame?.row?.kind ?? frame?.wakeClass}:${frame?.seq}`
@@ -3245,10 +3242,7 @@ export async function followWakes(parsed, client, options = {}) {
         cursor = frame.seq;
       }
       frames += 1;
-      if (parsed.stopOnClosedWake && frame?.wakeClass === 'closed' && frame.observation !== true
-        && (parsed.swarms ?? []).includes(frame.swarmId)) closed = frame;
       await follow.onFollowPage?.(frame);
-      if (closed !== null) attachment.close();
     },
     onLagged: async (lagged) => {
       frames += 1;
@@ -3270,12 +3264,11 @@ export async function followWakes(parsed, client, options = {}) {
     );
   }
   // Issue #356: the end names its reason from the ONE closed set (WAKE_STREAM_END_REASONS). The
-  // swarm's own closed wake is the end IT named; the caller's own stop names itself; a reason the
+  // caller's own stop names itself; a reason the
   // resident named on the stream rides verbatim; a clean end the resident did not name is a
   // transport close — never an unnamed one (the follow that ended within a second on a live swarm
   // was undiagnosable exactly because this row carried no reason).
-  const reason = closed !== null ? 'swarm_closed'
-    : options.signal?.aborted === true ? 'caller_closed'
+  const reason = options.signal?.aborted === true ? 'caller_closed'
     : outcome?.status === 'ended' && WAKE_STREAM_END_REASONS.includes(outcome.reason) ? outcome.reason
     : 'transport_closed';
   if (outcome?.status === 'error') {
@@ -3296,7 +3289,6 @@ export async function followWakes(parsed, client, options = {}) {
     schemaVersion: 1, kind: 'baton.wake_stream_ended', frames, cursor,
     swarms: parsed.swarms === null ? null : [...parsed.swarms],
     kinds: parsed.kinds === null ? null : [...parsed.kinds],
-    closed: closed === null ? null : Object.freeze({ swarmId: closed.swarmId, seq: closed.seq }),
     reason,
     // The typed final frame rides the ended row on EVERY end, whatever the transport named, so a
     // consumer that only reads the returned row is never left with a bare reason string.
@@ -3522,7 +3514,7 @@ function swarmHasLiveParticipant(view) {
  * streamed under (`wakeClassFor` — the stream's own table, so the two legs can never disagree about
  * a class; a resident that already names the class on its enriched watch row (#356) is believed
  * through the same table). A row outside the filter re-arms the watch PAST it instead of answering,
- * so `baton swarm watch S --timeout-ms N --wake-class closed` waits for that class or for the
+ * so `baton swarm watch S --timeout-ms N --wake-class left` waits for that class or for the
  * deadline.
  *
  * The answer is a WAKE FRAME first: `watch {reason, matchedSeq, pendingSince, event, events}` — the

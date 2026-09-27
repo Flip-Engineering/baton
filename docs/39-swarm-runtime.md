@@ -22,9 +22,7 @@ happened. Verification supports those judgments without prescribing the organiza
   several activities and remain available after an assignment or a turn ends.
 - **Work:** an evolving intention, investigation, problem, change, or responsibility. Several
   agents may contribute concurrently. Its organization and relevant evidence can change.
-- **Group:** participants collaborating for a purpose, possibly across harnesses. Membership,
-  delegated coordination, subscriptions, and shared working context can change while work runs.
-- **Workspace:** a resource used by participants. Private worktrees, a group-owned workspace,
+- **Workspace:** a resource used by participants. Private worktrees, a shared workspace,
   scoped shared editing, and mediated patches are different strategies with different guarantees.
 - **Observation/contribution:** a message, tentative finding, edit, question, reference, check,
   proposed change, or other useful intermediate information. A contribution need not be final.
@@ -42,9 +40,7 @@ on separate branches. Participants can move between these arrangements during ex
 
 Add ordering only for real prerequisites or conflicts. A dependency can mean that a selected
 artifact or event is needed; it need not mean that another agent has finished. Informational
-relationships deliver updates without blocking execution. A group barrier, atomic admission,
-shared failure policy, exclusive writer, or selected quorum is an explicit coordination choice.
-Independent activities do not inherit these requirements merely because they share a wave.
+relationships deliver updates. Work items declare their dependencies with `dependsOn`.
 
 Worker/session failure affects its owned activity and actual dependents. Independent peers
 continue. A temporary inability to observe a worker is uncertainty, not proof of death. Elapsed
@@ -54,15 +50,13 @@ selected authority and accounts for all resources it owns.
 
 ## Communication and shared context
 
-Authorized participants can initiate peer conversations, reply independently to group messages,
-share partial work, and subscribe to relevant changes. Recipient and group authority comes from
-the coordinator's current membership records, not untrusted message payloads. Each message and
+Authorized participants can initiate peer conversations, share partial work, and subscribe to
+relevant changes. Recipient authority comes from the coordinator's current membership records. Each message and
 delivery has an attributable identity; transport retries must not be confused with new work.
 
 Conversation payloads can be ordinary text. Schemas are useful for machine-executed actions and
 structured data, not a prerequisite for every finding or discussion. Shared notes and references
-can evolve with attributed versions. A subgroup may receive authority to maintain its shared
-context without asking the root orchestrator to relay every update.
+evolve with attributed versions through swarm-wide context updates.
 
 Native harness tools, context management, skills, and delegation are part of the participant's
 capabilities. Baton must state which it preserves or replaces and observe delegated work to the
@@ -147,7 +141,6 @@ These are behavioral examples, not a required sequence for user work:
 - A reviewer responds to partial implementation and the builder changes direction mid-turn.
 - Several agents claim newly discovered work from a shared board and exchange peer messages.
 - Multiple recipients reply to a broadcast without overwriting each other's contributions.
-- A tightly coordinated subgroup uses an explicit synchronization point while outsiders proceed.
 - One useful change is accepted while other agents continue exploring and monitoring.
 - A resident restart preserves communication, work identity, and recoverable contributions.
 - The same collaboration works across supported native harnesses with their differences visible.
@@ -157,15 +150,15 @@ These are behavioral examples, not a required sequence for user work:
 The September 13 implementation adds a durable living-swarm domain on the existing coordination
 log and existing execution authorities. The ordinary SDK, CLI, MCP, and Web command registry now
 expose create, list, inspect, watch, update, recruit, guide, capture, check, and participant stop.
-Swarms start empty; participants can recruit within delegated grants, join overlapping changing
-groups, publish ordinary findings, and evolve work, assignments, and attributed shared context.
+Swarms start empty; participants can recruit within delegated grants, publish findings, and
+evolve work, assignments, claims, and attributed shared context.
 
 Membership is recorded before the first native turn. A swarm participant ending a turn remains
 available even on an adapter whose ordinary task protocol claims completion. Guidance selects the
 current active/paused delivery behavior inside the worker's serialized delivery slot. Capture pins
 an immutable contribution without finishing its author; independent verification can run while
 the author continues or after its session closes. A check result and an acceptance review are
-separate observations. Organizational close and participant shutdown are separate operations.
+separate observations. Participant leave and participant shutdown are separate operations.
 Live capture uses a separate Git index and leaves the author's HEAD, branch and staging area
 unchanged. A contribution can carry both its original finding and an attached immutable revision.
 Routine tool and usage events do not wake swarm watchers into a self-generated feedback loop.
@@ -183,10 +176,9 @@ recruited DeepSeek Flash, changed groups/context, received findings, and capture
 builder's revision while preserving its session. Observed harness subagents remain a separate
 integration.
 
-Still required for the full design: multi-holder group workspace custody; ongoing native swarm
-acceptance across harnesses; richer selected-event subscriptions and delivery; revisable grants;
-and removal of remaining mandatory Run goal/plan and budget assumptions. Current group/context
-records do not grant shared filesystem custody. Existing wave/recipe workflows remain available.
+Further design work covers native swarm acceptance across harnesses, selected-event subscriptions
+and delivery, revisable grants, and Run goal/plan and budget assumptions. Existing wave/recipe
+workflows remain available.
 
 See [the integration audit](audits/2026-09-13-runtime-policy/integration.md) for defects corrected,
 validation, and boundaries still under development.
@@ -210,64 +202,23 @@ the work assigned within, their contributions and reviews, and the attention row
 act on; the root sees the same subtree when it names the lead.
 
 A participant whose runtime is dead or exited, or whose membership has ended, otherwise keeps its
-active assignments and its group seats indefinitely. The organizer operation `swarm.update` event
+active assignments until they are released. The organizer operation `swarm.update` event
 `swarm.holder_released` (`{ participantId, reason }`) releases them in one durable batch: the
-individual `swarm.assignment_updated` (status released) and `swarm.group_updated` events are what
+individual `swarm.assignment_updated` events with status `released` are what
 the coordination log records, so replay stays byte-identical to the hand-written sequence, and
 the request itself — reason included — rides the durable operation record. A live active
 participant refuses with `swarm_holder_live`: stopping it remains the explicit separate act. The
 `assignment_holder_gone` and `delegation_orphaned` attention rows name this release as their next
 step.
 
-## Declared coupling and session ownership (issue #263 items 2 and 3, 2026-09-13)
+## Work dependencies and session ownership
 
-Coupling is something participants and organizers DECLARE and the swarm keeps honest — never
-something the runtime imposes. The declared choices are exactly the ones this design names:
+Work declares dependencies through `swarm.work_updated.dependsOn`. A `{workId}` entry names
+work that needs an accepted contribution; an `{artifact}` entry names an artifact referenced
+by an accepted contribution. The view shows each dependency and its evidence. Participants
+continue working while dependencies remain unsettled.
 
-- **A dependency between units of work** — declared on the work itself
-  (`swarm.update` event `swarm.work_updated`, optional `dependsOn` field):
-  `[{ workId: "W1" }]` waits for W1 to hold an accepted contribution; `[{ artifact: "name" }]`
-  waits for an accepted contribution that references the artifact. The declared set is replaced
-  whole and kept by updates that omit it. The fold refuses unknown target works, a work waiting
-  on itself, and rings of waits, naming what is missing.
-- **A synchronization point** — declared on a group (`swarm.update` event
-  `swarm.coupling_updated`, coupling `synchronization`): members ARRIVE as their own honest
-  report (read authority suffices for one's own arrival) and the point is RELEASED explicitly,
-  with who released and why recorded. Each arrival is a row — `{participantId, actor, seq, ts}` —
-  so "who arrived, and when" is answered by the artifact rather than by a watch log. The view
-  shows `arrivals`, `awaiting` (current live members only — a released or dead seat never holds a
-  point open), `departed` (the seats from the declared roster that no longer count), and the
-  derived `arrived` fact. Re-declaring the point replaces its parameters and CARRIES the arrivals
-  forward, naming them in `carriedArrivals`: a barrier is never wiped silently.
-- **An exclusive writer over a shared checkout** — declared with coupling `writer`: the record
-  names the writer and the checkout that writer is recorded in. A participant's checkout is
-  recorded when it is recruited into one (the deliberate `shareWorkspaceWith` adoption at
-  membership, and the live attachment observed at binding — the first recruit into a checkout is
-  armed by the latter). One writer per checkout: a second claim over the same checkout refuses
-  naming the current writer, and a claim over a participant with NO recorded checkout refuses with
-  `swarm_writer_workspace_unrecorded` — a claim that names no resource can never enforce
-  exclusivity, so it is refused rather than recorded inert. A writer whose runtime dies raises a
-  `coupling_writer_gone` attention row naming the release that frees the checkout.
-- **A group failure policy** — declared with coupling `failure`, policy `independent`: when a
-  member dies or leaves, a `group_member_gone` attention row names the member and the DEPENDENT
-  work (works that declared a dependency on the gone member's work); independent peers continue.
-  Without a declared policy no such row exists — independent activities inherit nothing by
-  sharing a swarm.
-
-These records INFORM rather than fence. Nothing here stops a worker's process: a participant
-that proceeds against an unsettled dependency does so visibly (`waitsOn` shows the wait as
-unsettled, with the evidence that has not arrived), and that is allowed. Every declaration,
-arrival, and release is a durable swarm event, so `swarm.watch` wakes on each of them and a
-scoped (`participantId`) view shows the couplings its subtree can act on — writer records follow
-the writer's subtree, and a synchronization point or group failure policy is shown to every member
-whose group roster intersects the subtree, so a seat listed in `awaiting` can always read the
-point it is expected to arrive at.
-
-**Who acted** is a fact of every record, never a caller-named seat. `releasedBy` and `reviewerId`
-carry the ACTOR: the participant's own name when a member acts, or the acting principal's label
-when an external orchestrator (which has no participant row) acts — so an organizer's release is
-never attributed to the seat it released, and an orchestrator's review or release never lands as
-null. A caller-named identity that is not the actor refuses.
+Reviews record the acting participant or external principal in `reviewerId`.
 
 **Session ownership after a member leaves** is an explicit, visible fact. The
 `member_left_session_live` attention row names the responsible party — the recruiter (the
@@ -497,11 +448,8 @@ brief text is carried by its own row and by no other: another seat's row says
 composed text's length, the ledger row that holds it and the docs/46 §4 relationship class that
 decided what this caller may see (#464 third half: every ROSTER row, paged or whole, carries the
 reach; only the participantId-scoped read carries the text) — because a brief is what a
-recruiter told ONE seat. Records with
-ROSTERS follow the intersection rule (the #292 rule): a group or a declared coupling is in scope
-when any member of the roster is in the subtree, and a group with an empty roster is in scope for
-nobody. Shared context is swarm-wide by construction and is the participant's own reading; an entry
-written for one group follows that group's roster. Attention rows are the ones the subtree can act
+recruiter told ONE seat. Shared context is visible to every participant. Attention rows are the ones
+the subtree can act
 on, and an in-flight operation names the COMMAND, the seat and the operation key — never the request
 body (2026-09-14 audit S-E6): the text of somebody's private guide is not attention.
 
@@ -669,7 +617,7 @@ text: one surface, one derivation, no drift.
 ## Every mutation answers with a receipt (issues #302, #301, #308, 2026-09-14)
 
 **A mutation is an operation you can account for.** `swarm.create`, `swarm.update` (every kind,
-close included), `swarm.recruit`, `swarm.guide`, `swarm.stop` and `swarm.capture`
+participant leave included), `swarm.recruit`, `swarm.guide`, `swarm.stop` and `swarm.capture`
 answer with a RECEIPT — `receipt {command, event: {kind, seq, ts, actor}, changed:
 [{collection, id, seq, ts}]}` — the recorded event that proves the mutation happened and the rows
 it changed, plus `next: {command, args}`, the projection or action that follows (the same `next`
@@ -679,7 +627,7 @@ returns the FIRST attempt's receipt — idempotency holds for the answer, not on
 Because a receipt names what was recorded, an operation that records nothing durable (a stop whose
 effect lives on the run lane) answers with the receipt of the operation terminal row that proves it.
 
-**One collection shape on the view.** `participants`, `contributions`, `couplings`, `groups` and
+**One collection shape on the view.** `participants`, `contributions`, `claims` and
 `attention` are ARRAYS of rows — the collections a caller iterates — while the identity-addressed
 families (`work`, `assignments`, `reviews`, `context`) stay keyed objects. Every read path (view,
 watch frames, the native bridge, the MCP tools) carries those rows through unchanged, and a test
@@ -913,8 +861,8 @@ overlap advisory named twelve stopped seats, and the roster-intersection rules c
 same fold the recruit-refused rollback (#308) uses — one representation, `leftReason` on the row —
 so a stopped seat reads `status: left` on every projection; `completed` is chosen by the ONE
 completion derivation (`_seatCompleted`, #332) the view and the stop share. Every predicate that
-means "a seat that can still act" — peers in the brief, scope overlap, synchronization arrivals,
-`closed_with_live_participants`, holder checks and the completion derivation — reads one helper,
+means "a seat that can still act" — peers in the brief, scope overlap, holder checks and the
+completion derivation — reads one helper,
 `_canAct` (membership active and runtime not known-dead; `gone` keeps its meaning). The brief's
 Swarm situation lists only seats that can act and adds one line counting the seats that completed
 or stopped since the base, so a successor knows the history without being told the dead are
@@ -1003,12 +951,10 @@ listed there with `excluded_by_operator` (#574), so the decision row audits ever
 `advanced.routing.excludeHarnesses` (`BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok` on a config-less
 serve) is that rule: the recruit selection, the `recruitable` flag, the re-route candidates and
 the pre-effect refusal all read it through the ONE eligibility predicate, and a recruit onto an
-excluded harness refuses `route_excluded`. The swarm-level policy is one caller-submittable row,
-`swarm.policy_updated {rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}` (`organize`,
-through `swarm.update`, or at the open: `baton swarm create <purpose> --policy
-'{"rerouteOnProviderFault":"manual"}'` writes the same row in the create's own mutation, validated
-against the fold's closed sets before `swarm.created` lands, so a refused policy leaves no swarm
-behind and the row is on the ledger before any recruit — #443 hand-back). A swarm that declares
+excluded harness refuses `route_excluded`. The initial provider-fault policy is supplied through `swarm.create.policy` and recorded on
+`swarm.created`. For example, `baton swarm create <purpose> --policy
+'{"rerouteOnProviderFault":"manual"}'` declares manual routing. The runtime validates the policy
+before creation. A swarm that declares
 nothing resolves to `auto`, and the runtime performs the resume itself onto the first candidate
 (successor `<seat>-reroute-<deathSeq>`, operation key `swarm-reroute:<swarm>:<seat>:<seq>`, both
 stable so a retry is safe), recording `swarm.rerouted {from, to, successor, carriedFrom,

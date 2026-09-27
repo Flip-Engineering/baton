@@ -16,7 +16,7 @@ import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionCo
   contributionContractConflict,
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
-import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
+import { scopeClaimId, SWARM_REROUTE_MODES,
   SWARM_POLICY_FIELDS } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
@@ -606,10 +606,7 @@ function objectiveReferencedReceipt(receipt, seat) {
   return { ...out, ...(seat?.roleRef ? { objectiveRef: seat.roleRef, objectiveBytes: seat.roleBytes ?? 0 } : {}) };
 }
 
-/** Issue #443 hand-back: the policy a `swarm.create` may OPEN with — validated against the SAME
- * closed vocabulary the `swarm.policy_updated` fold reads (swarm-state.mjs owns both tables), so
- * the two spellings of "declare a policy" can never disagree about what a policy is. The check runs
- * BEFORE the swarm row lands: a refused policy leaves no swarm behind to clean up. */
+/** Validate the initial provider-fault policy before recording the swarm creation. */
 function swarmCreatePolicy(policy) {
   if (policy === null || typeof policy !== 'object' || Array.isArray(policy)) {
     refuse('swarm.create policy must be a JSON object naming the policy fields to declare',
@@ -1234,21 +1231,13 @@ const _mutationView = (args) => args.view === true || args.view === 'true';
 export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute', 'review', 'organize', 'recruit', 'stop']);
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
 const UPDATE_PERMISSIONS = Object.freeze({
-  'swarm.group_updated': 'organize', 'swarm.work_updated': 'organize',
-  'swarm.assignment_updated': 'organize', 'swarm.coupling_updated': 'organize',
-  // Issues #422/#423 (docs/45 §4.6): the two new kinds land with the runtime half, so this table
-  // stays the STRICT value for each — the value a request naming another seat needs — and the
-  // per-payload relaxation (a seat's own claim at contribute, a member's own consent at read, a
-  // group member's joint declaration at communicate) is the §4.6 derivation in `_updatePermission`
-  // below, the ONE place dispatch and the view's `updates` rows both read.
-  'swarm.claim_updated': 'organize', 'swarm.proposal_updated': 'organize',
-  // Issue #443: a swarm-level policy is the swarm's own conduct — an organizing declaration, so
-  // the same authority every other swarm-level record takes.
+  'swarm.work_updated': 'organize',
+  'swarm.assignment_updated': 'organize',
+  'swarm.claim_updated': 'organize',
   'swarm.holder_released': 'organize',
-  'swarm.policy_updated': 'organize',
   'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
-  'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
+  'swarm.participant_left': 'organize',
 });
 // The update table is a third parallel table over the closed event vocabulary; the contract
 // asserts the other two agree at load, and so must this one — otherwise a new kind is admitted
@@ -1806,8 +1795,6 @@ export const renderPeerNowLine = (peer) => {
     ...peer.holds.filter((row) => row.kind === 'work').map((row) => `${row.workId} (assigned)`),
     ...peer.holds.filter((row) => row.kind === 'claim' && typeof row.workId === 'string')
       .map((row) => `${row.workId} (claimed)`),
-    ...peer.holds.filter((row) => row.kind === 'lease')
-      .map((row) => `the write turn of ${row.couplingId} (lease)`),
   ];
   const clauses = [`holds ${held.length > 0 ? held.join(', ') : 'nothing'}`];
   for (const claim of peer.holds.filter((row) => row.kind === 'claim' && Array.isArray(row.paths) && row.paths.length > 0)) {
@@ -1844,7 +1831,7 @@ const pathClaimExample = () => {
  * never mints it — it is named here because this is the docs/46 §4.1 set, whole.
  */
 export const SWARM_BRIEF_EXPOSURE_CLASSES = Object.freeze([
-  'self', 'subtree', 'checkout', 'group', 'swarm', 'repository',
+  'self', 'subtree', 'checkout', 'swarm', 'repository',
 ]);
 
 /** docs/46 §1.2 (#268) rule 3: what a seat with nothing recorded reads — absence labelled as
@@ -1945,9 +1932,6 @@ export class SwarmRuntime {
     // that can actually change them. Bounded: a long-lived resident must not accumulate one
     // entry per workspace it has ever seen.
     this.workspaceObservations = new Map();
-    // Issue #425/#438: how many worker leases the last writer-state projection saw, so a lease
-    // set that changed (a resident restart) is re-projected once instead of on every read.
-    this.projectedLeaseCount = 0;
     // Issue #443: whether THIS runtime incarnation is already performing an `auto` re-route — the
     // recruit it runs is itself a runtime entry, so the guard is what keeps a pending decision from
     // starting a second successor inside its own resume.
@@ -2417,202 +2401,14 @@ export class SwarmRuntime {
     return false;
   }
 
-  /** The permission one swarm.update request requires of THIS caller — the ONE derivation the
-   * dispatch check and the view's `updates` rows share, so what a view advertises can never
-   * disagree with what dispatch enforces (2026-09-14 audit S-F1). A member's own leave, its own
-   * arrival at a declared synchronization point and its own consent to a proposal are honest
-   * self-reports, and read authority admits them; naming another seat stays an organizing act.
-   *
-   * docs/45 §4.6 is the whole delta on top of that rule: a group member's joint declaration and
-   * any member's coupling proposal ride `communicate`, a lease member's own `take`/`yield` (and
-   * the `yield` of a hold whose holder's RUNTIME is gone — §4.2's liveness check, which the fold
-   * never reads) ride `contribute`, a seat's own claim rides `contribute`, and everything that
-   * names another live seat — or releases another's record — stays `organize`.
-   *
-   * With no payload (the view's question: "which kinds may this caller send at all?") the
-   * self-scoped reading applies to the two NEW kinds — the permission a member's own claim or
-   * its own consent needs — while a coupling request keeps the table's strict value, because a
-   * request that names another live seat, releases a record or declares over a group the caller
-   * is not on still needs organize and the question carries no action to place it. `swarm` is
-   * the fold's row the request is judged against when the caller has one (a lease's roster, a
-   * proposal's proposer); the view asks without it. */
-  _updatePermission(event, caller, payload = null, swarm = null) {
+  /** The permission required by a caller's update, shared by dispatch and discovery. */
+  _updatePermission(event, caller, payload = null) {
     const permission = UPDATE_PERMISSIONS[event] ?? null;
     if (!caller) return permission;
     const own = !payload?.participantId || payload.participantId === caller.participantId;
     if (event === 'swarm.participant_left' && own) return 'read';
-    if (event === 'swarm.coupling_updated') {
-      return this._couplingPermission(caller, payload, own, permission, swarm);
-    }
-    // docs/45 §2: a claim is the seat's own hold — naming another seat, or moving another's
-    // release or handoff, stays an organizing act (the fold refuses the move itself, naming the
-    // rule, so an organizer's own act is the only one that lands).
     if (event === 'swarm.claim_updated') return own ? 'contribute' : permission;
-    if (event === 'swarm.proposal_updated') {
-      const action = payload?.action ?? null;
-      // §3: arrival at a proposal a seat was named in IS its consent, and consent by the seat
-      // itself rides `read` — the same honest self-report rule as a synchronization arrival.
-      if (action === 'arrive') return own ? 'read' : permission;
-      if (action === 'propose') return own ? 'contribute' : permission;
-      // §4.6: the proposer withdraws its own proposal at contribute; any other seat withdraws
-      // at organize. Who proposed is the fold's own fact — `consents` starts with the proposer's
-      // seat (the proposer consents by proposing), so the record itself answers.
-      if (action === 'release') {
-        const proposer = this._proposalProposer(swarm, payload?.proposalId);
-        return proposer !== null && proposer === caller.participantId ? 'contribute' : permission;
-      }
-      // The view's question (no payload): the least a seat may send is its own consent.
-      return payload === null ? 'read' : permission;
-    }
     return permission;
-  }
-
-  /** The §4.6 delta for `swarm.coupling_updated`, one rule per action. `strict` is the table's
-   * value — what the request needs when it names another live seat, releases a record, or asks
-   * for something this derivation cannot place. */
-  _couplingPermission(caller, payload, own, strict, swarm) {
-    const action = payload?.action ?? null;
-    if (action === 'arrive') return own ? 'read' : strict;
-    if (action === 'declare') {
-      // A joint coupling is the GROUP's own declaration (docs/45 §4.1/§4.3): a member of the
-      // group the record is declared over makes it at communicate. An exclusive writer record
-      // (declared over participantId, not a group), a failure policy — which names what happens
-      // to OTHER members, not a consent set's to give (§4.5) — and anything declared over a
-      // group the caller is not on stay organize.
-      if (payload.coupling !== 'synchronization' && payload.coupling !== 'writer') return strict;
-      if (typeof payload.groupId !== 'string' || payload.groupId.length === 0) return strict;
-      if (!own) return strict;
-      const group = swarm?.groups?.[payload.groupId] ?? null;
-      return group !== null && group.members.includes(caller.participantId) ? 'communicate' : strict;
-    }
-    // §4.5: any member with communicate may put a coupling to its consent set, and the proposer
-    // is one of the members it names (the fold refuses a proposal naming anyone else).
-    if (action === 'propose') {
-      return own && Array.isArray(payload.members) && payload.members.includes(caller.participantId)
-        ? 'communicate' : strict;
-    }
-    if (action === 'take' || action === 'yield') {
-      const record = swarm !== null && typeof payload.couplingId === 'string'
-        ? swarm.couplings?.[payload.couplingId] ?? null : null;
-      // A rotating lease is a writer record with no exclusive writer (docs/45 §4.1); an
-      // exclusive record has no write turn to take or yield. A caller with no fold to read (the
-      // view's question) is answered strictly — the fold refuses a non-member by name anyway.
-      if (record === null || record.coupling !== 'writer'
-        || (record.writer !== null && record.writer !== undefined)) return strict;
-      if (!this._leaseRoster(swarm, record).includes(caller.participantId)) return strict;
-      if (own) return 'contribute';
-      // §4.2: yielding the hold of a seat whose RUNTIME is gone is the one act on another
-      // seat's hold a member may make at contribute. Liveness is a runtime fact the fold never
-      // reads, so the runtime is its only judge — and the payload names the holder (the fold
-      // yields exactly the named hold).
-      if (action === 'yield' && payload.participantId === record.holder
-        && !this._seatLive(swarm, record.holder)) return 'contribute';
-      return strict;
-    }
-    return strict;
-  }
-
-  /** docs/45 §3/§4.6: the seat that proposed a work split is the FIRST name in its consent set —
-   * the proposer consents by proposing, and every later arrival appends. Null when no proposal
-   * (or no swarm) is there to read, which keeps the caller's request at the strict permission. */
-  _proposalProposer(swarm, proposalId) {
-    if (swarm === null || typeof proposalId !== 'string') return null;
-    const proposal = swarm.proposals?.[proposalId] ?? null;
-    return proposal?.consents?.[0] ?? null;
-  }
-
-  /** The live roster a rotating lease reads for its own acts (docs/45 §4.1): the group's CURRENT
-   * members when it was declared over a group, else the consent set its declaration named — the
-   * fold's own rule, read here to answer "is this caller one of the lease's members?". */
-  _leaseRoster(swarm, record) {
-    if (typeof record.groupId === 'string' && record.groupId.length > 0) {
-      return swarm?.groups?.[record.groupId]?.members ?? [];
-    }
-    return record.members ?? [];
-  }
-
-  /** Whether a seat's runtime is live NOW — the ONE liveness reading the view derives, asked
-   * directly (docs/45 §4.2): membership that ended, a #364 restart loss, a #442 provider fault
-   * or a worker that is not in a live state all read gone, and a seat with no runtime reading at
-   * all (unbound) is NOT evidence of death. */
-  _seatLive(swarm, participantId) {
-    const participant = swarm?.participants?.[participantId] ?? null;
-    if (participant === null || participant.status !== 'active') return false;
-    if (this._runtimeLostCurrent(participant) !== null
-      || this._participantFaultCurrent(participant) !== null) return false;
-    const worker = this._workerFor(participant, this.coordinator.list());
-    const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
-    return swarmParticipantLiveness(worker, paused.length).live;
-  }
-
-  /** docs/45 §4.3: whether a synchronization point's arrivals satisfy it — the distinct LIVE
-   * members arrived reaching `min(quorum ?? ∞, live members)` with at least one arrival. ONE
-   * derivation, so "released by quorum or by the last arrival" is never two rules: a roster
-   * shrunk below its quorum by departures is satisfied by its LAST arrival, and a quorum of the
-   * full roster by the quorum-th. With no quorum it is exactly the `arrived` reading above.
-   * `participantsById` carries the PROJECTED liveness (settled #364/#442 deaths included). */
-  _couplingSatisfied(record, members, participantsById) {
-    const arrivals = record.arrivals ?? [];
-    if (arrivals.length === 0) return false;
-    const arrived = new Set(arrivals.map((arrival) => arrival.participantId));
-    const live = members.filter((memberId) => {
-      const row = participantsById.get(memberId);
-      return row !== undefined && this._canAct(row);
-    });
-    const threshold = Math.min(record.quorum ?? Number.POSITIVE_INFINITY, live.length);
-    return live.filter((memberId) => arrived.has(memberId)).length >= threshold;
-  }
-
-  /** docs/45 §7 (#374): a group's tightness is DERIVED per read — never declared, never stored on
-   * the swarm, and never global (there is no mode field anywhere). A group reads `tight` when:
-   * a DECLARED, unreleased coupling names it (a synchronization point, a rotating lease or a
-   * failure policy — a proposed-but-unconsented coupling does NOT tighten: consent is still
-   * outstanding); an exclusive-writer record names one of its members; or work actively held
-   * inside the group declares a `dependsOn` edge to work held inside the same group.
-   * `tightBecause` names exactly the rows that make it so, so the reading is auditable, and a
-   * group with none of them is loose however many peers it has. */
-  _groupCoordination(swarm, group) {
-    const tightBecause = [];
-    for (const record of Object.values(swarm.couplings ?? {})) {
-      if (record.released || record.proposed === true) continue;
-      // A coupling declared over the group by its id, or — for a record a consent set declared
-      // (a proposal whose members all arrived leaves groupId null) — one whose roster is entirely
-      // this group's members: the record still names the group it was declared for (docs/45 §7).
-      const namesGroup = record.groupId === group.groupId
-        || (record.groupId === null && Array.isArray(record.members) && record.members.length > 0
-          && record.members.every((member) => group.members.includes(member)));
-      if (namesGroup) {
-        tightBecause.push({ kind: 'coupling', couplingId: record.couplingId, coupling: record.coupling });
-        continue;
-      }
-      if (record.coupling === 'writer' && typeof record.writer === 'string'
-        && group.members.includes(record.writer)) {
-        tightBecause.push({ kind: 'writer', couplingId: record.couplingId, participantId: record.writer });
-      }
-    }
-    // The work each member actively holds — by assignment or by claim — so a dependsOn edge
-    // between two holds of THIS group is visible as the wait it is (docs/45 §7).
-    const heldBy = new Map();
-    const hold = (workId, participantId) => {
-      if (typeof workId !== 'string' || !group.members.includes(participantId)) return;
-      if (!heldBy.has(workId)) heldBy.set(workId, new Set());
-      heldBy.get(workId).add(participantId);
-    };
-    for (const assignment of Object.values(swarm.assignments ?? {})) {
-      if (assignment.status === 'active') hold(assignment.workId, assignment.participantId);
-    }
-    for (const claim of Object.values(swarm.claims ?? {})) {
-      if (claim.status === 'active') hold(claim.workId, claim.participantId);
-    }
-    for (const [workId, holders] of heldBy) {
-      for (const entry of swarm.work?.[workId]?.dependsOn ?? []) {
-        if (entry.workId === undefined) continue;
-        const waited = heldBy.get(entry.workId);
-        if (!waited || ![...waited].some((member) => holders.has(member))) continue;
-        tightBecause.push({ kind: 'dependency', workId, dependsOnWorkId: entry.workId });
-      }
-    }
-    return { ...group, coordination: tightBecause.length > 0 ? 'tight' : 'loose', tightBecause };
   }
 
   _participant(swarm, id) {
@@ -3838,7 +3634,7 @@ export class SwarmRuntime {
   }
 
   /** Issue #350: the ONE "this seat can still act" predicate every surface reads — peers
-   * in the brief, scope overlap, roster intersection, closed-with-live-participants, holder
+   * in the brief, scope overlap, holder
    * checks, and the completion derivation. A seat acts while its membership is active AND
    * its runtime is not known-dead: projected rows carry the liveness derivation, stored
    * rows carry none, and absence of a runtime reading is not evidence of death (an unbound
@@ -3854,16 +3650,12 @@ export class SwarmRuntime {
 
   /** Issue #464 (the brief's reach) + docs/46 §4.1: the caller-side facts the relationship
    * derivation reads, gathered ONCE per view (never per row): the seat this caller IS, the
-   * checkout it was recorded on (#428's binding/custody rows) and the groups it is on. Null for
+   * checkout it was recorded on (#428's binding/custody rows). Null for
    * an organizer — a caller with no seat — which the derivation reads as the swarm's creator. */
   _briefExposureFacts(swarm, caller) {
     if (caller === null || caller === undefined) return null;
-    const groups = new Set();
-    for (const group of Object.values(swarm.groups ?? {})) {
-      if ((group.members ?? []).includes(caller.participantId)) groups.add(group.groupId);
-    }
     return { participantId: caller.participantId,
-      workspaceId: typeof caller.workspaceId === 'string' ? caller.workspaceId : null, groups };
+      workspaceId: typeof caller.workspaceId === 'string' ? caller.workspaceId : null };
   }
 
   /** The ONE derivation of what a caller IS to a seat (docs/46 §4.1, strongest first) — the
@@ -3883,12 +3675,6 @@ export class SwarmRuntime {
     if (this._delegationRelated(swarm, caller.participantId, participant.participantId)) return 'subtree';
     if (facts !== null && facts.workspaceId !== null
       && participant.workspaceId === facts.workspaceId) return 'checkout';
-    if (facts !== null) {
-      for (const group of Object.values(swarm.groups ?? {})) {
-        if (facts.groups.has(group.groupId)
-          && (group.members ?? []).includes(participant.participantId)) return 'group';
-      }
-    }
     return 'swarm';
   }
 
@@ -4054,63 +3840,11 @@ export class SwarmRuntime {
     return delegations;
   }
 
-  /** Issue #425: the checkout's exclusive-writer coupling is kept honest at the seat's own
-   * git seam. The projected writer files (runtime-isolation.mjs) are rewritten here — by the
-   * ONE component that folds coupling events — on every coupling change and binding, so the
-   * file a wrapper reads at commit time cannot go stale: the write happens in the same
-   * synchronous apply path that appended the event, before the mutating answer returns.
-   * Issue #438: this half is EVENT-DRIVEN — it is called by the mutating apply paths that can
-   * change a checkout's writer (a coupling change, a binding) and NEVER by a read, so a view
-   * neither rewrites nor re-reads every checkout's writer state. */
-  _projectCheckoutWriterState() {
-    const scopes = this.coordinator?._runtimeScopes ?? null;
-    if (!scopes || typeof scopes.projectWriterCoupling !== 'function') return;
-    this.projectedLeaseCount = scopes.leases?.size ?? 0;
-    for (const swarm of this.store.swarms()) {
-      const writers = new Map();
-      for (const record of Object.values(swarm.couplings ?? {})) {
-        if (record.coupling === 'writer' && record.released !== true && typeof record.workspaceId === 'string') {
-          writers.set(record.workspaceId, { couplingId: record.couplingId, writer: record.writer });
-        }
-      }
-      for (const participant of Object.values(swarm.participants)) {
-        if (participant.status !== 'active') continue;
-        const workerId = participant.bindings?.at(-1)?.workerId;
-        if (typeof workerId !== 'string' || workerId.length === 0) continue;
-        const workspaceId = typeof participant.workspaceId === 'string' ? participant.workspaceId : null;
-        const writer = workspaceId !== null ? writers.get(workspaceId) ?? null : null;
-        scopes.projectWriterCoupling(workerId, {
-          workspaceId,
-          couplingId: writer?.couplingId ?? null,
-          writer: writer?.writer ?? null,
-        });
-      }
-    }
-  }
-
-  /** Issue #425: the wrappers' own commit observations drain here into the durable rows:
-   * attribution always (`worktree.commit_recorded`), and `swarm.coupling_writer_bypassed` when
-   * the observation saw another seat as the checkout's live writer. A bypass whose named record
-   * no longer matches the fold (a re-declare over another checkout between the act and this
-   * drain) composes no row — a stale sensor line must never refuse the fold nor fabricate a
-   * bypass against a checkout the coupling does not cover.
-   * Issue #438: the drain IS the change probe (an empty spool costs one skipped read per
-   * lease and nothing else), so every runtime entry may run it; what it must never do is
-   * rewrite per-checkout state when nothing changed, which is why the writer projection above
-   * no longer rides this path. The observation it takes is ALSO the workspace observation the
-   * roster reads: the seat's wrapper saw this checkout's HEAD at commit time, so the cache is
-   * stamped `wrapper` here and the next view needs no read of its own.
-   * Issue #612: `turnBoundaries` is the reconcile below, and it walks every worker handle to read
-   * one epoch. `_dispatch` passes it for the commands that read a route and leaves it out for the
-   * ones that read none; every other caller (a view, a watch, a coupling settle, a test) keeps the
-   * default. */
+  /** Attribute wrapper commit observations to their seats and preserve the recorded commits.
+   * Commands that read a route also reconcile turn boundaries. */
   _drainCommitObservations({ turnBoundaries = true } = {}) {
     const scopes = this.coordinator?._runtimeScopes ?? null;
     if (!scopes || typeof scopes.takeCommitObservations !== 'function') return;
-    // A lease set that changed since the last projection (a resident restart re-creating its
-    // leases) must not wait for the next coupling change: those lease's writer files are
-    // re-derived once here. The count makes that at most once per lease change, never per read.
-    if ((scopes.leases?.size ?? 0) !== this.projectedLeaseCount) this._projectCheckoutWriterState();
     // Issue #594: the newest observed commit per seat rides the same drain — the batch is
     // published after the loop, one push per seat carrying every earlier commit by ancestry.
     const preserveBatch = this.preserver !== null && this.preserver.available ? new Map() : null;
@@ -4132,10 +3866,6 @@ export class SwarmRuntime {
         this.skippedForeignObservations = (this.skippedForeignObservations ?? 0) + 1;
         continue;
       }
-      const observationKey = hash(['worktree-commit', swarmId, participantId, workspaceId, sha, at]);
-      this.store.recordDriver('worktree.commit_recorded', {
-        swarmId, participantId, workspaceId, sha, at, paths,
-      }, { actor: 'baton-runtime', key: `worktree-commit:${observationKey}` });
       // The seat's workspace identity, resolved the same way the composer resolves it: the
       // observation's own workspace when the wrapper named one, else the seat's durable binding
       // — the participant row's workspace or its worker's recorded checkout.
@@ -4145,6 +3875,10 @@ export class SwarmRuntime {
         ?? (typeof seat?.workspaceId === 'string' && seat.workspaceId.length > 0 ? seat.workspaceId : null)
         ?? (typeof worker?.sessionContext?.ownerTaskId === 'string' && worker.sessionContext.ownerTaskId.length > 0
           ? worker.sessionContext.ownerTaskId : null);
+      const observationKey = hash(['worktree-commit', swarmId, participantId, seatWorkspaceId, sha, at]);
+      this.store.recordDriver('worktree.commit_recorded', {
+        swarmId, participantId, workspaceId: seatWorkspaceId, sha, at, paths,
+      }, { actor: 'baton-runtime', key: `worktree-commit:${observationKey}` });
       if (sha !== null) {
         this._noteWorkspaceObservation(
           this._workspaceObservationKey(seatWorkspaceId, observation.workerId ?? null),
@@ -4154,15 +3888,6 @@ export class SwarmRuntime {
       if (preserveBatch !== null && sha !== null) {
         preserveBatch.set(participantId, { swarmId, participantId, workspaceId: seatWorkspaceId, sha });
       }
-      const couplingId = typeof observation.couplingId === 'string' && observation.couplingId.length > 0 ? observation.couplingId : null;
-      const writer = typeof observation.writer === 'string' && observation.writer.length > 0 ? observation.writer : null;
-      if (couplingId === null || writer === null || writer === participantId) continue;
-      const record = swarm
-        ? Object.values(swarm.couplings ?? {}).find((row) => row.couplingId === couplingId) ?? null : null;
-      if (!record || record.coupling !== 'writer' || record.workspaceId !== workspaceId) continue;
-      this.store.recordSwarm('swarm.coupling_writer_bypassed', {
-        swarmId, couplingId, workspaceId, writer, by: participantId, sha, at,
-      }, { actor: 'baton-runtime', key: `swarm-writer-bypass:${observationKey}` });
     }
     if (preserveBatch !== null && preserveBatch.size > 0) {
       for (const entry of preserveBatch.values()) {
@@ -4208,13 +3933,6 @@ export class SwarmRuntime {
       if (!seen.has(workerId)) this.preserveTurnEpochs.delete(workerId);
     }
    }
-
-  /** Issue #425: the ONE mutation-path settle — the writer projection a coupling change or a
-   * binding must leave fresh on the lease, then the spool drain those writes then answer to. */
-  _settleCheckoutWriterState() {
-    this._projectCheckoutWriterState();
-    this._drainCommitObservations();
-  }
 
   /** Issue #438: the cache key one workspace row and its observation share — the workspace
    * identity when the seat has one, else the worker's own (a checkout observed before any
@@ -4340,11 +4058,7 @@ export class SwarmRuntime {
   }
 
   inspect(swarm, principal, context, scopeId = null, projection = SWARM_VIEW_DEFAULT_PROJECTION) {
-    // Issue #425: drain before the projection reads the fold — the rows this drain writes must
-    // be folded into THIS view, so the swarm row is re-read after it. Issue #438: the drain is
-    // the ONLY half of the settle a read runs; the writer projection is event-driven (a coupling
-    // change, a binding) and the drain itself is the cheap change probe — an empty spool is one
-    // skipped read per lease, and the writer files are not rewritten for a view.
+    // Drain commit observations before re-reading the swarm for this view.
     this._drainCommitObservations();
     // Issue #454: the restart reconciliation is NOT a read. `_reconcileParticipantRuntimes`
     // writes the durable lost-seat fold, so it runs at the runtime entry every command already
@@ -4852,80 +4566,7 @@ export class SwarmRuntime {
         ...(typeof claim.workId === 'string' ? { workId: claim.workId } : { paths: claim.paths ?? null }),
         next: { event: 'swarm.claim_updated', claimId: claim.claimId, status: 'released' } });
     }
-    // Declared coupling kept honest (issue #263 item 2): a declared group failure policy turns a
-    // member's death into a row that tells the dependents — the works declared on the gone
-    // member's work — while independent peers continue; an exclusive writer whose runtime is
-    // gone names the release that frees the checkout. Coupling is never imposed, so these rows
-    // exist only where the coupling was declared.
-    for (const record of Object.values(swarm.couplings ?? {})) {
-      if (record.released) continue;
-      if (record.coupling === 'failure') {
-        // Issue #448: the roster the policy covers is the GROUP ROW'S OWN HISTORY — the members
-        // it carries now plus the seats it recorded as departed (#395's eviction rows, written by
-        // the participant_left fold itself). A settled member is evicted from every group the
-        // moment it settles (#350), so reading `members` alone made this row unreachable for
-        // exactly the death it exists to announce. A departed seat can never be named again
-        // (group_updated refuses a non-active member), so the union is the group's whole roster:
-        // the row the group already carries, never a second membership table.
-        const group = swarm.groups?.[record.groupId] ?? null;
-        const roster = new Set([...(group?.members ?? []),
-          ...(group?.departed ?? []).map((entry) => entry.participantId)]);
-        for (const memberId of roster) {
-          const memberRow = participantsById.get(memberId);
-          if (!memberRow || !gone(memberRow)) continue;
-          // The works it held when it went gone: its ACTIVE holds, plus the holds the settle's
-          // own aftermath released — `swarm.holder_released`, the remedy every gone-holder row
-          // names, lands as an assignment_updated after the leave, so that row's seq is the newer
-          // one. A hold the member released while it could still act is not one it died holding.
-          const heldWork = new Set(Object.values(swarm.assignments ?? {})
-            .filter((assignment) => assignment.participantId === memberId
-              && (assignment.status === 'active' || (assignment.seq ?? 0) > (memberRow.seq ?? 0)))
-            .map((assignment) => assignment.workId));
-          const dependentWork = Object.entries(swarm.work ?? {})
-            .filter(([, work]) => (work.dependsOn ?? []).some((entry) => entry.workId !== undefined && heldWork.has(entry.workId)))
-            .map(([workId]) => workId).sort();
-          organization.push({ kind: 'group_member_gone', couplingId: record.couplingId, groupId: record.groupId,
-            participantId: memberId, policy: record.policy, dependentWork });
-        }
-      }
-      if (record.coupling === 'writer' && record.writer === null) {
-        // docs/45 §4.1: a rotating lease pages the same row for a holder whose runtime is gone —
-        // naming the lease, the holder and the remedy. Death settles nothing by itself: a member
-        // yields the gone hold (the runtime admits that yield, §4.2), then takes it.
-        const holderId = record.holder ?? null;
-        const holderRow = holderId === null ? null : participantsById.get(holderId);
-        if (holderId !== null && (!holderRow || gone(holderRow))) {
-          organization.push({ kind: 'coupling_writer_gone', couplingId: record.couplingId,
-            participantId: holderId, workspaceId: record.workspaces?.[0] ?? null,
-            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId,
-              action: 'yield', participantId: holderId } });
-        }
-      }
-      if (record.coupling === 'writer' && typeof record.writer === 'string') {
-        const writerRow = participantsById.get(record.writer);
-        if (!writerRow || gone(writerRow)) {
-          organization.push({ kind: 'coupling_writer_gone', couplingId: record.couplingId, participantId: record.writer,
-            workspaceId: record.workspaceId,
-            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'release' } });
-        }
-        // Issue #425: a peer committed while this coupling was live — the act is recorded,
-        // never refused, so the swarm SEES it: the writer is paged to release the coupling,
-        // the bypasser to take it (docs/39 §Declared coupling, kept honest at the checkout).
-        for (const bypass of record.bypasses ?? []) {
-          organization.push({ kind: 'coupling_writer_bypassed', couplingId: record.couplingId,
-            workspaceId: record.workspaceId, participantId: record.writer, bypassedBy: bypass.by,
-            sha: bypass.sha ?? null, at: bypass.at ?? null,
-            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'release' } });
-          organization.push({ kind: 'coupling_writer_bypassed', couplingId: record.couplingId,
-            workspaceId: record.workspaceId, participantId: bypass.by, writer: record.writer,
-            sha: bypass.sha ?? null, at: bypass.at ?? null,
-            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'declare', participantId: bypass.by } });
-        }
-      }
-    }
-    if (swarm.status !== 'open' && participants.some((row) => this._canAct(row))) {
-      organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => this._canAct(row)).map((row) => row.participantId) });
-    }
+
     // #329 (+ #269 item 2): host admission, folded from the runtime's own durable rows — the
     // queue-to-admit timeline the authority records for every host-admitted seat. Issue #541
     // removed the admission wait and its refusal, so the two live kinds are all this fold reads.
@@ -5154,10 +4795,6 @@ export class SwarmRuntime {
       ...organization,
     ];
     const scopedAttention = !scope ? attention : attention.flatMap((row) => {
-      if (row.kind === 'closed_with_live_participants') {
-        const within = row.participantIds.filter((id) => scopeSubtree.includes(id));
-        return within.length ? [{ ...row, participantIds: within }] : [];
-      }
       // A shared-checkout row is one seat's business when the seat is ON that checkout: the row
       // is narrowed to the seats the reader's subtree actually holds, so a peer's shared tree
       // never rides a seat's scoped read as somebody else's row (docs/45 §5).
@@ -5214,46 +4851,6 @@ export class SwarmRuntime {
     const workEntries = Object.entries(swarm.work ?? {})
       .map(([workId, row]) => [workId, { ...clone(row), evidence: evidenceFor(workId),
         ...(((row.dependsOn ?? []).length > 0) ? { waitsOn: waitsFor(row) } : {}) }]);
-    // A group at a synchronization point sees who has arrived and who has not. `awaiting` counts
-    // only current live members — a departed member's seat never holds the point open (released
-    // seats are what a barrier must consume) — `departed` names the seats that no longer count,
-    // and `arrived` derives from the recorded arrivals; it is never asserted.
-    //
-    // docs/45 §8: "whose turn it is" is ONE field name however the record spelled it — an
-    // exclusive writer record's `writer` projects as `holder`, and a rotating lease already
-    // carries its own holder, hold history, group and roster snapshot; a synchronization row
-    // carries its `quorum` (as stored) and the derived `satisfied`.
-    const couplingEntries = Object.entries(swarm.couplings ?? {}).map(([couplingId, record]) => {
-      const row = clone(record);
-      if (record.coupling === 'writer' && row.holder === undefined) row.holder = record.writer;
-      if (record.coupling === 'synchronization') {
-        const currentMembers = swarm.groups?.[record.groupId]?.members ?? [];
-        row.awaiting = currentMembers.filter((memberId) => {
-          const memberRow = participantsById.get(memberId);
-          return memberRow && this._canAct(memberRow)
-            && !record.arrivals.some((arrival) => arrival.participantId === memberId);
-        });
-        // Departed seats come from the roster the point was declared over: a member that left
-        // the swarm, lost its runtime, or was released from the group is named, never counted.
-        const declared = record.members ?? currentMembers;
-        row.departed = declared.filter((memberId) => {
-          const memberRow = participantsById.get(memberId);
-          const stillLiveMember = currentMembers.includes(memberId)
-            && memberRow && this._canAct(memberRow);
-          return !stillLiveMember;
-        });
-        row.arrived = row.awaiting.length === 0 && record.arrivals.length > 0;
-        row.satisfied = this._couplingSatisfied(record, currentMembers, participantsById);
-      }
-      // docs/45 §8: a proposed coupling projects its consent state — the seats whose arrival is
-      // still OUTSTANDING (the consent set minus the consents already given), so a named seat
-      // reads from the record that its arrival is the consent being waited on.
-      if (row.proposed === true) {
-        row.outstanding = (record.members ?? [])
-          .filter((member) => !(record.consents ?? []).includes(member));
-      }
-      return [couplingId, row];
-    });
     const contributionEntries = Object.entries(swarm.contributions ?? {});
     // Issue #441 (lane C): the ONE contributions derivation, read ONCE per view — the same rows
     // `run.contributions.read` answers and the recruit brief counts — and rendered on every
@@ -5307,8 +4904,8 @@ export class SwarmRuntime {
       work: keep(workEntries, ([workId]) => scopeWorkIds.has(workId)),
       assignments: keep(Object.entries(swarm.assignments ?? {}), ([, assignment]) => scopeSubtree.includes(assignment.participantId)
         || scopeWorkIds.has(assignment.workId)),
-      // ONE collection shape on the view (issue #302): participants, contributions, couplings,
-      // groups and attention are ARRAYS of rows — the collections a caller iterates — while the
+      // ONE collection shape on the view (issue #302): participants, contributions, claims,
+      // and attention are ARRAYS of rows — the collections a caller iterates — while the
       // identity-addressed families (work, assignments, reviews, context) stay keyed objects.
       // Every read path (view, watch, bridge, MCP) carries these rows through unchanged.
       contributions: [...rowsOf(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
@@ -5326,52 +4923,14 @@ export class SwarmRuntime {
       }),
       ...noteRows],
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
-      // docs/45 §2/§3, §8: the holds seats take for themselves and the work splits they accept by
-      // arriving are ARRAY collections (the one shape, #302) read with the same scoped-read
-      // intersection the other collections use — a claim follows its holder's subtree or the work
-      // it names, a proposal follows the members it names (roster intersection).
+      // Claims are scoped to the holder or the work they name.
       claims: rowsOf(Object.entries(swarm.claims ?? {}), ([, claim]) =>
         scopeSubtree.includes(claim.participantId) || scopeWorkIds.has(claim.workId)),
-      proposals: rowsOf(Object.entries(swarm.proposals ?? {}), ([, proposal]) =>
-        (proposal.members ?? []).some((member) => scopeSubtree.includes(member)))
-        // docs/45 §3/§8: the row carries the consent state beside the plan — `consents` is the
-        // stored set and `outstanding` is the seats whose arrival is still the one being waited
-        // on, derived per read so a re-propose that carries consents forward reads honestly.
-        .map((proposal) => ({ ...proposal,
-          outstanding: (proposal.members ?? [])
-            .filter((member) => !(proposal.consents ?? []).includes(member)) })),
-      // A group is a roster: a scoped view carries the groups its subtree is ON, by the same
-      // roster-intersection rule the couplings below use. A group with no member in scope is not
-      // this participant's business — and an emptied roster (a released holder) is therefore
-      // carried by nobody, instead of by everybody (`[].every(...)` is vacuous). Each row carries
-      // the DERIVED coordination reading (docs/45 §7) — never stored on the swarm.
-      groups: rowsOf(Object.entries(swarm.groups ?? {}), ([, group]) =>
-        group.members.some((member) => scopeSubtree.includes(member)))
-        .map((group) => this._groupCoordination(swarm, group)),
-      // A member sees the couplings its subtree can act on. An exclusive writer record follows
-      // the writer's subtree; a rotating lease — whose `writer` is null by construction — follows
-      // the roster that may take its write turn (the group's current members, else the consent
-      // set it was declared by); a synchronization point or group failure policy follows its
-      // group — every member whose roster intersects the subtree sees it, so a seat listed in
-      // `awaiting` can always read the point it is expected to arrive at (docs/39 §Declared
-      // coupling), and a lease's members can always read the lease they may take.
-      couplings: rowsOf(couplingEntries, ([, record]) => {
-        if (record.coupling === 'writer' && typeof record.writer === 'string') {
-          return scopeSubtree.includes(record.writer);
-        }
-        const roster = swarm.groups?.[record.groupId]?.members ?? record.members ?? [];
-        return roster.some((member) => scopeSubtree.includes(member));
-      }),
-      // The shared context every participant is recruited with is swarm-wide by construction, so a
-      // scoped view carries it; an entry written for ONE group follows that group's roster, and is
-      // visible to the members who can read the group it belongs to (2026-09-14 audit S-G5).
+      // Shared context is visible to every participant.
       // Issue #427: the rows read in LEDGER order — a rewritten key sorts by the seq of its latest
       // write, not by when the key was first seen — so the `context` projection lists the notes the
       // way the coordination ledger wrote them.
-      context: keep([...Object.entries(swarm.context ?? {})].sort(([, left], [, right]) => left.seq - right.seq),
-        ([, entry]) => entry.groupId === null
-        || entry.groupId === undefined
-        || (swarm.groups?.[entry.groupId]?.members ?? []).some((member) => scopeSubtree.includes(member))),
+      context: keep([...Object.entries(swarm.context ?? {})].sort(([, left], [, right]) => left.seq - right.seq), () => true),
       // The swarm's seeded facts are the shared evidence of the WHOLE swarm — the exchange
       // channel a participant reads without the root copying anything — so a scoped view carries
       // them whole, like the swarm-wide context above (#318).
@@ -5582,13 +5141,7 @@ export class SwarmRuntime {
     }
   }
 
-  /** Issue #263 item 2 — the organizer release operation. A participant whose runtime is dead or
-   * exited, or whose status is left, keeps its active assignments and group seats; this operation
-   * releases them in ONE durable batch: the individual swarm.assignment_updated and
-   * swarm.group_updated events are what lands in the log, so replay stays byte-identical to the
-   * hand-written sequence (the request itself, reason included, rides swarm.operation_requested).
-   * A live active participant refuses with swarm_holder_live — stopping it stays the explicit
-   * separate act. */
+  /** Release a gone participant's active assignments as durable assignment updates. */
   async _holderRelease(swarm, payload, args, principal, context) {
     const holder = this._participant(swarm, payload.participantId);
     const state = this._workerFor(holder, this.coordinator.list())?.status ?? 'unbound';
@@ -5601,8 +5154,6 @@ export class SwarmRuntime {
       const current = this._swarm(args.swarmId);
       const releases = Object.values(current.assignments ?? {})
         .filter((assignment) => assignment.status === 'active' && assignment.participantId === holder.participantId);
-      const groupLeaves = Object.values(current.groups ?? {})
-        .filter((group) => group.members.includes(holder.participantId));
       const planned = [
         ...releases.map((assignment) => ({
           kind: 'swarm.assignment_updated',
@@ -5611,46 +5162,11 @@ export class SwarmRuntime {
             ...(payload.reason ? { reason: payload.reason } : {}) },
           key: `assignment:${assignment.assignmentId}`,
         })),
-        // Issue #290: the roster rewrite retains only currently active members. A leave never
-        // evicts group seats, so the roster the holder departs from usually still names other
-        // departed members — and the fold requires every named member to be active, which made
-        // the release operation bricked by the most common preceding event.
-        ...groupLeaves.map((group) => {
-          const members = group.members.filter((member) => member !== holder.participantId
-            && (Object.hasOwn(current.participants, member) && current.participants[member].status === 'active'));
-          return {
-            kind: 'swarm.group_updated',
-            payload: { swarmId: current.swarmId, groupId: group.groupId, members },
-            key: `group:${group.groupId}`,
-          };
-        }),
       ];
-      // Prove the whole batch folds before the first write: a batch that cannot land whole
-      // refuses with nothing recorded. The prune above removes the seats the fold would refuse
-      // (a departed member); any residual refusal surfaces TYPED, naming the group and seats
-      // the batch planned (#290) — never a raw integrity error wearing no coordinate.
-      const trial = new Map([[current.swarmId, current]]);
-      for (const event of planned) {
-        try { foldSwarmEvent(trial, { kind: event.kind, payload: event.payload }); }
-        catch (error) {
-          if (error instanceof SwarmIntegrityError) {
-            refuse('the holder release batch does not fold, so nothing was recorded; the refusal names the group and seats to repair',
-              'swarm_holder_release_refused', {
-                groupId: event.payload.groupId ?? null,
-                assignmentId: event.payload.assignmentId ?? null,
-                seats: Array.isArray(event.payload.members) ? [...event.payload.members] : null,
-                cause: error.code,
-                causeMessage: error.message,
-              });
-          }
-          throw error;
-        }
-      }
       const operationKey = this._operationKey('swarm.update', args, principal);
       const writes = planned.map((event) => this._write(event.kind, event.payload, principal, `${operationKey}:${event.key}`));
       return { participantId: holder.participantId, released: {
         assignments: releases.map((assignment) => assignment.assignmentId),
-        groups: groupLeaves.map((group) => group.groupId),
       }, writes };
     }, { replaySafe: true, context });
   }
@@ -6154,16 +5670,6 @@ export class SwarmRuntime {
         holds.push(typeof claim.workId === 'string'
           ? { kind: 'claim', claimId: claim.claimId, workId: claim.workId, workspaceId: claim.workspaceId ?? null }
           : { kind: 'claim', claimId: claim.claimId, paths: claim.paths ?? [], workspaceId: claim.workspaceId ?? null });
-      }
-      for (const coupling of Object.values(swarm.couplings ?? {})) {
-        if (coupling.coupling !== 'writer' || coupling.released) continue;
-        if (typeof coupling.writer === 'string' && coupling.writer === participantId) {
-          holds.push({ kind: 'writer', couplingId: coupling.couplingId, workspaceId: coupling.workspaceId ?? null });
-        } else if (coupling.writer === null && coupling.holder === participantId) {
-          // A rotating lease's LIVE hold is the same fact, spelled by a joint record (docs/45 §4.1).
-          holds.push({ kind: 'lease', couplingId: coupling.couplingId, groupId: coupling.groupId ?? null,
-            workspaces: [...(coupling.workspaces ?? [])] });
-        }
       }
       return Object.freeze(holds);
     };
@@ -7075,61 +6581,6 @@ export class SwarmRuntime {
     return this._recordGuidanceSent(swarmId, participant, principal, args, guidance, sent, guided);
   }
 
-  /** docs/45 §8 (#422): the coupling records one seat's brief renders as its "Couplings" block —
-   * the DECLARED and PROPOSED records that touch it. "Touch" is derived from the fold's own rows,
-   * never guessed: a record declared over a group the seat is on (or the group its recruiter is
-   * on — the context the seat is being attached to), a lease whose roster names the seat, an
-   * exclusive writer record naming it, and a proposal whose consent set names it (whose arrival
-   * IS its consent, §4.5). Released records are history, not a situation. */
-  _briefCouplingLines(swarm, participantId, caller) {
-    const groups = new Set();
-    for (const group of Object.values(swarm.groups ?? {})) {
-      if (group.members.includes(participantId)) groups.add(group.groupId);
-      if (caller && group.members.includes(caller.participantId)) groups.add(group.groupId);
-    }
-    const lines = [];
-    for (const record of Object.values(swarm.couplings ?? {})) {
-      if (record.released) continue;
-      const onGroup = typeof record.groupId === 'string' && groups.has(record.groupId);
-      const namesSeat = record.writer === participantId
-        || (record.members ?? []).includes(participantId)
-        || (record.consents ?? []).includes(participantId);
-      if (!onGroup && !namesSeat) continue;
-      lines.push(`- ${this._renderCouplingSituation(swarm, record, participantId)}`);
-    }
-    return lines;
-  }
-
-  /** One coupling record's situation line: its kind and name, who holds what, and — for a
-   * proposed record or a quorum point — whether it is waiting on the reading seat's arrival. */
-  _renderCouplingSituation(swarm, record, participantId) {
-    const head = `${record.couplingId} — ${record.coupling}${record.name ? ` "${record.name}"` : ''}`;
-    if (record.proposed === true) {
-      const outstanding = (record.members ?? []).filter((member) => !(record.consents ?? []).includes(member));
-      return `${head} (proposed): waiting on arrival from`
-        + ` ${outstanding.length > 0 ? outstanding.join(', ') : 'nobody'}`
-        + `${outstanding.includes(participantId) ? ' — your arrival is your consent' : ''}`;
-    }
-    if (record.coupling === 'synchronization') {
-      const members = swarm.groups?.[record.groupId]?.members ?? record.members ?? [];
-      const arrived = new Set((record.arrivals ?? []).map((arrival) => arrival.participantId));
-      const awaiting = members.filter((member) => this._seatLive(swarm, member) && !arrived.has(member));
-      const threshold = record.quorum === undefined ? '' : ` (quorum ${record.quorum})`;
-      return `${head}${threshold}: arrived ${arrived.size === 0 ? 'nobody' : [...arrived].join(', ')};`
-        + ` awaiting ${awaiting.length > 0 ? awaiting.join(', ') : 'nobody'}`
-        + `${awaiting.includes(participantId) ? ' — including you' : ''}`;
-    }
-    if (record.coupling === 'writer') {
-      if (record.writer === null || record.writer === undefined) {
-        return record.holder === null || record.holder === undefined
-          ? `${head} (rotating writer lease): unheld — any member of its group may take it`
-          : `${head} (rotating writer lease): held by ${record.holder}`;
-      }
-      return `${head} (exclusive writer): held by ${record.writer}`;
-    }
-    return `${head} (failure policy): ${record.policy}`;
-  }
-
   /** docs/47 §5 (#441 item 1): the `## Claims` block one recruited seat's brief carries. It
    * teaches the ONE spelling for work outside a declared scope — a path claim, docs/45 §2 — with
    * the example the validator's own schema admits, then lists the claims the SEAT holds (its
@@ -7391,21 +6842,7 @@ export class SwarmRuntime {
           + ` (this block is bounded by ${FRAME_LIMITS['view.seat_read.items'].lane} = ${FRAME_LIMITS['view.seat_read.items'].value})`);
       }
     }
-    // docs/45 §8 (#422): the couplings that touch this seat — its groups' declared and proposed
-    // records, and the records that name the seat itself (a lease whose roster names it, a
-    // proposal whose consent set does) — so a seat reads "who holds the write turn / which point
-    // is waiting on whom / whether my arrival IS my consent" from its own brief, never from a
-    // lead's retyped message. Bounded by the ONE registry row the section draws.
-    const couplingLines = this._briefCouplingLines(swarm, args.participantId, caller);
-    if (couplingLines.length > 0) {
-      situation.push('Couplings (the records that touch your groups, and whether they are waiting on you):');
-      const bound = FRAME_LIMITS['brief.couplings.items'].value;
-      for (const line of couplingLines.slice(0, bound)) situation.push(line);
-      if (couplingLines.length > bound) {
-        situation.push(`- ${couplingLines.length - bound} further coupling record${couplingLines.length - bound === 1 ? '' : 's'} not shown`
-          + ` (this section is bounded by ${FRAME_LIMITS['brief.couplings.items'].lane} = ${bound})`);
-      }
-    }
+
     // Issue #350: the settled history is named once, as a count — a successor knows seats
     // completed or stopped without being told the dead are still working. Rolled-back
     // admissions (recruit_refused) never worked, so they are not history.
@@ -8379,11 +7816,7 @@ export class SwarmRuntime {
     // entry does not look at is not lost: the reconcile compares epochs, so the next entry that
     // reads the fleet sees the same boundary.
     const readsRoutes = ROUTE_READING_COMMANDS.has(command);
-    // Issue #425: every runtime entry drains the commit spools, so a seat's commit is seen at
-    // the next operation — and the mutating arms below (a coupling declare/release, a recruit
-    // binding) project the writer files again after their writes, before the answer ever returns
-    // to the seat. Issue #438: the writer projection is NOT part of a read — it is written by
-    // the apply paths that can change it, never on every command.
+    // Each runtime entry records commits observed since the preceding operation.
     this._drainCommitObservations({ turnBoundaries: readsRoutes });
     // Issue #459: the same open entry sweeps the integration checkouts a previous incarnation left
     // behind — once per runtime incarnation, before any landing of this one exists, so the
@@ -8441,25 +7874,15 @@ export class SwarmRuntime {
       if (principal.principalId?.startsWith('worker:') || context?.runId) {
         refuse('Recruit and organize within your granted swarm', 'swarm_membership_required');
       }
-      // Issue #443 hand-back: a swarm may be OPENED with its re-route policy declared. The policy
-      // is validated BEFORE anything lands (a refused policy leaves no swarm behind), and the row
-      // the create writes is the fold's own `swarm.policy_updated` kind — the same shape
-      // `swarm.update {event: 'swarm.policy_updated'}` carries, so the view reads ONE derivation.
       const policy = args.policy === undefined ? null : swarmCreatePolicy(args.policy);
       const swarmId = args.swarmId ?? `swarm-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       // The commit this swarm starts from (#318): the base the situation projection derives
       // "commits landed on the target since the base" FROM — a reference, never a count.
       const baseCommit = typeof this.situationGit?.head === 'function' ? this.situationGit.head() : null;
       const writes = [this._write('swarm.created', { swarmId, purpose: args.purpose,
+        ...(policy === null ? {} : { policy }),
         ...(typeof baseCommit === 'string' && baseCommit.length > 0 ? { baseCommit } : {}) }, principal,
         this._operationKey(command, { ...args, swarmId }, principal))];
-      if (policy !== null) {
-        // A key of its OWN: the operation key already names the create request, and a second row
-        // under it would be a different request wearing one identity. The content-derived key makes
-        // a retry of the same create land on the row the first attempt wrote.
-        writes.push(this._write('swarm.policy_updated', { swarmId, ...policy }, principal,
-          `swarm-policy:${hash([swarmId, policy])}`));
-      }
       this._recordOperationCompleted(command, args, principal, context);
       return this._mutationResult(command, { ...args, swarmId }, writes, principal, context, { swarmId });
     }
@@ -8556,24 +7979,7 @@ export class SwarmRuntime {
         payload.contributionId ??= `contribution-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       }
       if (args.event === 'swarm.participant_left' && caller) payload.participantId ??= caller.participantId;
-      // Arrivals, releases, and writer claims default the participant they NAME to the caller's
-      // own seat; naming another participant stays possible (organize authority — checked above)
-      // and stays recorded. A release carries no such default: who released is the ACTOR, never a
-      // seat the request happens to name. A group-scoped DECLARATION (`groupId`, docs/45 §4.1)
-      // names its group and no seat at all — the fold refuses a writer record naming both — so it
-      // is the one coupling request the default must not touch.
-      if (args.event === 'swarm.coupling_updated' && payload.participantId === undefined
-        && payload.action !== 'release' && caller
-        && !(payload.action === 'declare' && typeof payload.groupId === 'string' && payload.groupId.length > 0)) {
-        payload.participantId = caller.participantId;
-      }
-      // docs/45 §2/§3 (§4.6 autoFill): a claim names the seat that holds it and a proposal names
-      // the seat proposing or consenting — both default to the caller, exactly as a coupling's
-      // arrivals do; naming another seat stays possible (organize authority, checked above) and
-      // stays recorded. A proposal WITHDRAWAL carries no such default: who released is the ACTOR.
-      if ((args.event === 'swarm.claim_updated'
-        || (args.event === 'swarm.proposal_updated' && payload.action !== 'release'))
-        && payload.participantId === undefined && caller) {
+      if (args.event === 'swarm.claim_updated' && payload.participantId === undefined && caller) {
         payload.participantId = caller.participantId;
       }
       if (args.event === 'swarm.work_updated' && payload.objective === undefined) {
@@ -8612,34 +8018,6 @@ export class SwarmRuntime {
         if (payload.reviewerId && payload.reviewerId !== actor) refuse('Review author does not match caller', 'swarm_author_mismatch');
         payload.reviewerId = actor;
       }
-      if (args.event === 'swarm.coupling_updated' && payload.action === 'release') {
-        const actor = this._actorOf(caller, principal);
-        if (payload.releasedBy !== undefined && payload.releasedBy !== actor) {
-          refuse('A release is attributed to the participant that released it', 'swarm_author_mismatch', { releasedBy: actor });
-        }
-        payload.releasedBy = actor;
-      }
-      // docs/45 §4.1/§4.2: the ONE yield a member may make over ANOTHER seat's hold — the hold
-      // whose holder's runtime is gone — names that holder (the fold yields exactly the named
-      // seat). Who YIELDED it is the actor (§11: attribution is a fact of the record, never a
-      // caller-named seat), so the hold's history carries the member that ended it.
-      if (args.event === 'swarm.coupling_updated' && payload.action === 'yield'
-        && caller && payload.participantId !== undefined && payload.participantId !== caller.participantId) {
-        const actor = this._actorOf(caller, principal);
-        if (payload.releasedBy !== undefined && payload.releasedBy !== actor) {
-          refuse('A release is attributed to the participant that released it', 'swarm_author_mismatch', { releasedBy: actor });
-        }
-        payload.releasedBy = actor;
-      }
-      // A withdrawn proposal is attributed to its ACTOR, exactly as a coupling release is
-      // (docs/45 §3/§11): the fold records who withdrew it, never the seat the request named.
-      if (args.event === 'swarm.proposal_updated' && payload.action === 'release') {
-        const actor = this._actorOf(caller, principal);
-        if (payload.releasedBy !== undefined && payload.releasedBy !== actor) {
-          refuse('A release is attributed to the participant that released it', 'swarm_author_mismatch', { releasedBy: actor });
-        }
-        payload.releasedBy = actor;
-      }
       const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
       // Issue #564: the root-addressed fact is written DURABLY BEFORE the operation is completed,
       // so an operation that reads completed can never be missing its owed row. The contribution
@@ -8677,7 +8055,6 @@ export class SwarmRuntime {
       }
       this._recordOperationCompleted(command, args, principal, context);
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
-      if (args.event === 'swarm.coupling_updated') this._settleCheckoutWriterState();
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
         return this._mutationResult(command, args, [recorded, ...rootAttention].filter(Boolean),
           principal, context,
@@ -8686,7 +8063,6 @@ export class SwarmRuntime {
       return this._mutationResult(command, args, [externalJoin, recorded, ...rootAttention].filter(Boolean),
         principal, context, contributionStatus === null ? {} : { status: contributionStatus });
     }
-    if (swarm.status !== 'open' && command === 'swarm.recruit') refuse('Swarm recruitment is closed', 'swarm_closed');
     if (command === 'swarm.recruit') {
       const permissions = args.permissions ?? DEFAULT_PERMISSIONS;
       if (!Array.isArray(permissions) || permissions.some((permission) => !SWARM_PERMISSIONS.includes(permission))) {
@@ -9200,8 +8576,8 @@ export class SwarmRuntime {
             key: `package.attach:${contextPackage.digest}:${runId}:worker:${args.participantId}`,
           });
         }
-        // Issue #425: the new lease learns the checkout's live writer before its seat can act.
-        this._settleCheckoutWriterState();
+        // Record commits observed by the bound lease.
+        this._drainCommitObservations();
         // Issue #385 + #453: record the workspace carry after binding, from the plan the brief was
         // composed with — case 1 binds the predecessor's checkout (`how: 'bound'`), case 2 applies
         // the snapshot's own diff to the checkout this bind just created (`how: 'applied'`), and a

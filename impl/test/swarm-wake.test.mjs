@@ -83,7 +83,6 @@ test('the CLI parses swarm watch --follow into the deployment wake stream, pinne
   assert.equal(parsed.kind, 'wake_watch');
   assert.deepEqual(parsed.swarms, ['swarm-1']);
   assert.equal(parsed.since, 250);
-  assert.equal(parsed.stopOnClosedWake, true, 'the swarm verb stops when its swarm closes');
   assert.equal(parseBatonCli(['swarm', 'watch', 'swarm-1']).kind, 'command',
     'without --follow the verb is one bounded swarm.watch call');
   assert.throws(() => parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--after-seq', '5']),
@@ -91,7 +90,7 @@ test('the CLI parses swarm watch --follow into the deployment wake stream, pinne
     'the stream resumes from the wake cursor, never the old --after-seq spelling');
 });
 
-test('a real resident wakes a real `baton swarm watch --follow` child on coordination rows and ends it on close', { timeout: 60_000 }, async (t) => {
+test('a real resident wakes a real `baton swarm watch --follow` child on coordination rows and ends it on caller cancellation', { timeout: 60_000 }, async (t) => {
   const repo = repository(t);
   const configured = options(t, repo);
   const owner = await openBaton({ repo, advanced: configured.advanced });
@@ -111,21 +110,22 @@ test('a real resident wakes a real `baton swarm watch --follow` child on coordin
   let buffer = '';
   child.stdout.on('data', (chunk) => { buffer += chunk; let index; while ((index = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1); if (line.trim()) lines.push(JSON.parse(line)); } });
   const exited = new Promise((resolve) => child.once('close', (code) => resolve(code)));
-  const wakes = async (count) => { const deadline = Date.now() + 20_000; while (lines.length < count) { if (Date.now() > deadline) throw new Error(`only ${lines.length} wakes; stderr: ${stderr}`); await new Promise((resolve) => setTimeout(resolve, 50)); } };
+  const wakes = async (ready) => { const deadline = Date.now() + 20_000; while (!ready()) { if (Date.now() > deadline) throw new Error(`only ${lines.length} wakes; stderr: ${stderr}`); await new Promise((resolve) => setTimeout(resolve, 50)); } };
 
   // A guide to a paused seat rides the nudge lane (#273): the receipt is the delivery evidence.
   // The stream's guidance class names a DELIVERED parked guidance (#337), so the rows this test
-  // drives at the follower are the contribution, the context row and the close.
+  // drives at the follower are the contribution, the context row and the participant leave.
   const guideReceipt = await swarm.guide('worker', 'Report what you see.');
   assert.equal(guideReceipt.result?.ok, true, 'the guide reaches the paused seat through its lane');
   await swarm.update('swarm.contribution_recorded', 'a finding from the root');
-  await wakes(1);
+  await wakes(() => lines.some((line) => line.wakeClass === 'contribution_recorded'));
   // #272: a context row wakes naming the key it wrote, so the follower never re-reads the view.
   await swarm.update('swarm.context_updated', { key: 'wake:proof', body: { phase: 'context-subject-proof' } });
-  await wakes(2);
+  await wakes(() => lines.some((line) => line.wakeClass === 'context_updated'));
   await untilPaused();
   await swarm.stop('worker', 'done');
-  await swarm.close({ reason: 'proof complete' });
+  await wakes(() => lines.some((line) => line.wakeClass === 'left'));
+  child.kill('SIGINT');
   const code = await exited;
   assert.equal(code, 0, `follow child exit ${code}; stderr: ${stderr}`);
   // #365: after the wakes the follow prints its ended row on the SAME stream — one compact JSON
@@ -133,7 +133,7 @@ test('a real resident wakes a real `baton swarm watch --follow` child on coordin
   // the attachment's own verdict row.
   const wakeFrames = lines.filter((line) => line.kind === 'baton.wake');
   const ended = lines.find((line) => line.kind === 'baton.wake_stream_ended');
-  assert.ok(wakeFrames.length >= 3, `at least contribution, context and close wakes: ${wakeFrames.length}`);
+  assert.ok(wakeFrames.length >= 3, `at least contribution, context and participant leave wakes: ${wakeFrames.length}`);
   for (const line of wakeFrames) {
     assert.equal(line.kind, 'baton.wake');
     assert.equal(line.swarmId, swarm.id);
@@ -141,47 +141,47 @@ test('a real resident wakes a real `baton swarm watch --follow` child on coordin
     assert.ok(typeof line.actor === 'string' && line.actor.length > 0, 'every wake names its actor');
     assert.ok(line.subject !== null && typeof line.subject?.id === 'string', 'every wake names its subject');
   }
-  assert.equal(wakeFrames.at(-1).wakeClass, 'closed');
+  assert.ok(wakeFrames.some((frame) => frame.wakeClass === 'left'));
   assert.ok(wakeFrames.some((line) => line.wakeClass === 'contribution_recorded'));
   const context = wakeFrames.find((line) => line.wakeClass === 'context_updated');
   assert.deepEqual(context?.subject, { kind: 'context', id: 'wake:proof' });
   assert.ok(ended, 'the follow ends with its ended row');
-  assert.equal(ended.reason, 'swarm_closed');
-  assert.equal(ended.closed?.swarmId, swarm.id);
+  assert.equal(ended.reason, 'caller_closed');
   const closed = await owner.close();
   assert.equal(closed.state, 'closed');
 
-test('followWakes delivers one frame per matched event over the resident stream and stops when the pinned swarm closes', { timeout: 30_000 }, async (t) => {
+test('followWakes delivers one frame per matched event over the resident stream and stops when the caller cancels', { timeout: 30_000 }, async (t) => {
   const resident = await startWakeResident({
     token: TOKEN,
     frames: [
       wakeFrame({ seq: 5, wakeClass: 'guidance_delivered', swarmId: SWARM_ID, participantId: 'worker' }),
       wakeFrame({ seq: 9, wakeClass: 'contribution_recorded', swarmId: SWARM_ID }),
-      wakeFrame({ seq: 12, wakeClass: 'closed', swarmId: SWARM_ID }),
+      wakeFrame({ seq: 12, wakeClass: 'left', swarmId: SWARM_ID }),
     ],
     card: CARD, session: SESSION,
   });
   t.after(() => resident.close());
   // The production consumer path: followWakes over the production stream client, with the swarm
-  // pinned and the close ending the attachment (stopOnClosedWake), exactly as the CLI builds it.
+  // pinned and cancellation ending the attachment, as the CLI builds it.
   const client = {
     wakes: (opts) => openWakeStream({
       token: TOKEN, baseUrl: BASE_URL, socketPath: resident.socketPath, ...opts,
     }),
   };
   const pages = [];
+  const controller = new AbortController();
   const last = await followWakes(
-    { kinds: null, swarms: [SWARM_ID], since: 0, follow: true, stopOnClosedWake: true },
+    { kinds: null, swarms: [SWARM_ID], since: 0, follow: true },
     client,
-    { onFollowPage: async (page) => { pages.push(page); } },
+    { signal: controller.signal, onFollowPage: async (page) => { pages.push(page); if (pages.length === 3) controller.abort(); } },
   );
   assert.deepEqual(pages.map((page) => [page.kind, page.wakeClass, page.swarmId]), [
     ['baton.wake', 'guidance_delivered', SWARM_ID],
     ['baton.wake', 'contribution_recorded', SWARM_ID],
-    ['baton.wake', 'closed', SWARM_ID],
+    ['baton.wake', 'left', SWARM_ID],
   ]);
   assert.equal(last.frames, 3);
-  assert.deepEqual(last.closed, { swarmId: SWARM_ID, seq: 12 });
+  assert.equal(last.reason, 'caller_closed');
 });
 });
 
@@ -191,20 +191,20 @@ test('followWakes delivers one frame per matched event over the resident stream 
 // the stream's closed class set (including the `queued` class #329 added); `--kinds` stays a
 // working spelling of the same axis.
 test('swarm watch --follow honours --wake-class over the closed class set (#272)', () => {
-  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--wake-class', 'closed,queued']);
+  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--wake-class', 'left,queued']);
   assert.equal(parsed.kind, 'wake_watch');
-  assert.deepEqual(parsed.kinds, ['closed', 'queued']);
+  assert.deepEqual(parsed.kinds, ['left', 'queued']);
   const repeated = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow',
-    '--wake-class', 'closed', '--wake-class', 'dead, closed']);
-  assert.deepEqual(repeated.kinds, ['closed', 'dead']);
+    '--wake-class', 'left', '--wake-class', 'dead, left']);
+  assert.deepEqual(repeated.kinds, ['dead', 'left']);
   const deployment = parseBatonCli(['deployment', 'watch', '--follow', '--wake-class', 'capacity_pressure']);
   assert.equal(deployment.kind, 'wake_watch');
   assert.deepEqual(deployment.kinds, ['capacity_pressure']);
   const legacy = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--kinds', 'dead']);
   assert.deepEqual(legacy.kinds, ['dead']);
   const both = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow',
-    '--kinds', 'dead', '--wake-class', 'closed']);
-  assert.deepEqual(both.kinds, ['closed', 'dead']);
+    '--kinds', 'dead', '--wake-class', 'left']);
+  assert.deepEqual(both.kinds, ['dead', 'left']);
   assert.throws(() => parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--wake-class', 'not_a_class']),
     (error) => String(error?.message ?? '').includes('not_a_class')
       && String(error?.message ?? '').includes('queued'),
@@ -226,10 +226,11 @@ test('followWakes emits one page per coordination row when the transport replays
     },
   };
   const pages = [];
+  const controller = new AbortController();
   const last = await followWakes(
-    { kinds: null, swarms: [SWARM_ID], since: 0, follow: true, stopOnClosedWake: false },
+    { kinds: null, swarms: [SWARM_ID], since: 0, follow: true },
     client,
-    { onFollowPage: async (page) => { pages.push(page); } },
+    { signal: controller.signal, onFollowPage: async (page) => { pages.push(page); if (pages.length === 3) controller.abort(); } },
   );
   assert.deepEqual(pages.map((page) => page.seq), [5, 9]);
   assert.equal(last.frames, 2);
@@ -244,17 +245,17 @@ test('followWakes emits one page per coordination row when the transport replays
 // requested class and re-arms past the rows it did not act on, using the stream's own class table.
 
 test('the bounded swarm watch parses --wake-class through the same closed-set parser as --follow (#339)', () => {
-  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--timeout-ms', '250', '--wake-class', 'closed,queued']);
+  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--timeout-ms', '250', '--wake-class', 'left,queued']);
   assert.equal(parsed.kind, 'swarm_watch_filtered');
   assert.equal(parsed.swarmId, 'swarm-1');
   assert.equal(parsed.timeoutMs, 250);
-  assert.deepEqual(parsed.kinds, ['closed', 'queued']);
+  assert.deepEqual(parsed.kinds, ['left', 'queued']);
 
   const legacy = parseBatonCli(['swarm', 'watch', 'swarm-1', '--kinds', 'dead', '--projection', 'outline']);
   assert.equal(legacy.kind, 'swarm_watch_filtered');
   assert.deepEqual(legacy.kinds, ['dead'], '--kinds stays a working spelling of the same axis');
   assert.equal(legacy.projection, 'outline', 'the projection rides along like every other flag');
-  const resumed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--wake-class', 'closed', '--after-seq', '4']);
+  const resumed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--wake-class', 'left', '--after-seq', '4']);
   assert.equal(resumed.afterSeq, 4, 'the bounded watch resumes with the swarm cursor');
 
   const plain = parseBatonCli(['swarm', 'watch', 'swarm-1', '--timeout-ms', '250']);
@@ -277,14 +278,14 @@ test('the bounded watch answers on a row of the requested wake class, re-arming 
     { schemaVersion: 1, swarmId: SWARM_ID, cursor: 5, status: 'open',
       watch: { reason: 'event', afterSeq: 0, matchedSeq: 5,
         event: { seq: 5, kind: 'driver.recorded', payloadKind: 'message.delivered', participantId: 'worker' } } },
-    { schemaVersion: 1, swarmId: SWARM_ID, cursor: 9, status: 'closed',
+    { schemaVersion: 1, swarmId: SWARM_ID, cursor: 9, status: 'open',
       watch: { reason: 'event', afterSeq: 5, matchedSeq: 9,
-        event: { seq: 9, kind: 'swarm.closed', payloadKind: null } } },
+        event: { seq: 9, kind: 'swarm.participant_left', payloadKind: null } } },
   ];
   const client = {
     async command(name, args, key) { calls.push({ name, args, key }); return delivered.shift(); },
   };
-  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--timeout-ms', '2000', '--wake-class', 'closed']);
+  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--timeout-ms', '2000', '--wake-class', 'left']);
   const view = await watchSwarmFiltered(parsed, client);
   assert.equal(calls.length, 2, 'the row outside the filter does not answer the watch');
   assert.deepEqual(calls.map((call) => call.args.afterSeq), [undefined, 5],
@@ -294,7 +295,7 @@ test('the bounded watch answers on a row of the requested wake class, re-arming 
     'every round is bounded by what is left of the caller\'s own deadline');
   assert.notEqual(calls[0].key, calls[1].key, 'each round carries its own command identity');
   assert.equal(view.cursor, 9);
-  assert.equal(view.watch.wakeClass, 'closed', 'the answer names the class it woke on');
+  assert.equal(view.watch.wakeClass, 'left', 'the answer names the class it woke on');
   assert.equal(view.watch.event.seq, 9);
 });
 
@@ -305,7 +306,7 @@ test('the bounded watch answers the timeout row when no matching class lands (#3
         watch: { reason: 'timeout', afterSeq: 7, matchedSeq: null, event: null } };
     },
   };
-  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--timeout-ms', '20', '--wake-class', 'closed']);
+  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--timeout-ms', '20', '--wake-class', 'left']);
   const view = await watchSwarmFiltered(parsed, client);
   assert.equal(view.watch.reason, 'timeout', 'the deadline is reported, never a fabricated wake');
   assert.equal(view.watch.wakeClass, undefined, 'a timeout row never claims a wake class');

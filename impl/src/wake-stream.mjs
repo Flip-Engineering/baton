@@ -34,7 +34,7 @@ const WAKE_SCHEMA_VERSION = 1;
 // ended the stream without naming itself; the resident names `stream_cursor_behind_archive` and
 // `resident_stopping` itself, because only it knows.
 export const WAKE_STREAM_END_REASONS = Object.freeze([
-  'swarm_closed', 'stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping',
+  'stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping',
 ]);
 
 // Issue #316 (b): the ONE closed set of reasons an ATTACHMENT that ends can name — the end-reason
@@ -132,26 +132,18 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'assigned', scope: 'swarm', terminal: false, next: null,
-    summary: 'groups, assignments or claims changed — who holds what work',
+    summary: 'assignments or claims changed — who holds what work',
     // docs/45 §8 (#423): a claim is a hold on work or on paths, so it wakes the class that
     // answers "who holds what" — no new wake vocabulary for a new hold spelling.
-    rows: [ledgerKind('swarm.assignment_updated'), ledgerKind('swarm.group_updated'),
+    rows: [ledgerKind('swarm.assignment_updated'),
       ledgerKind('swarm.claim_updated')],
     subject: { field: 'assignmentId', kind: 'assignment', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
     wakeClass: 'work_updated', scope: 'swarm', terminal: false, next: null,
-    summary: 'declared work changed, including its dependencies and status — and a work split was proposed or accepted',
-    // docs/45 §8 (#423): a work proposal is a change to declared work — the plan names the work
-    // items it will create — so its rows ride the class that already announces work changes.
-    rows: [ledgerKind('swarm.work_updated'), ledgerKind('swarm.proposal_updated')],
+    summary: 'declared work changed, including its dependencies and status',
+    rows: [ledgerKind('swarm.work_updated')],
     subject: { field: 'workId', kind: 'work', fallback: { field: 'swarmId', kind: 'swarm' } },
-  }),
-  wakeRow({
-    wakeClass: 'coupling_updated', scope: 'swarm', terminal: false, next: null,
-    summary: 'a coupling between participants changed',
-    rows: [ledgerKind('swarm.coupling_updated')],
-    subject: { field: 'couplingId', kind: 'coupling', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
     wakeClass: 'context_updated', scope: 'swarm', terminal: false, next: null,
@@ -204,12 +196,6 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     summary: 'a participant seeded a fact into the swarm\u2019s shared evidence — find it with evidence search',
     rows: [ledgerKind('knowledge.node_added')],
     subject: { field: 'id', kind: 'knowledge', fallback: { field: 'runId', kind: 'run' } },
-  }),
-  wakeRow({
-    wakeClass: 'closed', scope: 'swarm', terminal: true, next: 'baton_swarm_view / baton swarm view {swarmId}',
-    summary: 'a swarm was closed; its participants keep running until each is stopped explicitly',
-    rows: [ledgerKind('swarm.closed')],
-    subject: { field: 'swarmId', kind: 'swarm', fallback: null },
   }),
   wakeRow({
     wakeClass: 'refused', scope: 'swarm', terminal: true, next: 'baton_swarm_view / baton swarm view {swarmId}',

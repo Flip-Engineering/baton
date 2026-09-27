@@ -67,7 +67,7 @@ function fixture(t) {
   return { store, runtime, ports, workers, prompts, starts, checks, call, recruit, cards };
 }
 
-test('orchestrator starts empty, recruits later, and changes overlapping collaboration groups', async (t) => {
+test('orchestrator starts empty, recruits later, and shares context', async (t) => {
   const f = fixture(t);
   const created = await f.call('create', { purpose: 'Develop Baton using Baton' });
   // Issue #302: a mutation answers with its RECEIPT — the recorded event and the rows it changed —
@@ -82,15 +82,11 @@ test('orchestrator starts empty, recruits later, and changes overlapping collabo
   assert.equal('participants' in created, false, 'the view is opt-in, never the default answer');
   await f.recruit('builder');
   await f.recruit('reviewer', ['read', 'review', 'communicate']);
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'runtime', members: ['builder', 'reviewer'] } });
-  await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'api', members: ['reviewer'] } });
   await f.call('update', { event: 'swarm.context_updated', payload: { key: 'design', body: 'A turn ending is not a contribution being accepted.' } });
   await f.recruit('scout');
   assert.equal(f.starts.at(-1).sharedContext[0].body, 'A turn ending is not a contribution being accepted.');
   assert.equal(f.workers.length, 3);
   const view = await f.call('view');
-  assert.deepEqual(view.groups.find((row) => row.groupId === 'runtime').members, ['builder', 'reviewer']);
-  assert.deepEqual(view.groups.find((row) => row.groupId === 'api').members, ['reviewer']);
   assert.ok(view.availableActions.includes('swarm.recruit'));
 });
 
@@ -147,12 +143,10 @@ test('inspect gives each participant usable payload examples only for their perm
   // arrival at a proposal) is sendable at read — beside the kinds that were already advertised.
   assert.deepEqual(view.updates.filter((row) => row.event !== undefined), [
     { event: 'swarm.claim_updated', permission: 'contribute' },
-    { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.context_updated', permission: 'communicate' },
     { event: 'swarm.contribution_recorded', permission: 'contribute' },
     { event: 'swarm.participant_left', permission: 'read' },
   ], 'updates names each kind this caller may send with the permission that admits it');
-  assert.equal(view.updatePayloads['swarm.group_updated'], undefined);
   const schema = view.updatePayloads['swarm.context_updated'];
   assert.equal(schema.fields.body.type, 'json');
   await f.call('update', { event: 'swarm.context_updated', payload: schema.example }, caller);
