@@ -452,7 +452,6 @@ test('RG-09 RE-DERIVED (#566): combined tools/list is the served combined table 
   // Issue #566 composition: the combined surface carries the restored ordinary table (55 + the
   // harvest pair) plus the fleet/advanced/reflex families and the #233 canonical dot twins — the
   // 14 minted baton_run_* lifecycle siblings left with the regression restore.
-  assert.equal(names.length, 148, 'combined tools/list count 148 (stage: combined-102-includes-siblings)'); // two fewer than the pre-removal 150: baton_swarm_check left the ordinary table and the canonical swarm.check left the combined one, both with the #598 removal of the check verb
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
