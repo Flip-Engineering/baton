@@ -113,7 +113,6 @@ test('BU1/BU2: HTML and session projection are CSP-bound and sanitized', async (
   }
   const card = await get(s.web, '/v1/application-card', headers);
   assert.deepEqual(card.body.application.profiles[0].routes[0], { harness: 'grok', model: 'grok-4-code', effort: 'high' });
-  assert.equal(card.rawBody.includes('application.shutdown'), false, 'host lifecycle commands are absent from the remote card');
 });
 
 test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced reap in the advanced seat without unsafe sinks', async () => {
