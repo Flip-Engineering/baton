@@ -267,7 +267,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       at: STRING('the delivery instant, ISO 8601'),
     }),
     example: Object.freeze({
-      seq: 42, wakeClass: 'root_turn_reported', swarmId: null, runId: 'run-root-1', workerId: null,
+      seq: 42, wakeClass: 'root_owed', swarmId: null, runId: 'run-root-1', workerId: null,
       attempt: 2,
       harness: 'claude-code', mechanism: 'session-socket', sessionId: 'session-ada',
       at: '2026-09-23T04:00:00.000Z',
@@ -288,7 +288,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       at: STRING('the refusal instant, ISO 8601'),
     }),
     example: Object.freeze({
-      seq: 43, wakeClass: 'root_turn_reported', swarmId: null, runId: null, workerId: 'worker-root-1',
+      seq: 43, wakeClass: 'root_owed', swarmId: null, runId: null, workerId: 'worker-root-1',
       attempt: 1,
       harness: 'codex', mechanism: 'none', code: 'wake_delivery_unavailable',
       at: '2026-09-23T04:00:01.000Z',

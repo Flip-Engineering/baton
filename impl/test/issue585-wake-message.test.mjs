@@ -24,7 +24,7 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { createBrief } from '../src/messages.mjs';
 import { renderBrief } from '../src/adapter.mjs';
-import { composeOwedMessage, composeTurnReportMessage } from '../src/attention-message.mjs';
+import { composeOwedMessage } from '../src/attention-message.mjs';
 
 const SMILE = '✦(◕‿◕)✦';
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
@@ -57,10 +57,6 @@ function memoryStore() {
 function rootWakeBody(record, frame) {
   const store = memoryStore();
   const event = record(store);
-  if (frame.wakeClass === 'root_turn_reported') {
-    const { worker, report, runId } = event.payload;
-    return composeTurnReportMessage({ worker, report, runId });
-  }
   const subject = store.rows
     .filter((row) => row.payload.kind === 'swarm.contribution_recorded'
       && row.payload.contributionId === event.payload.contributionId)
@@ -108,25 +104,6 @@ test('585-2: a needs_root wake carries the ask and the view command', async () =
     '  ask: the root: inspect contribution-564',
     '  next: baton swarm view swarm-564',
   ].join('\n'));
-  assert.equal(body.includes('{'), false);
-  assert.equal(body.includes('"'), false);
-});
-
-test('585-3: a turn report names its result, the worker, the run and the run view command', async () => {
-  const body = await rootWakeBody((store) => store.recordDriver('worker.turn_reported', {
-    runId: 'run-root-585', worker: 'worker-root-585', taskId: 'task-root-585',
-    turnSeq: 12, turnEpoch: 3,
-    report: { status: 'completed', summary: 'The deployment turn is ready for root.' },
-    assignmentDone: true,
-  }, { actor: 'baton-runtime', key: '585-turn-reported' }).event,
-  { wakeClass: 'root_turn_reported', runId: 'run-root-585' });
-
-  assert.equal(body, [
-    `${SMILE} turn reported: completed · worker-root-585`,
-    '  run: run-root-585',
-    '  next: baton run view run-root-585',
-  ].join('\n'),
-  'an event-shaped class carries no invented status word, and the run view reads the report');
   assert.equal(body.includes('{'), false);
   assert.equal(body.includes('"'), false);
 });
