@@ -6,7 +6,7 @@
 // reads, plus nativeObservationEvent — the only key an arm assigns (the resource.tokens and
 // default arms), read by the tail. Recording routes through the recorder port.
 
-import { processReadyPayload } from '../process-lifecycle.mjs';
+import { ownedHarnessRetry, processReadyPayload } from '../process-lifecycle.mjs';
 import { boundedProcessObservation, KILL_RULES, TERMINAL_TASK_STATUSES } from '../runtime-recovery.mjs';
 import {
   compareWorkerPolicyObservation, normalizeWorkerPolicyObservation, workerPolicyObservationRequired,
@@ -64,6 +64,9 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
         'kill.confirmed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)) return;
     }
     const turnWasTerminal = handle.turnTerminalObserved === true;
+    // Issue #199: whether this event is the coordinator's OWN spawn-window retry. Declared here so
+    // the spawned arm below (a separate block) binds the same retry the gate above admitted.
+    let ownedRetry = false;
     if (actor === 'worker' && kind === 'lifecycle.spawned') {
       const providerId = payload?.threadId ?? payload?.sessionId;
       const processBound = handle.processRef !== null
@@ -76,7 +79,13 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
         && payload?.processGeneration === handle.processRef.generation
         && payload?.pid === handle.processRef.pid
         && typeof providerId === 'string' && providerId.length > 0);
-      if (!validProviderReady) {
+      // Issue #199 (the double-spawn window): a second `lifecycle.spawned` whose wire identity does
+      // not match the bound processRef is the harness RETRY the coordinator owns while its own spawn
+      // is still being confirmed. It binds to the same member in the spawned arm below instead of
+      // being refused — the phantom-failure class, where a member reads failed while its process
+      // keeps working orphaned.
+      ownedRetry = !validProviderReady && ownedHarnessRetry(handle, payload);
+      if (!validProviderReady && !ownedRetry) {
         recorder.log.append({
           worker: workerId, harness, turnEpoch: coordinator._safeTurnEpoch(handle),
           kind: 'lifecycle.process_attribution_refused', actor: 'policy',
@@ -184,6 +193,22 @@ export function handleEvent(coordinator, recorder, event, sourceVendor = null, o
         && payload?.pid === handle.processRef.pid
         && typeof nativeId === 'string' && nativeId.length > 0) {
         handle.processRef = { ...handle.processRef, state: 'ready', ready: true };
+      }
+      // Issue #199: bind the owned retry to the SAME member — the process identity advances to the
+      // retry's exact coordinates, no new claim is minted, and the member keeps working.
+      if (ownedRetry
+        && Number.isSafeInteger(payload?.pid) && Number.isSafeInteger(payload?.processGeneration)
+        && (payload.pid !== handle.processRef?.pid
+          || payload.processGeneration !== handle.processRef?.generation)) {
+        if (payload.processGeneration > handle.processGeneration) handle.processGeneration = payload.processGeneration;
+        handle.processRef = {
+          generation: payload.processGeneration, pid: payload.pid,
+          processGroupId: payload.processGroupId ?? payload.pid,
+          state: 'initializing', ready: false, startedSeq: null, closedSeq: null,
+        };
+        handle.processAuthority = null;
+        handle.recoveredProcessAuthority = false;
+        handle.localAuthority = true;
       }
     }
     const policyObservationEvent = actor === 'worker'
