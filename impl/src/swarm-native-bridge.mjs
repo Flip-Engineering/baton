@@ -68,7 +68,7 @@ import { WAKE_CLASSES } from './wake-stream.mjs';
 // entry; the bridge reads the verb tables for its swarmId fill, its help and its routing.
 import { SWARM_PERMISSIONS,
   swarmSeatReadCommand, SWARM_SEAT_READ_COMMAND_NAMES, SWARM_SEAT_READ_COMMANDS } from './swarm-runtime.mjs';
-import { canonicalOperationForCommand } from './application-semantics.mjs';
+import { canonicalOperationForCommand, knowledgeSeedPayloadLines } from './application-semantics.mjs';
 // Issue #496: the shared ID validator (Decision 8 — the 256-byte bound and character class are
 // declared once in application-observation.mjs and read here, never re-declared).
 import { validId } from './application-observation.mjs';
@@ -822,6 +822,12 @@ function bridgeHelpText(command = null) {
       const required = schema.required?.includes(field) && !knowledge.identityFields.includes(field);
       const derived = knowledge.identityFields.includes(field);
       lines.push(`  ${field}${required ? '' : ' (optional)'} — ${fieldSchema.description ?? 'a value'}${derived ? `; derived from your swarm token — never send it` : ''}`);
+    }
+    // Issue #370: the seed's payload shape is taught where a seat asks for it — the same
+    // canonical-schema derivation the brief's Swarm section renders, so help cannot teach a value
+    // the validator would refuse.
+    if (command === 'run.knowledge.seed') {
+      lines.push('', 'Payload shape:', ...knowledgeSeedPayloadLines().map((line) => `  ${line}`));
     }
   } else {
     for (const { field, required, expectation } of swarmCommandFieldSummary(command)) {

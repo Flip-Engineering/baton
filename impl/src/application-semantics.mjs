@@ -2499,6 +2499,25 @@ export function canonicalOperationForCommand(name, registry = APPLICATION_SEMANT
   return typeof legacy === 'string' && byKey.has(legacy) ? byKey.get(legacy) : null;
 }
 
+/** Issue #370: the `run.knowledge.seed` payload a seat reads from its brief. The closed type set,
+ * the grounding choices and the body bound are read from the canonical schema above — the SAME
+ * row the bridge's validator admits against — so the brief cannot teach a value or a bound a
+ * refusal would reject. The evidence sentence states what the schema's two reference shapes mean,
+ * and the example is one the validator admits as printed. */
+export function knowledgeSeedPayloadLines() {
+  const { type, grounding, body } = canonicalOperationForCommand('run.knowledge.seed').inputSchema.properties;
+  return freeze([
+    `type — one of ${type.enum.join(', ')}`,
+    `grounding — one of ${grounding.enum.join(', ')}`,
+    `body — the fact itself: 1 to ${body.maxLength} bytes of UTF-8 text (the run.objective frame bound)`,
+    'evidence — optional; each entry names where a peer checks the fact: {"artifactId": "..."} for an'
+      + ' artifact this run already holds, or {"coordinationSeq": N} for a coordination row the swarm'
+      + ' has already recorded. grounding names how you know the fact; evidence names where a peer checks it.',
+    `example — ${JSON.stringify({ type: 'Finding', grounding: 'observed', body: 'one durable sentence your peers can find' })}`
+      + ' is admitted as printed; a verified Finding must also carry evidence.',
+  ]);
+}
+
 /** Every field an operation's wire transports may declare: schema properties, server-derived
  * fields, declared-hidden fields, the fold's transport selectors, and the Run addressing. */
 export function canonicalOperationFields(operation) {

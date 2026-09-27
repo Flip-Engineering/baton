@@ -21,13 +21,15 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
 import { SWARM_PERMISSIONS, SWARM_SEAT_READ_COMMAND_NAMES } from '../src/swarm-runtime.mjs';
 import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES } from '../src/swarm-contract.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, canonicalOperationForCommand } from '../src/application-semantics.mjs';
 import { SWARM_NATIVE_GUIDANCE } from '../src/swarm-native-access.mjs';
 import { wakeClassFor } from '../src/wake-stream.mjs';
+import { renderBrief } from '../src/adapter.mjs';
 import { parseBatonCli } from '../src/application-cli.mjs';
 import { APPLICATION_TOOL } from '../src/mcp-northbound.mjs';
 
@@ -66,6 +68,11 @@ async function fixture(t) {
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
   const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 5, summary: 'ready', files: {} } });
+  // The provider-facing briefs the coordinator hands the adapter — the seat's own Baton Swarm
+  // section (issue #309) rides them.
+  const briefs = [];
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (workerId, brief, opts) => { briefs.push(brief); return spawn(workerId, brief, opts); };
   const card = adapter.card.bind(adapter);
   adapter.card = () => ({
     ...card(), turnCompletion: 'pausable',
@@ -100,7 +107,7 @@ async function fixture(t) {
       return swarmBridgeCommand({ command, args }, { env: issued.env });
     };
   };
-  return { app, driver, directory, repo, root: bindBaton(app, principal('root')), paused, asWorker, bridgeFor };
+  return { app, driver, directory, repo, briefs, root: bindBaton(app, principal('root')), paused, asWorker, bridgeFor };
 }
 
 // One swarm with two seated builders: alpha (every permission) and beta, plus their bridge
@@ -303,4 +310,79 @@ test('evidence search finds facts by text, participant and kind, with a ledger-s
 
   // MCP: the tool rides the canonical table under its derived spelling.
   assert.equal(APPLICATION_TOOL.baton_evidence_search, 'evidence.search');
+});
+
+test('the recruit brief carries the seed payload shape, and the example it prints seeds unchanged', async (t) => {
+  const { alphaSend, briefs } = await swarmFixture(t);
+  const schema = canonicalOperationForCommand('run.knowledge.seed').inputSchema.properties;
+  // The seat's own Baton Swarm section (issue #309) as its provider renders it — the text a
+  // recruit reads, not the join brief the Run's goal is spelled from.
+  const provided = briefs.find((candidate) => String(candidate.goal ?? '').includes('Build A'));
+  assert.ok(provided, 'the alpha recruit reached the adapter with its brief');
+  const text = renderBrief(provided, 'omp-rpc');
+  const start = text.indexOf('## Swarm');
+  assert.ok(start >= 0, 'the rendered brief carries the Swarm section');
+  const brief = text.slice(start);
+
+  // The closed sets and the bound are the canonical schema's OWN, so the brief cannot teach a
+  // value or a bound the bridge validator would refuse (issue #370).
+  assert.ok(brief.includes(`type — one of ${schema.type.enum.join(', ')}`),
+    'the brief names the seed type set the validator admits');
+  assert.ok(brief.includes(`grounding — one of ${schema.grounding.enum.join(', ')}`),
+    'the brief names the grounding choices');
+  assert.ok(brief.includes(`1 to ${schema.body.maxLength} bytes`),
+    'the brief names the body bound in the bytes the application measures');
+  assert.ok(brief.includes('"artifactId"') && brief.includes('"coordinationSeq"'),
+    'the brief names both evidence reference shapes');
+
+  // The worked example the brief prints is admitted as printed: it seeds over the real bridge.
+  const exampleLine = brief.split('\n').find((line) => line.includes('is admitted as printed'));
+  assert.ok(exampleLine, 'the brief prints a worked example');
+  const example = JSON.parse(exampleLine.slice(exampleLine.indexOf('{'), exampleLine.lastIndexOf('}') + 1));
+  assert.deepEqual(Object.keys(example).sort(), ['body', 'grounding', 'type']);
+  assert.equal((await alphaSend('run.knowledge.seed', example)).ok, true,
+    'the example the brief prints is exactly what the bridge admits');
+  // The bridge's own per-verb help teaches the same shape when a seat asks for it.
+  const help = execFileSync(process.execPath,
+    [fileURLToPath(new URL('../src/swarm-native-bridge.mjs', import.meta.url)), 'run.knowledge.seed', '--help'],
+    { encoding: 'utf8' });
+  assert.ok(help.includes(`type — one of ${schema.type.enum.join(', ')}`),
+    'the bridge help renders the same payload shape the brief teaches');
+});
+
+test('a refused seed crosses with its field, its rule and the next action, and its own row keeps the field', async (t) => {
+  const { swarm, alphaSend, betaSend } = await swarmFixture(t);
+  const base = { type: 'Finding', grounding: 'observed', body: 'routes differ by 3x on cost' };
+  const refusals = [
+    [{ evidence: [{ commit: 'abc' }] }, 'application_knowledge_seed_invalid', 'evidence-reference-shape'],
+    [{ grounding: 'verified' }, 'application_knowledge_seed_invalid', 'verified-finding-requires-evidence'],
+    [{ evidence: [{ artifactId: 'artifact-370-absent' }] }, 'missing_evidence', 'evidence-reference-known'],
+    [{ evidence: [{ coordinationSeq: 999999 }] }, 'temporal_incoherence', 'evidence-seq-recorded'],
+  ];
+  for (const [delta, code, rule] of refusals) {
+    await assert.rejects(alphaSend('run.knowledge.seed', { ...base, ...delta }), (error) => {
+      assert.equal(error.code, code, JSON.stringify(delta));
+      assert.equal(error.detail?.field, 'evidence', JSON.stringify(delta));
+      assert.equal(error.detail?.rule, rule, JSON.stringify(delta));
+      assert.ok((error.detail?.correction ?? '').length > 0,
+        `the refusal names the next action: ${JSON.stringify(delta)}`);
+      return true;
+    });
+  }
+
+  // The durable refusal row the orchestrator reads keeps the field, so a root reads what the seat
+  // was told without reproducing the bridge's answer.
+  const view = await swarm.view();
+  const alphaRow = view.participants.find((row) => row.participantId === 'alpha');
+  assert.equal(alphaRow.lastRefusal.command, 'run.knowledge.seed');
+  assert.equal(alphaRow.lastRefusal.field, 'evidence');
+
+  // Valid seeding still works for a peer, and the reference shape the refusal teaches is admitted
+  // once it names a row the swarm really holds.
+  assert.equal((await betaSend('run.knowledge.seed',
+    { type: 'Finding', grounding: 'observed', body: 'beta sees the same interface' })).ok, true);
+  const found = await betaSend('evidence.search', { query: 'same interface' });
+  assert.equal(found.rows.length, 1);
+  assert.equal((await alphaSend('run.knowledge.seed',
+    { ...base, evidence: [{ coordinationSeq: found.rows[0].seq }] })).ok, true);
 });
