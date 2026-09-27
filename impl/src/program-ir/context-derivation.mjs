@@ -61,7 +61,6 @@ function synthesizeContextPolicy(policy, recursionDepth) {
     maxResultItems: policy.maxJoinMembers,
     maxJoinComparisons: policy.maxJoinComparisons,
     maxCellsPerSession: DEFAULT_CONTEXT_PROGRAM_POLICY.maxCellsPerSession,
-    maxTextBytes: DEFAULT_CONTEXT_PROGRAM_POLICY.maxTextBytes,
     maxArtifactBytes: policy.maxValueBytes,
     maxEvidenceCoordinates: DEFAULT_CONTEXT_PROGRAM_POLICY.maxEvidenceCoordinates,
   });

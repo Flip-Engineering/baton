@@ -51,14 +51,13 @@ test('CO1: canonical comparator is exact UTF-16 code-unit order with closed inpu
   const values = ['Z', 'a', 'ä', 'Å', 'I', 'ı', 'İ', 'i', '\u{1F600}', '\uE000', 'e\u0301', 'é'];
   const expected = [...values].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   assert.equal(CANONICAL_ORDER_VERSION, 1);
-  assert.deepEqual(sortCanonicalStrings(values, { maxItems: values.length }), expected);
+  assert.deepEqual(sortCanonicalStrings(values), expected);
   assert.deepEqual(values, ['Z', 'a', 'ä', 'Å', 'I', 'ı', 'İ', 'i', '\u{1F600}', '\uE000', 'e\u0301', 'é']);
   assert.equal(compareCanonicalStrings('a', 'a'), 0);
   assert.equal(compareCanonicalStrings('Z', 'a'), -1);
   assert.equal(compareCanonicalStrings('ä', 'Å'), 1);
   assert.throws(() => compareCanonicalStrings(1, '1'), TypeError);
-  assert.throws(() => sortCanonicalStrings(['a', 1], { maxItems: 2 }), TypeError);
-  assert.throws(() => sortCanonicalStrings(['a', 'b'], { maxItems: 1 }), RangeError);
+  assert.throws(() => sortCanonicalStrings(['a', 1]), TypeError);
   assert.deepEqual(canonicalJson({ ä: 1, Z: { ı: 2, I: 3 }, a: 4 }), { Z: { I: 3, ı: 2 }, a: 4, ä: 1 });
 });
 

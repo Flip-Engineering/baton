@@ -4,15 +4,19 @@
 export const CANONICAL_ORDER_VERSION = 1;
 export const CANONICAL_CASE_FOLD_VERSION = 1;
 // Issue #500: the canonical-order implementation ceilings. A deployment-supplied policy
-// (normalizeCanonicalOrderPolicy) and the in-memory sort/JSON helpers are judged against
-// these, never against a caller-supplied bound. The ledger ceiling holds 64 max-size events
+// (normalizeCanonicalOrderPolicy) and the in-memory JSON helper are judged against these,
+// never against a caller-supplied bound. The ledger ceiling holds 64 max-size events
 // (1 GiB / 16 MiB), so one full event can never be a sizable fraction of the ledger it lands
 // in; the receipt ceiling is one wire frame (1 MiB), so a receipt composes with the transport
-// frame beside the ledger it attests. The item ceiling is the default the sort and JSON
-// helpers run with, and the depth ceiling is twice the JSON helper's default (128). The
-// numbers themselves are operator-declared: no file in the repository derives them, and
-// moving one moves every policy judged against it.
-const MAX_CANONICAL_ITEMS = 1_000_000;
+// frame beside the ledger it attests, and the depth ceiling is twice the JSON helper's own
+// default (128). The numbers themselves are operator-declared: no file in the repository
+// derives them, and moving one moves every policy judged against it.
+//
+// Issue #530: the item ceiling left with the count ceilings it capped. It was the bound the sort
+// helper refused an array past, the value a policy's `maxEvents` could not exceed, and the cap on
+// the JSON helper's `maxNodes` — a count a caller brought, refused for exceeding a number nothing
+// derives. The sort now orders whatever it is given, and a policy or a JSON caller declares its
+// own bounds with no implementation number behind them.
 const MAX_CANONICAL_DEPTH = 256;
 const MAX_LEDGER_BYTES = 1024 * 1024 * 1024;
 const MAX_EVENT_BYTES = 16 * 1024 * 1024;
@@ -48,7 +52,7 @@ export function normalizeCanonicalOrderPolicy(value) {
     if (!Number.isSafeInteger(value[field]) || value[field] <= 0) throw new TypeError(`canonical order policy ${field} is invalid`);
   }
   if (value.maxLedgerBytes > MAX_LEDGER_BYTES || value.maxEventBytes > MAX_EVENT_BYTES
-    || value.maxReceiptBytes > MAX_RECEIPT_BYTES || value.maxEvents > MAX_CANONICAL_ITEMS
+    || value.maxReceiptBytes > MAX_RECEIPT_BYTES
     || value.maxEventBytes > value.maxLedgerBytes) throw new TypeError('canonical order policy exceeds implementation ceilings');
   return Object.freeze({
     maxLedgerBytes: value.maxLedgerBytes, maxEventBytes: value.maxEventBytes,
@@ -81,13 +85,8 @@ export function normalizeCanonicalOrderMigration(value, policy) {
   return Object.freeze({ ...value, ...requestedPolicy });
 }
 
-export function sortCanonicalStrings(values, options = { maxItems: MAX_CANONICAL_ITEMS }) {
-  closedOptions(options, ['maxItems'], 'canonical string order');
-  if (!Number.isSafeInteger(options.maxItems) || options.maxItems < 0 || options.maxItems > MAX_CANONICAL_ITEMS) {
-    throw new RangeError('canonical string order bound is invalid');
-  }
+export function sortCanonicalStrings(values) {
   if (!Array.isArray(values)) throw new TypeError('canonical string order requires an array');
-  if (values.length > options.maxItems) throw new RangeError('canonical string order exceeds its bound');
   if (values.some((value) => typeof value !== 'string')) throw new TypeError('canonical string order accepts only strings');
   return [...values].sort(compareCanonicalStrings);
 }
@@ -95,7 +94,7 @@ export function sortCanonicalStrings(values, options = { maxItems: MAX_CANONICAL
 export function canonicalJson(value, options = { maxDepth: 128, maxNodes: 1_000_000 }) {
   closedOptions(options, ['maxDepth', 'maxNodes'], 'canonical JSON');
   if (!Number.isSafeInteger(options.maxDepth) || options.maxDepth < 0 || options.maxDepth > MAX_CANONICAL_DEPTH
-    || !Number.isSafeInteger(options.maxNodes) || options.maxNodes <= 0 || options.maxNodes > MAX_CANONICAL_ITEMS) {
+    || !Number.isSafeInteger(options.maxNodes) || options.maxNodes <= 0) {
     throw new RangeError('canonical JSON bounds are invalid');
   }
   const active = new Set(); let nodes = 0;

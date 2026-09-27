@@ -216,7 +216,7 @@ function manifestBranch(value, policy) {
   return {
     name, ref: value.ref,
     summary: boundedText(value.summary, 'ContextManifest branch summary', failManifest,
-      { maxBytes: Math.min(4_096, policy.maxTextBytes) }),
+      { maxBytes: 4_096 }),
     digest: branchDigest, mediaType, itemCount: value.itemCount,
   };
 }
@@ -484,7 +484,7 @@ function normalizeExpression(value, state, depth = 0) {
       result = {
         op: 'search', input: nested(value.input),
         query: boundedText(value.query, 'Context Program search query', failProgram,
-          { maxBytes: Math.min(4_096, state.policy.maxTextBytes) }),
+          { maxBytes: 4_096 }),
         mode: value.mode,
       };
       break;
@@ -546,7 +546,7 @@ function normalizeExpression(value, state, depth = 0) {
         op: value.op, input: nested(value.input),
         role: safeId(value.role, `Context Program ${value.op} role`, failProgram),
         instruction: boundedText(value.instruction, `Context Program ${value.op} instruction`, failProgram,
-          { maxBytes: Math.min(16 * 1024, state.policy.maxTextBytes) }),
+          { maxBytes: MAX_TEXT_BYTES }),
       };
       break;
     }
@@ -669,14 +669,16 @@ function outputValue(result) {
   });
 }
 
-/** The Bench's source admission (#488): every string in the value is measured against the
- * deployment policy's own text bound and scanned for the secret shapes above, and the TWO facts
- * answer TWO codes — `context_source_oversize` with `{bytes, bound, limit: 'maxTextBytes'}` (the
- * document is bigger than one source string may be, which is a projection fact, never a
- * confidentiality one) and `context_source_sensitive` with `{pattern, line}` (a named shape on a
- * named line, never the matched text). Exported beside the Bench because the readers that must
- * answer the same two facts — the root's reading leg (#488) — chunk and gap by THIS judgment
- * rather than re-deriving it. */
+/** The Bench's source admission (#488): every string in the value is scanned for the secret shapes
+ * above, and a source that exceeds the deployment-owned structural ceiling answers
+ * `context_source_oversize`, while a named shape on a named line answers `context_source_sensitive`
+ * with `{pattern, line}` (never the matched text). Exported beside the Bench because the readers
+ * that must answer the same two facts — the root's reading leg (#488) — chunk and gap by THIS
+ * judgment rather than re-deriving it.
+ *
+ * Issue #530: the per-string byte bound (`policy.maxTextBytes`, answered as
+ * `context_source_oversize` with `{bytes, bound, limit}`) is gone with the policy field: a source
+ * string is no longer measured against a number a caller declared. */
 export function normalizeContextSource(value, policy) {
   const normalized = normalizeJson(value, 'context_source_integrity');
   const state = { nodes: 0 };
@@ -687,13 +689,6 @@ export function normalizeContextSource(value, policy) {
         'context_source_oversize');
     }
     if (typeof entry === 'string') {
-      const bytes = Buffer.byteLength(entry);
-      if (bytes > policy.maxTextBytes) {
-        throw Object.assign(typed('Context source text exceeds its deployment-owned bound',
-          'context_source_oversize'), {
-          detail: { bytes, bound: policy.maxTextBytes, limit: 'maxTextBytes' },
-        });
-      }
       const shape = contextSourceSecretShape(entry);
       if (shape !== null) {
         throw Object.assign(typed('Context source text is secret-shaped',
