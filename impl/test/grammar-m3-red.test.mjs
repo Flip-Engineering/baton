@@ -222,10 +222,11 @@ test('M3-6: the work sentinel is accepted by run.send only, and refused for memb
 });
 
 test('M3-7: run.view --until settles on the registry lifecycle predicates', async () => {
-  // The CLI folds the deployment-bounded condition wait onto run.wait with an explicit condition.
+  // The CLI folds the condition wait onto run.wait with an explicit condition, and the bound it
+  // carries is the caller's own or none (#541): `--wait` names one, its absence names none.
   const settled = parseBatonCli(['run', 'view', 'run-m3', '--until', 'settled']);
   assert.equal(settled.name, 'run.wait');
-  assert.equal(settled.args.until, 'settled');
+  assert.deepEqual(settled.args, { runId: 'run-m3', until: 'settled' });
   const terminal = parseBatonCli(['run', 'view', 'run-m3', '--until', 'terminal', '--wait', '5ms']);
   assert.deepEqual(terminal.args, { runId: 'run-m3', until: 'terminal', timeoutMs: 5 });
   assert.throws(() => parseBatonCli(['run', 'view', 'run-m3', '--until', 'anything']), /settled or terminal/u);
@@ -236,6 +237,10 @@ test('M3-7: run.view --until settles on the registry lifecycle predicates', asyn
     .wait('run-m3', PRINCIPAL, { timeoutMs: 60_000, until: 'settled' }, null)).phase, 'work_completed');
   assert.equal((await waitApp(['work_completed', 'completed'])
     .wait('run-m3', PRINCIPAL, { timeoutMs: 60_000, until: 'terminal' }, null)).phase, 'completed');
+  // No caller-named bound: the wait carries no deadline of its own and ends when the condition
+  // holds, whatever the deployment was doing in the meantime.
+  assert.equal((await waitApp(['working', 'work_completed', 'completed'])
+    .wait('run-m3', PRINCIPAL, { until: 'settled' }, null)).phase, 'work_completed');
 });
 
 test('M3-8: every transport name is byte-stable (UA5)', () => {

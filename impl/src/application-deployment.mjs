@@ -25,7 +25,6 @@ import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
-import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
@@ -1922,25 +1921,16 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
   return Object.freeze(adapters);
 }
 
+/** The deployment's goal/plan policy: identity, approval lifetime and the risk/effect/capability
+ * vocabularies. A goal, plan or status is admitted at whatever size and count it has — the policy
+ * carries no limits object and drives no size, count, version or budget refusal (the operator
+ * ruling of 2026-09-21). */
 function goalPlanPolicy(repoId) {
   return Object.freeze({
     schemaVersion: 1, repoId, mandatory: true, approvalTtlMs: DEFAULT_BUDGET.wallMin * 60_000,
     riskClasses: ['low', 'medium', 'high', 'critical'],
     effectClasses: ['provider_call', 'repository_edit'],
     capabilityClasses: ['baton_orchestrator', 'code', 'test'],
-    limits: {
-      maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 16, maxDepsPerNode: 16,
-      // #362: a recruit's run objective is its whole composed brief, admitted up to the
-      // run.objective lane (the registry's one objective ceiling), so the goal text bound IS
-      // that lane's value — never a literal below it. The goal and plan byte bounds are the
-      // goal/plan substrate's own ceilings (GOAL_PLAN_CEILINGS), declared once in goal-plan.mjs.
-      maxTextBytes: FRAME_LIMITS['run.objective'].value, maxItems: 128, maxScopePaths: 128, maxRouteValues: 64,
-      maxGoalBytes: GOAL_PLAN_CEILINGS.goalBytes, maxPlanBytes: GOAL_PLAN_CEILINGS.planBytes,
-      // A status record is one durable body: the registry's spill.body substrate row.
-      maxStatusBytes: FRAME_LIMITS['spill.body'].value,
-      maxTokens: DEFAULT_BUDGET.tokens, maxUsd: DEFAULT_BUDGET.usd,
-      maxWallMin: DEFAULT_BUDGET.wallMin, maxProviderTurns: DEFAULT_BUDGET.providerTurns,
-    },
   });
 }
 

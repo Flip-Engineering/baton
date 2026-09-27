@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BatonWebClient } from '../src/application-cli.mjs';
 
-// #226 red-first pins — the silent ~45s request-timeout floor is BANNED (operator ruling
+// #226 red-first pins — the silent ~45 s request-timeout floor is BANNED (operator ruling
 // 2026-08-14): it broke bridge/CLI opens under fleet load by capping a caller's patient
-// commandTimeoutMs at DEFAULT_APPLICATION_WAIT_MS + WEB_WAIT_TRANSPORT_SLACK_MS (45s).
-// These pins enforce the permanent contract: the request ceiling IS the caller's number.
+// commandTimeoutMs at a fixed floor. These pins enforce the permanent contract: the request
+// ceiling IS the caller's number.
 //
 // RED at the pre-fix head: requestTimeoutMs was Math.min(commandTimeoutMs, 45_000).
 

@@ -141,8 +141,6 @@ function cliTerminalRunPhase(phase) {
   return TERMINAL_RUN_PHASES.has(canonicalRunPhase(phase));
 }
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
-const DEFAULT_APPLICATION_WAIT_MS = 30_000;
-const WEB_WAIT_TRANSPORT_SLACK_MS = 15_000;
 const RESIDENT_PROFILE_FIELDS = Object.freeze([
   'schemaVersion', 'transport', 'socketPath', 'url', 'origin', 'tokenFile', 'deploymentId',
   'incarnation', 'registryDigest', 'startedAt',
@@ -3544,15 +3542,19 @@ export async function followSwarm(parsed, client, options = {}) {
 export async function watchSwarmFiltered(parsed, client) {
   const kinds = parsed.kinds === null || parsed.kinds === undefined ? null : new Set(parsed.kinds);
   const projection = parsed.projection ?? 'outline';
-  const deadline = Date.now() + (parsed.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS);
+  // #541: the watch bound is the caller's own or none. With no `--timeout-ms` there is no
+  // deadline — the watch re-arms until a row of the admitted class arrives, exactly as the
+  // follow leg re-arms. A caller-named bound is handed to the resident, whose own timeout row
+  // ends the wait.
+  const deadline = parsed.timeoutMs === undefined ? null : Date.now() + parsed.timeoutMs;
   let cursor = parsed.afterSeq;
   let round = 0;
   for (;;) {
-    const remaining = deadline - Date.now();
+    const remaining = deadline === null ? null : deadline - Date.now();
     round += 1;
     const view = await watchSwarmCommand(client, parsed.swarmId, {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
-      timeoutMs: Math.max(1, remaining),
+      ...(remaining === null ? {} : { timeoutMs: Math.max(1, remaining) }),
       projection,
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}:${round}`);
     const wake = view?.watch ?? null;
@@ -4606,7 +4608,7 @@ export function parseBatonCli(rawArgs) {
       if (section !== null) throw cliError('run view --until takes no --section');
       return {
         kind: 'command', name: 'run.wait',
-        args: { runId, until, timeoutMs: wait === null ? DEFAULT_APPLICATION_WAIT_MS : duration(wait) },
+        args: { runId, until, ...(wait === null ? {} : { timeoutMs: duration(wait) }) },
         idempotencyKey,
       };
     }
@@ -4920,8 +4922,7 @@ export class BatonWebClient {
 
   async _json(path, options = {}, requestTimeoutMs = this.requestTimeoutMs, signal = null) {
     if (requestTimeoutMs !== null
-      && (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0
-        || requestTimeoutMs > (24 * 60 * 60 * 1_000) + WEB_WAIT_TRANSPORT_SLACK_MS)) {
+      && (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0)) {
       throw cliCauseRefusal('request_timeout_invalid', { observed: `requestTimeoutMs ${observedValue(requestTimeoutMs)}` });
     }
     const controller = new AbortController();
@@ -5255,18 +5256,17 @@ export class BatonWebClient {
     if (this.requestTimeoutMs === null) return null;
     // Issue #392: the dispatch hands over the canonical spelling it serves (`run watch`
     // dispatches run_watch; the resident answers it under the run.follow wait policy), so the
-    // wait tables resolve the alias table the dispatch itself uses and both spellings keep the
-    // same stretch.
+    // wait tables resolve the alias table the dispatch itself uses.
     const transport = CLI_DISPATCH_ALIASES[name] ?? name;
     let serverWaitMs = 0;
     if (['run.follow', 'run.wait'].includes(transport)) serverWaitMs = args.timeoutMs;
-    if (transport === 'swarm.watch') serverWaitMs = args.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS;
-    if (transport === 'run.inspect' && args.cursor !== undefined) {
-      serverWaitMs = args.waitMs ?? DEFAULT_APPLICATION_WAIT_MS;
-    }
-    return Number.isSafeInteger(serverWaitMs) && serverWaitMs > 0
-      ? Math.max(this.requestTimeoutMs, serverWaitMs + WEB_WAIT_TRANSPORT_SLACK_MS)
-      : this.requestTimeoutMs;
+    if (transport === 'swarm.watch') serverWaitMs = args.timeoutMs;
+    if (transport === 'run.inspect' && args.cursor !== undefined) serverWaitMs = args.waitMs;
+    // #541: a caller-named server wait is answered by the server — the resident's own bound ends
+    // the request — so the client arms no transport cut over it. A client bound derived from that
+    // wait (the old serverWaitMs + slack stretch) could only abort the very answer the caller
+    // asked for; the caller's own command bound still governs every command that names no wait.
+    return Number.isSafeInteger(serverWaitMs) && serverWaitMs > 0 ? null : this.requestTimeoutMs;
   }
 
   async actionAuthority(args, idempotencyKey) {
@@ -5442,9 +5442,9 @@ export async function connectBaton({
     repoId: connection.repoId,
     token: connection.token,
     // #541 sweep: an operator-declared bound is honored (and arms the cli_command_pending
-    // receipt); undeclared, the client waits — the server's own wait policies (run.inspect's
-    // 30-second continuation wait, a follow's leg bound) answer on their own, and a wall clock
-    // between this client and those answers only ever cut an admitted command off.
+    // receipt); undeclared, the client waits — the server's own wait policies (a follow leg's
+    // bound, an inspect continuation wait) answer on their own, and a wall clock between this
+    // client and those answers only ever cut an admitted command off.
     commandTimeoutMs: advanced.commandTimeoutMs ?? null,
     pollMs: advanced.pollMs ?? 100,
     fetchImpl,
