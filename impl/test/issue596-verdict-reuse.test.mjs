@@ -2,9 +2,11 @@
 //
 // The root's rule: when the target moves during a landing's gate run, `swarm integrate` re-bases
 // the squash onto the head the target now carries. A clean re-base LANDS ON THE VERDICT THE GATE
-// ALREADY PRODUCED, with no re-run of any test; a conflicting re-base refuses exactly as a
-// conflicting prepare does. These rows drive the real `landContribution` with a gate that moves
-// the target from inside the run, which is the only place the race can be observed.
+// ALREADY PRODUCED, with no re-run of any test the move cannot change; a conflicting re-base
+// refuses exactly as a conflicting prepare does. These rows drive the real `landContribution` with
+// a gate that moves the target from inside the run, which is the only place the race can be
+// observed. Issue #617 narrows what a moved target costs: the re-based call is handed the paths
+// the move carries and the tests the first call judged, and it re-judges only their intersection.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -73,23 +75,37 @@ const request = (w, runGates) => ({
 
 test('596a: a target that moves under the gate lands on the verdict already produced', needsGit, async (t) => {
   const w = world(t);
+  const gateHead = git(w.repo, 'rev-parse', 'master');
   const runs = [];
   let movedHead = null;
   const answer = await landContribution(w.repo, request(w, async (dir, changed, ctx) => {
-    runs.push({ squashSha: ctx.squashSha, changed: [...changed] });
-    movedHead = w.record('impl/src/other.mjs', 'export const other = 1;\n', 'unrelated target work');
-    return {
-      files: ['test/lane.test.mjs'],
-      verdictLine: `green — passed 3, squash ${ctx.squashSha.slice(0, 12)}`,
-      unexpected: [],
-    };
+    runs.push({ squashSha: ctx.squashSha, changed: [...changed], rebased: ctx.rebased ?? null, judged: ctx.judged ?? null });
+    if (runs.length === 1) {
+      movedHead = w.record('impl/src/other.mjs', 'export const other = 1;\n', 'unrelated target work');
+      return {
+        files: ['test/lane.test.mjs'],
+        verdictLine: `green — passed 3, squash ${ctx.squashSha.slice(0, 12)}`,
+        unexpected: [],
+      };
+    }
+    // Issue #617: the re-based call. This move carries a path no judged test imports, so the
+    // caller determined nothing it holds could change the verdict: no file is re-judged.
+    return { files: [], verdictLine: null, unexpected: [], reused: true };
   }));
 
-  assert.equal(runs.length, 1, 'the gate ran ONCE: the verdict was re-used, never re-produced');
+  assert.equal(runs.length, 2, 'the moved target cost one narrowed call, and no third');
+  assert.equal(runs[0].rebased, null, 'the first call is handed no re-base');
+  assert.deepEqual(runs[1].judged, ['test/lane.test.mjs'],
+    'the re-based call names the tests the first call actually judged');
+  assert.deepEqual(runs[1].rebased,
+    { from: gateHead, to: movedHead, movedPaths: ['impl/src/other.mjs'] },
+    'and the head the re-base left, the head it took, and the paths the move carries');
   assert.notEqual(answer.squashSha, runs[0].squashSha, 'the landed squash is the re-based one');
   assert.equal(answer.gates.verdictSquash, runs[0].squashSha,
     'the receipt names the commit the verdict judged, never the one that landed');
   assert.equal(answer.gates.reboundOnto, movedHead, 'and the head the re-base took');
+  assert.equal(Object.hasOwn(answer.gates, 'rejudged'), false,
+    'a move that touches none of the judged tests names no re-judgment');
   assert.equal(answer.targetHeadBefore, movedHead, 'the landing recorded the head it re-based onto');
   assert.equal(git(w.repo, 'rev-parse', 'master'), answer.squashSha, 'the target holds the re-based squash');
   assert.deepEqual(answer.changedPaths, [LANE_FILE], 'the receipt names what the landed squash carries');

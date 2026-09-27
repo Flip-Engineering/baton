@@ -2701,6 +2701,11 @@ export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
  * @param {string[]} [request.dependencyDirs] the deployment's own dependency directories, when it
  *   configures them; omitted, the scratch checkout derives them from the repository (#451)
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
+ *   the landing's gate call (#617): the first call is handed the squash's changed paths and a
+ *   context naming `base`, `targetHeadBefore` and `squashSha`; when the target moves under it and
+ *   the squash is re-based, a second call is handed the re-based checkout and a context carrying
+ *   `rebased: {from, to, movedPaths}` and `judged` (the files the first call answered with), and
+ *   replies with the tests it re-judged — an empty list when the move touches none of them
  * @param {string|null} [request.publishRemote] the deployment's DECLARED shared remote (a URL or
  *   path from `advanced.integration.publishRemote`): a real landing with one pre-flights the
  *   remote BEFORE the gate run and refuses typed when the destination does not exist, cannot be
@@ -2992,6 +2997,14 @@ export async function landContribution(repoRoot, request) {
   let landed = attempt;
   let verdictSquash = squashSha;
   let reboundOnto = null;
+  // Issue #617: the head the FIRST gate call below is given. When the target moves under the gate
+  // and the squash is re-based, the commits in `<gateHead>..<moved>` are the only ones the verdict
+  // never judged, so they are what the second gate call derives its narrowed set from.
+  const gateHead = targetHeadBefore;
+  // What that second call re-judged: `{files, verdictLine, squashSha, onto}`, or null when it
+  // re-judged nothing (a target move that touches no judged test) — the landing then reads exactly
+  // as the unrelated-move reuse of #596 produced it.
+  let rejudged = null;
   try {
     // Issue #570: the gate verdict names the base commit it judged — the head the squash
     // descends from, which is the fetched remote tip when the local ref sat behind the declared
@@ -3021,8 +3034,16 @@ export async function landContribution(repoRoot, request) {
       // Issue #596: a target that moved while the GATE ran does not cost the verdict. The squash
       // is re-based onto the head the target now carries — `prepare` applies the same change
       // against that head, so a conflicting path refuses there exactly as it does at the first
-      // prepare — and a clean re-base lands on the verdict the gate already produced, without
-      // re-running it. A target that moves a second time refuses as it always has.
+      // prepare — and a clean re-base lands on the verdict the gate already produced. A target
+      // that moves a second time refuses as it always has.
+      //
+      // Issue #617: the moved commits' own work was never judged, so the gate is asked ONCE more
+      // about only the tests they can change. `git diff --name-only <gate head> <the new head>`
+      // names what the target carried in between; the caller re-derives its selection from those
+      // paths (the same `selectFromRepository` the first call used) and answers with the tests it
+      // actually re-judged — an empty answer means the move touches none of the judged tests. The
+      // re-judgment runs BEFORE the second compare-and-swap, so the verdict it produces is the one
+      // the landing publishes or refuses on.
       try {
         gitFile(['update-ref', ref, landed.squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
       } catch (error) {
@@ -3036,11 +3057,39 @@ export async function landContribution(repoRoot, request) {
         verdictSquash = landed.squashSha;
         reboundOnto = moved;
         landed = rebound;
+        let secondGate = null;
+        if (typeof request.runGates === 'function') {
+          const movedPaths = sh('git', ['diff', '--name-only', gateHead, moved], repoRoot)
+            .split('\n').filter((line) => line.length > 0).sort();
+          secondGate = await request.runGates(rebound.checkout.dir, rebound.changed, {
+            base, targetHeadBefore: moved, squashSha: rebound.squashSha,
+            rebased: { from: gateHead, to: moved, movedPaths },
+            judged: [...(gates?.files ?? [])],
+          });
+        }
+        const secondRed = Array.isArray(secondGate?.unexpected) ? secondGate.unexpected : [];
+        if (secondRed.length > 0) {
+          throw Object.assign(
+            mergeError(`the re-judged gate set ran red: ${secondRed.length} test(s) fail with the change and pass on the target`, 'integrate_gates_red'),
+            {
+              verdictLine: secondGate?.verdictLine ?? null, unexpected: secondRed, baseSha: moved,
+              reboundOnto: moved, rejudged: { files: [...(secondGate?.files ?? [])] },
+              ...(Array.isArray(secondGate?.unconfirmed) && secondGate.unconfirmed.length > 0
+                ? { unconfirmed: [...secondGate.unconfirmed] } : {}),
+            },
+          );
+        }
+        if (Array.isArray(secondGate?.files) && secondGate.files.length > 0) {
+          rejudged = {
+            files: [...secondGate.files], verdictLine: secondGate.verdictLine ?? null,
+            squashSha: rebound.squashSha, onto: moved,
+          };
+        }
         targetHeadBefore = moved;
         try {
           gitFile(['update-ref', ref, landed.squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
-        } catch (again) {
-          throw Object.assign(mergeError(`${target} advanced again while the landing was prepared`, 'integrate_target_moved'), { cause: again });
+        } catch (refused) {
+          throw Object.assign(mergeError(`${target} advanced again while the landing was prepared`, 'integrate_target_moved'), { cause: refused });
         }
       }
       // Issue #558: publish the landed ref to the declared remote. The push names the declared
@@ -3092,6 +3141,7 @@ export async function landContribution(repoRoot, request) {
       contributionId, target, base, targetHeadBefore, squashSha: landed.squashSha,
       changedPaths: landed.changed, dryRun,
       ...(reboundOnto === null ? {} : { verdictSquash, reboundOnto }),
+      ...(rejudged === null ? {} : { rejudged }),
       ...(landed.inherited.length === 0 ? {} : { inherited: landed.inherited }),
       ...(landed.debris.length === 0 ? {} : { debris: landed.debris }),
     });
@@ -3114,6 +3164,10 @@ export async function landContribution(repoRoot, request) {
         // receipt names the commit the verdict judged and the head the re-base took, so the
         // verdict is never read as a claim about the commit that landed.
         ...(reboundOnto === null ? {} : { verdictSquash, reboundOnto }),
+        // Issue #617: the tests the moved commits made the gate judge again, the verdict line that
+        // run answered with, and the commit and head it judged them at. A move that re-judged
+        // nothing adds no key, so the receipt reads as the unrelated-move reuse of #596 left it.
+        ...(rejudged === null ? {} : { rejudged }),
       },
       dryRun,
     };
