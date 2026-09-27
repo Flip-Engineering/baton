@@ -1,8 +1,7 @@
-// Issue #352: `swarm recruit --follow` reported 'refused' for a seat that was admitted.
-// After an earlier host_capacity_queue_timeout for the same participantId, the follow leg
-// read the STALE timed_out admission row and never the new participant row. The follow leg
-// must observe only rows at or after the recruit's own receipt seq, and an active seat with
-// a live runtime wins over any admission row's timed_out.
+// Issue #352: `swarm recruit --follow` reported a stale verdict for a seat that was admitted.
+// After an earlier admission row for the same participantId, the follow leg read the STALE row
+// and never the new participant row. The follow leg must observe only rows at or after the
+// recruit's own receipt seq, and a row that cannot be dated still decides.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -35,29 +34,28 @@ function liveParticipant() {
   };
 }
 
-function staleTimeoutView() {
+function staleAdmissionView() {
   return {
     swarmId: 'swarm-352', status: 'open', cursor: 150,
     participants: [liveParticipant()],
     admission: [{
       participantId: 'seat-S', seq: 100, ts: TS_OLD,
-      state: 'timed_out', authority: 'host', leaseKind: 'worker',
+      state: 'queued', authority: 'host', leaseKind: 'worker',
       position: 2, ahead: 1,
       shortfall: { dimension: 'load', observed: 29.39, required: 10 },
-      code: 'host_capacity_queue_timeout', waitMs: 1000, bypass: null,
     }],
   };
 }
 
-test('#352(a): a stale timed_out row never settles a recruit that admitted', async () => {
+test('#352(a): a stale admission row never settles a recruit this attempt admitted', async () => {
   const client = {
     async command(name) {
       if (name === 'swarm.recruit') return recruitReceipt(200);
-      return staleTimeoutView();
+      return staleAdmissionView();
     },
   };
   const result = await followSwarmRecruit(parseBatonCli([...recruitArgs, '--follow']), client, {});
-  assert.equal(result.outcome, 'admitted', 'the live seat wins over the forty-minute-old timeout');
+  assert.equal(result.outcome, 'admitted', 'the live seat wins over the previous attempt row');
   assert.equal(result.seat.participantId, 'seat-S');
   assert.equal(result.seat.runtime.state, 'working');
   const admission = result.seat.admission;
@@ -65,39 +63,32 @@ test('#352(a): a stale timed_out row never settles a recruit that admitted', asy
 });
 
 test('#352(a-unit): swarmRecruitSeat filters admission rows older than since', () => {
-  const found = swarmRecruitSeat(staleTimeoutView(), 'seat-S', 200);
+  const found = swarmRecruitSeat(staleAdmissionView(), 'seat-S', 200);
   assert.equal(found?.outcome, 'admitted');
   assert.ok(found?.admission === null || found.admission.seq >= 200);
-  // Without since the stale row survives filtering — but the live seat still wins (req 2),
-  // and the printed seat never carries the previous attempt's row.
-  const unscoped = swarmRecruitSeat(staleTimeoutView(), 'seat-S');
-  assert.equal(unscoped?.outcome, 'admitted');
-  assert.equal(unscoped?.admission, null);
 });
 
 test('#352(a-unit): an undated admission row still decides (no seq to filter on)', () => {
-  const view = staleTimeoutView();
+  const view = staleAdmissionView();
   const undated = { ...view.admission[0] };
   delete undated.seq;
   const found = swarmRecruitSeat({ ...view, admission: [undated] }, 'seat-S', 200);
-  // The row cannot be dated against this attempt, so the live seat still wins — and the
-  // printed seat never carries the previous attempt's timed_out row.
-  assert.equal(found?.outcome, 'admitted');
-  assert.equal(found?.admission, null);
+  // The row cannot be dated against this attempt, so it decides.
+  assert.equal(found?.outcome, 'queued');
+  assert.equal(found?.admission?.state, 'queued');
 });
 
-test('#352(b): a re-recruit whose own admission times out refuses with the new row', async () => {
-  const refusal = Object.assign(new Error('host capacity queue spent'), {
-    code: 'host_capacity_queue_timeout',
+test('#352(b): a host refusal beside a durable queued row reports that row with the caught code', async () => {
+  const refusal = Object.assign(new Error('host capacity unavailable'), {
+    code: 'host_capacity_unavailable',
   });
   const view = {
     swarmId: 'swarm-352', status: 'open', cursor: 300,
     participants: [],
     admission: [{
       participantId: 'seat-S', seq: 300, ts: TS_NEW,
-      state: 'timed_out', authority: 'host', leaseKind: 'worker',
+      state: 'queued', authority: 'host', leaseKind: 'worker',
       position: 1, ahead: 0, shortfall: { dimension: 'load', observed: 29.39, required: 10 },
-      code: 'host_capacity_queue_timeout', waitMs: 1000, bypass: null,
     }],
   };
   const client = {
@@ -107,9 +98,9 @@ test('#352(b): a re-recruit whose own admission times out refuses with the new r
     },
   };
   const result = await followSwarmRecruit(parseBatonCli([...recruitArgs, '--follow']), client, {});
-  assert.equal(result.outcome, 'refused');
+  assert.equal(result.outcome, 'queued', 'the seat row is this attempt verdict');
   assert.equal(result.seat.admission?.seq, 300, 'the verdict is this attempt row');
-  assert.equal(result.refusal.code, 'host_capacity_queue_timeout');
+  assert.equal(result.refusal.code, 'host_capacity_unavailable');
 });
 
 test('#352(c): a recruit refused pre-effect with no rows refuses with the caught code', async () => {

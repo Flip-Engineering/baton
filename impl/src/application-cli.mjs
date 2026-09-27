@@ -3615,7 +3615,7 @@ function watchAnswer(view, projection, wake, wakeClass) {
 }
 
 /** The seat rows one recruit wrote, classified for the follow leg (issue #331). The admission
- * slice carries the host authority's queued / admitted / timed_out rows per seat; the
+ * slice carries the host authority's queued or admitted rows per seat; the
  * participant row carries the seat itself — including the `leftReason: 'recruit_refused'` /
  * `leftCode` rollback a refused admission leaves (#308). `since` (issue #352) is the seq this
  * attempt began at — the recruit receipt's own event seq — and an admission row older than it
@@ -3640,15 +3640,6 @@ export function swarmRecruitSeat(view, participantId, since) {
   }
   // A withdrawn seat never admits: the recruit_refused rollback (#308) or any other leave.
   if (participant?.status === 'left') return { outcome: 'refused', participant, admission };
-  // An active seat with a live runtime already runs: it wins over any admission row's
-  // timed_out (issue #352 — a previous attempt's timeout is never this seat's verdict), and
-  // the printed seat carries no previous attempt's row beside it.
-  if (admission?.state === 'timed_out' && participant?.status === 'active'
-    && (LIVE_RUNTIME_STATES.has(participant?.runtime?.state) || participant?.runtime?.live === true)) {
-    return { outcome: 'admitted', participant, admission: null };
-  }
-  // A queue timeout is the host authority's refused row: it carries the code.
-  if (admission?.state === 'timed_out') return { outcome: 'refused', participant, admission };
   if (admission?.state === 'queued') return { outcome: 'queued', participant, admission };
   if (admission?.state === 'admitted' || participant !== null) {
     return { outcome: 'admitted', participant, admission };
@@ -3691,9 +3682,9 @@ function recruitRefusal(refusal, found) {
  * own feed until THIS seat's admitted / queued / refused row appears and return it. A queued
  * row is terminal: the caller sees the position and ahead and re-observes rather than hanging
  * on a lease it cannot grant. A refusal prints with its code — the caught refusal's when the
- * recruit call itself refused, else the durable leftCode / admission-timeout code the feed
- * carries. This is CLI-side observation, so a recruit that outlives the CLI's request bound is
- * still observable instead of lost to a transport refusal. */
+ * recruit call itself refused, else the durable leftCode the seat's own row carries. This is
+ * CLI-side observation, so a recruit that outlives the CLI's request bound is still
+ * observable instead of lost to a transport refusal. */
 export async function followSwarmRecruit(parsed, client, options = {}) {
   let recruit = null;
   let refusal = null;
