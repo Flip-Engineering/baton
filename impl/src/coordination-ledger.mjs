@@ -15,7 +15,7 @@ import { serialize } from 'node:v8';
 import { ledgerCommitted, ledgerCommitFailed } from './coordination-commit.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
-import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 import { boundedAttentionText, frameWebContent, referencesWebFetchHandle, wrapHubDerived, wrapProse } from './messages.mjs';
 import { GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical, goalPlanDigest, goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planBriefMatches, planRouteAuthorityState, planRouteMatches } from './goal-plan.mjs';
 import { normalizeContextAuthority } from './context-authority.mjs';
@@ -340,10 +340,8 @@ export const SAFE_BOARD_OWNER = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 const BOARD_ITEM_STATES = new Set(['open', 'closed', 'dropped']);
 
-// Live board bound imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the store
-// is a first-class registry consumer, never a second door for a cataloged lane. A title and a
-// detail carry no byte ceiling: they are shown whole.
-const MAX_STORE_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
+// Live board bound (Decision 8): a title, a detail and a report body carry no byte ceiling; they are
+// shown whole.
 
 export const MAX_STORE_BOARD_EVIDENCE = 8;
 
@@ -422,12 +420,10 @@ export function replBindingContentDigest(core) {
 }
 
 
-// Issue #33 — typed task-horizon scratchpad bounds. These are deployment constants, not
-// caller policy, so live admission and replay use the same ceilings.
+// Issue #33 — the scratchpad's raw request walk bound: the short-circuiting walker that refuses a
+// payload no shape check could judge (a cycle, an accessor, a symbol key, a non-JSON value) walks at
+// most this many raw bytes before it refuses.
 export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
-
-export const MAX_SCRATCHPAD_ENTRY_BYTES = FRAME_LIMITS['scratchpad.entry.body'].value;
-
 // The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
 // application and northbound surfaces share ONE family name with the store that mints it (D7).
 export const BRIEFING_FAMILY = 'orchestrator-briefing';
@@ -507,7 +503,7 @@ function scratchpadRawBytes(value, limit = MAX_SCRATCHPAD_WRITE_REQUEST_BYTES) {
   return bytes;
 }
 
-function scratchpadString(value, maxBytes) {
+function scratchpadString(value, maxBytes = Number.MAX_SAFE_INTEGER) {
   if (typeof value !== 'string') throw new CoordinationRefusal('scratchpad string is invalid', 'scratchpad_entry_invalid');
   const normalized = value.normalize('NFKC').trim();
   if (normalized.length === 0 || normalized.includes('\0') || !validUnicodeScalarString(normalized)
@@ -529,14 +525,8 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
   }
   let normalized;
   if (entry.kind === 'note') {
-    // deliberate-local: note.text partition inside the capped entry (Decision 2). A
-    // steering-registered run (the wave driver's settlement binding) rides the entry body limit
-    // (FRAME_LIMITS['scratchpad.entry.body']) — the admission override is derived from the run's
-    // durable steering registration in writeScratchpad.
-    const noteCap = opts?.noteMaxBytes ?? null;
-    normalized = { kind: 'note', text: noteCap == null
-      ? scratchpadString(entry.text, 2_048)
-      : scratchpadString(entry.text, noteCap) };
+    // A note's text carries no ceiling: the entry is whatever the seat wrote.
+    normalized = { kind: 'note', text: scratchpadString(entry.text) };
   } else if (entry.kind === 'plan') {
     if (!Array.isArray(entry.steps) || entry.steps.length < 1 || entry.steps.length > 16
       || entry.steps.some((step) => !scratchpadExact(step, ['text', 'state'])
@@ -551,8 +541,8 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
       throw new CoordinationRefusal('scratchpad plan supersedes binding is invalid', 'scratchpad_entry_invalid');
     }
     normalized = {
-      kind: 'plan', objective: scratchpadString(entry.objective, 512),
-      steps: entry.steps.map((step) => ({ text: scratchpadString(step.text, 512), state: step.state })),
+      kind: 'plan', objective: scratchpadString(entry.objective),
+      steps: entry.steps.map((step) => ({ text: scratchpadString(step.text), state: step.state })),
       supersedes: supersedes === null ? null : clone(supersedes),
     };
   } else if (entry.kind === 'doubt') {
@@ -560,8 +550,8 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
       throw new CoordinationRefusal('scratchpad doubt context is invalid', 'scratchpad_entry_invalid');
     }
     normalized = {
-      kind: 'doubt', question: scratchpadString(entry.question, 1_024),
-      context: entry.context === null ? null : scratchpadString(entry.context, 2_048),
+      kind: 'doubt', question: scratchpadString(entry.question),
+      context: entry.context === null ? null : scratchpadString(entry.context),
     };
   } else if (entry.kind === 'link') {
     if (!SCRATCHPAD_RELATIONS.has(entry.relation) || !entry.target || typeof entry.target !== 'object') {
@@ -599,24 +589,7 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
   } else {
     throw new CoordinationRefusal('scratchpad kind is invalid', 'scratchpad_entry_invalid');
   }
-  const canonicalEntryBytes = canonicalBytes(normalized);
-  if (canonicalEntryBytes > MAX_SCRATCHPAD_ENTRY_BYTES) {
-    // Decision 3 (blocker 7): the canonical entry ceiling gains the coaching shape — the registry
-    // row names cap and actual; the field-level partitions inside the entry stay deliberate locals.
-    throw coachingRefusal(FRAME_LIMITS['scratchpad.entry.body'], canonicalEntryBytes, MAX_SCRATCHPAD_ENTRY_BYTES);
-  }
   return freeze(normalized);
-}
-
-
-/** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
- * gracefulPath} on the thrown error AND a human message composed by the ONE helper — numbers
- * only, never body content (AS-4). */
-export function coachingRefusal(row, actual, cap = row?.value) {
-  return Object.assign(
-    new CoordinationRefusal(composeFrameLimitRefusal(row, actual, cap), row?.refusalCode ?? 'size_exceeded'),
-    { cap, actual, unit: 'bytes', gracefulPath: frameLimitRefusalPath(row, cap) },
-  );
 }
 
 // ── the observation bucket ───────────────────────────────────────────────────────────────────────────
@@ -2939,7 +2912,7 @@ export function _apply(store, event) {
       throw new CoordinationIntegrityError('scratchpad written entry is invalid', 'scratchpad_entry_integrity');
     }
     let normalized;
-    try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
+    try { normalized = normalizeScratchpadEntry(p.content); }
     catch { throw new CoordinationIntegrityError('scratchpad written content is invalid', 'scratchpad_entry_integrity'); }
     if (canonicalDigest(normalized) !== canonicalDigest(p.content) || store._scratchpadEntries.has(p.entryId)) {
       throw new CoordinationIntegrityError('scratchpad written entry changed during replay', 'scratchpad_entry_integrity');
@@ -2991,7 +2964,7 @@ export function _apply(store, event) {
       throw new CoordinationIntegrityError('scratchpad appended entry is invalid', 'scratchpad_entry_integrity');
     }
     let normalized;
-    try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
+    try { normalized = normalizeScratchpadEntry(p.content); }
     catch { throw new CoordinationIntegrityError('scratchpad appended content is invalid', 'scratchpad_entry_integrity'); }
     if (canonicalDigest(normalized) !== canonicalDigest(p.content) || store._scratchpadEntries.has(p.entryId)) {
       throw new CoordinationIntegrityError('scratchpad appended entry changed during replay', 'scratchpad_entry_integrity');
@@ -5814,10 +5787,6 @@ export function mintSpill(store, fields, auth) {
     throw new CoordinationRefusal('spill body is required (non-empty string)', 'spill_invalid');
   }
   const bytes = Buffer.byteLength(body);
-  const spillCeiling = FRAME_LIMITS['spill.body'].value;
-  if (bytes > spillCeiling) {
-    throw coachingRefusal(FRAME_LIMITS['spill.body'], bytes, spillCeiling);
-  }
   const digest = createHash('sha256').update(body, 'utf8').digest('hex');
   const spillId = spillIdForBody(body);
   const payload = { spillId, digest, bytes, lane, body };
@@ -6085,8 +6054,7 @@ export function writeScratchpad(store, fields, auth) {
     content = normalizeScratchpadEntry(fields.entry,
       (entryId, entryDigest, requirement) => store._scratchpadResolveForWorker(
         fields.runId, fields.workerId, entryId, entryDigest, requirement,
-      ),
-      steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
+      ));
   } catch (error) {
     if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
     throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
@@ -6173,22 +6141,13 @@ export function appendScratchpad(store, fields, auth) {
     || !validRunId(fields?.runId) || !SCRATCHPAD_SCOPE.test(fields?.scope ?? '')) {
     throw new CoordinationRefusal('scratchpad append envelope is invalid', 'scratchpad_write_invalid');
   }
-  const steeringRegistered = store._steeringRuns.has(fields.runId);
   const workerId = auth.principalId;
-  // D3: the surface body bound comes from the scratchpad.entry.body admission row.
-  // Oversize notes refuse scratchpad_entry_exceeded; kernel steering-note variants
-  // do not establish a second surface bound.
-  if (typeof fields.entry?.text === 'string'
-    && Buffer.byteLength(fields.entry.text) > MAX_SCRATCHPAD_ENTRY_BYTES) {
-    throw new CoordinationRefusal('scratchpad entry body exceeds the admission bound', 'scratchpad_entry_exceeded');
-  }
   let content;
   try {
     content = normalizeScratchpadEntry(fields.entry,
       (entryId, entryDigest, requirement) => store._scratchpadResolveForWorker(
         fields.runId, workerId, entryId, entryDigest, requirement,
-      ),
-      steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
+      ));
   } catch (error) {
     if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
     throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
@@ -6668,11 +6627,7 @@ export function submitBoardReport(store, fields, auth, beforeWrite = null) {
   if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board report requires an itemId', 'invalid_board_item_id');
   if (!Number.isSafeInteger(fields.itemVersion) || fields.itemVersion <= 0) throw new CoordinationRefusal('board report requires a positive itemVersion', 'invalid_board_item_version');
   if (typeof fields.itemDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.itemDigest)) throw new CoordinationRefusal('board report requires an itemDigest', 'invalid_board_item_digest');
-  if (!boardBounded(fields.body, MAX_STORE_BOARD_REPORT_BYTES)) {
-    const reportBytes = typeof fields.body === 'string' ? Buffer.byteLength(fields.body) : 0;
-    if (reportBytes > MAX_STORE_BOARD_REPORT_BYTES) throw coachingRefusal(FRAME_LIMITS['board.report.body'], reportBytes, MAX_STORE_BOARD_REPORT_BYTES);
-    throw new CoordinationRefusal('board report body must be bounded non-empty', 'invalid_board_report');
-  }
+  if (!boardNonEmpty(fields.body)) throw new CoordinationRefusal('board report body must be non-empty', 'invalid_board_report');
   if (typeof fields.owner !== 'string' || !SAFE_BOARD_OWNER.test(fields.owner)) throw new CoordinationRefusal('board report requires a safe owner id', 'invalid_board_owner');
   const history = store._boardItemHistory.get(fields.itemId);
   const version = history?.find((rec) => rec.itemVersion === fields.itemVersion);

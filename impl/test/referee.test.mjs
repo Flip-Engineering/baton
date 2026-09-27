@@ -685,12 +685,12 @@ test('G-10: a legacy string verification is bounded at its declared row and keep
 });
 
 // G-10: a legacy contract predates `maxOutputBytes` (the northbound scratch_oracle shape), and its
-// transcript is one durable evidence body — so the bound is the frame-limits registry's declared
-// `spill.body` row, never a number minted in the referee for this path alone.
-test('G-10: a legacy contract with no declared bound is bounded by the frame registry row, not a second literal', async (t) => {
+// transcript is one durable evidence body — so the capture bound is the referee's own declared
+// default for that path, never a number minted per call.
+test('G-10: a legacy contract with no declared bound is bounded by the capture default, not a per-call literal', async (t) => {
   const sandbox = makeSandbox();
   t.after(() => sandbox.cleanup());
-  const bound = FRAME_LIMITS['spill.body'].value;
+  const bound = 1_048_576;
   const verification = { command: `node -e "process.stdout.write('y'.repeat(${bound + 4096}))"`, expectExit: 0 };
   const task = makeTask({ verification });
   const result = makeResult({ verification: { command: verification.command, claimedExit: 0 } });
