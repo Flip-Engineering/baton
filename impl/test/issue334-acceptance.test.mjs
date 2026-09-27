@@ -260,7 +260,7 @@ async function terminal(run) {
   throw new Error(`Run did not settle: ${JSON.stringify({ phase: last?.phase })}`);
 }
 
-test('334-4: an inconclusive baseline_or_environment verdict reads phase inconclusive, keeps retry_verification, and names the ownership', async (t) => {
+test('334-4: an inconclusive baseline_or_environment verdict reads phase inconclusive and names the ownership', async (t) => {
   const repo = repository(t);
   const deployment = await openBaton({
     repo,
@@ -288,9 +288,9 @@ test('334-4: an inconclusive baseline_or_environment verdict reads phase inconcl
   assert.equal(settled.verification?.verdict?.failureOwnership, 'baseline_or_environment');
   assert.equal(settled.phase, 'inconclusive', 'a baseline-owned inconclusive never reads failed');
   assert.equal(settled.verification?.state, 'inconclusive');
-  assert.ok(
-    (settled.nextActions ?? []).some((entry) => entry?.kind === 'retry_verification'),
-    'the retry_verification action is still offered',
+  assert.equal(
+    (settled.nextActions ?? []).some((entry) => entry?.kind === 'retry_verification'), false,
+    'run.retry_verification left the tree, so the Run advertises no action for it',
   );
   assert.match(
     settled.progress?.summary ?? '',

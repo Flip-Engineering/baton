@@ -360,8 +360,10 @@ test('DF7: worker worktrees materialize the effective caller tree without import
   t.after(async () => { try { await deployment.close(); } catch {} });
   const run = await deployment.run('Add one worker-owned output while preserving the effective caller tree.', route);
   const prepared = await run.complete();
-  assert.equal(prepared.outline.phase, 'work_completed');
-  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), true);
+  assert.equal(prepared.outline.phase, 'work_completed',
+    'a manual-result Run ends at work_completed — the caller owns the result');
+  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), false,
+    'the Run ends at work_completed: no apply action is advertised');
 
   const callerAfter = {
     status: gitBytes(['status', '--porcelain=v1', '-z']),
@@ -529,3 +531,34 @@ test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi ro
   assert.equal(kimi.every((route) => route.code === 'authentication_refresh_required'), true);
 });
 
+
+test('DF11: concise complete prepares an adopted result and stops at work_completed', {
+  skip: !factoryAvailable,
+}, async (t) => {
+  const repo = repository('apply');
+  const route = routes[0];
+  const adapter = exactAdapter(route.harness, route.model, [route.effort], {
+    outcome: 'completed', delayMs: 10, summary: 'application result prepared',
+    edits: [{ path: 'applied-result.txt', content: 'applied through Baton\n' }],
+  });
+  const options = advanced('apply', [route]);
+  options.adapters = { [route.harness]: adapter };
+  const deployment = await open({ repo, advanced: options });
+  t.after(async () => { try { await deployment.close(); } catch {} });
+
+  assert.deepEqual(deployment.card().profiles[0].integrationPolicy, {
+    mode: 'manual', strategies: ['ff-only', 'structured'],
+    requireAdoptedResult: true, requireSemanticReview: false,
+  });
+  assert.equal(deployment.card().profiles[0].exportPolicy.requireIntegration, true);
+  const beforeSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const run = await deployment.run('Create one result and hand it to the caller through the concise Baton surface.', route);
+  const prepared = await run.complete();
+
+  assert.equal(prepared.outline.phase, 'work_completed', JSON.stringify(prepared));
+  assert.equal(existsSync(join(repo, 'applied-result.txt')), false,
+    'complete must not implicitly edit the caller repository');
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), beforeSha);
+  assert.equal(prepared.outline.actions.some((action) => action.kind === 'integrate'), false,
+    'the Run ends at work_completed and advertises no apply action');
+});

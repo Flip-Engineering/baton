@@ -4882,23 +4882,10 @@ export class BatonApplication {
     const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
       ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
       : [];
-    const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
-      && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
-    const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
-    const canIntegrate = !readOnlyResult && current.profile.integrationPolicy.mode === 'manual'
-      && (!current.profile.integrationPolicy.requireSemanticReview
-        || semanticReview.state === 'semantic_reviewed')
-      && (!current.profile.integrationPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
-      && !integration;
-    const canExport = !readOnlyResult && current.profile.exportPolicy.mode === 'manual' && this.exportRoot !== null
-      && resultSha !== null && durableExport === null
-      && (!current.profile.exportPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
-      && (!current.profile.exportPolicy.requireSemanticReview || semanticReview.state === 'semantic_reviewed')
-      && (!current.profile.exportPolicy.requireIntegration || integration?.state === 'integrated');
     const exportActions = durableExport?.status === 'completed' && !runStop
       ? [{ kind: 'download_export', exportId: durableExport.exportId }]
       : durableExport?.status === 'pending' ? [{ kind: 'wait' }, { kind: 'status' }]
-        : canExport ? [{ kind: 'export_result' }] : [];
+        : [];
     const nextActions = phase === 'stopping' ? [{ kind: 'wait' }, { kind: 'status' }]
       : phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
@@ -4907,18 +4894,12 @@ export class BatonApplication {
         : phase === 'interruption_uncertain' ? [{ kind: 'stop' }]
         : ['running', 'reviewing'].includes(phase) ? [{ kind: 'steer' }, { kind: 'stop' }, { kind: 'wait' }, ...attention]
           : phase === 'work_completed' ? [
-            ...(canReview ? [{ kind: 'semantic_review', routes: clone(current.profile.reviewPolicy.routes) }] : []),
-            ...(canIntegrate ? [{ kind: 'integrate', strategies: clone(current.profile.integrationPolicy.strategies) }] : []),
             ...exportActions,
             { kind: 'evidence' },
-            ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : []),
           ]
             : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [
-              ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
-              ...(resumeProjection?.available ? [{ kind: 'resume_work' }] : []),
               { kind: 'evidence' },
-              ...exportActions,
-              ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
+              ...exportActions]
               : [{ kind: 'status' }];
     const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase)
       ? resultStability === 'passed_after_candidate_failure' ? 'mechanically_verified_unstable' : 'mechanically_verified'

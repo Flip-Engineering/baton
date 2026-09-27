@@ -1061,6 +1061,10 @@ export class BatonRun {
     if (!this.#last?.outline) await this.inspect();
     const current = this.#last;
     if (options.signal?.aborted || current?.terminal) return current;
+    // work_completed is the end of a manual-result Run: the Run hands its result to the caller
+    // and no action on this surface continues it, so drive() returns there rather than
+    // long-polling the continuation the Run keeps offering.
+    if (current?.outline?.phase === 'work_completed') return current;
 
     const actions = outlineActions(current);
     if (current?.outline?.attention?.state === 'required'
