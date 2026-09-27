@@ -2,6 +2,8 @@
 import json
 import pathlib
 import subprocess
+import threading
+import time
 import tempfile
 import unittest
 
@@ -193,6 +195,92 @@ class Land(unittest.TestCase):
         self.call('land', 'w1', self.repo, 'main')
         result = self.call('push', self.repo, 'main', 'test-remote')
         self.assertEqual(result['status'], 'rejected')
+
+    def waiting_checks(self):
+        """Checks for the target-move rows: one waits for the target to move."""
+        (self.repo / 'check-wait.sh').write_text(
+            'common=$(git rev-parse --git-common-dir)\n'
+            'repo=$(dirname "$common")\n'
+            'before=$(git -C "$repo" rev-parse refs/heads/main)\n'
+            'n=0\n'
+            'while [ "$(git -C "$repo" rev-parse refs/heads/main)" = "$before" ]; do\n'
+            '  n=$((n + 1))\n'
+            '  [ "$n" -gt 60 ] && { echo 77616974 6e6f6d6f7665 6572726f 2d; exit 1; }\n'
+            '  sleep 0.2\n'
+            'done\n'
+            'git rev-parse --verify HEAD >/dev/null || '
+            '{ echo 77616974 6e6f68656164 6572726f 2d; exit 1; }\n'
+            'exit 0\n')
+        (self.repo / 'check-plain.sh').write_text(
+            'git rev-parse --verify HEAD >/dev/null || '
+            '{ echo 706c61696e 6e6f68656164 6572726f 2d; exit 1; }\n'
+            'exit 0\n')
+        self.git('add', 'check-wait.sh')
+        self.git('add', 'check-plain.sh')
+        self.git('commit', '-q', '-m', 'check fixtures')
+
+    def wait_for_candidate(self, worker, seconds=30):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if list(self.repo.glob(f'.scratch/bend2-land-{worker}-*')):
+                return
+            time.sleep(0.1)
+        self.fail(f'the candidate for {worker} was never prepared')
+
+    def land_under_a_move(self, under, mover):
+        """Start UNDER's landing, move the target with MOVER's, answer UNDER's."""
+        answer = {}
+
+        def land_under():
+            try:
+                answer['result'] = self.call('land-checked', under, self.repo, 'main',
+                                             'check-wait.sh', 'file.txt')
+            except BaseException as error:
+                answer['error'] = error
+
+        thread = threading.Thread(target=land_under)
+        thread.start()
+        self.wait_for_candidate(under)
+        moved = self.call('land-checked', mover, self.repo, 'main',
+                          'check-plain.sh', 'file.txt')
+        thread.join(120)
+        self.assertFalse(thread.is_alive(), f'the landing of {under} did not finish')
+        self.assertNotIn('error', answer, str(answer.get('error')))
+        return moved, answer['result']
+
+    def recruit_and_write(self, worker, branch, path, name, body):
+        self.call('recruit', worker, 'root', 'omp', 'model', 'high',
+                  self.repo, branch, path, self.base)
+        wt = self.repo / path
+        (wt / name).write_text(body)
+        subprocess.run(['git', '-C', str(wt), 'add', name], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', f'{worker} writes {name}'],
+                       check=True, capture_output=True)
+        return self.git('rev-parse', branch).strip()
+
+    def test_target_moves_under_the_second_landing_and_it_rebases(self):
+        self.waiting_checks()
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_write('w1', 'wa', 'wt1', 'a.txt', 'alpha\n')
+        self.recruit_and_write('w2', 'wb', 'wt2', 'b.txt', 'beta\n')
+        moved, under = self.land_under_a_move('w2', 'w1')
+        self.assertEqual(moved['status'], 'landed')
+        self.assertEqual(under['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main^').strip(), moved['commit'])
+        self.assertEqual(self.git('show', 'main:a.txt').strip(), 'alpha')
+        self.assertEqual(self.git('show', 'main:b.txt').strip(), 'beta')
+
+    def test_target_moves_under_the_second_landing_and_the_rebase_conflicts(self):
+        self.waiting_checks()
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit('w3', 'wc', 'wt3')
+        self.recruit_and_commit('w4', 'wd', 'wt4')
+        moved, under = self.land_under_a_move('w4', 'w3')
+        self.assertEqual(moved['status'], 'landed')
+        self.assertEqual(under['status'], 'conflict')
+        self.assertEqual(under['files'], 'file.txt')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
 
 if __name__ == '__main__':
     unittest.main()
