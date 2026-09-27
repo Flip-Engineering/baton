@@ -213,6 +213,66 @@ def msg_of(r: String, commit: String) -> IO(String):
 def drop_line() -> String:
   "dropped (ignored by this repository): build/out.bin"
 
+# L: the landed target pushed to the declared remote reaches it, and a push the
+# remote refuses is reported rather than read as a published landing.
+def remote_init(remote: String) -> IO(T.RunRes):
+  +rm = remote
+  Git.runFull(["git", "init", "-q", "--bare", rm], ".")
+
+def remote_add(r: String, remote: String) -> IO(T.RunRes):
+  +r2 = r
+  +rm = remote
+  Git.runFull(["git", "-C", r2, "remote", "add", "lt-remote", rm], ".")
+
+def remote_ahead(r: String, tip: String) -> IO(T.RunRes):
+  +r2 = r
+  +t2 = tip
+  Git.runFull(["git", "-C", r2, "push", "-q", "--force", "lt-remote", Tx.str_cat(t2, ":refs/heads/main")], ".")
+
+def remote_tip(remote: String, branch: String) -> IO(String):
+  +rm = remote
+  +b2 = branch
+  do IO<String>:
+    g : T.GitOut <- Git.runGit(rm, ["rev-parse", "--verify", b2])
+    IO.pure(String, Tx.trim_nl(out_of(g)))
+
+def land_l_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, tip: String, acc: String) -> IO(Unit):
+  match res:
+    case Done{T.LLanded{target, commit}}:
+      +r2 = r
+      +t2 = tip
+      +a2 = acc
+      +c2 = commit
+      do IO<Unit>:
+        _i : T.RunRes <- remote_init(Tx.str_cat(r2, "/.scratch/lt-remote.git"))
+        _a : T.RunRes <- remote_add(r2, Tx.str_cat(r2, "/.scratch/lt-remote.git"))
+        g1 : T.GitOut <- LD.push_git(r2, "main", "lt-remote")
+        got : String <- remote_tip(Tx.str_cat(r2, "/.scratch/lt-remote.git"), "main")
+        _h : T.RunRes <- remote_ahead(r2, t2)
+        g2 : T.GitOut <- LD.push_git(r2, "main", "lt-remote")
+        f1 : String <- IO.pure(String, eq_or(cat_ok(g1), "land L: the publish push failed"))
+        f2 : String <- IO.pure(String, eq_or(Tx.str_eq(got, c2), "land L: the remote target is not the landed commit"))
+        f3 : String <- IO.pure(String, eq_or(Bool.not(cat_ok(g2)), "land L: a refused push read as published"))
+        finish(Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
+    case Done{made}: finish(Tx.str_cat(acc, "land L: landing did not land"))
+    case Fail{fail}: finish(Tx.str_cat(acc, Tx.str_cat("land L refused: ", Tx.trim_nl(T.fail_text(fail)))))
+
+def land_l_run(tip: String, r: String, acc: String) -> IO(Unit):
+  +t2 = tip
+  +r2 = r
+  +a2 = acc
+  do IO<Unit>:
+    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", t2, Con{"pub.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-ll"))
+    land_l_ok(res, r2, t2, a2)
+
+def land_l(r: String, acc: String) -> IO(Unit):
+  +r2 = r
+  +a2 = acc
+  do IO<Unit>:
+    head0 : String <- head_of(r2)
+    tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wl"), "baton/wl", head0, "printf 'pub\\n' > pub.txt")
+    land_l_run(tip, r2, a2)
+
 def land_k_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, acc: String) -> IO(Unit):
   match res:
     case Done{T.LLanded{target, commit}}:
@@ -226,9 +286,9 @@ def land_k_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, acc: Str
         f1 : String <- IO.pure(String, eq_or(Bool.not(obj), "land K: ignored build output landed"))
         f2 : String <- IO.pure(String, eq_or(feat, "land K: worker change missing from the landing"))
         f3 : String <- IO.pure(String, eq_or(LD.block_has(msg, drop_line()), "land K: candidate message does not name the drop"))
-        finish(Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
-    case Done{made}: finish(Tx.str_cat(acc, "land K: landing did not land"))
-    case Fail{fail}: finish(Tx.str_cat(acc, Tx.str_cat("land K refused: ", Tx.trim_nl(T.fail_text(fail)))))
+        land_l(r2, Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
+    case Done{made}: land_l(r, Tx.str_cat(acc, "land K: landing did not land"))
+    case Fail{fail}: land_l(r, Tx.str_cat(acc, Tx.str_cat("land K refused: ", Tx.trim_nl(T.fail_text(fail)))))
 
 def land_j(r: String, acc: String) -> IO(Unit):
   +r2 = r

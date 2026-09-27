@@ -13,6 +13,11 @@
 # preparing anything. LAlready names the worker commit on the fast-forward
 # and the checked path alike.
 #
+# Publication is the last step: push_git pushes the landed target to the
+# remote the deployment declares and answers the push's own exit and output,
+# so a refused or non-fast-forward push is named as a failure and never read
+# as a published landing.
+#
 # Check contract: check is the path of a shell script, run as
 #   /bin/sh <check> <selected-file>
 # inside the checked tree, one run per selected file per tree. A passing run
@@ -800,3 +805,15 @@ def land_checked(repo: String, target: String, worker: String, script: String, f
 # The coordinator's current entry point: the fast-forward landing.
 def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
   land_fast_forward(repo, workerBranch, target)
+
+# The landed target pushed to the remote the deployment declares. The answer
+# is the push's own exit and output: a non-zero code is the remote's refusal
+# (a non-fast-forward is the common one) and the caller names it, never reads
+# it as a landing.
+def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
+  +r2 = repo
+  +b2 = branch
+  +rm = remote
+  do IO<T.GitOut>:
+    g : T.GitOut <- Git.runGit(r2, ["push", rm, b2])
+    IO.pure(T.GitOut, g)
