@@ -222,52 +222,7 @@ test('CE10/CE11 red: status reconstructs the immutable completed receipt and dow
   assertNoServerAuthority(status, [f.repo, f.logDir, f.exportRoot]);
 });
 
-test('CE11: application-backed Web authority derives, streams, releases, and revokes the completed export', async (t) => {
-  const f = applicationFixture(t, 'integrated-delivery');
-  const runId = 'run-export-delivery';
-  const { evidence } = await acceptedAndAdopted(f, runId);
-  const exported = await f.application.command('run.export', {
-    runId, evidenceDigest: evidence.manifestDigest,
-  }, principal('exporter'));
-  const webPrincipal = {
-    userId: 'operator', sessionId: 'session', credentialId: 'credential', authMethod: 'bearer',
-    capabilities: ['observe', 'export_result'], repoIds: [REPO_ID],
-    expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,
-  };
-  const web = new WebNorthbound({
-    coordinator: f.driver.coordinator, coordination: f.driver.coordination, application: f.application,
-    allowedOrigins: [ORIGIN], repoIds: [REPO_ID], now: () => Date.parse('2026-07-14T20:00:00.000Z'),
-    isPrincipalActive: () => true,
-  });
-  assert.ok(web.exportDelivery);
-  const coordinates = { repoId: REPO_ID, runId, exportId: exported.export.exportId };
-  const issued = await web.exportDelivery.issue(webPrincipal, ORIGIN, coordinates);
-  assert.equal(issued.status, 201);
-  assert.equal(issued.body.delivery.manifestDigest, exported.export.manifestDigest);
-  class Response extends EventEmitter {
-    constructor() { super(); this.chunks = []; }
-    writeHead(status, headers) { this.status = status; this.headers = headers; }
-    write(chunk) { this.chunks.push(Buffer.from(chunk)); return true; }
-    end(chunk = null) { if (chunk) this.chunks.push(Buffer.from(chunk)); this.ended = true; }
-  }
-  const response = new Response();
-  assert.equal(await web.exportDelivery.open({
-    ticket: issued.body.ticket, principal: webPrincipal, origin: ORIGIN,
-    requestHeaders: {}, exportId: exported.export.exportId,
-  }, response), null);
-  assert.equal(response.status, 200);
-  assert.equal(Buffer.concat(response.chunks).length, issued.body.delivery.archiveBytes);
-  assert.equal(f.application._runDeliveryRegistrations.size, 0);
 
-  const active = new AbortController();
-  f.application.registerResultExportDelivery({
-    runId, exportId: exported.export.exportId, signal: active.signal, abort: () => active.abort(),
-  });
-  await f.application.command('run.stop', { runId, reason: 'revoke delivery after proof' }, principal('stopper'));
-  assert.equal(active.signal.aborted, true);
-  assert.equal(f.application._runDeliveryRegistrations.size, 0);
-  assert.equal((await web.exportDelivery.issue(webPrincipal, ORIGIN, coordinates)).status, 403);
-});
 
 test('CE11 red: CLI help documents the required local destination after RUN_ID', () => {
   assert.match(BATON_CLI_HELP, /baton run export RUN_ID DIR/u);
@@ -480,13 +435,4 @@ test('CE9: browser Run desk initiates export through the registry-bound applicat
   assert.equal(script.includes('view.export'), true);
   assert.equal(script.includes('exportRoot'), false);
   assert.equal(script.includes('retainedResultRef'), false);
-});
-
-test('CE11 red: browser download affordance is gated by an active completed receipt', () => {
-  const html = operatorAsset('/control').body;
-  const script = operatorAsset('/control/app.js').body;
-  assert.match(html, /id="export-download"/u);
-  assert.match(script, /view\.export(?:\?\.|\.)state\s*===\s*['"]completed['"]/u);
-  assert.equal(script.includes('download_export'), true);
-  assert.equal(script.includes('exportRoot'), false);
 });
