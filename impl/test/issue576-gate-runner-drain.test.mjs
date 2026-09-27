@@ -90,6 +90,16 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
   const repo = join(directory, 'repo');
   const markerPath = join(directory, 'gate-run-finished.marker');
   const capacityRoot = join(directory, 'host-capacity');
+  // The suite runner hands every test file TWO ambient reasons to stay lease-free, and either one
+  // makes this fixture's landing take no lease at all — so under the runner the queue row row (d)
+  // waits on can never form: `BATON_HOST_CAPACITY_DISABLED=1`, the #297 operator bypass, and
+  // `BATON_SUITE_VERIFY_LEASE`, the digest a lease-holding runner publishes to its children so a
+  // NESTED verdict never queues behind its own parent (#424). Both belong to a runner or an
+  // operator, never to a fixture: withdrawn for this world and restored with it (the issue459
+  // 459f idiom).
+  const ambientLease = ['BATON_HOST_CAPACITY_DISABLED', 'BATON_SUITE_VERIFY_LEASE']
+    .map((name) => [name, process.env[name]]);
+  for (const [name] of ambientLease) delete process.env[name];
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
   // #605: fixture identity rides the test process environment — no test writes a repository config.
   Object.assign(process.env, { GIT_AUTHOR_NAME: 'Issue 576', GIT_COMMITTER_NAME: 'Issue 576' });
@@ -146,6 +156,7 @@ async function world(t, { gateSleepMs = 30_000 } = {}) {
     runtime.close();
     pool.killAll();
     rmSync(directory, { recursive: true, force: true });
+    for (const [name, value] of ambientLease) { if (value !== undefined) process.env[name] = value; }
   });
 
   await runtime.command('swarm.create', { swarmId: 's1', purpose: 'stop under a landing (#576)', idempotencyKey: 'i576:create' }, principal);
