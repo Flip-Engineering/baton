@@ -357,7 +357,7 @@ function interpreterFacade(states, stops) {
       }
       return {
         reason, stops: receipts, remainingCount: 0, residueUnknown: false,
-        knowledge: { candidates: 0, admittedThisRun: 0 }, drivesCancelled: 0, pumpQuiescent: true,
+        knowledge: { candidates: 0 }, drivesCancelled: 0, pumpQuiescent: true,
       };
     },
   };

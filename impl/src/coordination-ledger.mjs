@@ -2714,13 +2714,6 @@ export function _apply(store, event) {
       store._setKnowledgeNode(event, target.id, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
       store._contamination.push(freeze({ nodeId: target.id, invalidationEvent: event.seq, affectedReadEvents: clone(p.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
     }
-  } else if (event.kind === 'knowledge.workflow_admitted') {
-    // KG-2 Part D rule 14: the third instance of the promotion_batch/scratch_corrected
-    // generic nodes/edges fold — payload-digest-only integrity via
-    // _validateWorkflowAdmissionPayload, never a per-node temporal re-validation.
-    store._validateWorkflowAdmissionPayload(p, event, true);
-    for (const node of p.nodes) store._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
-    for (const edge of p.edges) store._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, edge.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
   } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
     store._validateKnowledgeNodePayload(p, event, true);
     store._setKnowledgeNode(event, p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
@@ -4230,14 +4223,10 @@ export function sweepSettlementLeases(store, repoId, options = {}) {
   const maxLeases = Number.isSafeInteger(options?.maxLeases) && options.maxLeases > 0
     ? Math.min(options.maxLeases, 16) : 16;
   const currentTaskId = options?.currentWaveId ? `settlement-task:${options.currentWaveId}` : null;
-  const admittedRuns = new Set(store._events
-    .filter((event) => event.kind === 'knowledge.workflow_admitted')
-    .map((event) => event.payload?.runId));
   const candidates = [...store._runOrchestratorLeases.values()]
     .filter((lease) => lease.status === 'active' && lease.repoId === repoId
       && store._tasks.get(lease.parent?.taskId)?.relation === 'settlement'
-      && lease.parent?.taskId !== currentTaskId
-      && !admittedRuns.has(lease.parent?.runId))
+      && lease.parent?.taskId !== currentTaskId)
     .sort((a, b) => compareCanonicalStrings(a.leaseId, b.leaseId))
     .slice(0, maxLeases);
   const revoked = [];
@@ -6488,19 +6477,11 @@ export function knowledgeContentDigest(store) {
 export function knowledgeCandidateQueue(store, { now } = {}) {
   const at = typeof now === 'number' ? now : Date.parse(now ?? store._clock());
   const nodes = store.queryKnowledge({});
-  const edges = store.queryKnowledgeEdges({});
-  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  const admittedIds = new Set();
-  for (const edge of edges) {
-    if (edge.type === 'DerivedFrom' && nodeMap.get(edge.from)?.promotion?.trigger === 'workflow.admitted') {
-      admittedIds.add(edge.to);
-    }
-  }
   const triggers = KNOWLEDGE_CANDIDATE_TRIGGERS();
   const candidates = [];
   for (const node of nodes) {
     const source = triggers[node.promotion?.trigger];
-    if (!source || node.type !== 'Finding' || node.validTo != null || admittedIds.has(node.id)) continue;
+    if (!source || node.type !== 'Finding' || node.validTo != null) continue;
     const observedAt = Date.parse(node.observedAt ?? node.eventTime ?? store._clock());
     candidates.push({
       id: node.id, type: node.type, source, observedSeq: node.observedSeq,
@@ -6516,15 +6497,12 @@ export function knowledgeCandidateQueue(store, { now } = {}) {
       ageMs: row.ageMs, groundingDigest: row.groundingDigest,
     })),
     count: candidates.length,
-    admittedIds: [...admittedIds].sort(compareCanonicalStrings),
   });
 }
 
-export function knowledgeRitual(store, runId, { now } = {}) {
+export function knowledgeRitual(store, { now } = {}) {
   const candidates = store.knowledgeCandidateQueue({ now }).count;
-  const admittedThisRun = store._events.filter((event) => event.kind === 'knowledge.workflow_admitted'
-    && event.payload?.runId === runId).length;
-  return freeze({ candidates, admittedThisRun });
+  return freeze({ candidates });
 }
 
 export function invalidateKnowledge(store, nodeId, expectedValidityVersion, reason, auth) {

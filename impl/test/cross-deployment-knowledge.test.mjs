@@ -21,15 +21,12 @@
 //   A1-P1 PIN  D4 absent = per-root local (byte-identical to HEAD)   (green today)
 //   A2-R1 RED  D3 run.knowledge.seed (addKnowledgeNode) refuses      (no primary check)
 //   A2-R2 RED  D3 verified_task_outcome (promoteKnowledgeNode) refuses (no primary check)
-//   A2-R3 RED  D3 knowledge.promote (coordinator admitWorkflowFinding) refuses at the seam (no primary check)
 //   A2-P1 PIN  D3 a self-primary deployment promotes normally        (green today)
-//   A2-P2 PIN  D3 the #63 gate unchanged (raw store admission works) (green today)
 //   A3-R1 RED  D1 a non-primary project read serves the primary node (no projection)
 //   A3-R2 RED  D5 the read carries {epochLag, sourceRoot}            (no source/epoch vocabulary)
 //   A3-P1 PIN  D1 foreign-seq _apply-replay refuses temporal_incoherence (green today)
 //   A3-P2 PIN  GT2 per-root local — no cross-root read (green today)
 //   A4-R1 RED  D2 endpoint-closure — task:<taskId> endpoints are replicated (no projection)
-//   A4-R2 RED  D2 edge-severing — a workflow_admitted DerivedFrom edge citing a candidate is severed (no cross-root denial)
 //   A5-R1 RED  D5/A6 the non-strict recall serves the primary node with {epochLag, sourceRoot} and appends nothing (no projection)
 //   S-R1  RED  B2 the discriminator is declared-path-vs-this-root    (no primary check)
 //   S-R2  RED  OQ5 two self-declared primaries surfaced honestly     (no source/epoch vocabulary)
@@ -198,14 +195,6 @@ test('A2-P1: a self-primary deployment promotes normally (PIN)', () => {
   assert.equal(store.queryKnowledge({ types: ['Finding'] }).some((node) => node.id === 'finding:self'), true, 'the node lands in the self-primary store');
 });
 
-test('A2-P2: the #63 gate is unchanged — the raw store admission still works on a non-primary store (PIN)', () => {
-  const { primaryRoot, replicaRoot, replica } = replicaFixture();
-  const cf = candidateFixture(replica, 'run:a2p2', 'task:a2p2', 'worker:a2p2');
-  const code = refusalCode(() => replica.admitWorkflowFinding(
-    replica.repositoryId(), cf.runId, cf.candidateFindingId, workflowAdmissionPolicyFor(replica.repositoryId()), auth('admit:a2p2'), cf.lease));
-  assert.equal(code, null, 'the raw store admission on a non-primary store still succeeds — the refusal fires at the coordinator mutator seam, never inside admitWorkflowFinding (D3)');
-  assert.equal(primaryRoot !== replicaRoot, true, 'the fixture is genuinely cross-root');
-});
 
 // ---------------------------------------------------------------------------
 // A3-rows — D1 the projection build
@@ -481,21 +470,6 @@ function replicaFixture(storeOpts = {}, coordOpts = {}, options = {}) {
   return { repo, repoIdv, primaryRoot, replicaRoot, primary, replica, replicaCoord };
 }
 
-// A primary whose project KG holds a knowledge.workflow_admitted node (admitted via the #63 path,
-// so its DerivedFrom edge cites the local candidate finding) + a non-primary replica declaring it.
-function admittedReplicaFixture() {
-  const repo = gitRoot('repo');
-  const repoIdv = repoIdOf(repo);
-  const primaryRoot = deploymentRoot(repo, 'taskwave-P', 'deployment-primary', repoIdv);
-  const replicaRoot = deploymentRoot(repo, 'taskwave-R', 'deployment-replica', repoIdv);
-  const primary = storeAt(primaryRoot, repoIdv);
-  const cf = candidateFixture(primary, 'run:a4r2', 'task:a4r2', 'worker:a4r2');
-  primary.admitWorkflowFinding(primary.repositoryId(), cf.runId, cf.candidateFindingId,
-    workflowAdmissionPolicyFor(primary.repositoryId()), auth('admit:a4r2'), cf.lease);
-  const replica = storeAt(replicaRoot, repoIdv, { primaryRoot, deploymentRoot: replicaRoot });
-  const replicaCoord = coordinatorFor(replica, { primaryRoot, deploymentRoot: replicaRoot });
-  return { repo, repoIdv, primaryRoot, replicaRoot, primary, replica, replicaCoord, candidateFindingId: cf.candidateFindingId };
-}
 
 function seedTaskNode(store, id) {
   store.createTask({
@@ -506,9 +480,6 @@ function seedTaskNode(store, id) {
   }, auth(`task.created:${id}`));
 }
 
-function workflowAdmissionPolicyFor(rid) {
-  return Object.freeze({ repoId: rid, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
-}
 
 function recallPolicyFor(rid) {
   return Object.freeze({ repoId: rid });
@@ -516,38 +487,3 @@ function recallPolicyFor(rid) {
 
 // The #63 candidate fixture: createTask -> claimTask -> run-orchestrator lease -> board item ->
 // close -> the board-close candidate finding id (the candidacy the #63 admission reviews).
-function candidateFixture(store, runId, taskId, workerId) {
-  const rid = store.repositoryId();
-  store.createTask({
-    id: taskId, brief: { objective: 'orchestrate', capabilities: ['baton_orchestrator'] },
-    deps: [], refines: null, relation: 'root', runId, taskType: 'general',
-    reservedWorkerId: workerId, vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
-    modelPolicy: null, effortRequested: 'max', sessionRequest: { mode: 'new' },
-  }, auth(`task.created:${taskId}`));
-  const task = store.claimTask(taskId, workerId, 1, auth(`task.claimed:${taskId}`), {
-    harnessRequested: 'kimi-code', harnessResolved: 'kimi-code@fixture',
-    modelRequested: 'kimi-code/k3', modelResolved: 'kimi-code/k3', modelObserved: 'kimi-code/k3',
-    effortRequested: 'max', effortResolved: 'max', effortObserved: 'max',
-    routeKey: '["kimi-code","fixture","kimi-code/k3","max"]',
-  }).task;
-  const session = {
-    principalId: `principal-${runId}`, sessionId: `session-${runId}`,
-    authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: `principal-${runId}`, sessionId: `session-${runId}` }),
-    expiresAt: '2026-08-12T09:00:00.000Z',
-  };
-  const leaseRequest = { schemaVersion: 1, repoId: rid, parentTask: { id: taskId, version: task.version }, session };
-  const leaseIdentity = {
-    repoId: rid, parentRunId: runId, parentTaskId: taskId, parentTaskVersion: task.version,
-    workerId, principalId: session.principalId, sessionId: session.sessionId,
-    sessionAuthorityDigest: session.authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-  const issued = store.issueRunOrchestratorLease(leaseRequest, auth(`run.orchestrator_lease:${leaseId}`));
-  const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: `board-${runId}`, title: 'do the thing' }, auth(`post-${runId}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`close-${runId}`));
-  return {
-    runId, taskId, session, lease,
-    candidateFindingId: `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`,
-  };
-}

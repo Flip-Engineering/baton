@@ -746,7 +746,7 @@ test('D5: the resolve authority is the server-re-derived lease, never a caller f
   assert.equal(forged, 'run_orchestrator_session_mismatch', 'the #73 forge class is closed — a foreign session cannot resolve');
 });
 
-test('D6: answer/dismiss mints no Finding, KG node, board item, workflow_admitted, or scratch-fact (RED — coordinator.resolveDoubt missing)', () => {
+test('D6: answer/dismiss mints no Finding, KG node, board item, or scratch-fact (RED — coordinator.resolveDoubt missing)', () => {
   const { store, coordinator } = directHarness();
   const runId = 'run:d6'; const taskId = 'task:d6'; const workerId = 'worker:d6';
   registerSteering(store, runId, W1, 'research');
@@ -767,7 +767,6 @@ test('D6: answer/dismiss mints no Finding, KG node, board item, workflow_admitte
   assert.equal(nodesAfter, nodesBefore, 'no new KG node (GT2/GT5 — a doubt answer never enters the Finding graph)');
   assert.equal(boardsAfter, boardsBefore, 'no new board item');
   assert.equal(factsAfter, factsBefore, 'no new scratch fact');
-  assert.equal(store.events().filter((event) => event.kind === 'knowledge.workflow_admitted').length, 0, 'no workflow admission');
 });
 
 // ---------------------------------------------------------------------------

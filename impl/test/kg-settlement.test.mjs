@@ -86,53 +86,7 @@ const WAVE_ID = `wave:${createHash('sha256').update('kg-settlement-test-wave').d
 const SETTLEMENT_RUN_ID = `run-settlement:${WAVE_ID}`;
 const SETTLEMENT_TASK_ID = `settlement-task:${WAVE_ID}`;
 const SETTLEMENT_WORKER_ID = `settlement-worker:${WAVE_ID}`;
-const REVIEW_SESSION = {
-  principalId: 'wave-owner', sessionId: 'session-wave-owner',
-  authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: 'wave-owner', sessionId: 'session-wave-owner' }),
-  expiresAt: '2026-08-01T08:30:00.000Z',
-};
-const ADMISSION_POLICY = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
 
-// PRIMITIVE-ONLY fixture: an admitted candidate Finding + an active lease built entirely
-// from already-shipped primitives (goalPlanPolicy NON-mandatory so createTask works without
-// D1). Used ONLY by the KS2 admission-enforcement rows; it proves nothing about D2/D3 wiring.
-function primitiveAdmissionFixture(label, { clock, session = REVIEW_SESSION } = {}) {
-  const store = freshStore(label, {
-    runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
-    goalPlanPolicy: goalPlanPolicy(false),
-    ...(clock ? { clock } : {}),
-  });
-  store.createTask({
-    id: SETTLEMENT_TASK_ID, brief: { objective: `settlement task for wave ${WAVE_ID}`, capabilities: ['baton_orchestrator'] },
-    deps: [], refines: null, relation: 'root', runId: SETTLEMENT_RUN_ID, taskType: 'general',
-    reservedWorkerId: SETTLEMENT_WORKER_ID, vendorRequested: 'mock', modelRequested: 'mock-model',
-    modelPolicy: null, effortRequested: 'low', sessionRequest: { mode: 'new' },
-  }, auth(`task.created:${SETTLEMENT_TASK_ID}`));
-  store.claimTask(SETTLEMENT_TASK_ID, SETTLEMENT_WORKER_ID, 1, auth(`task.claimed:${SETTLEMENT_TASK_ID}`), {
-    harnessRequested: 'mock', harnessResolved: 'mock@fixture',
-    modelRequested: 'mock-model', modelResolved: 'mock-model', modelObserved: 'mock-model',
-    effortRequested: 'low', effortResolved: 'low', effortObserved: 'low',
-    routeKey: '["mock","fixture","mock-model","low"]',
-  });
-  const leaseIdentity = {
-    repoId, parentRunId: SETTLEMENT_RUN_ID, parentTaskId: SETTLEMENT_TASK_ID, parentTaskVersion: 2,
-    workerId: SETTLEMENT_WORKER_ID, principalId: session.principalId, sessionId: session.sessionId,
-    sessionAuthorityDigest: session.authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-  const issued = store.issueRunOrchestratorLease(
-    { schemaVersion: 1, repoId, parentTask: { id: SETTLEMENT_TASK_ID, version: 2 }, session },
-    { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
-  );
-  const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({
-    board: `wave-settlement:${WAVE_ID}`, title: 'the finding title',
-    detail: 'the full note text the candidate grounds against',
-  }, auth(`board.candidacy:${WAVE_ID}:scratchpad-entry:${'a'.repeat(64)}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`board.candidacy.close:${WAVE_ID}:0`));
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
-  return { store, lease, session, candidateFindingId, boardItemId: posted.item.itemId };
-}
 
 // ===========================================================================
 // KS1 — D1: the atomic settlement-task API (stage: API missing)
@@ -197,73 +151,6 @@ test('KS1: replay is exactly-once and same-key-different-fields conflicts', () =
 });
 
 // ===========================================================================
-// KS2 — XB: admission enforces the full lease gate (stage: enforcement missing;
-// the fixture is PRIMITIVE-ONLY and unstaged today — these rows fail AT the admission)
-// ===========================================================================
-
-test('KS2: every _activeRunOrchestratorLease refusal code is produced at admission', () => {
-  // not_found
-  {
-    const { store, session, candidateFindingId } = primitiveAdmissionFixture('ks2-notfound');
-    assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth('knowledge.workflow_admitted:nf', session),
-      { id: `run-orchestrator-lease:${'0'.repeat(64)}`, digest: '0'.repeat(64), issuedEvent: 1 })),
-      'run_orchestrator_lease_not_found');
-  }
-  // revoked
-  {
-    const { store, lease, session, candidateFindingId } = primitiveAdmissionFixture('ks2-revoked');
-    store.revokeRunOrchestratorLease({ schemaVersion: 1, leaseId: lease.id, leaseDigest: lease.digest, reason: 'operator' },
-      auth(`run.orchestrator_lease_revoked:${lease.id}`));
-    assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth('knowledge.workflow_admitted:rv', session), lease)), 'run_orchestrator_lease_revoked');
-  }
-  // expired
-  {
-    let now = Date.parse('2026-08-01T08:00:00.000Z');
-    const { store, lease, session, candidateFindingId } = primitiveAdmissionFixture('ks2-expired', {
-      clock: () => new Date(now).toISOString(),
-    });
-    now = Date.parse('2026-08-01T09:00:00.000Z');
-    assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth('knowledge.workflow_admitted:ex', session), lease)), 'run_orchestrator_lease_expired');
-  }
-  // session mismatch — each coordinate mutated independently
-  for (const mutation of ['principalId', 'sessionId', 'authorityDigest']) {
-    const { store, lease, candidateFindingId } = primitiveAdmissionFixture(`ks2-session-${mutation}`);
-    const foreign = { ...REVIEW_SESSION, [mutation]: mutation === 'authorityDigest' ? digest('mallory') : `mallory-${mutation}` };
-    assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth(`knowledge.workflow_admitted:sm:${mutation}`, foreign), lease)),
-      'run_orchestrator_session_mismatch', mutation);
-  }
-  // parent inactive (non-working)
-  {
-    const { store, lease, session, candidateFindingId } = primitiveAdmissionFixture('ks2-inactive');
-    store.transitionTask(SETTLEMENT_TASK_ID, 'cancelled', 2, auth('task.cancelled:settlement'));
-    assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth('knowledge.workflow_admitted:pi', session), lease)), 'run_orchestrator_parent_inactive');
-  }
-  // run stopping
-  {
-    const { store, lease, session, candidateFindingId } = primitiveAdmissionFixture('ks2-stopping');
-    const reasonDigest = digest('settlement review');
-    store.admitRunStop({
-      schemaVersion: 1, repoId, runId: SETTLEMENT_RUN_ID, reasonDigest,
-      requestDigest: digest({ repoId, runId: SETTLEMENT_RUN_ID, reasonDigest }),
-    }, { actor: 'orchestrator', key: `run.stop:${SETTLEMENT_RUN_ID}` });
-    assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth('knowledge.workflow_admitted:rs', session), lease)), 'run_stopping');
-  }
-});
-
-test('KS2: the acquiring session admits (control)', () => {
-  const { store, lease, session, candidateFindingId } = primitiveAdmissionFixture('ks2-control');
-  const admitted = store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-    sessionAuth(`knowledge.workflow_admitted:${candidateFindingId}`, session), lease);
-  assert.equal(admitted.replayed, false);
-  assert.equal(admitted.finding.grounding, 'verified');
-  assert.equal(admitted.finding.promotion?.trigger, 'workflow.admitted');
-});
 
 // ===========================================================================
 // KS3 — D2: the four commands dispatch to the exact coordinator methods with
@@ -272,7 +159,7 @@ test('KS2: the acquiring session admits (control)', () => {
 
 test('KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with normalized args', async (t) => {
   const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const calls = spyCoordinator(driver, ['elevateTaskScratchpad', 'settleWorkflowScratchpad', 'admitWorkflowFinding']);
+  const calls = spyCoordinator(driver, ['elevateTaskScratchpad', 'settleWorkflowScratchpad']);
   const code = await application.command('scratchpad.elevate', {
     runId: 'run-x', taskId: 'task-x', workerId: 'w-1', expectedScratchpadFence: 0,
     entryIds: [`scratchpad-entry:${'a'.repeat(64)}`],
@@ -283,7 +170,6 @@ test('KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with nor
   assert.equal(taskIdArg, 'task-x', 'the command normalizes to the coordinator wrapper signature');
   assert.deepEqual(entryIdsArg, [`scratchpad-entry:${'a'.repeat(64)}`]);
   assert.equal(calls.settleWorkflowScratchpad.length, 0, 'no alternate method is called');
-  assert.equal(calls.admitWorkflowFinding.length, 0);
 });
 
 test('KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad', async (t) => {
@@ -299,17 +185,6 @@ test('KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad', asyn
   assert.equal(calls.elevateTaskScratchpad.length, 0, 'no alternate method is called');
 });
 
-test('KS3: knowledge.promote maps to coordinator.admitWorkflowFinding (registry liveMethod agrees)', async (t) => {
-  const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const calls = spyCoordinator(driver, ['admitWorkflowFinding']);
-  await application.command('knowledge.promote', {
-    runId: 'run-x', candidateFindingId: 'finding:board-close:x:1',
-    policy: ADMISSION_POLICY, lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
-  }, principal('wave-owner')).catch(() => {});
-  assert.equal(calls.admitWorkflowFinding.length, 1);
-  const row = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === 'knowledge.promote');
-  assert.equal(row?.liveMethod, 'admitWorkflowFinding', 'the registry names the gate, not promoteKnowledgeNode');
-});
 
 test('KS3: knowledge.settlement_lease materializes the bundle with the session derived from the calling principal', async (t) => {
   const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
@@ -433,103 +308,22 @@ test('KS4: an empty partition is honest-empty with the ritual ON (zero ritual ev
 test('KS6: the hook sweeps expired settlement leases (≤16/pass) with review_window_expired and retires residue', async (t) => {
   const context = await scratchHarness(t, []);
   const store = context.driver.coordination;
-  // Seed 17 expired settlement bundles + 1 admitted control against the deployment store.
   // (Prerequisite: D1's API — this row's stage is recorded as D1-first, then sweep.)
-  let now = Date.parse('2026-08-01T06:00:00.000Z'); // well past TTL at hook time
-  void now;
+  // Seed 17 expired settlement bundles against the deployment store.
   for (let index = 0; index < 17; index += 1) {
-    seedExpiredSettlementBundle(store, `wave:stale${String(index).padStart(2, '0')}`, index === 0);
+    seedExpiredSettlementBundle(store, `wave:stale${String(index).padStart(2, '0')}`);
   }
   await driveWave(context, []);
   const firstPassRevocations = store.events().filter((event) => event.kind === 'run.orchestrator_lease_revoked'
     && event.payload?.reason === 'review_window_expired');
   assert.ok(firstPassRevocations.length > 0, 'the sweep revokes with review_window_expired');
   assert.ok(firstPassRevocations.length <= 16, 'bounded ≤16 per pass');
-  // The admitted control (index 0) is untouched.
-  const controlTask = store.task(`settlement-task:wave:stale00`);
-  assert.notEqual(controlTask?.status, 'cancelled', 'the admitted control keeps its task');
-  await driveWave(context, []);
   await driveWave(context, []);
   const allRevocations = store.events().filter((event) => event.kind === 'run.orchestrator_lease_revoked'
     && event.payload?.reason === 'review_window_expired');
   assert.ok(allRevocations.length >= 16, 'later passes finish the residue');
   const tasks = store.snapshot().tasks.filter((task) => task.relation === 'settlement' && task.status === 'cancelled');
   assert.ok(tasks.length >= 16, 'swept settlement tasks are cancelled');
-});
-
-// ===========================================================================
-// KS7 — knowledge.promote is one resumable act (stage: command missing)
-// ===========================================================================
-
-test('KS7: promote admits→revokes→completes in order, replays exactly, and resumes from every partial state', async (t) => {
-  const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const store = driver.coordination;
-  // Command→promote end-to-end (C3): the candidacy rides the store (the driver's D3 job), the
-  // lease is minted by the knowledge.settlement_lease COMMAND, and knowledge.promote consumes
-  // EXACTLY the coordinates that command returns — never a hand-derived lease.
-  const posted = store.postBoardItem({ board: `wave-settlement:${WAVE_ID}`, title: 't', detail: 'd' },
-    auth(`board.candidacy:${WAVE_ID}:scratchpad-entry:${'b'.repeat(64)}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`board.candidacy.close:${WAVE_ID}:1`));
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
-  const materialized = await application.command('knowledge.settlement_lease', { waveId: WAVE_ID }, principal('wave-owner'));
-  const coordinates = materialized?.runId !== undefined ? materialized : (materialized?.value ?? materialized?.outline ?? {});
-  const lease = coordinates.lease;
-  assert.ok(lease?.id, 'the command returns the lease coordinates');
-  // Pre-state: task working, lease active, no admitted Finding.
-  assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'working');
-  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).recipientAuthority.counts.active, 1);
-  assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 0);
-  const before = store.events().length;
-  await application.command('knowledge.promote', {
-    runId: SETTLEMENT_RUN_ID, candidateFindingId, policy: ADMISSION_POLICY, lease,
-  }, principal('wave-owner'));
-  // Exact outcome + ordering.
-  const promoted = store.queryKnowledge({}).find((node) => node.promotion?.trigger === 'workflow.admitted');
-  assert.equal(promoted?.id, `finding:workflow-admitted:${candidateFindingId}`, 'promotes EXACTLY the candidate');
-  const edge = store.queryKnowledgeEdges({}).find((row) => row.type === 'DerivedFrom' && row.to === candidateFindingId);
-  assert.ok(edge, 'the DerivedFrom edge exists');
-  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).recipientAuthority.counts.revoked, 1);
-  assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'completed');
-  const seqs = store.events(before + 1).map((event) => event.kind);
-  assert.ok(seqs.indexOf('knowledge.workflow_admitted') < seqs.indexOf('run.orchestrator_lease_revoked'),
-    'admit precedes revoke (rule 16b)');
-  // Full replay: no second Finding, no conflict.
-  await application.command('knowledge.promote', {
-    runId: SETTLEMENT_RUN_ID, candidateFindingId, policy: ADMISSION_POLICY, lease,
-  }, principal('wave-owner'));
-  assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 1);
-});
-
-test('KS7: partial state admit-done (crash after step 1) completes without conflict', async (t) => {
-  const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const store = driver.coordination;
-  const { lease, candidateFindingId, session } = seedCommandSettlementBundle(store);
-  // Partial state A: admit landed, lease active, task working (crash after step 1).
-  store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-    sessionAuth(`knowledge.workflow_admitted:${candidateFindingId}`, session), lease);
-  await application.command('knowledge.promote', {
-    runId: SETTLEMENT_RUN_ID, candidateFindingId, policy: ADMISSION_POLICY, lease,
-  }, principal('wave-owner'));
-  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).recipientAuthority.counts.revoked, 1);
-  assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'completed');
-  assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 1);
-});
-
-test('KS7: partial state admit+revoke-done (crash after step 2) completes without conflict', async (t) => {
-  const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const store = driver.coordination;
-  const { lease, candidateFindingId, session } = seedCommandSettlementBundle(store);
-  // Partial state B: admit landed AND lease revoked, task still working (crash after step 2).
-  store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
-    sessionAuth(`knowledge.workflow_admitted:${candidateFindingId}`, session), lease);
-  store.revokeRunOrchestratorLease({ schemaVersion: 1, leaseId: lease.id, leaseDigest: lease.digest, reason: 'operator' },
-    auth(`run.orchestrator_lease_revoked:${lease.id}`));
-  await application.command('knowledge.promote', {
-    runId: SETTLEMENT_RUN_ID, candidateFindingId, policy: ADMISSION_POLICY, lease,
-  }, principal('wave-owner'));
-  assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'completed', 'the remaining step completes');
-  assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 1,
-    'no second Finding minted from the partial state');
 });
 
 // ===========================================================================
@@ -579,19 +373,19 @@ test('KS8: a not-ready elevation refusal is recorded in settlement.errors and cl
 // KS9 — structural surface gate (regression pin; amended for the MCP-W2 fold)
 // ===========================================================================
 
-test('KS9: the four rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
-  const names = ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.promote', 'knowledge.settlement_lease'];
+test('KS9: the three rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
+  const names = ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.settlement_lease'];
   const rows = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations;
   for (const name of names) {
     if (name === 'knowledge.settlement_lease') continue; // pinned by KS9b once the row lands
     const row = rows.find((entry) => entry.key === name);
     assert.ok(row, `${name} registry row exists`);
-    // Deliberate amendment (mcp-packaging-decisions v1.0 MCP-W2): the four rows gain `mcp` in
+    // Deliberate amendment (mcp-packaging-decisions v1.0 MCP-W2): the rows gain `mcp` in
     // `surfaces`; the MCP enablement carries the S-2 sessionAuthority envelope requirement
-    // (knowledge.promote) and the settlement capability class (knowledge.settlement_lease).
+    // and the settlement capability class (knowledge.settlement_lease).
     assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], `${name} surfaces carry mcp`);
   }
-  for (const derived of ['scratchpad_elevate', 'scratchpad_settle', 'knowledge_promote', 'knowledge_settlement_lease']) {
+  for (const derived of ['scratchpad_elevate', 'scratchpad_settle', 'knowledge_settlement_lease']) {
     assert.equal(CLI_WEB_COMMANDS.has(derived), false, `CLI excludes ${derived}`);
   }
   assert.deepEqual([...RUN_ORCHESTRATOR_CAPABILITIES], ['run.context', 'run.start', 'run.status', 'run.stop']);
@@ -805,34 +599,9 @@ function spyCoordinator(driver, methods) {
   return calls;
 }
 
-// A settlement bundle (D1 task + lease with the wave-owner session + one candidate) inside
-// the deployment store, for the knowledge.promote command rows.
-function seedCommandSettlementBundle(store) {
-  store.createAndClaimSettlementTask(
-    { id: SETTLEMENT_TASK_ID, runId: SETTLEMENT_RUN_ID, reservedWorkerId: SETTLEMENT_WORKER_ID },
-    { actor: 'orchestrator', key: `settlement.task:${WAVE_ID}` },
-  );
-  const leaseIdentity = {
-    repoId, parentRunId: SETTLEMENT_RUN_ID, parentTaskId: SETTLEMENT_TASK_ID, parentTaskVersion: 2,
-    workerId: SETTLEMENT_WORKER_ID, principalId: REVIEW_SESSION.principalId,
-    sessionId: REVIEW_SESSION.sessionId, sessionAuthorityDigest: REVIEW_SESSION.authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-  const issued = store.issueRunOrchestratorLease(
-    { schemaVersion: 1, repoId, parentTask: { id: SETTLEMENT_TASK_ID, version: 2 }, session: REVIEW_SESSION },
-    { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
-  );
-  const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: `wave-settlement:${WAVE_ID}`, title: 't', detail: 'd' },
-    auth(`board.candidacy:${WAVE_ID}:scratchpad-entry:${'b'.repeat(64)}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`board.candidacy.close:${WAVE_ID}:1`));
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
-  return { lease, candidateFindingId, session: REVIEW_SESSION, boardItemId: posted.item.itemId };
-}
 
-// An EXPIRED settlement bundle for the sweep rows. When admittedControl is true the
-// candidate is admitted immediately (the sweep must leave it untouched).
-function seedExpiredSettlementBundle(store, waveId, admittedControl = false) {
+// An EXPIRED settlement bundle for the sweep rows.
+function seedExpiredSettlementBundle(store, waveId) {
   const taskId = `settlement-task:${waveId}`;
   const runId = `run-settlement:${waveId}`;
   const workerId = `settlement-worker:${waveId}`;
@@ -855,14 +624,5 @@ function seedExpiredSettlementBundle(store, waveId, admittedControl = false) {
     { schemaVersion: 1, repoId, parentTask: { id: taskId, version: 2 }, session },
     { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
   );
-  const posted = store.postBoardItem({ board: `wave-settlement:${waveId}`, title: `stale ${waveId}`, detail: 'stale' },
-    auth(`board.candidacy:${waveId}:scratchpad-entry:${digest(waveId)}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`board.candidacy.close:${waveId}`));
-  if (admittedControl) {
-    const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
-    store.admitWorkflowFinding(repoId, runId, candidateFindingId, ADMISSION_POLICY,
-      sessionAuth(`knowledge.workflow_admitted:${candidateFindingId}`, session),
-      { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent });
-  }
   return { taskId, runId, leaseId: issued.lease.leaseId };
 }

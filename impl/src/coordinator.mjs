@@ -5302,29 +5302,11 @@ export class Coordinator {
   }
 
 
-  // KG-2 Part D rule 16: the settle-time orchestrator-admit gate. This entry point accepts no
-  // opts.actor at all — hardcoded to 'orchestrator' (mirroring the actor: 'policy' precedent at
-  // :5574/:10258, but for the promotionActor-gated orchestrator/operator authority tier instead).
-  // repoId is resolved from the coordinator's own deployment authority (rule 12: neither board
-  // items nor packages carry repoId). The caller supplies the active run-orchestrator lease;
-  // ordering (rule 16b) is the caller's responsibility — this call must complete, or be
-  // explicitly abandoned, before that run's lease is revoked.
-    admitWorkflowFinding(runId, candidateFindingId, policy, lease, session = null) {
-    return runtimeAdmission.admitWorkflowFinding(this, this._recorder, runId, candidateFindingId, policy, lease, session);
-  }
 
   // D2: scratchpad.elevate → the terminal-task elevation wrapper with an explicit note+plan
   // selection (the wrapper derives runId/worker/fence and refuses a non-terminal task).
     elevateTaskScratchpad(taskId, entryIds) {
     return runtimeObservation.elevateTaskScratchpad(this, this._recorder, taskId, entryIds);
-  }
-
-  // D2: knowledge.promote → one resumable act, admit → revoke → complete, each step independently
-  // idempotent (rule 16b order: admit precedes revoke). A crash anywhere resolves by re-issuing the
-  // SAME command with the SAME idempotency keys: the store replays the admit, a revoked lease is
-  // skipped, and a completed task is left alone.
-    promoteWorkflowFinding(runId, candidateFindingId, policy, lease, session) {
-    return runtimeObservation.promoteWorkflowFinding(this, this._recorder, runId, candidateFindingId, policy, lease, session);
   }
 
   // The member's primary (worker-claimed) task for a wave member run — the elevation target.
