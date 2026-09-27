@@ -421,11 +421,11 @@ function spawnSuccessor(spec) {
       'the successor\'s own row names the log it opened at open');
     await until(() => resident.child.exitCode !== null, 'the predecessor\'s own exit');
     // #461: the old incarnation ENDS BY ITSELF after the handoff — nothing it still held keeps its
-    // loop alive, and no signal ends it. (The measured exit code for the real entry script here is
-    // 13, Node's "unsettled top-level await": `serveDeployment`'s signal wait is still pending when
-    // the loop drains. That is the stop path's own fact, reported by this lane rather than pinned
-    // here — this row's contract is the log the successor writes, and the successor's own
-    // `host.reincarnated` row is what observes this exit.)
+    // loop alive, and no signal ends it. Issue #589: the exit is now the serve arm's own (it exits
+    // with the code the terminal state names) rather than the loop draining under a pending
+    // top-level await, so no "unsettled top-level await" warning precedes it. This row's contract
+    // is the log the successor writes, and the successor's own `host.reincarnated` row is what
+    // observes this exit.
     assert.equal(resident.child.signalCode, null, `the old ends by itself, never by a signal: ${resident.state.stderr.slice(-800)}`);
     // The failure mode of #468: the pipe that used to carry this narration has no reader left.
     // The successor is still alive and its log still answers.
