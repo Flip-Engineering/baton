@@ -13,8 +13,9 @@
 # preparing anything. LAlready names the worker commit on the fast-forward and
 # the checked path alike.
 #
-# The candidate carries the worker commit's own message, whose body names the
-# worker branch the landing came from and any added path the landing dropped.
+# One branch commit retains its full message. Several branch commits use the
+# tip subject and list every subject since the merge-base with the target.
+# The body names the worker branch and any added path the landing dropped.
 #
 # Publication is the last step: push_git pushes the landed target to the
 # remote the deployment declares and answers the push's own exit and output,
@@ -683,8 +684,8 @@ def ld_commit_next(g: T.GitOut, scratch: String, worker: String, sha: String, ti
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
 # Stage 5 drops the added paths this repository's own ignore rules exclude,
-# reads the worker commit's own message, and commits the candidate under it
-# with the worker branch and the dropped paths named in its body.
+# constructs the message from the worker history above the target merge-base,
+# and commits with the worker branch and dropped paths named in the body.
 def ld_message(workerMessage: String, worker: String, paths: String) -> String:
   Tx.trim_nl(workerMessage) ++ "\n\nlanded from " ++ worker ++ Deb.debris_note(paths)
 
@@ -707,7 +708,7 @@ def ld_msg_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: 
     case T.GRun{code, out}: ld_msg_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
-def ld_msg_read(worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+def ld_single_msg_read(worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
   +w2 = worker
   +s2 = sha
   +sc = scratch
@@ -715,6 +716,44 @@ def ld_msg_read(worker: String, sha: String, tip: String, scratch: String, paths
   do IO<Ld>:
     g : T.GitOut <- Git.runGit(sc, ["log", "-1", "--format=%B", s2])
     ld_msg_pick(g, w2, s2, tip, sc, p2)
+
+# Git emits the tip first in topological order. The body lists oldest first.
+def ld_subjects_tail(rest: List<String>, +subject: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match rest:
+    case Nil{}: ld_single_msg_read(worker, sha, tip, scratch, paths)
+    case Con{h, tail}: ld_commit_now(subject ++ "\n\n" ++ Tx.join("\n", List.reverse(&1, String, Con{subject, Con{h, tail}})), worker, sha, tip, scratch, paths)
+
+def ld_subjects(lines: List<String>, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match lines:
+    case Nil{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker history above the target merge-base is empty"}})
+    case Con{subject, rest}: ld_subjects_tail(rest, subject, worker, sha, tip, scratch, paths)
+
+def ld_history_ok(ok: Bool, text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match ok:
+    case True{}: ld_subjects(Tx.split_lines(text), worker, sha, tip, scratch, paths)
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker commit subjects could not be read: " ++ text}})
+
+def ld_history_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_history_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_history_base_ok(ok: Bool, base: String, +worker: String, +sha: String, +tip: String, +scratch: String, +paths: String) -> IO(Ld):
+  match ok:
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker and target merge-base could not be read: " ++ base}})
+    case True{}: do IO<Ld>:
+      g : T.GitOut <- Git.runGit(scratch, ["log", "--topo-order", "--format=%s", Tx.trim_nl(base) ++ ".." ++ sha])
+      ld_history_pick(g, worker, sha, tip, scratch, paths)
+
+def ld_history_base(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_history_base_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_msg_read(+worker: String, +sha: String, +tip: String, +scratch: String, +paths: String) -> IO(Ld):
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(scratch, ["merge-base", sha, tip])
+    ld_history_base(g, worker, sha, tip, scratch, paths)
 
 def ld_debris_go(d: Deb.Debris, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
   match d:

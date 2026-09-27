@@ -108,6 +108,12 @@ answer is JSON with a `status` field: `landed` with the new target commit
 contains, `conflict` naming the unmerged paths and the retained scratch
 worktree, or `blocked` with a reason.
 
+The squash message describes the worker history above its merge-base with the
+target. A single commit retains its full message. Several commits use the tip
+commit's subject, with every branch commit's subject in the body, oldest first
+in topological order. The body also names the worker branch and any ignored
+paths dropped during landing.
+
 ## Native turns
 
 After registering the worker, run:

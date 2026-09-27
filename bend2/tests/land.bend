@@ -313,30 +313,23 @@ def land_l(r: String, acc: String) -> IO(Unit):
     tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wl"), "baton/wl", head0, "printf 'pub\\n' > pub.txt")
     land_l_run(tip, r2, a2)
 
-# The landed candidate's message facts: it carries the worker commit's own
-# message and body, names the worker branch in its body, and names the drop.
-def msg_lines(+msg: String, +drop: String) -> String:
-  Tx.str_cat(eq_or(LD.block_has(msg, drop), "land K: candidate message does not name the drop"),
-  Tx.str_cat(eq_or(LD.block_has(msg, "worker change"), "land K: the landed message does not carry the worker commit's own message"),
-  Tx.str_cat(eq_or(LD.block_has(msg, "worker body line"), "land K: the landed message does not carry the worker commit's own body"),
-  eq_or(LD.block_has(msg, "landed from baton/wj"), "land K: the landed message does not name the worker branch in its body"))))
-
-def land_k_ok(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, acc: String) -> IO(Unit):
+# K: one commit retains its complete message. Several commits use the tip
+# subject and every branch subject in the body. Both name the branch and drops.
+def land_k_check(res: Result<&1, &1, T.GitFail, T.LandOutcome>, r: String, expected: String) -> IO(String):
   match res:
     case Done{T.LLanded{target, commit}}:
       +r2 = r
-      +a2 = acc
       +c2 = commit
-      do IO<Unit>:
+      do IO<String>:
         obj : Bool <- path_in(r2, c2, "build/out.bin")
         feat : Bool <- path_in(r2, c2, "feat5.txt")
         msg : String <- msg_of(r2, c2)
         f1 : String <- IO.pure(String, eq_or(Bool.not(obj), "land K: ignored build output landed"))
         f2 : String <- IO.pure(String, eq_or(feat, "land K: worker change missing from the landing"))
-        f3 : String <- IO.pure(String, msg_lines(msg, drop_line()))
-        land_l(r2, Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, f3))))
-    case Done{made}: land_l(r, Tx.str_cat(acc, "land K: landing did not land"))
-    case Fail{fail}: land_l(r, Tx.str_cat(acc, Tx.str_cat("land K refused: ", Tx.trim_nl(T.fail_text(fail)))))
+        f3 : String <- IO.pure(String, eq_or(Tx.str_eq(msg, expected), "land K: candidate message differs from the branch history"))
+        IO.pure(String, f1 ++ f2 ++ f3)
+    case Done{made}: IO.pure(String, "land K: landing did not land")
+    case Fail{fail}: IO.pure(String, "land K refused: " ++ Tx.trim_nl(T.fail_text(fail)))
 
 def land_j(r: String, acc: String) -> IO(Unit):
   +r2 = r
@@ -345,7 +338,15 @@ def land_j(r: String, acc: String) -> IO(Unit):
     head0 : String <- head_of(r2)
     _tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wj"), "baton/wj", head0, "mkdir -p build; printf 'obj\\n' > build/out.bin; git add -f build/out.bin; printf 'feat5\\n' > feat5.txt")
     res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", "baton/wj", Con{"feat5.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lj"))
-    land_k_ok(res, r2, a2)
+    single : String <- land_k_check(res, r2, "worker change\n\nworker body line\n\nlanded from baton/wj\n" ++ drop_line())
+    head1 : String <- head_of(r2)
+    _multi : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wk"), "baton/wk", head1, "mkdir -p build; printf 'obj\\n' > build/out.bin; git add -f build/out.bin; printf 'feat6\\n' > feat5.txt")
+    _correction : T.RunRes <- git_seq([
+      ["commit", "-q", "--allow-empty", "-m", "Correct the wording", "-m", "Correction detail"]
+    ], Tx.str_cat(r2, "/.scratch/lt-wk"))
+    multi : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", "baton/wk", Con{"feat5.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lk"))
+    multiple : String <- land_k_check(multi, r2, "Correct the wording\n\nworker change\nCorrect the wording\n\nlanded from baton/wk\n" ++ drop_line())
+    land_l(r2, a2 ++ single ++ multiple)
 
 def land_i(r: String, acc: String) -> IO(Unit):
   +r2 = r
