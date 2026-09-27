@@ -303,19 +303,18 @@ function siteSource(open, next) {
   return assert.fail(`no store module still carries ${open}`);
 }
 
-// The three sites the brief names: the fleet-drain admission, the run-stop target helpers
-// (`_runStopContextTargets` + `_runStopTargets`), and the run-stop admission — by member name, so a
-// moved member's text is read where it lives.
-const SITES = ['_validateFleetDrainAdmission', '_runStopContextTargets', '_validateRunStopAdmission'];
+// The two sites the brief names: the fleet-drain admission and the run-stop admission — by member
+// name, so a moved member's text is read where it lives.
+const SITES = ['_validateFleetDrainAdmission', '_validateRunStopAdmission'];
 
-test('the target-set literals are gone from the three sites, and the ONE helper is judged at admission only', () => {
+test('the target-set literals are gone from the two sites, and the ONE helper is judged at admission only', () => {
   for (const name of SITES) {
     const source = siteSource(name);
     assert.equal(source.includes('100_000'), false,
       `${name} still carries a literal target-set ceiling: the ledger is the physical resource`);
   }
   const fleetDrain = siteSource(SITES[0]);
-  const runStop = siteSource(SITES[2]);
+  const runStop = siteSource(SITES[1]);
   assert.match(runStop, /if \(!integrity\) \{?\s*\n?\s*assertTargetSetAdmissible\(/u,
     'the run-stop admission judges its target set through the ONE helper, under `!integrity`: the '
     + 'fold applies no ceiling, so a recorded row is never re-judged for size on replay');
@@ -324,15 +323,14 @@ test('the target-set literals are gone from the three sites, and the ONE helper 
     + 'live fleet, not a projection of this ledger');
   assert.equal(fleetDrain.includes('maxWorkers'), false,
     'and the fleet-drain admission names no deployment worker cap either');
-  // The fold path itself: the target helpers state why they carry no ceiling at all — both of them,
-  // the window this pin always read (from `_runStopContextTargets` through `_runStopTargets`).
-  const targetHelpers = [siteSource('_runStopContextTargets'), siteSource('_runStopTargets')].join('\n');
+  // The fold path itself: the target helper states why it carries no ceiling at all.
+  const targetHelpers = siteSource('_runStopTargets');
   assert.equal(/run stop target set exceeds capacity|run stop Context target set exceeds capacity/u
     .test(targetHelpers), false,
-  'the helpers reached from the fold carry no capacity refusal');
-  assert.match(targetHelpers, /projection of the ledger/u, 'they state the derivation instead');
-  assert.match(targetHelpers, /returns? from the FOLD|reached from the FOLD/u,
-    'and they say why the fold may not judge one');
+    'the helper reached from the fold carries no capacity refusal');
+  assert.match(targetHelpers, /projection of the ledger/u, 'it states the derivation instead');
+  assert.match(targetHelpers, /FOLD reaches\s*\/\/\s*this function/u,
+    'and it says why the fold may not judge one');
 });
 
 test('the surviving bound is ONE declared registry row whose derivation is the ledger itself', () => {

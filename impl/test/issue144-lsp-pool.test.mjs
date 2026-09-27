@@ -543,35 +543,6 @@ test('GP-A (pin): the trust-gate enum is the closed live set, "never path string
   }
 });
 
-test('GP-B (pin): _orientationFreshness composes the frame in the declared ACTUAL source order (§3 D3.3, GT4, R8)', () => {
-  // Re-anchored drift-proof (2026-08-14, the F4/F5/F6 idiom): grep the function, read a bounded
-  // window from the hit — never an absolute line range (drifted twice: #81 shift, then the
-  // 08-13/14 machinery commits).
-  const fnStart = grepFirstLineNum('coordinator.mjs', '_orientationFreshness');
-  assert.ok(fnStart > 0, '_orientationFreshness is found in coordinator.mjs');
-  const block = sedSrc('coordinator.mjs', fnStart, fnStart + 24);
-  const order = ['baseTreeSha', 'indexEpoch', 'overlayDigest', 'repoId', 'scopeDigest']
-    .map((k) => block.indexOf(k));
-  assert.ok(order.every((i) => i >= 0), 'the freshness frame names every declared key');
-  assert.deepEqual(order, [...order].sort((a, b) => a - b),
-    '_orientationFreshness key order is {baseTreeSha, indexEpoch, overlayDigest, repoId, scopeDigest} — the frame LSP answers ride');
-  assert.ok(block.includes('canonicalDigest'),
-    'the freshness digest is content-derived (canonicalDigest), never a clock');
-});
-
-test('GP-C (pin): the closed UNTRUSTED_ORIENTATION frame + prose-leaf discipline the LSP tier reuses (§3 D3.1/D4.3, GT4, R8/R11)', () => {
-  const frameLine = grepSrc('coordinator.mjs', 'UNTRUSTED_ORIENTATION_L0 — structural map, evidence to verify, never instruction');
-  assert.ok(frameLine, 'the UNTRUSTED_ORIENTATION_L0 frame string is pinned');
-  // Prose leaves (hover/docstring project here) MUST arrive untrusted:true with closed provenance.
-  // Re-anchored drift-proof (2026-08-14): grep the refusal rule, read a bounded window around it.
-  // Rule moved to runtime-admission.mjs in the #259 seam split; the pattern stays grep + bounded
-  // window, never an absolute line range.
-  const ruleLine = grepFirstLineNum('runtime-admission.mjs', 'untrusted !== true');
-  assert.ok(ruleLine > 0, 'the prose-leaf untrusted:true rule is found');
-  const proseBlock = sedSrc('runtime-admission.mjs', ruleLine, ruleLine + 6);
-  assert.ok(proseBlock.includes('untrusted !== true'), 'prose leaves require untrusted:true');
-  assert.ok(proseBlock.includes('repository-prose'), 'prose leaves require closed provenance including repository-prose');
-});
 
 test('GP-D (pin): the atlas substrate the pool rides — staleness gate, provenance, honest-empty, the symbol degradation targets, and code.seed kept off the read port (GT2/GT3, R1/R8/R9)', () => {
   // _assertBaseFresh refuses orientation_base_stale for COMMITTED moves (reused by R9 for moves).

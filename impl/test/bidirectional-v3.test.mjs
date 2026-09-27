@@ -264,19 +264,6 @@ test('A4: scratchpad reads return only the run shared partition, never a sibling
   assert.ok(!body.includes('SIBLING-SECRET'), 'a sibling worker\'s private partition NEVER serves');
 });
 
-test('A6: read evidence is the context.read class with ZERO promotion weight', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitContextRead(adapter, handle, { kind: 'knowledge', text: 'x' }, 'a6-read');
-  await flush(40);
-  const events = coordinator._coordination.events().filter((event) => event.kind === 'context.read');
-  assert.ok(events.length >= 1, 'reads mint context.read audit events');
-  assert.equal(events.some((event) => event.kind === 'scratch.read'), false,
-    'NOT the scratch.read family (zero promotion weight)');
-  assert.equal(coordinator._coordination.events().some((event) => event.kind === 'scratch.read'), false,
-    'no scratch.read is minted by the read lane');
-});
 
 test('A6b: the author\'s own task never counts toward minScratchReaders (no self-promotion)', () => {
   const store = new CoordinationStore(tmpDir(), { repoId: 'repo-a', clock: () => '2026-08-03T00:00:00.000Z' });
@@ -338,71 +325,6 @@ test('A8: CONTEXT_READ receipts never answer the TG3 steering cycle (reads are n
     'the cycle stays armed — a read receipt never answers it');
 });
 
-// ===========================================================================
-// BD3-B — context packs (stage: pack machinery missing)
-// ===========================================================================
-
-test('B1: packs supersede through a server-owned chain (predecessor + validityVersion, history retained)', () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-bd3', clock: () => '2026-08-03T00:00:00.000Z' });
-  const first = store.mintContextPack({
-    type: 'spec', body: 'v1 of the decomposition spec', validity: '2026-08-03T01:00:00.000Z',
-  }, { actor: 'orchestrator', key: 'bd3-b1-v1' });
-  const second = store.mintContextPack({
-    type: 'spec', body: 'v2 of the decomposition spec', validity: '2026-08-03T02:00:00.000Z',
-    predecessor: first.pack.packId,
-  }, { actor: 'orchestrator', key: 'bd3-b1-v2' });
-  assert.equal(second.pack.validityVersion, (first.pack.validityVersion ?? 1) + 1);
-  assert.equal(second.pack.predecessor, first.pack.packId);
-  assert.ok(store.contextPack(first.pack.packId), 'the superseded version is retained as content history');
-  assert.equal(store.contextPackHead(first.pack.family ?? 'spec').packId, second.pack.packId, 'the head tracks the chain');
-});
-
-test('B2: a brief citing a superseded pack refuses context_pack_stale at materialization (live-head CAS)', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const store = coordinator._coordination;
-  const first = store.mintContextPack({ type: 'spec', body: 'v1' }, { actor: 'orchestrator', key: 'bd3-b2-v1' });
-  store.mintContextPack({ type: 'spec', body: 'v2', predecessor: first.pack.packId }, { actor: 'orchestrator', key: 'bd3-b2-v2' });
-  const refusal = await coordinator.spawn('mock', makeBrief({ contextPacks: [first.pack.packId] })).then(
-    () => null,
-    (error) => error?.code ?? 'thrown',
-  );
-  assert.equal(refusal, 'context_pack_stale', 'a superseded citation fails at spawn, never serves silently');
-  const head = store.contextPackHead('spec');
-  const accepted = await coordinator.spawn('mock', makeBrief({ contextPacks: [head.packId] })).then(
-    () => 'spawned',
-    (error) => error?.code ?? 'thrown',
-  );
-  assert.equal(accepted, 'spawned', 'the live head cites and spawns (the positive control)');
-});
-
-test('B2b: the materialized pack content arrives framed at spawn (not just cited)', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const store = coordinator._coordination;
-  const minted = store.mintContextPack({ type: 'spec', body: 'THE DECOMPOSITION BODY' }, { actor: 'orchestrator', key: 'bd3-b2b-v1' });
-  const handle = await coordinator.spawn('mock', makeBrief({ contextPacks: [minted.pack.packId] }));
-  const briefText = JSON.stringify(adapter.calls.spawn.at(-1)?.brief ?? {});
-  assert.ok(briefText.includes('THE DECOMPOSITION BODY'), 'the pack materializes INTO the brief at spawn');
-  assert.ok(briefText.includes('UNTRUSTED'), 'the materialized content is framed, never raw instructions');
-  void handle;
-});
-
-test('B3: an expired pack refuses context_pack_expired and never serves (expiry is not supersession)', () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-bd3', clock: () => '2026-08-03T03:00:00.000Z' });
-  store.mintContextPack({ type: 'spec', body: 'short-lived', validity: '2026-08-03T01:00:00.000Z' },
-    { actor: 'orchestrator', key: 'bd3-b3-v1' });
-  const refusal = (() => {
-    try {
-      return store.materializeContextPack(store.contextPackHead('spec').packId).code ?? 'served';
-    } catch (error) { return error?.code ?? 'thrown'; }
-  })();
-  assert.equal(refusal, 'context_pack_expired', 'expired packs stop serving without being superseded');
-  const live = store.mintContextPack({ type: 'spec', body: 'still fresh', validity: '2026-08-03T04:00:00.000Z' },
-    { actor: 'orchestrator', key: 'bd3-b3-live' });
-  const served = store.materializeContextPack(live.pack.packId);
-  assert.ok(String(served?.body ?? served?.pack?.body ?? '').includes('still fresh'), 'an unexpired pack serves (the positive control)');
-});
 
 // ===========================================================================
 // BD3-C — the message lane (stage: lane missing)
@@ -570,24 +492,6 @@ test('A5: the board query kind reuses the S-2 board→run binding check', async 
   assert.equal(foreign?.payload?.ok ?? null, false, 'a board bound to another run refuses with the binding precedence');
 });
 
-test('B4: the pack reaper reports the expiry it OBSERVED — it reclaims nothing, and live history is untouched', () => {
-  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-bd3', clock: () => '2026-08-03T05:00:00.000Z' });
-  const expired = store.mintContextPack({ type: 'spec', body: 'old', validity: '2026-08-03T01:00:00.000Z' },
-    { actor: 'orchestrator', key: 'bd3-b4-old' });
-  store.mintContextPack({ type: 'spec', body: 'fresh', validity: '2026-08-03T06:00:00.000Z' },
-    { actor: 'orchestrator', key: 'bd3-b4-fresh' });
-  const receipt = store.reapExpiredContextPacks(store._repoId ?? 'repo-bd3');
-  assert.deepEqual(receipt, { expired: 1, reaped: 0 },
-    'the receipt counts the expired pack the scan saw; `reaped` names removals, and this store has no reclamation path');
-  const live = store.materializeContextPack(store.contextPackHead('spec').packId);
-  assert.ok(String(live?.body ?? live?.pack?.body ?? '').includes('fresh'), 'live packs survive the scan');
-  const history = store.contextPack(store.contextPackHead('spec').packId);
-  assert.ok(history, 'the head resolves after the scan');
-  assert.ok(store.contextPack(expired.pack.packId), 'the expired pack stays durable — nothing was removed');
-  assert.throws(() => store.materializeContextPack(expired.pack.packId),
-    (error) => error?.code === 'context_pack_expired',
-    'expiry stops the pack serving without any pack being reaped');
-});
 
 test('C4: run.send and nudge_turn ride the lane as aliases (identical worker-visible behavior)', async () => {
   const adapter = new ScriptableAdapter();

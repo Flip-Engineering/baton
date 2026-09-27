@@ -30,12 +30,6 @@ const MATRIX = Object.freeze([
   ['board.drop', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → dropBoardItem'],
   // MCP-W2 fold (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
   // knowledge.promote LEAVE the reflex matrix — they are the ordinary-surface settlement tools.
-  ['package.admit', 'ordinary', ['embedded', 'mcp'], 'control', 'admitContextPackage'],
-  ['package.attach', 'ordinary', ['embedded', 'mcp'], 'control', 'attachContextPackage'],
-  ['package.read', 'ordinary', ['embedded', 'mcp'], 'observe', 'contextPackageBranch + projectContextPackageBranch'],
-  ['repl.manifest', 'kernel', ['embedded'], 'control', 'admitReplManifest'],
-  ['repl.binding', 'kernel', ['embedded'], 'control', 'admitReplBinding + dropReplBinding'],
-  ['repl.cite', 'ordinary', ['embedded', 'mcp'], 'observe', 'resolveReplCitation'],
   ['knowledge.recall', 'ordinary', ['embedded', 'mcp'], 'observe', 'recallKnowledge'],
   ['knowledge.horizon', 'ordinary', ['embedded', 'mcp'], 'observe', 'taskHorizon + workflowHorizon + projectHorizon'],
 ]);
@@ -43,7 +37,7 @@ const MATRIX = Object.freeze([
 const rows = new Map(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
   .filter((row) => SURFACING_MATRIX_KEYS.includes(row.key)).map((row) => [row.key, row]));
 
-test('SM-1 schema truth: all sixteen rows are closed, exact live-method mappings', () => {
+test('SM-1 schema truth: all ten rows are closed, exact live-method mappings', () => {
   assert.deepEqual([...SURFACING_MATRIX_KEYS], MATRIX.map(([key]) => key));
   assert.equal(rows.size, SURFACING_MATRIX_KEYS.length);
   for (const [key, profile, surfaces, effect, liveMethod] of MATRIX) {

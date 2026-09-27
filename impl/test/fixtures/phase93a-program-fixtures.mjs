@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import {
   canonicalProgramDigest, createApprovalTemplate, createProgramPolicy,
   createProgramValueAuthority, createSchemaRegistry, createTypedValue,
-  createValueSchemaDefinition, deriveCollectSchemaDefinition, deriveContextSchemaDefinitions,
+  createValueSchemaDefinition, deriveCollectSchemaDefinition,
   normalizeRoleCatalog, valueSchemaRef,
 } from '../../src/program-ir/index.mjs';
 
@@ -89,10 +89,6 @@ export function programFixture() {
   }, authority);
   const policy = makePolicy();
   const parallelPolicy = makePolicy({ maxParallelBranches: 4 });
-  // recursionDepth stays the Context v1 constant 1 in the synthesized Context policy; the
-  // Program's own repeat/child depth bound (maxChildDepth: 4 above) is a different axis that
-  // context normalization never gates on (§93.10A). Kept as a named convenience only.
-  const contextPolicy = makePolicy({ maxChildDepth: 1 });
 
   const workerPolicyRequest = {
     schemaVersion: 1,
@@ -161,7 +157,6 @@ export function programFixture() {
     value: (nodeKey, typedValue) => ({
       nodeKey, kind: 'value', value: typedValue, schema: typedValue.schema,
     }),
-    context: (nodeKey, program) => ({ nodeKey, kind: 'context', program }),
     sequence: (nodeKey, steps, result, outputSchema = refs.string) => ({
       nodeKey, kind: 'sequence',
       steps: steps.map((step) => (typeof step === 'string' ? { nodeKey: step } : step)),
@@ -222,29 +217,6 @@ export function programFixture() {
   ];
   const baseSource = (overrides = {}) => source(baseNodes(), { nodeKey: 'main' }, overrides);
 
-  // §93.10A author-aid fixtures (rule 6): build a raw baton.context_program from an expression,
-  // derive+register every schema its result requires via the SAME code path the normalizer uses
-  // (never hand-computed digests), and hand back a ready-to-embed context node plus the schemas
-  // array a test's `f.source(...)` override needs. `extraSchemas` folds in registrations another
-  // expression already derived (e.g. a nested collect input reused across two context nodes).
-  const contextProgram = (expression) => ({
-    schemaVersion: 1, kind: 'baton.context_program', expression,
-  });
-  const contextExpression = (branch = 'repository') => ({ op: 'source', branch });
-  const deriveContext = (nodeKey, expression, {
-    policy: nodePolicy = contextPolicy, extraSchemas = [],
-  } = {}) => {
-    const program = contextProgram(expression);
-    const derived = deriveContextSchemaDefinitions(program, { authority, policy: nodePolicy });
-    return {
-      node: nodes.context(nodeKey, program),
-      schemas: [...registry.schemas, ...extraSchemas, ...derived],
-      policy: nodePolicy,
-      program,
-      derived,
-    };
-  };
-
   return {
     authority, registry, refs, schemasWithCollectOuter, schemas: {
       string: stringSchema, boolean: booleanSchema, strings: stringsSchema,
@@ -252,11 +224,11 @@ export function programFixture() {
       childHandle: childHandleSchema, collectResult: collectResultSchema,
       collectOuter: collectOuterSchema,
     },
-    policy, makePolicy, parallelPolicy, contextPolicy, catalog, catalogSource, makeCatalogSource,
+    policy, makePolicy, parallelPolicy, catalog, catalogSource, makeCatalogSource,
     approvalTemplate, manifest, verificationContract, role, nodeTemplate, nodeTemplateDigest,
     workerPolicyRequest, workerPolicyRequestDigest, childProgramRef,
     typed, stringValue, booleanValue, stringsValue, envelopeValue,
-    nodes, source, baseSource, contextProgram, contextExpression, deriveContext,
+    nodes, source, baseSource,
     valueSchemaRef, sha256,
   };
 }

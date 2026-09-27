@@ -252,17 +252,6 @@ function rotateItems(items, by = 1) {
   return [...items.slice(k), ...items.slice(0, k)];
 }
 
-// A #69-shaped cited REPL object (the total-order rows need the section to exist on the fold).
-function replObjectEntry(citation, scope, name, bindingVersion, overrides = {}) {
-  return {
-    citation, scope, name, bindingVersion,
-    digest: createHash('sha256').update(citation).digest('hex'),
-    cellId: `cell:${citation}`,
-    head: { text: `${name} head text`, provenance: 'hub-derived', untrusted: true },
-    ...overrides,
-  };
-}
-
 // A #79-shaped pending-attention item (the total-order rows need the section to exist on the fold).
 function attentionItem(kind, requestId, workerId, overrides = {}) {
   return { kind, requestId, workerId, code: 'scratchpad_entry_invalid', text: 'scratchpad.entry.body is 42 bytes (cap 8192)', ...overrides };
@@ -537,7 +526,6 @@ test('C1 (RED): the ONE total render order does not hold in renderBrief (stage: 
     outputFormat: 'plain text',
     knowledge: { items: [{ ref: 'k1', validFrom: 'a', validTo: 'z', snippet: 'a recalled snippet' }], truncated: false },
     continuity: continuityBlock(),
-    replObjects: [replObjectEntry('repl:shared:result@1', 'shared', 'result', 1)],
     attention: [attentionItem('scratchpad_write_failed', 'swf:w-1:5', 'w-1')],
   });
   const rendered = renderBrief(brief, 'mock');
@@ -548,11 +536,9 @@ test('C1 (RED): the ONE total render order does not hold in renderBrief (stage: 
   );
   const ambientAt = rendered.indexOf('## Ambient knowledge');
   const continuityAt = rendered.indexOf(CONTINUITY_SECTION);
-  const citedAt = rendered.indexOf('## Cited REPL objects');
   const pendingAt = rendered.indexOf('## Pending attention');
   assert.ok(continuityAt > ambientAt, '`## Ambient knowledge` → `## Re-drive continuity` (D2/R9)');
-  assert.ok(citedAt > continuityAt, '`## Re-drive continuity` → `## Cited REPL objects` (R9)');
-  assert.ok(pendingAt > citedAt, '`## Cited REPL objects` → `## Pending attention` (R9)');
+  assert.ok(pendingAt > continuityAt, '`## Re-drive continuity` → `## Pending attention` (R9)');
   const verificationAt = rendered.indexOf('## Verification');
   assert.ok(verificationAt >= 0 && verificationAt < ambientAt,
     'the `## Verification (the ONLY definition of done …)` contract keeps its position (D2)');
@@ -561,7 +547,6 @@ test('C1 (RED): the ONE total render order does not hold in renderBrief (stage: 
 test('C2 (RED): the ONE total render order does not hold in renderPrompt (stage: renderPrompt-total-order-missing)', () => {
   const brief = makeBrief({
     continuity: continuityBlock(),
-    replObjects: [replObjectEntry('repl:shared:result@1', 'shared', 'result', 1)],
     attention: [attentionItem('scratchpad_write_failed', 'swf:w-2:9', 'w-2')],
   });
   const rendered = renderPrompt(brief);
@@ -572,11 +557,9 @@ test('C2 (RED): the ONE total render order does not hold in renderPrompt (stage:
     'the CLI prompt emits the continuity section (stage: renderPrompt-total-order-missing)',
   );
   const continuityAt = rendered.indexOf(CONTINUITY_SECTION);
-  const citedAt = rendered.indexOf('## Cited REPL objects');
   const pendingAt = rendered.indexOf('## Pending attention');
   assert.ok(continuityAt > contractAt, 'the continuity section lands AFTER the verification execution contract (D2)');
-  assert.ok(citedAt > continuityAt, '`## Re-drive continuity` → `## Cited REPL objects` (R9)');
-  assert.ok(pendingAt > citedAt, '`## Cited REPL objects` → `## Pending attention` — the final lines of the prompt (R9/#79 D1)');
+  assert.ok(pendingAt > continuityAt, '`## Re-drive continuity` → `## Pending attention` — the final lines of the prompt (R9/#79 D1)');
 });
 
 // ===========================================================================

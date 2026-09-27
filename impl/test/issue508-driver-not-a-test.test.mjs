@@ -2,7 +2,7 @@
 //
 // The --changed import graph (issue #300) selects any impl/test/ path that a changed module
 // reaches, and a directly named file runs the same way. Both reach driver scripts and helper
-// modules (issue480-citation-driver.mjs, seam-member-source.mjs): such a file has no
+// modules (non-test-driver.mjs, seam-member-source.mjs): such a file has no
 // test-registration import, produces no test events, and the verdict read the run as
 // "(file exited 0 without reporting)" — an unexpected failure indistinguishable from a
 // genuinely broken test.
@@ -52,19 +52,19 @@ function driveRunner(t, args) {
 }
 
 test('(a) a --changed selection that lands on the driver reports it skipped, not failed', async (t) => {
-  const run = await driveRunner(t, ['--changed', 'impl/test/issue480-citation-driver.mjs']);
+  const run = await driveRunner(t, ['--changed', 'impl/test/non-test-driver.mjs']);
   assert.equal(run.code, 0, `the driver-shaped file is not a failure: ${run.stderr.slice(-2000)}`);
-  assert.match(run.stderr, /impl\/test\/issue480-citation-driver\.mjs \(changed\)/u,
+  assert.match(run.stderr, /impl\/test\/non-test-driver\.mjs \(changed\)/u,
     'the selection still says why the file was selected');
   assert.match(run.stderr, /0 file\(s\) expanded from 1 changed path\(s\): 0 in the parallel lane/u,
     'the plan schedules nothing for a selection that is entirely non-test files');
-  assert.match(run.stderr, /skipped: no test-framework import: test\/issue480-citation-driver\.mjs/u,
+  assert.match(run.stderr, /skipped: no test-framework import: test\/non-test-driver\.mjs/u,
     'the verdict names the skip and its reason');
   assert.doesNotMatch(run.stderr, /^ {2}unexpected failure:/mu, 'no unexpected failure is reported');
   const document = JSON.parse(readFileSync(run.verdictPath, 'utf8'));
   assert.equal(document.green, true, 'a skipped non-test file does not redden the verdict');
   assert.deepEqual(document.unexpected, []);
-  assert.deepEqual(document.skipped, [{ file: 'test/issue480-citation-driver.mjs', reason: 'no test-framework import' }]);
+  assert.deepEqual(document.skipped, [{ file: 'test/non-test-driver.mjs', reason: 'no test-framework import' }]);
 });
 
 test('(b) a directly named helper module reports skipped, not failed', async (t) => {

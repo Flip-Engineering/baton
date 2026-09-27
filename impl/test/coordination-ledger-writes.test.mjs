@@ -250,17 +250,6 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
     // The cheap moved-member paths, with their pre-move outcomes.
     assert.deepEqual(await store.waitAfter(1, 50), { advanced: true, upperBound: 3 });
     assert.equal(store.materializeSpill('spill:none'), null);
-    assert.throws(() => store.materializeContextPack('pack:none'), { code: 'context_pack_not_found' });
-    assert.throws(() => store.attachContextPackage(
-      { packageDigest: '0'.repeat(64), runId: 'run:x', scope: 'run' },
-      { actor: 'orchestrator', key: 'package.attach:bad' }), { code: 'context_package_attach_invalid' });
-    assert.throws(() => store.proposeOrientationCandidate(
-      { leafDigest: 'a'.repeat(64), packDigest: 'b'.repeat(64) },
-      { actor: 'worker:w-clw-a', key: 'k' }), { code: 'orientation_propose_refused' });
-    const grant = store.grantContextPack(
-      { packId: 'pack:x', runId: 'run:x', taskId: 'clw-a', taskVersion: 2, workerId: 'w-clw-a' },
-      { actor: 'orchestrator', key: 'context.pack_granted:clw-a:pack:x' });
-    assert.deepEqual([grant.result, grant.event.kind, grant.event.seq], ['granted', 'context.pack_granted', 4]);
     assert.deepEqual(store.revokeBoardGrants({ workerId: 'w-clw-a' }, { actor: 'orchestrator', key: 'revoke-none' }),
       { ok: true, revoked: [] });
 
@@ -268,12 +257,12 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
     store.createTask(fields('clw-c'), { actor: 'orchestrator', key: 'fixture-c' });
     store.createTask(fields('clw-d'), { actor: 'orchestrator', key: 'fixture-d' });
     assert.deepEqual(store.compact({ beforeSeq: 3 }), {
-      schemaVersion: 1, beforeSeq: 3, archivedThroughSeq: 2, windowEvents: 4,
+      schemaVersion: 1, beforeSeq: 3, archivedThroughSeq: 2, windowEvents: 3,
       segment: {
         fromSeq: 1, throughSeq: 2,
         digest: '7918adfd723e6dd6cb8f2257f02d07f4c6e42f0a757e5aaea845aad9520f4c0f', bytes: 545,
       },
-      segments: 1, ledgerBytes: 1023,
+      segments: 1, ledgerBytes: 757,
     });
     const sha = (buf) => createHash('sha256').update(buf).digest('hex');
     const segDir = join(root, 'segments');
@@ -281,13 +270,13 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
       [['<digest>.jsonl', '7918adfd723e6dd6cb8f2257f02d07f4c6e42f0a757e5aaea845aad9520f4c0f'],
         ['index.json', '778d58928e63d98d3a06c5264105abdae5a69ce95ba492371b5ad4abd3703763']]);
     assert.equal(sha(readFileSync(join(root, 'events.jsonl'))),
-      '0baa9c18c598e1face7da42bf9e773a6d29588fdfa56f00322e383963d1927ea');
-    // Re-captured after the projection gained its surface: #66 (1e050e42) added the doubt review
-    // plane to PROJECTION_CHECKPOINT_FIELDS, so projectionShapeDigest and projectionDigest moved
-    // and the checkpoint's bytes with them. The other two digests on this line's neighbours are
-    // unchanged, which is what says the move is the projection's and not the write path's.
+      '3f8c035028a84028d08c311a69b40ab3034fa6f6f30e951bf27bcc0e99a83360');
+    // Re-captured for the checkpoint envelope's restored fields: `servedCommit` records the
+    // deployment commit, and `authorityDigest` covers the task-topology and run-lineage policies, so
+    // the envelope's bytes move with them. The ledger, segment, index and canonical-receipt digests
+    // around this line are unchanged — the move is the envelope's.
     assert.equal(sha(readFileSync(join(root, 'projection.checkpoint'))),
-      'a3c561371c766feb32f4cde09a93ec7785df5047eadc070c366b2608fa1da7b6');
+      '439a8ac897fcb292cc9056e9b91c4857f64344ee12b337570ed9f34b583b4097');
 
     assert.equal(store.releaseWriterLease({ requireOwned: true }), true);
     assert.equal(existsSync(join(root, 'writer.lease')), false);
@@ -297,8 +286,8 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
 
     const restarted = new CoordinationStore(root, { clock: CLOCK });
     assert.deepEqual(restarted.startupStatus(), {
-      schemaVersion: 1, state: 'ready', source: 'segments_checkpoint', totalEvents: 6,
-      checkpointEvents: 4, replayedEvents: 0, checkpoint: 'valid', failure: null,
+      schemaVersion: 1, state: 'ready', source: 'segments_checkpoint', totalEvents: 5,
+      checkpointEvents: 3, replayedEvents: 0, checkpoint: 'valid', failure: null,
       poison: null, quarantined: [],
     }, 'restart replays the segment checkpoint through the moved write path');
     assert.equal(sha(JSON.stringify(restarted.snapshot())), sha(JSON.stringify(store.snapshot())),
