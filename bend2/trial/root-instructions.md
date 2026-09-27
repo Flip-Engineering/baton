@@ -87,6 +87,8 @@ both levels of landing:
   "$TRIAL_CHECK" 'impl/test/selected.test.mjs'
 ```
 
+Record the root's own call as evidence: write the exact command line and its answer to `$TRIAL_STATE/issue-N-root-land-checked.log`.
+
 The adapter runs the repository's selected tests on both trees. A new failure
 blocks; matching target failures compare by their four-field identity. An
 unjudged run blocks. Inspect a refused landing and resolve its named cause.
