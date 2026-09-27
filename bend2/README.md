@@ -349,14 +349,20 @@ tests run. Installing packages only in the original checkout does not establish
 that those other trees can resolve them. A missing module produces an unjudged
 check that blocks landing.
 
-The launcher prints one command to seed the first task. Edit the printed task
-file to select an issue before running that command. The root follows
-[the trial instructions](trial/root-instructions.md), starts a worker in the
-background, and resumes when its report arrives. It reviews and lands through
+The launcher writes current root and lead instructions, an issue task template,
+and a first task file. Copy the printed template to an issue task file, fill in
+the assigned issue, and send it with the printed coordinator command and a fresh
+message ID. The root follows [the root instructions](trial/root-instructions.md)
+and recruits an OMP lead through `omp-root.mjs --session ID`. The lead follows
+[the lead instructions](trial/lead-instructions.md), recruits workers and lands
+their reviewed changes onto its branch. Worker reports resume the lead; lead
+reports resume the Codex root. The root reviews and lands the lead branch through
 `check-node-test.sh`, pushes `bend2-trial` to `origin`, and records an operator
-report with the issue and advertised commit. Keep `bend2-trial` unchecked-out
-while landing. The launcher prints the operator inbox command and root log path.
+report with the issue and advertised commit. Keep each landing target branch
+unchecked-out. The launcher prints the operator inbox command and root log path.
 
-Run the launcher again with the same paths to reattach the saved native session
-and deliver pending messages. It preserves the database and first task file.
-The trial's target is separate from the branch the existing JS swarms use.
+Rebuild the kit between lanes after native turns and supervisors have exited.
+Running the launcher with the same paths preserves the database, native root
+identity and first task file, refreshes the instructions and issue template, and
+delivers pending root messages. The trial target is `bend2-trial`; the operator's
+root owns promotion to master.

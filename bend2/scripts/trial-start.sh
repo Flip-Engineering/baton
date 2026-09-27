@@ -52,31 +52,49 @@ settings = {
     'B2': str(coord), 'DB': str(db), 'TRIAL_REPO': str(repo),
     'TRIAL_SOURCE': str(source), 'TRIAL_STATE': str(state),
     'TRIAL_TARGET': 'bend2-trial', 'TRIAL_CHECK': str(source / 'bend2/scripts/check-node-test.sh'),
-    'TRIAL_OMP': omp, 'TRIAL_MUSE': muse,
+    'TRIAL_OMP': omp, 'TRIAL_MUSE': muse, 'TRIAL_NODE': node,
+    'TRIAL_LEAD_ADAPTER': str(source / 'bend2/scripts/omp-root.mjs'),
+    'TRIAL_ROOT_INSTRUCTIONS': str(state / 'root-instructions.md'),
+    'TRIAL_LEAD_INSTRUCTIONS': str(state / 'lead-instructions.md'),
 }
 envfile = state / 'environment.sh'
 envfile.write_text(''.join(f'export {key}={q(value)}\n' for key, value in settings.items()))
+# Refresh the standing instructions while preserving operator-edited tasks.
+context = ('\n\n## This trial\n\n'
+    + f'Source the shell settings from {q(str(envfile))} in each shell call.\n'
+    + f'The repository is {repo}; the Bend2 tools are at {source}.\n')
+for name in ['root-instructions.md', 'lead-instructions.md']:
+    (state / name).write_text((source / 'bend2/trial' / name).read_text() + context)
+template = state / 'task-template.md'
+template.write_text(
+    f'Read {state / "root-instructions.md"} for the current trial workflow before acting.\n'
+    + f'Source {envfile} in each shell call.\n'
+    + 'Run the issue below through one OMP lead, which recruits and reviews its own workers. '
+      'The root reviews and lands the lead branch, publishes bend2-trial and reports to operator.\n\n'
+    + '## Assigned issue\n\n'
+    + 'Replace this paragraph with the issue number, requested outcome and constraints. '
+      'An unassigned template requests no issue work.\n')
 first = state / 'first-task.md'
 if not first.exists():
-    first.write_text((source / 'bend2/trial/root-instructions.md').read_text()
-        + '\n\n## This trial\n\n'
-        + f'Source the shell settings from {q(str(envfile))} in each shell call.\n'
-        + f'The repository is {repo}; the Bend2 tools are at {source}.\n'
-        + f'The standing instructions are {source}/bend2/trial/root-instructions.md.\n'
-        + 'Use gh issue list and gh issue view in the repository to select one open issue '
-          'with a concrete, small change. Read the current issue comments and local source '
-          'before assigning it. Continue that one lane through review, landing and publication. '
-          'Report the outcome and wait for the operator to choose further work.\n')
+    first.write_text(template.read_text())
 run(coord, db, 'attach', 'operator', 'terminal', '', '')
 run(node, source / 'bend2/scripts/codex-root.mjs', db, coord, wrapper, '--attach',
     env={**env, 'CODEX_ROOT_MODEL': 'gpt-6-astra'})
 print(f'Attached trial root. Task file: {first}')
-print('Edit that task file to narrow the first issue before seeding it.')
-print('Seed the first task:')
+print(f'Current root instructions: {state / "root-instructions.md"}')
+print(f'Current lead instructions: {state / "lead-instructions.md"}')
+print(f'Refreshed issue template: {template}')
+print('Copy the template to an issue task file and fill in the assigned issue before sending it.')
+print('Existing first-task.md is preserved. Begin any older task by reading the current root instructions.')
+print('For the first task, edit first-task.md to name the assigned issue, then seed it:')
 print(shlex.join([str(coord), str(db), 'message-file', 'trial-first-task',
                   'operator', 'root', 'task', str(first)]))
+print('For a later issue, use a fresh message ID and the filled task file:')
+print(shlex.join([str(coord), str(db), 'message-file', 'issue-N-task',
+                  'operator', 'root', 'task', str(state / 'issue-N-task.md')]))
 print('Read landing reports:')
 print(shlex.join([str(coord), str(db), 'inbox', 'operator']))
 print(f'Native root responses: {db}.root.log')
-print('The target branch bend2-trial must remain unchecked-out while land-checked advances it.')
+print('Rebuild this kit between lanes after the native turns and their supervisors have exited.')
+print('Keep bend2-trial and each lead branch unchecked-out while land-checked advances them.')
 PY

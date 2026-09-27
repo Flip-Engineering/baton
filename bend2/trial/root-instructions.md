@@ -1,105 +1,98 @@
 # Bend2 trial root
 
-Run one lane against this repository's open tracker issues. Work in the repository
-and use the absolute paths in the trial's `environment.sh`. Read `AGENTS.md` before
-assigning work. Read an issue and its current comments with `gh`, inspect the
-relevant code, and choose a small change with a named failure or an explicit
-operator request. Coordinate overlapping work with the operator's root. The JS
-swarms continue alongside this lane.
+Work on the issue assigned by the operator. Read `AGENTS.md`, the issue and its
+current comments, and the relevant code before assigning work. Coordinate overlap
+with the operator's root; the JS swarms continue alongside this lane. Source the
+trial's `environment.sh` in each shell call and use its absolute tool paths.
 
-Use the native Codex subscription session started by `trial-start.sh`. Your task,
-reports and decisions remain in that session. The coordinator stores worker
-identities, messages and turn observations in `$DB`.
+Use the native Codex subscription session attached by `trial-start.sh`. Recruit
+one OMP lead for the issue. The lead recruits its own workers, reviews their work,
+and lands it onto its branch. You review and land the lead branch onto
+`bend2-trial`, publish it, and report to the operator. The coordinator stores the
+parent relationships, messages and turn observations in `$DB`.
 
-The trial repository starts from current master and supplies the JS runner with
-`failures` and `reportedFiles` in its verdict. The Bend2 checkout supplies the
-coordinator and check adapter. Follow the repository's dependency setup for the
-selected tests: packages must resolve from the worker and both checked trees.
-An installation only in the original checkout may not serve linked worktrees.
+The trial repository supplies the JS runner with `failures` and `reportedFiles`
+in its verdict. The Bend2 checkout supplies the coordinator and check adapter.
+Test dependencies must resolve from the lead, workers and both checked trees.
 Report missing dependencies or an old verdict format to the operator; an
-unjudged check cannot authorize the landing.
+unjudged check cannot authorize a landing. Run only selected tests for this issue.
 
-## Recruit and start work
+## Recruit the lead
 
-Use OMP `deepseek/deepseek-flash` for implementation. Use Muse
-`muse-spark-1.3-contributor` for small items. Set effort to `low` initially; choose
-another native effort when the task warrants it. Give the worker the issue,
-observed behavior, intended change, relevant files, and the selected tests. Ask it
-to commit its work and report the commit, touched paths, tests and any limitation.
-Tell it to read its checkout's `AGENTS.md` and stay within the assigned change.
-
-Choose a distinct worker ID and branch. Read the current target commit and recruit
-from it. For example, after sourcing the trial environment:
+Choose a distinct lead ID, branch and workspace for each issue. Replace `N` in
+these examples with the assigned issue number:
 
 ```sh
 base=$(git -C "$TRIAL_REPO" rev-parse "$TRIAL_TARGET")
-"$B2" "$DB" recruit issue-N root omp deepseek/deepseek-flash low \
-  "$TRIAL_REPO" bend2/issue-N "$TRIAL_STATE/issue-N" "$base"
+"$B2" "$DB" recruit issue-N-lead root omp deepseek/deepseek-flash low \
+  "$TRIAL_REPO" bend2/issue-N-lead "$TRIAL_STATE/issue-N-lead" "$base"
+OMP_ROOT_MODEL=deepseek/deepseek-flash OMP_ROOT_THINKING=low \
+  "$TRIAL_NODE" "$TRIAL_LEAD_ADAPTER" "$DB" "$B2" "$TRIAL_OMP" \
+  --session issue-N-lead --attach
+cp "$TRIAL_LEAD_INSTRUCTIONS" "$TRIAL_STATE/issue-N-lead-task.md"
 ```
 
-For Muse use harness `muse`, model `muse-spark-1.3-contributor` and `$TRIAL_MUSE`
-as the native executable. For OMP the executable is `$TRIAL_OMP`. Write the task
-in `$TRIAL_STATE/issue-N-task.md`.
+Keep the adapter's model and effort aligned with the recruited session. Append
+the assignment to the copied lead instructions: lead ID, branch, workspace, issue text and current
+comments, requested outcome, relevant files, constraints and selected test files.
+Read the issue with `gh` in `$TRIAL_REPO` and include its text so the lead and its
+workers can act from their task files. State any operator decision on the issue.
+The lead chooses a useful division of the implementation among its own workers.
 
-Start the turn in the background with all standard streams redirected. This
-example starts a new OMP native session and immediately returns its supervisor
-PID to your shell:
+Deliver this task in the background with all standard streams redirected. The
+message invokes the registered lead adapter:
 
 ```sh
 python3 - <<'PY'
 import os, pathlib, subprocess
 state = pathlib.Path(os.environ['TRIAL_STATE'])
-with (state / 'issue-N-supervisor.log').open('ab') as log:
+with (state / 'issue-N-lead-supervisor.log').open('ab') as log:
     child = subprocess.Popen([
-        os.environ['B2'], os.environ['DB'], 'turn', 'issue-N', 'issue-N-turn-1',
-        os.environ['TRIAL_OMP'], 'deepseek/deepseek-flash', 'low',
-        str(state / 'issue-N'), str(state / 'issue-N-task.md'),
-        str(state / 'issue-N-native.jsonl'), '',
+        os.environ['B2'], os.environ['DB'], 'message-file',
+        'issue-N-lead-task', 'root', 'issue-N-lead', 'task',
+        str(state / 'issue-N-lead-task.md'),
     ], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
 print(child.pid)
 PY
 ```
 
-Acknowledge the input that caused your turn with
-`"$B2" "$DB" ack MESSAGE_ID root RECEIPT`, then end your turn after launching the
-worker. Do not wait or poll for it. The supervisor records its report and invokes
-your registered adapter, which resumes your native session for the next turn.
-Only one worker turn in this trial lane should be active at a time.
+Acknowledge your operator input with `"$B2" "$DB" ack MESSAGE_ID root RECEIPT`
+and end your turn. Each lead turn reports to you automatically and resumes your
+native session. Review and acknowledge progress reports, then end your turn
+while the lead's workers continue. Keep one foreground native turn per session.
 
-## Guide and review
+## Review the lead
 
-Read `workers`, `turns WORKER` and `inbox root` when a report arrives. Acknowledge
-the report after reviewing it. OMP accepts a `message ID root WORKER guidance BODY`
-during a running turn. To continue a completed worker, write its next task file,
-read its `native` field with `session WORKER`, and start another background `turn`
-with a fresh turn ID and log path and that native ID as the final argument.
-Retain the recorded workspace for the resumed session.
+Read `session issue-N-lead`, `workers`, `turns WORKER` and `inbox root` as needed
+when a report arrives. Confirm each worker's parent is the lead. Inspect the
+actual lead branch diff, worker commits, checked landing results and selected
+tests. A progress report may describe work still running; land the branch only
+when the lead reports the assigned change ready for review.
 
-Review the actual branch diff and tests. A worker report alone does not establish
-that the change fixes the issue. Request a correction when necessary and resume
-the same worker. Run only the selected test files for this change. Never run the
-whole JS suite as part of the trial. Do not invent checks or recovery machinery
-for hypothetical failures.
+For a correction, write a new task file and send it through a fresh `message-file`
+ID to the same lead using the background pattern above, then end your turn. Keep
+its recorded workspace and native session. Do not send a synchronous message back
+to the lead during its report-delivery call or start another turn while that
+session is working. Name missing prerequisites to the operator when necessary.
 
 ## Land and publish
 
-Keep `bend2-trial` unchecked-out. Give `land-checked` the test files the change
-touches, separated by spaces in one argument. Include existing behavior tests
-that judge changed production code. Pass the absolute check script path from
-`$TRIAL_CHECK`, so the same adapter runs against both trees:
+Keep `bend2-trial` unchecked-out. Give `land-checked` the relevant selected test
+files, separated by spaces in one argument. Include existing behavior tests that
+judge the changed production code. Use the absolute `$TRIAL_CHECK` adapter at
+both levels of landing:
 
 ```sh
-"$B2" "$DB" land-checked issue-N "$TRIAL_REPO" "$TRIAL_TARGET" \
+"$B2" "$DB" land-checked issue-N-lead "$TRIAL_REPO" "$TRIAL_TARGET" \
   "$TRIAL_CHECK" 'impl/test/selected.test.mjs'
 ```
 
-The check uses this repository's runner and its verdict. A new failure blocks;
-a matching failure on the target is compared by its four-field identity. An
-unjudged run blocks. Inspect a blocked or conflicted result and resolve its named
-cause. A conflict retains its scratch checkout; guide the worker to rebase its
-branch onto the current target and resolve, then review and request a new checked
-landing. A docs-only change still needs a relevant selected check; ask the operator
-to choose it if the change has no applicable test.
+The adapter runs the repository's selected tests on both trees. A new failure
+blocks; matching target failures compare by their four-field identity. An
+unjudged run blocks. Inspect a refused landing and resolve its named cause.
+A conflict retains its scratch checkout; request that the lead rebase its branch
+onto the current target and resolve the conflict, then review the result. A
+change with no applicable test needs the operator to choose its selected check.
 
 After a successful `landed` or `already` result, read the actual target commit,
 publish with the coordinator, and verify the advertised ref:
@@ -111,27 +104,31 @@ git -C "$TRIAL_REPO" ls-remote origin refs/heads/bend2-trial
 ```
 
 Report publication only when `push` answers `pushed` and the advertised ref
-matches the target commit. Never force-push. Do not change another target branch
-or close the tracker issue; the operator's root decides promotion and closure.
+matches the target commit. Never force-push. The operator's root owns promotion
+to master and tracker closure.
 
-For every landing, send the operator a coordinator message containing the issue,
-worker commit, landed target commit, checks, publication result and advertised
-ref. Use a unique message ID, for example:
+Send the operator a coordinator message with the issue, lead ID, worker and lead
+commits, both levels' landing results, selected checks, publication result and
+advertised ref. Use a unique message ID:
 
 ```sh
 "$B2" "$DB" message issue-N-landed-COMMIT root operator report 'ISSUE and exact evidence'
 ```
 
-Also include that report in your final response. The operator reads `inbox operator`
-and the native responses in `$DB.root.log`; the trial launcher prints both paths.
-Name a failed publication or missing prerequisite in that report. After finishing
-the seeded issue, end the lane's work and report to the operator's root.
+Include that report in your final response and end the lane's work. Name a failed
+publication or missing prerequisite in the report. The operator reads
+`inbox operator` and `$DB.root.log`.
 
-## Reattach
+## Reattach and rebuild
 
-The operator reruns `trial-start.sh` with the same paths after an interruption.
-It rebuilds the executable and reattaches the saved Codex session, delivering its
-pending reports. A worker interrupted before its report needs a new `turn` using
-its stored native ID and retained workspace. Inspect its history and existing
-commit before continuing. Workspaces and native sessions remain available for
-that continuation.
+The operator rebuilds the kit between lanes after native turns and their
+supervisors have exited. Running `trial-start.sh` with the same paths reattaches
+the saved Codex session and delivers pending root messages. It refreshes these
+instructions, the lead instructions and `task-template.md`, and preserves
+`first-task.md`. Read the current root instructions before acting on an older task.
+
+For an interrupted lead, inspect its session, messages, branch and worker history,
+then reattach its endpoint with the same `--session ID --attach` command. This
+can deliver pending messages immediately. Resume a worker through its lead, using
+the worker's stored native ID and retained workspace. Check existing commits and
+reports before requesting more work.
