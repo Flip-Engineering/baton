@@ -26,13 +26,20 @@ these examples with the assigned issue number:
 base=$(git -C "$TRIAL_REPO" rev-parse "$TRIAL_TARGET")
 "$B2" "$DB" recruit issue-N-lead root omp deepseek/deepseek-flash low \
   "$TRIAL_REPO" bend2/issue-N-lead "$TRIAL_STATE/issue-N-lead" "$base"
-OMP_ROOT_MODEL=deepseek/deepseek-flash OMP_ROOT_THINKING=low \
-  "$TRIAL_NODE" "$TRIAL_LEAD_ADAPTER" "$DB" "$B2" "$TRIAL_OMP" \
-  --session issue-N-lead --attach
+python3 - <<'PY'
+import json, os, pathlib, subprocess
+lead = 'issue-N-lead'
+b2, db = os.environ['B2'], os.environ['DB']
+session = json.loads(subprocess.check_output([b2, db, 'session', lead], text=True))
+log = pathlib.Path(os.environ['TRIAL_STATE']) / (lead + '-native.jsonl')
+endpoint = [b2, db, 'receive', lead, os.environ['TRIAL_OMP'], '', '', '', str(log)]
+subprocess.run([b2, db, 'connect', lead, session['native'], json.dumps(endpoint)], check=True)
+subprocess.run([*endpoint, ''], check=True)
+PY
 cp "$TRIAL_LEAD_INSTRUCTIONS" "$TRIAL_STATE/issue-N-lead-task.md"
 ```
 
-Keep the adapter's model and effort aligned with the recruited session. Append
+The native receiver uses the lead's recorded model, effort and workspace. Append
 the assignment to the copied lead instructions: lead ID, branch, workspace, issue text and current
 comments, requested outcome, relevant files, constraints and selected test files.
 Read the issue with `gh` in `$TRIAL_REPO` and include its text so the lead and its
@@ -44,7 +51,7 @@ The OMP adapter stores it under `$DB.session-<hex of lead ID>/`; match the
 its own command and answer in the root landing file described below.
 
 Deliver this task in the background with all standard streams redirected. The
-message invokes the registered lead adapter:
+message invokes the registered native receiver:
 
 ```sh
 python3 - <<'PY'
@@ -63,7 +70,7 @@ PY
 Acknowledge your operator input with `"$B2" "$DB" ack MESSAGE_ID root RECEIPT`
 and end your turn. Each lead turn reports to you automatically and resumes your
 native session. Review and acknowledge progress reports, then end your turn
-while the lead's workers continue. Keep one foreground native turn per session.
+while the lead's workers continue. The coordinator serializes turns for each session.
 
 ## Review the lead
 
@@ -134,7 +141,8 @@ instructions, the lead instructions and `task-template.md`, and preserves
 `first-task.md`. Read the current root instructions before acting on an older task.
 
 For an interrupted lead, inspect its session, messages, branch and worker history,
-then reattach its endpoint with the same `--session ID --attach` command. This
-can deliver pending messages immediately. Resume a worker through its lead, using
+then reconnect its endpoint and run `receive` with an empty final message ID,
+using the registration example above. This can deliver pending messages immediately.
+Resume a worker through its lead, using
 the worker's stored native ID and retained workspace. Check existing commits and
 reports before requesting more work.
