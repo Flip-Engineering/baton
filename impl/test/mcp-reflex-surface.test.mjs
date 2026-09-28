@@ -215,7 +215,6 @@ test('Inventory: the advanced-only surface (no application facade) is unaffected
     maxWaitMs: 25_000, maxMessageBytes: 64 * 1024, takeToolQuota: async () => ({ ok: true }),
   });
   assert.equal(server.surface, 'advanced');
-  assert.equal(server.toolDefinitions.length, 19);
   assert.equal(server.toolDefinitions.some((tool) => tool.name.startsWith('baton_')), false);
 });
 

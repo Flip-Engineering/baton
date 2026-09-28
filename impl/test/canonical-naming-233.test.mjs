@@ -35,9 +35,8 @@ import { mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northboun
 // The coordinator-lane kernel commands — hand-registered web literals predating the application
 // command table. Pinned frozen: the closed-set pin below must fail if one is removed silently.
 const KERNEL_WEB_COMMANDS = Object.freeze([
-  'spawn', 'scratch_oracle', 'send', 'interrupt', 'kill', 'drain', 'respond',
+  'spawn', 'send', 'interrupt', 'kill', 'drain', 'respond',
   'list', 'result', 'wait', 'capabilities', 'provider_status', 'capability_invoke',
-  'reuse_decide', 'reuse_recheck',
   'goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status',
   'run_scratchpad_append',
 ]);
