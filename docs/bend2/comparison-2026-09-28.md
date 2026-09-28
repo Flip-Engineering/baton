@@ -8,10 +8,13 @@ measurements establish a baseline for selecting useful optimizations.
 
 The old source is `8120395abf641d34413b34400af5dbd390e0fb33`. Bend2 runtime
 source is `9e00826300a864a0f0cfba385ed461473d281f9e`; validation commit
-`1bbb2516` changes its test runner and one test. The benchmark scripts are
-committed at `6c5da1dd`. The generated [final results](measurements/2026-09-28-coordinators.json)
-retain exact revisions, source and executable hashes, raw samples and host
-observations. This baseline precedes the native `receive` implementation.
+`1bbb2516` changes its test runner and one test. The benchmark scripts were added
+at `8c9b1851`; `6c5da1dd` corrects their caller timing boundary. The generated
+[final results](measurements/2026-09-28-coordinators.json) retain source revisions,
+runtime source and executable hashes, benchmark script hashes, raw samples and
+host observations. The old runtime uses the checkout's mutable `node_modules`;
+those dependency contents were not pinned or hashed. This baseline precedes
+the native `receive` implementation.
 
 The workload starts with nine workers and 58 reports of 4,096 UTF-8 bytes each.
 The worker count and payload size represent the current cutover trial. It uses
@@ -33,12 +36,14 @@ pending for measurement. Both implementations use new private stores.
 
 | Outcome | Old operation | Bend2 operation |
 | --- | --- | --- |
-| Read worker roster | `swarm.view`, participants projection | `workers` |
+| Read worker roster | `swarm.view`, participants projection; median 18,210 output bytes | `workers`, including complete latest reports; 41,141 output bytes |
 | Read retained reports | `swarm.view`, contributions projection | `inbox root` |
 | Retain worker guidance | `swarm.guide` for a worker without streaming input | `message`, guidance kind |
 | Retain a worker report | `swarm.update`, contribution event | `report` to its parent |
 
-The records carry different metadata. Old contributions include review state;
+The roster commands serve a common worker-listing task with different fields
+and output volumes. The timing pair includes the cost of each complete response.
+Old contributions include review state;
 Bend2 messages include recipients and receipts. Output sizes are retained with
 the timing samples. This comparison excludes model execution, root delivery,
 Git recruitment and landing, publication, and the old resident's full CLI and
@@ -53,17 +58,17 @@ transport or process launch, command completion and caller JSON parsing.
 
 | Operation | Old p50 / p95, ms | Bend2 p50 / p95, ms |
 | --- | ---: | ---: |
-| Worker roster | 6.61 / 13.24 | 7.51 / 8.42 |
+| Worker roster, 18,210 / 41,141 median output bytes | 6.61 / 13.24 | 7.51 / 8.42 |
 | Read reports | 10.31 / 16.66 | 13.54 / 14.34 |
 | Retain guidance | 5.51 / 10.98 | 7.93 / 12.03 |
 | Retain report | 5.21 / 10.74 | 8.00 / 9.81 |
 
 An [earlier diagnostic run](measurements/2026-09-28-coordinators-first.json)
-is retained with the same runtime source. Its old timing includes caller JSON
-parsing, while its Bend2 timing ends before parsing. It also predates the UTF-8
-output-size correction and host load capture. The final run corrects those
-measurement boundaries. Timings varied during work on the shared host; the
-earlier run supplies no load observation for attributing that variation.
+is retained with the same runtime source. Its benchmark and helper hashes refer
+to uncommitted versions whose source snapshots are unavailable in this record.
+The earlier run also lacks host load observations. It supports no reproducible
+implementation comparison or attribution of changes in timing or output size.
+The final results above use the committed scripts and matching caller boundaries.
 
 The final old process retained 128.2 MiB RSS after the workload. A separate
 native roster process peaked at 4.22 MiB RSS. These figures cover the measured
@@ -109,7 +114,10 @@ python3 bend2/scripts/compare-coordinators.py \
 
 The script exports the selected old source revision, runs private stores and
 retains generated results below `.scratch/comparison/`. It uses available
-dependencies from the old checkout. It leaves the existing resident and its
+dependencies from the old checkout. Future runs record installed direct-package
+versions and package metadata hashes; those observations do not pin dependency
+contents or establish the dependency versions used by this baseline.
+It leaves the existing resident and its
 stored state untouched. Sample counts, workload sizes and output location are
 command-line options.
 
@@ -127,3 +135,6 @@ Python test file. Its previous discovery command skipped the hyphenated Codex,
 OMP and check-runner filenames. The corrected baseline passed both Bend suites
 and all 94 Python tests across ten files. Local before/after logs are retained
 in `.scratch/validation/check-native.log` and `check-native-fixed.log`.
+That count describes the pinned baseline. The subsequent receive implementation
+passed 104 tests across eleven files, recorded in the
+[native receive validation](native-receive-2026-09-28.md).
