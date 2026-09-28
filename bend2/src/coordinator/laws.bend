@@ -86,6 +86,7 @@ import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
 import ../replay/laws.bend as ReplayLaws
+import ../harness/laws.bend as HarnessLaws
 
 # ---------------------------------------------------------------------------
 # M-1: no acceptance claim without recoverable matching intent. The answer a
