@@ -2362,6 +2362,11 @@ export function _performRunStop(application, stop) {
       if (!current) throw applicationError('Run stop admission is unavailable', 'application_run_stop_incomplete');
       if (current.status === 'stopped') return current.receipt;
       const targetRunIds = current.targetRunIds ?? [stop.runId];
+      // A stopped Run's in-flight result-export deliveries abort with it; their registrations
+      // release on the abort, so the stopped Run leaves no live download.
+      for (const targetRunId of targetRunIds) {
+        await application._abortResultExportDeliveries(targetRunId);
+      }
       // VR6: stop cancels an in-flight verifier retry exactly and settles its durable admission.
       for (const targetRunId of targetRunIds) {
         for (const controller of application._runRetryControllers.get(targetRunId) ?? []) controller.abort();
