@@ -6,6 +6,7 @@ import ./recruit.bend as Recruit
 import ./land.bend as Land
 import ./commands.bend as C
 import ../host/text.bend as T
+import ../host/process.bend as P
 
 def output(value: String, empty: Bool) -> IO(Unit):
   match empty:
@@ -55,10 +56,33 @@ def execute(db: String, command: C.Command) -> IO(Unit):
         run(db,C.Message{id,sender,recipient,kind,body})
     case valid: run(db,valid)
 
-def cli(args: List<String>) -> IO(Unit):
+def keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,2,"Invalid inherited process lock.")
+    case Some{handle}: IO.try(Unit,P.ProcessChild.keeper(directory,handle))
+
+def normal_cli(args: List<String>) -> IO(Unit):
   match args:
     case db <> rest: execute(db,C.parse(rest))
     case Nil{}: execute("",C.Invalid{})
+
+def keeper_cli(directory: String, lock: String, args: List<String>, internal: Bool) -> IO(Unit):
+  match internal:
+    case True{}: keeper(directory,U32.read(lock))
+    case False{}: normal_cli(args)
+
+def recover_cli(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, internal: Bool) -> IO(Unit):
+  match internal:
+    case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory))
+    case False{}: execute("",C.Invalid{})
+
+def cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +flag <> +directory <> +lock <> Nil{}:
+      keeper_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"))
+    case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> Nil{}:
+      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,String.eq(flag,"--recover-receive"))
+    case other: normal_cli(other)
 
 def main() -> IO(Unit):
   do IO<Unit>:

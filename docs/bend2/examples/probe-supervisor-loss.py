@@ -1,9 +1,11 @@
-"""Record receive behavior after killing its supervisor with a native child alive.
+"""Verify native output and queued work survive a killed receive observer.
 
-Run from the repository root after building .scratch/bend2/baton2.
-Uses controlled harness processes and a fresh database. JSON reports observations;
-a duplicate is an unresolved runtime defect.
+Run after building .scratch/bend2/baton2. The probe uses a fresh database and
+socket-controlled native fixtures. It kills only its own receive observer.
+JSON includes partial evidence on failure; --output retains it in a file.
 """
+import argparse
+import hashlib
 import importlib
 import json
 import pathlib
@@ -15,75 +17,53 @@ sys.path.insert(0, str(ROOT))
 receive = importlib.import_module('bend2.test.receive')
 
 
-def process_rows(*pids):
-    result = subprocess.run(
-        ['ps', '-o', 'pid=,ppid=,stat=', '-p', ','.join(map(str, pids))],
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode not in (0, 1):
-        raise RuntimeError(result.stderr)
-    return result.stdout.splitlines()
-
-
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--harness', choices=('codex', 'omp'), default='codex')
+    parser.add_argument('--no-retry', action='store_true',
+                        help='verify recovery without another receive invocation')
+    parser.add_argument('--terminal-before-loss', action='store_true',
+                        help='kill the observer after terminal output while native exit is held')
+    parser.add_argument('--output', type=pathlib.Path)
+    args = parser.parse_args()
+    evidence = {
+        'source': subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+        'executable': str(receive.EXE),
+        'executableSha256': hashlib.sha256(receive.EXE.read_bytes()).hexdigest(),
+        'harness': args.harness,
+        'retryRequested': not args.no_retry,
+        'terminalBeforeObserverLoss': args.terminal_before_loss,
+        'duplicateNativeSession': None,
+        'postLossOutputRetained': False,
+        'originalCompletionRetained': False,
+        'pendingInputDrained': False,
+        'parentNotified': False,
+    }
     fixture = receive.Receive()
-    orphan = None
     try:
         fixture.setUp()
-        source = fixture.fixture.read_text()
-        source = source.replace('import json,pathlib,re,socket,subprocess,sys',
-                                'import json,pathlib,re,socket,subprocess,sys,os')
-        source = source.replace("reply({'session':model,",
-                                "reply({'pid':os.getpid(),'session':model,")
-        source = source.replace("    if action.get('turn'):",
-                                "    if action.get('exit_probe'): break\n    if action.get('turn'):")
-        fixture.fixture.write_text(source)
-        fixture.worker()
-        fixture.message('first', 'parent')
-        first = fixture.spawn(*fixture.receive_args('parent'))
-        orphan, started = fixture.accept('parent')
-        binding = fixture.coord('session', 'parent')
-        first.kill()
-        first.communicate(timeout=5)
-        surviving = process_rows(started['pid'])
-
-        retry = fixture.spawn(*fixture.receive_args('parent'))
-        control, resumed = fixture.accept('parent')
-        overlap = process_rows(started['pid'], resumed['pid'])
-        evidence = {
-            'source': subprocess.check_output(
-                ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-            'firstSupervisor': first.pid,
-            'firstNative': started['pid'],
-            'supervisorExit': first.returncode,
-            'survivingNative': surviving,
-            'recordedNativeId': binding['native'],
-            'retrySupervisor': retry.pid,
-            'retryNative': resumed['pid'],
-            'retryResumeId': resumed['resume'],
-            'retryIncludesPendingInput': '[id: first]' in resumed['prompt'],
-            'overlap': overlap,
-            'duplicateNativeSession': len(overlap) == 2 and resumed['resume'] == binding['native'],
-            'pendingBeforeCompletion': fixture.coord('inbox', 'parent'),
-        }
-        fixture.action(control)
-        fixture.finish(retry)
-        evidence['pendingAfterRetry'] = fixture.coord('inbox', 'parent')
-        evidence['turnsAfterRetry'] = fixture.coord('turns', 'parent')
-        print(json.dumps(evidence, indent=2))
+        fixture.exercise_observer_loss(args.harness, retry=not args.no_retry,
+                                       terminal_before_loss=args.terminal_before_loss,
+                                       evidence=evidence)
+        evidence['status'] = 'passed'
+    except Exception as error:
+        evidence.update({'status': 'failed', 'error': type(error).__name__ + ': ' + str(error)})
     finally:
-        try:
-            if orphan is not None:
-                # Release the owned fixture without writing to its dead supervisor.
-                try:
-                    fixture.action(orphan, exit_probe=True)
-                    if orphan.readline() != b'':
-                        raise RuntimeError('Expected the orphan fixture control socket to close')
-                except (OSError, ValueError):
-                    pass
-        finally:
-            fixture.doCleanups()
+        if hasattr(fixture, 'directory'):
+            evidence['processesBeforeCleanup'] = fixture.owned_processes()
+            log = fixture.directory / 'parent.jsonl'
+            if log.exists():
+                evidence['retainedNativeLog'] = log.read_text(errors='replace')
+        if not fixture.doCleanups():
+            evidence.update({'status': 'failed', 'cleanupFailed': True})
+    serialized = json.dumps(evidence, indent=2) + '\n'
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(serialized)
+    print(serialized, end='')
+    return 0 if evidence['status'] == 'passed' else 1
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
