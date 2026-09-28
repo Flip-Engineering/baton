@@ -94,7 +94,7 @@ const assembledCapability = (name, capability, transformCard = (card) => card) =
   return Object.freeze(assembled);
 };
 
-export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
+export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 export { normalizeProviderGovernancePolicy, providerGovernanceRoute } from './provider-governance.mjs';
@@ -1126,11 +1126,6 @@ export function createDriver(opts) {
     const requiredVersion = head?.policyHash === policy.hash && head?.policyCardDigest === canonicalDigest(policy) ? expectedVersion : expectedVersion + 1;
     if (activated?.head?.policyHash !== policy.hash || activated.head.policyCardDigest !== canonicalDigest(policy) || activated.head.version !== requiredVersion) throw Object.assign(new Error('reuse policy activation did not establish the deployment policy'), { code: 'reuse_policy_integrity' });
   }
-  const publisher = Object.hasOwn(opts, 'publisher') ? opts.publisher : async ({ remote, ref, sha }) => {
-    execFileSync('git', ['push', '--porcelain', remote, `${sha}:${ref}`], { cwd: opts.repoRoot, stdio: 'ignore' });
-    return { transport: 'git-push' };
-  };
-
   // C2/D5: real selection via router.pick(task, candidates) over the ceiling-feasible
   // set — no first-fit fallback. Feasibility is the SHARED predicate: a card with
   // `concurrencyCeiling: null` has no configured limit and is always feasible, and
@@ -1242,7 +1237,6 @@ export function createDriver(opts) {
       requireMutation: opts.requireMutation ?? false,
     },
     requireIndependentOracle: opts.requireIndependentOracle ?? false,
-    publisher,
     story: { record: (e) => story.ingest(e) },
     now,
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,

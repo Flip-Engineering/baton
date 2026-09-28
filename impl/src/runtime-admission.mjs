@@ -62,7 +62,7 @@ export class DependencyCycleError extends Error {
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
   'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
-  'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
+  'recordDriver', 'completeIntegration', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
   'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
@@ -344,7 +344,7 @@ export class SupervisedProcesses {
 
 export function constructor(coordinator, opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     coordinator._closed = false;
@@ -676,7 +676,6 @@ export function constructor(coordinator, opts) {
     // admission was recorded under a different runtime policy than the one now bound.
     coordinator._verificationRuntimeDigest = opts.verificationRuntimeDigest ?? null;
     coordinator._requireIndependentOracle = opts.requireIndependentOracle ?? false;
-    coordinator._publisher = opts.publisher ?? null;
     // C4: injectable timer primitives for a real, unref'd stop-deadline timer.
     coordinator._setTimeout = opts.setTimeout ?? globalThis.setTimeout;
     coordinator._clearTimeout = opts.clearTimeout ?? globalThis.clearTimeout;
@@ -795,7 +794,6 @@ export function constructor(coordinator, opts) {
 
     coordinator._workerSeq = 0;
     coordinator._taskSeq = 0;
-    coordinator._publicationSeq = 0;
     coordinator._refinementSeq = 0;
     // #267: the identifiers replay has seen, by field. Allocation is checked against them (and
     // against live and durable state) by value; nothing is inferred from the shape of an id.
@@ -2026,7 +2024,6 @@ export async function result(coordinator, recorder, workerId) {
       topology: coordinator._taskTopologyProjection(task?.id ?? handle.taskId),
       review: task?.review ?? null,
       integration: task?.integration ?? null,
-      publication: task?.publication ?? null,
       capturedSha: task?.capturedSha ?? null,
       retainedResultRef: task?.retainedResultRef ?? null,
       verificationStability: task?.verificationStability ?? null,

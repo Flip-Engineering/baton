@@ -94,8 +94,8 @@ accumulated knowledge.
 
 Phase 49 closes the first general promotion-policy subset. `causal.promote` pins one coordination
 prefix, reruns the Phase 47 critical audit, and derives candidates without caller nomination. The
-closed taxonomy admits operator/orchestrator spawn and selected control/publication Decisions,
-policy-authored integration/publication/recovery Counterexamples, and same-repository observed
+closed taxonomy admits operator/orchestrator spawn and selected control Decisions,
+policy-authored integration/recovery Counterexamples, and same-repository observed
 Scratch Findings only after distinct completed tasks independently ground them in live verified
 outcomes. One replay-validated atomic batch retains fixed safe text, closed identifiers/digests,
 and exact causal edges without copying briefs, Scratch values, prompts, paths, reasons, commands,

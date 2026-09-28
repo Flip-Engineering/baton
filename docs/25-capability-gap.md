@@ -28,8 +28,8 @@ of all non-shipped rows (22 of 66) are deliberate scope discipline rather than f
 The row counts remain a historical phase-10 snapshot, not a current shipped count. Phase 11 has
 since shipped exact orchestrator-level model selection, persistent follow-up/resume/fork/recovery,
 isolated runtime homes, canonical token/USD thresholds and hard stops, deterministic watchdog
-actions, red→green/changed-line coverage/mutation gates, independent oracle provenance,
-fast-forward integration, and approval-gated publication. Current code/evidence overrides the
+actions, red→green/changed-line coverage/mutation gates, independent oracle provenance, and
+fast-forward integration. Current code/evidence overrides the
 older row status wherever those capabilities appear.
 
 Phase 29 additionally ships the capability-plane narrow waist: deployments can register existing
@@ -92,10 +92,8 @@ same-family fallback cannot satisfy a required oracle gate.
 
 The first safe vertical now ships. `integrate()` reaps the accepted worker and applies only an
 explicit clean fast-forward; divergence/dirty state refuses without rewriting history and retains
-a durable result ref. A separate single-consumer, timeout-bound, fence-checked publication
-approval targets an exact integrated SHA, credential-free remote name, and full branch ref. No
-approval means no push, and restart drops pending publication authority. Semantic conflict
-handling, stacked integration, deploy adapters, and live remote-push proof remain debt.
+a durable result ref. Semantic conflict handling, stacked integration, and deploy adapters remain
+debt.
 
 ## Historical Phase-10 fences (status superseded by doc 28)
 

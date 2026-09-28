@@ -630,8 +630,8 @@ function normalizeAnswer(value) {
 // F3: the answer shape must match the pending interaction's own kind, checked at the hub
 // BEFORE any adapter call — a {decision} answer may only settle an approval-kind record, a
 // {text} answer a question-kind (or free-response decision) record, and {optionId} only a
-// decision-kind record. Unrecognized interaction kinds (e.g. publication, answered through a
-// different surface) are left unchecked here rather than silently forbidden.
+// decision-kind record. Unrecognized interaction kinds are left unchecked here rather than
+// silently forbidden.
 function assertAnswerKindMatches(interactionKind, answer) {
   if (!['approval', 'question', 'decision'].includes(interactionKind)) return;
   const answerKind = Object.keys(answer)[0];

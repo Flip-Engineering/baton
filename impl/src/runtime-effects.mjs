@@ -51,14 +51,6 @@ export class ModelSelectionError extends Error {
   }
 }
 
-export class PublicationError extends Error {
-  constructor(message, code = 'publication_refused') {
-    super(message);
-    this.name = 'PublicationError';
-    this.code = code;
-  }
-}
-
 export function _dispatch(coordinator, recorder, task, vendor, model, effort, workerPolicyResolution = null) {
     const handle = coordinator._workers.get(task.assignee);
     const workerId = handle.id;
@@ -576,108 +568,6 @@ export async function _resolveRecord(coordinator, recorder, requestId, answer, a
     };
 
     const handle = coordinator._workers.get(record.worker);
-
-    if (record.kind === 'publication') {
-      const decision = answer?.decision;
-      if (!['allow', 'deny'].includes(decision)) {
-        record.state = 'pending';
-        finishResolving();
-        return { ok: false, result: 'invalid_decision' };
-      }
-      const currentFence = handle ? coordinator._fences.current(handle.id).fence : null;
-      const fenceValid = actor === 'policy' || answer?.fence === record.fenceAtAsk;
-      if (!handle || !fenceValid || currentFence !== record.fenceAtAsk) {
-        if (handle) {
-          const refusedEvent = recorder.log.append({
-            worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-            kind: 'publication.refused', actor: 'policy',
-            payload: { requestId, reason: 'stale_fence', remote: record.publication.remote, ref: record.publication.ref, sha: record.publication.sha },
-          });
-          const evidence = recorder.mapEvent(refusedEvent);
-          recorder.recordDriver('publication.refused', { taskId: handle.taskId, requestId, reason: 'stale_fence', publication: record.publication, evidence }, `driver.publication.refused:${handle.taskId}:${requestId}`, 'policy');
-        }
-        coordinator._resolveInteractionAuthority(requestId, record);
-        record.consumer = actor;
-        record.resolution = { decision: 'deny', reason: 'stale_fence' };
-        finishResolving();
-        return { ok: false, result: 'stale_fence', current: currentFence };
-      }
-      if (decision === 'deny') {
-        const deniedEvent = recorder.log.append({
-          worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-          kind: 'publication.denied', actor,
-          payload: { requestId, remote: record.publication.remote, ref: record.publication.ref, sha: record.publication.sha },
-        });
-        const evidence = recorder.mapEvent(deniedEvent);
-        recorder.recordDriver('publication.denied', { taskId: handle.taskId, requestId, publication: record.publication, evidence }, `driver.publication.denied:${handle.taskId}:${requestId}`, actor);
-        coordinator._resolveInteractionAuthority(requestId, record);
-        record.consumer = actor;
-        record.resolution = { decision: 'deny' };
-        finishResolving();
-        return { ok: true, result: 'denied' };
-      }
-      if (typeof coordinator._publisher !== 'function') {
-        record.state = 'pending';
-        finishResolving();
-        return { ok: false, result: 'publication_unavailable' };
-      }
-      let authorizedEvent;
-      try {
-        authorizedEvent = recorder.log.append({
-          worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-          kind: 'publication.authorized', actor,
-          payload: { requestId, remote: record.publication.remote, ref: record.publication.ref, sha: record.publication.sha, fence: record.fenceAtAsk },
-        });
-        const evidence = recorder.mapEvent(authorizedEvent);
-        recorder.recordDriver('publication.authorized', { taskId: handle.taskId, requestId, publication: record.publication, fence: record.fenceAtAsk, evidence }, `driver.publication.authorized:${handle.taskId}:${requestId}`, actor);
-      } catch (err) {
-        record.state = 'pending';
-        finishResolving();
-        throw err;
-      }
-      let published;
-      try {
-        published = await coordinator._publisher(record.publication);
-      } catch (err) {
-        record.state = 'pending';
-        finishResolving();
-        throw new PublicationError(String(err?.message ?? err), 'publisher_failed');
-      }
-      const task = coordinator._tasks.get(handle.taskId);
-      void published;
-      const publication = Object.freeze({ requestId, ...record.publication, actor });
-      try {
-        const publicationEvent = recorder.log.append({
-          worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-          kind: 'publication.completed', actor, payload: publication,
-        });
-        const publicationEvidence = recorder.mapEvent(publicationEvent);
-        recorder.coordination?.completePublication({
-          taskId: task.id, publication, evidence: publicationEvidence,
-          knowledge: {
-          id: `decision:publish:${task.id}:${publicationEvent.seq}`, type: 'Decision',
-          body: `Published task ${task.id} to ${publication.remote}/${publication.ref}`,
-          grounding: 'observed', informedBy: [`task:${task.id}`],
-          evidence: [{ coordinationSeq: publicationEvidence.coordinationSeq }],
-          },
-        }, { actor, key: `publication.commit:${task.id}:${publicationEvent.seq}` });
-        task.publication = publication;
-      } catch (err) {
-        // The publisher may have advanced, so this reservation cannot roll back for retry. The
-        // coordinator is poisoned by either authoritative append path, replay requires the atomic
-        // coordination commit below, and a racing responder is released instead of hanging.
-        coordinator._resolveInteractionAuthority(requestId, record);
-        record.consumer = actor;
-        record.resolution = { decision: 'allow', outcome: 'unknown' };
-        finishResolving();
-        throw err;
-      }
-      coordinator._resolveInteractionAuthority(requestId, record);
-      record.consumer = actor;
-      record.resolution = { decision: 'allow' };
-      finishResolving();
-      return { ok: true, result: 'published', publication };
-    }
 
     if (record.kind === 'decision') {
       return coordinator._resolveDecisionRecord(requestId, record, answer, actor, finishResolving);
