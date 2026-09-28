@@ -782,27 +782,57 @@ law m3a_judged_block_names_news:
 def m3a_judged_block_names_news(repo, target, scratch, tip, cand):
   {==}
 
-# ---------------------------------------------------------------------------
-# M-3b: one logical effect per operation identity. The advance is a
-# compare-and-swap: a target that moved takes the rebase path once, and a
-# second move is refused rather than landed twice.
-
-# M-3b: a second move of the target is refused, naming the basis it moved from.
-law m3b_second_move_is_refused:
+# M-3a: a passing gate carries its candidate and target basis into publication.
+law m3a_checked_pair_reaches_publication:
+  for repo: String
+  for target: String
+  for scratch: String
+  for tip: String
   for cand: String
-  for basis: String
-  {L.ld_adv_next(True{}, cand, basis) == IO.pure(L.Ld, L.LdFail{T.FCmd{"land", "target moved again: " ++ basis}}) : IO(L.Ld)}
+  {L.ld_judged_news(Nil{}, repo, target, scratch, tip, cand) == L.ld_advance(repo, target, cand, tip) : IO(L.Ld)}
 
-def m3b_second_move_is_refused(cand, basis):
+def m3a_checked_pair_reaches_publication(repo, target, scratch, tip, cand):
   {==}
 
-# M-3b: the first move of the target rebases the candidate once more.
-law m3b_first_move_rebases_once:
+# M-3a: the command names the candidate and the expected old target exactly.
+law m3a_cas_argv_binds_checked_pair:
+  for target: String
   for cand: String
   for basis: String
-  {L.ld_adv_next(False{}, cand, basis) == IO.pure(L.Ld, L.LdRe{cand, basis}) : IO(L.Ld)}
+  {L.ld_update_argv(target, cand, basis) == ["update-ref", "refs/heads/" ++ target, cand, basis] : List<String>}
 
-def m3b_first_move_rebases_once(cand, basis):
+def m3a_cas_argv_binds_checked_pair(target, cand, basis):
+  {==}
+
+# The production effect invokes Git with that exact pair. Git's atomic old-value
+# comparison and the host's report of its exit status remain boundary assumptions.
+def checked_pair_update(repo: String, +target: String, +cand: String, basis: String) -> IO(L.Ld):
+  do IO<L.Ld>:
+    g : T.GitOut <- P.runGit(repo, ["update-ref", "refs/heads/" ++ target, cand, basis])
+    IO.pure(L.Ld, L.ld_update_pick(g, target, cand))
+
+law m3a_publication_invokes_checked_pair:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_update(repo, target, cand, basis) == checked_pair_update(repo, target, cand, basis) : IO(L.Ld)}
+
+def m3a_publication_invokes_checked_pair(repo, target, cand, basis):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-3b: publication compares the target against the basis that was checked.
+
+# M-3a: a changed target returns a retry result with no publication effect.
+law m3a_changed_basis_requires_new_check:
+  for repo: String
+  for target: String
+  for cand: String
+  for basis: String
+  {L.ld_adv_same(False{}, repo, target, cand, basis) == IO.pure(L.Ld, L.LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}) : IO(L.Ld)}
+
+def m3a_changed_basis_requires_new_check(repo, target, cand, basis):
   {==}
 
 # M-3b: a compare-and-swap that still matches the basis lands the candidate.
@@ -815,15 +845,14 @@ law m3b_cas_success_lands:
 def m3b_cas_success_lands(out, target, cand):
   {==}
 
-# M-3b: a compare-and-swap that no longer matches the basis fails the attempt
-# by name instead of landing twice.
-law m3b_cas_miss_refuses_retry:
+# M-3b: a failed compare-and-swap names the failure and requires a fresh check.
+law m3b_failed_cas_requires_new_check:
   for out: String
   for target: String
   for cand: String
-  {L.ld_update_ok(False{}, out, target, cand) == L.LdFail{T.FCmd{"land", "git update-ref failed"}} : L.Ld}
+  {L.ld_update_ok(False{}, out, target, cand) == L.LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}} : L.Ld}
 
-def m3b_cas_miss_refuses_retry(out, target, cand):
+def m3b_failed_cas_requires_new_check(out, target, cand):
   {==}
 
 # M-3b: an advance the host never started is a failure, never a landing.

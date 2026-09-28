@@ -87,9 +87,10 @@ new failures as AGENTS.md requires. Missing verdicts and newly failing tests
 block the landing. Checks use task behavior as their specification.
 
 A successful landing advances the target to the checked candidate only while
-its prior commit still matches. A changed target triggers a rebase of the candidate. A clean
-rebase uses the existing check result; a conflict returns to the requester. The target branch must be free of another checked-out worktree
-before a direct ref update. Recovery reads Git to resolve a lost acknowledgment;
+its prior commit still matches. A changed target returns a retry instruction and
+retains the candidate and worker work. A new `land-checked` invocation prepares
+and checks a candidate against the current target. The target branch must be
+free of another checked-out worktree before a direct ref update. Recovery reads Git to resolve a lost acknowledgment;
 worker branches remain available. The result names the actual target commit.
 The first slice lands locally; remote publication is a later explicit operation.
 

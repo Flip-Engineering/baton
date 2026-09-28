@@ -45,7 +45,9 @@ checked landing (bend2/src/git/land_checked in bend2/src/git/land.bend)
 prepares a squashed candidate in a scratch worktree, runs the selected checks
 on the candidate and on a tree at the target tip, blocks on failures the
 target run does not show, and advances the target through a compare-and-swap
-ref update; a target that moved meanwhile rebases the candidate once.
+ref update. A target that moved meanwhile returns a retry instruction and leaves
+the candidate and worker work available. The next `land-checked` invocation
+prepares and checks against the current target.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
@@ -130,6 +132,11 @@ keeps, or `blocked` with a reason. A landing that answers `landed` or
 `already` removes the candidate and target scratch worktrees as it answers. A
 refused or conflicted landing keeps them for the requester, and that worker's
 next landing request drops them before preparing its own.
+
+If the target moves while checks run, the command returns `blocked` and names
+`land-checked` as the retry. Repeating that command checks the new candidate and
+target before advancing the branch. The worker's branch and worktree remain
+available throughout these attempts.
 
 The squash message describes the worker history above its merge-base with the
 target. A single commit retains its full message. Several commits use the tip

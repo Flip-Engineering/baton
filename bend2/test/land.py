@@ -2,9 +2,11 @@
 import json
 import os
 import pathlib
+import shlex
+import socket
 import subprocess
+import sys
 import threading
-import time
 import tempfile
 import unittest
 
@@ -284,17 +286,21 @@ class Land(unittest.TestCase):
         self.assertEqual(result['status'], 'rejected')
 
     def waiting_checks(self):
-        """Checks for the target-move rows: one waits for the target to move."""
+        """Hold the first candidate check until the other landing finishes."""
+        self.check_socket = socket.socket()
+        self.check_socket.bind(('127.0.0.1', 0))
+        self.check_socket.listen()
+        self.check_socket.settimeout(30)
+        self.addCleanup(self.check_socket.close)
+        handshake = (
+            'import socket; '
+            f's=socket.create_connection({self.check_socket.getsockname()!r}, timeout=30); '
+            's.sendall(b"ready"); assert s.recv(1)==b"1"; s.close()'
+        )
         (self.repo / 'check-wait.sh').write_text(
-            'common=$(git rev-parse --git-common-dir)\n'
-            'repo=$(dirname "$common")\n'
-            'before=$(git -C "$repo" rev-parse refs/heads/main)\n'
-            'n=0\n'
-            'while [ "$(git -C "$repo" rev-parse refs/heads/main)" = "$before" ]; do\n'
-            '  n=$((n + 1))\n'
-            '  [ "$n" -gt 60 ] && { echo 77616974 6e6f6d6f7665 6572726f 2d; exit 1; }\n'
-            '  sleep 0.2\n'
-            'done\n'
+            f'if mkdir {shlex.quote(str(self.directory / "check-held"))} 2>/dev/null; then\n'
+            f'  {shlex.quote(sys.executable)} -c {shlex.quote(handshake)} || exit 1\n'
+            'fi\n'
             'git rev-parse --verify HEAD >/dev/null || '
             '{ echo 77616974 6e6f68656164 6572726f 2d; exit 1; }\n'
             'exit 0\n')
@@ -305,14 +311,6 @@ class Land(unittest.TestCase):
         self.git('add', 'check-wait.sh')
         self.git('add', 'check-plain.sh')
         self.git('commit', '-q', '-m', 'check fixtures')
-
-    def wait_for_candidate(self, worker, seconds=30):
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if list(self.repo.glob(f'.scratch/bend2-land-{worker}-*')):
-                return
-            time.sleep(0.1)
-        self.fail(f'the candidate for {worker} was never prepared')
 
     def land_under_a_move(self, under, mover):
         """Start UNDER's landing, move the target with MOVER's, answer UNDER's."""
@@ -327,9 +325,16 @@ class Land(unittest.TestCase):
 
         thread = threading.Thread(target=land_under)
         thread.start()
-        self.wait_for_candidate(under)
-        moved = self.call('land-checked', mover, self.repo, 'main',
-                          'check-plain.sh', 'file.txt')
+        connection, _ = self.check_socket.accept()
+        with connection:
+            connection.settimeout(30)
+            with connection.makefile('rb') as incoming:
+                self.assertEqual(incoming.read(5), b'ready')
+            try:
+                moved = self.call('land-checked', mover, self.repo, 'main',
+                                  'check-plain.sh', 'file.txt')
+            finally:
+                connection.sendall(b'1')
         thread.join(120)
         self.assertFalse(thread.is_alive(), f'the landing of {under} did not finish')
         self.assertNotIn('error', answer, str(answer.get('error')))
@@ -345,27 +350,48 @@ class Land(unittest.TestCase):
                        check=True, capture_output=True)
         return self.git('rev-parse', branch).strip()
 
-    def test_target_moves_under_the_second_landing_and_it_rebases(self):
+    def test_target_moves_under_the_second_landing_and_retry_lands(self):
         self.waiting_checks()
         self.git('checkout', '-q', '--detach')
         self.recruit_and_write('w1', 'wa', 'wt1', 'a.txt', 'alpha\n')
-        self.recruit_and_write('w2', 'wb', 'wt2', 'b.txt', 'beta\n')
+        worker = self.recruit_and_write('w2', 'wb', 'wt2', 'b.txt', 'beta\n')
         moved, under = self.land_under_a_move('w2', 'w1')
         self.assertEqual(moved['status'], 'landed')
-        self.assertEqual(under['status'], 'landed')
+        self.assertEqual(under['status'], 'blocked')
+        self.assertIn('target moved', under['reason'])
+        self.assertIn('rerun land-checked', under['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('rev-parse', 'wb').strip(), worker)
+        self.assertEqual((self.repo / 'wt2' / 'b.txt').read_text(), 'beta\n')
+        self.assertNotIn('b.txt', self.git('ls-tree', '--name-only', 'main').splitlines())
+        self.assertEqual(len(self.scratch_trees('w2')), 2)
+        retry = self.call('land-checked', 'w2', self.repo, 'main',
+                          'check-plain.sh', 'file.txt')
+        self.assertEqual(retry['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), retry['commit'])
         self.assertEqual(self.git('rev-parse', 'main^').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:a.txt').strip(), 'alpha')
         self.assertEqual(self.git('show', 'main:b.txt').strip(), 'beta')
+        self.assertEqual(self.scratch_trees('w2'), [])
 
-    def test_target_moves_under_the_second_landing_and_the_rebase_conflicts(self):
+    def test_target_moves_under_the_second_landing_and_retry_conflicts(self):
         self.waiting_checks()
         self.git('checkout', '-q', '--detach')
         self.recruit_and_commit('w3', 'wc', 'wt3')
-        self.recruit_and_commit('w4', 'wd', 'wt4')
+        worker = self.recruit_and_commit('w4', 'wd', 'wt4')
         moved, under = self.land_under_a_move('w4', 'w3')
         self.assertEqual(moved['status'], 'landed')
-        self.assertEqual(under['status'], 'conflict')
-        self.assertEqual(under['files'], 'file.txt')
+        self.assertEqual(under['status'], 'blocked')
+        self.assertIn('target moved', under['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('rev-parse', 'wd').strip(), worker)
+        self.assertEqual((self.repo / 'wt4' / 'file.txt').read_text(), 'worker change for w4')
+        self.assertEqual(len(self.scratch_trees('w4')), 2)
+        retry = self.call('land-checked', 'w4', self.repo, 'main',
+                          'check-plain.sh', 'file.txt')
+        self.assertEqual(retry['status'], 'conflict')
+        self.assertEqual(retry['files'], 'file.txt')
+        self.assertTrue(pathlib.Path(retry['dir']).is_dir())
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
         self.assertEqual(len(self.scratch_trees('w4')), 2)
@@ -374,9 +400,18 @@ class Land(unittest.TestCase):
         self.waiting_checks()
         self.git('checkout', '-q', '--detach')
         self.recruit_and_commit('w5', 'we', 'wt5')
-        self.recruit_and_commit('w6', 'wf', 'wt6')
+        worker = self.recruit_and_commit('w6', 'wf', 'wt6')
         moved, under = self.land_under_a_move('w6', 'w5')
-        self.assertEqual(under['status'], 'conflict')
+        self.assertEqual(under['status'], 'blocked')
+        self.assertIn('target moved', under['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('rev-parse', 'wf').strip(), worker)
+        self.assertEqual(len(self.scratch_trees('w6')), 2)
+        retry = self.call('land-checked', 'w6', self.repo, 'main',
+                          'check-plain.sh', 'file.txt')
+        self.assertEqual(retry['status'], 'conflict')
+        self.assertEqual(retry['files'], 'file.txt')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         wt = self.repo / 'wt6'
         rebase = subprocess.run(['git', '-C', str(wt), 'rebase', 'main'],
                                 capture_output=True, text=True)
