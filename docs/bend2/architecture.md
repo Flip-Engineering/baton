@@ -25,14 +25,17 @@ database; SQLite serializes their write transactions.
 | `bend2/src/coordinator/main.bend` | Parse and dispatch the command line. |
 | `coordinator/commands.bend`, `store.bend` | Define records, command SQL, retry semantics and transactional writes. |
 | `coordinator/recruit.bend`, `turn.bend` | Create worker workspaces and supervise native turns. |
+| `coordinator/receive.bend` | Read parent input, select the native route and continue queued session work. |
 | `coordinator/guidance.bend`, `root.bend` | Send OMP guidance and invoke a root endpoint after a committed message. |
 | `bend2/src/harness/` | Construct the four harness launch and resume protocols. |
 | `bend2/src/git/` | Inspect Git state, create worktrees, prepare and judge landings, update refs and push. |
 | `bend2/src/host/` | Bind process, file and SQLite effects to the host. |
-| `bend2/scripts/*-root.mjs` | Connect committed messages to Codex, OMP and Claude Code root turns. |
+| `bend2/scripts/mcp-root.mjs` | Connect committed messages to an interactive Claude Code root. |
 
 Bend 2.0.25 emits C; the build links it with clang, pthreads and SQLite. The
-three root adapters use Node's standard library, including `node:sqlite`.
+Claude channel adapter uses Node's standard library, including `node:sqlite`.
+Native `receive` supplies Codex and OMP root delivery. Their earlier Node
+adapters remain available for existing configurations.
 Application decisions live in the Bend modules; C bindings perform host effects.
 Production modules are imported libraries. Earlier JSON and replay experiments
 and their frozen-output checks remain optional reference programs.
@@ -84,12 +87,16 @@ route.
 
 A separate `turn` command takes the worker, unique turn ID, native executable,
 model, effort, working directory, task file, output log and optional native
-session ID. The caller runs one foreground turn at a time for each worker.
+session ID. `turn` and `receive` acquire the same OS file lock for each logical
+session. Its key uses the canonical database path and UTF-8 session identity.
+Different sessions use different locks and can run concurrently. The supervisor
+retains ownership until the native process exits and releases it before parent
+delivery. The lock records no durable session state.
 
 | Worker harness | Native protocol and retained identity |
 | --- | --- |
 | Claude Code | Streaming JSON in print mode; native initialization identifies the session; resume passes the saved session ID. |
-| Codex | `exec --json`, with task on stdin; `exec resume SESSION` continues the conversation. The supervisor derives the final report from the assistant and terminal events in the saved log after process exit. |
+| Codex | `exec --json`, with task on stdin; `exec resume SESSION` continues the conversation. The supervisor retains the current assistant and terminal events while draining native output. |
 | OMP | RPC mode with session files beside the database. `get_state` supplies observed identity and model. Stdin remains open until turn completion. |
 | Muse | `exec --json --prompt-file`, with `--session-id` for resume. Session and terminal envelopes supply native identity, model and report text. |
 
@@ -115,23 +122,34 @@ through their next explicitly started native turn; their inbox remains readable.
 The root endpoint is an executable argv array stored in its session row. The
 process that commits a root-directed report, question or message invokes that
 endpoint with the message ID. The writer waits for delivery to return and keeps
-adapter output at `DATABASE.root.log`. The root adapter registers its own
-endpoint. No endpoint discovery is performed.
+receiver output at `DATABASE.root.log`. `attach` or `connect` registers the
+explicit endpoint.
 
 ### Codex and OMP
 
-`codex-root.mjs` and `omp-root.mjs` accept the database, coordinator executable
-and native executable. `--attach` stores their invocation, processes pending
-messages once and exits. A later report writer starts the adapter for its
-message. The adapter builds native input from committed messages; the native
-root reviews it and acknowledges through coordinator commands.
+The endpoint invokes `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD
+OUTPUT_LOG MESSAGE_ID`. Empty model, effort and working-directory arguments
+select the recorded session values. The executable and log path are required.
+The receiver reads pending messages under session ownership and supervises the
+native turn through the worker harness code. The recipient reviews the input
+and acknowledges it with coordinator commands.
 
-Native initialization binds the root's session ID in the existing session row.
-Later invocations resume it. Codex retains conversation files in its configured
-home; OMP uses `DATABASE.root-sessions`. Reattaching preserves the native ID and
-delivers pending messages. A launch wrapper supplies any harness-specific home
-or login environment. Root model selections and OMP thinking selection are retained in the
-registered invocation.
+A receiver that finds an active turn returns `queued`. The active supervisor
+releases ownership after native exit, then checks for newly pending input and
+invokes the receiver again. Reading after release covers messages committed
+while the previous turn was ending. Pending messages remain in the existing
+SQLite inbox. A failed turn retains unacknowledged input for later delivery.
+
+Native initialization binds the session ID in the existing row. Later turns
+resume it. Codex retains conversations in its configured storage. OMP roots
+use `DATABASE.root-sessions`; recruited OMP leads use `DATABASE.session-HEX_ID`,
+preserving storage from the earlier adapter. The trial launcher preserves the
+root ID, registers its native endpoint and replays pending input. A launch
+wrapper supplies harness-specific configuration or login settings.
+
+The retained `codex-root.mjs` and `omp-root.mjs` entry points use their earlier
+scheduling behavior. New trial roots and leads use native `receive`. Claude's
+channel transport remains the runtime component that requires Node.
 
 ### Claude Code Channels
 
@@ -221,7 +239,7 @@ runtime facilities are outside this design:
 | Route catalogs, credential probes, quota tracking and automatic rerouting | The caller chooses the harness, model and effort and uses the native login. Native failures produce reports for the root's next decision. |
 | Delegation grants, exclusive writer couplings and contribution review roles | The implementation serves trusted local agents with the user's repository access. Native review and explicit Git operations supply the demonstrated review path. |
 | Contribution capture, integration queue and deployment-wide test selection | Workers commit branches and the root supplies a check script and selection to a foreground landing. The root can inspect the actual branch and result directly. |
-| HTTP/web operator surface and general MCP command bridge | The operator works through native sessions, with the three root adapters supplying the required delivery paths. |
+| HTTP/web operator surface and general MCP command bridge | The operator works through native sessions, using native receive and the Claude channel adapter for delivery. |
 | Knowledge stores, packages, scratchpad elevation and composed recruitment briefs | Task files, native conversation context and coordinator messages carry the working context used in these runs. |
 | Wake subscriptions and resident recovery machinery | The report writer invokes the registered root endpoint after commit. Reattachment reads the pending messages and resumes native context. |
 | Automatic workspace reclamation | Recovery uses the retained worker workspace. A completed turn or landing does not establish that the worker has no further work. |

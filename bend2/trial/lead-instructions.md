@@ -9,9 +9,9 @@ and final landing onto `bend2-trial`.
 
 Set `LEAD_ID` and `LEAD_BRANCH` to the values in your assignment in each shell
 that uses them. Acknowledge each task and reviewed worker report with
-`"$B2" "$DB" ack MESSAGE_ID "$LEAD_ID" RECEIPT`. Your native adapter sends your
+`"$B2" "$DB" ack MESSAGE_ID "$LEAD_ID" RECEIPT`. Your native supervisor sends your
 final response to the root after every turn. Write progress or completion facts
-in that response; the adapter supplies the report message.
+in that response; the supervisor supplies the report message.
 
 ## Recruit and start workers
 
@@ -55,9 +55,9 @@ PY
 
 For Muse, recruit with harness `muse` and its model, and use `$TRIAL_MUSE` and the
 same model in `turn`. End your turn after starting the worker; its report invokes
-your registered OMP adapter and resumes your native session. Run one child turn
-at a time and finish reviewing its report before starting the next child. Keep
-one foreground native turn per session.
+your registered native receiver and resumes your native session. Start independent
+child turns concurrently and review each report when it arrives. The coordinator
+serializes turns for each session.
 
 ## Guide, review and land
 

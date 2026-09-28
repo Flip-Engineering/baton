@@ -15,6 +15,11 @@ The build uses `.bend/bin/bend` or `node_modules/.bend/bin/bend`. Set `BEND` to
 another installed compiler path if needed. It emits C and links the native
 executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 
+`python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
+comparison of retained coordination operations with a pinned old Baton checkout.
+The [measurement report](../docs/bend2/comparison-2026-09-28.md) records its
+workload, source revisions, results and limits.
+
 ## Coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude
@@ -166,45 +171,59 @@ argument to continue the same conversation. For example:
 .scratch/bend2/baton2 state.db turn worker1 turn2 HARNESS_COMMAND MODEL EFFORT WORKTREE NEXT_TASK_FILE NEXT_OUTPUT_LOG NATIVE_SESSION
 ```
 
-`pending` shows reports awaiting native acceptance. The root adapters in the
-next section read messages addressed to a root session directly from the
-database. Run one foreground turn at a time for a worker.
+`pending` shows reports awaiting native acceptance. Native receivers read
+messages from the database. `turn` and `receive` share process ownership for
+each logical session; separate sessions can run concurrently.
 
 The check command builds the coordinator, process and Git test executables, then
 runs persistence, recruitment, Git, OS-process and controlled-protocol tests. A controlled
 process fixture verifies supervision; a real subscription worker and a native
 root acceptance receipt are required for the live-slice result.
 
-## Root adapters
+## Native root delivery
 
-Attach a Codex or OMP root to the database with its model and native executable:
+Register a root and its native receiver endpoint using absolute paths. This
+example creates a new Codex root:
 
 ```sh
-CODEX_ROOT_MODEL=gpt-6-astra node bend2/scripts/codex-root.mjs state.db .scratch/bend2/baton2 codex --attach
-OMP_ROOT_MODEL=deepseek/deepseek-flash OMP_ROOT_THINKING=low node bend2/scripts/omp-root.mjs state.db .scratch/bend2/baton2 omp --attach
+/repo/.scratch/bend2/baton2 /repo/state.db attach root codex '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","root","/path/to/codex","gpt-6-astra","low","/repo","/repo/root-native.jsonl"]'
+/repo/.scratch/bend2/baton2 /repo/state.db receive root /path/to/codex gpt-6-astra low /repo /repo/root-native.jsonl ''
 ```
 
-Attachment records the adapter invocation in the existing root session's
-`endpoint`, processes pending messages once and exits. When a coordinator
-process commits a report, question or message addressed to that root, it invokes
-the adapter for that message. The adapter starts one native root turn and the
-writer waits for it to finish. Its output is retained at `DATABASE.root.log`.
-A failed delivery leaves the committed message available in the pending inbox
-and makes the writer return an error. Attaching again or running the adapter
-with `--once` delivers pending messages. Native initialization records the root's
-session ID. Later invocations resume that session, including after process loss.
-Keep the same database and harness configuration when reattaching. Codex retains
-its native session in its configured home; OMP stores root sessions in
+The command is `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD OUTPUT_LOG
+MESSAGE_ID`. Empty model, effort and working-directory arguments use the
+session's recorded values. The native executable and output-log path are
+required. A committed message invokes the registered endpoint with its ID
+appended. An empty final argument explicitly replays pending input.
+
+The receiver reads pending messages and supervises the native turn. When that
+session already has a native turn, delivery returns `queued`; the active
+supervisor checks for incoming messages after releasing session ownership.
+Reports remain pending until the recipient acknowledges them with `ack`. Native
+events append to `OUTPUT_LOG`, and report writers retain receiver output at
+`DATABASE.root.log`. A failed native turn leaves unacknowledged messages pending.
+
+For OMP, register harness `omp` and use its executable, model and effort in the
+same endpoint. Each harness uses its existing login; a launch wrapper can set
+its documented configuration environment. Native initialization records the
+session ID. Subsequent turns resume that ID. Keep it when reconnecting an
+existing root with `connect`; the trial launcher preserves it automatically.
+Codex retains conversations in its configured storage. OMP roots use
 `DATABASE.root-sessions`.
 
-The database path comes first, followed by optional coordinator and native
-executable paths. The coordinator defaults to `.scratch/bend2/baton2`; native
-executables default to `codex` and `/opt/homebrew/bin/omp`. `--once` is the
-mode when no flag is given. Codex reads `CODEX_ROOT_MODEL` (default `o4-mini`).
-OMP reads `OMP_ROOT_MODEL` (default `zai/glm-5.3-flash`) and
-`OMP_ROOT_THINKING` (default `high`). Attachment preserves these selections in
-the invocation. Each harness uses its existing login. Pass a launch wrapper
-as the native executable to set the harness's home or config environment.
+The earlier `codex-root.mjs` and `omp-root.mjs` entry points remain available for
+existing configurations. Native `receive` supplies the session ownership and
+queued delivery described here. The trial launcher uses that native path.
+
+`python3 bend2/scripts/accept-native-receive.py --config routes.json --output .scratch/native-review`
+starts a Codex root and two OMP source reviewers in an isolated clone. The route
+file supplies each harness's executable, model and effort. Build the coordinator
+first and commit the runtime source being reviewed. The driver verifies retained
+report text, acknowledgment, native session reuse and unchanged source checkouts.
+It retains the database, native logs, process records and source and binary hashes
+under the output directory. The command starts real model sessions.
+
+## Claude Code channel adapter
 
 A Claude Code root uses an interactive session with a Channels MCP configuration.
 For example, save this as `root-mcp.json`, replacing `/repo` with absolute paths:
@@ -236,16 +255,16 @@ report alone leaves that receipt empty.
 ## OMP leads
 
 A recruited OMP session can receive reports from its own workers. Recruit the
-lead under the root, then attach the OMP adapter to its existing session:
+lead under the root, then connect its native receiver:
 
 ```sh
 .scratch/bend2/baton2 state.db recruit lead root omp deepseek/deepseek-flash low REPO lead-branch LEAD_WORKTREE BASE
-node bend2/scripts/omp-root.mjs state.db .scratch/bend2/baton2 /path/to/omp --session lead --attach
+.scratch/bend2/baton2 state.db connect lead '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","lead","/path/to/omp","","","","/repo/lead-native.jsonl"]'
 ```
 
-The adapter uses the lead's recorded model, effort and workspace. The existing
-`OMP_ROOT_MODEL` and `OMP_ROOT_THINKING` environment settings can override the
-native invocation. Attachment preserves the lead's parent, branch and base.
+The empty launch fields select the lead's recorded model, effort and workspace.
+Explicit fields override those values for that invocation. Connection preserves
+the lead's parent, branch and base. Supply its stored native ID when reconnecting.
 Messages addressed to the lead invoke its endpoint; subsequent invocations
 resume its native session. Each finished lead turn submits its result through
 the coordinator, which delivers the report to the lead's parent. A failed native
@@ -257,15 +276,15 @@ lands their branches onto `lead-branch`. Detach the lead's checkout before a
 landing advances that branch. The root can then review and land the lead's
 registered branch through the same landing command.
 
-Keep one foreground native turn per session. Start a child's turn in the
-background and end the parent turn so that its next report can resume the
-parent. Run long message-delivery commands in the background as well: the
-message writer waits for the invoked native turn and its parent delivery.
-The OMP adapter's `inbox`, `ack`, recruitment and guidance examples name the
-selected session. With no `--session`, it selects `root`.
+Start independent child turns in the background and end the parent turn so
+that incoming reports can resume it. The coordinator serializes native turns
+for each session. OMP leads retain conversations in
+`DATABASE.session-HEX_ID`, with the session ID encoded as lowercase UTF-8 hex.
+This preserves conversation storage used by the earlier OMP adapter.
 
 `python3 bend2/scripts/accept-hierarchy.py --config routes.json --output .scratch/hierarchy-run`
-exercises a Codex root, an OMP lead and two OMP workers in a scratch clone.
+exercises the earlier root adapters with a Codex root, an OMP lead and two OMP
+workers in a scratch clone.
 The route file uses the `codex` and `omp` executable/model/effort entries described
 below. Build the coordinator first; `--coordinator` selects another executable.
 The run retains native events, process records, SQLite messages, guidance receipts
@@ -356,7 +375,7 @@ The launcher writes current root and lead instructions, an issue task template,
 and a first task file. Copy the printed template to an issue task file, fill in
 the assigned issue, and send it with the printed coordinator command and a fresh
 message ID. The root follows [the root instructions](trial/root-instructions.md)
-and recruits an OMP lead through `omp-root.mjs --session ID`. The lead follows
+and connects an OMP lead through native `receive`. The lead follows
 [the lead instructions](trial/lead-instructions.md), recruits workers and lands
 their reviewed changes onto its branch. Worker reports resume the lead; lead
 reports resume the Codex root. The root reviews and lands the lead branch through

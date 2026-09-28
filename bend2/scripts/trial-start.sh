@@ -3,6 +3,7 @@
 set -eu
 exec python3 - "$@" <<'PY'
 import os
+import json
 import pathlib
 import shlex
 import shutil
@@ -53,7 +54,6 @@ settings = {
     'TRIAL_SOURCE': str(source), 'TRIAL_STATE': str(state),
     'TRIAL_TARGET': 'bend2-trial', 'TRIAL_CHECK': str(source / 'bend2/scripts/check-node-test.sh'),
     'TRIAL_OMP': omp, 'TRIAL_MUSE': muse, 'TRIAL_NODE': node,
-    'TRIAL_LEAD_ADAPTER': str(source / 'bend2/scripts/omp-root.mjs'),
     'TRIAL_ROOT_INSTRUCTIONS': str(state / 'root-instructions.md'),
     'TRIAL_LEAD_INSTRUCTIONS': str(state / 'lead-instructions.md'),
 }
@@ -78,8 +78,15 @@ first = state / 'first-task.md'
 if not first.exists():
     first.write_text(template.read_text())
 run(coord, db, 'attach', 'operator', 'terminal', '', '')
-run(node, source / 'bend2/scripts/codex-root.mjs', db, coord, wrapper, '--attach',
-    env={**env, 'CODEX_ROOT_MODEL': 'gpt-6-astra'})
+saved_root = subprocess.check_output([str(coord), str(db), 'session', 'root'],
+                                    text=True, env=env).strip()
+root_session = json.loads(saved_root) if saved_root else {}
+native_root = root_session.get('native', '') if root_session.get('harness') == 'codex' else ''
+root_log = state / 'root-native.jsonl'
+root_endpoint = [str(coord), str(db), 'receive', 'root', str(wrapper),
+                 'gpt-6-astra', 'low', str(repo), str(root_log)]
+run(coord, db, 'attach', 'root', 'codex', native_root, json.dumps(root_endpoint))
+run(*root_endpoint, '', env=env)
 print(f'Attached trial root. Task file: {first}')
 print(f'Current root instructions: {state / "root-instructions.md"}')
 print(f'Current lead instructions: {state / "lead-instructions.md"}')
@@ -95,6 +102,7 @@ print(shlex.join([str(coord), str(db), 'message-file', 'issue-N-task',
 print('Read landing reports:')
 print(shlex.join([str(coord), str(db), 'inbox', 'operator']))
 print(f'Native root responses: {db}.root.log')
+print(f'Native root events: {root_log}')
 print('Rebuild this kit between lanes after the native turns and their supervisors have exited.')
 print('Keep bend2-trial and each lead branch unchecked-out while land-checked advances them.')
 PY
