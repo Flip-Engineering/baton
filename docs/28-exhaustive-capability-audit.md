@@ -33,8 +33,8 @@ evidence and disagreement are retained in
    contract and current evidence are retained in closed
    [GitHub #2](https://github.com/user/baton/issues/2).
 3. **Trust spine:** immutable briefs, pinned verification, red→green, changed-line coverage,
-   mutation, independent-family oracle, ff integration, approval-gated exact-SHA publication, and
-   opt-in structured staging with post-effect poison semantics.
+   mutation, independent-family oracle, ff integration, and opt-in structured staging with
+   post-effect poison semantics.
 4. **Governance substrate:** scoped runtime homes/credentials, canonical token/USD/wall budgets,
    hard stops, deterministic watchdogs, and verified-outcome adaptive routing.
 5. **Shared coordination/knowledge substrate:** operational ledger/cursors/replay, durable task and
@@ -160,7 +160,7 @@ evidence and disagreement are retained in
    auth-red before provider PIDs while all worktrees/runtimes/branches/writer authority reap.
 22. **Cairn audit-gated selective promotion:** Phase 49 adds a deployment-pinned closed source
    taxonomy and derives candidates from one audited coordination prefix without caller nomination.
-   Operator/orchestrator spawn and selected control/publication events become Decisions; closed
+   Operator/orchestrator spawn and selected control events become Decisions; closed
    policy failure observations become Counterexamples; and cited same-repository observed Scratch
    becomes a Finding only through distinct completed tasks with live verified outcome grounding.
    One atomic replay-validated batch uses fixed safe bodies, closed identifiers/digests, exact
@@ -318,7 +318,7 @@ evidence and disagreement are retained in
   now ship. Richer verification/evidence predicates, authorized continuation/recovery nodes,
   amendments and migration, child/refinement allocation, live budget reallocation or increase,
   portfolio scheduling, richer risk/multi-principal approval, and distinct
-  integration/publication/deploy/rollback authorities remain partial or pending.
+  integration/deploy/rollback authorities remain partial or pending.
 - Canonical determinism is only locally hardened so far. Phase 62 plan and provider-policy ordering
   are locale-independent, but multiple Atlas, Cairn, supply-chain, capacity, and projection
   artifacts still use host-locale `localeCompare`. A repository-wide canonical-order audit,
@@ -346,7 +346,7 @@ evidence and disagreement are retained in
   explicit temp-root ownership. These are retained governance/lifecycle gates, not reasons to
   weaken exact reap claims.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
-  proof is absent. Publication has no live remote-push proof.
+  proof is absent.
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
   audit/trace, bounded recall, and the first closed selective-promotion batch now ship locally;
@@ -550,8 +550,7 @@ evidence and disagreement are retained in
   validation, closure/destructuring/catch binding support, deeper behavioral/provenance attestation
   overlays, and representation choreography. Phase 61 closes fixed graph-backed R1 structural,
   R2 SCIP, and R3 bounded CPG production; it does not satisfy deeper precision or R4–R7 gates.
-- True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
-  publication.
+- True semantic merge, stacked integration, deploy adapters, and rollback automation.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
   deeper operator surfaces, and OpenTelemetry GenAI export.
 - Deeper authenticated web user-to-orchestrator policy/control, and the remaining retention,

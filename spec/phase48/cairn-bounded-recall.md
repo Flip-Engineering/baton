@@ -147,8 +147,8 @@ branch/runtime cleanup, and full reap are evidence, not assumptions.
 Phase 48 does not close or delete later work. The retained catalog still includes authenticated
 northbound user/orchestrator control; exact southbound harness/model/effort routing; persistent
 resume/fork sessions; lifecycle/replay/kill/reap; sandboxing and scoped secrets; provenance,
-budgets, watchdogs, telemetry, verification, mutation, independent oracle, semantic review,
-integration and approval-gated publication; adaptive routing/evaluation/context governance;
+budgets, watchdogs, telemetry, verification, mutation, independent oracle, semantic review, and
+integration; adaptive routing/evaluation/context governance;
 promotion, recall feedback, contradiction and temporal integrity; Atlas plus AST/CST, symbol/SCIP,
 CPG, IR and semantic-delta representations; graph-backed semantic diff; Vantage, Evidence Ladder,
 Scratch, Skill Forge/computer use, Cartographer, Quartermaster and Cairn; structured/semantic merge,

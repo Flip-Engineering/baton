@@ -83,8 +83,8 @@ export { DependencyCycleError, SupervisedProcesses, guidanceSender } from './run
 import {
   closedVerificationVerdict, noop, pathInScope,
 } from './runtime-observation.mjs';
-import { ModelSelectionError, PublicationError, WORKTREE_FAILURE, normalizeRunId } from './runtime-effects.mjs';
-export { ModelSelectionError, PublicationError };
+import { ModelSelectionError, WORKTREE_FAILURE, normalizeRunId } from './runtime-effects.mjs';
+export { ModelSelectionError };
 import { KILL_RULES, LOGICAL_CALL_PHASES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES, REARM_KINDS, RUN_TIMELINE_OPERATIONAL_KINDS, IntegrationError, SessionSelectionError, TERMINAL_TASK_STATUSES, addSafeTokenCounts, boundedProcessObservation, canonical, canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, logicalCallTransition, minimalBrief, normalizeSessionRequest, officialCoordinateMatches, providerProcessingFailureCode, replayProviderGovernanceRoute, startupReconcilerNext, startupReconcilerRecord, throwIfProviderCancelled, typedTerminalCode, validLogicalCallId, validLogicalCallPhase, validWorkspaceOwnerBoundPayload, workspaceOwnerExpectation } from './runtime-recovery.mjs';
 export { PUSH_REFUSAL_CODES, REARM_KINDS, IntegrationError, SessionSelectionError } from './runtime-recovery.mjs';
 // Issue #66 (K2): the frozen doubt refusal family — the closed 9-code vocabulary every doubt
@@ -1249,7 +1249,7 @@ export class Coordinator {
     await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline, () => ({ reason: 'startup_cleanup_pending', timeoutMs: this._drainPolicy.timeoutMs }));
     if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
     // Operations admitted before the irreversible fence may finish, but no stop effect races
-    // them. In particular, publisher/integration/provider work cannot be relabelled as drained
+    // them. In particular, integration/provider work cannot be relabelled as drained
     // while it still owns an external or repository effect boundary.
     while (this._authorityOps > 0 && this._now() < deadline) {
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
@@ -1738,7 +1738,7 @@ export class Coordinator {
       }
     }
     for (const [requestId, record] of [...this._pending]) {
-      if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
+      if (record.kind === 'approval' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._bestEffort(this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')), 'interaction_expiry');
       } else if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._bestEffort(this._trackAuthorityPromise(() => this._expireDecision(requestId, record)), 'interaction_expiry');
@@ -2457,7 +2457,6 @@ export class Coordinator {
       capturedSha: null,
       integration: null,
       retainedResultRef: null,
-      publication: null,
       review: opts.review ? Object.freeze({ ...opts.review }) : null,
       coordinationVersion,
       taskType: opts.taskType ?? 'general',
@@ -3277,11 +3276,6 @@ export class Coordinator {
       manifestCore: request.manifestCore,
       policy: request.policy,
     });
-  }
-
-  /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */
-    requestPublication(workerId, target = {}, actor = 'orchestrator') {
-    return runtimeObservation.requestPublication(this, this._recorder, workerId, target, actor);
   }
 
   /** Worker ids are checked against the live table and every worker the log knows (#267). */
@@ -5127,7 +5121,7 @@ export class Coordinator {
 
   // =========================================================================
   // Decision channel settlement (issue #16 Part B, docs/32 §3.1) — surgical, isolated from
-  // the question/approval/publication branches above (F2: `record.resolution` for a decision
+  // the question/approval branches above (F2: `record.resolution` for a decision
   // is always `{disposition, answer}`; it never echoes an undelivered answer as the
   // resolution, unlike the legacy question/approval `resolution = answer` shape those
   // branches keep for backward compatibility).

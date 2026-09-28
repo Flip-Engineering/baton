@@ -36,15 +36,7 @@ SHAs and marks the task integrated. Before branch cleanup Baton pins the capture
 `refs/baton/results/<sha>`; success releases the pin because main retains it, while refusal keeps
 the pin as durable evidence. Non-fast-forward state refuses without rewriting history.
 
-## AC6 — irreversible publication requires a separate approval
-
-Push/deploy is not implied by verification or local integration. A publication request is a
-single-consumer approval containing remote/ref/SHA; only an explicit allow response may invoke the
-side effect. Deny, timeout, replay, stale fence, or missing approval performs no push. Secret
-remote credentials never enter the event payload. The remote is a configured credential-free name,
-the branch is a full `refs/heads/*` ref, and the SHA must equal the locally integrated result.
-
 ## Safety gate
 
 Temp-repo tests prove base/result freshness, coverage, mutation parsing, sandbox cleanup,
-integration success/refusal, and no-push-without-approval before any provider or remote probe.
+integration success/refusal before any provider or remote probe.

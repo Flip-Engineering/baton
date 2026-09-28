@@ -100,12 +100,12 @@ must supply the equivalent hook if they promise live revocation.
 
 Authorization evaluates `{user, session, command, repoId, runId, taskId, workerId, effect}` before
 dispatch. Roles/capabilities distinguish observation, ordinary control, approvals, budget changes,
-integration/publication, credential administration, and emergency stop. Repository/run scopes are
+integration, credential administration, and emergency stop. Repository/run scopes are
 allowlists. Object identifiers are resolved inside the authorized scope to prevent IDOR access.
 
 Emergency stop remains available to an authorized operator even when ordinary budgets or task
 policy block work. No role may bypass sandbox confinement, secret projection, trust-gate
-verification, publication approval, or human-over-policy fences.
+verification, or human-over-policy fences.
 
 ## WN4 — authenticated command envelope and idempotency
 

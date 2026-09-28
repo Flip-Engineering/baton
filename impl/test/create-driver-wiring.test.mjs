@@ -427,7 +427,6 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   providerQuotaAuthority: 'consulted on a provider quota refusal',
   providerRead: 'consulted by provider status reads',
   providerReconciliation: 'consulted by provider reconciliation',
-  publisher: 'reached only by a landing/push effect',
   recoveryMaxAttempts: 'reached only by a death-cert retry',
   recoveryTimeoutMs: 'reached only by a recovery attempt',
   repoId: 'the deployment identity; supplied implicitly by every case',

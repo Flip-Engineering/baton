@@ -1989,18 +1989,6 @@ export class CoordinationStore {
 
   completeIntegration(fields, auth) { return coordinationLedger.completeIntegration(this, fields, auth); }
 
-  /** Verify the complete post-effect publication authority tuple during replay. Merely finding a
-   * promoted decision is insufficient: the mapped operational digest, paired driver record,
-   * adjacency, batch-key lineage, task, evidence, and publication payload must all agree. */
-  publicationAuthority(taskId, operationalEvent) {
-    return coordinationInternals.publicationAuthority(this, taskId, operationalEvent);
-  }
-
-  /** Atomically make a post-effect publication authoritative. The operational completion may
-   * already exist because the publisher is an outside effect; neither the graph decision nor the
-   * driver completion is visible unless both append in one fs write. */
-  completePublication(fields, auth) { return coordinationLedger.completePublication(this, fields, auth); }
-
   postScratchFact(fields, auth) { return coordinationLedger.postScratchFact(this, fields, auth); }
 
   /** Bind an oracle Brief to the exact durable Scratch assertion without asking a caller to

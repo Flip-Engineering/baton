@@ -4,7 +4,7 @@
 
 CK6 is incomplete until Baton's durable coordination history can promote consequential control
 decisions, closed failure observations, and cited observed Scratch facts into the local causal
-graph. Promotion MUST NOT run synchronously inside stop, kill, publication, integration, or task
+graph. Promotion MUST NOT run synchronously inside stop, kill, integration, or task
 terminal paths: a knowledge-plane failure may never delay or reverse a safety/control effect.
 
 Phase 49 adds the deployment-configured `cairn/causal.promote` operation. It deterministically scans
@@ -45,12 +45,12 @@ Candidate derivation scans at most `maxScanEvents` events in `[1, observedSeq]` 
 
 1. `task.created` by `orchestrator` or `operator:*` → observed `Decision`, trigger
    `coordination.spawn`, informed by its durable Task node;
-2. `driver.recorded` with `kind` in `control.stop_requested`, `follow_up.requested`,
-   `publication.authorized`, or `publication.denied`, where the event actor is `orchestrator` or
-   `operator:*` → observed `Decision`, trigger `coordination.<kind>`, informed by a durable Task;
+2. `driver.recorded` with `kind` in `control.stop_requested` or `follow_up.requested`, where the
+   event actor is `orchestrator` or `operator:*` → observed `Decision`, trigger
+   `coordination.<kind>`, informed by a durable Task;
 3. policy-authored `driver.recorded` with `kind` in `integration.incomplete`,
-   `integration.refused`, `publication.refused`, or `recovery.claimed_without_spawn` → observed
-   `Counterexample`, trigger `coordination.<kind>`, linked to a durable Task; and
+   `integration.refused`, or `recovery.claimed_without_spawn` → observed `Counterexample`,
+   trigger `coordination.<kind>`, linked to a durable Task; and
 4. active `scratch.fact_posted` with `grounding:'observed'`, same `repoId`, and at least
    `minScratchReaders` distinct completed tasks in durable `scratch.read` events at or before the
    boundary, where every counted task has a live verified-grounding `verified_task_outcome`

@@ -2393,7 +2393,7 @@ export function _createCoordinationRecoveryRefinement(coordinator, recorder, han
     });
     const next = {
       ...prior, id, deps: [], refines: prior.id, status: 'working', result: null, verdict: null,
-      capturedSha: null, integration: null, retainedResultRef: null, publication: null, review: null,
+      capturedSha: null, integration: null, retainedResultRef: null, review: null,
       coordinationVersion: result.task.version,
       sessionRequest: handle.sessionRequest,
     };
@@ -2463,7 +2463,6 @@ export function _createCoordinationPlanRecoveryRefinement(coordinator, recorder,
       capturedSha: null,
       integration: null,
       retainedResultRef: null,
-      publication: null,
       review: null,
       coordinationVersion: result.task.version,
       vendorRequested: route.vendor,
@@ -2995,7 +2994,6 @@ export function* _replay(coordinator, recorder) {
       let retainedResultRef = null;
       let checkpoint = null;
       let progressPreservation = null;
-      let publication = null;
       let review = null;
       let runId = null;
       const budgetUsed = { tokens: 0, usd: 0 };
@@ -3421,13 +3419,6 @@ export function* _replay(coordinator, recorder) {
           case 'integration.refused':
             retainedResultRef = e.payload?.retainedResultRef ?? retainedResultRef;
             break;
-          case 'publication.completed':
-            // Operational completion follows an outside effect, but it is not authoritative by
-            // itself. The publication decision and driver completion are an atomic coordination
-            // batch; absence of that decision means replay must report outcome unknown, never
-            // fabricate a successful publication from the telemetry stream.
-            if (recorder.coordination?.publicationAuthority(taskId, e)) publication = e.payload ?? publication;
-            break;
           case 'lifecycle.crashed':
             if (preservedTurnEpoch !== null) break;
             providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
@@ -3688,7 +3679,6 @@ export function* _replay(coordinator, recorder) {
           retainedResultRef,
           checkpoint,
           verificationStability,
-          publication,
           review,
         };
         const durable = recorder.coordination?.task(taskId);
@@ -3709,7 +3699,6 @@ export function* _replay(coordinator, recorder) {
         task.checkpoint = checkpoint;
         task.verificationStability = verificationStability;
         task.progressPreservation = progressPreservation;
-        task.publication = publication;
         task.review = review;
         task.workerPolicyRequest = workerPolicyRequest
           ?? (task.brief?.workerPolicy ? normalizeWorkerPolicyRequest(task.brief.workerPolicy) : null);

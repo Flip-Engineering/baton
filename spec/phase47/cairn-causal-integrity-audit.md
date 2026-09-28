@@ -100,7 +100,7 @@ not retire them.
 The attested packet carries a versioned, digested stable-ID catalog rather than only broad prose.
 It retains authenticated northbound control; exact harness/model/effort routing; persistent
 sessions; kill/reap/replay; sandbox/secrets/provenance/budgets/watchdogs; verification, mutation,
-independent oracle, semantic review, integration and approval-gated publication; adaptive routing;
+independent oracle, semantic review, and integration; adaptive routing;
 shared memory and recall; AST/CST, symbol/SCIP, CPG, IR and semantic-delta depth; graph-backed
 representations; Vantage, Evidence Ladder, Scratch, Skill Forge/computer use,
 Cartographer/Quartermaster/Cairn; semantic merge/fingerprints; e-graphs; and the deeper language,
