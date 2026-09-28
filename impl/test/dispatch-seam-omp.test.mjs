@@ -135,33 +135,3 @@ test('DISPATCH-SEAM: approving a plan on the migrated omp route shape dispatches
   }
 });
 
-test('PROGRESS-CEILING: waves.progress must not ride runs.list — a fleet with more than 64 lifetime runs still answers', async () => {
-  const { application } = await buildFixture();
-  try {
-    // Fill the catalog past MAX_RUN_LIST_ITEMS (64) with plain runs...
-    for (let i = 0; i < 65; i += 1) {
-      await application.command('run.start', { intent: {
-        runId: `run-filler-${i}`, objective: `filler ${i}`,
-        profile: 'plain',
-        route: { harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort: 'high' },
-      } }, principal('owner'));
-    }
-    // ...and bind one run to a wave exactly as createWave does (waveId/waveRole ride run.start).
-    await application.command('run.start', { intent: {
-      runId: 'run-wave-member-1', objective: 'the wave member',
-      profile: 'plain', driverKind: 'wave',
-      waveId: 'wave:0123456789abcdef0123456789abcdef', waveRole: 'probe',
-      route: { harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort: 'high' },
-    } }, principal('owner'));
-
-    // THE CEILING: progress must answer from the wave's own steering index, never the
-    // fleet-wide run catalog. 66 runs > 64 must NOT refuse.
-    const progress = await application.command('waves.progress', {
-      waveId: 'wave:0123456789abcdef0123456789abcdef',
-    }, principal('owner'));
-    assert.equal(progress.members.length, 1, 'the wave member must be served');
-    assert.equal(progress.members[0].role, 'probe', 'the wave role must be served');
-  } finally {
-    await application.close?.();
-  }
-});

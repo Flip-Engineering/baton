@@ -25,7 +25,7 @@ import { BatonApplication } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { bindBaton, createDriver, createWaveDriver, DEFAULT_RUN_LINEAGE_POLICY } from '../src/index.mjs';
+import { bindBaton, createDriver, DEFAULT_RUN_LINEAGE_POLICY } from '../src/index.mjs';
 import { RUN_ORCHESTRATOR_CAPABILITIES } from '../src/run-lineage.mjs';
 
 const repoId = 'repo-kg-settlement';
@@ -36,16 +36,8 @@ function dir(label) {
   return d;
 }
 test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
-
-function digest(value) {
-  const canonical = (v) => {
-    if (Array.isArray(v)) return v.map(canonical);
-    if (!v || typeof v !== 'object') return v;
-    return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])]));
-  };
-  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-}
 const auth = (key, actor = 'orchestrator') => ({ actor, key });
+
 const sessionAuth = (key, session) => ({
   actor: 'orchestrator', key,
   principalId: session.principalId, sessionId: session.sessionId,
@@ -214,152 +206,8 @@ test('KS3: knowledge.settlement_lease materializes the bundle with the session d
   assert.equal(total, 1, 'no second lease on replay');
 });
 
-// ===========================================================================
-// KS4 — D3: the settle-window hook, end to end (stage: hook missing)
-// ===========================================================================
-
-test('KS4: the hook elevates note+plan+doubt (issue #66 v1.1) and surfaces receipt + outline', async (t) => {
-  const noteText = `the lease binds a working orchestrator parent — ${'χ'.repeat(90)} — tail beyond the title cap`;
-  const writes = [
-    { entry: { kind: 'note', text: noteText }, expectedFence: 'current', idempotencyKey: 'ks4-note' },
-    { entry: { kind: 'plan', objective: 'survey the lease', steps: [{ text: 'read', state: 'done' }], supersedes: null }, expectedFence: 'current', idempotencyKey: 'ks4-plan' },
-    { entry: { kind: 'doubt', question: 'does TTL bind?', context: null }, expectedFence: 'current', idempotencyKey: 'ks4-doubt' },
-  ];
-  const { store, receipt, baton } = await ritualWave(t, writes);
-  const runRow = store.snapshot().tasks.find((task) => task.assignee === 'w-1');
-  const runId = runRow.runId;
-  const shared = store.scratchpadSnapshot(runId, 'shared');
-  assert.deepEqual(shared.entries.map((entry) => entry.kind).sort(), ['doubt', 'note', 'plan'],
-    'the settle selection is exactly note/plan/doubt — the doubt elevates with them (issue #66 D1)');
-  const noteShared = shared.entries.find((entry) => entry.kind === 'note');
-  assert.ok(noteShared.scratchFactId, 'the note mints a scratch fact (D4.3)');
-  assert.equal(shared.entries.find((entry) => entry.kind === 'plan')?.scratchFactId ?? null, null);
-  assert.equal(shared.entries.find((entry) => entry.kind === 'doubt')?.scratchFactId ?? null, null,
-    'a doubt never mints a bridge scratch fact (issue #66 GT2)');
-  // No auto-admission anywhere (D5.1).
-  assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 0,
-    'no workflow.admitted Finding exists without an explicit knowledge.promote');
-  // Settlement lease + receipt + terminal OUTLINE agree (receipt and per-member stop outline).
-  assert.equal(receipt.knowledge?.candidatesAwaitingAdmission, 1);
-  assert.equal(receipt.knowledge?.settlementRunId, SETTLEMENT_RUN_ID);
-  assert.ok(Array.isArray(receipt.settlement?.errors), 'settlement.errors is a (possibly empty) array');
-  const terminalRun = await baton.runs.attach(runId).catch(() => null);
-  const terminalView = terminalRun ? await terminalRun.outline().catch(() => null) : null;
-  const terminalKnowledge = terminalView?.outline?.knowledge ?? terminalView?.knowledge ?? null;
-  assert.equal(terminalKnowledge?.candidates ?? terminalKnowledge?.candidatesAwaitingAdmission ?? null, 1,
-    'the terminal outline carries the same candidacy count as the receipt');
-  // Ordering: every ritual event precedes the first member run.stop event (XA acceptance).
-  const events = store.events();
-  const firstStop = events.findIndex((event) => event.kind === 'run.stop_admitted');
-  const lastRitual = events.map((event, index) => ({ event, index }))
-    .filter(({ event }) => ['scratchpad.entry_elevated', 'run.orchestrator_lease_issued'].includes(event.kind))
-    .map(({ index }) => index).pop() ?? -1;
-  assert.ok(firstStop === -1 || lastRitual < firstStop, 'ritual completes before any run stop');
-});
-
-test('KS4: the default (no settlement field) is kg-ritual ON', async (t) => {
-  const writes = [
-    { entry: { kind: 'note', text: 'default-on proof' }, expectedFence: 'current', idempotencyKey: 'ks4-default-note' },
-  ];
-  const { store, receipt } = await ritualWave(t, writes, { settlement: undefined });
-  const runRow = store.snapshot().tasks.find((task) => task.assignee === 'w-1');
-  const shared = store.scratchpadSnapshot(runRow.runId, 'shared');
-  assert.deepEqual(shared.entries.map((entry) => entry.kind), ['note'],
-    'the ritual elevates the note when the policy field is absent');
-  assert.equal(receipt.knowledge?.candidatesAwaitingAdmission, 1,
-    'the receipt counts the elevated candidacy');
-});
-
-test('KS4: settlement:none performs zero ritual writes (event-log diff)', async (t) => {
-  const writes = [
-    { entry: { kind: 'note', text: 'never elevated' }, expectedFence: 'current', idempotencyKey: 'ks4-none-note' },
-  ];
-  const { store, receipt } = await ritualWave(t, writes, { settlement: 'none' });
-  const ritualKinds = ['scratchpad.entry_elevated', 'run.orchestrator_lease_issued', 'scratch.fact_posted'];
-  const writes_ = store.events().filter((event) => ritualKinds.includes(event.kind));
-  assert.equal(writes_.length, 0, 'zero ritual events');
-  assert.equal(receipt.knowledge?.candidatesAwaitingAdmission, 0, 'explicit numeric zero, never missing');
-});
-
-test('KS4: an empty partition is honest-empty with the ritual ON (zero ritual events)', async (t) => {
-  const { store, receipt } = await ritualWave(t, []);
-  const ritualKinds = ['scratchpad.entry_elevated', 'run.orchestrator_lease_issued', 'scratch.fact_posted'];
-  assert.equal(store.events().filter((event) => ritualKinds.includes(event.kind)).length, 0);
-  assert.equal(receipt.knowledge?.candidatesAwaitingAdmission, 0);
-  assert.equal(store.snapshot().tasks.filter((task) => task.relation === 'settlement').length, 0);
-});
-
-// ===========================================================================
-// KS5 — exactly-once crash walk (stage: hook missing; then: re-drive not exactly-once)
-// ===========================================================================
 
 
-// ===========================================================================
-// KS6 — the driver-triggered TTL sweep (stage: sweep missing; prerequisite D1)
-// ===========================================================================
-
-test('KS6: the hook sweeps expired settlement leases (≤16/pass) with review_window_expired and retires residue', async (t) => {
-  const context = await scratchHarness(t, []);
-  const store = context.driver.coordination;
-  // (Prerequisite: D1's API — this row's stage is recorded as D1-first, then sweep.)
-  // Seed 17 expired settlement bundles against the deployment store.
-  for (let index = 0; index < 17; index += 1) {
-    seedExpiredSettlementBundle(store, `wave:stale${String(index).padStart(2, '0')}`);
-  }
-  await driveWave(context, []);
-  const firstPassRevocations = store.events().filter((event) => event.kind === 'run.orchestrator_lease_revoked'
-    && event.payload?.reason === 'review_window_expired');
-  assert.ok(firstPassRevocations.length > 0, 'the sweep revokes with review_window_expired');
-  assert.ok(firstPassRevocations.length <= 16, 'bounded ≤16 per pass');
-  await driveWave(context, []);
-  const allRevocations = store.events().filter((event) => event.kind === 'run.orchestrator_lease_revoked'
-    && event.payload?.reason === 'review_window_expired');
-  assert.ok(allRevocations.length >= 16, 'later passes finish the residue');
-  const tasks = store.snapshot().tasks.filter((task) => task.relation === 'settlement' && task.status === 'cancelled');
-  assert.ok(tasks.length >= 16, 'swept settlement tasks are cancelled');
-});
-
-// ===========================================================================
-
-// KS8 — D4 lanes incl. link, with dispositions receipted; amended for issue #66 v1.1 (the
-// settle selection is exactly note/plan/doubt — the link alone is orchestrator_skipped)
-// ===========================================================================
-
-test('KS8: shared kinds are exactly note/plan/doubt; a link carries the orchestrator_skipped disposition (issue #66 v1.1)', async (t) => {
-  const writes = [
-    { entry: { kind: 'note', text: 'n' }, expectedFence: 'current', idempotencyKey: 'ks8-note' },
-    { entry: { kind: 'plan', objective: 'p', steps: [{ text: 's', state: 'todo' }], supersedes: null }, expectedFence: 'current', idempotencyKey: 'ks8-plan' },
-    { entry: { kind: 'doubt', question: 'q', context: null }, expectedFence: 'current', idempotencyKey: 'ks8-doubt' },
-    { entry: { kind: 'link', label: 'upstream', relation: 'reference', target: { type: 'url', url: 'https://example.test/spec' } }, expectedFence: 'current', idempotencyKey: 'ks8-link' },
-  ];
-  const { store } = await ritualWave(t, writes);
-  const runRow = store.snapshot().tasks.find((task) => task.assignee === 'w-1');
-  const shared = store.scratchpadSnapshot(runRow.runId, 'shared');
-  assert.deepEqual(shared.entries.map((entry) => entry.kind).sort(), ['doubt', 'note', 'plan'],
-    'note+plan+doubt elevate; the link is the only kind never selected');
-  const reap = store.events().find((event) => event.kind === 'scratchpad.partition_reaped'
-    && event.payload?.basis === 'task_settled');
-  const skipped = (reap?.payload?.dispositions ?? []).filter((row) => row.result === 'not_elevated');
-  assert.equal(skipped.length, 1, 'the link is the one dispositioned skip');
-  for (const row of skipped) assert.equal(row.reasonCode, 'orchestrator_skipped', 'the skip is receipted, not silent');
-});
-
-test('KS8: a not-ready elevation refusal is recorded in settlement.errors and close still completes', async (t) => {
-  // The member writes its entries but its task is claimed-terminal through the claim path —
-  // if the store task is not yet terminal when the hook fires (lifecycle A1's race), the
-  // refusal must land in settlement.errors as {member, step, code} and never abort close.
-  const writes = [
-    { entry: { kind: 'note', text: 'racy note' }, expectedFence: 'current', idempotencyKey: 'ks8-race-note' },
-  ];
-  const { receipt } = await ritualWave(t, writes);
-  assert.ok(receipt, 'the wave closes even when a ritual step refuses');
-  const errors = receipt.settlement?.errors ?? null;
-  assert.ok(Array.isArray(errors), 'settlement.errors is an array');
-  assert.ok(errors.length <= 8, 'bounded ≤8');
-  for (const entry of errors) {
-    assert.deepEqual(Object.keys(entry).sort(), ['code', 'member', 'step'], 'closed {member, step, code} shape');
-  }
-});
 
 // ===========================================================================
 // KS9 — structural surface gate (regression pin; amended for the MCP-W2 fold)
@@ -412,24 +260,6 @@ function root(label) {
   return d;
 }
 
-// A MockAdapter that emits scratchpad.write events on the worker's authenticated stream right
-// after its first file edit — mid-turn, with the task fully claimed (emissions at session start
-// race the spawn's claim and crash the member, receipted in this suite's v2 bring-up). This is
-// the exact hub admission path claude-session's scanner lands on.
-class ScratchMockAdapter extends MockAdapter {
-  constructor(config, writes) {
-    super(config);
-    this._scratchWrites = [...writes];
-  }
-
-  _emit(session, kind, payload) {
-    super._emit(session, kind, payload);
-    if (kind === 'content.file_edit' && this._scratchWrites.length > 0) {
-      const pending = this._scratchWrites.splice(0);
-      for (const request of pending) super._emit(session, 'scratchpad.write', request);
-    }
-  }
-}
 
 function profile() {
   return Object.freeze({
@@ -518,43 +348,8 @@ function appHarness(t, scenariosByMarker) {
   return buildApplication(t, new MockAdapter({ scenario: scenariosByMarker.default ?? { outcome: 'completed' } }), {});
 }
 
-async function scratchHarness(t, writes) {
-  return buildApplication(t, new ScratchMockAdapter(
-    { scenario: { outcome: 'completed', edits: [{ path: 'reports/surveyor.md', content: 'report\n' }] } },
-    writes,
-  ), {});
-}
 
-async function driveWave(context, writes, driverPolicy = {}) {
-  void writes;
-  const dbg = process.env.KS_DEBUG ? (m) => console.error(`[dbg ${((Date.now() - driveWave.t0) / 1000).toFixed(1)}s] ${m}`) : () => {};
-  driveWave.t0 = Date.now();
-  const waveDriver = createWaveDriver(context.baton, {
-    pollIntervalMs: 50, stallTimeoutMs: 3_000, settleTimeoutMs: 2_000,
-    saltObjectives: false, preflight: false,
-    onProgress: (line) => dbg(`progress ${line}`),
-    ...(driverPolicy.settlement !== undefined ? { settlement: driverPolicy.settlement } : {}),
-  });
-  dbg('run start');
-  const receipt = await waveDriver.run({
-    idempotencyKey: 'kg-settlement-test-wave',
-    members: [{
-      role: 'surveyor',
-      objective: 'survey and record (marker:surveyor)',
-      harness: 'mock', model: 'mock-model', effort: 'low',
-      scope: ['reports/**'],
-      report: 'reports/surveyor.md',
-    }],
-  });
-  dbg(`run done basis=${receipt.basis}`);
-  return { receipt };
-}
 
-async function ritualWave(t, writes, driverPolicy = {}) {
-  const context = await scratchHarness(t, writes);
-  const { receipt } = await driveWave(context, writes, driverPolicy);
-  return { ...context, receipt };
-}
 
 function spyCoordinator(driver, methods) {
   const calls = Object.fromEntries(methods.map((name) => [name, []]));
@@ -570,30 +365,3 @@ function spyCoordinator(driver, methods) {
 }
 
 
-// An EXPIRED settlement bundle for the sweep rows.
-function seedExpiredSettlementBundle(store, waveId) {
-  const taskId = `settlement-task:${waveId}`;
-  const runId = `run-settlement:${waveId}`;
-  const workerId = `settlement-worker:${waveId}`;
-  store.createAndClaimSettlementTask(
-    { id: taskId, runId, reservedWorkerId: workerId },
-    { actor: 'orchestrator', key: `settlement.task:${waveId}` },
-  );
-  const session = {
-    principalId: 'wave-owner', sessionId: 'session-wave-owner',
-    authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: 'wave-owner', sessionId: 'session-wave-owner' }),
-    expiresAt: '2026-08-01T06:30:00.000Z', // expired before the hook runs (hook clock: 08:00)
-  };
-  const leaseIdentity = {
-    repoId, parentRunId: runId, parentTaskId: taskId, parentTaskVersion: 2,
-    workerId, principalId: session.principalId, sessionId: session.sessionId,
-    sessionAuthorityDigest: session.authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-  const issued = store.issueRunOrchestratorLease(
-    { schemaVersion: 1, repoId, parentTask: { id: taskId, version: 2 }, session },
-    { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
-  );
-
-  return { taskId, runId, leaseId: issued.lease.leaseId };
-}

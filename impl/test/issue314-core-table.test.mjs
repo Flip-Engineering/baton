@@ -103,13 +103,13 @@ const toolOf = (definitions, name) => definitions.find((tool) => tool.name === n
 test('314-l1-a: a field added to a family table appears in the core tool, one removed disappears', () => {
   const grown = coreToolDefinitions({
     sources: sourcesWith({
-      ordinary: (name, base) => (name === 'baton_waves_send'
+      ordinary: (name, base) => (name === 'baton_run_message_send'
         ? adjustedTool(name, { addProperties: { probeField: { type: 'string', minLength: 1 } } })
         : base.ordinary(name)),
     }),
   });
-  const waves = toolOf(grown, 'baton_waves');
-  assert.deepEqual(waves.inputSchema.properties.probeField, { type: 'string', minLength: 1 },
+  const runs = toolOf(grown, 'baton_run');
+  assert.deepEqual(runs.inputSchema.properties.probeField, { type: 'string', minLength: 1 },
     'the added field rides the tool the verb belongs to');
 
   const shrunk = coreToolDefinitions({
@@ -128,14 +128,14 @@ test('314-l1-a: a field added to a family table appears in the core tool, one re
 test('314-l1-b: a required field added to a family table is required by the verb branch', () => {
   const definitions = coreToolDefinitions({
     sources: sourcesWith({
-      ordinary: (name, base) => (name === 'baton_waves_send'
-        ? adjustedTool(name, { addRequired: ['message'] })
+      ordinary: (name, base) => (name === 'baton_run_message_send'
+        ? adjustedTool(name, { addRequired: ['workerId'] })
         : base.ordinary(name)),
     }),
   });
-  const branch = toolOf(definitions, 'baton_waves').inputSchema.oneOf
+  const branch = toolOf(definitions, 'baton_run').inputSchema.oneOf
     .find((entry) => entry.properties.verb.const === 'send');
-  assert.deepEqual(branch.required, ['verb', 'runId', 'message'], 'the branch follows the landed required set');
+  assert.deepEqual(branch.required, ['verb', 'runId', 'body', 'kind', 'workerId'], 'the branch follows the landed required set');
 });
 
 test('314-l1-c: a swarm family row that vanishes refuses to project (a verb removed disappears)', () => {
@@ -209,11 +209,6 @@ const PARITY = Object.freeze([
   { tool: 'baton_swarm', verb: 'recruit', flat: 'baton_swarm_recruit', args: { swarmId: 'swarm:parity', participantId: 'seat', objective: 'parity seat', permissions: ['read'], idempotencyKey: 'parity:swarm-recruit' } },
   { tool: 'baton_swarm', verb: 'guide', flat: 'baton_swarm_guide', args: { swarmId: 'swarm:parity', participantId: 'seat', message: 'parity guide', idempotencyKey: 'parity:swarm-guide' } },
   { tool: 'baton_swarm', verb: 'capture', flat: 'baton_swarm_capture', args: { swarmId: 'swarm:parity', participantId: 'seat', contributionId: 'contribution:parity' } },
-  { tool: 'baton_waves', verb: 'start', flat: 'baton_waves_start', args: { members: [{ role: 'r', objective: 'o', exact: { harness: 'h', model: 'm', effort: 'e' } }], idempotencyKey: 'parity:wave-start' } },
-  { tool: 'baton_waves', verb: 'list', flat: 'baton_waves_list', args: {} },
-  { tool: 'baton_waves', verb: 'progress', flat: 'baton_waves_progress', args: { waveId: `wave:${'a'.repeat(32)}` } },
-  { tool: 'baton_waves', verb: 'send', flat: 'baton_waves_send', args: { runId: 'run:parity', message: 'parity steer' } },
-  { tool: 'baton_waves', verb: 'stop', flat: 'baton_waves_stop', args: { runId: 'run:parity', reason: 'parity wave stop' } },
   { tool: 'baton_knowledge', verb: 'search', flat: 'baton_evidence_search', args: {} },
   { tool: 'baton_knowledge', verb: 'seed', flat: 'baton_run_knowledge_seed', args: { runId: 'run:parity', type: 'Finding', grounding: 'observed', body: 'parity fact' } },
   { tool: 'baton_wakes', verb: 'subscribe', flat: 'baton_wakes_subscribe', args: { kinds: ['contribution_recorded'] } },
@@ -346,7 +341,7 @@ test('314-l1-k: the long verbs carry their wake handoff from the landed vocabula
       }
     }
   }
-  assert.deepEqual(long, ['baton_run:start', 'baton_swarm:recruit', 'baton_waves:start'],
+  assert.deepEqual(long, ['baton_run:start', 'baton_swarm:recruit'],
     'the long verbs are exactly the ones docs/49 §2 gives a wake handoff');
   assert.equal(coreVerbFacts('baton_run', 'view').mutation, false, 'the landed annotation says a read');
   assert.equal(coreVerbFacts('baton_swarm', 'capture').mutation, true, 'and an identity-keyed capture is a write');

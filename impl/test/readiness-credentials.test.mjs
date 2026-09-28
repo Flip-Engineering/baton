@@ -75,7 +75,7 @@ import {
   claudeAuthenticationSummary, openBatonDeployment,
 } from '../src/application-deployment.mjs';
 import * as deploymentModule from '../src/application-deployment.mjs';
-import { createDriver, createWaveDriver, routeTupleKey } from '../src/index.mjs';
+import { createDriver, routeTupleKey } from '../src/index.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 
@@ -425,31 +425,6 @@ function probeRecords(driver, adapter, kind) {
 
 const ms = (value) => (typeof value === 'number' ? value : Date.parse(value));
 
-// The §4.2.2 wave-preflight consumer, driven exactly as wave-driver.mjs:274-282 drives it, with
-// the wave itself stopped at the fixture boundary (RT-5 gates on preflight probe counts only).
-async function runWavePreflight(deployment, route, members = 64) {
-  const facade = {
-    doctor: () => deployment.doctor(),
-    waves: {
-      start: async () => {
-        throw Object.assign(new Error('fixture stop after preflight'), { code: 'fixture_preflight_passed' });
-      },
-    },
-  };
-  const wave = createWaveDriver(facade, { preflight: true });
-  const request = {
-    members: Array.from({ length: members }, (_, index) => ({
-      role: `member-${index}`, objective: `fixture wave member ${index}`, exact: route,
-    })),
-  };
-  return bounded('runWavePreflight: wave.run', wave.run(request)).then(
-    () => 'resolved',
-    (error) => {
-      if (isWaitBoundFailure(error)) throw error;
-      return error?.code ?? String(error?.message ?? error);
-    },
-  );
-}
 
 function scanTree(root) {
   const values = [];
@@ -828,62 +803,6 @@ test('RT-4p (pin): the static readiness substrate is unchanged — the tier is a
   }
 });
 
-test('RT-5 (stage: #47 preflight consumption missing): the wave-driver preflight rides the cache — fresh costs zero probes, a cold wave costs ≤1 per stale route', async () => {
-  const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
-  const fixture = await openFixture({ routes: [ROUTE_LOW], adapters: { grok: adapter } });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt5-warm');
-    assert.equal(probeInvocations(adapter).length, 1, 'stage #47: the warm-up consult probes exactly once — zero means the preflight cache discipline is not landed');
-    const outcome = await runWavePreflight(fixture.deployment, ROUTE_LOW);
-    assert.equal(outcome, 'fixture_preflight_passed', 'a cache-fresh 64-member preflight passes');
-    assert.equal(probeInvocations(adapter).length, 1,
-      'a 64-member wave whose routes are all cache-fresh performs NO probes at preflight (RT-5)');
-  } finally {
-    await fixture.close();
-  }
-
-  const coldAdapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
-  const cold = await openFixture({ routes: [ROUTE_LOW], adapters: { grok: coldAdapter } });
-  try {
-    assert.equal(cold.wiringError, null, 'fixture must open');
-    const outcome = await runWavePreflight(cold.deployment, ROUTE_LOW);
-    assert.equal(outcome, 'fixture_preflight_passed', 'the cold preflight passes after probing');
-    assert.ok(probeInvocations(coldAdapter).length <= 1,
-      'a cold wave performs ≤1 probe per stale route — never one per member (RT-5)');
-    assert.equal(probeInvocations(coldAdapter).length, 1,
-      'stage #47: the preflight never probed the stale route at all (the cache consult is not wired)');
-  } finally {
-    await cold.close();
-  }
-
-  const deadAdapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'invalid_grant' });
-  const dead = await openFixture({ routes: [ROUTE_LOW], adapters: { grok: deadAdapter } });
-  try {
-    assert.equal(dead.wiringError, null, 'fixture must open');
-    const outcome = await runWavePreflight(dead.deployment, ROUTE_LOW);
-    assert.equal(outcome, 'wave_driver_route_unready',
-      'stage #47: a provider-dead route must fail the wave at preflight, not eat 64 member spawns');
-    assert.ok(probeInvocations(deadAdapter).length <= 1, 'the failing preflight probes at most once');
-  } finally {
-    await dead.close();
-  }
-});
-
-test('RT-5p (pin): the existing preflight still refuses a static-blocked member with wave_driver_route_unready', async () => {
-  const orphan = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
-  const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
-  const absentAdapter = new ProbeAdapter({ route: orphan, credentialState: 'absent' });
-  const fixture = await openFixture({ routes: [ROUTE_LOW, orphan], adapters: { grok: adapter, codex: absentAdapter } });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    const outcome = await runWavePreflight(fixture.deployment, orphan, 2);
-    assert.equal(outcome, 'wave_driver_route_unready',
-      'wave-driver.mjs:274-282 keeps its typed refusal for a not-ready route (the seam the tier extends)');
-  } finally {
-    await fixture.close();
-  }
-});
 
 test('RT-14a (stage: credentialKey join missing): a probe-sourced invalid_grant invalidates every liveness row sharing the credentialKey — and ONLY those rows (a second credential identity is the negative control)', async () => {
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });

@@ -370,16 +370,6 @@ const LONG_VERBS = Object.freeze([
     // Another swarm's death is not this operation's: the handoff is scoped to its own subject.
     foreign: wakeFrame({ seq: 14, wakeClass: 'dead', swarmId: 'swarm-other', participantId: 'seat-314' }),
   }),
-  Object.freeze({
-    label: 'baton_waves {verb: start} (waves.start)',
-    tool: 'baton_waves', verb: 'start',
-    args: { members: [{ role: 'builder', objective: 'lane 2 member', exact: { harness: 'mock', model: 'model-a', effort: 'low' } }] },
-    answers: { waves_start: { schemaVersion: 1, waveId: `wave:${'a'.repeat(32)}`, members: [{ role: 'builder', runId: 'run-wave-314' }] } },
-    kinds: ['attention', 'paused'],
-    settleOn: ['attention', 'paused'],
-    swarms: null, participants: null,
-    settle: wakeFrame({ seq: 16, wakeClass: 'paused', runId: 'run-wave-314' }),
-  }),
 ]);
 
 for (const row of LONG_VERBS) {
