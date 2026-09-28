@@ -69,7 +69,7 @@ const ADMISSION = Object.freeze({
   // #358: an objective is whatever the recruiter needs to say — no head cap. An objective past
   // this lane's declared 1 MiB value rides whole (its head inline, its body a durable spill).
   'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission' },
-  'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission' },
+  'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave member admission' },
   'view.resultpin.page': { lane: 'view.resultpin.page', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   // Issue #366 (with #286 G-41): the ONE bound a run-stop target set is judged against at
   // ADMISSION, and its derivation is the ledger itself. A run stop's target set is a projection of
