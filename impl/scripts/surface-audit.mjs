@@ -55,8 +55,6 @@ function extractRunPhases() {
     if (!/^\s*(?:(?:const|let)\s+)?phase\s*=(?!=)/u.test(line)) continue;
     for (const phase of extractAll(line, /'([a-z_]+)'/gu)) phases.add(phase);
   }
-  const wave = src('wave.mjs');
-  for (const phase of extractAll(wave, /(?:phase\s*===|phase:)\s*'([a-z_]+)'/gu)) phases.add(phase);
   for (const phase of extractAll(
     src('application-cli.mjs'),
     /TERMINAL_RUN_PHASES = new Set\(\[([^\]]+)\]/gu,
