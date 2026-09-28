@@ -187,7 +187,6 @@ test('450c2: a narration read that never answers cannot hold the stop', async (t
       stopped: () => ({ line: 'baton serve: host.stopped stopped' }),
       stage: () => {},
       participants: () => new Promise(() => {}),
-      narrationRefused: () => null,
     },
   });
   // The signal handler's own order: the intent is announced, then the stop runs.

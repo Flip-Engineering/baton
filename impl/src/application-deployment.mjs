@@ -4447,18 +4447,6 @@ class BatonDeployment {
     return owned;
   }
 
-  /** Issue #437: record what a read behind the narration refused with, ONCE per (read, code) —
-   * the row is idempotency-keyed per stop incarnation, so a narration repeated by a later stage
-   * writes nothing new. Returns the line the caller narrates, never a throw: the stop the row
-   * describes goes on without it. */
-  recordNarrationRefused({ read, code } = {}) {
-    if (typeof read !== 'string' || read.length === 0 || typeof code !== 'string' || code.length === 0) return null;
-    const at = this.#clock();
-    const recorded = this.#stopRecord('host.narration_refused', { read, code, at }, `narration_refused:${read}:${code}`);
-    if (recorded === null) return null;
-    return { line: `baton serve: host.narration_refused ${read} (${code}) at ${at}` };
-  }
-
   /** Issue #468: record a writable this resident holds whose asynchronous error nobody else owns
    * — one bounded `host.stream_error {stream, code, at}` row per (stream, code), so the ledger
    * names the stream that failed instead of a narration line that the failure itself swallowed.
@@ -4586,9 +4574,7 @@ class BatonDeployment {
    * Issue #468: a trigger raised by an uncaught exception carries `facts` — the error's `code` and
    * its stack head — onto the row, so the ledger names what reached `process` (an EPIPE on a
    * stream nobody guarded) and where, even when the narration line itself was written into a pipe
-   * that had no reader. A stop that was already requested keeps its ONE trigger row; the late
-   * facts land on a bounded `host.last_resort` row instead, never lost and never a second
-   * `host.stop_requested` for one stop.
+   * that had no reader. A stop that was already requested keeps its ONE trigger row.
    *
    * Issue #471: a `parent_exited` request carries `parentPid` — the declared parent whose absence
    * the resident observed — so the trigger is a fact a reader can check, not an inference. */
@@ -4600,13 +4586,7 @@ class BatonDeployment {
       stackHead: typeof facts.stackHead === 'string' && facts.stackHead.length > 0 ? facts.stackHead : null,
       ...(Number.isSafeInteger(facts.parentPid) && facts.parentPid > 0 ? { parentPid: facts.parentPid } : {}),
     };
-    if (this.#stopRequestedAt !== null) {
-      if (facts === null || (named.code === null && named.stackHead === null)) return null;
-      const late = this.#stopRecord('host.last_resort', { trigger: kind, at, ...named },
-        `last_resort:${kind}:${named.code ?? 'error'}`);
-      if (late === null) return null;
-      return `baton serve: host.last_resort ${kind} (${named.code ?? 'error'}) at ${at}`;
-    }
+    if (this.#stopRequestedAt !== null) return null;
     // Issue #467: the instant THIS incarnation began stopping. Set before the request row is even
     // attempted, because the state a reader asks about is the stop, not the row — and set for a stop
     // that is already requested too (the state began then).
@@ -4696,9 +4676,8 @@ class BatonDeployment {
   }
 
   /** The stop-records seam a host narrates and records through. Built once per deployment, handed
-   * to every host it builds. Beside the three durable facts it carries the stop's stage clock
-   * (`stage`), the participant projection the signal line counts from (`participants`), and the
-   * one-shot record of a refusal behind that narration (`narrationRefused`). */
+   * to every host it builds, beside the three durable facts it carries the stop's stage clock
+   * (`stage`) and the participant projection the signal line counts from (`participants`). */
   #stopRecordsFor() {
     this.#stopRecords ??= Object.freeze({
       requested: ({ trigger }) => {
@@ -4755,8 +4734,6 @@ class BatonDeployment {
       /** Issue #437: the count the signal line carries, from the projection this resident already
        * holds. It REFUSES (typed) rather than answering a number it cannot observe. */
       participants: () => this.ownedParticipantCount(),
-      /** Issue #437: one durable row per (read, code) — see recordNarrationRefused. */
-      narrationRefused: (refusal) => this.recordNarrationRefused(refusal),
       /** Issue #468: one durable row per (stream, code) for a writable the resident holds whose
        * asynchronous error nobody owns — see recordStreamError. The host narrates the line of the
        * call that recorded it and stays silent on a repeat, so the sink that just failed is never

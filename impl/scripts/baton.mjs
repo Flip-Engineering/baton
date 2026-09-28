@@ -179,13 +179,7 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
       : typeof deployment.runs?.list === 'function'
         ? { read: 'runs.list', run: () => deployment.runs.list() }
         : { read: null, run: () => { throw Object.assign(new Error('this deployment publishes no run list'), { code: 'application_host_narration_unavailable' }); } };
-    const refused = (refusal) => {
-      try {
-        const recorded = typeof deployment.recordNarrationRefused === 'function' ? deployment.recordNarrationRefused(refusal) : null;
-        if (recorded?.line) logLine(flipAnnounce('draining', recorded.line, { tty: TTY, color: TTY }));
-      } catch { /* the line below is still written */ }
-    };
-    announced = (async () => signalIntentLine(trigger, source, { onRefused: refused }))().then(
+    announced = (async () => signalIntentLine(trigger, source))().then(
       (line) => { logLine(flipAnnounce('draining', `baton serve: ${line}`, { tty: TTY, color: TTY })); },
       (error) => {
         logLine(flipAnnounce('draining', `baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { tty: TTY, color: TTY }));

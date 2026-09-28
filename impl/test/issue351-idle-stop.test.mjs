@@ -21,8 +21,7 @@
 //  (b) the signal line counts the participants this process owns from the projection it already
 //      holds (the coordinator's live rows), so a `runs.list` that refuses on the ledger behind the
 //      narration no longer costs the operator the count; and when the read behind the narration
-//      DOES refuse, the line names the refusing read and its code and the same refusal is recorded
-//      once as `host.narration_refused {read, code}`.
+//      DOES refuse, the line names the refusing read and its code.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -325,7 +324,6 @@ export const createBatonDeployment = async () => {
     host: (options) => deployment.host(options),
     close: () => deployment.close(),
     recordStopRequested: (trigger) => deployment.recordStopRequested(trigger),
-    recordNarrationRefused: (refusal) => deployment.recordNarrationRefused(refusal),
     ownedParticipantCount: () => deployment.ownedParticipantCount(),
     runs: { list: refuseRuns },
   };
@@ -341,12 +339,9 @@ export const createBatonDeployment = async () => {
     `the count comes from the projection the resident holds:\n${stderr.slice(-2_000)}`);
   assert.doesNotMatch(stderr, /count unavailable/u,
     'the refusal of a read the narration no longer depends on must not cost the operator the count');
-  // And with nothing refusing behind the narration, nothing is recorded as refused.
-  const refusals = stopRows(fixture.ledgerPath).filter((row) => row.payload.kind === 'host.narration_refused');
-  assert.deepEqual(refusals, [], 'no read behind this narration refused, so no refusal row');
 });
 
-test('351s-b2: a read that refuses behind the narration is named, and recorded once', async (t) => {
+test('351s-b2: a read that refuses behind the narration is named in the signal line', async (t) => {
   const fixture = claimFixture(t, 'narration-refused', {
     rows: 64,
     serve: ({ advanced }) => `
@@ -362,7 +357,6 @@ export const createBatonDeployment = async () => {
     host: (options) => deployment.host(options),
     close: () => deployment.close(),
     recordStopRequested: (trigger) => deployment.recordStopRequested(trigger),
-    recordNarrationRefused: (refusal) => deployment.recordNarrationRefused(refusal),
     runs: { list: refuseRuns },
   };
 };
@@ -376,15 +370,6 @@ export const createBatonDeployment = async () => {
   // The line names BOTH the refusing read and its code (#437), never a bare "count unavailable".
   assert.match(stderr, /count unavailable: structured_review_target_mismatch from runs\.list\) \(SIGTERM\)/u,
     stderr.slice(-2_000));
-  // …and the same refusal is durable, exactly once, so the doctor and the wake stream can see it.
-  const refusals = stopRows(fixture.ledgerPath).filter((row) => row.payload.kind === 'host.narration_refused');
-  assert.equal(refusals.length, 1, `the refusal is recorded once:\n${JSON.stringify(refusals)}`);
-  assert.deepEqual(
-    { read: refusals[0].payload.read, code: refusals[0].payload.code },
-    { read: 'runs.list', code: 'structured_review_target_mismatch' },
-  );
-  assert.match(stderr, /host\.narration_refused runs\.list \(structured_review_target_mismatch\)/u,
-    'the recorded refusal is narrated too — the operator sees the same fact the ledger holds');
 });
 
 test('351s-b3: the signal line answers both advertised reads — a projection count and a run page', async () => {
@@ -404,20 +389,16 @@ test('351s-b3: the signal line answers both advertised reads — a projection co
     await signalIntentLine(trigger, { read: 'runs.list', run: () => ({ items: [{ resources: { ownedCount: 2 } }, { resources: { ownedCount: 0 } }] }) }),
     'signal received; draining 2 participants (SIGTERM)',
   );
-  // A refused read is named with its code and handed to the recorder exactly once.
-  const refusals = [];
+  // A refused read is named with its code in the line.
   const line = await signalIntentLine(trigger, {
     read: 'runs.list',
     run: () => { throw Object.assign(new Error('nope'), { code: 'structured_review_target_mismatch' }); },
-  }, { onRefused: (refusal) => refusals.push(refusal) });
+  });
   assert.equal(line, 'signal received; draining participants (count unavailable: structured_review_target_mismatch from runs.list) (SIGTERM)');
-  assert.deepEqual(refusals, [{ read: 'runs.list', code: 'structured_review_target_mismatch' }]);
-  // A read with no name to blame keeps the honest line it always had, and nothing is recorded.
-  const unnamed = [];
+  // A read with no name to blame keeps the honest line it always had.
   const unnamedLine = await signalIntentLine(trigger, {
     read: null,
     run: () => { throw Object.assign(new Error('no bus'), { code: 'application_host_narration_unavailable' }); },
-  }, { onRefused: (refusal) => unnamed.push(refusal) });
+  });
   assert.equal(unnamedLine, 'signal received; draining participants (count unavailable: application_host_narration_unavailable) (SIGTERM)');
-  assert.deepEqual(unnamed, [], 'a read that cannot be named is never invented');
 });

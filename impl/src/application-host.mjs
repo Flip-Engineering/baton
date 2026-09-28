@@ -71,9 +71,8 @@ const FIRST_WAIT_MS = 1_000;
  * any wait. The count comes from a NAMED read the caller supplies — the projection the resident
  * already holds (the deployment's live coordinator rows) or, for a caller whose only authority is
  * its command bus, the `runs.list` page whose `resources.ownedCount` is derived from that same
- * live ownership filter. When that read refuses, the line names the refusing read AND its code,
- * and the caller records the refusal once, so "count unavailable" is never the whole answer. */
-export async function signalIntentLine(trigger, source, { onRefused } = {}) {
+ * live ownership filter. When that read refuses, the line names the refusing read AND its code. */
+export async function signalIntentLine(trigger, source) {
   const kind = typeof trigger?.kind === 'string' ? trigger.kind : 'signal';
   const read = typeof source?.read === 'string' && source.read.length > 0 ? source.read : null;
   let count = null;
@@ -84,9 +83,6 @@ export async function signalIntentLine(trigger, source, { onRefused } = {}) {
     if (count === null) reason = `the read projects no owned participant count${read === null ? '' : ` (${read})`}`;
   } catch (error) {
     reason = errorCode(error);
-    if (read !== null && typeof onRefused === 'function') {
-      try { onRefused(Object.freeze({ read, code: reason })); } catch { /* the line is still written */ }
-    }
   }
   if (count === null) {
     return `signal received; draining participants (count unavailable: ${reason}${read === null ? '' : ` from ${read}`}) (${kind})`;
@@ -348,7 +344,7 @@ export class BatonWebHost {
       || (options.report !== undefined && typeof options.report !== 'function')
       || (options.stopRecords !== undefined && (!record(options.stopRecords)
         || !['requested', 'stopped'].every((name) => typeof options.stopRecords[name] === 'function')
-        || !['waiting', 'stage', 'participants', 'narrationRefused']
+        || !['waiting', 'stage', 'participants']
           .every((name) => options.stopRecords[name] === undefined || typeof options.stopRecords[name] === 'function')))
       || (!tcp && !local)
       || (tcp && (typeof options.listen.host !== 'string' || options.listen.host.length === 0
@@ -540,9 +536,7 @@ export class BatonWebHost {
         if (requested?.line) this._say(requested.line);
       }
     } catch { /* the stop narrates without the row rather than wedging the handler */ }
-    const announced = (async () => signalIntentLine(trigger, this._participantSource(), {
-      onRefused: (refusal) => this._recordNarrationRefusal(refusal),
-    }))().then(
+    const announced = (async () => signalIntentLine(trigger, this._participantSource()))().then(
       (line) => { this._say(line); },
       (error) => {
         this._say(`signal received; draining participants (narration failed: ${errorCode(error)}) (${trigger.kind})`);
@@ -569,17 +563,6 @@ export class BatonWebHost {
       read: null,
       run: () => { throw hostError('this application exposes no command bus', 'application_host_narration_unavailable'); },
     });
-  }
-
-  /** Issue #437: the refusal behind the narration is recorded ONCE (the deployment keys it per
-   * read and code) so the doctor and the wake stream see what the operator's line could not
-   * count; the same line is said here, so the log carries both facts. A host with no deployment
-   * records nothing — its log line is the whole record. */
-  _recordNarrationRefusal(refusal) {
-    try {
-      const recorded = this.stopRecords?.narrationRefused?.(refusal);
-      if (recorded?.line) this._say(recorded.line);
-    } catch { /* the narration goes on */ }
   }
 
   /** Issue #450: the narration read is a wait, and this host NAMES every wait it takes past its

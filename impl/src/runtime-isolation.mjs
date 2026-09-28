@@ -705,10 +705,9 @@ export class RuntimeIsolation {
     });
   }
 
-  /** Every scope outside `expectedWorkerIds` is removed. The scopes that refuse removal are
-   * reported through ONE `runtime_cleanup_failed` error carrying each of them on `pending`, so a
-   * scope a child still holds open never hides another from the caller that records the pending
-   * set (runtime-recovery.mjs). */
+  /** Every scope outside `expectedWorkerIds` is removed. A scope that refuses removal is a startup
+   * refusal: ONE `runtime_cleanup_failed` error naming the first scope that refused, with the
+   * cause it reported. */
   reconcile(expectedWorkerIds = []) {
     const expected = new Set(expectedWorkerIds);
     if (!existsSync(this.root)) return;
@@ -727,22 +726,7 @@ export class RuntimeIsolation {
       code: 'runtime_cleanup_failed',
       record: refused[0].workerId,
       observed: refused[0].observed,
-      pending: Object.freeze(refused),
     });
-  }
-
-  /** Issue #542: retry the removal of the exact scopes a startup pass reported pending. Every
-   * named scope is attempted, so one that still refuses never hides another, and the scopes that
-   * still refuse come back as their own typed failures — an empty list is absence reached. Only
-   * the names given are touched: a scope a worker admitted after the startup pass created for
-   * itself is never removed here. */
-  retryPendingScopes(workerIds) {
-    const refused = [];
-    for (const workerId of workerIds) {
-      try { this.remove(workerId); }
-      catch (error) { refused.push(error); }
-    }
-    return Object.freeze(refused);
   }
 }
 
