@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
-  allocatePhysicalWorkspaceOwner, applySnapshotToWorktree, createFromBase,
+  allocatePhysicalWorkspaceOwner, createFromBase,
   listWorktrees, markStopped, physicalWorkspaceOwnerReceipt, reap, reconcile,
   seatLinkedWorktreeOwnershipPath,
 } from '../src/worktree.mjs';
@@ -176,16 +176,17 @@ test('568-A: restart captures a dead local owner, reclaims its checkout, and kee
   assert.ok(events.some((event) => event.kind === 'worktree.removed'
     && event.payload?.snapshot === removed.snapshot));
 
+  // The content the reclamation preserved belongs to no owner receipt: it is reachable again by
+  // creating a checkout at the recorded snapshot revision (#621), which is how a resume-from
+  // successor receives it.
   const successorReceipt = allocatePhysicalWorkspaceOwner(
-    f.repo, ownerBinding(f.baseSha, 'successor'), after,
+    f.repo, ownerBinding(removed.snapshot, 'successor'), after,
   );
   const successor = await createFromBase(
-    f.repo, successorReceipt.physicalOwnerId, f.baseSha, { ownerReceipt: successorReceipt },
+    f.repo, successorReceipt.physicalOwnerId, removed.snapshot, { ownerReceipt: successorReceipt },
   );
-  assert.deepEqual(
-    applySnapshotToWorktree(f.repo, removed.snapshot, successor.dir, f.baseSha),
-    ['base.txt', 'untracked.txt'],
-  );
+  assert.equal(git(successor.dir, ['rev-parse', 'HEAD']), removed.snapshot,
+    'the successor checkout starts at the preserved revision');
   assert.equal(readFileSync(join(successor.dir, 'base.txt'), 'utf8'),
     'base edited before the crash\n');
   assert.equal(readFileSync(join(successor.dir, 'untracked.txt'), 'utf8'),

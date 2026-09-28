@@ -368,6 +368,13 @@ export function constructor(coordinator, opts) {
     coordinator._authorityTokens = new Set();
     coordinator._derivedReviewPlanToken = Object.freeze({});
     coordinator._derivedResumePlanToken = Object.freeze({});
+    // Issue #621: the private authority a `swarm.recruit --resume-from` dispatch holds when the
+    // predecessor's checkout is gone — the successor's own checkout is created at the
+    // predecessor's preserved snapshot revision. Observed 2026-09-27 (mcp-598-updates →
+    // mcp-598-updates2) and 2026-09-28 08:55Z (digest-lead16za → digest-lead16zb): the carry
+    // applied the predecessor's snapshot as a patch onto the successor's checkout, which no longer
+    // applied once the target had moved.
+    coordinator._derivedCarryPlanToken = Object.freeze({});
     coordinator._derivedRevisionPlanToken = Object.freeze({});
     coordinator._planRecoveryAuthority = Object.freeze({});
     coordinator._preservedProcesslessAttachAuthority = Object.freeze({});

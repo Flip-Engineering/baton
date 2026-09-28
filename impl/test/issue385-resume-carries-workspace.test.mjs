@@ -5,8 +5,8 @@
 // Contracts pinned by this file:
 //   (a) same workspace binding — the successor binds to the predecessor's checkout when
 //       no live worker holds it;
-//   (b) snapshot carry — when the worktree is gone but a snapshot commit exists, changes
-//       are applied from the snapshot into the successor's new worktree;
+//   (b) snapshot carry — when the predecessor's checkout is gone and a snapshot commit exists,
+//       the successor's own checkout starts at that snapshot revision (#621);
 //   (c) held-workspace refusal — recruiting a successor while the predecessor's workspace
 //       is held by another live worker is refused;
 //   (d) replay parity — the workspace.carried_from fold event is recorded and its fields
@@ -353,10 +353,10 @@ test('385-a: a resume-from successor binds to the predecessor\'s same workspace 
 });
 
 // ——————————————————————————————————————————————————————————————————
-// (b) Snapshot carry — worktree gone, snapshot applied to new checkout
+// (b) Snapshot custody — the stop's row names the revision the lane holds
 // ——————————————————————————————————————————————————————————————————
 
-test('385-b: a resume-from successor applies snapshot changes when the predecessor worktree is gone', async (t) => {
+test('385-b: the stop\'s custody row names the snapshot the predecessor lane branch holds', async (t) => {
   const { app, driver, repo } = await fixture(t);
   await createSwarm(app, 'snapshot');
   const alpha = await recruit(app, { swarmId: 'snapshot', participantId: 'alpha', objective: 'Build alpha snapshot' });
@@ -378,13 +378,10 @@ test('385-b: a resume-from successor applies snapshot changes when the predecess
   assert.notEqual(snapshotSha, alphaBaseSha, 'the lane branch carries the snapshot commit');
 
   // Alpha is now 'left' — a resumeFrom to a left predecessor is refused by _inheritancePredecessor.
-  // This means snapshot carry in real deployments happens when the predecessor is runtime_lost
-  // but the worktree was removed (reconciliation or external cleanup). To test the snapshot
-  // application path in isolation, we manually re-activate alpha and remove the worktree.
-  //
-  // This test verifies the snapshot application itself works correctly:
-  // the worktree.snapshotted event exists, the worktree is gone, and the snapshot diff
-  // can be applied to a new checkout.
+  // This means snapshot carry in real deployments happens when the predecessor is runtime_lost but
+  // the checkout was removed (reconciliation or external cleanup). This test verifies the custody
+  // row that reclamation writes: the worktree is gone and `worktree.snapshotted` names the revision
+  // the lane branch holds, which is the revision a successor's own checkout starts at (#621).
   const custodyEvents = driver.coordination.eventsView()
     .filter((e) => {
       const kind = e.kind === 'driver.recorded' ? e.payload?.kind : e.kind;
