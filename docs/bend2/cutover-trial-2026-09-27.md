@@ -78,12 +78,14 @@ Direct execution of the corrected check script passed the three selected tests.
 
 ## Evidence and limits
 
-The assigned checkout retains the proof under
-`.scratch/bend2/architect14/trial-proof/`: the cloned repository, scratch bare
-remote, `trial.db`, `trial.db.root.log`, launcher and check outputs, and
-`reattach-evidence.json`. `trial.db.trial/` holds the executable, environment,
-seed task, worker task and worktree, and supervisor and native logs. Native Codex
-conversation records remain in the proof's existing local harness storage.
+The 2026-09-27 scratch cleanup retained the proof's database, root log,
+launcher and check outputs, `reattach-evidence.json`, tasks, and focused
+supervisor and native logs in the assigned checkout's
+`.scratch/retained-evidence/bend2-evidence.tar.gz`. Their archive paths retain
+the original `.scratch/bend2/architect14/trial-proof/` prefix. Compact Git
+commit metadata is in `.scratch/retained-evidence/proof-commits.json`.
+The cloned repository, bare remote, worker checkout, built executable and
+disposable native session caches were removed.
 
 For this seat's containment, native launch wrappers placed harness state inside
 the assigned worktree. Selected JS runs used a contained `BATON_TEST_TMP_PARENT`
