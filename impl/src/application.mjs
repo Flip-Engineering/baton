@@ -5,7 +5,6 @@ import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
-import { MAX_CELL_SIZE, normalizeCellDeclaration } from './cell-declaration.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
@@ -191,13 +190,6 @@ const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 // Issue #31 §2.2(4): the closed set of run drivers. Only the wave path exists today — an
 // MCP/embedded explicit registration channel is a named future extension, not built here.
 const DRIVER_KINDS = Object.freeze(new Set(['wave']));
-// 93B (wave durability, attach-and-harvest): `wave.started` mints pre-loop, once per waveId
-// (idempotency-keyed so every member's run.start can carry it and only the first lands);
-// `wave.driver_detached` mints at attach-time, keyed `wave.driver_detached:${waveId}` — both ride
-// the same generic `driver.recorded` envelope as steering.registered, no dedicated projection.
-const APPLICATION_WAVE_STARTED_KIND = 'wave.started';
-// #173: the detached drive's settlement receipt — minted from runWorkflow's onSettle, keyed on waveId.
-const APPLICATION_WAVE_SETTLED_KIND = 'wave.settled';
 // Issue #370: the seed's evidence refusals are raised by the coordination store's own admission
 // (`_validateKnowledgeEvidence`), which keeps that rule's ONE authority; this boundary attaches
 // the field, the rule name and the next action a seat needs, reading and validating nothing a
@@ -743,33 +735,9 @@ function normalizeIntent(value) {
     // its working intent by calling it again — so without the key here, any caller passing
     // driverKind is refused `application_intent_invalid` before the handler body is reached.
     'runId', 'objective', 'resultIntent', 'profile', 'route', 'scope', 'composition', 'driverKind',
-    // 93B: `waveId`/`waveRole` bind this run to a wave, carried into steering.registered so a
-    // driver dying mid-loop leaves already-started members discoverable; `waveStart` (roster +
-    // idempotencyKey) rides only the first member's run.start and mints the pre-loop wave.started
-    // record. None of these describe what the run IS — same non-identity treatment as driverKind.
-    'waveId', 'waveRole', 'waveStart',
-    // #102 Decision 1: `cell` declares that this run IS a tight cell — `size` homogeneous worker
-    // nodes of ONE seat, keyed cell:<waveRole>:<index>. Like driverKind it describes who is
-    // driving the run, never what the run is, so it stays out of the runId derivation.
-    'cell',
   ]);
   const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
   const hasDriverKind = Object.hasOwn(value ?? {}, 'driverKind');
-  const hasWaveId = Object.hasOwn(value ?? {}, 'waveId');
-  const hasWaveRole = Object.hasOwn(value ?? {}, 'waveRole');
-  const hasWaveStart = Object.hasOwn(value ?? {}, 'waveStart');
-  const waveStart = value?.waveStart;
-  // #102 Decision 1: a cell is a run-shape declaration, read by the ONE declaration law the wave
-  // seams share (wave.mjs normalizeCellDeclaration, the same refusal codes). The wave role is
-  // required because it names the member nodes the cell's workers are keyed by, and a composition
-  // run already mints its nodes from its team, so the two declarations never combine.
-  let cell = null;
-  if (Object.hasOwn(value ?? {}, 'cell')) {
-    if (!hasWaveRole || !validId(value.waveRole) || Object.hasOwn(value ?? {}, 'composition')) {
-      throw applicationError('run intent is invalid', 'application_intent_invalid');
-    }
-    cell = normalizeCellDeclaration(value.cell, 'run cell');
-  }
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
@@ -778,27 +746,6 @@ function normalizeIntent(value) {
     // defense in depth behind the client-layer whitelist, the same two-tier shape resultIntent
     // already uses.
     || (hasDriverKind && !DRIVER_KINDS.has(value.driverKind))
-    || (hasWaveId && !validId(value.waveId))
-    || (hasWaveRole && !validId(value.waveRole))
-    || (hasWaveStart && (!waveStart || typeof waveStart !== 'object' || Array.isArray(waveStart)
-      // D2.2 (epic #132): the closed key set is deploymentId,idempotencyKey,roster for the
-      // direct-port wave.start; the facade runs.start (wave.mjs:205) still carries the legacy
-      // idempotencyKey,roster pair — both are accepted so the pre-loop mint dedups either way.
-      || !['deploymentId,idempotencyKey,roster', 'idempotencyKey,roster'].includes(Object.keys(waveStart).sort().join(','))
-      || !validId(waveStart.idempotencyKey)
-      || !Array.isArray(waveStart.roster) || waveStart.roster.length === 0 || waveStart.roster.length > 64
-      || !waveStart.roster.every((member) => (
-        // B2 legacy shape: a string-array roster stays a raw role string in the projection.
-        (typeof member === 'string' && validId(member))
-        // D2.2 NEW shape: each member carries {role, route: {effort, harness, model}, scope}.
-        || (member !== null && typeof member === 'object' && !Array.isArray(member)
-          && validId(member.role)
-          && member.route !== null && typeof member.route === 'object' && !Array.isArray(member.route)
-          && (member.scope === undefined
-            || (Array.isArray(member.scope) && member.scope.length > 0 && member.scope.length <= 64
-              && member.scope.every((item) => validText(item))
-              && new Set(member.scope).size === member.scope.length)))
-      ))))
     || (value.runId !== undefined && !validId(value.runId))
     // Decision 2: the objective is SHAPE-checked here (non-empty string, no NUL) — the byte law
     // and the spill economy live at the run.start ADMISSION seam (oversize admits with spill up
@@ -814,18 +761,9 @@ function normalizeIntent(value) {
     objective: value.objective.normalize('NFKC').trim(),
     ...(hasResultIntent ? { resultIntent: value.resultIntent } : {}),
     // Deliberately NOT folded into intentDigest or runId derivation: driverKind describes who is
-    // driving a run, not what the run is. Two calls with identical objective/profile/route/scope
-    // must resolve to the SAME run whether or not a wave happens to be the caller. Same rationale
-    // for waveId/waveRole/waveStart below.
+    // driving a run, not what the run is — two calls with identical objective/profile/route/scope
+    // must resolve to the SAME run whether or not a driver kind is declared.
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
-    ...(hasWaveId ? { waveId: value.waveId } : {}),
-    ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
-    ...(cell === null ? {} : { cell }),
-    ...(hasWaveStart ? { waveStart: {
-      deploymentId: waveStart.deploymentId,
-      idempotencyKey: waveStart.idempotencyKey,
-      roster: [...waveStart.roster],
-    } } : {}),
     profile: value.profile ?? null,
     route: normalizeRouteSelector(value.route),
     scope: value.scope === undefined ? null : [...value.scope].sort(),
@@ -3406,39 +3344,10 @@ export class BatonApplication {
       && typeof this.driver.coordination.recordDriver === 'function') {
       this.driver.coordination.recordDriver(APPLICATION_STEERING_REGISTERED_KIND, {
         runId: intent.runId, driverKind: intent.driverKind, actor: owner.actor,
-        ...(intent.waveId !== undefined ? { waveId: intent.waveId } : {}),
-        ...(intent.waveRole !== undefined ? { waveRole: intent.waveRole } : {}),
-        // Issue #74 (D3/A6): the member's EXACT route rides the steering-registered record so the
-        // waves.list seat map can recover it even when the wave was minted by the interpreter seam
-        // (createWave mints a role-only string roster, wave.mjs:180 — the route is not in it).
-        ...(intent.waveId !== undefined ? { route: clone(intent.route) } : {}),
-        // #102 Decision 6: the cell declaration rides the same record, so the run-status
-        // builder recovers size/quorum/strict for the quorum aggregate from the durable log
-        // (same event-log-only discipline as the wave binding above).
-        ...(intent.cell !== undefined ? { cell: clone(intent.cell) } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
       });
-      // 93B rule 1: `wave.started` mints pre-loop — durable, idempotency-keyed on waveId. Every
-      // member's run.start can carry the SAME `waveStart` payload; `_append`'s duplicate-key
-      // dedup (coordination-store.mjs) means only the first to land actually mints it, so a
-      // driver dying between member 1 and member 2 still leaves the record durable.
-      if (intent.waveId !== undefined && intent.waveStart !== undefined) {
-        // D2.2/F3 (wave-observability-2026-08-06/contract.md §D2.2): the wave.started payload
-        // carries the deployment's stable id beside {waveId, roster, idempotencyKey}; the roster
-        // is the object shape [{role, route, scope}] the fold renders. A bare host (no
-        // deploymentId) mints null — the fold renders it as the local-only row.
-        this.driver.coordination.recordDriver(APPLICATION_WAVE_STARTED_KIND, {
-          waveId: intent.waveId,
-          deploymentId: intent.waveStart.deploymentId ?? null,
-          roster: intent.waveStart.roster,
-          idempotencyKey: intent.waveStart.idempotencyKey,
-        }, {
-          actor: owner.actor,
-          key: `wave.started:${intent.waveId}`,
-        });
-      }
     }
     const normalizedPlan = normalizePlanRequest({
       goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
