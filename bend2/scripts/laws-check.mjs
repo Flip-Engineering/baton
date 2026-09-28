@@ -102,6 +102,8 @@ console.log(JSON.stringify({ check: 'entry compiles with every law proven', pass
 if (!baseline.ok) {
   failures++;
   console.log(baseline.output.trimEnd());
+  console.log(`laws-check: red - ${rows.length} laws, 1 compile, ${failures} failure; proof-removal controls did not run`);
+  process.exit(1);
 }
 
 for (const { law, file } of rows) {

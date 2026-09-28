@@ -176,9 +176,8 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
-    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(database,session))
-    acquired(database,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,""))
+    Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
+      +database => lock => acquired(database,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,"")))
 
 def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

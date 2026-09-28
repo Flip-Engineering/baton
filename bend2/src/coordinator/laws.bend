@@ -63,6 +63,7 @@
 # clauses laws-trace.md records as host assumptions - durability, crash windows, provider
 # idempotency, interface delivery and process lifetime - are outside what a Bend term decides.
 import Base
+import ./receive-laws.bend as ReceiveLaws
 import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C
@@ -210,10 +211,11 @@ law m17_missing_native_result_reports_to_the_parent:
   for +worker: String
   for +id: String
   for +log: String
+  for +stderr: String
   for +status: String
-  {Turn.result_missing(db, worker, id, log, status, False{}) == Turn.report(db, worker, id, "Worker process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ log ++ ".stderr") : IO(Unit)}
+  {Turn.result_missing(db, worker, id, log, stderr, status, False{}) == Turn.report(db, worker, id, "Worker process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
 
-def m17_missing_native_result_reports_to_the_parent(db, worker, id, log, status):
+def m17_missing_native_result_reports_to_the_parent(db, worker, id, log, stderr, status):
   {==}
 
 law m17_missing_observation_reports_to_the_parent:

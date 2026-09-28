@@ -258,26 +258,33 @@ including `check-native.log` and `real-omp/evidence.json`.
 
 ## Application ownership laws
 
-[receive-laws.bend](receive-laws.bend) states the receive ownership obligations
+[receive-laws.bend](../../bend2/src/coordinator/receive-laws.bend) states the receive ownership obligations
 under M-8's exclusive-claim clause. For a canonical coordinator database and
 session, a surviving keeper retains native ownership until native exit. A busy
 receive reports `queued`; recovery attaches to the recorded attempt.
 
-The checked equations import `coordinator/receive.bend`. The first constrains
+The equations import `coordinator/receive.bend` and `host/session-lock.bend`. The first constrains
 `Receive.acquired` for every launch argument and continuation when acquisition
 returns no lock. The second constrains `Receive.attach_recorded`: it invokes
 `ProcessChild.attach` with the supplied attempt directory and passes the returned
 handle to its continuation. `Receive.recover` uses this attachment function and
-the existing output observation and pending-input continuation.
+the existing output observation and pending-input continuation. The third
+constrains `SessionLock.acquire_session`: canonicalize the database, acquire the
+supplied session under that canonical path, and pass the exact database and lock
+result to the continuation. Both receive and direct turns use this helper.
 
-`laws-check.py` checks these equations through `laws.bend` and also checks the
-application file directly. Two negative controls mutate copies of the actual
-receive source: one executes a continuation while busy, and one launches a new
-process during recovery. Each must fail at its named law with expected and
-observed terms. The mutation copies retain the runtime import graph.
+The coordinator entry imports `coordinator/laws.bend`, which imports these
+ownership laws. Every entry compile verifies them. `laws-check.py` checks the
+entry and the documentation import. Four negative controls mutate the runtime:
+execute a continuation while busy, launch a process during recovery, substitute
+another session, or bypass database canonicalization. Each entry compile must
+fail at its named law with expected and observed terms. The mutation copies retain
+the runtime import graph. The native law checker also removes each runtime law's
+proof and requires the entry compile to fail.
 
 ```sh
 python3 docs/bend2/laws-check.py /path/to/bend
+node bend2/scripts/laws-check.mjs /path/to/bend
 ```
 
 The compiler reports the equations' foreign dependencies. Kernel file-lock
