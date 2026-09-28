@@ -1,0 +1,1543 @@
+{
+  "result": "passed",
+  "driver_exit_code": 0,
+  "source": "512349b6eed81c019bf0cf674bd7ddef3d5f2afe",
+  "source_directory": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928",
+  "driver_sha256": "a03cbf9d4138ee13d1bd3668f35c5ddd7d061d8c0c2a83e5428e60dab4fef920",
+  "helper_sha256": "b01af1f378839882799735f4b570706758247291d1285b2be550f5cf124f5cab",
+  "coordinator_sha256": "5518f42bbdddb9f56b1712a6c7998c9b242454cb2bda95430de0a4ade7befbf6",
+  "coordinator_build": {
+    "mode": "built_from_selected_clone",
+    "command": [
+      "sh",
+      "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/repo/bend2/scripts/build-native.sh",
+      "bend2/src/coordinator/main.bend",
+      "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/baton2"
+    ],
+    "build_log": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/build.log",
+    "generated_c_sha256": "6c104229c5f3905706efcf82c24c556e1bd3f4a38e539330d01a8ffb8aa26798",
+    "compiler": {
+      "path": "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+      "version": "bend 2.0.25",
+      "executable_sha256": "3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c"
+    }
+  },
+  "codex_login": {
+    "method": "chatgpt",
+    "exit_code": 0,
+    "status_sha256": "16118df3eb3595e44a4721878cef0f79910e6564e10ff0e78e451e7c4e478947"
+  },
+  "routes": {
+    "codex": {
+      "executable": "/Users/wahargis/.codex/packages/standalone/releases/0.154.0-aarch64-apple-darwin/bin/codex",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "executable_sha256": "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc"
+    },
+    "lead": {
+      "executable": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+    },
+    "omp": {
+      "executable": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+    },
+    "muse": {
+      "executable": "/Users/wahargis/.local/bin/muse",
+      "model": "muse-spark-1.3-contributor",
+      "effort": "low",
+      "executable_sha256": "c6db294799a190ca380da274beb3b9c0e160e0da9681a3d364ce8b0e5fa3a4bc"
+    }
+  },
+  "tasks": {
+    "deepseek": {
+      "task": "Fix the observed incorrect pass in bend2/scripts/check-unittest.sh. Reproductions: an imported file containing only `import unittest`, or a suite with a unittest.skip-decorated TestCase, each currently returns exit 0 and empty stdout. This lets unjudged selected tests authorize land-checked. Read the checker, its existing tests and the landing contract. Make zero executed tests or any skipped tests unjudged: nonzero exit and non-identity stdout so matching omissions on both checked trees cannot authorize a landing. Cover empty, entirely skipped, and mixed passing plus skipped suites. Preserve ordinary passes and stable assertion/error failure identities. Add behavioral regressions in bend2/test/check-unittest.py and update the checker's explanatory comments where needed. Your lead will send a further observed unittest result case through native guidance during this task; incorporate it. Work only on the two assigned files. Run `mkdir -p .scratch/bend2; python3 bend2/test/check-unittest.py`, inspect your diff, commit, and report exact commit and test result. The native supervisor sends your final report to your lead.",
+      "files": [
+        "bend2/scripts/check-unittest.sh",
+        "bend2/test/check-unittest.py"
+      ],
+      "checks": [
+        "bend2/test/check-unittest.py"
+      ]
+    },
+    "muse": {
+      "task": "Correct one stale paragraph in bend2/README.md under worker turns. It currently claims the Codex supervisor rereads the retained output log after process exit. Inspect bend2/src/coordinator/turn.bend and the Codex regression in bend2/test/receive.py: the implementation retains the current invocation's completed assistant and terminal events in memory to produce the parent report, including when the output log contains earlier successful turns. Describe that actual behavior in plain technical English. Keep the native thread ID and unavailable observed-model facts accurate. Change only bend2/README.md, keep this a small documentation correction, check the diff against the implementation, and run `mkdir -p .scratch/bend2; python3 bend2/test/check-unittest.py` as the shared landing check. Commit your documentation change and report its SHA and exact check result. The native supervisor sends your final report to your lead.",
+      "files": [
+        "bend2/README.md"
+      ],
+      "checks": [
+        "bend2/test/check-unittest.py"
+      ]
+    },
+    "guidance": "A further reproduced bug belongs in this fix: a unittest.expectedFailure-decorated test that unexpectedly passes currently returns exit 0 and empty stdout. Handle result.unexpectedSuccesses as failures with stable four-field identities, using kind unexpected-success, and add a behavioral regression. Preserve unittest's ordinary expected-failure behavior and cover it. Include this requirement before committing.",
+    "file_checks": []
+  },
+  "started_unix": 1790590618.295699,
+  "ended_unix": 1790591256.07542,
+  "elapsed_seconds": 637.7797210216522,
+  "full_evidence": {
+    "path": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/evidence.json",
+    "sha256": "6cc2e3e84abbb0269d37521deb60d504bcb10200366f753729531e4583616685"
+  },
+  "sessions": [
+    {
+      "id": "operator",
+      "parent": null,
+      "harness": "terminal",
+      "model": "",
+      "effort": "",
+      "native": "",
+      "observed_harness": "",
+      "observed_model": "",
+      "observed_effort": "",
+      "endpoint": "",
+      "workspace": "",
+      "branch": "",
+      "base": ""
+    },
+    {
+      "id": "root",
+      "parent": null,
+      "harness": "codex",
+      "model": "",
+      "effort": "",
+      "native": "01a0e784-904a-7172-878a-49a6acba951e",
+      "observed_harness": "",
+      "observed_model": "",
+      "observed_effort": "",
+      "endpoint": "[\"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/baton2\", \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/state.db\", \"receive\", \"root\", \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/root-native\", \"gpt-6-astra\", \"low\", \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/repo\", \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/root.jsonl\"]",
+      "workspace": "",
+      "branch": "",
+      "base": ""
+    },
+    {
+      "id": "lead",
+      "parent": "root",
+      "harness": "omp",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "native": "01a0e784-f712-7000-a735-6fbbdd84e498",
+      "observed_harness": "",
+      "observed_model": "kimi-code/k3",
+      "observed_effort": "",
+      "endpoint": "[\n  \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/baton2\",\n  \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/state.db\",\n  \"receive\",\n  \"lead\",\n  \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/lead-native\",\n  \"\",\n  \"\",\n  \"\",\n  \"/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/lead.jsonl\"\n]",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/lead",
+      "branch": "hierarchy-lead",
+      "base": "512349b6eed81c019bf0cf674bd7ddef3d5f2afe"
+    },
+    {
+      "id": "deepseek",
+      "parent": "lead",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "native": "01a0e786-ad97-7000-99e2-79c66a36d497",
+      "observed_harness": "",
+      "observed_model": "deepseek/deepseek-flash",
+      "observed_effort": "",
+      "endpoint": "",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/deepseek",
+      "branch": "hierarchy-deepseek",
+      "base": "512349b6eed81c019bf0cf674bd7ddef3d5f2afe"
+    },
+    {
+      "id": "muse",
+      "parent": "lead",
+      "harness": "muse",
+      "model": "muse-spark-1.3-contributor",
+      "effort": "low",
+      "native": "01a0e786-a8f8-7751-ae1d-8cef043f4332",
+      "observed_harness": "",
+      "observed_model": "muse-spark-1.3-contributor",
+      "observed_effort": "",
+      "endpoint": "",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/muse",
+      "branch": "hierarchy-muse",
+      "base": "512349b6eed81c019bf0cf674bd7ddef3d5f2afe"
+    }
+  ],
+  "processes": [
+    {
+      "seat": "root",
+      "harness": "codex",
+      "pid": 18504,
+      "ppid": 18436,
+      "argv": [
+        "/Users/wahargis/.codex/packages/standalone/releases/0.154.0-aarch64-apple-darwin/bin/codex",
+        "-c",
+        "forced_login_method=\"chatgpt\"",
+        "exec",
+        "--json",
+        "--model",
+        "gpt-6-astra",
+        "-c",
+        "model_reasoning_effort=\"low\"",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-"
+      ],
+      "started_unix": 1790590618.677387,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-root-18504.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-root-18504.events.jsonl",
+      "child_pid": 19270,
+      "child_started_unix": 1790590618.682158,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790590647.6544588,
+      "ended_unix": 1790590647.6607318,
+      "exit_code": 0,
+      "frames_sha256": "e93ac56c2206adbb01094630b0c5d02a1647d13cd12fb9436222d5911c47d309",
+      "events_sha256": "2dbf6e4bca3d983ceda8844bb54e6568c5f61c6e7c896a20b47ed8c35561745b"
+    },
+    {
+      "seat": "lead",
+      "harness": "omp",
+      "pid": 30497,
+      "ppid": 30350,
+      "argv": [
+        "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+        "--mode",
+        "rpc",
+        "--model",
+        "kimi-code/k3",
+        "--thinking",
+        "high",
+        "--approval-mode",
+        "yolo",
+        "--session-dir",
+        "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/state.db.session-6c656164"
+      ],
+      "started_unix": 1790590644.641966,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-lead-30497.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-lead-30497.events.jsonl",
+      "child_pid": 31408,
+      "child_started_unix": 1790590644.64525,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790590795.545132,
+      "ended_unix": 1790590795.546283,
+      "exit_code": 0,
+      "frames_sha256": "d535422fd54349054bd54f593cde4bbd50f7c319e6d4cd4fb1fd9d7d27f3aa5e",
+      "events_sha256": "871d5643e0bdaf4619c14690d6fcbc40bff71184dfc7820a3488fd0f4a5ca25d"
+    },
+    {
+      "seat": "deepseek",
+      "harness": "omp",
+      "pid": 85852,
+      "ppid": 85775,
+      "argv": [
+        "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+        "--mode",
+        "rpc",
+        "--model",
+        "deepseek/deepseek-flash",
+        "--thinking",
+        "low",
+        "--approval-mode",
+        "yolo",
+        "--session-dir",
+        "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/state.db.sessions"
+      ],
+      "started_unix": 1790590756.792744,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-deepseek-85852.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-deepseek-85852.events.jsonl",
+      "child_pid": 87083,
+      "child_started_unix": 1790590756.797083,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790590883.760573,
+      "ended_unix": 1790590883.767009,
+      "exit_code": 0,
+      "frames_sha256": "0cf9f21b1ac5efe8c3ef6d4e07c04e1bd42db09611bd95e198a09141fc94c288",
+      "events_sha256": "94d6c503a61d6689b42c13422f0f4664fd172207767f02c3e4ecae8d4e5c0f1d"
+    },
+    {
+      "seat": "muse",
+      "harness": "muse",
+      "pid": 85954,
+      "ppid": 85809,
+      "argv": [
+        "/Users/wahargis/.local/bin/muse",
+        "exec",
+        "--json",
+        "--prompt-file",
+        "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/muse.md",
+        "--model",
+        "muse-spark-1.3-contributor",
+        "--reasoning-effort",
+        "low",
+        "--yolo"
+      ],
+      "started_unix": 1790590756.794805,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-muse-85954.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-muse-85954.events.jsonl",
+      "child_pid": 87091,
+      "child_started_unix": 1790590756.80066,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790590829.514019,
+      "ended_unix": 1790590829.517083,
+      "exit_code": 0,
+      "frames_sha256": "eb876eb1c6dbf60cebfe022ddb4f52b7468faf1d4d784a8bb82fbd6c5ee8929d",
+      "events_sha256": "9faade5b09b35fe4f9163d45be5edb89474cca233393222084bf19e849847065"
+    },
+    {
+      "seat": "root",
+      "harness": "codex",
+      "pid": 65927,
+      "ppid": 65877,
+      "argv": [
+        "/Users/wahargis/.codex/packages/standalone/releases/0.154.0-aarch64-apple-darwin/bin/codex",
+        "-c",
+        "forced_login_method=\"chatgpt\"",
+        "exec",
+        "resume",
+        "01a0e784-904a-7172-878a-49a6acba951e",
+        "--json",
+        "--model",
+        "gpt-6-astra",
+        "-c",
+        "model_reasoning_effort=\"low\"",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-"
+      ],
+      "started_unix": 1790590796.7114298,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-root-65927.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-root-65927.events.jsonl",
+      "child_pid": 66497,
+      "child_started_unix": 1790590796.7147388,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790590815.0930932,
+      "ended_unix": 1790590815.094167,
+      "exit_code": 0,
+      "frames_sha256": "09f2d3d79b5c5e2fdfe157eff3e9bb70e3c4eccab242176e5c931755805101ee",
+      "events_sha256": "f9253e26eec7df39a3bd6a8fc267a31cb52d367ebd3f386ddb6b0dd7816c0b59"
+    },
+    {
+      "seat": "lead",
+      "harness": "omp",
+      "pid": 28399,
+      "ppid": 28345,
+      "argv": [
+        "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+        "--mode",
+        "rpc",
+        "--model",
+        "kimi-code/k3",
+        "--thinking",
+        "high",
+        "--approval-mode",
+        "yolo",
+        "--session-dir",
+        "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/state.db.session-6c656164",
+        "--resume",
+        "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/state.db.session-6c656164/2026-09-28T10-17-26-034Z_01a0e784-f712-7000-a735-6fbbdd84e498.jsonl"
+      ],
+      "started_unix": 1790590829.658976,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-lead-28399.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-lead-28399.events.jsonl",
+      "child_pid": 28975,
+      "child_started_unix": 1790590829.661859,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790591151.751425,
+      "ended_unix": 1790591151.7524989,
+      "exit_code": 0,
+      "frames_sha256": "a864a006b06786e8a460d53790d3d4647ab97d713c307839c054bb0f7094db97",
+      "events_sha256": "c702c0f675a4cd09ca9936f0c953998fb67793e87368be785459203ceb642fc8"
+    },
+    {
+      "seat": "root",
+      "harness": "codex",
+      "pid": 32538,
+      "ppid": 32496,
+      "argv": [
+        "/Users/wahargis/.codex/packages/standalone/releases/0.154.0-aarch64-apple-darwin/bin/codex",
+        "-c",
+        "forced_login_method=\"chatgpt\"",
+        "exec",
+        "resume",
+        "01a0e784-904a-7172-878a-49a6acba951e",
+        "--json",
+        "--model",
+        "gpt-6-astra",
+        "-c",
+        "model_reasoning_effort=\"low\"",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-"
+      ],
+      "started_unix": 1790591152.888225,
+      "frames": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-root-32538.native.jsonl",
+      "events": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/native-root-32538.events.jsonl",
+      "child_pid": 32795,
+      "child_started_unix": 1790591152.8971431,
+      "child_exit_code": 0,
+      "child_ended_unix": 1790591254.701128,
+      "ended_unix": 1790591254.702097,
+      "exit_code": 0,
+      "frames_sha256": "1a53368166349d01f13cda18728c9a9660fefc0aadbbd76a76dade1cb15b1225",
+      "events_sha256": "56353c4526e83bd5de16967303bb11d307f3af4539932ed2b831cfbd9e6fd9df"
+    }
+  ],
+  "messages": [
+    {
+      "seq": 1,
+      "id": "hierarchy-task",
+      "sender": "operator",
+      "recipient": "root",
+      "kind": "task",
+      "receipt": "Accepted; lead recruited and connected; task launched in a background process session.",
+      "body_bytes": 2156,
+      "body_sha256": "2302f038e5a12b4143ea8312178285218da97f156de229f89f6811ea75346283"
+    },
+    {
+      "seq": 2,
+      "id": "lead-task",
+      "sender": "root",
+      "recipient": "lead",
+      "kind": "task",
+      "receipt": "accepted: recruiting deepseek and muse, detaching lead workspace, starting workers",
+      "body_bytes": 2791,
+      "body_sha256": "5a30bcd973bed1c2a0dc904e94e1e6a0fbbd15e64ebfd96b3582fdee52848c75"
+    },
+    {
+      "seq": 3,
+      "id": "unexpected-success-guidance",
+      "sender": "lead",
+      "recipient": "deepseek",
+      "kind": "guidance",
+      "receipt": "{\"id\":\"unexpected-success-guidance\",\"type\":\"response\",\"command\":\"steer\",\"success\":true}",
+      "body_bytes": 413,
+      "body_sha256": "3c8ff228d0e13365dbfd9034a6cb391762fc4a5a885045525cb44d99e4150e0a"
+    },
+    {
+      "seq": 4,
+      "id": "receive:lead:2:1",
+      "sender": "lead",
+      "recipient": "root",
+      "kind": "report",
+      "receipt": "Accepted delegation progress. Coordinator confirms both child sessions under lead and their native bindings. Continue review and checked landings on child reports as assigned.",
+      "body_bytes": 1565,
+      "body_sha256": "0cf673b957a017884b190441e9457405ddcee344340f8e8401d25aff302e32d7"
+    },
+    {
+      "seq": 5,
+      "id": "muse-turn",
+      "sender": "muse",
+      "recipient": "lead",
+      "kind": "report",
+      "receipt": "reviewed: README diff 68abd65 matches turn.bend codex_log/codex_finished in-memory report path; check 6/6 OK; integrating commit onto hierarchy-muse then landing",
+      "body_bytes": 1354,
+      "body_sha256": "53692d2aae1f4464db1094a09d4526796aa1940140abf2f1bc837e5e5cee6abf"
+    },
+    {
+      "seq": 6,
+      "id": "deepseek-turn",
+      "sender": "deepseek",
+      "recipient": "lead",
+      "kind": "report",
+      "receipt": "reviewed: d1a6c1a on hierarchy-deepseek, both allowed files only; skip/zero-test runs now unjudged non-identity stdout + exit 1, unexpectedSuccesses emit unexpected-success identity; 12/12 tests OK independently; landing",
+      "body_bytes": 3109,
+      "body_sha256": "c37fb4204f9d520856c45da379a79518e293dba6dc6aba6c6c61ef4e9ff105b8"
+    },
+    {
+      "seq": 7,
+      "id": "receive:lead:5:2",
+      "sender": "lead",
+      "recipient": "root",
+      "kind": "report",
+      "receipt": "Accepted LEAD_READY; independent root review and selected checks underway.",
+      "body_bytes": 2701,
+      "body_sha256": "114c3065b46e00b9c774df6d1248675727ca241765675213ec2274637c79cf36"
+    },
+    {
+      "seq": 8,
+      "id": "hierarchy-complete",
+      "sender": "root",
+      "recipient": "operator",
+      "kind": "report",
+      "receipt": null,
+      "body_bytes": 3008,
+      "body_sha256": "040dd56d80f150bdf97fa23e395b22c6b6c20d182c81401c399ca900df5f8484"
+    }
+  ],
+  "turns": [
+    {
+      "id": "receive:lead:2:1",
+      "worker": "lead",
+      "event_bytes": 152440,
+      "event_sha256": "505da9ad047e0b6630de1fca70211343ea68ec957cba7edfab8ae62a3e53212f"
+    },
+    {
+      "id": "muse-turn",
+      "worker": "muse",
+      "event_bytes": 1917,
+      "event_sha256": "738720d6a8c1cf4c3dd64dd28aaa5799b3a074fb5bc9668ac9ccfbc53c789f40"
+    },
+    {
+      "id": "deepseek-turn",
+      "worker": "deepseek",
+      "event_bytes": 330544,
+      "event_sha256": "36e7c3ca6981bf75551cf5a5110b46384f288aa8f386419f8f3a19fa66be3c9d"
+    },
+    {
+      "id": "receive:lead:5:2",
+      "worker": "lead",
+      "event_bytes": 196864,
+      "event_sha256": "71bb40bb9198d066a19e1501a0105840d1014ae6df52d3ab9eb65fb622b100dd"
+    }
+  ],
+  "guidance_observation": {
+    "observed_unix": 1790590764.938677,
+    "process": 85852,
+    "event": {
+      "type": "tool_execution_start",
+      "received_unix": 1790590761.030035,
+      "offset": 132742,
+      "bytes": 275
+    }
+  },
+  "lead_guidance_calls": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "tool_virWF7oUn8ruB7Y4SdPgARAM",
+      "toolName": "bash",
+      "args": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/environment.sh && \"$B2\" \"$DB\" message-file unexpected-success-guidance lead deepseek guidance \"$STATE/guidance.txt\""
+      },
+      "intent": "Sending unexpected-success guidance to deepseek"
+    }
+  ],
+  "native_steer_event": {
+    "type": "response",
+    "command": "steer",
+    "id": "unexpected-success-guidance",
+    "success": true,
+    "received_unix": 1790590774.0313249,
+    "offset": 533554,
+    "bytes": 88
+  },
+  "concurrent_native_processes": {
+    "observed_unix": 1790590757.441515,
+    "child_pids": [
+      87083,
+      87091
+    ],
+    "processes": [
+      [
+        "87083",
+        "85852",
+        "R",
+        "/opt/homebrew/Cellar/omp/17.4.0/bin/omp"
+      ],
+      [
+        "87091",
+        "85954",
+        "S",
+        "/Users/wahargis/.local/bin/muse-bin-1.4.0-R4302.1"
+      ]
+    ]
+  },
+  "worker_overlap_seconds": 72.71335911750793,
+  "landings": {
+    "deepseek": {
+      "status": "landed",
+      "target": "hierarchy-lead",
+      "commit": "ceec71618bff9493b08eb8333131bdf811427be2"
+    },
+    "muse": {
+      "status": "landed",
+      "target": "hierarchy-lead",
+      "commit": "b5e1c3a36408f0c72d48424ec1fd9a9c137909f7"
+    },
+    "root": {
+      "status": "landed",
+      "target": "bend2-trial",
+      "commit": "19ec7aabe18dda423dab54094d60d3bc0f46bf25"
+    }
+  },
+  "tips": {
+    "target": "19ec7aabe18dda423dab54094d60d3bc0f46bf25",
+    "lead": "ceec71618bff9493b08eb8333131bdf811427be2",
+    "deepseek": "d1a6c1a22e1bfaf2cb62c1b6b9454ec45945e772",
+    "muse": "68abd6558abe1cbf926a83129b08bb66bf35817d"
+  },
+  "target_tree": "8a4a17edddc226d57b562145aef0bfd9054d3aaa",
+  "root_report": {
+    "path": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-live/root-report.md",
+    "sha256": "040dd56d80f150bdf97fa23e395b22c6b6c20d182c81401c399ca900df5f8484",
+    "text": "# Hierarchy completion\n\nChecked landing of lead onto bend2-trial succeeded: 19ec7aabe18dda423dab54094d60d3bc0f46bf25.\nLead commit: ceec71618bff9493b08eb8333131bdf811427be2. Both trees equal 8a4a17edddc226d57b562145aef0bfd9054d3aaa.\nBase: 512349b6eed81c019bf0cf674bd7ddef3d5f2afe.\n\n## Commits\n\n- DeepSeek worker: d1a6c1a22e1bfaf2cb62c1b6b9454ec45945e772.\n- Muse worker: 68abd6558abe1cbf926a83129b08bb66bf35817d.\n- Muse checked landing onto lead: b5e1c3a36408f0c72d48424ec1fd9a9c137909f7.\n- DeepSeek checked landing onto lead: ceec71618bff9493b08eb8333131bdf811427be2.\n- Root checked landing: 19ec7aabe18dda423dab54094d60d3bc0f46bf25; exact response in landing-root.json.\n\n## Independent review\n\nRoot inspected both worker diffs and the composed lead diff. Changes are limited to bend2/scripts/check-unittest.sh, bend2/test/check-unittest.py, and bend2/README.md. The lead checker and test files equal the DeepSeek files; the lead README equals the Muse file. Full composed diff is saved in root-reviewed.diff.\n\nThe checker marks zero-test and skipped-test runs unjudged and exits 1. Unexpected successes produce stable four-field identities with kind unexpected-success. Regressions cover empty suites, all-skipped suites, mixed suites, identical omissions, unexpected successes, and ordinary expected failures. Existing passing, assertion, error, missing-file, import-error, and noisy-load checks pass.\n\nREADME statements were inspected against codex_frames, codex_finished, codex_result_sql, consume in turn.bend and the native session mapping in commands.bend. The current invocation retains its completed assistant message and terminal event for report creation.\n\nCoordinator bindings confirm lead under root, DeepSeek and Muse under lead, the assigned harness/model/effort, native IDs, workspaces, branches, and base. Snapshot: root-bindings-and-guidance.json. The guidance message has a successful native steer receipt; native-deepseek-85852.events.jsonl records command steer success true at 1790590774.0313249, after the observed first tool event at 1790590761.030035. The unexpected-success requirement is implemented and its regression passes.\n\nMuse originally committed on the detached root checkout; lead bound hierarchy-muse to that commit before checked landing. Root independently verified the resulting branch contents. Root checkout remains detached. Existing sessions, branches, and worktrees are preserved; root-target is a detached verification worktree. Nothing was pushed.\n\n## Selected checks\n\nOnly bend2/test/check-unittest.py was selected, executed through CHECK using /bin/sh.\n\n- DeepSeek worker tree: exit 0, 12 tests OK; root-check-deepseek.log.\n- Muse worker tree: exit 0, 6 tests OK; root-check-muse.log.\n- Composed lead tree: exit 0, 12 tests OK; root-check-lead.log.\n- Final target tree after checked landing: exit 0, 12 tests OK; root-check-target.log.\n\nAll three checked landing responses have status landed. Final target tree equality was verified before running its checks.\n"
+  },
+  "usage_and_timeline": {
+    "extracted_unix": 1790591550.6406138,
+    "source": "512349b6eed81c019bf0cf674bd7ddef3d5f2afe",
+    "coordinator_sha256": "5518f42bbdddb9f56b1712a6c7998c9b242454cb2bda95430de0a4ade7befbf6",
+    "evidence_path": "evidence.json",
+    "evidence_sha256": "6cc2e3e84abbb0269d37521deb60d504bcb10200366f753729531e4583616685",
+    "run_started_utc": "2026-09-28T10:16:58.295699+00:00",
+    "run_elapsed_s": 637.7797210216522,
+    "worker_native_overlap_s": 72.71335911750793,
+    "concurrent_native_processes": {
+      "observed_unix": 1790590757.441515,
+      "child_pids": [
+        87083,
+        87091
+      ],
+      "processes": [
+        [
+          "87083",
+          "85852",
+          "R",
+          "/opt/homebrew/Cellar/omp/17.4.0/bin/omp"
+        ],
+        [
+          "87091",
+          "85954",
+          "S",
+          "/Users/wahargis/.local/bin/muse-bin-1.4.0-R4302.1"
+        ]
+      ]
+    },
+    "seats": {
+      "root": {
+        "requested_model": "gpt-6-astra",
+        "observed_model": null,
+        "native_session_id": "01a0e784-904a-7172-878a-49a6acba951e",
+        "invocations": 3,
+        "native_seconds": 149.15463995933533,
+        "intervals": [
+          {
+            "pid": 19270,
+            "start_unix": 1790590618.682158,
+            "end_unix": 1790590647.6544588,
+            "start_since_run_s": 0.3864591121673584,
+            "end_since_run_s": 29.358759880065918,
+            "duration_s": 28.97230076789856,
+            "exit_code": 0,
+            "frames": "native-root-18504.native.jsonl",
+            "frames_sha256": "e93ac56c2206adbb01094630b0c5d02a1647d13cd12fb9436222d5911c47d309"
+          },
+          {
+            "pid": 66497,
+            "start_unix": 1790590796.7147388,
+            "end_unix": 1790590815.0930932,
+            "start_since_run_s": 178.4190399646759,
+            "end_since_run_s": 196.79739427566528,
+            "duration_s": 18.37835431098938,
+            "exit_code": 0,
+            "frames": "native-root-65927.native.jsonl",
+            "frames_sha256": "09f2d3d79b5c5e2fdfe157eff3e9bb70e3c4eccab242176e5c931755805101ee"
+          },
+          {
+            "pid": 32795,
+            "start_unix": 1790591152.8971431,
+            "end_unix": 1790591254.701128,
+            "start_since_run_s": 534.6014442443848,
+            "end_since_run_s": 636.4054291248322,
+            "duration_s": 101.80398488044739,
+            "exit_code": 0,
+            "frames": "native-root-32538.native.jsonl",
+            "frames_sha256": "1a53368166349d01f13cda18728c9a9660fefc0aadbbd76a76dade1cb15b1225"
+          }
+        ],
+        "usage": {
+          "source": "turn.completed.usage",
+          "aggregation": "Counters are cumulative across this resumed conversation; use the last cumulative total and consecutive differences.",
+          "cumulative": [
+            {
+              "input_tokens": 96262,
+              "cached_input_tokens": 82816,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 488,
+              "reasoning_output_tokens": 0
+            },
+            {
+              "input_tokens": 179995,
+              "cached_input_tokens": 162176,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 742,
+              "reasoning_output_tokens": 0
+            },
+            {
+              "input_tokens": 429074,
+              "cached_input_tokens": 391168,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 3136,
+              "reasoning_output_tokens": 19
+            }
+          ],
+          "per_invocation_deltas": [
+            {
+              "input_tokens": 96262,
+              "cached_input_tokens": 82816,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 488,
+              "reasoning_output_tokens": 0
+            },
+            {
+              "input_tokens": 83733,
+              "cached_input_tokens": 79360,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 254,
+              "reasoning_output_tokens": 0
+            },
+            {
+              "input_tokens": 249079,
+              "cached_input_tokens": 228992,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 2394,
+              "reasoning_output_tokens": 19
+            }
+          ],
+          "total": {
+            "input_tokens": 429074,
+            "cached_input_tokens": 391168,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3136,
+            "reasoning_output_tokens": 19
+          },
+          "input_including_cache": 429074,
+          "input_plus_output": 432210
+        }
+      },
+      "lead": {
+        "requested_model": "kimi-code/k3",
+        "observed_model": "kimi-code/k3",
+        "native_session_id": "01a0e784-f712-7000-a735-6fbbdd84e498",
+        "invocations": 2,
+        "native_seconds": 472.98944783210754,
+        "intervals": [
+          {
+            "pid": 31408,
+            "start_unix": 1790590644.64525,
+            "end_unix": 1790590795.545132,
+            "start_since_run_s": 26.3495512008667,
+            "end_since_run_s": 177.2494330406189,
+            "duration_s": 150.8998818397522,
+            "exit_code": 0,
+            "frames": "native-lead-30497.native.jsonl",
+            "frames_sha256": "d535422fd54349054bd54f593cde4bbd50f7c319e6d4cd4fb1fd9d7d27f3aa5e"
+          },
+          {
+            "pid": 28975,
+            "start_unix": 1790590829.661859,
+            "end_unix": 1790591151.751425,
+            "start_since_run_s": 211.36616015434265,
+            "end_since_run_s": 533.455726146698,
+            "duration_s": 322.08956599235535,
+            "exit_code": 0,
+            "frames": "native-lead-28399.native.jsonl",
+            "frames_sha256": "a864a006b06786e8a460d53790d3d4647ab97d713c307839c054bb0f7094db97"
+          }
+        ],
+        "usage": {
+          "source": "message_end.message.usage where message.role is assistant",
+          "aggregation": "Sum only completed assistant message_end records; exclude repeated usage in turn_end and agent_end.",
+          "assistant_messages": 41,
+          "duplicate_fingerprints": 0,
+          "missing_usage": 0,
+          "field_presence": {
+            "input": 41,
+            "output": 41,
+            "cacheRead": 41,
+            "cacheWrite": 41,
+            "totalTokens": 41,
+            "cost": 41
+          },
+          "total": {
+            "input": 63905,
+            "output": 17371,
+            "cacheRead": 1691648,
+            "cacheWrite": 0,
+            "totalTokens": 1772924
+          },
+          "input_including_cache": 1755553,
+          "per_invocation": [
+            {
+              "native_pid": 31408,
+              "assistant_messages": 16,
+              "usage": {
+                "input": 39220,
+                "output": 4699,
+                "cacheRead": 456704,
+                "cacheWrite": 0,
+                "totalTokens": 500623
+              }
+            },
+            {
+              "native_pid": 28975,
+              "assistant_messages": 25,
+              "usage": {
+                "input": 24685,
+                "output": 12672,
+                "cacheRead": 1234944,
+                "cacheWrite": 0,
+                "totalTokens": 1272301
+              }
+            }
+          ]
+        }
+      },
+      "deepseek": {
+        "requested_model": "deepseek/deepseek-flash",
+        "observed_model": "deepseek/deepseek-flash",
+        "native_session_id": "01a0e786-ad97-7000-99e2-79c66a36d497",
+        "invocations": 1,
+        "native_seconds": 126.96349000930786,
+        "intervals": [
+          {
+            "pid": 87083,
+            "start_unix": 1790590756.797083,
+            "end_unix": 1790590883.760573,
+            "start_since_run_s": 138.50138401985168,
+            "end_since_run_s": 265.46487402915955,
+            "duration_s": 126.96349000930786,
+            "exit_code": 0,
+            "frames": "native-deepseek-85852.native.jsonl",
+            "frames_sha256": "0cf9f21b1ac5efe8c3ef6d4e07c04e1bd42db09611bd95e198a09141fc94c288"
+          }
+        ],
+        "usage": {
+          "source": "message_end.message.usage where message.role is assistant",
+          "aggregation": "Sum only completed assistant message_end records; exclude repeated usage in turn_end and agent_end.",
+          "assistant_messages": 30,
+          "duplicate_fingerprints": 0,
+          "missing_usage": 0,
+          "field_presence": {
+            "input": 30,
+            "output": 30,
+            "cacheRead": 30,
+            "cacheWrite": 30,
+            "totalTokens": 30,
+            "cost": 30,
+            "reasoningTokens": 26
+          },
+          "total": {
+            "input": 30574,
+            "output": 20935,
+            "cacheRead": 1528064,
+            "cacheWrite": 0,
+            "totalTokens": 1579573,
+            "reasoningTokens": 12695
+          },
+          "input_including_cache": 1558638,
+          "per_invocation": [
+            {
+              "native_pid": 87083,
+              "assistant_messages": 30,
+              "usage": {
+                "input": 30574,
+                "output": 20935,
+                "cacheRead": 1528064,
+                "cacheWrite": 0,
+                "totalTokens": 1579573,
+                "reasoningTokens": 12695
+              }
+            }
+          ]
+        }
+      },
+      "muse": {
+        "requested_model": "muse-spark-1.3-contributor",
+        "observed_model": "muse-spark-1.3-contributor",
+        "native_session_id": "01a0e786-a8f8-7751-ae1d-8cef043f4332",
+        "invocations": 1,
+        "native_seconds": 72.71335911750793,
+        "intervals": [
+          {
+            "pid": 87091,
+            "start_unix": 1790590756.80066,
+            "end_unix": 1790590829.514019,
+            "start_since_run_s": 138.50496101379395,
+            "end_since_run_s": 211.21832013130188,
+            "duration_s": 72.71335911750793,
+            "exit_code": 0,
+            "frames": "native-muse-85954.native.jsonl",
+            "frames_sha256": "eb876eb1c6dbf60cebfe022ddb4f52b7468faf1d4d784a8bb82fbd6c5ee8929d"
+          }
+        ],
+        "usage": {
+          "source": "No usage or token fields present in retained Muse exec JSONL",
+          "total": null
+        }
+      }
+    },
+    "guidance": {
+      "observation": {
+        "observed_unix": 1790590764.938677,
+        "process": 85852,
+        "event": {
+          "type": "tool_execution_start",
+          "received_unix": 1790590761.030035,
+          "offset": 132742,
+          "bytes": 275
+        }
+      },
+      "lead_tool_calls": [
+        {
+          "toolCallId": "tool_virWF7oUn8ruB7Y4SdPgARAM",
+          "toolName": "bash",
+          "received_unix": 1790590770.92984
+        }
+      ],
+      "steer_response": {
+        "type": "response",
+        "command": "steer",
+        "id": "unexpected-success-guidance",
+        "success": true,
+        "received_unix": 1790590774.0313249,
+        "offset": 533554,
+        "bytes": 88
+      },
+      "deepseek_terminal_event": {
+        "type": "agent_end",
+        "isTerminal": true,
+        "received_unix": 1790590883.3571358,
+        "offset": 1377082,
+        "bytes": 330545
+      },
+      "steer_after_worker_start_s": 17.23424196243286,
+      "steer_before_terminal_s": 109.32581090927124
+    },
+    "parent_report_checks": [
+      {
+        "id": "receive:lead:2:1",
+        "bytes": 1565,
+        "sha256": "0cf673b957a017884b190441e9457405ddcee344340f8e8401d25aff302e32d7",
+        "matches_native": true,
+        "has_receipt": true
+      },
+      {
+        "id": "receive:lead:5:2",
+        "bytes": 2701,
+        "sha256": "114c3065b46e00b9c774df6d1248675727ca241765675213ec2274637c79cf36",
+        "matches_native": true,
+        "has_receipt": true
+      },
+      {
+        "id": "deepseek-turn",
+        "bytes": 3109,
+        "sha256": "c37fb4204f9d520856c45da379a79518e293dba6dc6aba6c6c61ef4e9ff105b8",
+        "matches_native": true,
+        "has_receipt": true
+      },
+      {
+        "id": "muse-turn",
+        "bytes": 1354,
+        "sha256": "53692d2aae1f4464db1094a09d4526796aa1940140abf2f1bc837e5e5cee6abf",
+        "matches_native": true,
+        "has_receipt": true
+      }
+    ],
+    "root_completion": {
+      "bytes": 3008,
+      "sha256": "040dd56d80f150bdf97fa23e395b22c6b6c20d182c81401c399ca900df5f8484",
+      "matches_report_file": true
+    },
+    "codex_cumulative_proof": {
+      "native_session_path": "/Users/wahargis/.codex/sessions/2026/09/28/rollout-2026-09-28T03-16-59-01a0e784-904a-7172-878a-49a6acba951e.jsonl",
+      "sha256": "11da29b573f6c4e4f9f39e16d74270031b8c04ae54c4c7b5aef74a3deb97bb23",
+      "token_count_records": [
+        {
+          "timestamp": "2026-09-28T10:17:08.751Z",
+          "total_token_usage": {
+            "input_tokens": 22636,
+            "cached_input_tokens": 12160,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 113,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 22749
+          },
+          "last_token_usage": {
+            "input_tokens": 22636,
+            "cached_input_tokens": 12160,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 113,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 22749
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:17:16.443Z",
+          "total_token_usage": {
+            "input_tokens": 46671,
+            "cached_input_tokens": 34560,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 236,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 46907
+          },
+          "last_token_usage": {
+            "input_tokens": 24035,
+            "cached_input_tokens": 22400,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 123,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 24158
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:17:24.478Z",
+          "total_token_usage": {
+            "input_tokens": 71313,
+            "cached_input_tokens": 58368,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 451,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 71764
+          },
+          "last_token_usage": {
+            "input_tokens": 24642,
+            "cached_input_tokens": 23808,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 215,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 24857
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:17:26.814Z",
+          "total_token_usage": {
+            "input_tokens": 96262,
+            "cached_input_tokens": 82816,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 488,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 96750
+          },
+          "last_token_usage": {
+            "input_tokens": 24949,
+            "cached_input_tokens": 24448,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 37,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 24986
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:20:06.140Z",
+          "total_token_usage": {
+            "input_tokens": 122444,
+            "cached_input_tokens": 107648,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 601,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 123045
+          },
+          "last_token_usage": {
+            "input_tokens": 26182,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 113,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 26295
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:20:11.453Z",
+          "total_token_usage": {
+            "input_tokens": 151118,
+            "cached_input_tokens": 133632,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 705,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 151823
+          },
+          "last_token_usage": {
+            "input_tokens": 28674,
+            "cached_input_tokens": 25984,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 104,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 28778
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:20:14.262Z",
+          "total_token_usage": {
+            "input_tokens": 179995,
+            "cached_input_tokens": 162176,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 742,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 180737
+          },
+          "last_token_usage": {
+            "input_tokens": 28877,
+            "cached_input_tokens": 28544,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 37,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 28914
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:26:05.203Z",
+          "total_token_usage": {
+            "input_tokens": 210457,
+            "cached_input_tokens": 190848,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 980,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 211437
+          },
+          "last_token_usage": {
+            "input_tokens": 30462,
+            "cached_input_tokens": 28672,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 238,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 30700
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:26:14.337Z",
+          "total_token_usage": {
+            "input_tokens": 250085,
+            "cached_input_tokens": 221184,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1229,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 251314
+          },
+          "last_token_usage": {
+            "input_tokens": 39628,
+            "cached_input_tokens": 30336,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 249,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 39877
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:26:33.416Z",
+          "total_token_usage": {
+            "input_tokens": 292218,
+            "cached_input_tokens": 260608,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1670,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 293888
+          },
+          "last_token_usage": {
+            "input_tokens": 42133,
+            "cached_input_tokens": 39424,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 441,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 42574
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:26:45.956Z",
+          "total_token_usage": {
+            "input_tokens": 336615,
+            "cached_input_tokens": 302592,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1778,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 338393
+          },
+          "last_token_usage": {
+            "input_tokens": 44397,
+            "cached_input_tokens": 41984,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 108,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 44505
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:27:29.895Z",
+          "total_token_usage": {
+            "input_tokens": 381214,
+            "cached_input_tokens": 346752,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3038,
+            "reasoning_output_tokens": 19,
+            "total_tokens": 384252
+          },
+          "last_token_usage": {
+            "input_tokens": 44599,
+            "cached_input_tokens": 44160,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1260,
+            "reasoning_output_tokens": 19,
+            "total_tokens": 45859
+          }
+        },
+        {
+          "timestamp": "2026-09-28T10:27:34.108Z",
+          "total_token_usage": {
+            "input_tokens": 429074,
+            "cached_input_tokens": 391168,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3136,
+            "reasoning_output_tokens": 19,
+            "total_tokens": 432210
+          },
+          "last_token_usage": {
+            "input_tokens": 47860,
+            "cached_input_tokens": 44416,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 98,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 47958
+          }
+        }
+      ],
+      "all_turn_completed_values_match_native_totals": true
+    },
+    "limitations": [
+      "Run elapsed starts after source preparation, login preflight and compilation. Native durations are observed child lifetimes, not model-computation or coordinator CPU time.",
+      "Native process overlap is supported by both child lifetimes and a simultaneous non-zombie process snapshot.",
+      "OMP input excludes separately reported cacheRead/cacheWrite in these records; each totalTokens equals input+cacheRead+cacheWrite+output. Codex input_tokens includes cached_input_tokens.",
+      "OMP turn_end and agent_end repeat completed assistant usage and are excluded. No selected OMP assistant message lacked usage or duplicated an entire message fingerprint.",
+      "Token totals include repeated context across requests and use each native provider/tokenizer schema. They are not unique conversation sizes or directly interchangeable model workloads.",
+      "Reasoning fields are retained separately and are not added again to totals; DeepSeek reasoningTokens appears in 26 of 30 completed messages. Kimi exposes no separate reasoning field.",
+      "Muse token usage is unavailable in its retained exec stream, so no complete cross-model token total is asserted.",
+      "Native cost fields were not treated as billing evidence. Codex model is requested through its configured route; its events supply no observed model."
+    ]
+  },
+  "checker_before": {
+    "repository": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928",
+    "cases": [
+      {
+        "name": "empty",
+        "fixture": "import unittest\n",
+        "expected": "unjudged",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": false
+      },
+      {
+        "name": "skipped",
+        "fixture": "import unittest\n@unittest.skip(\"missing prerequisite\")\nclass Selected(unittest.TestCase):\n def test_case(self): pass\n",
+        "expected": "unjudged",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": false
+      },
+      {
+        "name": "mixed",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_pass(self): pass\n @unittest.skip(\"missing prerequisite\")\n def test_skip(self): pass\n",
+        "expected": "unjudged",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": false
+      },
+      {
+        "name": "skip_failure",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_fail(self): self.fail(\"fixture\")\n @unittest.skip(\"missing prerequisite\")\n def test_skip(self): pass\n",
+        "expected": "unjudged",
+        "exit": 1,
+        "stdout": "736b69705f6661696c7572652e7079 62656e64325f73656c65637465645f736b69705f6661696c7572652e53656c65637465642e746573745f6661696c 617373657274696f6e 2d\n",
+        "stderr": "",
+        "verified": false
+      },
+      {
+        "name": "unexpected_success",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n @unittest.expectedFailure\n def test_case(self): pass\n",
+        "expected": "unexpected-success",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "identity": [
+          ""
+        ],
+        "verified": false
+      },
+      {
+        "name": "expected_failure",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n @unittest.expectedFailure\n def test_case(self): self.fail(\"expected\")\n",
+        "expected": "pass",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "passing",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): pass\n",
+        "expected": "pass",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "assertion",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): self.fail(\"fixture\")\n",
+        "expected": "assertion",
+        "exit": 1,
+        "stdout": "617373657274696f6e2e7079 62656e64325f73656c65637465645f617373657274696f6e2e53656c65637465642e746573745f63617365 617373657274696f6e 2d\n",
+        "stderr": "",
+        "identity": [
+          "assertion.py",
+          "bend2_selected_assertion.Selected.test_case",
+          "assertion",
+          "-"
+        ],
+        "verified": true
+      },
+      {
+        "name": "error",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): raise RuntimeError(\"fixture\")\n",
+        "expected": "error",
+        "exit": 1,
+        "stdout": "6572726f722e7079 62656e64325f73656c65637465645f6572726f722e53656c65637465642e746573745f63617365 6572726f72 2d\n",
+        "stderr": "",
+        "identity": [
+          "error.py",
+          "bend2_selected_error.Selected.test_case",
+          "error",
+          "-"
+        ],
+        "verified": true
+      }
+    ]
+  },
+  "checker_on_live_landing": {
+    "repository": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928",
+    "cases": [
+      {
+        "name": "empty",
+        "fixture": "import unittest\n",
+        "expected": "unjudged",
+        "exit": 1,
+        "stdout": "check-unittest: unjudged: empty.py: no test ran\n",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "skipped",
+        "fixture": "import unittest\n@unittest.skip(\"missing prerequisite\")\nclass Selected(unittest.TestCase):\n def test_case(self): pass\n",
+        "expected": "unjudged",
+        "exit": 1,
+        "stdout": "check-unittest: unjudged: skipped.py: bend2_selected_skipped.Selected.test_case: skipped\ncheck-unittest: unjudged: skipped.py: no test ran\n",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "mixed",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_pass(self): pass\n @unittest.skip(\"missing prerequisite\")\n def test_skip(self): pass\n",
+        "expected": "unjudged",
+        "exit": 1,
+        "stdout": "check-unittest: unjudged: mixed.py: bend2_selected_mixed.Selected.test_skip: skipped\n",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "skip_failure",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_fail(self): self.fail(\"fixture\")\n @unittest.skip(\"missing prerequisite\")\n def test_skip(self): pass\n",
+        "expected": "unjudged",
+        "exit": 1,
+        "stdout": "736b69705f6661696c7572652e7079 62656e64325f73656c65637465645f736b69705f6661696c7572652e53656c65637465642e746573745f6661696c 617373657274696f6e 2d\ncheck-unittest: unjudged: skip_failure.py: bend2_selected_skip_failure.Selected.test_skip: skipped\n",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "unexpected_success",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n @unittest.expectedFailure\n def test_case(self): pass\n",
+        "expected": "unexpected-success",
+        "exit": 1,
+        "stdout": "756e65787065637465645f737563636573732e7079 62656e64325f73656c65637465645f756e65787065637465645f737563636573732e53656c65637465642e746573745f63617365 756e65787065637465642d73756363657373 2d\n",
+        "stderr": "",
+        "identity": [
+          "unexpected_success.py",
+          "bend2_selected_unexpected_success.Selected.test_case",
+          "unexpected-success",
+          "-"
+        ],
+        "verified": true
+      },
+      {
+        "name": "expected_failure",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n @unittest.expectedFailure\n def test_case(self): self.fail(\"expected\")\n",
+        "expected": "pass",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "passing",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): pass\n",
+        "expected": "pass",
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "verified": true
+      },
+      {
+        "name": "assertion",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): self.fail(\"fixture\")\n",
+        "expected": "assertion",
+        "exit": 1,
+        "stdout": "617373657274696f6e2e7079 62656e64325f73656c65637465645f617373657274696f6e2e53656c65637465642e746573745f63617365 617373657274696f6e 2d\n",
+        "stderr": "",
+        "identity": [
+          "assertion.py",
+          "bend2_selected_assertion.Selected.test_case",
+          "assertion",
+          "-"
+        ],
+        "verified": true
+      },
+      {
+        "name": "error",
+        "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): raise RuntimeError(\"fixture\")\n",
+        "expected": "error",
+        "exit": 1,
+        "stdout": "6572726f722e7079 62656e64325f73656c65637465645f6572726f722e53656c65637465642e746573745f63617365 6572726f72 2d\n",
+        "stderr": "",
+        "identity": [
+          "error.py",
+          "bend2_selected_error.Selected.test_case",
+          "error",
+          "-"
+        ],
+        "verified": true
+      }
+    ]
+  },
+  "post_run_review": {
+    "revision": "e2bbd6b66488e4f005248646504ba0d43a753aee",
+    "changes": [
+      "Name each worker workspace and branch explicitly in generated tasks.",
+      "Correct skipped-subtest empty-selection diagnostic and add regression.",
+      "Specify latest completed assistant message in Codex documentation.",
+      "Document the Kimi route and native hierarchy acceptance command."
+    ],
+    "selected_check": {
+      "command": "python3 bend2/test/check-unittest.py",
+      "exit_code": 0,
+      "tests": 13
+    },
+    "independent_checker_cases": {
+      "repository": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928",
+      "cases": [
+        {
+          "name": "empty",
+          "fixture": "import unittest\n",
+          "expected": "unjudged",
+          "exit": 1,
+          "stdout": "check-unittest: unjudged: empty.py: no test ran\n",
+          "stderr": "",
+          "verified": true
+        },
+        {
+          "name": "skipped",
+          "fixture": "import unittest\n@unittest.skip(\"missing prerequisite\")\nclass Selected(unittest.TestCase):\n def test_case(self): pass\n",
+          "expected": "unjudged",
+          "exit": 1,
+          "stdout": "check-unittest: unjudged: skipped.py: bend2_selected_skipped.Selected.test_case: skipped\n",
+          "stderr": "",
+          "verified": true
+        },
+        {
+          "name": "mixed",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_pass(self): pass\n @unittest.skip(\"missing prerequisite\")\n def test_skip(self): pass\n",
+          "expected": "unjudged",
+          "exit": 1,
+          "stdout": "check-unittest: unjudged: mixed.py: bend2_selected_mixed.Selected.test_skip: skipped\n",
+          "stderr": "",
+          "verified": true
+        },
+        {
+          "name": "skip_failure",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_fail(self): self.fail(\"fixture\")\n @unittest.skip(\"missing prerequisite\")\n def test_skip(self): pass\n",
+          "expected": "unjudged",
+          "exit": 1,
+          "stdout": "736b69705f6661696c7572652e7079 62656e64325f73656c65637465645f736b69705f6661696c7572652e53656c65637465642e746573745f6661696c 617373657274696f6e 2d\ncheck-unittest: unjudged: skip_failure.py: bend2_selected_skip_failure.Selected.test_skip: skipped\n",
+          "stderr": "",
+          "verified": true
+        },
+        {
+          "name": "unexpected_success",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n @unittest.expectedFailure\n def test_case(self): pass\n",
+          "expected": "unexpected-success",
+          "exit": 1,
+          "stdout": "756e65787065637465645f737563636573732e7079 62656e64325f73656c65637465645f756e65787065637465645f737563636573732e53656c65637465642e746573745f63617365 756e65787065637465642d73756363657373 2d\n",
+          "stderr": "",
+          "identity": [
+            "unexpected_success.py",
+            "bend2_selected_unexpected_success.Selected.test_case",
+            "unexpected-success",
+            "-"
+          ],
+          "verified": true
+        },
+        {
+          "name": "expected_failure",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n @unittest.expectedFailure\n def test_case(self): self.fail(\"expected\")\n",
+          "expected": "pass",
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "verified": true
+        },
+        {
+          "name": "passing",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): pass\n",
+          "expected": "pass",
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "verified": true
+        },
+        {
+          "name": "assertion",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): self.fail(\"fixture\")\n",
+          "expected": "assertion",
+          "exit": 1,
+          "stdout": "617373657274696f6e2e7079 62656e64325f73656c65637465645f617373657274696f6e2e53656c65637465642e746573745f63617365 617373657274696f6e 2d\n",
+          "stderr": "",
+          "identity": [
+            "assertion.py",
+            "bend2_selected_assertion.Selected.test_case",
+            "assertion",
+            "-"
+          ],
+          "verified": true
+        },
+        {
+          "name": "error",
+          "fixture": "import unittest\nclass Selected(unittest.TestCase):\n def test_case(self): raise RuntimeError(\"fixture\")\n",
+          "expected": "error",
+          "exit": 1,
+          "stdout": "6572726f722e7079 62656e64325f73656c65637465645f6572726f722e53656c65637465642e746573745f63617365 6572726f72 2d\n",
+          "stderr": "",
+          "identity": [
+            "error.py",
+            "bend2_selected_error.Selected.test_case",
+            "error",
+            "-"
+          ],
+          "verified": true
+        }
+      ]
+    },
+    "independent_verifier_sha256": "ae1f4f08d6c85749c782fd7215f60f614c9afe6a3d0ff7676b228afee66ec11e",
+    "full_native_check": {
+      "command": "BEND=/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend sh bend2/scripts/check-native.sh",
+      "exit_code": 0,
+      "log": "/Users/wahargis/Development/Experiments/baton-bend2-kimi-lead-20260928/.scratch/kimi-preflight/check-native-final.log",
+      "log_sha256": "12e5fb5979c4586262be5adaafacd448b21ffeb36a1fb57032dfa69abc6c0a85",
+      "python_tests": 113,
+      "python_files": 11,
+      "bend_git_suites": 2
+    },
+    "coordinator_sha256": "5518f42bbdddb9f56b1712a6c7998c9b242454cb2bda95430de0a4ade7befbf6"
+  },
+  "limitations": [
+    "Native lifetimes overlap; this does not measure simultaneous model computation.",
+    "Codex events do not supply an observed model.",
+    "The target is a local isolated branch; no remote publication is exercised.",
+    "The run exercised root, lead and two children; deeper hierarchies and three children were not exercised.",
+    "Mid-task steering was exercised through OMP DeepSeek.",
+    "Muse committed on the detached repository checkout; Kimi reviewed and bound that commit to the registered worker branch before checked landing.",
+    "Source review corrections after the live landing have separate local validation."
+  ]
+}
