@@ -71,16 +71,15 @@ const normalizeDrainPolicy = (value) => {
 };
 const normalizeAtlasDeployment = (value, repoRoot) => {
   if (value === undefined) return null;
-  const fields = new Set(['artifactRoot', 'maxArtifactBytes', 'maxFiles', 'maxResults', 'maxSourceBytes']);
+  const fields = new Set(['artifactRoot', 'maxArtifactBytes', 'maxSourceBytes']);
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !fields.has(key))
     || typeof value.artifactRoot !== 'string' || value.artifactRoot.length === 0
     || !Number.isSafeInteger(value.maxArtifactBytes) || value.maxArtifactBytes <= 0) throw new TypeError('atlas must be one bounded deployment assembly configuration');
   const config = Object.freeze({
     artifactRoot: resolve(value.artifactRoot), maxArtifactBytes: value.maxArtifactBytes,
     maxSourceBytes: value.maxSourceBytes ?? 2 * 1024 * 1024,
-    maxFiles: value.maxFiles ?? 20_000, maxResults: value.maxResults ?? 100_000,
   });
-  if (['maxArtifactBytes', 'maxFiles', 'maxResults', 'maxSourceBytes'].some((key) => !Number.isSafeInteger(config[key]) || config[key] <= 0)) throw new TypeError('atlas ceilings must be positive safe integers');
+  if (['maxArtifactBytes', 'maxSourceBytes'].some((key) => !Number.isSafeInteger(config[key]) || config[key] <= 0)) throw new TypeError('atlas ceilings must be positive safe integers');
   let paths = [];
   try { paths = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: repoRoot, encoding: 'utf8' }).split(/\r?\n/u).filter(Boolean); } catch { /* createDriver reports repository failures through its ordinary worktree checks */ }
   const available = paths.some((path) => /\.(?:[cm]?[jt]sx?|html?|css)$/iu.test(path));
@@ -1050,8 +1049,7 @@ export function createDriver(opts) {
     const names = ['atlas-index', 'atlas-structural', 'cartographer'];
     if (names.some((name) => Object.hasOwn(configuredCapabilities, name) || Object.hasOwn(opts.capabilityFactories ?? {}, name) || Object.hasOwn(configuredCapabilityContexts, name))) throw new TypeError('duplicate opted-in Atlas capability assembly');
     const index = new AtlasCodeIndex({
-      artifactRoot: join(atlasDeployment.artifactRoot, 'index'), maxArtifactBytes: atlasDeployment.maxArtifactBytes,
-      maxSourceBytes: atlasDeployment.maxSourceBytes, maxFiles: atlasDeployment.maxFiles, maxResults: atlasDeployment.maxResults,
+      artifactRoot: join(atlasDeployment.artifactRoot, 'index'),
       availability: atlasDeployment.availability, repoId: deploymentRepoId,
     });
     const structural = new AtlasStructuralDelta({

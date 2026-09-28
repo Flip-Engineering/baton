@@ -327,13 +327,13 @@ test('U-F3: an unclassified internal throw is the TRANSIENT row — retryable, w
 
 test('U-F3: a permanent deployment condition keeps its own code and is not retryable', async () => {
   const permanent = fixture({ command: async () => {
-    throw Object.assign(new Error('the projection exceeds the deployment ceiling'), { code: 'application_run_view_oversize' });
+    throw Object.assign(new Error('this resident serves no Run application'), { code: 'application_unavailable' });
   } });
   const view = await permanent.web.execute(permanent.context(), envelope());
   assert.equal(view.status, 503);
-  assert.equal(view.body.error.code, 'application_run_view_oversize', 'the cause is typed, never re-spelled');
+  assert.equal(view.body.error.code, 'application_unavailable', 'the cause is typed, never re-spelled');
   assert.equal(view.body.error.retryable, false);
-  assert.ok(view.body.error.action.length > 0, 'the remedy is stated');
+  assert.match(view.body.error.action, /no retry can succeed/u, 'the remedy is stated');
 
   // No session store: the deployment wires no Run application AND no principal authority, so the
   // refusal the caller meets is the wiring fact, not a liveness check.

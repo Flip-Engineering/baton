@@ -30,7 +30,7 @@ test('AT9/AT15: card declares snapshot+overlay, exact parser, operations, and ho
   assert.equal(card.ops['index.build'].interruptible, true);
   assert.equal(card.ops['symbol.references'].reverifiable, true);
   assert.equal(card.ops['scip.export'].deterministic, true);
-  assert.equal(card.ceilings.maxArtifactBytes, 64 * 1024 * 1024);
+  assert.equal(card.ceilings, undefined, '#530: the index card declares no construction ceiling');
   assert.ok(card.limitations.some((item) => item.includes('no live LSP')));
   assert.ok(card.limitations.includes('no CPG/IR/semantic merge'));
 });
@@ -120,19 +120,19 @@ test('AT14: bounded payload retains a complete artifact and deterministic reveri
   assert.equal((await f.atlas.reverify(result, 'search.lexical', args, ctx)).ok, true);
 });
 
-test('AT14/AT15: cancellation, symlink skipping, and file ceilings fail safely', async () => {
+test('AT14/AT15 (#530): cancellation and symlink skipping fail safely, and no file or source ceiling refuses', async () => {
   const f = fixture(); symlinkSync(join(f.base, 'src/a.js'), join(f.base, 'linked.js'));
   const built = await build(f);
   assert.equal(built.payload.some((file) => file.path === 'linked.js'), false);
   const abort = new AbortController(); abort.abort();
   await assert.rejects(f.atlas.invoke('index.build', {}, { ...f.ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
-  const small = fixture({ maxFiles: 1 });
-  await assert.rejects(build(small), (error) => error.code === 'index_too_large');
+  const many = fixture({ maxFiles: 1 });
+  assert.ok((await build(many)).provenance.index_epoch, 'a file count past the old ceiling is indexed whole');
   const bounded = fixture({ maxSourceBytes: 128 }); write(bounded.base, 'src/huge.js', `export const huge = '${'x'.repeat(4_096)}'\n`); const boundedBuild = await build(bounded);
-  assert.equal(boundedBuild.payload.some((file) => file.path === 'src/huge.js'), false);
+  assert.equal(boundedBuild.payload.some((file) => file.path === 'src/huge.js'), true, 'a source past the old ceiling is indexed whole');
   const overlay = dir('atlas-oversize-overlay'); cpSync(bounded.base, overlay, { recursive: true }); write(overlay, 'src/a.js', `export const huge = '${'x'.repeat(4_096)}'\n`);
   const over = await bounded.atlas.invoke('repo.map', { indexEpoch: boundedBuild.provenance.index_epoch }, { worktreeRoot: overlay, budgetTokens: 1_000 });
-  assert.equal(over.payload.some((file) => file.path === 'src/a.js'), false); assert.ok(over.provenance.overlay_deleted.includes('src/a.js'));
+  assert.equal(over.payload.some((file) => file.path === 'src/a.js'), true); assert.ok(over.provenance.overlay_changed.includes('src/a.js'));
 });
 
 test('AT10/AT12: unknown epochs, ambiguous names, and missing symbols are typed refusals', async () => {
@@ -152,9 +152,10 @@ test('AT9/AT14: tampered index/result artifacts and pathological result volume f
   await assert.rejects(f.atlas.invoke('symbol.search', { indexEpoch: epoch, query: 'greet' }, { budgetTokens: 100 }), (error) => error.code === 'index_integrity');
 
   const clean = fixture(); const cleanEpoch = (await build(clean)).provenance.index_epoch;
-  const bounded = new AtlasCodeIndex({ artifactRoot: dir('atlas-small-results'), maxResults: 1 });
+  const bounded = new AtlasCodeIndex({ artifactRoot: dir('atlas-small-results') });
   const boundedBuild = await bounded.invoke('index.build', {}, { baseRoot: clean.base, budgetTokens: 1000 });
-  await assert.rejects(bounded.invoke('search.lexical', { indexEpoch: boundedBuild.provenance.index_epoch, query: 'greet' }, { budgetTokens: 100 }), (error) => error.code === 'result_too_large');
+  const hits = await bounded.invoke('search.lexical', { indexEpoch: boundedBuild.provenance.index_epoch, query: 'greet' }, { budgetTokens: 100_000 });
+  assert.ok(hits.payload.length > 1, '#530: the result ceiling left — every hit inside the budget is served');
 
   const result = await clean.atlas.invoke('search.lexical', { indexEpoch: cleanEpoch, query: 'greet' }, { budgetTokens: 1 });
   const resultPath = result.refs[0].path; writeFileSync(resultPath, `${readFileSync(resultPath, 'utf8')} `);

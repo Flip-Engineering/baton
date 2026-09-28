@@ -153,7 +153,6 @@ test('U-F3 × MCP: an unclassified throw is the TRANSIENT row — retryable, wit
 test('U-F3 × MCP: a permanent deployment condition keeps its typed code and is not retryable', async () => {
   const cases = [
     ['application_unavailable', /no retry can succeed/u],
-    ['application_run_view_oversize', /narrow the read/u],
   ];
   for (const [code, remedy] of cases) {
     const server = mcpFixture(async () => { throw Object.assign(new Error('deployment detail'), { code }); });

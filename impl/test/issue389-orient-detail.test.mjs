@@ -145,7 +145,7 @@ function orientedLane(files, label) {
     capabilities: {
       'atlas-index': new AtlasCodeIndex({
         artifactRoot: join(root, 'atlas-artifacts', 'index'), maxArtifactBytes: 256 * 1024,
-        maxSourceBytes: 64 * 1024, maxFiles: 64, maxResults: 256,
+        maxSourceBytes: 64 * 1024,
       }),
     },
     contexts: { 'atlas-index': { baseRoot: root } },

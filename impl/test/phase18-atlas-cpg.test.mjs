@@ -84,9 +84,11 @@ test('CG7: bounded result resumes, detects tamper, and reverifies', async () => 
   await assert.rejects(f.atlas.resume({ digest, path }, `atlas-cpg:${digest}:0`, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
 });
 
-test('CG6: source and graph deployment ceilings fail typed', async () => {
+test('CG6 (#530): the CPG slice carries no source, scope, binding, reach or graph ceiling', async () => {
   const source = fixture(`function run() { return 1 }`, { maxSourceBytes: 4 });
-  await assert.rejects(source.atlas.invoke('cpg.build', source.args, source.ctx), (error) => error.code === 'invalid_source');
+  const built = await source.atlas.invoke('cpg.build', source.args, source.ctx);
+  assert.match(built.provenance.graphDigest, /^[a-f0-9]{64}$/u, 'a source past the old byte ceiling is built whole');
   const graph = fixture(`function run(value) { let x = value; return x }`, { maxArtifactBytes: 64 });
-  await assert.rejects(graph.atlas.invoke('cpg.build', graph.args, graph.ctx), (error) => error.code === 'graph_too_large');
+  const wide = await graph.atlas.invoke('cpg.build', graph.args, graph.ctx);
+  assert.ok(wide.refs[0].bytes > 64, 'a graph past the old artifact ceiling is published whole');
 });

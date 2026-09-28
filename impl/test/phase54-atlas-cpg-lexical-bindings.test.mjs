@@ -50,15 +50,10 @@ function publish(rootPath, value, kind) {
 test('LB1/LB8/LB10: cards and constructors expose one bounded advisory binding model without new authority', () => {
   const f = sourceFixture('function run(value) { return value }\n'); const card = f.cpg.card();
   assert.equal(card.bindingModel, MODEL); assert.equal(card.graphSchemaVersion, 3);
-  assert.deepEqual(Object.fromEntries(['maxScopes', 'maxScopeDepth', 'maxBindings', 'maxBindingOccurrences'].map((key) => [key, card.ceilings[key]])), {
-    maxScopes: limits.maxScopes, maxScopeDepth: limits.maxScopeDepth,
-    maxBindings: limits.maxBindings, maxBindingOccurrences: limits.maxBindingOccurrences,
-  });
+  assert.equal(card.ceilings, undefined, '#530: the slice card declares no construction ceiling');
   assert.deepEqual(Object.keys(card.ops), ['cpg.build']);
   assert.equal(card.limitations.some((item) => item.includes('no shadowing-aware bindings')), false);
   assert.equal(card.limitations.some((item) => item.includes('closure')), true);
-  const missing = { ...limits }; delete missing.maxScopes;
-  assert.throws(() => new AtlasCpgSlice({ artifactRoot: root('missing-bound'), ...missing }), /maxScopes/);
 });
 
 test('LB2/LB3/LB4: deterministic scopes and bindings distinguish block lexical identity and merge parameter plus var', async () => {
@@ -125,18 +120,18 @@ test('LB4/LB11: closures and destructuring stay explicit unsupported boundaries 
   assert.equal(caughtGraph.nodes.some((node) => node.type === 'identifier' && node.name === 'value' && node.bindingResolution === 'unsupported'), true);
 });
 
-test('LB8: scope, depth, binding, occurrence, and reaching-definition ceilings refuse independently before artifact publication', async () => {
+test('LB8 (#530): scope, depth, binding, occurrence, and reaching-definition counts admit any size', async () => {
   const cases = [
-    ['scope_too_large', { maxScopes: 1 }, 'function run(){ let a=1; { let b=2 } }\n'],
-    ['scope_depth_exceeded', { maxScopeDepth: 1 }, 'function run(){ { { let a=1 } } }\n'],
-    ['binding_too_large', { maxBindings: 1 }, 'function run(){ let a=1; let b=2 }\n'],
-    ['binding_occurrences_too_large', { maxBindingOccurrences: 1 }, 'function run(){ let a=1; use(a) }\n'],
-    ['reachdef_too_large', { maxReachDefPairs: 1 }, 'function run(a){ let b=a; use(a); use(b) }\n'],
+    [{ maxScopes: 1 }, 'function run(){ let a=1; { let b=2 } }\n'],
+    [{ maxScopeDepth: 1 }, 'function run(){ { { let a=1 } } }\n'],
+    [{ maxBindings: 1 }, 'function run(){ let a=1; let b=2 }\n'],
+    [{ maxBindingOccurrences: 1 }, 'function run(){ let a=1; use(a) }\n'],
+    [{ maxReachDefPairs: 1 }, 'function run(a){ let b=a; use(a); use(b) }\n'],
   ];
-  for (const [code, overrides, source] of cases) {
+  for (const [overrides, source] of cases) {
     const f = sourceFixture(source, overrides);
-    await assert.rejects(f.cpg.invoke('cpg.build', f.args, f.ctx), (error) => error.code === code, code);
-    assert.deepEqual(readdirSync(f.artifactRoot), [], code);
+    const result = await f.cpg.invoke('cpg.build', f.args, f.ctx);
+    assert.equal(result.refs.length, 1, 'the graph is built and published whatever the counts are');
   }
 });
 

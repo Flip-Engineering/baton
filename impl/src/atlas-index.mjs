@@ -17,11 +17,14 @@ const LANGUAGE = Object.freeze({
   '.html': ['html', Lang.Html], '.htm': ['html', Lang.Html], '.css': ['css', Lang.Css],
 });
 const IGNORE_DIRS = new Set(['.git', '.baton', 'node_modules']);
-function readSourceBounded(path, ceiling) {
+/** Read one file whole through a no-follow descriptor; null when it is not a regular file. #530:
+ * the byte ceiling that answered null for an oversize file left the tree, so a source of any size
+ * is read. */
+function readSource(path) {
   let fd;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > ceiling) return null;
+    if (!stat.isFile()) return null;
     const bytes = Buffer.alloc(stat.size); let offset = 0;
     while (offset < bytes.length) { const count = readSync(fd, bytes, offset, bytes.length - offset, offset); if (count === 0) break; offset += count; }
     if (offset !== bytes.length || readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0) throw typed('Atlas source changed during bounded read', 'source_changed');
@@ -131,11 +134,9 @@ function scan(root, opts, ctx) {
       if (!entry.isFile()) continue;
       const language = LANGUAGE[extname(entry.name).toLowerCase()];
       if (!language) continue;
-      const bytes = readSourceBounded(full, opts.maxSourceBytes);
-      if (bytes === null) { opts.record?.({ kind: 'atlas.source.skipped', path: slash(rel), reason: 'exceeds_source_ceiling', ceiling: opts.maxSourceBytes }); continue; }
-      if (bytes.includes(0)) continue;
+      const bytes = readSource(full);
+      if (bytes === null || bytes.includes(0)) continue;
       files.push(extractFile(slash(rel), bytes, ...language));
-      if (files.length > opts.maxFiles) throw typed(`Atlas file ceiling ${opts.maxFiles} exceeded`, 'index_too_large');
     }
   }
   walk(root);
@@ -250,11 +251,6 @@ export class AtlasCodeIndex {
     if (typeof opts.artifactRoot !== 'string' || !opts.artifactRoot) throw new TypeError('Atlas artifactRoot required');
     this.artifactRoot = opts.artifactRoot;
     this.indexRoot = join(opts.artifactRoot, 'indexes'); this.resultRoot = join(opts.artifactRoot, 'results');
-    // Issue #500: 16 MiB — the ledger event ceiling used by coordination rows, result
-    // bodies and wire frames. A source file the ledger could hold is always indexed.
-    this.maxSourceBytes = opts.maxSourceBytes ?? 16 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
-    this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
-    for (const key of ['maxSourceBytes', 'maxFiles', 'maxResults', 'maxArtifactBytes']) if (!Number.isSafeInteger(this[key]) || this[key] <= 0) throw new TypeError(`Atlas ${key} must be a positive safe integer`);
     this.repoId = opts.repoId ?? null;
     // Epic #81 (O-5): deployment orientation-result storage ceiling (constructive, never a clock).
     // Applies to result artifacts only (the base index is exempt — it is the authority, not
@@ -284,27 +280,25 @@ export class AtlasCodeIndex {
         'scip.export': { latency_class: 'interactive', deterministic: true, side_effects: 'writes_content_addressed_artifact', reverifiable: true },
       },
       languages: [...new Set(Object.values(LANGUAGE).map(([name]) => name))], shared_state: { code_index: 'snapshot+overlay' },
-      ceilings: { maxSourceBytes: this.maxSourceBytes, maxFiles: this.maxFiles, maxResults: this.maxResults, maxArtifactBytes: this.maxArtifactBytes },
       availability: this.availability,
       languageCeiling: { family: 'javascript-typescript', extensions: Object.keys(LANGUAGE).sort(), maximumRung: 'R2', enforcingGate: 'atlas-representation-ceiling' },
       sandbox_required: 'read_only_worktree', cost_model: 'cpu_bound_local',
-      limitations: [`overlay recomputed per query`, `hard result ceiling ${this.maxResults}`, 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
+      limitations: [`overlay recomputed per query`, 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
     });
   }
   _readArtifact(path, expectedDigest, expectedBytes = null) {
     let stat; let bytes;
     try {
       stat = lstatSync(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > this.maxArtifactBytes || (stat.mode & 0o777) !== 0o600
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || (stat.mode & 0o777) !== 0o600
         || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new Error('unsafe artifact file');
-      bytes = readSourceBounded(path, this.maxArtifactBytes);
+      bytes = readSource(path);
     } catch (cause) { const error = typed('Atlas content-addressed artifact is unavailable or unsafe', 'artifact_integrity'); error.cause = cause; throw error; }
     if (bytes === null || bytes.length !== stat.size || sha(bytes) !== expectedDigest || (expectedBytes !== null && !bytes.equals(expectedBytes))) throw typed('Atlas content-addressed artifact digest mismatch', 'artifact_integrity');
     return bytes;
   }
   _write(root, value) {
     const serialized = `${stable(value)}\n`; const digest = sha(serialized); const path = join(root, `${digest}.json`);
-    if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('Atlas artifact exceeded deployment ceiling', 'artifact_too_large');
     // Epic #81 (O-5): orientation-result storage ceiling — refuses BEFORE write once cumulative
     // result bytes cross the deployment bound. The base index (indexRoot) and the index.build
     // manifest are exempt: they are the authority, not orientation storage. create-if-absent:
@@ -335,7 +329,7 @@ export class AtlasCodeIndex {
     const matches = readdirSync(this.indexRoot).filter((name) => name.endsWith('.json')).sort();
     let found = null;
     for (const name of matches) {
-      const bytes = readSourceBounded(join(this.indexRoot, name), this.maxArtifactBytes); if (bytes === null) throw typed('Atlas index artifact exceeded deployment ceiling', 'index_too_large'); const raw = bytes.toString('utf8');
+      const bytes = readSource(join(this.indexRoot, name)); if (bytes === null) throw typed('Atlas index artifact is not a regular file', 'index_integrity'); const raw = bytes.toString('utf8');
       let value;
       try { value = JSON.parse(raw); } catch { continue; }
       if (value.epoch !== epoch) continue;
@@ -518,7 +512,6 @@ export class AtlasCodeIndex {
       summary = `SCIP JSON interchange for ${documents.length} documents${parseErrors.total > 0 ? `; ${parseErrors.total} parse errors in ${parseErrors.files} files` : ''}`; resultKind = 'scip_export_results'; analysisStatus = parseErrors.total > 0 ? 'partial' : null;
     }
     checkAbort(ctx);
-    if (items.length > this.maxResults) throw typed(`Atlas result ceiling ${this.maxResults} exceeded`, 'result_too_large');
     // Epic #81 (O-8): answer-time coverage derives per-answer from the scoped effective-source
     // snapshot (repo.map tier) — the deployment-time availability flag is advisory metadata only.
     const coverage = op === 'repo.map' ? this._orientationCoverage(ctx.worktreeRoot ?? ctx.baseRoot, view) : null;
@@ -554,7 +547,7 @@ export class AtlasCodeIndex {
     }
     const path = join(this.resultRoot, `${match[1]}.json`);
     if (!existsSync(path)) throw typed('Atlas result artifact was lawfully reclaimed', 'orientation_artifact_retired');
-    const bytesBuffer = readSourceBounded(path, this.maxArtifactBytes); if (bytesBuffer === null) throw typed('Atlas result artifact exceeded deployment ceiling', 'result_too_large'); const raw = bytesBuffer.toString('utf8');
+    const bytesBuffer = readSource(path); if (bytesBuffer === null) throw typed('Atlas result artifact is not a regular file', 'result_integrity'); const raw = bytesBuffer.toString('utf8');
     if (sha(raw) !== match[1]) throw typed('Atlas result artifact digest mismatch', 'result_integrity');
     const full = JSON.parse(raw); const offset = Number(match[2]);
     if (!Array.isArray(full.items) || offset < 0 || offset > full.items.length) throw typed('Atlas cursor offset is invalid', 'invalid_cursor');

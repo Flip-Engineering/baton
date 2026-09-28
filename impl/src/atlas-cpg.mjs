@@ -91,22 +91,20 @@ export function validateAtlasCpgGraph(graph) {
 export class AtlasCpgSlice {
   constructor(opts = {}) {
     if (!opts.artifactRoot) throw new TypeError('CPG artifactRoot required');
-    for (const key of ['maxSourceBytes', 'maxArtifactBytes', 'maxReachDefPairs', 'maxScopes', 'maxScopeDepth', 'maxBindings', 'maxBindingOccurrences']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
-    this.artifactRoot = opts.artifactRoot; this.maxSourceBytes = opts.maxSourceBytes; this.maxArtifactBytes = opts.maxArtifactBytes; this.maxReachDefPairs = opts.maxReachDefPairs; this.maxScopes = opts.maxScopes; this.maxScopeDepth = opts.maxScopeDepth; this.maxBindings = opts.maxBindings; this.maxBindingOccurrences = opts.maxBindingOccurrences; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
+    this.artifactRoot = opts.artifactRoot; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
-  card() { return Object.freeze({ name: 'atlas-cpg-slice', version: '0.3.0', underlying: [`@ast-grep/napi@${VERSION}`], ops: { 'cpg.build': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifact', reverifiable: true } }, languages: ['javascript', 'typescript', 'tsx'], bindingModel: BINDING_MODEL, graphSchemaVersion: 3, ceilings: { maxSourceBytes: this.maxSourceBytes, maxArtifactBytes: this.maxArtifactBytes, maxReachDefPairs: this.maxReachDefPairs, maxScopes: this.maxScopes, maxScopeDepth: this.maxScopeDepth, maxBindings: this.maxBindings, maxBindingOccurrences: this.maxBindingOccurrences }, limitations: ['single-file JS/TS-family slice', 'bounded CFG may-reaching definitions, not SSA/must-def/full PDG', 'value flow covers direct identifier/call assignment and direct call arguments', 'literal-only dead-branch pruning; no general path-condition solving', 'no aliases/heap/implicit flow/interprocedural dataflow/dynamic dispatch', 'only braced if control is expanded; unsupported control constructs are atomic', 'standalone bare blocks are not CFG spine nodes', 'no closure capture, destructuring, imports/exports, class fields, or type-namespace resolution', 'no temporal-dead-zone, hoisting-legality, definite-assignment, or type-flow analysis'] }); }
+  card() { return Object.freeze({ name: 'atlas-cpg-slice', version: '0.3.0', underlying: [`@ast-grep/napi@${VERSION}`], ops: { 'cpg.build': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifact', reverifiable: true } }, languages: ['javascript', 'typescript', 'tsx'], bindingModel: BINDING_MODEL, graphSchemaVersion: 3, limitations: ['single-file JS/TS-family slice', 'bounded CFG may-reaching definitions, not SSA/must-def/full PDG', 'value flow covers direct identifier/call assignment and direct call arguments', 'literal-only dead-branch pruning; no general path-condition solving', 'no aliases/heap/implicit flow/interprocedural dataflow/dynamic dispatch', 'only braced if control is expanded; unsupported control constructs are atomic', 'standalone bare blocks are not CFG spine nodes', 'no closure capture, destructuring, imports/exports, class fields, or type-namespace resolution', 'no temporal-dead-zone, hoisting-legality, definite-assignment, or type-flow analysis'] }); }
 
   async invoke(op, args, ctx) {
     if (op !== 'cpg.build') throw typed('unsupported CPG operation', 'unsupported_op');
     if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required');
     abort(ctx); const language = LANG[extname(args?.path ?? '').toLowerCase()]; if (!language) throw typed('unsupported CPG language', 'unsupported_language');
-    const file = safe(ctx.root, args.path); const bytes = readFileSync(file); if (bytes.includes(0) || bytes.length > this.maxSourceBytes) throw typed('CPG source exceeds budget or is binary', 'invalid_source');
+    const file = safe(ctx.root, args.path); const bytes = readFileSync(file); if (bytes.includes(0)) throw typed('CPG source is binary', 'invalid_source');
     let source; try { source = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw typed('CPG source is invalid UTF-8', 'invalid_source'); }
     const sourceDigest = sha(bytes); const started = this.now(); this.record?.({ kind: 'capability.op.started', actor: ctx.actor ?? 'orchestrator', op, sourceDigest });
     const root = parse(language, source).root(); const nodes = []; const edges = []; const errors = []; const functions = []; const occurrences = []; const calls = []; const statements = []; const blockStatements = new Map(); const pendingAssignments = []; const pendingArguments = [];
     const scopes = []; const bindings = []; const bindingCandidates = []; const functionOrdinals = new Map();
-    const maxScopes = this.maxScopes; const maxScopeDepth = this.maxScopeDepth; const maxBindings = this.maxBindings; const maxBindingOccurrences = this.maxBindingOccurrences; const maxReachDefPairs = this.maxReachDefPairs;
     const nodeId = (type, node) => `${sourceDigest}:${id(type, node)}`;
     const edgeIds = new Set(); const edge = (type, from, to) => { if (!from || !to) return; const edgeId = sha(`${type}\0${from}\0${to}`); if (edgeIds.has(edgeId)) return; edgeIds.add(edgeId); edges.push({ id: edgeId, type, from, to }); };
     function visit(node, state = { fn: null, fnScope: null, block: null, blockScope: null, scopeDepth: 0, parent: null, grandparent: null, statement: null, unsupportedPattern: false }) {
@@ -116,7 +114,6 @@ export class AtlasCpgSlice {
         const name = (state.parent?.kind() === 'variable_declarator' ? firstName(state.parent) : null) ?? firstName(node) ?? '<anonymous>';
         fn = nodeId('function', node); const entry = `${fn}:entry`; const exit = `${fn}:exit`;
         nodes.push({ id: fn, type: 'function', kind, name, path: args.path, range: range(node) }, { id: entry, type: 'entry', function: fn }, { id: exit, type: 'exit', function: fn });
-        if (scopes.length >= maxScopes) throw typed('CPG scope count exceeds deployment ceiling', 'scope_too_large');
         const functionSemanticBase = `${kind}:${name}`; const functionOrdinal = functionOrdinals.get(functionSemanticBase) ?? 0; functionOrdinals.set(functionSemanticBase, functionOrdinal + 1);
         fnScope = nodeId('scope', node); const fnKey = `function:${functionSemanticBase}:${functionOrdinal}`;
         nodes.push({ id: fnScope, type: 'scope', scopeKind: 'function', function: fn, parentScope: null, scopeId: fnScope, scopeKey: fnKey });
@@ -128,8 +125,6 @@ export class AtlasCpgSlice {
         if (parentFn && !parentFn.bodyBlock) { parentFn.bodyBlock = nodeId('block', node); block = parentFn.bodyBlock; blockScope = fnScope; }
         else if (fnScope) {
           block = nodeId('block', node); scopeDepth += 1;
-          if (scopeDepth > maxScopeDepth) throw typed('CPG scope depth exceeds deployment ceiling', 'scope_depth_exceeded');
-          if (scopes.length >= maxScopes) throw typed('CPG scope count exceeds deployment ceiling', 'scope_too_large');
           const blockScopeId = nodeId('scope', node);
           const parentScope = blockScope ?? fnScope;
           const parentScopeData = scopes.find((s) => s.id === parentScope);
@@ -185,7 +180,6 @@ export class AtlasCpgSlice {
       abort(ctx); const targetScope = candidate.declarationKind === 'function_value' ? candidate.fnScope : candidate.scopeId; const identity = `${targetScope}\0${candidate.declarationKind}\0${candidate.name}`;
       let binding = bindingBySemanticIdentity.get(identity);
       if (!binding) {
-        if (bindings.length >= maxBindings) throw typed('CPG binding count exceeds deployment ceiling', 'binding_too_large');
         const scopeData = scopes.find((scope) => scope.id === targetScope); const bindingKey = semanticKey(scopeData?.scopeKey ?? '', candidate.declarationKind, candidate.name); const bindingId = `${sourceDigest}:binding:${sha(`${targetScope}\0${candidate.declarationKind}\0${candidate.name}`)}`;
         binding = { id: bindingId, type: 'binding', name: candidate.name, bindingKind: candidate.declarationKind, function: candidate.fn, scopeId: targetScope, bindingId, bindingKey };
         bindings.push(binding); nodes.push(binding); bindingBySemanticIdentity.set(identity, binding);
@@ -205,7 +199,6 @@ export class AtlasCpgSlice {
     for (const candidate of bindingCandidates) {
       abort(ctx); if (!candidate.supported) continue;
       const binding = candidate.binding ?? nearestBinding(candidate); if (!binding) continue;
-      if (occurrences.length >= maxBindingOccurrences) throw typed('CPG binding occurrence count exceeds deployment ceiling', 'binding_occurrences_too_large');
       candidate.graphNode.bindingId = binding.id; candidate.graphNode.bindingKey = binding.bindingKey; candidate.graphNode.bindingResolution = 'resolved';
       occurrences.push({ id: candidate.id, name: candidate.name, role: candidate.role, fn: candidate.fn, statement: candidate.statement, scope: candidate.scopeId, bindingId: binding.id, start: candidate.start }); edge('BINDS', binding.id, candidate.id);
     }
@@ -305,7 +298,7 @@ export class AtlasCpgSlice {
       }
       for (const item of fnOccurrences.filter((candidate) => candidate.role === 'reference')) {
         const anchor = item.statement ? effectiveStatement(item.statement) : fn.entry; if (!anchor || !reachable.has(anchor)) continue;
-        for (const definition of incoming.get(anchor)?.get(item.bindingId) ?? []) { reachDefPairs += 1; if (reachDefPairs > maxReachDefPairs) throw typed('CPG reaching-definition relation exceeds deployment ceiling', 'reachdef_too_large'); edge('REACHING_DEF', definition, item.id); }
+        for (const definition of incoming.get(anchor)?.get(item.bindingId) ?? []) { reachDefPairs += 1; edge('REACHING_DEF', definition, item.id); }
       }
     }
     const byName = new Map(); for (const fn of functions) { const list = byName.get(fn.name) ?? []; list.push(fn.id); byName.set(fn.name, list); }
@@ -319,8 +312,6 @@ export class AtlasCpgSlice {
     const unsupportedOccurrences = bindingCandidates.filter((item) => item.graphNode.bindingResolution === 'unsupported');
     const maxDepth = scopes.length > 0 ? Math.max(...scopes.map((s) => s.depth)) : 0;
     const graph = validateAtlasCpgGraph({ schemaVersion: 3, bindingModel: BINDING_MODEL, op, path: args.path, sourceDigest, parseErrors: errors, nodes, edges }); const serialized = `${JSON.stringify(graph)}\n`; const graphDigest = sha(serialized);
-    const maxArtifactBytes = this.maxArtifactBytes;
-    if (Buffer.byteLength(serialized) > maxArtifactBytes) throw typed('CPG graph exceeds artifact budget', 'graph_too_large');
     const artifactPath = join(this.artifactRoot, `${graphDigest}.json`); if (existsSync(artifactPath) && sha(readFileSync(artifactPath)) !== graphDigest) throw typed('CPG artifact integrity failure', 'artifact_integrity'); if (!existsSync(artifactPath)) writeFileSync(artifactPath, serialized, { mode: 0o600, flag: 'wx' });
     const items = [...nodes.map((node) => ({ recordType: 'node', ...node })), ...edges.map((item) => ({ recordType: 'edge', ...item }))]; const payload = bounded(items, ctx.budgetTokens); const truncated = payload.length < items.length; const status = truncated ? 'needs_resume' : errors.length ? 'partial' : 'ok'; const wallMs = Math.max(0, this.now() - started);
     const result = Object.freeze({ op, status, summary: `${nodes.length} nodes, ${edges.length} edges${errors.length ? `; ${errors.length} parse errors` : ''}`, payload, refs: [{ handle: `art:sha256:${graphDigest}`, kind: 'cpg_slice', digest: graphDigest, bytes: Buffer.byteLength(serialized), mediaType: 'application/vnd.baton.atlas-cpg+json', path: artifactPath }], ...(truncated ? { cursor: `atlas-cpg:${graphDigest}:${payload.length}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: wallMs, usd: 0, underlying: `@ast-grep/napi@${VERSION}` }, provenance: { sourceDigest, graphDigest, parseErrors: errors.length, reachDefPairs, scopeCount: scopes.length, maxScopeDepthObserved: maxDepth, bindingCount: bindings.length, bindingOccurrenceCount: bindingCandidates.length, resolvedBindingOccurrences: resolvedOccurrences.length, unresolvedBindingOccurrences: unresolvedOccurrences.length, unsupportedBindingOccurrences: unsupportedOccurrences.length, deterministic: true, scope: 'single_file_intraprocedural_cfg_binding_aware_may_reach_seed', bindingModel: BINDING_MODEL } });

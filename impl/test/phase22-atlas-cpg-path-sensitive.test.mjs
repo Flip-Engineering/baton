@@ -73,10 +73,12 @@ function run(){ let clean=sanitize(readInput()); send(clean) }\n`);
   assert.equal((await sanitized.taint.invoke('cpg.taint', sanitized.args, sanitized.ctx)).payload.length, 1);
 });
 
-test('PS2/PS6: reaching-definition expansion has a mandatory deployment ceiling', async () => {
-  assert.throws(() => new AtlasCpgSlice({ artifactRoot: dir('missing-reach-bound'), maxSourceBytes: 1000, maxArtifactBytes: 1000 }), /maxReachDefPairs/);
+test('PS2/PS6 (#530): reaching-definition expansion carries no ceiling', async () => {
+  const unbounded = new AtlasCpgSlice({ artifactRoot: dir('no-reach-bound') });
+  assert.equal(unbounded.maxReachDefPairs, undefined, 'no reaching-definition pair ceiling is constructed');
   const tiny = fixture(`function send(v){} function run(a){ let b=a; send(b) }\n`, { maxReachDefPairs: 1 });
-  await assert.rejects(tiny.cpg.invoke('cpg.build', { path: 'src/a.js' }, tiny.ctx), (error) => error.code === 'reachdef_too_large');
+  const built = await tiny.cpg.invoke('cpg.build', { path: 'src/a.js' }, tiny.ctx);
+  assert.ok(built.provenance.reachDefPairs > 1, 'the expansion is built whole, past the old ceiling');
 });
 
 test('PS4/PS5: direct arguments remain, while heap and interprocedural return flow remain explicitly absent', async () => {

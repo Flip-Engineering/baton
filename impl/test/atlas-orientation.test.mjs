@@ -34,8 +34,6 @@ const atlas = (root) => ({
   artifactRoot: join(root, 'atlas-artifacts'),
   maxArtifactBytes: 256 * 1024,
   maxSourceBytes: 64 * 1024,
-  maxFiles: 64,
-  maxResults: 256,
 });
 const driver = (root, overrides = {}) => createDriver({
   repoRoot: root,
@@ -98,7 +96,12 @@ test('AT-2: createDriver composes the full opted-in Atlas set with budgets, ceil
   const cards = composed.coordinator.capabilityCards();
   assert.deepEqual(cards.map((card) => card.name), ['atlas-index', 'atlas-structural', 'cartographer']);
   assert.ok(cards.every((card) => Object.keys(card.ops).length > 0));
-  assert.ok(cards.every((card) => card.ceilings && Number.isSafeInteger(card.ceilings.maxArtifactBytes)));
+  // #530: the atlas-index card declares no construction ceiling; the structural and cartographer
+  // cards keep the artifact ceiling each of them enforces.
+  const indexCard = cards.find((card) => card.name === 'atlas-index');
+  assert.equal(indexCard.ceilings, undefined, 'the index carries no source, file, result or artifact ceiling');
+  assert.ok(cards.filter((card) => card.name !== 'atlas-index')
+    .every((card) => card.ceilings && Number.isSafeInteger(card.ceilings.maxArtifactBytes)));
   const structural = cards.find((card) => card.name === 'atlas-structural');
   assert.equal(structural.ops['diff.structural'].reverifiable, true);
   assert.equal(structural.languageCeiling.family, 'javascript-typescript');

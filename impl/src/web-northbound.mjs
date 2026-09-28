@@ -409,10 +409,6 @@ const PERMANENT_DISPATCH_CAUSES = Object.freeze({
     message: 'this resident serves no Run application',
     remedy: 'restart the resident from a deployment that wires the Run application (`baton serve` on the resident host); no retry can succeed against this one',
   }),
-  application_run_view_oversize: Object.freeze({
-    message: 'the Run view exceeds this deployment\'s projection ceiling',
-    remedy: 'narrow the read (a smaller `depth`/`section`/`item`) or raise the deployment ceiling; the same read refuses for the same reason',
-  }),
 });
 
 // The cleartext-transport refusal: the listener cannot serve this request at all, and no retry

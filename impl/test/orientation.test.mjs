@@ -223,8 +223,6 @@ const atlasConfig = (root) => ({
   artifactRoot: join(root, 'atlas-artifacts'),
   maxArtifactBytes: 256 * 1024,
   maxSourceBytes: 64 * 1024,
-  maxFiles: 64,
-  maxResults: 256,
 });
 const driver = (root, overrides = {}) => createDriver({
   repoRoot: root,
@@ -254,7 +252,7 @@ function orientedLane(files, label) {
     capabilities: {
       'atlas-index': new AtlasCodeIndex({
         artifactRoot: join(root, 'atlas-artifacts', 'index'), maxArtifactBytes: 256 * 1024,
-        maxSourceBytes: 64 * 1024, maxFiles: 64, maxResults: 256,
+        maxSourceBytes: 64 * 1024,
       }),
     },
     contexts: { 'atlas-index': { baseRoot: root } },
@@ -830,7 +828,7 @@ test('OR-C6 [stage: storage-ceiling-missing]: orientation storage refuses BEFORE
   // control this epic adds; today no quota, roots, or reclamation exist at all.
   const index = new AtlasCodeIndex({
     artifactRoot: join(tmpDir('c6-artifacts'), 'atlas'), maxArtifactBytes: 256 * 1024,
-    maxSourceBytes: 64 * 1024, maxFiles: 64, maxResults: 256, maxOrientationStorageBytes: 600,
+    maxSourceBytes: 64 * 1024, maxOrientationStorageBytes: 600,
   });
   const built = await index.invoke('index.build', {}, { budgetTokens: 10_000, baseRoot: root });
   const epoch = built.provenance.index_epoch;

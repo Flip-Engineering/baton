@@ -8,11 +8,11 @@ import test from 'node:test';
 import { AtlasCodeIndex } from '../src/atlas-index.mjs';
 import { AtlasStructuralDelta } from '../src/atlas-structural.mjs';
 
-// Issue #500 — the atlas indexing modules silently dropped files over a private
-// 2 MiB default ceiling with no diagnostic. The repaired contract: the default
-// source ceiling is 16 MiB (the ledger event ceiling), and a file skipped over
-// the ceiling emits an atlas.source.skipped record. The structural delta module
-// names the ceiling value in its refusal message.
+// Issue #500 — the atlas indexing modules silently dropped files over a private 2 MiB default
+// ceiling with no diagnostic. The repaired contract named the default (16 MiB, the ledger event
+// ceiling) and recorded a skip. #530 removed the index ceilings outright: the index reads a source
+// of any size, so nothing is skipped and no file or result count refuses. The structural delta
+// module keeps its own ceiling and still names the value in its refusal message.
 
 function repository(t, name, files) {
   const root = mkdtempSync(join(tmpdir(), `baton-500-atlas-${name}-`));
@@ -29,12 +29,15 @@ function repository(t, name, files) {
   return root;
 }
 
-test('500-atlas-a: AtlasCodeIndex default maxSourceBytes is the 16 MiB ledger event ceiling', (t) => {
+test('500-atlas-a (#530): the Atlas index constructs and declares no source, file, result or artifact ceiling', (t) => {
   const artifacts = mkdtempSync(join(tmpdir(), 'baton-500-atlas-a-'));
   t.after(() => rmSync(artifacts, { recursive: true, force: true }));
   const atlas = new AtlasCodeIndex({ artifactRoot: artifacts });
-  assert.equal(atlas.maxSourceBytes, 16 * 1024 * 1024,
-    'default maxSourceBytes is 16 MiB (the ledger event ceiling)');
+  assert.equal(atlas.maxSourceBytes, undefined, 'no source byte ceiling is constructed');
+  assert.equal(atlas.maxFiles, undefined, 'no file count ceiling is constructed');
+  assert.equal(atlas.maxResults, undefined, 'no result count ceiling is constructed');
+  assert.equal(atlas.maxArtifactBytes, undefined, 'no artifact byte ceiling is constructed');
+  assert.equal(atlas.card().ceilings, undefined, 'and the card declares none');
 });
 
 test('500-atlas-b: AtlasStructuralDelta default maxSourceBytes is the 16 MiB ledger event ceiling', (t) => {
@@ -45,23 +48,19 @@ test('500-atlas-b: AtlasStructuralDelta default maxSourceBytes is the 16 MiB led
     'default maxSourceBytes is 16 MiB (the ledger event ceiling)');
 });
 
-test('500-atlas-c: a file over the index source ceiling emits an atlas.source.skipped record', async (t) => {
+test('500-atlas-c (#530): no source is skipped for its size — every supported file is indexed', async (t) => {
   const artifacts = mkdtempSync(join(tmpdir(), 'baton-500-atlas-c-'));
   t.after(() => rmSync(artifacts, { recursive: true, force: true }));
   const records = [];
-  const atlas = new AtlasCodeIndex({
-    artifactRoot: artifacts, maxSourceBytes: 32, record: (r) => records.push(r),
-  });
+  const atlas = new AtlasCodeIndex({ artifactRoot: artifacts, record: (r) => records.push(r) });
   const root = repository(t, 'skipped', {
     'src/small.mjs': 'export const x = 1;\n',
     'src/big.mjs': `export const y = ${'a'.repeat(64)};\n`,
   });
-  await atlas.invoke('index.build', {}, { baseRoot: root, budgetTokens: 10_000 });
-  const skipped = records.filter((r) => r.kind === 'atlas.source.skipped');
-  assert.equal(skipped.length, 1, 'one file was skipped over the source ceiling');
-  assert.equal(skipped[0].path, 'src/big.mjs');
-  assert.equal(skipped[0].reason, 'exceeds_source_ceiling');
-  assert.equal(skipped[0].ceiling, 32);
+  const built = await atlas.invoke('index.build', {}, { baseRoot: root, budgetTokens: 10_000 });
+  assert.deepEqual(records.filter((r) => r.kind === 'atlas.source.skipped'), [],
+    'no skip record is emitted — nothing is dropped for its size');
+  assert.deepEqual(built.payload.map((file) => file.path).sort(), ['src/big.mjs', 'src/small.mjs']);
 });
 
 test('500-atlas-d: structural delta names the ceiling in its oversized-source refusal', async (t) => {

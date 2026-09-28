@@ -311,8 +311,10 @@ export class CartographerQuartermaster {
     if (typeof opts.atlas.resultRoot !== 'string' || opts.atlas.resultRoot.length === 0) throw new TypeError('Cartographer/Quartermaster requires Atlas resultRoot');
     this.atlasResultRoot = realpathSync(opts.atlas.resultRoot);
     const artifactRoot = resolve(opts.artifactRoot); mkdirSync(artifactRoot, { recursive: true, mode: 0o700 }); this.artifactRoot = realpathSync(artifactRoot);
-    this.maxArtifactBytes = opts.maxArtifactBytes ?? opts.atlas.card().ceilings?.maxArtifactBytes;
-    if (!Number.isSafeInteger(this.maxArtifactBytes) || this.maxArtifactBytes <= 0) throw new TypeError('Cartographer/Quartermaster maxArtifactBytes required');
+    // #530: the atlas card no longer declares a ceiling for this module to read, so the artifact
+    // ceiling is the CALLER's declaration: a deployment that names one (index.mjs passes the atlas
+    // assembly's value) has it advertised on the card, and a caller that names none declares none.
+    this.maxArtifactBytes = Number.isSafeInteger(opts.maxArtifactBytes) && opts.maxArtifactBytes > 0 ? opts.maxArtifactBytes : null;
     this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
     this.externalOracle = opts.externalOracle ?? null;
     this.vetPolicy = null;
@@ -361,9 +363,8 @@ export class CartographerQuartermaster {
         || !Number.isSafeInteger(policy.maxImportWitnesses) || policy.maxImportWitnesses <= 0
         || !Number.isSafeInteger(policy.maxArtifactBytes) || policy.maxArtifactBytes <= 0
         || !Number.isSafeInteger(policy.maxPathBytes) || policy.maxPathBytes <= 0
-        || !Number.isSafeInteger(policy.maxImportSourceBytes) || policy.maxImportSourceBytes <= 0
-        || !Number.isSafeInteger(atlasCard?.ceilings?.maxSourceBytes) || atlasCard.ceilings.maxSourceBytes <= 0 || !Number.isSafeInteger(atlasCard?.ceilings?.maxFiles) || atlasCard.ceilings.maxFiles <= 0 || !Number.isSafeInteger(atlasCard?.ceilings?.maxResults) || atlasCard.ceilings.maxResults <= 0) throw new TypeError('advisory scanner identity/policy is invalid');
-      this.advisoryPolicy = Object.freeze({ scannerId: card.scan.scannerId, scannerCardDigest: sha(stable(card)), scannerCeilings: card.ceilings, atlasCardDigest: sha(stable(atlasCard)), atlasCeilings: atlasCard.ceilings, maxEdges: policy.maxEdges, maxDepth: policy.maxDepth, maxProjectionRows: policy.maxProjectionRows, maxImportWitnesses: policy.maxImportWitnesses, maxArtifactBytes: policy.maxArtifactBytes, maxPathBytes: policy.maxPathBytes, maxImportSourceBytes: policy.maxImportSourceBytes });
+        || !Number.isSafeInteger(policy.maxImportSourceBytes) || policy.maxImportSourceBytes <= 0) throw new TypeError('advisory scanner identity/policy is invalid');
+      this.advisoryPolicy = Object.freeze({ scannerId: card.scan.scannerId, scannerCardDigest: sha(stable(card)), scannerCeilings: card.ceilings, atlasCardDigest: sha(stable(atlasCard)), maxEdges: policy.maxEdges, maxDepth: policy.maxDepth, maxProjectionRows: policy.maxProjectionRows, maxImportWitnesses: policy.maxImportWitnesses, maxArtifactBytes: policy.maxArtifactBytes, maxPathBytes: policy.maxPathBytes, maxImportSourceBytes: policy.maxImportSourceBytes });
     }
   }
 
@@ -380,7 +381,7 @@ export class CartographerQuartermaster {
       },
       ...(this.externalOracle ? { reusePolicy: { schemaVersion: 1, policyId: 'quartermaster-vet-policy-v1', hash: this.vetPolicyHash, projection: this.vetPolicy } } : {}),
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
-      ceilings: { maxArtifactBytes: this.maxArtifactBytes }, availability: this.availability,
+      ...(this.maxArtifactBytes === null ? {} : { ceilings: { maxArtifactBytes: this.maxArtifactBytes } }), availability: this.availability,
       languageCeiling: { family: 'javascript-typescript', extensions: this.atlas.card().languageCeiling?.extensions ?? [], maximumRung: 'R2', enforcingGate: 'atlas-representation-ceiling' },
       limitations: [
         this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured',
@@ -634,7 +635,7 @@ export class CartographerQuartermaster {
     }
     if (op === 'provenance.advisories' && this.advisoryScanner) {
       if (sha(stable(this.advisoryScanner.card())) !== this.advisoryPolicy.scannerCardDigest) throw typed('advisory scanner policy changed', 'advisory_policy_changed');
-      if (sha(stable(this.atlas.card())) !== this.advisoryPolicy.atlasCardDigest || stable(this.atlas.card().ceilings) !== stable(this.advisoryPolicy.atlasCeilings)) throw typed('Atlas advisory policy changed', 'advisory_policy_changed');
+      if (sha(stable(this.atlas.card())) !== this.advisoryPolicy.atlasCardDigest) throw typed('Atlas advisory policy changed', 'advisory_policy_changed');
       const selected = await this._advisorySource(args, ctx); this._abort(ctx);
       const grounding = selected.source.kind === 'actual' ? 'actual_lockfile' : 'proposed_not_installed';
       const snapshot = advisoryGraphSnapshot(selected.graph, grounding, selected.source, this.advisoryPolicy);
@@ -826,7 +827,7 @@ export class CartographerQuartermaster {
       }
       if (op === 'provenance.advisories') {
         if (sha(stable(this.advisoryScanner.card())) !== this.advisoryPolicy.scannerCardDigest) return { ok: false, reason: 'advisory_policy_changed' };
-        if (sha(stable(this.atlas.card())) !== this.advisoryPolicy.atlasCardDigest || stable(this.atlas.card().ceilings) !== stable(this.advisoryPolicy.atlasCeilings)) return { ok: false, reason: 'advisory_policy_changed' };
+        if (sha(stable(this.atlas.card())) !== this.advisoryPolicy.atlasCardDigest) return { ok: false, reason: 'advisory_policy_changed' };
         const selected = await this._advisorySource(args, ctx); const grounding = selected.source.kind === 'actual' ? 'actual_lockfile' : 'proposed_not_installed';
         const query = { source: selected.query, indexEpoch: args?.indexEpoch };
         if (stable(prior.query) !== stable(query) || !Array.isArray(prior.provenance?.advisoryRefs) || prior.provenance.advisoryRefs.length !== 3 || !Array.isArray(claim?.refs) || claim.refs.length !== 4) return { ok: false, reason: 'query_mismatch' };
