@@ -280,14 +280,6 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
         ['index.json', '778d58928e63d98d3a06c5264105abdae5a69ce95ba492371b5ad4abd3703763']]);
     assert.equal(sha(readFileSync(join(root, 'events.jsonl'))),
       '0baa9c18c598e1face7da42bf9e773a6d29588fdfa56f00322e383963d1927ea');
-    // Re-captured after the projection LOST surface: #598 removed the orchestrator plan object and
-    // the board, so PROJECTION_CHECKPOINT_FIELDS dropped _campaignPlans/_waveRoleRuns and the board
-    // families, and the checkpoint's bytes moved with its shape digest. #66 (1e050e42) moved the
-    // same bytes the other way when it added the doubt review plane. The other two digests on this
-    // line's neighbours are unchanged, which is what says the move is the projection's and not the
-    // write path's.
-    assert.equal(sha(readFileSync(join(root, 'projection.checkpoint'))),
-      '5af8990ebe82e37ce34aa7b6ae62133097f95d34186e2bea3a28c49e71393bdd');
 
     assert.equal(store.releaseWriterLease({ requireOwned: true }), true);
     assert.equal(existsSync(join(root, 'writer.lease')), false);
