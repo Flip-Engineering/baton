@@ -52,16 +52,22 @@ def frames(path):
 
 
 def omp_reports(path):
+    latest = None
     for frame in frames(path):
-        if frame.get('type') != 'agent_end':
+        kind = frame.get('type')
+        if kind == 'message_end':
+            messages = [frame.get('message', {})]
+        elif kind == 'agent_end' and frame.get('isTerminal') is not False:
+            messages = frame.get('messages', [])
+        else:
             continue
-        latest = None
-        messages = frame.get('messages', [])
         for message in messages:
             if message.get('role') == 'assistant':
                 latest = '\n'.join(part['text'] for part in message.get('content', [])
                                    if part.get('type') == 'text')
-        yield latest
+        if kind == 'agent_end':
+            yield latest
+            latest = None
 
 
 def prepare_coordinator(source, repo, out, supplied):
