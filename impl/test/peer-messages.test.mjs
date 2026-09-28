@@ -201,7 +201,7 @@ test('current wave membership permits peer initiation across member runs, refuse
   assert.equal(sent(fx,a).ok,true);
   fx.coordinator._coordination.appendWaveClosed({ waveId:'wave:ours', receiptDigest:'a'.repeat(64),
     rings:[], lanes:[], parked:[], blockedOn:[], settlementErrors:[],
-    knowledge:{candidates:0,admittedThisRun:0,candidatesAwaitingAdmission:0,settlementRunId:null},
+    knowledge:{candidates:0,candidatesAwaitingAdmission:0,settlementRunId:null},
   },{actor:'orchestrator',key:'wave.close:ours'});
   emit(fx,a,{to:{workerId:late.id},body:'The wave has closed.'});
   await flush();

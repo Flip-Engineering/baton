@@ -25,7 +25,6 @@ import test from 'node:test';
 import { renderBrief, MockAdapter } from '../src/adapter.mjs';
 import { buildKnowledgeSlice, createBrief } from '../src/messages.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
@@ -69,83 +68,28 @@ function freshStore(label, opts = {}) {
   return new CoordinationStore(dir(label), { repoId, clock: () => '2026-07-22T08:00:00.000Z', ...opts });
 }
 
-// The Context Program authority a package admission needs — the store opts plus the branch shape
-// the admission consumes (kg12-decisions' Part C fixture writes the same rows).
-const packageAuthority = Object.freeze({
-  deploymentBaseSha: '1'.repeat(40),
-  contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-  contextEnvironmentDigest: '2'.repeat(64),
-  contextReferenceIdentity: '3'.repeat(64),
-  contextReferenceRead: () => { throw Object.assign(new Error('unused in this suite'), { code: 'context_artifact_unavailable' }); },
-  contextSourceAttest: () => { throw new Error('not used in this suite'); },
-});
-
-function valueRefBranch(name, store, seed = name) {
-  const artifactDigest = digest({ a: seed });
-  const schemaId = `schema:${digest({ s: seed })}`;
-  const valueDigest = digest({ v: seed });
-  const lineageDigest = digest({ l: seed });
-  const artifactId = `artifact:${seed}`;
-  store._artifacts.set(artifactId, { id: artifactId, digest: artifactDigest });
-  const valueId = `pvalue:${digest({ artifactDigest, schemaId, valueDigest, lineageDigest })}`;
-  return {
-    name, source: null, artifact: null, schema: null,
-    valueRef: { kind: 'value_ref', valueId, artifactId, artifactDigest, schemaId, valueDigest, lineageDigest },
-  };
-}
 
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });
-const workflowAdmissionPolicy = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
-
-// A context-package admission mints the `observed` package Finding the admit gate consumes — the
-// candidate path both fixtures below mint from.
-function admitCandidate(store, runId, label) {
-  const admitted = store.admitContextPackage({
-    schemaVersion: 1, kind: 'baton.context_package',
-    branches: [valueRefBranch('candidate', store, label)],
-    provenance: { runId, principalId: `principal-${label}` },
-    policyDigest: DEFAULT_CONTEXT_PROGRAM_POLICY.policyDigest,
-  }, auth(`admit-${label}`));
-  return `finding:package:${admitted.package.packageDigest}`;
+// A candidate Finding the candidacy queue reads. The settle-time admit gate left with the
+// workflow-admitted lane, so the surviving trigger path mints the candidate directly.
+function mintCandidate(store, label) {
+  const id = `finding:candidate:${label}`;
+  store.addKnowledgeNode({
+    id, type: 'Finding', grounding: 'observed', evidence: [],
+    promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' },
+  }, auth(`candidate-${label}`));
+  return id;
 }
 
-// A coordinator + its store, with a package-admit candidate Finding and an active run-orchestrator
-// lease bound to it — the same shape kg12-decisions' settleFixture builds, exposed here so the
-// activation suite can both read the candidacy queue AND drive the admit gate on one fixture.
+// A store holding one pending candidate Finding, exposed so the activation suite can read the
+// candidacy queue and the ritual count off one fixture.
 function candidateFixture(label, opts = {}) {
-  const store = freshStore(label, { runLineagePolicy: lineagePolicy, ...packageAuthority, ...opts });
+  const store = freshStore(label, { runLineagePolicy: lineagePolicy, ...opts });
   const runId = `run-${label}`;
-  const taskId = `task-${label}`;
-  const workerId = `worker-${label}`;
-  store.createTask({
-    id: taskId, brief: { objective: 'orchestrate', capabilities: ['baton_orchestrator'] },
-    deps: [], refines: null, relation: 'root', runId, taskType: 'general',
-    reservedWorkerId: workerId, vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
-    modelPolicy: null, effortRequested: 'max', sessionRequest: { mode: 'new' },
-  }, { actor: 'orchestrator', key: `task.created:${taskId}` });
-  const task = store.claimTask(taskId, workerId, 1, { actor: 'orchestrator', key: `task.claimed:${taskId}` }, {
-    harnessRequested: 'kimi-code', harnessResolved: 'kimi-code@fixture',
-    modelRequested: 'kimi-code/k3', modelResolved: 'kimi-code/k3', modelObserved: 'kimi-code/k3',
-    effortRequested: 'max', effortResolved: 'max', effortObserved: 'max',
-    routeKey: '["kimi-code","fixture","kimi-code/k3","max"]',
-  }).task;
-  const session = {
-    principalId: `principal-${label}`, sessionId: `session-${label}`,
-    authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: `principal-${label}`, sessionId: `session-${label}` }),
-    expiresAt: '2026-07-22T09:00:00.000Z',
-  };
-  const leaseRequest = { schemaVersion: 1, repoId, parentTask: { id: taskId, version: task.version }, session };
-  const leaseIdentity = {
-    repoId, parentRunId: runId, parentTaskId: taskId, parentTaskVersion: task.version, workerId,
-    principalId: session.principalId, sessionId: session.sessionId, sessionAuthorityDigest: session.authorityDigest,
-  };
-  const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-  const issued = store.issueRunOrchestratorLease(leaseRequest, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
-  const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const candidateFindingId = admitCandidate(store, runId, label);
-  return { store, runId, taskId, lease, candidateFindingId };
+  const candidateFindingId = mintCandidate(store, label);
+  return { store, runId, candidateFindingId };
 }
 
 // A coordinator wrapping its own store (for the horizon projections), optionally set up with the
@@ -153,7 +97,7 @@ function candidateFixture(label, opts = {}) {
 function coordinatorFixture(label, { withCandidate = false } = {}) {
   const d = dir(label);
   const log = new Log(join(d, 'log'));
-  const coordination = new CoordinationStore(join(d, 'coord'), { repoId, clock: () => '2026-07-22T08:00:00.000Z', runLineagePolicy: lineagePolicy, ...packageAuthority });
+  const coordination = new CoordinationStore(join(d, 'coord'), { repoId, clock: () => '2026-07-22T08:00:00.000Z', runLineagePolicy: lineagePolicy });
   const fences = new FenceTable();
   const coordinator = new Coordinator({
     log, coordination, fences, adapters: {},
@@ -168,34 +112,7 @@ function coordinatorFixture(label, { withCandidate = false } = {}) {
   let setup = null;
   if (withCandidate) {
     const runId = `run-${label}`;
-    const taskId = `task-${label}`;
-    const workerId = `worker-${label}`;
-    coordination.createTask({
-      id: taskId, brief: { objective: 'orchestrate', capabilities: ['baton_orchestrator'] },
-      deps: [], refines: null, relation: 'root', runId, taskType: 'general',
-      reservedWorkerId: workerId, vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
-      modelPolicy: null, effortRequested: 'max', sessionRequest: { mode: 'new' },
-    }, { actor: 'orchestrator', key: `task.created:${taskId}` });
-    const task = coordination.claimTask(taskId, workerId, 1, { actor: 'orchestrator', key: `task.claimed:${taskId}` }, {
-      harnessRequested: 'kimi-code', harnessResolved: 'kimi-code@fixture',
-      modelRequested: 'kimi-code/k3', modelResolved: 'kimi-code/k3', modelObserved: 'kimi-code/k3',
-      effortRequested: 'max', effortResolved: 'max', effortObserved: 'max',
-      routeKey: '["kimi-code","fixture","kimi-code/k3","max"]',
-    }).task;
-    const session = {
-      principalId: `principal-${label}`, sessionId: `session-${label}`,
-      authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: `principal-${label}`, sessionId: `session-${label}` }),
-      expiresAt: '2026-07-22T09:00:00.000Z',
-    };
-    const leaseRequest = { schemaVersion: 1, repoId, parentTask: { id: taskId, version: task.version }, session };
-    const leaseIdentity = {
-      repoId, parentRunId: runId, parentTaskId: taskId, parentTaskVersion: task.version, workerId,
-      principalId: session.principalId, sessionId: session.sessionId, sessionAuthorityDigest: session.authorityDigest,
-    };
-    const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
-    const issued = coordination.issueRunOrchestratorLease(leaseRequest, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
-    const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-    setup = { runId, lease, candidateFindingId: admitCandidate(coordination, runId, label) };
+    setup = { runId, candidateFindingId: mintCandidate(coordination, label) };
   }
   return { coordinator, coordination, setup };
 }
@@ -294,20 +211,20 @@ test('KG-A1: a spawn brief carries the bounded knowledge slice with provenance w
 // KG-A2: the candidacy queue — first-class projection over candidate records
 // ============================================================
 
-test('KG-A2: candidates from each source kind appear with type/source/age/grounding; admit removes exactly that candidate; the queue is capped and ordered; no duplicates across views', () => {
+test('KG-A2: candidates from each source kind appear with type/source/age/grounding; the queue is capped and ordered; no duplicates across views', () => {
   const s = freshStore('queue', { clock: clockMs() });
   // A task node grounds the verification-class candidate (verified_task_outcome binds its task).
   s.addKnowledgeNode({ id: 'task:t-ver', type: 'Task', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-task' });
-  s.addKnowledgeNode({ id: 'finding:pkg-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'package.admitted' } }, { actor: 'policy', key: 'kn-pkg' });
+
   s.addKnowledgeNode({ id: 'finding:scratch-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' } }, { actor: 'policy', key: 'kn-scratch' });
   s.addKnowledgeNode({ id: 'finding:ver-1', type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'verified_task_outcome' }, taskId: 't-ver' }, { actor: 'policy', key: 'kn-ver' });
 
   const q = s.knowledgeCandidateQueue({ now });
   assert.ok(Array.isArray(q.candidates));
   const sources = q.candidates.map((c) => c.source).sort();
-  assert.deepEqual(sources, ['package_admit', 'scratchpad_settle', 'verification'], 'each source kind appears with its canonical label');
+  assert.deepEqual(sources, ['scratchpad_settle', 'verification'], 'each source kind appears with its canonical label');
   for (const c of q.candidates) {
-    assert.ok(['package_admit', 'scratchpad_settle', 'verification'].includes(c.source));
+    assert.ok(['scratchpad_settle', 'verification'].includes(c.source));
     assert.equal(typeof c.id, 'string');
     assert.equal(typeof c.type, 'string');
     assert.ok(Number.isFinite(c.ageMs) && c.ageMs >= 0, 'ageMs is a non-negative millisecond age');
@@ -321,21 +238,13 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
   const qAgain = s.knowledgeCandidateQueue({ now });
   assert.deepEqual(qAgain.candidates.map((c) => c.id), [...new Set(q.candidates.map((c) => c.id))], 'no candidate appears twice');
 
-  // Admitting one candidate removes EXACTLY that candidate; the rest remain.
-  const f = candidateFixture('admit-remove');
-  const before = f.store.knowledgeCandidateQueue({ now });
-  assert.ok(before.candidates.some((c) => c.id === f.candidateFindingId), 'the package-admit candidate is queued before admit');
-  f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('admit-a2'), f.lease);
-  const after = f.store.knowledgeCandidateQueue({ now });
-  assert.equal(after.candidates.some((c) => c.id === f.candidateFindingId), false, 'admit removes exactly that candidate');
-  assert.equal(after.admittedIds.includes(f.candidateFindingId), true, 'the admitted id is recorded, never double-counted');
-  f.store.releaseWriterLease();
+
 
   // The queue is capped (<= 16) and ordered even when many candidates are pending.
   const s2 = freshStore('cap');
   s2.addKnowledgeNode({ id: 'task:t-cap', type: 'Task', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-cap-task' });
   for (let i = 0; i < 24; i += 1) {
-    s2.addKnowledgeNode({ id: `finding:cap-${i}`, type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'package.admitted' } }, { actor: 'policy', key: `kn-cap-${i}` });
+    s2.addKnowledgeNode({ id: `finding:cap-${i}`, type: 'Finding', grounding: 'observed', evidence: [], promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' } }, { actor: 'policy', key: `kn-cap-${i}` });
   }
   const capped = s2.knowledgeCandidateQueue({ now });
   assert.ok(capped.candidates.length <= 16, 'the queue is bounded');
@@ -346,34 +255,25 @@ test('KG-A2: candidates from each source kind appear with type/source/age/ground
 // KG-A3: ritual hooks — candidacy counts at the natural review moments
 // ============================================================
 
-test('KG-A3: the ritual projection carries candidacy counts; a zero-candidate run carries 0 (not a missing field); mint/admit move them; the wave close receipt inherits the block', () => {
-  // Zero candidates + zero admits → { candidates: 0, admittedThisRun: 0 } (0, never missing).
-  const empty = freshStore('ritual-empty').knowledgeRitual('run-none', { now });
-  assert.deepEqual(empty, { candidates: 0, admittedThisRun: 0 });
+test('KG-A3: the ritual projection carries the candidacy count; a zero-candidate run carries 0 (not a missing field); minting moves it; the wave close receipt inherits the block', () => {
+  // Zero candidates → { candidates: 0 } (0, never missing).
+  const empty = freshStore('ritual-empty').knowledgeRitual({ now });
+  assert.deepEqual(empty, { candidates: 0 });
 
-  // Minting candidates moves the count; admitting moves admittedThisRun up and candidates down.
+  // Minting a candidate moves the count.
   const f = candidateFixture('ritual');
-  const r0 = f.store.knowledgeRitual(f.runId, { now });
-  assert.equal(r0.candidates, 1, 'the pending package-admit candidate is counted');
-  assert.equal(r0.admittedThisRun, 0);
-  f.store.admitWorkflowFinding(repoId, f.runId, f.candidateFindingId, workflowAdmissionPolicy, auth('admit-a3'), f.lease);
-  const r1 = f.store.knowledgeRitual(f.runId, { now });
-  assert.equal(r1.admittedThisRun, 1, 'the admit is counted for this run');
-  assert.equal(r1.candidates, 0, 'the admitted candidate leaves the pending queue');
+  const r0 = f.store.knowledgeRitual({ now });
+  assert.equal(r0.candidates, 1, 'the pending candidate is counted');
+  assert.equal(freshStore('ritual-empty').knowledgeRitual({ now }).candidates, 0,
+    'a different store reports its own queue only');
   f.store.releaseWriterLease();
-
-  // admittedThisRun is run-scoped: a second run's admit does not leak into the first.
-  const g = candidateFixture('ritual-other');
-  g.store.admitWorkflowFinding(repoId, g.runId, g.candidateFindingId, workflowAdmissionPolicy, auth('admit-a3b'), g.lease);
-  assert.equal(freshStore('ritual-empty').knowledgeRitual(f.runId, { now }).admittedThisRun, 0, 'a different store reports its own run only');
-  g.store.releaseWriterLease();
 });
 
 // ============================================================
 // KG-A4: horizon digests in the wave surface — cache-correct
 // ============================================================
 
-test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on admit and holds on unrelated state (cache-correct)', () => {
+test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on a knowledge write and holds on unrelated state (cache-correct)', () => {
   const { coordinator, coordination, setup } = coordinatorFixture('digest', { withCandidate: true });
   const runId = setup.runId;
 
@@ -387,24 +287,13 @@ test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on admit and hold
   const d1 = coordinator.workflowHorizon(runId).knowledgeDigest;
   assert.equal(d1, d0, 'an unrelated state move leaves the knowledge digest unchanged');
 
-  // A scratchpad write is also unrelated knowledge state — the digest holds.
-  coordination._events; // touch (no-op guard); the next assertion is the real property
-  const d1b = coordinator.workflowHorizon(runId).knowledgeDigest;
-  assert.equal(d1b, d0, 'a repeated read with no knowledge change is stable');
-
-  // Admitting a finding mints a new verified Finding + DerivedFrom edge → the digest moves. The
-  // admit goes through the real gate on the store (the coordinator wrapper ticks startup recovery,
-  // unnecessary for this pure cache property — kg12 Part D admits store-direct for the same reason).
-  coordination.admitWorkflowFinding(repoId, runId, setup.candidateFindingId, workflowAdmissionPolicy, auth('admit-a4'), setup.lease);
+  // A knowledge write mints a node → the digest moves.
+  coordination.addKnowledgeNode({ id: 'finding:digest-probe', type: 'Finding', grounding: 'observed', evidence: [] },
+    { actor: 'policy', key: 'kn-a4' });
   const d2 = coordinator.workflowHorizon(runId).knowledgeDigest;
-  assert.notEqual(d2, d0, 'admitting a finding changes the knowledge digest');
+  assert.notEqual(d2, d0, 'a knowledge write changes the knowledge digest');
   coordination.releaseWriterLease();
 });
-
-// ============================================================
-// KG-A5: gate honesty — the admit gate is the ONLY promotion path
-// ============================================================
-
 
 // ============================================================
 // KG-A3/KG-A4 wave surfacing: the wave close receipt + progress rows carry the knowledge block
@@ -429,7 +318,6 @@ test('KG-A3/A4 wave surfacing: the wave close receipt carries knowledge counts a
   const stop = await wave.close({ reason: 'KG-activation surfacing.' });
   assert.ok(Object.hasOwn(stop, 'knowledge'), 'the wave close receipt carries the knowledge block');
   assert.equal(stop.knowledge.candidates, 0, 'a zero-candidate wave surfaces 0, never a missing field');
-  assert.equal(stop.knowledge.admittedThisRun, 0);
 });
 
 // ---------------------------------------------------------------------------

@@ -24,12 +24,6 @@ const MATRIX = Object.freeze([
   ['decision.list', 'ordinary', ['embedded', 'mcp'], 'observe', 'application.decisionList'],
   // MCP-W2 fold (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
   // knowledge.promote LEAVE the reflex matrix — they are the ordinary-surface settlement tools.
-  ['package.admit', 'ordinary', ['embedded', 'mcp'], 'control', 'admitContextPackage'],
-  ['package.attach', 'ordinary', ['embedded', 'mcp'], 'control', 'attachContextPackage'],
-  ['package.read', 'ordinary', ['embedded', 'mcp'], 'observe', 'contextPackageBranch + projectContextPackageBranch'],
-  ['repl.manifest', 'kernel', ['embedded'], 'control', 'admitReplManifest'],
-  ['repl.binding', 'kernel', ['embedded'], 'control', 'admitReplBinding + dropReplBinding'],
-  ['repl.cite', 'ordinary', ['embedded', 'mcp'], 'observe', 'resolveReplCitation'],
   ['knowledge.recall', 'ordinary', ['embedded', 'mcp'], 'observe', 'recallKnowledge'],
   ['knowledge.horizon', 'ordinary', ['embedded', 'mcp'], 'observe', 'taskHorizon + workflowHorizon + projectHorizon'],
 ]);

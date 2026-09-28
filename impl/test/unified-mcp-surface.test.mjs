@@ -154,7 +154,7 @@ test('configured describe resolves canonical names and corrected live aliases de
 test('configured describe reports embedded-only capability without promoting it', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
-  const response = await call(server, 'baton_surface_describe', { name: 'repl.binding' }, 22);
+  const response = await call(server, 'baton_surface_describe', { name: 'run.scratchpad' }, 22);
   const capability = response.result.structuredContent.capability;
   assert.equal(capability.remotePosture, 'embedded_only');
   assert.equal(capability.operatorFacing, false);
@@ -185,25 +185,25 @@ test('generic MCP invoke refuses embedded-only authority and requires action coo
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
   const embedded = await call(server, 'baton_surface_invoke', {
-    name: 'repl.binding', args: { runId: 'run:a' }, idempotencyKey: 'embedded:1',
+    name: 'run.scratchpad', args: { runId: 'run:a' }, idempotencyKey: 'embedded:1',
   }, 31);
   assert.equal(embedded.result.isError, true);
   assert.equal(embedded.result.structuredContent.error.code, 'surface_embedded_only');
 
   const missingAction = await call(server, 'baton_surface_invoke', {
-    name: 'context.map', args: { runId: 'run:a', branch: 'source' }, idempotencyKey: 'action:1',
+    name: 'run.send', args: { runId: 'run:a', message: 'go' }, idempotencyKey: 'action:1',
   }, 32);
   assert.equal(missingAction.result.isError, true);
   assert.equal(missingAction.result.structuredContent.error.code, 'surface_action_id_required');
 
   const action = await call(server, 'baton_surface_invoke', {
-    name: 'context.map',
-    args: { runId: 'run:a', actionId: 'action:map', branch: 'source' },
+    name: 'run.send',
+    args: { runId: 'run:a', actionId: 'action:send', message: 'go' },
     idempotencyKey: 'action:2',
   }, 33);
   assert.equal(action.result.structuredContent.result.name, 'run.act');
   assert.deepEqual(action.result.structuredContent.result.args, {
-    runId: 'run:a', actionId: 'action:map', inputs: { branch: 'source' },
+    runId: 'run:a', actionId: 'action:send', inputs: { message: 'go' },
   });
 });
 

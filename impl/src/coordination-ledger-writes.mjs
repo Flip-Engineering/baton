@@ -17,7 +17,6 @@ import {
   appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
   readFileSync, renameSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 import { serialize } from 'node:v8';
 import { closeCommitWaiters } from './coordination-commit.mjs';
@@ -25,7 +24,6 @@ import {
   CANONICAL_ORDER_MIGRATION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderMigration,
   normalizeCanonicalOrderPolicy,
 } from './canonical-order.mjs';
-import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import * as coordinationInternals from './coordination-internals.mjs';
 import {
@@ -222,48 +220,15 @@ export function constructor(store, root, opts = {}) {
     }
     try { store._workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy); }
     catch (error) { throw new TypeError(error?.message ?? 'Workflow policy is invalid'); }
-    store._contextProgramPolicy = null;
+    // The deployment commit the checkpoint envelope records as `servedCommit` and the tree the
+    // terminal captures bind to: one deployment decision, never a checkpoint default.
     store._deploymentBaseSha = opts.deploymentBaseSha ?? null;
-    store._contextEnvironmentDigest = opts.contextEnvironmentDigest ?? null;
-    store._contextReferenceIdentity = opts.contextReferenceIdentity ?? null;
-    store._contextReferenceRead = opts.contextReferenceRead ?? null;
-    store._contextSourceAttest = opts.contextSourceAttest ?? null;
-    store._contextArtifactVerificationStorage = new AsyncLocalStorage();
-    if (opts.contextProgramPolicy !== undefined) {
-      try { store._contextProgramPolicy = normalizeContextProgramPolicy(opts.contextProgramPolicy); }
-      catch (error) { throw new TypeError(error?.message ?? 'Context Program policy is invalid'); }
-      if (!/^[a-f0-9]{40}$/u.test(store._deploymentBaseSha ?? '')
-        || !/^[a-f0-9]{64}$/u.test(store._contextEnvironmentDigest ?? '')
-        || !/^[a-f0-9]{64}$/u.test(store._contextReferenceIdentity ?? '')
-        || typeof store._contextReferenceRead !== 'function'
-        || typeof store._contextSourceAttest !== 'function') {
-        throw new TypeError('Context Program authority requires one deployment tree, environment, and artifact resolver identity');
-      }
-    } else if (opts.contextEnvironmentDigest !== undefined
-      || opts.contextReferenceIdentity !== undefined || opts.contextReferenceRead !== undefined
-      || opts.contextSourceAttest !== undefined) {
-      throw new TypeError('Context Program dependencies require Context Program policy');
-    }
     store._repoId = opts.repoId ?? store._goalPlanPolicy?.repoId ?? null;
     if (store._repoId !== null && !validRunId(store._repoId)) {
       throw new TypeError('coordination repository identity is invalid');
     }
     if (store._goalPlanPolicy && store._repoId !== store._goalPlanPolicy.repoId) {
       throw new TypeError('coordination repository identity differs from goal/plan authority');
-    }
-    // Epic #81 (O-2): per-attempt constructive ceilings on orientation receipts/proposals — the
-    // flood control that replaces the v1 maxScanEvents scan ceiling (a scan bound, not a write
-    // bound). Checked BEFORE append; no clock participates (campaign law).
-    store._orientationReceiptCeilings = null;
-    if (opts.orientationReceiptCeilings !== undefined) {
-      const c = opts.orientationReceiptCeilings;
-      if (!c || typeof c !== 'object' || Array.isArray(c)
-        || !Number.isSafeInteger(c.maxReceiptsPerAttempt) || c.maxReceiptsPerAttempt <= 0
-        || !Number.isSafeInteger(c.maxReceiptBytesPerAttempt) || c.maxReceiptBytesPerAttempt <= 0
-        || !Number.isSafeInteger(c.maxProposalsPerAttempt) || c.maxProposalsPerAttempt <= 0) {
-        throw new TypeError('orientation receipt ceilings are invalid');
-      }
-      store._orientationReceiptCeilings = freeze(clone(c));
     }
     store._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
       ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
@@ -288,12 +253,12 @@ export function constructor(store, root, opts = {}) {
       representationPolicy: store._representationPolicy,
       goalPlanPolicy: store._goalPlanPolicy,
       workflowPolicy: store._workflowPolicy,
-      contextProgramPolicy: store._contextProgramPolicy,
+      // A task-topology or run-lineage policy change, or a moved deployment commit, must make an
+      // existing checkpoint stale_authority rather than reusable — the same rule the policies above
+      // follow (GitHub #361).
       taskTopologyPolicy: store._taskTopologyPolicy,
       runLineagePolicy: store._runLineagePolicy,
       deploymentBaseSha: store._deploymentBaseSha,
-      contextEnvironmentDigest: store._contextEnvironmentDigest,
-      contextReferenceIdentity: store._contextReferenceIdentity,
     });
     // Issue #449(2): this build's projection shape — the digest of the sorted field list the
     // checkpoint's payload carries. It rides every envelope the store writes beside the commit that
@@ -786,38 +751,7 @@ export function waitAfter(store, afterSeq, timeoutMs, options = {}) {
     });
   }
 
-export function attachContextPackage(store, fields, auth) {
-    const prior = store._byKey.get(auth?.key);
-    if (prior) {
-      if (prior.kind !== 'package.attached'
-        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
-        throw new CoordinationRefusal('context package attachment idempotency content changed',
-          'board_replay_conflict');
-      }
-      return {
-        ok: true, result: 'idempotent', event: clone(prior),
-        attachment: store._contextPackageAttachmentView(prior),
-      };
-    }
-    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-      || Object.keys(fields).sort().join(',') !== ['packageDigest', 'runId', 'scope'].sort().join(',')
-      || !/^[a-f0-9]{64}$/.test(fields.packageDigest ?? '') || !validRunId(fields.runId)
-      || !/^(run|worker:[A-Za-z0-9._:-]{1,256})$/u.test(fields.scope ?? '')) {
-      throw new CoordinationRefusal('context package attach request is invalid', 'context_package_attach_invalid');
-    }
-    if (auth?.key !== `package.attach:${fields.packageDigest}:${fields.runId}:${fields.scope}`) {
-      throw new CoordinationRefusal('context package attach authority is invalid', 'context_package_attach_invalid');
-    }
-    if (!store._contextPackages.has(fields.packageDigest)) {
-      throw new CoordinationRefusal('Context package is unavailable', 'context_package_not_found');
-    }
-    const payload = { packageDigest: fields.packageDigest, runId: fields.runId, scope: fields.scope };
-    const event = store._append('package.attached', payload, auth);
-    return {
-      ok: true, result: 'attached', event: clone(event),
-      attachment: store._contextPackageAttachmentView(event),
-    };
-  }
+
 
 export function revokeTaskAcceptance(store, fields, auth) {
     const request = store._acceptanceRevocationRequest(fields, auth);
@@ -858,14 +792,7 @@ export function revokeTaskAcceptance(store, fields, auth) {
     });
   }
 
-export function materializeContextPack(store, packId) {
-    const pack = store._contextPacks.get(packId);
-    if (!pack) throw new CoordinationRefusal('context pack was not found', 'context_pack_not_found');
-    if (Date.parse(store._clock()) >= Date.parse(pack.validity)) {
-      throw new CoordinationRefusal('context pack has expired', 'context_pack_expired');
-    }
-    return freeze({ packId: pack.packId, family: pack.family, body: pack.body });
-  }
+
 
 export function materializeSpill(store, spillId) {
     const spill = store._resolvedSpill(spillId);
@@ -874,57 +801,17 @@ export function materializeSpill(store, spillId) {
       : { spillId: spill.spillId, digest: spill.digest, bytes: spill.bytes, body: spill.body };
   }
 
-export function grantContextPack(store, fields, auth) {
-    const event = store._append('context.pack_granted', clone(fields), auth);
-    return { ok: true, result: 'granted', event: clone(event) };
-  }
 
-export function proposeOrientationCandidate(store, { leafDigest, packDigest }, auth) {
-    if (!/^[a-f0-9]{64}$/.test(leafDigest ?? '') || !/^[a-f0-9]{64}$/.test(packDigest ?? '')) {
-      throw new CoordinationRefusal('orientation candidate leaf is invalid', 'orientation_propose_refused');
-    }
-    const workerId = typeof auth?.actor === 'string' && auth.actor.startsWith('worker:') ? auth.actor.slice('worker:'.length) : null;
-    const source = store._orientationLatestSource();
-    // #286 G-45: one fold lookup replaces the per-proposal ledger scan (at least one receipt for
-    // this worker is exactly "the latest-receipt fold has this worker").
-    const hasReceipt = store._orientationWorkerFreshness(workerId) !== null;
-    if (!source && !hasReceipt) throw new CoordinationRefusal('orientation candidate was not received by the attempt', 'orientation_propose_refused');
-    const freshnessDigest = source?.freshnessDigest ?? store._orientationWorkerFreshness(workerId) ?? '0'.repeat(64);
-    const existing = store._orientationCandidate(leafDigest, freshnessDigest);
-    if (existing) return { ok: true, result: 'idempotent', node: clone(existing) };
-    store._assertOrientationProposalCeiling(workerId);
-    const candidateId = `orientation:candidate:${canonicalDigest({ freshnessDigest, leafDigest })}`;
-    const result = store.addKnowledgeNode({
-      body: `orientation overlay candidate leaf ${leafDigest.slice(0, 12)}`, evidence: [],
-      freshnessDigest, grounding: 'observed', id: candidateId, leafDigest, packDigest,
-      promotion: { kind: 'Finding', trigger: 'orientation.overlay_proposed' }, type: 'Finding', workerId,
-    }, auth);
-    if (source) {
-      try { store.addKnowledgeEdge({ evidence: [], from: candidateId, id: `knowledge-edge:cites:${candidateId}`, to: source.id, type: 'Cites' }, { actor: auth.actor, key: `${auth.key}:cites` }); }
-      catch { /* the Cites edge is best-effort over the observed candidate */ }
-    }
-    return { ok: true, result: 'minted', node: clone(result.node) };
-  }
 
-export function _orientationLatestSource(store) {
-    const sources = store.queryKnowledge({ types: ['Source'] }).sort((a, b) => (b.observedSeq ?? 0) - (a.observedSeq ?? 0));
-    return sources[0] ?? null;
-  }
 
-export function orientationReadLatest(store, workerId) {
-    return coordinationInternals.orientationReadLatest(store._contextReadLatest, workerId);
-  }
 
-export function _orientationWorkerFreshness(store, workerId) {
-    return store.orientationReadLatest(workerId)?.freshnessDigest ?? null;
-  }
 
-export function orientationReadHead(store, workerId, packDigest) {
-    return coordinationInternals.orientationReadHead(store._contextReadHeads, workerId, packDigest);
-  }
 
-export function _orientationCandidate(store, leafDigest, freshnessDigest) {
-    return store.queryKnowledge({ types: ['Finding'] }).find((node) => node.promotion?.trigger === 'orientation.overlay_proposed'
-      && node.leafDigest === leafDigest && node.freshnessDigest === freshnessDigest) ?? null;
-  }
+
+
+
+
+
+
+
 

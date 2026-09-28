@@ -727,11 +727,9 @@ permissions the view names — one table, four surfaces that cannot disagree:
 **Retired from the participant surface, with the reason.** A verb without a participant situation
 is not kept alive by an advertisement the loop cannot use:
 
-- `knowledge.promote` and `knowledge.settlement_lease` — the wave settlement pair. The store's
-  admission gate (`admitWorkflowFinding`) accepts only `orchestrator`/`operator:<id>` actors and a
-  wave-scoped lease, by design (KS3, single-orchestrator settlement posture). A swarm participant
-  has no wave and cannot hold the lease; the swarm's durable-knowledge settlement is
-  `run.knowledge.seed` plus the review lane. They remain embedded/MCP tools for the orchestrator.
+- `knowledge.settlement_lease` — the wave settlement lease, an embedded/MCP tool for the
+  orchestrator. The swarm's durable-knowledge settlement is `run.knowledge.seed` plus the review
+  lane.
 - `scratchpad.settle` — the scratchpad settles when the run's tasks are terminal, which is the
   workflow terminal sweep, never a live participant's act mid-loop.
 - `scratchpad.elevate` (the embedded wrapper) — superseded for participants by
@@ -1191,7 +1189,7 @@ declaration, every block's shape and honesty rules, the brief rendering, and the
 the #503 brief block) but pinned only for three retired verbs. `swarm-knowledge.test.mjs` now
 derives the whole knowledge/scratchpad/board/context/package family from the canonical registry
 and asserts the participant bridge refuses every member the brief does not teach — 22 rows at
-this writing: the wave-settlement lane (`knowledge.promote`, `knowledge.settlement_lease`,
+this writing: the wave-settlement lane (`knowledge.settlement_lease`,
 `scratchpad.settle`, the kernel `scratchpad.elevate`), the S-2 orchestrator board and package
 tools, the worker `board.claim`/`board.report` wire frames, the orchestrator knowledge reads
 (`knowledge.recall`, `knowledge.horizon`), and the context engine (`context.eval`/`map`/`reduce`/

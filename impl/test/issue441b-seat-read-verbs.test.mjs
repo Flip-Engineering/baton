@@ -36,7 +36,6 @@ childProcess.spawnSync = (...args) => { spawns += 1; return realSpawnSync(...arg
 const spawnCount = () => spawns;
 
 const { CoordinationStore } = await import('../src/coordination-store.mjs');
-const { DEFAULT_CONTEXT_PROGRAM_POLICY } = await import('../src/context-program-policy.mjs');
 const { createSwarmNativeBridge, swarmBridgeCommand } = await import('../src/swarm-native-bridge.mjs');
 const { SWARM_KNOWLEDGE_COMMAND_NAMES } = await import('../src/swarm-contract.mjs');
 const runtimeModule = await import('../src/swarm-runtime.mjs');
@@ -55,7 +54,6 @@ const owner = Object.freeze({ actor: 'owner', principalId: 'owner', sessionId: '
 const workerPrincipal = (workerId) => Object.freeze({
   actor: `worker:${workerId}`, principalId: `worker:${workerId}`, sessionId: `${workerId}-session`,
 });
-const policy = DEFAULT_CONTEXT_PROGRAM_POLICY;
 
 const canonical = (value) => (Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object'
@@ -69,25 +67,6 @@ function git(cwd, args) {
   return ran.stdout ?? '';
 }
 
-/** One branch whose content is an artifact the resolver holds: {name, digest, bytes} is what the
- * digest read projects, and the artifact is what the branch read projects. */
-function artifactBranch(name, res, content) {
-  const artifactDigest = digestOf(content);
-  const handle = `art:sha256:${artifactDigest}`;
-  res.artifacts.set(handle, content);
-  return {
-    name, source: null, valueRef: null, schema: null,
-    artifact: { kind: 'context_value', digest: artifactDigest, handle,
-      mediaType: 'application/vnd.baton.context-value+json',
-      bytes: Buffer.byteLength(JSON.stringify(content)) },
-  };
-}
-
-const packageFields = (branches) => ({
-  schemaVersion: 1, kind: 'baton.context_package', branches,
-  provenance: { runId: 'run-root', principalId: 'owner' },
-  policyDigest: policy.policyDigest,
-});
 
 async function fixture(t, label) {
   const directory = mkdtempSync(join(tmpdir(), `baton-issue441b-${label}-`));
@@ -102,24 +81,8 @@ async function fixture(t, label) {
   writeFileSync(join(repo, 'seed.txt'), 'seed\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-qm', 'seed']);
-  // The deployment's content resolver (reflex3-packages.test.mjs's shape): the package
-  // admission resolves every branch ref exactly once through it, and resolve-time revalidates.
-  const resolver = { sources: new Map(), artifacts: new Map() };
   const store = new CoordinationStore(join(directory, 'coordination'), {
     repoId: 'repo-issue441b', deploymentBaseSha: '1'.repeat(40),
-    contextProgramPolicy: policy,
-    contextEnvironmentDigest: '2'.repeat(64), contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: (reference) => {
-      const fromSource = reference.kind === 'context_source';
-      const key = fromSource ? reference.ref : reference.handle;
-      const table = fromSource ? resolver.sources : resolver.artifacts;
-      if (!table.has(key)) {
-        throw Object.assign(new Error('context package content is unavailable'),
-          { code: 'context_artifact_unavailable' });
-      }
-      return table.get(key);
-    },
-    contextSourceAttest: () => { throw new Error('the seat read verbs never attest a source'); },
     clock: () => '2026-09-18T00:00:00.000Z',
   });
   const workers = [];
@@ -157,7 +120,7 @@ async function fixture(t, label) {
     const issued = await bridge.issue({ swarmId: SWARM_ID, participantId, runId });
     return (name, args = {}) => swarmBridgeCommand({ command: name, args }, { env: issued.env });
   };
-  return { directory, repo, store, runtime, bridge, command, bridgeFor, workers, resolver };
+  return { directory, repo, store, runtime, bridge, command, bridgeFor, workers };
 }
 
 /** One swarm, two seats, one accepted contribution by beta (with a captured revision), work held
@@ -200,49 +163,6 @@ async function swarmFixture(t, label) {
   return { ...f, alphaRunId, betaRunId, alphaWorker, betaWorker };
 }
 
-test('441b-a: a package attached to the seat run reads by digest and by branch; an unattached digest refuses typed', async (t) => {
-  const f = await swarmFixture(t, 'package');
-  const beta = await f.bridgeFor('beta', f.betaRunId);
-  const admitted = f.store.admitContextPackage(
-    packageFields([artifactBranch('issue:441', f.resolver, { title: 'the reading half' })]),
-    { actor: 'owner', key: 'admit-441' },
-  );
-  const packageDigest = admitted.package.packageDigest;
-  f.store.attachContextPackage({ packageDigest, runId: f.betaRunId, scope: 'worker:beta' },
-    { actor: 'owner', key: `package.attach:${packageDigest}:${f.betaRunId}:worker:beta` });
-  // The branch list, by digest: name, digest and bytes — what the brief renders a digest of.
-  const list = await beta('run.package.read', { packageDigest });
-  assert.equal(list.swarmId, SWARM_ID);
-  assert.equal(list.packageDigest, packageDigest);
-  assert.deepEqual(list.branches, [{ name: 'issue:441',
-    kind: 'artifact', digest: digestOf({ title: 'the reading half' }),
-    bytes: Buffer.byteLength(JSON.stringify({ title: 'the reading half' })) }]);
-  assert.equal(list.provenance.principalId, 'owner');
-
-  // ONE branch's text, by name, through the ONE projection the MCP leg also serves: the untrusted
-  // prose marker rides the answer, unread prose is never returned raw.
-  const branch = await beta('run.package.read', { packageDigest, branchName: 'issue:441' });
-  assert.equal(branch.branch.name, 'issue:441');
-  assert.equal(branch.branch.provenance, 'untrusted');
-  assert.match(branch.branch.artifact, /the reading half/u);
-
-  // A digest nobody attached to this run or this swarm refuses typed — and does so without
-  // disclosing whether the deployment holds it at all. (A runtime refusal crosses the bridge
-  // verbatim: the "Nothing was recorded:" first line is the BRIDGE's own refusals' contract, and
-  // this read's refusals are the runtime's — typed, with the correction that resolves them.)
-  await assert.rejects(beta('run.package.read', { packageDigest: 'f'.repeat(64) }),
-    (error) => error.code === 'package_not_attached_to_run'
-      && error.detail?.participantId === 'beta' && /ask the root to attach/u.test(error.detail?.correction ?? ''));
-  // A branch the attached package does not carry names itself.
-  await assert.rejects(beta('run.package.read', { packageDigest, branchName: 'doc:missing' }),
-    (error) => error.code === 'swarm_context_package_branch_not_found');
-
-  // The seat's own run is the scope: a seat whose run never carried it cannot read it either.
-  const alpha = await f.bridgeFor('alpha', f.alphaRunId);
-  const crossRead = await alpha('run.package.read', { packageDigest });
-  assert.equal(crossRead.branches.length, 1,
-    'the scope is the CALLER run or its swarm: a peer of the same swarm reads the same package');
-});
 
 test('441b-b: contributions.read answers the swarm fold since a seq, in order, and nothing before it', async (t) => {
   const f = await swarmFixture(t, 'contributions');
@@ -316,7 +236,7 @@ test('441b-d: the closed seat verb set and the brief teach exactly the participa
     'the advertised seat verb set must exist in swarm-native-access.mjs (issue #441 lane B)');
   const names = [...SWARM_SEAT_READ_COMMAND_NAMES].sort();
   assert.deepEqual(names,
-    ['run.contributions.read', 'run.package.read', 'run.peers.read', 'run.spill.read']);
+    ['run.contributions.read', 'run.peers.read', 'run.spill.read']);
   assert.deepEqual([...SWARM_SEAT_VERB_NAMES].sort(),
     [...SWARM_KNOWLEDGE_COMMAND_NAMES, ...names].sort(),
     'the advertised seat verb set is the knowledge verbs plus exactly these seat reads');
@@ -337,11 +257,11 @@ test('the seat-read and knowledge validators name every missing required field i
   };
   // The seat-read validator: the whole missing set in one refusal (the bridge fills swarmId from
   // the token, so a through-bridge refusal pluralizes on the caller-required fields alone).
-  const seat = refused(() => runtimeModule.validateSwarmSeatReadCommand('run.package.read', {}));
+  const seat = refused(() => runtimeModule.validateSwarmSeatReadCommand('run.spill.read', {}));
   assert.equal(seat.code, 'swarm_command_invalid');
   assert.equal(seat.detail.rule, 'required-field');
-  assert.deepEqual(seat.detail.required, ['swarmId', 'packageDigest']);
-  assert.match(seat.message, /add swarmId, packageDigest — each: swarmId: a value; packageDigest: /u);
+  assert.deepEqual(seat.detail.required, ['swarmId', 'spillId']);
+  assert.match(seat.message, /add swarmId, spillId — each: swarmId: a value; spillId: /u);
   // The knowledge validator: one refusal teaches the seed shape whole.
   const seed = refused(() => runtimeModule.validateSwarmKnowledgeCommand('run.knowledge.seed', {}));
   assert.equal(seed.code, 'swarm_command_invalid');
@@ -349,9 +269,9 @@ test('the seat-read and knowledge validators name every missing required field i
   assert.match(seed.message, /add swarmId, type, grounding, body — each: /u);
   // A single missing field keeps the recorded singular shape: message and expectation unchanged.
   const singular = refused(() => runtimeModule.validateSwarmSeatReadCommand(
-    'run.package.read', { swarmId: SWARM_ID }));
-  assert.match(singular.message, /^Swarm seat read request is invalid: add packageDigest \(/u);
-  assert.equal(singular.detail.expectation, 'the package digest your brief named');
+    'run.spill.read', { swarmId: SWARM_ID }));
+  assert.match(singular.message, /^Swarm seat read request is invalid: add spillId \(/u);
+  assert.equal(singular.detail.expectation, 'the spill id the marker named');
 });
 
 test('441b-f: the bridge guidance states the contribution-id mechanism the fold enforces', async (t) => {

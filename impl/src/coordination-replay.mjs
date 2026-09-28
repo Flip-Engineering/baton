@@ -1385,36 +1385,6 @@ export function pendingRecoveryAttempts(store, limit = 1_000) {
     .slice(0, limit).map(clone);
 }
 
-/** Moved from `CoordinationStore.reapExpiredContextPacks` (issue #259 slice 1). State: the store, passed explicitly.
- *
- * The receipt names what the scan OBSERVED (2026-09-14 audit, swarm-b/lead.md finding 9): the store
- * keeps no reclamation path — a minted context pack is durable append-only history and nothing here
- * removes one — so `reaped` stays 0 and the packs past their validity are reported as `expired`.
- * Reporting them as `reaped: N` claimed N removals that never happened. A reclamation path, if one
- * is ever built, increments `reaped` in the same place it deletes the pack.
- *
- * Issue #406 (audit C33, principle P5): the `repoId` parameter is a scope assertion, not a label.
- * Every deployment holds exactly one repoId (`store._repoId`) and packs carry no per-pack repoId,
- * so per-pack filtering is impossible — the scan covers this store's packs, which ARE the asserted
- * repo's packs. A repoId that is not this store's refuses instead of returning another repo's
- * counts under a foreign label. The receipt keeps the exact `{ expired, reaped }` shape.
- */
-export function reapExpiredContextPacks(store, repoId) {
-  const scope = repoId ?? store._repoId;
-  if (scope !== store._repoId) {
-    throw new CoordinationRefusal(
-      'context pack reap repository scope differs from deployment authority',
-      'context_pack_reap_scope_mismatch',
-    );
-  }
-  const now = Date.parse(store._clock());
-  let expired = 0;
-  for (const pack of store._contextPacks.values()) {
-    if (Date.parse(pack.validity) <= now) expired += 1;
-  }
-  return freeze({ expired, reaped: 0 });
-}
-
 /** Moved from `CoordinationStore.recordRecoveryContinuationIntent` (issue #259 slice 1). State: the store, passed explicitly. */
 export function recordRecoveryContinuationIntent(store, fields, auth) {
   const payload = { kind: 'recovery.continuation_intent', ...clone(fields) };

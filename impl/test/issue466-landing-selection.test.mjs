@@ -40,7 +40,6 @@ import { basename, dirname, join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
 
 const principal = { actor: 'direct:issue466-root', principalId: 'issue466-root', sessionId: 'issue466-root' };
@@ -93,35 +92,15 @@ const canonical = (value) => (Array.isArray(value) ? value.map(canonical)
     : value);
 const digestOf = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
-/** One branch whose content the resolver holds as a context SOURCE ref — the shape the root's
- * `--issue` admission writes (`application-cli.mjs`: `name: \`issue:${request.issue}\``). */
-function sourceBranch(name, resolver, content) {
-  const contentDigest = digestOf(content);
-  const ref = `ctx:sha256:${contentDigest}`;
-  resolver.sources.set(ref, content);
-  return {
-    name, artifact: null, valueRef: null, schema: null,
-    source: { kind: 'context_source', ref, digest: contentDigest,
-      mediaType: 'application/vnd.baton.context-value+json', itemCount: content.length },
-  };
-}
-
-const packageFields = (branches) => ({
-  schemaVersion: 1, kind: 'baton.context_package', branches,
-  provenance: { runId: 'run-root', principalId: 'owner' },
-  policyDigest: DEFAULT_CONTEXT_PROGRAM_POLICY.policyDigest,
-});
 
 /**
  * A real repository with the REAL layout: runtime source and tests under `impl/`, a lane branch
  * that adds ONE module and ONE test that imports it, and a seat bound to a durable run id.
  *
- * `packageIssue` decides the seat's context leg: null is a seat recruited WITHOUT a package (the
- * 2026-09-18 case); a number admits a package whose branch is `issue:<n>` and attaches it to the
- * seat's run. `purpose` is the swarm's own purpose — both fixtures point it at issue numbers the
- * contribution never carried, so an attribution read from the swarm cannot pass row (b) by luck.
+ * `purpose` is the swarm's own purpose — both fixtures point it at issue numbers the contribution
+ * never carried, so an attribution read from the swarm cannot pass row (b) by luck.
  */
-async function world(t, { purpose = 'land the lane (#443)', packageIssue = null } = {}) {
+async function world(t, { purpose = 'land the lane (#443)' } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue466-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
@@ -152,22 +131,8 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
   // publishes the landed ref to after the fast-forward.
   const publishRemote = join(directory, 'shared.git');
   execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
-
-  const resolver = { sources: new Map(), artifacts: new Map() };
   const store = new CoordinationStore(join(directory, 'ledger'), {
     repoId: 'repo-issue466', deploymentBaseSha: '1'.repeat(40),
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: '2'.repeat(64), contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: (reference) => {
-      const table = reference.kind === 'context_source' ? resolver.sources : resolver.artifacts;
-      const key = reference.kind === 'context_source' ? reference.ref : reference.handle;
-      if (!table.has(key)) {
-        throw Object.assign(new Error('context package content is unavailable'),
-          { code: 'context_artifact_unavailable' });
-      }
-      return table.get(key);
-    },
-    contextSourceAttest: () => { throw new Error('this fixture attests no context source'); },
     clock: () => '2026-09-18T00:00:00.000Z',
   });
   // What the landing's gate seam was handed, per attempt: `{dir, files, context}`.
@@ -211,16 +176,6 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
   record('swarm.contribution_reviewed',
     { contributionId: 'contribution:1', decision: 'accept', reviewerId: 'lane-a', reason: 'verified' },
     'accept');
-  if (packageIssue !== null) {
-    const admitted = store.admitContextPackage(packageFields([
-      sourceBranch(`issue:${packageIssue}`, resolver,
-        ['The landing selects its own work', '', `Issue ${packageIssue}.`]),
-    ]), { actor: principal.actor, key: `i466:admit:${packageIssue}` });
-    const digest = admitted.package.packageDigest;
-    store.attachContextPackage({ packageDigest: digest, runId: seatRun, scope: 'worker:lane-a' },
-      { actor: principal.actor, key: `package.attach:${digest}:${seatRun}:worker:lane-a` });
-  }
-
   const integrate = (args = {}) => runtime.command('swarm.integrate', {
     swarmId: 's1', contributionId: 'contribution:1', target: 'master', idempotencyKey: 'i466:integrate', ...args,
   }, principal);
@@ -280,19 +235,6 @@ test('466b: a seat without a package lands issue: null and a comment naming no i
   assert.doesNotMatch(answer.landingComment, /#\d+/u, 'and names no issue at all');
 });
 
-test('466b: a seat whose package names issue:466 lands that number, not the purpose\'s', needsGit, async (t) => {
-  const w = await world(t, { purpose: 'land the lane (#443)', packageIssue: 466 });
-
-  const answer = await w.integrate({ dryRun: true });
-
-  assert.equal(answer.integration.issue, 466,
-    'the issue the seat\'s admitted context package carries is the landing\'s attribution');
-  assert.equal(w.receiptRow().issue, 466, 'the durable receipt row carries it too');
-  assert.match(answer.landingComment, /#466/u, 'and the comment names it');
-  assert.match(answer.landingComment, /gh issue close 466/u,
-    'with the close guidance the comment is posted under');
-  assert.doesNotMatch(answer.landingComment, /#443/u, 'never the purpose\'s number');
-});
 
 // ── (c) ONE derivation: the landing equals the runner's selection ────────────────────────────────
 

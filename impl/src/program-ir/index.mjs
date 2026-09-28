@@ -12,6 +12,5 @@ export {
 } from './approval-template.mjs';
 export { normalizeProgramSource } from './normalize-program.mjs';
 export {
-  deriveCollectSchemaDefinition, deriveContextSchemaDefinitions, deriveContextResultSchema,
-  mapProgramPolicyToContextPolicy, resolveCollectResultSchema,
-} from './context-derivation.mjs';
+  deriveCollectSchemaDefinition, resolveCollectResultSchema,
+} from './collect-derivation.mjs';

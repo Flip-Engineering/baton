@@ -1,11 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
-import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
-import { replObjectRefusal } from './messages.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
-import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectContextPackageBranch } from './application.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   SURFACING_MATRIX_KEYS,
@@ -180,7 +178,6 @@ const CAPABILITY = Object.freeze({
   baton_wakes_since: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
-  baton_knowledge_promote: ['control', 'observe'],
   baton_knowledge_settlement_lease: ['settlement'],
   // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
   baton_run_resultpin: ['observe'],
@@ -215,7 +212,7 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
   // through the observe-path gate like the read-only tools.
   'baton_waves_start',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
@@ -223,7 +220,7 @@ const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_
     .map((operation) => operation.names.mcp),
   // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
   'baton_waves_start',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -499,11 +496,10 @@ function stateFailureCode(cause) {
     'plan_route_invalid', 'plan_route_authority_legacy_ambiguous',
     'plan_scope_invalid', 'plan_self_approval', 'plan_stale', 'plan_verification_invalid',
     'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
-  // Part F (R5, typed-error reach) — package reflex codes (mcp-reflex-surface-decisions.md
-  // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part E tools;
-  // slice 1 owns the context_eval/decision codes in this same rule. Missing/changed artifact
-  // bytes collapse to the one typed `artifact_unavailable` tool error, never a silent recompute.
+
   if (['attention_scope_forbidden', 'attention_scope_invalid', 'attention_target_invalid'].includes(cause?.code)) return cause.code;
+  // Part F (R5, typed-error reach) — board reflex codes (mcp-reflex-surface-decisions.md
+  // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part D tools.
   // Facade-projection epic (#87+#48): the scratchpad-settlement family (scratchpad_cursor_stale is
   // deliberately NOT mapped — the fence CAS is not projected, Decision 6).
   if (['scratchpad_settlement_invalid', 'scratchpad_settlement_conflict', 'scratchpad_settlement_not_ready',
@@ -513,13 +509,8 @@ function stateFailureCode(cause) {
   // none can ever degrade to command_outcome_unknown.
   if (['temporal_incoherence', 'missing_evidence', 'invalid_evidence', 'causal_orphan',
     'missing_endpoint', 'duplicate_node', 'knowledge_node_conflict', 'reserved_knowledge_field'].includes(cause?.code)) return cause.code;
-  if (['context_artifact_unavailable', 'context_package_not_found', 'context_package_branch_not_found'].includes(cause?.code)) return 'artifact_unavailable';
   if (['board_admission_invalid', 'board_lease_required', 'board_session_mismatch', 'board_run_closed',
-    'board_replay_conflict',
-    'context_package_invalid', 'reserved_package_field', 'package_branch_name_conflict', 'package_branch_empty',
-    'context_package_conflict', 'context_package_integrity', 'package_provenance_integrity',
-    'context_package_attach_invalid', 'context_package_unavailable',
-    'settlement_lease_required'].includes(cause?.code)) return cause.code;
+    'board_replay_conflict'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
   // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family
@@ -815,9 +806,9 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // MCP-W2 (mcp-packaging-decisions v1.0): the four settlement ops become MCP tools behind the
+  // MCP-W2 (mcp-packaging-decisions v1.0): the settlement ops become MCP tools behind the
   // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
-  // caller field); knowledge.promote refuses without it, and knowledge.settlement_lease requires
+  // caller field); knowledge.settlement_lease requires
   // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
   {
     name: 'baton_scratchpad_elevate',
@@ -839,14 +830,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'baton_knowledge_promote',
-    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated through the S-2 lease proof.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
-    }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
+
     name: 'baton_knowledge_settlement_lease',
     description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
     inputSchema: schema({
@@ -1336,32 +1320,8 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_drain', description: 'Drain and reap the coordinator-owned local fleet while retaining transport and writer authority.', inputSchema: schema({ ...repo, ...idem }, ['repoId', 'idempotencyKey']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
-// Reflex surface contract Part A.1: a fourth tool table (all `baton_*`-named), frozen with
-// `execution: { taskSupport: 'forbidden' }` and stamped with `_meta` exactly like the ordinary
-// table above — NOT added to ORDINARY (those map 1:1 onto APPLICATION_COMMAND_DEFINITIONS) nor
-// ADVANCED (fleet_* audience). Slice 1: context_eval (Part B) + decision tools (Part C);
-// slice 2: package tools (Part E) — one merged array per the
-// MCP-SLICE1-INTEGRATION seam.
-const LEGACY_REFLEX_TOOL_DEFINITIONS = Object.freeze([
-  {
-    name: 'baton_context_eval',
-    description: 'Evaluate one pure, closed Context program against an existing durably-admitted Context session, addressed by Run (with optional role) or by manifest digest.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, manifestDigest: digest, role: runId, program: { type: 'object' },
-    }, ['repoId', 'idempotencyKey', 'program']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-].map((tool) => Object.freeze({
-  ...tool,
-  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
-  execution: Object.freeze({ taskSupport: 'forbidden' }),
-})));
 const SURFACING_MATRIX_DESCRIPTIONS = Object.freeze({
   'decision.list': 'List one Run\'s pending decision requests awaiting an answer, sanitized and bounded.',
-  'package.admit': 'Admit one immutable Context Package under the landed admission rules.',
-  'package.attach': 'Attach an admitted Context Package to a run/worker scope as a fenced O(1) pointer binding.',
-  'package.read': 'Read Context Package metadata, or resolve and sanitize one named branch.',
-  'repl.cite': 'Resolve one exact versioned REPL binding citation.',
   'knowledge.recall': 'Recall bounded, role-scoped knowledge from the shared coordination store.',
   'knowledge.horizon': 'Read a viewer-scoped task, workflow, or project knowledge horizon.',
 });
@@ -1389,12 +1349,8 @@ const MATRIX_REFLEX_TOOL_DEFINITIONS = Object.freeze(SURFACING_MATRIX_MCP_ROWS.m
     execution: Object.freeze({ taskSupport: 'forbidden' }),
   });
 }));
-// The combined reflex table = the legacy context_eval + the full matrix projection.
-// baton_decision_answer moved to the ORDINARY table at MCP-W1 (v1.0.1 adjudication), so the
-// interleaved legacy[1] splice is gone.
-const REFLEX_TOOL_DEFINITIONS = Object.freeze([
-  LEGACY_REFLEX_TOOL_DEFINITIONS[0], ...MATRIX_REFLEX_TOOL_DEFINITIONS,
-]);
+// The combined reflex table = the full matrix projection.
+const REFLEX_TOOL_DEFINITIONS = Object.freeze([...MATRIX_REFLEX_TOOL_DEFINITIONS]);
 // Read-only reflex tool names needing typed-error reach through the observe-path error gate
 // (Part F rule 12) — merged across both slices.
 const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
@@ -1405,7 +1361,7 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
   'baton_deployment_doctor',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle',
   'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
@@ -1420,7 +1376,7 @@ const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_waves_start: 'waves.start', baton_waves_progress: 'waves.progress', baton_waves_send: 'waves.send',
   baton_waves_stop: 'waves.stop', baton_waves_list: 'waves.list', baton_waves_run: 'waves.run', baton_waves_compile: 'waves.compile',
   baton_scratchpad_elevate: 'scratchpad.elevate', baton_scratchpad_settle: 'scratchpad.settle',
-  baton_knowledge_promote: 'knowledge.promote', baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
+  baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
   baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
   baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
@@ -1751,23 +1707,7 @@ function validateArguments(name, args, maxWaitMs = null) {
       || !Number.isSafeInteger(args.expectedFence) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
   }
 
-  // Part E (package tools): the branch payload's deep shape (unique names, source/artifact/
-  // valueRef mold, provenance) is exhaustively validated by the hub's own
-  // `_normalizeContextPackage` — never re-implemented here (Part I: no schema-evaluated
-  // validation, no hub implementation changes).
-  if (name === 'baton_package_admit' && !record(args.package)) return 'invalid_context_package';
-  if (name === 'baton_package_attach') {
-    if (!/^[a-f0-9]{64}$/.test(args.packageDigest ?? '')) return 'invalid_context_package_digest';
-    if (!nonempty(args.runId)) return 'invalid_run_id';
-    if (!nonempty(args.scope)) return 'invalid_context_package_scope';
-  }
-  if (name === 'baton_package_read') {
-    if (!/^[a-f0-9]{64}$/.test(args.packageDigest ?? '')) return 'invalid_context_package_digest';
-    if (Object.hasOwn(args, 'branchName') && !nonempty(args.branchName)) return 'invalid_context_package_branch';
-  }
-  if (name === 'baton_repl_cite' && (!nonempty(args.runId) || !nonempty(args.citation))) {
-    return 'invalid_repl_citation';
-  }
+
   if (name === 'baton_knowledge_recall' && (!record(args.query)
     || (Object.hasOwn(args, 'reader') && !record(args.reader))
     || (Object.hasOwn(args, 'options') && !record(args.options)))) return 'invalid_knowledge_recall';
@@ -1841,10 +1781,6 @@ function validateArguments(name, args, maxWaitMs = null) {
     || !Number.isSafeInteger(args.expectedScratchpadFence) || args.expectedScratchpadFence < 0
     || (Object.hasOwn(args, 'skips') && !Array.isArray(args.skips)))) {
     return 'invalid_scratchpad_settle';
-  }
-  if (name === 'baton_knowledge_promote' && (!nonempty(args.runId) || !nonempty(args.candidateFindingId)
-    || !record(args.policy) || !record(args.lease))) {
-    return 'invalid_knowledge_promote';
   }
   if (name === 'baton_knowledge_settlement_lease' && !nonempty(args.waveId)) {
     return 'invalid_settlement_lease';
@@ -2221,19 +2157,11 @@ export class McpFleetServer {
       // before the greeting is composed — so the greeting can name what it opened beside the escape
       // hatch. The handshake stays a success whatever the stream answers.
       const wakeSentence = await this._autoSubscribeWake();
-      // Epic #103 (D6a): one bounded trailing sentence composed per initialize from the family
-      // head — the pack is data, not a gate (initialize succeeds identically with or without it),
-      // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
-      const briefingHead = this.coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
-      const briefingSentence = briefingHead
-        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve via the orchestrator's embedded ${'context.briefing'} command.`
-        : 'No orchestrator briefing pack minted yet.';
       // U-G10 (#287): the greeting states the served repoId — the one value every tool call
       // takes — so a client learns the coordinate from the server instead of guessing it. A
       // connection that BINDS the coordinate (the resident bridge) derives it per call and
       // refuses a supplied one, so the sentence states that instead. A multi-repo server says
-      // nothing rather than naming one of many. This sentence PRECEDES the briefing one, which
-      // stays the trailing sentence D6a-1 bounds.
+      // nothing rather than naming one of many.
       const servedRepoId = this.repoIds.size === 1 ? [...this.repoIds][0] : null;
       const repoSentence = servedRepoId === null ? ''
         : this.bindApplicationContext
@@ -2243,7 +2171,7 @@ export class McpFleetServer {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baton', version: '0.1.0' },
-        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence}${wakeSentence} ${briefingSentence}`,
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence}${wakeSentence}`,
       });
     }
     if (method === 'notifications/initialized') {
@@ -2616,20 +2544,6 @@ export class McpFleetServer {
     return pending;
   }
 
-  /** Issue #69 (R10/D3): `repl.cite` is a READ in the caller's OWN run. The wire's `runId` is
-   * never consulted — the run is the caller's task's (`principal.taskId`), the `contextRead`
-   * posture — so a caller cannot name another run's bindings and read them, however the request
-   * is written. A citation that does not resolve in the caller's own run refuses
-   * repl_citation_out_of_run (issue #143's shipped-code fix). */
-  _replCiteInOwnRun(principal, args) {
-    const taskId = typeof principal?.taskId === 'string' && principal.taskId.length > 0
-      ? principal.taskId : null;
-    if (taskId === null) {
-      throw replObjectRefusal('repl.cite requires an authenticated caller task',
-        'repl_citation_out_of_run');
-    }
-    return this.coordinator._replCiteInOwnRun(taskId, args.citation);
-  }
 
   async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
     let value;
@@ -2776,10 +2690,9 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
-    // MCP-W2: the four settlement tools via the S-2 sessionAuthority envelope. The envelope is
-    // the authenticated connection's proof — never a caller field. knowledge.promote REQUIRES it
-    // (validated through the S-2 lease proof); the settlement lease requires the
-    // settlement capability class (already enforced by _authority).
+    // MCP-W2: the settlement tools via the S-2 sessionAuthority envelope. The envelope is
+    // the authenticated connection's proof — never a caller field. The settlement lease requires
+    // the settlement capability class (already enforced by _authority).
     else if (name === 'baton_scratchpad_elevate') {
       value = await this.application.command('scratchpad.elevate', {
         runId: args.runId, taskId: args.taskId, workerId: args.workerId,
@@ -2800,20 +2713,7 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
-    else if (name === 'baton_knowledge_promote') {
-      const { sessionAuthority } = this._sessionAuthorityContext(principal);
-      if (sessionAuthority == null) {
-        throw Object.assign(new Error('an active settlement lease is required'), { code: 'settlement_lease_required' });
-      }
-      value = await this.application.command('knowledge.promote', {
-        runId: args.runId, candidateFindingId: args.candidateFindingId,
-        policy: clone(args.policy), lease: clone(args.lease),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
+
     else if (name === 'baton_knowledge_settlement_lease') {
       value = await this.application.command('knowledge.settlement_lease', {
         waveId: args.waveId, ...(Object.hasOwn(args, 'members') ? { members: clone(args.members) } : {}),
@@ -2941,35 +2841,7 @@ export class McpFleetServer {
     }
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_drain') value = await this.coordinator.drain({ actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}` });
-    // Part E — package tools: bound directly to the landed coordination-store hub methods (no
-    // Coordinator wrapper exists for these, matching the contract's coordination-store.mjs line
-    // citations). Admit/attach require an active run-orchestrator lease; attach's auth.key is the
-    // exact `package.attach:<digest>:<runId>:<scope>` string the hub itself validates (the fenced
-    // O(1) pointer binding — never a re-read of branch bytes).
-    else if (name === 'baton_package_admit') {
-      const { sessionAuthority } = this._sessionAuthorityContext(principal);
-      value = this.coordination.admitPackageCommand({
-        sessionAuthority, runId: args.runId,
-        package: args.package, mutation: { kind: 'admit' }, idempotencyKey: `mcp.call:${callId}`,
-      });
-    }
-    else if (name === 'baton_package_attach') {
-      const { sessionAuthority } = this._sessionAuthorityContext(principal);
-      value = this.coordination.admitPackageCommand({
-        sessionAuthority, runId: args.runId, package: args.packageDigest,
-        mutation: { kind: 'attach', scope: args.scope },
-        idempotencyKey: `package.attach:${args.packageDigest}:${args.runId}:${args.scope}`,
-      });
-    }
-    else if (name === 'baton_package_read') {
-      value = args.branchName
-        ? projectContextPackageBranch(this.coordination.withContextArtifactVerification(
-          () => this.coordination.resolveContextPackageBranch(args.packageDigest, args.branchName),
-        ))
-        : this._readContextPackage(args.packageDigest);
-    }
-    // Issue #69 (R10): the run is the caller's task's, never the wire's `runId`.
-    else if (name === 'baton_repl_cite') value = this._replCiteInOwnRun(principal, args);
+
     else if (name === 'baton_knowledge_recall') {
       value = this.coordinator.recallKnowledge(args.query, args.reader ?? {}, {
         ...(args.options ?? {}), actor, idempotencyKey: `mcp.call:${callId}`,
@@ -3096,11 +2968,6 @@ export class McpFleetServer {
     return normalized(walk(value));
   }
 
-  _readContextPackage(packageDigest) {
-    const pkg = this.coordination.contextPackage(packageDigest);
-    if (!pkg) throw Object.assign(new Error('context package is unavailable'), { code: 'context_package_not_found' });
-    return pkg;
-  }
 }
 
 async function writeFrame(output, frame) {

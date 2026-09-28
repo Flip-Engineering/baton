@@ -102,14 +102,13 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   assert.equal(response.result.tools.some((tool) => /shutdown|close|drain/.test(tool.name)), false);
   const advanced = setup({ application, surface: 'combined' }); await initialized(advanced.server);
   const combined = await request(advanced.server, 3, 'tools/list', {});
-  // S-3 extends the derived combined reflex projection with REPL citation and knowledge
-  // recall/horizon while leaving the ordinary application surface unchanged.
-  // names verbatim, taskSupport forbidden, additionalProperties false, and _meta present on the
-  // reflex tools like the ordinary table.
+  // S-3 extends the derived combined reflex projection with knowledge recall/horizon while leaving
+  // the ordinary application surface unchanged: the reflex tools carry their names verbatim,
+  // taskSupport forbidden, additionalProperties false, and _meta present on them like the ordinary
+  // table.
   const reflexNames = [
-    'baton_context_eval', 'baton_decision_list',
-    'baton_package_admit', 'baton_package_attach', 'baton_package_read',
-    'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
+    'baton_decision_list',
+    'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
   assert.equal(combined.result.tools.length, combinedMcpToolNames().length); // 111 existing tools plus the ten ordinary baton_swarm_* tools and their ten swarm.* dot twins.
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');

@@ -46,22 +46,15 @@ test('the catalog preserves application, live MCP-native, CLI-native and embedde
 });
 
 test('action-dispatched operations use the existing run.do authority and require action coordinates', () => {
-  const contextMap = resolveUnifiedCapability('context.map');
-  assert.equal(contextMap.surfaces.cli.direct, false);
-  assert.equal(contextMap.surfaces.mcp.direct, false);
-  assert.throws(
-    () => prepareApplicationSurfaceInvocation(contextMap, {
-      runId: 'run:a', branch: 'source', program: { op: 'source' },
-    }, { surface: 'cli' }),
-    (error) => error.code === 'surface_action_id_required',
-  );
-  const prepared = prepareApplicationSurfaceInvocation(contextMap, {
-    runId: 'run:a', actionId: 'action:map', branch: 'source', program: { op: 'source' },
+  const send = resolveUnifiedCapability('run.send');
+  const prepared = prepareApplicationSurfaceInvocation(send, {
+    runId: 'run:a', actionId: 'action:send', message: 'go',
   }, { surface: 'cli' });
   assert.equal(prepared.command, 'run.act');
+  assert.equal(prepared.path, 'run.do');
   assert.equal(prepared.args.runId, 'run:a');
-  assert.equal(prepared.args.actionId, 'action:map');
-  assert.deepEqual(prepared.args.inputs, { branch: 'source', program: { op: 'source' } });
+  assert.equal(prepared.args.actionId, 'action:send');
+  assert.deepEqual(prepared.args.inputs, { message: 'go' });
 });
 
 test('direct and generic reachability reflect existing live transports rather than declarations alone', () => {

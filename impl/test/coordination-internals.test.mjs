@@ -299,7 +299,6 @@ test('CI4: the store reaches every moved member through its own delegate, with i
       `${name}: the port is one of the two moved modules`);
   }
   assert.deepEqual(CoordinationStore.KNOWLEDGE_CANDIDATE_TRIGGERS, {
-    'package.admitted': 'package_admit',
     'scratch.cited_observed': 'scratchpad_settle', verified_task_outcome: 'verification',
   }, 'the one static getter still answers with the same frozen table');
 });

@@ -701,7 +701,7 @@ test('FP-07 (stage: facade watch absent): candidacy_review discloses only to the
   // the store's promotion queue (the D2 staging's durable source).
   fx.coordination.addKnowledgeNode({
     id: 'knowledge:ws-c2-candidacy', type: 'Finding', grounding: 'observed',
-    body: 'a finding awaits review', promotion: { kind: 'Finding', trigger: 'package.admitted' },
+    body: 'a finding awaits review', promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' },
   }, { actor: 'policy', key: 'ws-c2-candidacy' });
   const queue = fx.coordination.knowledgeCandidateQueue?.({}) ?? { count: 0 };
   assert.ok((queue.count ?? 0) >= 1, 'the candidacy exists (a vacuous D2 greens nothing)');
@@ -1416,15 +1416,8 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
     assert.equal(response.result?.isError === true && error?.code === 'forbidden', false,
       `${tool} never demands the settlement class (state-level outcomes/refusals are fine)`);
   }
-  // The settlement tools' envelope requirements are untouched (byte-identical
-  // before and after this rung — the guard).
-  const promote = await wireCall(server, id, 'baton_knowledge_promote', {
-    repoId: REPO, idempotencyKey: 'ws-h4-promote', runId: 'run:h4', candidateFindingId: 'finding:x:1',
-    policy: { repoId: REPO, maxBatchBytes: 1024, maxResultBytes: 1024 },
-    lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
-  });
   id += 1;
-  assert.match(resultText(promote), /settlement_lease_required/u, 'the S-2 envelope requirement still refuses');
+
   const lease = await wireCall(server, id, 'baton_knowledge_settlement_lease', {
     repoId: REPO, idempotencyKey: 'ws-h4-lease', waveId: `wave:${'a'.repeat(32)}`,
   });

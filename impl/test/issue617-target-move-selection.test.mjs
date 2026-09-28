@@ -33,7 +33,6 @@ import { dirname, join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
-import { DEFAULT_CONTEXT_PROGRAM_POLICY } from '../src/context-program-policy.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
 import { gateRunnerFile, gateRunnerLayout } from '../src/coordinator.mjs';
 
@@ -130,18 +129,6 @@ async function world(t, { move, rejudge = null } = {}) {
   const resolver = { sources: new Map(), artifacts: new Map() };
   const store = new CoordinationStore(join(directory, 'ledger'), {
     repoId: 'repo-issue617', deploymentBaseSha: '1'.repeat(40),
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: '2'.repeat(64), contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: (reference) => {
-      const table = reference.kind === 'context_source' ? resolver.sources : resolver.artifacts;
-      const key = reference.kind === 'context_source' ? reference.ref : reference.handle;
-      if (!table.has(key)) {
-        throw Object.assign(new Error('context package content is unavailable'),
-          { code: 'context_artifact_unavailable' });
-      }
-      return table.get(key);
-    },
-    contextSourceAttest: () => { throw new Error('this fixture attests no context source'); },
     clock: () => '2026-09-27T12:30:00.000Z',
   });
 

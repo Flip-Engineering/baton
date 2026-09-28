@@ -14,12 +14,10 @@ import { join } from 'node:path';
 import { serialize } from 'node:v8';
 import { ledgerCommitted, ledgerCommitFailed } from './coordination-commit.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
-import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
+import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { boundedAttentionText, frameWebContent, referencesWebFetchHandle, wrapHubDerived, wrapProse } from './messages.mjs';
 import { GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical, goalPlanDigest, goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planBriefMatches, planRouteAuthorityState, planRouteMatches } from './goal-plan.mjs';
-import { normalizeContextAuthority } from './context-authority.mjs';
-import { projectContextCallState } from './context-call.mjs';
 import { SWARM_EVENT_KINDS, SwarmIntegrityError, foldSwarmEvent, swarmSnapshot, validateSwarmEvent } from './swarm-state.mjs';
 import { usdToNanos } from './usd.mjs';
 import * as coordinationReplay from './coordination-replay.mjs';
@@ -89,12 +87,7 @@ export function assertWaveStartedRoster(payload) {
 }
 
 
-/** Epic #81 (O-2, issue #367): the per-attempt receipt identity — the ONE key derivation the
- * context.read fold and the O-2 ceiling admission share, so the fold's `{count, bytes}` row
- * and the admission's lookup can never drift apart. */
-export function contextReadAttemptKey(payload) {
-  return `${payload?.repoId ?? ''}\0${payload?.runId ?? ''}\0${payload?.taskId ?? ''}\0${payload?.taskVersion ?? ''}`;
-}
+
 
 
 /** Issue #290: durably record one quarantine entry beside the ledger (atomic temp + fsync +
@@ -194,10 +187,7 @@ export const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Superse
 
 export const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
 
-// The non-knowledge half of the projection-input fence (see _apply's closing note): package
-// admission/attach — the only non-knowledge inputs the horizons read, closed by design.
 const PROJECTION_INPUT_NONKG_EVENTS = new Set([
-  'package.admitted', 'package.attached',
 ]);
 
 // Issue #530: the six Cairn knowledge policies carried caller-declared size and count ceilings,
@@ -216,9 +206,7 @@ const ACCEPTANCE_REVOCATION_EVIDENCE_KINDS = new Set(['resource.provider_telemet
 
 export const ARTIFACT_LIFECYCLE_FIELDS = new Set(['createdEvent', 'version', 'supersededBy', 'supersededEvent', 'acceptanceInvalidation']);
 
-export function contextChildAccepted(value) {
-  return value?.origin === 'inherited' || value?.state === 'accepted';
-}
+
 
 export function normalizedRecallText(value) { return value.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' '); }
 
@@ -328,33 +316,17 @@ function frameWebSourcedFacts(result) {
   return changed ? { ...result, facts } : result;
 }
 
-// REPL-2/REPL-3 (docs/reference/evidence/repl-kg-wave-2026-07-22/repl23-decisions.md, issues
-// #22/#23). Binding identity/fences/history/citations are (runId, scope, name)-tupled via
-// JSON-encoded map keys — never string concatenation (Part A rule 2).
-export const SAFE_REPL_SCOPE = /^(shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
 
-export const SAFE_REPL_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
-export const REPL_DIGEST = /^[a-f0-9]{64}$/u;
-
-export function replBindingKey(runId, scope, name) { return JSON.stringify([runId, scope, name]); }
 
 /** bindingDigest = H(scope, name, bindingVersion, state, cellId), hub-recomputed (Part A rule 1). */
-export function replBindingContentDigest(core) {
-  return canonicalDigest({
-    scope: core.scope, name: core.name, bindingVersion: core.bindingVersion,
-    state: core.state, cellId: core.cellId,
-  });
-}
+
 
 
 // Issue #33 — the scratchpad's raw request walk bound: the short-circuiting walker that refuses a
 // payload no shape check could judge (a cycle, an accessor, a symbol key, a non-JSON value) walks at
 // most this many raw bytes before it refuses.
 export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
-// The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
-// application and northbound surfaces share ONE family name with the store that mints it (D7).
-export const BRIEFING_FAMILY = 'orchestrator-briefing';
 
 export const MAX_SCRATCHPAD_BATCH_BYTES = 2 * 1024 * 1024;
 
@@ -922,21 +894,8 @@ export function _resetProjection(store) {
   store._recoveryAttemptsById = new Map(); store._recoveryAttemptHeads = new Map();
   store._providerReceipts = new Map(); store._providerDeliveryIds = new Map(); store._providerProcessing = new Map(); store._providerPending = new Map();
   store._providerSequences = new Map(); store._providerSourceHealth = new Map();
-  store._contextSessions = new Map(); store._contextCells = new Map(); store._contextCalls = new Map();
-  store._contextPrograms = new Map(); store._contextArtifacts = new Map();
   store._taskResourceReleases = new Map();
-  // BD3-B context packs: a server-owned supersession chain per family. Old versions are
-  // retained as content history; only the live head materializes at spawn/nudge. BD3-A read
-  // audit rides `_contextReads` (zero promotion weight — never the scratch.read family).
-  store._contextPacks = new Map(); store._contextPackHeads = new Map(); store._contextReads = [];
   store._spills = new Map();
-  // #286 G-45: orientation receipt heads, folded from `context.read` (first per worker+pack, last
-  // per worker). Rebuilt by re-applying the log in _apply.
-  store._contextReadHeads = new Map(); store._contextReadLatest = new Map();
-  // #367: the O-2 receipt-ceiling counter — {count, bytes} per attempt key
-  // (contextReadAttemptKey), folded from `context.read` in _apply so the admission reads one
-  // map entry instead of filtering the ledger and re-serializing every prior receipt.
-  store._contextReadAttemptCounters = new Map();
   // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
   // re-applying the log in _apply; the record's own event seq is the epoch anchor.
   store._waveClosures = new Map();
@@ -955,13 +914,6 @@ export function _resetProjection(store) {
   // Per-fold marker for the mechanical derivation (acceptance P1): set by _setKnowledgeNode/
   // _setKnowledgeEdge, consumed at the end of each _apply pass.
   store._knowledgeWriteThisEvent = false;
-  store._contextPackages = new Map(); store._contextPackageAttachments = new Map();
-  // REPL-1: admitted ReplManifest authority records, keyed by manifestDigest. REPL sessions
-  // ride the existing _contextSessions map, so no separate session projection is added.
-  store._replManifestAdmissions = new Map();
-  // REPL-2: immutable versioned bindings keyed by JSON.stringify([runId, scope, name])
-  // (Part A rule 2); the fence is a per-(runId, scope) replay-derivable counter (Part C).
-  store._replBindings = new Map(); store._replBindingHistory = new Map(); store._replBindingFences = new Map();
   // Issue #33 scratchpad projection. Entry rows are immutable; only _apply mutates these maps.
   // Scope indexes contain entry IDs, so pure reads and folds never scan _events/all entries.
   store._scratchpadEntries = new Map(); store._scratchpadEntriesByScope = new Map();
@@ -1704,34 +1656,9 @@ export function _knowledgeVersionsAt(history, observedSeq, observedAt) {
   }).filter(Boolean);
 }
 
-export function _runStopContextTargets(store, targetRunIds) {
-  const targetRunSet = new Set(targetRunIds);
-  const targetContextSessionIds = [...store._contextSessions.values()]
-    .filter((session) => targetRunSet.has(session.runId) && session.state === 'active')
-    .map((session) => session.sessionId).sort(compareCanonicalStrings);
-  const targetContextCellIds = [...store._contextCells.values()]
-    .filter((cell) => {
-      const session = store._contextSessions.get(cell.sessionId);
-      if (!session) {
-        throw new CoordinationRefusal('run stop Context cell has no owning session',
-          'run_stop_integrity');
-      }
-      return targetRunSet.has(session.runId) && cell.state === 'admitted';
-    })
-    .map((cell) => cell.cellId).sort(compareCanonicalStrings);
-  const targetContextCallIds = [...store._contextCalls.values()]
-    .filter((call) => targetRunSet.has(store._contextCallRunId(call))
-      && call.state !== 'stopped')
-    .map((call) => call.callId).sort(compareCanonicalStrings);
-  // #366 (with #286 G-41): no Context target ceiling here — a Context target set is a projection
-  // of the ledger too (each id is a Context session/cell/call the ledger already holds, and the
-  // maps below are keyed by exactly those ids, so the projection cannot even repeat one), and this
-  // function is reached from the FOLD, which must never re-judge a recorded row for size. The one
-  // admission-time bound lives in assertTargetSetAdmissible, called by the run-stop admission only.
-  return { targetContextSessionIds, targetContextCellIds, targetContextCallIds };
-}
 
-export function _runStopTargets(store, runId, throughSeq = store._events.length, contextVersion = 3, scoped = store._runLineagePolicy !== null) {
+
+export function _runStopTargets(store, runId, throughSeq = store._events.length, scoped = store._runLineagePolicy !== null) {
   const targetRunIds = scoped
     ? [...new Set([runId, ...store.runDescendants(runId).map((row) => row.childRunId)])].sort(compareCanonicalStrings)
     : [runId];
@@ -1745,30 +1672,13 @@ export function _runStopTargets(store, runId, throughSeq = store._events.length,
   const targetTaskIds = tasks.map((task) => task.id);
   const targetWorkerIds = [...new Set(tasks.map((task) => task.reservedWorkerId ?? task.assignee).filter(Boolean))]
     .sort(compareCanonicalStrings);
-  const includeContext = contextVersion >= 2;
-  const observedContextTargets = includeContext
-    ? store._runStopContextTargets(targetRunIds)
-    : { targetContextSessionIds: [], targetContextCellIds: [], targetContextCallIds: [] };
-  const contextTargets = contextVersion >= 3 && observedContextTargets.targetContextCallIds.length > 0
-    ? observedContextTargets : {
-    targetContextSessionIds: observedContextTargets.targetContextSessionIds,
-    targetContextCellIds: observedContextTargets.targetContextCellIds,
-  };
-  const hasContextTargets = contextTargets.targetContextSessionIds.length > 0
-    || contextTargets.targetContextCellIds.length > 0
-    || (contextTargets.targetContextCallIds?.length ?? 0) > 0;
   if (scoped) {
-    const core = {
-      throughSeq, targetRunIds, targetTaskIds, targetWorkerIds,
-      ...(hasContextTargets ? contextTargets : {}),
-    };
+    const core = { throughSeq, targetRunIds, targetTaskIds, targetWorkerIds };
     return {
       scope: 'run_subtree', ...core, targetDigest: canonicalDigest(core),
     };
   }
-  const core = {
-    targetTaskIds, targetWorkerIds, ...(hasContextTargets ? contextTargets : {}),
-  };
+  const core = { targetTaskIds, targetWorkerIds };
   return { ...core, targetDigest: canonicalDigest(core) };
 }
 
@@ -1802,204 +1712,13 @@ export function _validSessionPreservationReceipt(receipt, allowHistorical = fals
 
 export function _runResultAdoptionKey(runId, nodeKey) { return `${runId}\0${nodeKey}`; }
 
-export function _currentContextDeployment(store) {
-  if (!store._contextProgramPolicy) return null;
-  const body = {
-    schemaVersion: 1,
-    kind: 'baton.context_deployment_authority',
-    deploymentBaseSha: store._deploymentBaseSha,
-    environmentDigest: store._contextEnvironmentDigest,
-    referenceIdentity: store._contextReferenceIdentity,
-    policy: clone(store._contextProgramPolicy),
-  };
-  return freeze({ ...body, authorityDigest: canonicalDigest(body) });
-}
 
-export function _contextSettlementChildren(store, call, kind, integrity = false, cleanup = null) {
-  const generic = kind === 'effect';
-  const subject = generic ? 'effect' : 'map';
-  const failChild = (message, code = 'context_map_call_not_terminal') => (
-    store._contextFailure(message, integrity
-      ? (generic ? 'context_call_integrity' : 'context_map_call_integrity')
-      : (generic && code.startsWith('context_map_')
-        ? code.replace('context_map_', 'context_') : code), integrity)
-  );
-  const plan = [...store._plans.values()].find((candidate) => (
-    candidate.digest === call.expectedPlanDigest
-  ));
-  const approval = plan ? store._planApprovals.get(store._planVersionKey(
-    plan.planId, plan.version,
-  )) : null;
-  if (!plan || approval?.disposition !== 'approved') {
-    return failChild(`Context ${subject} settlement requires its exact approved successor Plan`);
-  }
-  const terminalCause = (task) => {
-    const terminal = Number.isSafeInteger(task.terminalEvent)
-      ? store._events[task.terminalEvent - 1] : null;
-    const transitioned = terminal?.kind === 'task.transitioned'
-      && terminal.payload?.id === task.id && terminal.payload?.to === task.status;
-    const revoked = terminal?.kind === 'task.acceptance_revoked'
-      && terminal.payload?.taskId === task.id && task.status === 'failed';
-    if (!transitioned && !revoked) {
-      return failChild(`Context ${subject} child terminal identity is invalid`,
-        'context_map_child_terminal_invalid');
-    }
-    const coordinate = terminal.payload?.evidence;
-    let source = null;
-    if (coordinate !== null && coordinate !== undefined) {
-      const mapped = Number.isSafeInteger(coordinate?.coordinationSeq)
-        ? store._events[coordinate.coordinationSeq - 1] : null;
-      source = mapped?.kind === 'evidence.mapped'
-        ? store._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
-      if (!mapped || mapped.seq >= terminal.seq || mapped.payload.worker !== task.assignee
-        || canonicalDigest({ ...mapped.payload, coordinationSeq: mapped.seq })
-          !== canonicalDigest(coordinate)
-        || !source || source.worker !== task.assignee || source.taskId !== task.id
-        || source.runId !== task.runId || source.kind !== mapped.payload.kind
-        || digest(source) !== mapped.payload.digest) {
-        return failChild(`Context ${subject} child terminal evidence is invalid`,
-          'context_map_child_terminal_invalid');
-      }
-    }
-    const defaultCode = task.status === 'cancelled'
-      ? 'context_child_cancelled'
-      : revoked ? 'task_acceptance_revoked'
-        : source?.kind === 'lifecycle.crashed' ? 'provider_crashed'
-          : source?.kind === 'lifecycle.exited' ? 'provider_exited'
-            : source?.kind === 'verify.reverified' ? 'verification_failed'
-              : 'provider_turn_failed';
-    const candidateCode = source?.payload?.failure?.code ?? source?.payload?.code ?? defaultCode;
-    const code = /^[a-z0-9_:-]{1,128}$/u.test(candidateCode ?? '')
-      ? candidateCode : defaultCode;
-    const defaultSummary = task.status === 'cancelled'
-      ? `Context ${subject} child was cancelled before acceptance.`
-      : `Context ${subject} child failed before acceptance.`;
-    const summary = boundedText(source?.payload?.summary, 1_024)
-      ? source.payload.summary : defaultSummary;
-    return freeze({ code, retryable: true, summary });
-  };
-  const rows = [];
-  const units = generic
-    ? call.units.filter((unit) => call.executionUnitIds.includes(unit.unitId))
-    : call.partitions;
-  for (const unit of units) {
-    const node = plan.nodes.find((candidate) => (
-      generic
-        ? candidate.contextCall?.unit?.unitId === unit.unitId
-        : candidate.contextCall?.partition?.partitionId === unit.partitionId
-    ));
-    const dispatch = node ? store._planDispatches.get(store._planNodeKey(
-      plan.planId, plan.version, node.key,
-    )) : null;
-    const task = dispatch ? store._tasks.get(dispatch.taskId) : null;
-    if (!node || !dispatch || !task || !TERMINAL.has(task.status)
-      || dispatch.binding?.planDigest !== plan.digest
-      || dispatch.binding?.nodeKey !== node.key) {
-      return failChild(`Context ${subject} settlement has a missing or nonterminal child`);
-    }
-    const activeArtifacts = (task.artifactIds ?? []).map((artifactId) => (
-      store._artifacts.get(artifactId)
-    )).filter((artifact) => artifact?.accepted === true && artifact.supersededBy === null
-      && !Object.hasOwn(artifact, 'acceptanceInvalidation'))
-      .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
-    const commit = activeArtifacts.find((artifact) => artifact.kind === 'commit') ?? null;
-    const verification = activeArtifacts.find((artifact) => artifact.kind === 'verification') ?? null;
-    if (task.status === 'completed' && (!commit?.refs?.sha || !verification)) {
-      return failChild(`Completed Context ${subject} child lacks exact gate artifacts`,
-        'context_map_child_artifact_invalid');
-    }
-    if (task.status !== 'completed' && activeArtifacts.length > 0) {
-      return failChild(`Unaccepted Context ${subject} child retains accepted gate artifacts`,
-        'context_map_child_artifact_invalid');
-    }
-    // A Plan node carries the authorized route sets; the dispatch records the route that was
-    // actually selected inside those sets. Settlement is execution evidence, so it must project
-    // the durable dispatch choice rather than reconstructing a plausible choice from set order.
-    const route = {
-      harness: dispatch.route.vendor, model: dispatch.route.model,
-      effort: dispatch.route.effort,
-    };
-    const release = cleanup?.targets?.find((target) => (
-      generic ? target.unitId === unit.unitId : target.partitionId === unit.partitionId
-    )) ?? null;
-    const core = {
-      schemaVersion: generic ? (call.generation > 1 ? 3 : 2) : 1,
-      ...(generic && call.generation > 1 ? { origin: 'executed' } : {}),
-      ...(generic ? {
-        unitId: unit.unitId, unitDigest: unit.unitDigest,
-      } : {
-        partitionId: unit.partitionId, partitionDigest: unit.partitionDigest,
-      }),
-      index: unit.index,
-      nodeKey: node.key,
-      nodeDigest: canonicalDigest(node),
-      taskId: task.id,
-      taskVersion: task.version,
-      workerId: task.assignee ?? null,
-      state: task.status === 'completed' ? 'accepted' : task.status,
-      terminalEvent: task.terminalEvent,
-      route,
-      resultSha: commit?.refs?.sha ?? null,
-      artifactDigest: canonicalDigest(activeArtifacts.map((artifact) => ({
-        id: artifact.id, kind: artifact.kind, digest: artifact.digest,
-        refs: artifact.refs,
-      }))),
-      artifacts: activeArtifacts.map((artifact) => ({
-        id: artifact.id, kind: artifact.kind, digest: artifact.digest,
-        refs: clone(artifact.refs),
-      })),
-      ...(task.status === 'completed' ? {} : { termination: terminalCause(task) }),
-      ...(release === null ? {} : {
-        cleanupDigest: cleanup.cleanupDigest,
-        resourceRelease: clone(release),
-      }),
-    };
-    rows.push(freeze({ ...core, childDigest: canonicalDigest(core) }));
-  }
-  if (generic && call.generation > 1) {
-    const predecessor = store._contextCalls.get(call.predecessorCall.callId);
-    const predecessorChildren = predecessor?.result?.children;
-    const predecessorResults = predecessor?.result?.providerResults;
-    if (!predecessor || predecessor.state !== 'failed'
-      || !Array.isArray(predecessorChildren) || !Array.isArray(predecessorResults)) {
-      return failChild('Context effect inherited predecessor is unavailable');
-    }
-    for (const binding of call.inheritedChildren) {
-      const unit = call.units.find((candidate) => candidate.unitId === binding.unitId);
-      const origin = predecessorChildren.find((candidate) => (
-        candidate.unitId === binding.unitId && candidate.childDigest === binding.childDigest
-      ));
-      const providerResult = predecessorResults.find((candidate) => (
-        candidate.unitId === binding.unitId
-      ));
-      if (!unit || !origin || !(origin.origin === 'inherited' || origin.state === 'accepted')
-        || binding.originCallId !== predecessor.callId || !providerResult) {
-        return failChild('Context effect inherited child authority changed');
-      }
-      const core = {
-        schemaVersion: 3, origin: 'inherited',
-        unitId: unit.unitId, unitDigest: unit.unitDigest, index: unit.index,
-        originCallId: predecessor.callId, originChildDigest: origin.childDigest,
-        resultRefDigest: canonicalDigest(providerResult),
-      };
-      rows.push(freeze({ ...core, childDigest: canonicalDigest(core) }));
-    }
-    const byUnit = new Map(rows.map((row) => [row.unitId, row]));
-    if (byUnit.size !== call.units.length) {
-      return failChild('Context effect retry settlement does not cover every logical unit');
-    }
-    return freeze(call.units.map((unit) => byUnit.get(unit.unitId)));
-  }
-  return freeze(rows);
-}
 
-export function _contextMapSettlementChildren(store, call, integrity = false, cleanup = null) {
-  return store._contextSettlementChildren(call, 'map', integrity, cleanup);
-}
 
-export function _contextEffectSettlementChildren(store, call, integrity = false, cleanup = null) {
-  return store._contextSettlementChildren(call, 'effect', integrity, cleanup);
-}
+
+
+
+
 
 export function _acceptanceRevocationEvidence(store, task, coordinationSeq, integrity = false) {
   const mapped = store._events[coordinationSeq - 1];
@@ -2112,7 +1831,6 @@ export function _applyGoalPlanEvent(store, event) {
       if (plan.predecessor === null) {
         if (head || plan.version !== 1 || plan.planId !== `plan:${goalPlanDigest({ schemaVersion: 1, goal: plan.goal, firstDigest: plan.digest })}`) malformed();
       } else if (!head || head.planId !== plan.planId || head.version !== plan.predecessor.version || head.digest !== plan.predecessor.digest || plan.version !== head.version + 1) malformed();
-      store._validateContextCallPlanProposal(plan, true);
       const frozen = freeze(clone(plan)); store._plans.set(store._planVersionKey(plan.planId, plan.version), frozen); store._planHeads.set(headKey, frozen);
     } else if (event.kind === 'plan.approval_decided') {
       if (Object.keys(p).sort().join(',') !== ['approval', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
@@ -2201,22 +1919,6 @@ export function _apply(store, event) {
     admittedRunId = store._plans.get(store._planVersionKey(p?.binding?.planId, p?.binding?.planVersion))?.runId ?? null;
   } else if (event.kind === 'task.created') admittedRunId = p?.runId ?? null;
   else if (event.kind === 'task.claimed') admittedRunId = store._tasks.get(p?.id)?.runId ?? null;
-  else if (event.kind === 'context.session_admitted') admittedRunId = p?.session?.runId ?? null;
-  else if (event.kind === 'context.cell_admitted') {
-    admittedRunId = store._contextSessions.get(p?.cell?.sessionId)?.runId ?? null;
-  } else if (event.kind === 'context.call_admitted') {
-    admittedRunId = p?.schemaVersion === 2
-      ? p?.call?.authority?.contextPrincipal?.runId ?? null : p?.call?.source?.runId ?? null;
-  }
-  else if (event.kind === 'context.call_settled') {
-    admittedRunId = store._contextCallRunId(store._contextCalls.get(p?.callId));
-  }
-  else if (event.kind === 'repl.manifest_admitted') admittedRunId = p?.runId ?? null;
-  // REPL-2 bindings derive their runId from the repl.manifest_admitted record their write
-  // cited — the same lookup Part B rule 4(d) performs at admission time (Part G rule 25).
-  else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
-    admittedRunId = store._replManifestAdmissions.get(p?.manifestDigest)?.runId ?? null;
-  }
   else if (event.kind === 'scratchpad.entry_written') admittedRunId = p?.runId ?? null;
   else if (event.kind === 'scratchpad.entry_appended') admittedRunId = p?.runId ?? null;
   else if (event.kind === 'scratchpad.entry_elevated') {
@@ -2307,129 +2009,10 @@ export function _apply(store, event) {
     const children = [...(store._runChildrenByParent.get(lineage.parentRunId) ?? [])];
     children.push(lineage.childRunId);
     store._runChildrenByParent.set(lineage.parentRunId, freeze(children));
-  } else if (event.kind === 'package.admitted') {
-    const normalized = store._normalizeContextPackage(p, true);
-    store._contextPackages.set(normalized.packageDigest, freeze({
-      schemaVersion: normalized.schemaVersion, kind: normalized.kind, branches: normalized.branches,
-      provenance: normalized.provenance, policyDigest: normalized.policyDigest,
-      packageDigest: normalized.packageDigest, admittedEvent: event.seq, admittedAt: event.ts,
-    }));
-  } else if (event.kind === 'package.attached') {
-    if (!p || typeof p !== 'object' || Array.isArray(p)
-      || Object.keys(p).sort().join(',') !== ['packageDigest', 'runId', 'scope'].sort().join(',')
-      || !store._contextPackages.has(p.packageDigest) || !validRunId(p.runId)
-      || !/^(run|worker:[A-Za-z0-9._:-]{1,256})$/u.test(p.scope ?? '')) {
-      throw new CoordinationIntegrityError('context package attachment is invalid',
-        'context_package_attach_integrity');
-    }
-    const attachments = [...(store._contextPackageAttachments.get(p.runId) ?? [])];
-    attachments.push(freeze({
-      packageDigest: p.packageDigest, scope: p.scope, attachedEvent: event.seq, attachedAt: event.ts,
-    }));
-    store._contextPackageAttachments.set(p.runId, freeze(attachments));
-  } else if (event.kind === 'context.session_admitted') {
-    const validated = store._validateContextSessionPayload(p, event, true);
-    store._contextSessions.set(validated.session.sessionId, freeze({
-      ...clone(validated.session), authority: clone(p.authority),
-      admissionDigest: p.admissionDigest, state: 'active', version: 1,
-      admittedEvent: event.seq, admittedAt: event.ts,
-    }));
-  } else if (event.kind === 'context.cell_admitted') {
-    const cell = store._validateContextCellAdmissionPayload(p, event, true);
-    const priorProgram = store._contextPrograms.get(cell.programDigest);
-    if (priorProgram && canonicalDigest(priorProgram) !== canonicalDigest(cell.program)) {
-      throw new CoordinationIntegrityError('Context Program digest namespace collided',
-        'context_program_integrity');
-    }
-    store._contextPrograms.set(cell.programDigest, freeze(clone(cell.program)));
-    store._contextCells.set(cell.cellId, freeze({
-      ...clone(cell), authority: clone(p.authority), state: 'admitted', version: 1,
-      admittedEvent: event.seq, admittedAt: event.ts,
-      result: null, settledEvent: null, settledAt: null,
-    }));
-  } else if (event.kind === 'context.cell_settled') {
-    const validated = store._validateContextCellSettlementPayload(p, event, true);
-    const artifactRows = validated.result.state === 'completed' ? [
-      ['context-value', validated.result.outputRef],
-      ['context-evidence', validated.result.evidenceRef],
-    ] : [];
-    for (const [prefix, ref] of artifactRows) {
-      const id = `${prefix}:${ref.digest}`;
-      const artifact = freeze({
-        id, taskId: null, kind: ref.kind, refs: clone(ref), mediaType: ref.mediaType,
-        accepted: false, provenance: [{ coordinationSeq: event.seq }],
-        digest: canonicalDigest({ id, kind: ref.kind, refs: ref, mediaType: ref.mediaType }),
-        createdEvent: event.seq, version: 1, supersededBy: null, supersededEvent: null,
-      });
-      const prior = store._artifacts.get(id);
-      if (prior && (prior.kind !== artifact.kind
-        || canonicalDigest(prior.refs) !== canonicalDigest(artifact.refs)
-        || prior.mediaType !== artifact.mediaType)) {
-        throw new CoordinationIntegrityError('Context artifact identity collided',
-          'context_artifact_integrity');
-      }
-      if (!prior) store._artifacts.set(id, artifact);
-      store._contextArtifacts.set(ref.handle, id);
-    }
-    store._contextCells.set(validated.cell.cellId, freeze({
-      ...clone(validated.cell), state: validated.result.state, version: p.newVersion,
-      result: clone(validated.result), settlementDigest: p.settlementDigest,
-      settledEvent: event.seq, settledAt: event.ts,
-    }));
-  } else if (event.kind === 'context.call_admitted') {
-    const validated = p?.schemaVersion === 1
-      ? store._validateContextMapCallAdmissionPayload(p, event, true)
-      : store._validateContextEffectCallAdmissionPayload(p, event, true);
-    store._contextCalls.set(validated.call.callId, freeze({
-      ...clone(validated.call),
-      ...(p.schemaVersion === 1
-        ? { authority: clone(validated.authority) }
-        : { admissionAuthority: clone(validated.authority) }),
-      planRequest: clone(validated.planRequest),
-      expectedPlanDigest: validated.expectedPlanDigest,
-      ...(p.schemaVersion === 2 ? { admissionSchemaVersion: 2 } : {}),
-      admissionDigest: p.admissionDigest,
-      state: 'plan_pending', version: 1,
-      admittedEvent: event.seq, admittedAt: event.ts,
-    }));
+
   } else if (event.kind === 'task.resources_released') {
     const release = store._validateTaskResourceReleasePayload(p, event, true);
     store._taskResourceReleases.set(release.taskId, release);
-  } else if (event.kind === 'context.call_settled') {
-    const validated = p?.schemaVersion === 1
-      ? store._validateContextMapCallSettlementPayload(p, event, true)
-      : store._validateContextEffectCallSettlementPayload(p, event, true);
-    const artifactRows = [
-      ['context-value', validated.result.outputRef],
-      ['context-call-evidence', validated.result.evidenceRef],
-      ...validated.result.providerResults.map((result) => (
-        ['context-provider-result', result.capsuleRef]
-      )),
-    ].filter(([, ref]) => ref !== null);
-    for (const [prefix, ref] of artifactRows) {
-      const id = `${prefix}:${ref.digest}`;
-      const artifact = freeze({
-        id, taskId: null, kind: ref.kind, refs: clone(ref), mediaType: ref.mediaType,
-        accepted: false, provenance: [{ coordinationSeq: event.seq }],
-        digest: canonicalDigest({ id, kind: ref.kind, refs: ref, mediaType: ref.mediaType }),
-        createdEvent: event.seq, version: 1, supersededBy: null, supersededEvent: null,
-      });
-      const prior = store._artifacts.get(id);
-      if (prior && (prior.kind !== artifact.kind
-        || canonicalDigest(prior.refs) !== canonicalDigest(artifact.refs)
-        || prior.mediaType !== artifact.mediaType)) {
-        throw new CoordinationIntegrityError('Context call artifact identity collided',
-          p.schemaVersion === 1 ? 'context_map_call_settlement_integrity'
-            : 'context_call_settlement_integrity');
-      }
-      if (!prior) store._artifacts.set(id, artifact);
-      store._contextArtifacts.set(ref.handle, id);
-    }
-    store._contextCalls.set(validated.call.callId, freeze({
-      ...clone(validated.call), state: validated.result.state, version: p.newVersion,
-      result: clone(validated.result), settlementDigest: p.settlementDigest,
-      settledEvent: event.seq, settledAt: event.ts,
-    }));
   } else if (event.kind === 'recovery.attempt_admitted') {
     const admission = store._validateRecoveryAttemptAdmissionPayload(p, event, true);
     const attempt = freeze({
@@ -2991,25 +2574,7 @@ export function _apply(store, event) {
     store._scratchClaims.set(p.id, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
   } else if (event.kind === 'scratch.read') {
     store._scratchReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
-  } else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
-    // Part G rule 22: hub-derived runId from the cited repl.manifest_admitted record,
-    // guaranteed present by admission order; JSON-tuple keys, never string concatenation.
-    const runId = store._replManifestAdmissions.get(p.manifestDigest)?.runId ?? null;
-    const key = replBindingKey(runId, p.scope, p.name);
-    const rec = freeze({
-      scope: p.scope, name: p.name, bindingVersion: p.bindingVersion, state: p.state,
-      cellId: p.cellId, bindingDigest: p.bindingDigest, runId,
-      // D5: a promotion rebind carries the worker coordinates it promotes. Absent on an ordinary
-      // bind, so the record shape is unchanged for every binding the promotion path never touched.
-      ...(p.promotedFrom ? { promotedFrom: clone(p.promotedFrom) } : {}),
-      admittedEvent: event.seq, admittedAt: event.ts,
-    });
-    store._replBindings.set(key, rec);
-    store._replBindingHistory.set(key, freeze([...(store._replBindingHistory.get(key) ?? []), rec]));
-    // Part C rule 7: EVERY write bumps the scope fence — worker writes included, with no
-    // orchestrator-authority carve-out.
-    const fenceKey = replFenceKey(runId, p.scope);
-    store._replBindingFences.set(fenceKey, (store._replBindingFences.get(fenceKey) ?? 0) + 1);
+
   } else if (event.kind === 'knowledge.promotion_batch') {
     store._validateKnowledgePromotionPayload(p, event, true);
     for (const node of p.nodes) store._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
@@ -3023,13 +2588,6 @@ export function _apply(store, event) {
       store._setKnowledgeNode(event, target.id, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
       store._contamination.push(freeze({ nodeId: target.id, invalidationEvent: event.seq, affectedReadEvents: clone(p.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
     }
-  } else if (event.kind === 'knowledge.workflow_admitted') {
-    // KG-2 Part D rule 14: the third instance of the promotion_batch/scratch_corrected
-    // generic nodes/edges fold — payload-digest-only integrity via
-    // _validateWorkflowAdmissionPayload, never a per-node temporal re-validation.
-    store._validateWorkflowAdmissionPayload(p, event, true);
-    for (const node of p.nodes) store._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
-    for (const edge of p.edges) store._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, edge.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
   } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
     store._validateKnowledgeNodePayload(p, event, true);
     store._setKnowledgeNode(event, p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
@@ -3143,62 +2701,7 @@ export function _apply(store, event) {
     }));
     for (const targetRunId of p.targetRunIds ?? [p.runId]) store._runStopByTarget.set(targetRunId, p.runId);
     const stoppedRunIds = new Set(p.targetRunIds ?? [p.runId]);
-    // Issue #69 (D4): a run stop closes the task-ephemeral REPL tier — the run's ACTIVE binding map
-    // and its per-scope fences go, while the append-only history stays for replay-exact resolution.
-    // The FOLD performs this rather than the admission, so a replayed ledger reconstructs exactly
-    // the closed tier the live process served, and the reap is idempotent for the run-stop path's
-    // own call.
-    for (const targetRunId of stoppedRunIds) reapRunReplBindings(store, targetRunId);
-    const sessionTargets = p.schemaVersion >= 2
-      ? p.targetContextSessionIds.map((sessionId) => [sessionId, store._contextSessions.get(sessionId)])
-      : [...store._contextSessions].filter(([, session]) => (
-        stoppedRunIds.has(session.runId) && session.state === 'active'
-      ));
-    for (const [sessionId, session] of sessionTargets) {
-      if (!session || session.state !== 'active') {
-        if (p.schemaVersion >= 2) throw new CoordinationIntegrityError(
-          'run stop Context session target changed before application', 'run_stop_integrity',
-        );
-        continue;
-      }
-      store._contextSessions.set(sessionId, freeze({
-        ...clone(session), state: 'stopped', version: session.version + 1,
-        stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
-      }));
-    }
-    const cellTargets = p.schemaVersion >= 2
-      ? p.targetContextCellIds.map((cellId) => [cellId, store._contextCells.get(cellId)])
-      : [...store._contextCells].filter(([, cell]) => {
-        const session = store._contextSessions.get(cell.sessionId);
-        return session && stoppedRunIds.has(session.runId) && cell.state === 'admitted';
-      });
-    for (const [cellId, cell] of cellTargets) {
-      if (!cell || cell.state !== 'admitted') {
-        if (p.schemaVersion >= 2) throw new CoordinationIntegrityError(
-          'run stop Context cell target changed before application', 'run_stop_integrity',
-        );
-        continue;
-      }
-      store._contextCells.set(cellId, freeze({
-        ...clone(cell), state: 'stopped', version: cell.version + 1,
-        stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
-      }));
-    }
-    if (p.schemaVersion >= 3) {
-      for (const callId of p.targetContextCallIds) {
-        const call = store._contextCalls.get(callId);
-        if (!call || call.state === 'stopped') {
-          throw new CoordinationIntegrityError(
-            'run stop Context call target changed before application', 'run_stop_integrity',
-          );
-        }
-        if (['completed', 'failed'].includes(call.state)) continue;
-        store._contextCalls.set(callId, freeze({
-          ...clone(call), state: 'stopped', version: call.version + 1,
-          stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
-        }));
-      }
-    }
+
   } else if (event.kind === 'run.stop_completed') {
     const old = store._validateRunStopCompletion(p, event, true);
     store._runStops.set(p.runId, freeze({
@@ -3248,23 +2751,9 @@ export function _apply(store, event) {
     // Append-only MCP security/audit record; it deliberately owns no tool authority.
   } else if (event.kind === 'web.audit') {
     // Append-only security/audit record; it deliberately owns no command authority.
-  } else if (event.kind === 'repl.manifest_admitted') {
-    const record = store._validateReplManifestAdmissionPayload(p, event, true);
-    store._replManifestAdmissions.set(record.manifestDigest, freeze({
-      ...clone(record), admittedEvent: event.seq, admittedAt: event.ts,
-    }));
-  } else if (event.kind === 'context.pack_minted') {
-    const pack = freeze({
-      packId: p.packId, family: p.family, type: p.type, body: p.body, validity: p.validity,
-      predecessor: p.predecessor ?? null, validityVersion: p.validityVersion,
-      observedSeq: event.seq, observedAt: event.ts,
-    });
-    store._contextPacks.set(pack.packId, pack);
-    store._contextPackHeads.set(pack.family, pack.packId);
   } else if (event.kind === 'wave.closed') {
-    // D9 (epic #103): the durable campaign-state record at wave close. Replay-derived by
-    // waveId exactly like the context.pack_minted fold; the record's own event seq is the
-    // epoch anchor (closedAtEventSeq) — no clocks (G10).
+    // D9 (epic #103): the durable campaign-state record at wave close, replay-derived by
+    // waveId; the record's own event seq is the epoch anchor (closedAtEventSeq) — no clocks.
     const closure = store._validateWaveClosedPayload(p);
     store._waveClosures.set(closure.waveId, freeze({ ...clone(closure), closedAtEventSeq: event.seq }));
     // D2.3/B1 (epic #132): the same top-level record closes the registry row — state flips to
@@ -3287,39 +2776,6 @@ export function _apply(store, event) {
       observedSeq: event.seq, observedAt: event.ts,
     });
     store._spills.set(spill.spillId, spill);
-  } else if (event.kind === 'context.read') {
-    // BD3-A: the read-lane audit class. Deliberately NOT the scratch.read family — reads
-    // accrue zero promotion weight and minScratchReaders never counts them.
-    store._contextReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
-    // #286 G-45: the orientation receipt heads. The rating reader cites the FIRST receipt for
-    // its (worker, pack) and the freshness/eligibility readers want the LATEST receipt for a
-    // worker, so both are folded here instead of re-filtering the ledger per call.
-    const readWorker = typeof p?.workerId === 'string' ? p.workerId : null;
-    const readPack = typeof p?.packDigest === 'string' ? p.packDigest : null;
-    if (readWorker !== null && readPack !== null) {
-      let heads = store._contextReadHeads.get(readWorker);
-      if (heads === undefined) { heads = new Map(); store._contextReadHeads.set(readWorker, heads); }
-      if (!heads.has(readPack)) {
-        heads.set(readPack, freeze({
-          workerId: readWorker, packDigest: readPack, repoId: p.repoId ?? null, eventSeq: event.seq,
-        }));
-      }
-    }
-    if (readWorker !== null) {
-      store._contextReadLatest.set(readWorker, freeze({
-        workerId: readWorker, freshnessDigest: p?.freshnessDigest ?? null, eventSeq: event.seq,
-      }));
-    }
-    // #367: the O-2 receipt-ceiling counter. The SAME rows the heads fold reads, folded into
-    // one `{count, bytes}` row per attempt key so `_assertOrientationReceiptCeiling` judges
-    // the ceiling from a counter (O(1)) instead of filtering the ledger and canonically
-    // re-serializing every prior receipt per admitted read on the resident loop.
-    const counterKey = contextReadAttemptKey(p);
-    const counter = store._contextReadAttemptCounters.get(counterKey);
-    store._contextReadAttemptCounters.set(counterKey, freeze({
-      count: (counter?.count ?? 0) + 1,
-      bytes: (counter?.bytes ?? 0) + canonicalBytes(p),
-    }));
   } else if (event.kind === 'message.sent' || event.kind === 'message.delivered') {
     // Append-only message-lane audit receipts; the delivery state machine lives in the
     // coordinator (delivered/read/actedOn are process-scoped, never store-derived).
@@ -3328,10 +2784,6 @@ export function _apply(store, event) {
     // which grants a replacement generation invalidates. processGeneration is currently only
     // an in-memory worker-handle property; this event makes it a replay fact.
     store._workerGenerations.set(p.workerId, freeze({ ...clone(p), boundEvent: event.seq }));
-  } else if (event.kind === 'context.pack_granted' || event.kind === 'orientation.rating_recorded') {
-    // Epic #81 (O-6/O-7): append-only orientation audit receipts — attempt-scoped pack grants
-    // (authority never collapses across attempts) and closed rating records (advisory). No
-    // projection state; replay re-derives the audit by re-reading the log. Zero promotion weight.
   } else if (SWARM_EVENT_KINDS.has(event.kind)) {
     // Issue #304: a fold refusal during REPLAY is the resident's startup refusal, so it is
     // raised TYPED — the offending row's seq, kind, code and message, with the #290
@@ -3348,7 +2800,7 @@ export function _apply(store, event) {
   }
   // The fence has two halves, each honest about its coverage: knowledge mutations are
   // MECHANICALLY derived (the helpers above — no enumeration, nothing can escape it); the
-  // remaining horizon inputs are the named NON-knowledge kinds (package admit/attach). The
+  // remaining horizon inputs are the named NON-knowledge kinds. The
   // horizons' non-knowledge inputs are closed by design, so this set is stable; any future
   // non-knowledge projection input MUST be added here explicitly (named rule, KG-1f pins it).
   if (store._knowledgeWriteThisEvent || PROJECTION_INPUT_NONKG_EVENTS.has(event.kind)) {
@@ -3374,88 +2826,11 @@ export function goalPlanPolicy(state) { return clone(state); }
 
 export function workflowPolicy(state) { return clone(state); }
 
-export function contextProgramPolicy(state) { return clone(state); }
 
-export function contextCall(store, callId) {
-  const admitted = store._contextCalls.get(callId);
-  if (!admitted) return null;
-  const generic = admitted.kind === 'baton.context_effect_call';
-  const plan = [...store._plans.values()].find((candidate) => (
-    candidate.digest === admitted.expectedPlanDigest
-  )) ?? null;
-  const approval = plan ? store._planApprovals.get(store._planVersionKey(
-    plan.planId, plan.version,
-  )) ?? null : null;
-  const executionUnits = generic
-    ? admitted.units.filter((unit) => admitted.executionUnitIds.includes(unit.unitId))
-    : admitted.partitions;
-  const children = plan ? executionUnits.map((unit) => {
-    const node = plan.nodes.find((candidate) => (
-      generic
-        ? candidate.contextCall?.unit?.unitId === unit.unitId
-        : candidate.contextCall?.partition?.partitionId === unit.partitionId
-    ));
-    const dispatch = node ? store._planDispatches.get(store._planNodeKey(
-      plan.planId, plan.version, node.key,
-    )) : null;
-    const task = dispatch ? store._tasks.get(dispatch.taskId) : null;
-    return {
-      ...(generic ? {
-        unitId: unit.unitId, unitDigest: unit.unitDigest,
-      } : {
-        partitionId: unit.partitionId, partitionDigest: unit.partitionDigest,
-      }),
-      index: unit.index,
-      nodeKey: node?.key ?? null,
-      nodeDigest: node ? canonicalDigest(node) : null,
-      taskId: dispatch?.taskId ?? null,
-      state: task?.status ?? 'missing', workerId: task?.assignee ?? null,
-      taskVersion: task?.version ?? null, terminalEvent: task?.terminalEvent ?? null,
-      route: dispatch ? {
-        harness: dispatch.route.vendor, model: dispatch.route.model,
-        effort: dispatch.route.effort,
-      } : null,
-    };
-  }) : [];
-  const sourceRunId = store._contextCallRunId(admitted);
-  const sourceSessionId = generic ? admitted.authority.sessionId : admitted.source.sessionId;
-  const sourceCellId = generic && admitted.source.kind === 'cell'
-    ? admitted.source.id : admitted.source.cellId;
-  // Issue #390: the call view's state and its waitingOn are derived by the ONE projection in
-  // context-call.mjs. The stop row is the store's own target resolution (_runStopByTarget →
-  // the owning _runStops row), whose receipt is folded only by run.stop_completed.
-  const projection = projectContextCallState({
-    admittedState: admitted.state,
-    stop: store.runStop(sourceRunId),
-    hasPlan: plan !== null,
-    approvalDisposition: approval?.disposition ?? null,
-    hasChildren: children.length > 0,
-    childrenSettled: children.length > 0
-      && children.every((child) => TERMINAL.has(child.state)),
-    sessionStopped: store._contextSessions.get(sourceSessionId)?.state === 'stopped',
-    cellStopped: store._contextCells.get(sourceCellId)?.state === 'stopped',
-  });
-  return clone({
-    ...admitted, state: projection.state, waitingOn: projection.waitingOn,
-    plan: plan ? {
-      planId: plan.planId, version: plan.version, digest: plan.digest,
-      predecessor: clone(plan.predecessor),
-    } : null,
-    approval: approval ? {
-      disposition: approval.disposition, digest: approval.digest,
-    } : null,
-    children,
-  });
-}
 
-export function pendingContextCells(state, limit = 1_000) {
-  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
-    throw new TypeError('Context pending-cell scan limit is invalid');
-  }
-  return [...state.values()].filter((cell) => cell.state === 'admitted')
-    .sort((left, right) => left.admittedEvent - right.admittedEvent)
-    .slice(0, limit).map(clone);
-}
+
+
+
 
 export function canonicalOrderPolicy(state) { return clone(state); }
 
@@ -3463,81 +2838,9 @@ export function goalVersion(store, goalId, version) { return clone(store._goals.
 
 export function planVersion(store, planId, version) { return clone(store._plans.get(store._planVersionKey(planId, version)) ?? null); }
 
-export function _contextPackageAttachmentView(event) {
-  return freeze({
-    packageDigest: event.payload.packageDigest, runId: event.payload.runId, scope: event.payload.scope,
-    attachedEvent: event.seq, attachedAt: event.ts,
-  });
-}
 
-export function settleContextCell(store, fields, auth) {
-  const cell = store._contextCells.get(fields?.cellId);
-  if (!cell) throw new CoordinationRefusal('Context cell is unavailable', 'context_cell_not_found');
-  const session = store._contextSessions.get(cell.sessionId);
-  let authority;
-  try {
-    authority = normalizeContextAuthority({
-      actor: auth?.actor, principalId: auth?.principalId,
-      repoId: auth?.repoId, runId: auth?.runId,
-    });
-  } catch (error) {
-    throw new CoordinationRefusal(error.message, 'context_cell_settlement_unauthorized');
-  }
-  if (canonicalDigest(authority) !== canonicalDigest(cell.authority)) {
-    throw new CoordinationRefusal('Context cell settlement principal differs from admission',
-      'context_cell_settlement_unauthorized');
-  }
-  const result = clone(fields?.result);
-  const settlementCore = {
-    authority,
-    cellId: cell.cellId, admissionDigest: cell.admissionDigest,
-    expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1, result,
-  };
-  const payload = {
-    schemaVersion: 1, authority, cellId: cell.cellId,
-    expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1,
-    result, settlementDigest: canonicalDigest(settlementCore),
-  };
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    if (prior.kind !== 'context.cell_settled' || prior.actor !== auth.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-      throw new CoordinationRefusal('Context settlement idempotency key is bound differently',
-        'context_cell_settlement_conflict');
-    }
-    const projected = store.contextCell(cell.cellId);
-    if (!projected || projected.settledEvent !== prior.seq) {
-      throw new CoordinationIntegrityError('Context settlement projection is absent',
-        'context_cell_settlement_integrity');
-    }
-    return freeze({ ok: true, result: 'idempotent', event: clone(prior), cell: projected });
-  }
-  store._assertContextSessionCurrent(session, false);
-  if (result?.state === 'completed') {
-    let output; let evidence;
-    try {
-      output = store._contextReferenceRead(result?.outputRef);
-      evidence = store._contextReferenceRead(result?.evidenceRef);
-    } catch (error) {
-      throw new CoordinationRefusal(error?.message ?? 'Context settlement artifact is unavailable',
-        error?.code ?? 'context_artifact_unavailable');
-    }
-    store._validateContextCompletionArtifacts(cell, result, output, evidence, false);
-  }
-  const prospective = {
-    schemaVersion: 1, seq: store._events.length + 1, ts: store._clock(),
-    kind: 'context.cell_settled', actor: auth?.actor,
-    idempotencyKey: auth?.key, payload,
-  };
-  store._validateContextCellSettlementPayload(payload, prospective, false);
-  const event = store._append('context.cell_settled', payload, auth, prospective.ts);
-  const projected = store.contextCell(cell.cellId);
-  if (projected?.settledEvent !== event.seq) {
-    throw new CoordinationIntegrityError('Context cell settlement did not materialize',
-      'context_cell_settlement_integrity');
-  }
-  return freeze({ ok: true, result: 'settled', event: clone(event), cell: projected });
-}
+
+
 
 export function recordTaskResourceRelease(store, fields, auth) {
   const payload = clone(fields);
@@ -3571,97 +2874,13 @@ export function recordTaskResourceRelease(store, fields, auth) {
   });
 }
 
-export function _settleContextCall(store, fields, auth, expectedKind = null) {
-  const call = store._contextCalls.get(fields?.callId);
-  const generic = call?.kind === 'baton.context_effect_call';
-  const kind = generic ? 'effect' : 'map';
-  const codePrefix = expectedKind === 'effect' ? 'context_call'
-    : expectedKind === 'map' ? 'context_map_call'
-      : generic ? 'context_call' : 'context_map_call';
-  if (!call || (expectedKind !== null && expectedKind !== kind)) {
-    throw new CoordinationRefusal('Context call is unavailable', `${codePrefix}_not_found`);
-  }
-  let authority;
-  try {
-    authority = normalizeContextAuthority({
-      actor: auth?.actor, principalId: auth?.principalId,
-      repoId: auth?.repoId, runId: auth?.runId,
-    });
-  } catch (error) {
-    throw new CoordinationRefusal(error.message, `${codePrefix}_settlement_invalid`);
-  }
-  const baseChildren = generic
-    ? store._contextEffectSettlementChildren(call, false)
-    : store._contextMapSettlementChildren(call, false);
-  const cleanup = generic
-    ? store._normalizeContextEffectCleanupReceipt(call, baseChildren, fields?.cleanup, false)
-    : store._normalizeContextMapCleanupReceipt(call, baseChildren, fields?.cleanup, false);
-  const children = generic
-    ? store._contextEffectSettlementChildren(call, false, cleanup)
-    : store._contextMapSettlementChildren(call, false, cleanup);
-  const state = children.every(contextChildAccepted) ? 'completed' : 'failed';
-  const providerResults = clone(fields?.result?.providerResults);
-  const providerResultDigest = fields?.result?.providerResultDigest;
-  const result = {
-    state, providerEffects: generic ? call.executionUnitIds.length : children.length,
-    children, childDigest: canonicalDigest(children),
-    providerResults, providerResultDigest,
-    cleanup,
-    outputRef: clone(fields?.result?.outputRef),
-    evidenceRef: clone(fields?.result?.evidenceRef),
-    ...(state === 'failed' ? { termination: clone(fields?.result?.termination) } : {}),
-  };
-  const settlementCore = {
-    authority, callId: call.callId, admissionDigest: call.admissionDigest,
-    expectedVersion: fields?.expectedVersion,
-    newVersion: fields?.expectedVersion + 1, result,
-  };
-  const payload = {
-    schemaVersion: generic ? 2 : 1, authority, callId: call.callId,
-    expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1,
-    result, settlementDigest: canonicalDigest(settlementCore),
-  };
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    if (prior.kind !== 'context.call_settled' || prior.actor !== auth.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-      throw new CoordinationRefusal('Context call settlement key is bound differently',
-        `${codePrefix}_settlement_conflict`);
-    }
-    const projected = store.contextCall(call.callId);
-    if (!projected || projected.settledEvent !== prior.seq) {
-      throw new CoordinationIntegrityError('Context call settlement projection is absent',
-        `${codePrefix}_settlement_integrity`);
-    }
-    return freeze({ ok: true, result: 'idempotent', event: clone(prior), call: projected });
-  }
-  const prospective = {
-    schemaVersion: 1, seq: store._events.length + 1, ts: store._clock(),
-    kind: 'context.call_settled', actor: auth?.actor,
-    idempotencyKey: auth?.key, payload,
-  };
-  if (generic) store._validateContextEffectCallSettlementPayload(payload, prospective, false);
-  else store._validateContextMapCallSettlementPayload(payload, prospective, false);
-  const event = store._append('context.call_settled', payload, auth, prospective.ts);
-  const projected = store.contextCall(call.callId);
-  if (projected?.settledEvent !== event.seq) {
-    throw new CoordinationIntegrityError('Context call settlement did not materialize',
-      `${codePrefix}_settlement_integrity`);
-  }
-  return freeze({ ok: true, result: 'settled', event: clone(event), call: projected });
-}
 
-export function settleContextCall(store, fields, auth) {
-  return store._settleContextCall(fields, auth);
-}
 
-export function settleContextMapCall(store, fields, auth) {
-  return store._settleContextCall(fields, auth, 'map');
-}
 
-export function settleContextEffectCall(store, fields, auth) {
-  return store._settleContextCall(fields, auth, 'effect');
-}
+
+
+
+
 
 export function defineGoal(store, fields, auth) {
   if (!store._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
@@ -3736,7 +2955,6 @@ export function proposePlan(store, fields, auth) {
     policyDigest: store._goalPlanPolicy.policyDigest, proposerPrincipalId: auth.principalId,
     proposedEvent: store._events.length + 1, proposedAt: fixedTs,
   };
-  store._validateContextCallPlanProposal(plan, false);
   const event = store._append('plan.version_proposed', { schemaVersion: 1, requestDigest, plan }, { actor: auth.actor, key: auth.key }, fixedTs);
   return freeze({ ok: true, result: 'proposed', event: clone(event), plan: clone(plan) });
 }
@@ -4303,7 +3521,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -4789,14 +4007,10 @@ export function sweepSettlementLeases(store, repoId, options = {}) {
   const maxLeases = Number.isSafeInteger(options?.maxLeases) && options.maxLeases > 0
     ? Math.min(options.maxLeases, 16) : 16;
   const currentTaskId = options?.currentWaveId ? `settlement-task:${options.currentWaveId}` : null;
-  const admittedRuns = new Set(store._events
-    .filter((event) => event.kind === 'knowledge.workflow_admitted')
-    .map((event) => event.payload?.runId));
   const candidates = [...store._runOrchestratorLeases.values()]
     .filter((lease) => lease.status === 'active' && lease.repoId === repoId
       && store._tasks.get(lease.parent?.taskId)?.relation === 'settlement'
-      && lease.parent?.taskId !== currentTaskId
-      && !admittedRuns.has(lease.parent?.runId))
+      && lease.parent?.taskId !== currentTaskId)
     .sort((a, b) => compareCanonicalStrings(a.leaseId, b.leaseId))
     .slice(0, maxLeases);
   const revoked = [];
@@ -5367,32 +4581,7 @@ export function recordAuthorityRejected(store, payload, auth) {
   return { ok: true, event: clone(event) };
 }
 
-export function mintContextPack(store, fields, auth) {
-  const payload = store._prepareContextPackPayload(fields);
-  // D3 (epic #103): the orchestrator-briefing family is the orchestrator lane's voice — a
-  // non-orchestrator actor refuses before any append (the store is the authority of record).
-  if (payload.family === BRIEFING_FAMILY && auth?.actor !== 'orchestrator') {
-    throw new CoordinationRefusal('orchestrator-briefing mints are restricted to the orchestrator lane', 'context_pack_forbidden');
-  }
-  // D4 (epic #103): no-change replay short-circuit — AFTER the stale-predecessor check (already
-  // in _prepareContextPackPayload) and BEFORE the auth-key replay check. The live head has the
-  // same {body, validity}: no event, head unmoved, validityVersion NOT bumped (the spill-dedupe
-  // rule ported to packs, G4).
-  const headId = store._contextPackHeads.get(payload.family) ?? null;
-  const liveHead = headId ? (store._contextPacks.get(headId) ?? null) : null;
-  if (liveHead && liveHead.body === payload.body && liveHead.validity === payload.validity) {
-    return { ok: true, result: 'idempotent', event: null, pack: clone(liveHead) };
-  }
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    if (prior.kind !== 'context.pack_minted' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-      throw new CoordinationRefusal('context pack idempotency conflict', 'context_pack_conflict');
-    }
-    return { ok: true, result: 'idempotent', event: clone(prior), pack: clone(store._contextPacks.get(payload.packId)) };
-  }
-  const event = store._append('context.pack_minted', payload, auth);
-  return { ok: true, result: 'minted', event: clone(event), pack: clone(store._contextPacks.get(payload.packId)) };
-}
+
 
 export function appendWaveClosed(store, fields, auth) {
   const payload = store._validateWaveClosedPayload(fields);
@@ -5455,21 +4644,7 @@ export function ledgerHeadSeq(state) {
   return state.length;
 }
 
-export function backfillBriefingPack(store, { family }, auth) {
-  if (family !== BRIEFING_FAMILY) {
-    throw new CoordinationRefusal('backfill family is invalid', 'briefing_pack_invalid');
-  }
-  if (store.contextPackHead(family)) {
-    // A head exists — no backfill (D4 keeps it stable; a second call is a no-op).
-    return { ok: true, result: 'idempotent', event: null, pack: clone(store.contextPackHead(family)) };
-  }
-  if (store._events.length === 0) {
-    throw new CoordinationRefusal('backfill requires a non-empty ledger', 'briefing_pack_unavailable');
-  }
-  const composed = store.composeCampaignBriefing([]);
-  const minted = store.mintContextPack({ type: family, body: composed.body }, auth);
-  return { ok: true, result: minted.result, event: minted.event, pack: minted.pack };
-}
+
 
 /** The content address of one spilled body (#358): a spill's id is its body's SHA-256 digest,
  * so every reader that asks "did THIS body spill?" derives the same id the mint stored — the
@@ -5503,112 +4678,13 @@ export function mintSpill(store, fields, auth) {
   return { ok: true, result: 'minted', event: clone(event), spill: store._resolvedSpill(spillId) };
 }
 
-export function recordContextRead(store, fields, auth) {
-  const payload = clone(fields);
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    if (prior.kind !== 'context.read' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-      throw new CoordinationRefusal('context read idempotency conflict', 'context_read_conflict');
-    }
-    return { ok: true, result: 'idempotent', event: clone(prior) };
-  }
-  store._assertOrientationReceiptCeiling(payload);
-  const event = store._append('context.read', payload, auth);
-  return { ok: true, result: 'recorded', event: clone(event) };
-}
 
-export function mintOrientationSource(store, fields, auth) {
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-    || !fields.moduleKey || typeof fields.moduleKey !== 'object' || Array.isArray(fields.moduleKey)
-    || typeof fields.moduleKey.rootPath !== 'string'
-    || !/^[a-f0-9]{64}$/.test(fields.moduleDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.freshnessDigest ?? '')) {
-    throw new CoordinationRefusal('orientation source coordinate is invalid', 'orientation_source_invalid');
-  }
-  const repoId = fields.repoId ?? store._repoId;
-  if (typeof repoId !== 'string' || repoId.length === 0) throw new CoordinationRefusal('orientation source coordinate is invalid', 'orientation_source_invalid');
-  const rootPath = fields.moduleKey.rootPath;
-  const id = `orientation:source:${canonicalDigest({ freshnessDigest: fields.freshnessDigest, moduleDigest: fields.moduleDigest, repoId, rootPath })}`;
-  const existing = store.queryKnowledge({ ids: [id] })[0] ?? null;
-  if (existing) return { ok: true, result: 'idempotent', node: clone(existing) };
-  const result = store.addKnowledgeNode({
-    evidence: [], freshnessDigest: fields.freshnessDigest, grounding: 'observed', id,
-    moduleDigest: fields.moduleDigest, moduleKey: { repoId, rootPath }, repoId, type: 'Source',
-  }, auth);
-  return { ok: true, result: result.result ?? 'minted', node: clone(result.node) };
-}
 
-export function mergeOrientationMap(store, { moduleDigest, moduleKey, freshnessDigest, repoId: repoIdArg } = {}) {
-  if (typeof moduleDigest !== 'string' || !/^[a-f0-9]{64}$/.test(moduleDigest)
-    || typeof freshnessDigest !== 'string' || !/^[a-f0-9]{64}$/.test(freshnessDigest)
-    || !moduleKey || typeof moduleKey !== 'object' || typeof moduleKey.rootPath !== 'string') {
-    throw new CoordinationRefusal('orientation merge coordinate is invalid', 'orientation_merge_invalid');
-  }
-  const repoId = repoIdArg ?? store._repoId ?? null;
-  const rootPath = moduleKey.rootPath;
-  const sources = store.queryKnowledge({ types: ['Source'] }).filter((node) => node.moduleKey?.rootPath === rootPath && (repoId === null || node.repoId === repoId));
-  const citesEdges = store.queryKnowledgeEdges({ types: ['Cites'] });
-  const supersedesEdges = store.queryKnowledgeEdges({ types: ['Supersedes'] });
-  const overlayOmissions = [];
-  const applied = [];
-  for (const sourceNode of sources) {
-    const findings = citesEdges.filter((edge) => edge.to === sourceNode.id)
-      .map((edge) => store.queryKnowledge({ ids: [edge.from] })[0])
-      .filter((node) => node && node.type === 'Finding' && node.promotion?.trigger === 'orientation.overlay_proposed');
-    const exact = sourceNode.moduleDigest === moduleDigest && sourceNode.freshnessDigest === freshnessDigest;
-    if (!exact) {
-      for (const finding of findings) overlayOmissions.push({ findingId: finding.id, freshnessDigest: sourceNode.freshnessDigest, moduleDigest: sourceNode.moduleDigest, reason: 'overlay_dangling' });
-      continue;
-    }
-    for (const finding of findings) applied.push(finding);
-  }
-  const isSuperseded = (leafId) => applied.some((other) => other.id !== leafId && supersedesEdges.some((edge) => edge.from === other.id && edge.to === leafId));
-  const live = applied.filter((leaf) => !isSuperseded(leaf.id));
-  const curatedLeaves = [];
-  if (live.length > 1) {
-    for (const leaf of applied) overlayOmissions.push({ findingId: leaf.id, reason: 'overlay_conflict' });
-  } else if (live.length === 1) {
-    const winner = live[0];
-    curatedLeaves.push({ leafDigest: winner.leafDigest, provenance: 'model-authored', source: 'curated', sourceRef: winner.id, text: winner.body, untrusted: true });
-  }
-  const module = {
-    leaves: [{ moduleDigest, source: 'generated' }, ...curatedLeaves], moduleDigest,
-    moduleKey: { repoId, rootPath },
-  };
-  const status = overlayOmissions.length > 0 ? 'partial' : 'ok';
-  return { map: { modules: [module] }, overlayOmissions, status };
-}
 
-export function recordOrientationRating(store, { packDigest, rating }, auth) {
-  if (!['useful', 'missed'].includes(rating) || !/^[a-f0-9]{64}$/.test(packDigest ?? '')) {
-    throw new CoordinationRefusal('orientation rating request is invalid', 'orientation_rating_refused');
-  }
-  const attempt = auth?.attempt ?? null;
-  if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)
-    || typeof attempt.taskId !== 'string' || !Number.isSafeInteger(attempt.taskVersion)
-    || typeof attempt.workerId !== 'string' || !Number.isSafeInteger(attempt.grantOrReadEventSeq)) {
-    throw new CoordinationRefusal('orientation rating attempt is invalid', 'orientation_rating_refused');
-  }
-  const task = store._tasks.get(attempt.taskId) ?? null;
-  if (!task || task.assignee !== attempt.workerId) {
-    throw new CoordinationRefusal('orientation rating attempt does not match the hub task record', 'orientation_rating_refused');
-  }
-  const priorForAttempt = store._events.find((event) => event.kind === 'orientation.rating_recorded'
-    && event.payload?.taskId === attempt.taskId && event.payload?.taskVersion === attempt.taskVersion) ?? null;
-  if (priorForAttempt) {
-    if (priorForAttempt.payload.packDigest === packDigest) {
-      if (priorForAttempt.payload.rating === rating) return { ok: true, result: 'idempotent', event: clone(priorForAttempt) };
-      throw new CoordinationRefusal('orientation rating conflicts with a prior rating for this attempt', 'orientation_rating_conflict');
-    }
-    throw new CoordinationRefusal('orientation rating target was not received by this attempt', 'orientation_rating_refused');
-  }
-  const payload = {
-    grantOrReadEventSeq: attempt.grantOrReadEventSeq, packDigest, rating,
-    repoId: attempt.repoId ?? store._repoId, runId: attempt.runId ?? task.runId ?? null,
-    taskId: attempt.taskId, taskVersion: attempt.taskVersion, workerId: attempt.workerId,
-  };
-  const event = store._append('orientation.rating_recorded', payload, auth);
-  return { ok: true, result: 'recorded', event: clone(event) };
-}
+
+
+
+
 
 export function recordMessage(store, kind, fields, auth) {
   if (kind !== 'message.sent' && kind !== 'message.delivered') {
@@ -6168,98 +5244,13 @@ export function recordWorkerGeneration(store, fields, auth) {
   return { ok: true, result: 'recorded', event: clone(event) };
 }
 
-export function dropReplBinding(store, fields, auth) {
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-    || typeof fields.scope !== 'string' || !SAFE_REPL_SCOPE.test(fields.scope)
-    || typeof fields.name !== 'string' || !SAFE_REPL_NAME.test(fields.name)
-    || typeof fields.manifestDigest !== 'string' || !REPL_DIGEST.test(fields.manifestDigest)) {
-    throw new CoordinationRefusal('REPL binding drop requires a valid scope/name/manifestDigest',
-      'invalid_repl_binding');
-  }
-  const expectedBindingVersion = Object.hasOwn(fields, 'expectedBindingVersion')
-    ? fields.expectedBindingVersion : null;
-  if (!Number.isSafeInteger(expectedBindingVersion) || expectedBindingVersion <= 0) {
-    throw new CoordinationRefusal('REPL binding drop requires a positive expectedBindingVersion',
-      'invalid_repl_binding');
-  }
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    const runId = store._replManifestAdmissions.get(prior.payload?.manifestDigest)?.runId ?? null;
-    const identity = {
-      scope: fields.scope, name: fields.name, manifestDigest: fields.manifestDigest, expectedBindingVersion,
-    };
-    const priorIdentity = {
-      scope: prior.payload?.scope, name: prior.payload?.name,
-      manifestDigest: prior.payload?.manifestDigest,
-      expectedBindingVersion: prior.payload?.expectedBindingVersion ?? null,
-    };
-    if (prior.kind !== 'repl.binding_dropped' || prior.actor !== auth.actor
-      || canonicalDigest(priorIdentity) !== canonicalDigest(identity)) {
-      throw new CoordinationRefusal('REPL binding idempotency key is bound differently',
-        'repl_binding_conflict');
-    }
-    const projected = runId !== null ? store._replBindings.get(replBindingKey(runId, fields.scope, fields.name)) : null;
-    return freeze({ ok: true, result: 'idempotent', event: clone(prior), binding: clone(projected) });
-  }
 
-  const record = store._replManifestAdmissions.get(fields.manifestDigest);
-  if (!record) {
-    throw new CoordinationRefusal('REPL binding cites an unadmitted manifestDigest',
-      'repl_binding_manifest_unadmitted');
-  }
-  if (record.replRole !== fields.scope) {
-    throw new CoordinationRefusal('REPL binding scope disagrees with the cited manifest replRole',
-      'repl_binding_scope_manifest_mismatch');
-  }
-  const callerPrincipal = { actor: auth?.actor ?? null, principalId: auth?.principalId ?? null };
-  if (canonicalDigest(callerPrincipal) !== canonicalDigest(record.principal)) {
-    throw new CoordinationRefusal('REPL binding caller identity disagrees with the cited manifest principal',
-      'repl_binding_unauthorized');
-  }
-  const runId = record.runId;
-  store._assertRunAdmissionOpen(runId, false);
-  const key = replBindingKey(runId, fields.scope, fields.name);
-  const current = store._replBindings.get(key);
-  // Rule 3: dropping requires state 'bound' — dropping an already-dropped binding is
-  // repl_binding_not_bound, not idempotent (idempotency is the auth.key replay path above).
-  if (!current || current.state !== 'bound') {
-    throw new CoordinationRefusal('REPL binding is not currently bound', 'repl_binding_not_bound');
-  }
-  if (expectedBindingVersion !== current.bindingVersion) {
-    throw new CoordinationRefusal('REPL binding expectedBindingVersion is stale', 'stale_binding_version');
-  }
-  const bindingVersion = current.bindingVersion + 1;
-  const bindingDigest = replBindingContentDigest({
-    scope: fields.scope, name: fields.name, bindingVersion, state: 'dropped', cellId: current.cellId,
-  });
-  if (Object.hasOwn(fields, 'bindingDigest') && fields.bindingDigest !== bindingDigest) {
-    throw new CoordinationRefusal('REPL binding digest does not match the hub recompute',
-      'repl_binding_digest_mismatch');
-  }
-  const payload = {
-    schemaVersion: 1, scope: fields.scope, name: fields.name, bindingVersion, state: 'dropped',
-    cellId: current.cellId, bindingDigest, manifestDigest: fields.manifestDigest, expectedBindingVersion,
-  };
-  const event = store._append('repl.binding_dropped', payload, auth);
-  return freeze({ ok: true, result: 'dropped', event: clone(event), binding: clone(store._replBindings.get(key)) });
-}
 
-export function replBindingSnapshot(store, runId, scope) {
-  const rows = [...store._replBindings.entries()]
-    .filter(([key]) => { const [rId, s] = JSON.parse(key); return rId === runId && s === scope; })
-    .map(([, rec]) => rec)
-    .filter((rec) => rec.state === 'bound')
-    .map(clone);
-  return freeze({ runId, scope, bindingFence: store.bindingFence(runId, scope), bindings: rows });
-}
+
+
 
 /** The run's admitted REPL manifests, in admission order — the D6 review projection's input. */
-export function replManifestAdmissions(state, runId) {
-  return [...state.values()]
-    .filter((row) => row.runId === runId)
-    .sort((left, right) => left.admittedEvent - right.admittedEvent)
-    .map(clone);
-}
+
 
 /** Does this principal hold an ACTIVE run-orchestrator lease — this run's, or (when no run is
  * named) any run of this repository? This is the orchestrator identity a promotion is authorized
@@ -6282,82 +5273,6 @@ export function holdsRunOrchestratorLease(store, fields) {
   ));
 }
 
-/** Issue #69 (D4): the run-close reap of the task-ephemeral tier. A run's `worker:<id>` and
- * `shared` objects are run-scoped and unreachable once the run closes, so the ACTIVE binding map
- * and the per-scope fences for that run are dropped here. The append-only history is RETAINED:
- * `resolveReplCitation` resolves the EXACT version row from it (Part A rule 2), so a post-close
- * replay still resolves the object a receipt cites, and the drop is idempotent.
- * `active` is the count of active bindings the run has LEFT (0 after a complete reap) — the
- * question a caller asks of a closed run. */
-export function reapRunReplBindings(store, runId) {
-  if (!validRunId(runId)) {
-    throw new CoordinationRefusal('REPL binding reap requires a run id', 'invalid_repl_binding');
-  }
-  let reaped = 0;
-  for (const key of [...store._replBindings.keys()]) {
-    const [rowRunId, scope] = JSON.parse(key);
-    if (rowRunId !== runId) continue;
-    store._replBindings.delete(key);
-    store._replBindingFences.delete(replFenceKey(runId, scope));
-    reaped += 1;
-  }
-  const active = [...store._replBindings.keys()]
-    .filter((key) => JSON.parse(key)[0] === runId).length;
-  const retained = [...store._replBindingHistory.keys()]
-    .filter((key) => JSON.parse(key)[0] === runId).length;
-  return freeze({ runId, reaped, active, retained });
-}
-
-// REPL-2 binding-view ceilings (repl23-decisions.md Part D rule 13), the same byte/count-ceiling
-// shape a bounded view uses.
-const MAX_REPL_VIEW_BYTES = FRAME_LIMITS['view.repl.bytes'].value;
-const MAX_REPL_BINDING_ITEMS = 512;
-
-// REPL-2 (repl23-decisions.md Part D rules 11-13): a bounded, sanitized, per-worker binding
-// projection. Reads are NON-EVENTED (pure — appends nothing) and CACHED by
-// (runId, scope, workerId, bindingFence): while the (runId, scope) fence is unchanged the
-// exact cached view is served; a fence advance is the only thing that recomputes it. `scope`/
-// `name` are attacker-influenced identifiers and route through the same
-// boundedAttentionText/wrapProse untrusted-prose discipline every attacker-influenced body
-// uses (rule 16, P2-6); a resolved cellId is a closed hub-derived token and is never wrapped.
-// It lives here, beside `replBindingSnapshot`, because it is a pure projection of that snapshot:
-// the coordinator's run-view REPL review (issue #69 D6) reads it without reaching the
-// application layer, which owns the run view but not this shape.
-export function projectReplBindingView(snapshot, viewer = {}, cache = null) {
-  const runId = snapshot?.runId ?? null;
-  const scope = snapshot?.scope ?? null;
-  const bindingFence = Number.isSafeInteger(snapshot?.bindingFence) ? snapshot.bindingFence : 0;
-  const workerId = viewer.workerId ?? null;
-  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
-  const cacheKey = `${runId} ${scope} ${role}:${workerId ?? ''} ${bindingFence}`;
-  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
-
-  // Part D rule 12: a worker sees its own worker:<id> scope plus the shared scope
-  // (read-only), both within its own run; the orchestrator sees every scope in the run.
-  const visibleScope = role === 'orchestrator' || scope === 'shared' || scope === `worker:${workerId}`;
-  const visible = visibleScope ? (snapshot?.bindings ?? []) : [];
-  let replBindingViewTruncated = visible.length > MAX_REPL_BINDING_ITEMS;
-  const project = (binding) => ({
-    scope: wrapProse(binding.scope, boundedAttentionText(binding.scope)),
-    name: wrapProse(binding.scope, boundedAttentionText(binding.name)),
-    bindingVersion: binding.bindingVersion, state: binding.state,
-    cellId: binding.cellId, bindingDigest: binding.bindingDigest,
-  });
-  let items = visible.slice(0, MAX_REPL_BINDING_ITEMS).map(project);
-  const build = () => Object.freeze({
-    runId, scope, bindingFence, viewer: Object.freeze({ workerId, role }),
-    bindings: Object.freeze(items), replBindingViewTruncated,
-  });
-  let view = build();
-  // Byte ceiling: shed the trailing item and re-flag until under MAX_REPL_VIEW_BYTES (never silent).
-  while (Buffer.byteLength(JSON.stringify(view)) > MAX_REPL_VIEW_BYTES && items.length > 0) {
-    items = items.slice(0, items.length - 1);
-    replBindingViewTruncated = true;
-    view = build();
-  }
-  if (cache) cache.set(cacheKey, view);
-  return view;
-}
 
 export function _knowledgeLiveAt(row, at) {
   const time = typeof at === 'number' ? at : Date.parse(at);
@@ -6810,19 +5725,11 @@ export function knowledgeContentDigest(store) {
 export function knowledgeCandidateQueue(store, { now } = {}) {
   const at = typeof now === 'number' ? now : Date.parse(now ?? store._clock());
   const nodes = store.queryKnowledge({});
-  const edges = store.queryKnowledgeEdges({});
-  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  const admittedIds = new Set();
-  for (const edge of edges) {
-    if (edge.type === 'DerivedFrom' && nodeMap.get(edge.from)?.promotion?.trigger === 'workflow.admitted') {
-      admittedIds.add(edge.to);
-    }
-  }
   const triggers = KNOWLEDGE_CANDIDATE_TRIGGERS();
   const candidates = [];
   for (const node of nodes) {
     const source = triggers[node.promotion?.trigger];
-    if (!source || node.type !== 'Finding' || node.validTo != null || admittedIds.has(node.id)) continue;
+    if (!source || node.type !== 'Finding' || node.validTo != null) continue;
     const observedAt = Date.parse(node.observedAt ?? node.eventTime ?? store._clock());
     candidates.push({
       id: node.id, type: node.type, source, observedSeq: node.observedSeq,
@@ -6838,15 +5745,12 @@ export function knowledgeCandidateQueue(store, { now } = {}) {
       ageMs: row.ageMs, groundingDigest: row.groundingDigest,
     })),
     count: candidates.length,
-    admittedIds: [...admittedIds].sort(compareCanonicalStrings),
   });
 }
 
-export function knowledgeRitual(store, runId, { now } = {}) {
+export function knowledgeRitual(store, { now } = {}) {
   const candidates = store.knowledgeCandidateQueue({ now }).count;
-  const admittedThisRun = store._events.filter((event) => event.kind === 'knowledge.workflow_admitted'
-    && event.payload?.runId === runId).length;
-  return freeze({ candidates, admittedThisRun });
+  return freeze({ candidates });
 }
 
 export function invalidateKnowledge(store, nodeId, expectedValidityVersion, reason, auth) {

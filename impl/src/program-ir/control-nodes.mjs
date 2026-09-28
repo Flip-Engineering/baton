@@ -18,14 +18,13 @@ const NODE_KEY = /^[A-Za-z][A-Za-z0-9._:-]{0,127}$/u;
 export const CONTROL_NODE_KINDS = Object.freeze([
   'await', 'branch', 'child', 'parallel', 'repeat', 'select', 'sequence',
 ]);
-export const DATA_NODE_KINDS = Object.freeze(['collect', 'context', 'value']);
+export const DATA_NODE_KINDS = Object.freeze(['collect', 'value']);
 export const SOURCE_NODE_KINDS = Object.freeze([...CONTROL_NODE_KINDS, ...DATA_NODE_KINDS]);
 
-// §93.9 port vocabulary. value/context/collect/sequence/branch/select expose port "value";
+// §93.9 port vocabulary. value/collect/sequence/branch/select expose port "value";
 // parallel/child expose "handle"; await/repeat expose "settlement".
 const PORTS = Object.freeze({
   value: Object.freeze(['value']),
-  context: Object.freeze(['value']),
   collect: Object.freeze(['value']),
   sequence: Object.freeze(['value']),
   branch: Object.freeze(['value']),
@@ -428,7 +427,6 @@ function namedPortArray(value, label, { min, max, boundName }) {
 
 const SOURCE_FIELDS = Object.freeze({
   value: Object.freeze(['nodeKey', 'kind', 'value', 'schema']),
-  context: Object.freeze(['nodeKey', 'kind', 'program']),
   sequence: Object.freeze(['nodeKey', 'kind', 'steps', 'result', 'outputSchema']),
   branch: Object.freeze(['nodeKey', 'kind', 'predicate', 'then', 'otherwise', 'outputSchema']),
   parallel: Object.freeze(['nodeKey', 'kind', 'branches', 'join', 'outputSchema']),
@@ -439,7 +437,7 @@ const SOURCE_FIELDS = Object.freeze({
   child: Object.freeze(['nodeKey', 'kind', 'program', 'input', 'bound', 'resultSchema']),
 });
 
-// Stage-2 source-node validation (§93.9): exact field set (a source context/collect carries no
+// Stage-2 source-node validation (§93.9): exact field set (a source collect carries no
 // outputSchema, so supplying one is an unknown-field error), closed kinds, reference shapes, and
 // policy bounds. Deep schema, digest, and graph checks belong to the normalizer.
 export function validateSourceNode(node, { policy }) {
@@ -456,10 +454,6 @@ export function validateSourceNode(node, { policy }) {
       fail(`${label}.value must be a TypedValue object`);
     }
     schemaRefShape(node.schema, `${label}.schema`);
-  } else if (kind === 'context') {
-    if (!node.program || typeof node.program !== 'object' || Array.isArray(node.program)) {
-      fail(`${label}.program must be a baton.context_program object`);
-    }
   } else if (kind === 'sequence') {
     if (!Array.isArray(node.steps) || node.steps.length < 1
       || node.steps.length > policy.maxProgramNodes) {
@@ -529,7 +523,6 @@ export function nodePortNames(kind) {
 export function nodeDataRefs(node) {
   switch (node.kind) {
     case 'value':
-    case 'context':
       return [];
     case 'sequence':
       return [node.result];

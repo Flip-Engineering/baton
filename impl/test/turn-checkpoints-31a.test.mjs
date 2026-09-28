@@ -438,7 +438,7 @@ test('C2: every named guard site treats a `paused` task as live, exactly as it t
   const probes = [
     ['claimScratch', () => kit.coordinator.claimScratch(handle.id, {}, {})],
     ['postScratchFact', () => kit.coordinator.postScratchFact(handle.id, {}, {})],
-    ['admitReplManifest', () => kit.coordinator.admitReplManifest(handle.id, {}, {})],
+
   ];
   for (const [label, probe] of probes) {
     assert.throws(probe, TypeError, `${label} must admit a paused task past its status guard`);
