@@ -241,7 +241,6 @@ const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
 const SESSION_CONTEXT_FIELDS = new Set(['worktree', 'repoRoot', 'baseSha', 'branch', 'ownerTaskId']);
-const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
 const BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin']);
 const PLAN_BRIEF_FIELDS = ['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects'];
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization|actor|userId|sessionId|capabilities|repoIds)$/i;

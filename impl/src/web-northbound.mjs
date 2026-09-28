@@ -354,7 +354,6 @@ const APPLICATION_COMMAND = Object.freeze({
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
-const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
 const BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin']);
 const GOAL_PLAN_BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin', 'providerTurns']);
 const GOAL_REF_FIELDS = new Set(['goalId', 'version', 'digest']);
