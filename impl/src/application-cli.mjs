@@ -33,9 +33,9 @@ import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 //
 //   CLI_WEB_COMMANDS — the same set projected onto the resident's WIRE CARD: the application
 //     command table the card carries plus the direct ports the surface-divergence ledger
-//     documents (scripts/surface-divergence-ledger.json, the eight facade ports of #87+#48 and
-//     waves.compile of #170). The surface conformance, the parity matrix and CLI.md pin this
-//     projection, so it stays the byte-stable card view while dispatch follows the bus.
+//     documents (scripts/surface-divergence-ledger.json, the eight facade ports of #87+#48).
+//     The surface conformance, the parity matrix and CLI.md pin this projection, so it stays the
+//     byte-stable card view while dispatch follows the bus.
 function cliDispatchTransports() {
   const admitted = new Set(webAdmittedCommandNames());
   const dispatchAliases = applicationOperationAliasMap();
@@ -57,25 +57,18 @@ function cliDispatchTransports() {
   return names;
 }
 const CLI_DISPATCH_TRANSPORTS = Object.freeze([...cliDispatchTransports()].sort());
-// The transports the resident's WIRE CARD covers beyond the application command table: the six
-// wave direct ports (the same set surface-conformance.mjs pins as WAVE_DIRECT_PORT_VERBS and the
-// docs call the web.bus card) and the direct ports whose divergence from that projection the
-// ledger documents (the eight facade ports of #87+#48 plus waves.compile of #170). The gate
-// asserts the ledger's cli rows and this list agree.
-const CLI_CARD_WAVE_PORTS = Object.freeze([
-  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
-]);
+// The transports the resident's WIRE CARD covers beyond the application command table: the direct
+// ports whose divergence from that projection the ledger documents (the eight facade ports of
+// #87+#48). The gate asserts the ledger's cli rows and this list agree.
 const CLI_CARD_LEDGERED_PORTS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
   'run.scratchpad.elevate', 'run.knowledge.seed',
-  'waves.compile',
-  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
-  'run.resultpin', 'waves.harvest',
+  // Issue #99/#179: the accessor's ledgered direct port (Decision 5).
+  'run.resultpin',
 ]);
 export const CLI_WEB_COMMANDS = new Set(CLI_DISPATCH_TRANSPORTS.filter((name) => (
   (Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, name)
     && APPLICATION_COMMAND_DEFINITIONS[name].web === true)
-  || CLI_CARD_WAVE_PORTS.includes(name)
   || CLI_CARD_LEDGERED_PORTS.includes(name)
 )));
 /** The CLI's dispatch authority: the canonical operation transports the resident's web bus
@@ -1416,11 +1409,6 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     token: 'deployment', verb: 'baton deployment watch (or wakes-since)',
     argv: Object.freeze(['deployment', 'watch', '--follow']), kind: 'wake_watch', parser: 'baton-cli',
     summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead.',
-  }),
-  Object.freeze({
-    token: 'waves', verb: 'baton waves', argv: Object.freeze(['waves', 'list']), kind: 'command',
-    parser: 'baton-cli',
-    summary: 'Run, compile, start, stop and inspect workflow waves.',
   }),
   Object.freeze({
     token: 'runs', verb: 'baton runs list [--cursor CURSOR]', argv: Object.freeze(['runs', 'list']), kind: 'command',
@@ -3451,160 +3439,6 @@ export function parseBatonCli(rawArgs) {
       'cli_command_host_local',
     );
   }
-  // S-1 v2: baton waves attach WAVE_ID --members JSON (plural spelling only). The singular `wave`
-  // always refuses cli_command_unavailable with the corrective naming the RIGHT plural verb for the
-  // requested action (#132 D4.3/A5-3) — never the hardcoded attach spelling.
-  if (args[0] === 'wave') {
-    const singularAction = args[1] ?? 'attach';
-    const pluralCorrective = ['list', 'progress', 'start', 'send', 'stop', 'attach'].includes(singularAction)
-      ? singularAction : 'attach';
-    throw cliError(
-      `wave ${singularAction} is not a verb; use the plural spelling: baton waves ${pluralCorrective}`,
-      'cli_command_unavailable',
-    );
-  }
-  if (args[0] === 'waves') {
-    args.shift();
-    const action = args.shift();
-    // Issue #114 (D2, OQ2 folded): the workflow-as-data lane verb is the family plural
-    // `baton waves run <spec.json>` → command waves.run. The spec path rides the parsed args.
-    if (action === 'run') {
-      const specPath = args.shift();
-      noRemainder(args);
-      if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves run requires a spec path');
-      return { kind: 'command', command: 'waves.run', name: 'waves.run', args: { specPath }, idempotencyKey };
-    }
-    // #170 (D4): the inspectable compile seam — `baton waves compile [specPath]` → waves.compile.
-    // The registry schema requires nothing (`required: []`, application-semantics.mjs:1651+), so a
-    // bare `baton waves compile` is admitted (the D3 closed-set pin derives the minimal invocation
-    // mechanically from the schema — a required specPath would over-refuse the documented verb).
-    if (action === 'compile') {
-      const specPath = args.length > 0 && !args[0].startsWith('--') ? args.shift() : null;
-      noRemainder(args);
-      return {
-        kind: 'command', command: 'waves.compile', name: 'waves.compile',
-        args: specPath === null ? {} : { specPath },
-        idempotencyKey,
-      };
-    }
-    // #132 D4.1/D4.2 (wave-observability-2026-08-06/contract.md §D4): the read/steer verbs.
-    // `baton waves list` → waves.list — the registry read, no args (A5-1).
-    if (action === 'list') {
-      noRemainder(args);
-      return { kind: 'command', command: 'waves.list', name: 'waves.list', args: {}, idempotencyKey };
-    }
-    // `baton waves progress WAVE_ID [--cursor N]` → waves.progress — the paged per-member read;
-    // args stay exactly {waveId} until an explicit cursor is requested (A5-2).
-    if (action === 'progress') {
-      const progressWaveId = args.shift();
-      const cursorRaw = take(args, '--cursor');
-      noRemainder(args);
-      if (!progressWaveId || typeof progressWaveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(progressWaveId)) {
-        throw cliError('wave ID is invalid');
-      }
-      const cursor = cursorRaw === null ? null : Number(cursorRaw);
-      if (cursorRaw !== null && (!Number.isSafeInteger(cursor) || cursor < 0)) {
-        throw cliError('--cursor is invalid');
-      }
-      return {
-        kind: 'command', command: 'waves.progress', name: 'waves.progress',
-        args: { waveId: progressWaveId, ...(cursor === null ? {} : { cursor }) },
-        idempotencyKey,
-      };
-    }
-    // `baton waves start --members JSON [--idempotency-key KEY]` → waves.start (D4.6/A6-6): the
-    // idempotency key rides parsed.args (already consumed by the top-level take at line 1211) so
-    // the two-argument client port dispatches it into _normalizeWaveStart.
-    if (action === 'start') {
-      const membersRaw = take(args, '--members');
-      noRemainder(args);
-      if (membersRaw === null) throw cliError('--members is required');
-      let members;
-      try { members = JSON.parse(membersRaw); }
-      catch { throw cliError('--members must be JSON'); }
-      if (!Array.isArray(members)) {
-        throw cliError('--members must be a JSON array');
-      }
-      return {
-        kind: 'command', command: 'waves.start', name: 'waves.start',
-        args: { members, idempotencyKey },
-        idempotencyKey,
-      };
-    }
-    // F5/D4.5 (A5-4): a BARE `baton waves attach` issues the registry read waves.list — the
-    // attachable set — never the wave-ID-invalid refusal.
-    if (action === 'attach' && args.length === 0) {
-      return { kind: 'command', command: 'waves.list', name: 'waves.list', args: {}, idempotencyKey };
-    }
-    // #157 (D1.2): `baton waves send RUN_ID --message TEXT [--nudge|--now|--turn] [--claim-grant JSON]`
-    // → waves.send. The runId rides positionally (id() helper); --message required; at most one
-    // delivery mode (the run send idiom, :1733-1738); --claim-grant is the optional closed JSON
-    // the web wire already carries (web-northbound.mjs:54-61) — never silently dropped.
-    if (action === 'send') {
-      const sendRunId = id(args.shift(), 'run ID');
-      const message = take(args, '--message');
-      const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
-        .filter(([name]) => flag(args, name));
-      const claimGrantRaw = take(args, '--claim-grant');
-      noRemainder(args);
-      if (message === null) throw cliError('--message is required', 'cli_action_inputs_invalid');
-      if (!nonempty(message) || modes.length > 1) {
-        throw cliError('waves send requires bounded guidance and at most one delivery mode', 'cli_action_inputs_invalid');
-      }
-      let claimGrant = null;
-      if (claimGrantRaw !== null) {
-        try { claimGrant = JSON.parse(claimGrantRaw); }
-        catch { throw cliError('--claim-grant must be JSON', 'cli_action_inputs_invalid'); }
-        if (!record(claimGrant)) throw cliError('--claim-grant must be a JSON object', 'cli_action_inputs_invalid');
-      }
-      return {
-        kind: 'command', command: 'waves.send', name: 'waves.send',
-        args: {
-          runId: sendRunId, message,
-          ...(modes.length === 0 ? {} : { delivery: modes[0][1] }),
-          ...(claimGrant === null ? {} : { claimGrant }),
-        },
-        idempotencyKey,
-      };
-    }
-    // #157 (D1.2): `baton waves stop RUN_ID --reason TEXT` → waves.stop. The CLI requires --reason
-    // to match the dispatcher (_normalizeWaveMemberAction 'wave stop' requires reason), refusing
-    // early cli_action_inputs_invalid, never a server refusal (OQ1).
-    if (action === 'stop') {
-      const stopRunId = id(args.shift(), 'run ID');
-      const reason = take(args, '--reason');
-      noRemainder(args);
-      if (reason === null) throw cliError('--reason is required', 'cli_action_inputs_invalid');
-      return {
-        kind: 'command', command: 'waves.stop', name: 'waves.stop',
-        args: { runId: stopRunId, reason },
-        idempotencyKey,
-      };
-    }
-    // Issue #99/#179 (harvest-accessor contract Decision 5): `baton waves harvest
-    // RESULT_SHA|RUN_ID [--onto PATH]` → waves.harvest. The resultSha XOR runId source law is
-    // enforced at parse (exactly one positional source); a 40-hex source is the resultSha, any
-    // other valid id is the runId — the facade's closed shape remains the second gate.
-    if (action === 'harvest') {
-      const source = args.length > 0 && !args[0].startsWith('--') ? args.shift() : null;
-      const onto = take(args, '--onto');
-      noRemainder(args);
-      const isSha = typeof source === 'string' && /^[a-f0-9]{40}$/u.test(source);
-      if (source === null
-        || (!isSha && (typeof source !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/u.test(source)))) {
-        throw cliError('waves harvest requires exactly one result sha or run id source', 'cli_invalid');
-      }
-      return {
-        kind: 'command', command: 'waves.harvest', name: 'waves.harvest',
-        args: {
-          ...(isSha ? { resultSha: source } : { runId: source }),
-          ...(onto === null ? {} : { onto }),
-        },
-        idempotencyKey,
-      };
-    }
-    throw cliError('expected waves list, progress, start, send, stop, run, or compile', 'cli_command_unavailable');
-  }
   // R1/R4 (row-conformance-core / D1): `baton run watch RUN_ID` — the documented run.watch CLI
   // verb (registry example 'baton run watch RUN_ID', inputSchema {runId, channel?, recipient?,
   // afterCursor?}) — compiles to the run.watch command. Intercepted before the generic run branch
@@ -4331,7 +4165,15 @@ export class BatonWebClient {
     // server stops naming one. The loop ends on the SERVER's signal plus a progress check (the
     // cursor must advance, or the server is broken and the client refuses typed) — never on a
     // client-side page count.
+<<<<<<< HEAD
     const LIST_CONTINUATION = new Set(['runs.list', 'waves.list']);
+=======
+    // Issue #349: the transport's declared frame rides every envelope it dispatches (the MCP
+    // bridge declares {lane:'wire.frame'} on swarm.view; a client that declares none — the CLI —
+    // sends no frame and receives whole answers).
+    const declaredFrame = this.frameFor === null ? null : this.frameFor(bus);
+    const LIST_CONTINUATION = new Set(['runs.list']);
+>>>>>>> fa19db68 (WIP 2: #598 wave family stage 1 — run intent, CLI verb, card ports and surface option cut; the two production-*-convergence wave legs and harvest-accessor remain)
     if (LIST_CONTINUATION.has(bus)) {
       let pageArgs = { ...args };
       let drained = [];
