@@ -3,11 +3,11 @@ import ./commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 
-def relevant(db: String, event: String, omp: Bool) -> IO(Bool):
+def relevant(db: String, +event: String, omp: Bool) -> IO(Bool):
   match omp:
     case False{}: IO.pure(Bool,True{})
     case True{}: do IO<Bool>:
-      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type') IN ('response','message_end','tool_execution_start','tool_execution_end','agent_end') THEN 1 ELSE 0 END;"))
+      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type') IN ('response','message_end','tool_execution_start','tool_execution_end','agent_end') THEN 1 ELSE 0 END ELSE 0 END;"))
       IO.pure(Bool,String.eq(selected,"1\n"))
 
 def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) -> IO(String):
