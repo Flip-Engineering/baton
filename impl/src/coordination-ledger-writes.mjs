@@ -309,7 +309,6 @@ export function _writeCanonicalReceipt(store, mode, ledger, cutPolicy = store._c
     const core = store._canonicalReceiptCore(mode, ledger, createdAt, cutPolicy);
     const receipt = { ...core, receiptDigest: sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core)), 'utf8')) };
     const bytes = store._receiptBytes(receipt);
-    if (bytes.byteLength > store._canonicalOrderPolicy.maxReceiptBytes) store._canonicalOrderFail('canonical-order receipt exceeds its byte ceiling');
     const temp = join(store.root, `${CANONICAL_ORDER_TEMP_PREFIX}${randomUUID()}`);
     let fd = null;
     try {

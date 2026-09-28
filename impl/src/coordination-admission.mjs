@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, assertWaveStartedRoster, providerAttemptDelay, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
-import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
+import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, TERMINAL, boundedText, canonical, canonicalBytes, canonicalDigest, clone, digest, freeze, promotionActor, sha256Bytes, validKnowledgeContradictionPolicy, validRunId } from './coordination-internals.mjs';
 import { RUN_ORCHESTRATOR_CAPABILITIES, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -128,18 +128,21 @@ export function _validateCanonicalReceipt(store, receipt, bytes, ledger) {
     || !Number.isFinite(Date.parse(receipt.createdAt)) || new Date(Date.parse(receipt.createdAt)).toISOString() !== receipt.createdAt) {
     store._canonicalOrderFail('canonical-order receipt is malformed or from an unsupported version');
   }
-  let receiptPolicy; let cutPolicy;
-  try { receiptPolicy = normalizeCanonicalOrderPolicy(receipt.policy); cutPolicy = normalizeCanonicalOrderPolicy(receipt.cutPolicy); }
-  catch { store._canonicalOrderFail('canonical-order receipt policy is malformed'); }
-  if (canonicalDigest(receiptPolicy) !== canonicalDigest(store._canonicalOrderPolicy)) store._canonicalOrderFail('canonical-order receipt policy differs from deployment authority');
-  if (Object.keys(cutPolicy).some((key) => cutPolicy[key] > receiptPolicy[key])) store._canonicalOrderFail('canonical-order receipt cut exceeds deployment authority');
+  // #530: a receipt records the policy and the cut it was written under. Those recorded values
+  // are a READER's business, never a threshold: a receipt written before the limits left carries
+  // the numbers, one written after carries an empty policy, and both must stay readable — their
+  // identity is the receiptDigest recomputed below, which covers the recorded value as it stands.
+  for (const name of ['policy', 'cutPolicy']) {
+    const recorded = receipt[name];
+    if (!recorded || typeof recorded !== 'object' || Array.isArray(recorded)) store._canonicalOrderFail('canonical-order receipt policy is malformed');
+  }
   const core = Object.fromEntries(Object.entries(receipt).filter(([key]) => key !== 'receiptDigest'));
   if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core)), 'utf8'))) {
     store._canonicalOrderFail('canonical-order receipt digest is invalid');
   }
   const canonicalBytesValue = store._receiptBytes(receipt);
-  if (bytes.byteLength > store._canonicalOrderPolicy.maxReceiptBytes || !bytes.equals(canonicalBytesValue)) {
-    store._canonicalOrderFail('canonical-order receipt bytes are non-canonical or oversized');
+  if (!bytes.equals(canonicalBytesValue)) {
+    store._canonicalOrderFail('canonical-order receipt bytes are not canonical');
   }
   if (receipt.throughSeq > ledger.events.length) store._canonicalOrderFail('canonical-order receipt names a missing prefix');
   const prefixBytes = receipt.throughSeq === 0 ? 0 : ledger.offsets[receipt.throughSeq - 1];

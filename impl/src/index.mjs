@@ -716,7 +716,7 @@ function refereeFn(runtime, task, result, opts) {
  *          atlas?:{artifactRoot:string,maxArtifactBytes:number,maxSourceBytes?:number,maxFiles?:number,maxResults?:number},
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
- *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
+ *          canonicalOrderPolicy?:object,
  *          repoId?:string, deploymentBaseSha?:string, integrationPublishRemote?:string,
  *          reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
