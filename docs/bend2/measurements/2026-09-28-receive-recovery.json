@@ -172,5 +172,45 @@
     ],
     "log_sha256": "2e1da76ffa2a38ce124d64f4eca63d9bdddebe2ad94cd0a97f667b2f4cf0e47d",
     "rebuild_sha256": "2f0397100b793a87b180068434526b2f0963c6e8e8258338455fa56876702f30"
+  },
+  "integration": {
+    "source": "276b62b5baef6e6aae17f60c364957b96a08cf35",
+    "upstream": "cd2310afc073272f8339fca41676900ed3ca7fed",
+    "coordinator_sha256": "6b7f8f7c0207a92198de12f2bfacbac17398a015155ed8665120d3c9c7691c91",
+    "runtime_files_changed_since_original_measurement": [
+      "bend2/src/coordinator/turn.bend"
+    ],
+    "checks": {
+      "command": "BEND=/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend sh bend2/scripts/check-native.sh",
+      "exit_code": 0,
+      "python_tests": 124,
+      "bend_suites": [
+        "git",
+        "land"
+      ],
+      "log": "/Users/wahargis/Development/Experiments/baton-bend2-supervisor-loss-625/.scratch/issue625/all-process-loss/check-native-626.log",
+      "log_sha256": "4c7fbb9f37c0f9b6bedf59d6f800dfdf1e21974843893168920374dbd82837db"
+    },
+    "probe": {
+      "status": "passed",
+      "firstSupervisor": 15516,
+      "firstNative": 15523,
+      "keeper": 15517,
+      "duplicateNativeSession": false,
+      "postLossOutputRetained": true,
+      "originalCompletionRetained": true,
+      "pendingInputDrained": true,
+      "parentNotified": true,
+      "processesBeforeCleanup": []
+    },
+    "probe_artifact": ".scratch/issue625/all-process-loss/receive-probe-626.json",
+    "probe_artifact_sha256": "231963feda4d670d8b823e4c4c266526c379311258ca79a71f6fa42db6949c6c",
+    "codex_process_loss_record": "docs/bend2/measurements/2026-09-28-codex-process-loss.json",
+    "remaining_receive_626_gap": {
+      "source": "276b62b5baef6e6aae17f60c364957b96a08cf35",
+      "evidence": "/Users/wahargis/Development/Experiments/baton-bend2-supervisor-loss-625/.scratch/issue625/all-process-loss/receive-626-gap/evidence.json",
+      "evidence_sha256": "3d9ef30eb47ac05f3e605f23b15dfc3d26c40655a399eec5d91ba84c94cfb9ac",
+      "outcome": "Retained receive reports the missing OMP conversation, leaves its original input pending, and starts no fresh conversation."
+    }
   }
 }
