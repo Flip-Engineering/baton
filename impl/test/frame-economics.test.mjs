@@ -79,7 +79,7 @@
 //     message endsWith it). Typed codes are the registry rows' refusalCode values:
 //       graceful lanes beyond the spill ceiling  -> 'spill_body_exceeded' (cap = 1048576)
 //       run.legacy_send.body                     -> 'run_legacy_send_exceeded' (v1.2: the legacy
-//                                                   run.send / run.act send / waves.send message
+//                                                   run.send / waves.send message
 //                                                   door at its LIVE 16,384)
 //       decision.text                            -> 'decision_text_exceeded'
 //       scratchpad.entry.body                    -> 'scratchpad_entry_exceeded'
@@ -146,7 +146,7 @@
 //     fail at once the registry exists. The E5 fixture's positive arm is smoke-verified to
 //     connect today (the mismatch arm is the red one).
 //   * RESOLVED (contract v1.2, blue-team blocker 2): the legacy-alias door (run.send /
-//     run.act send / waves.send message args at 16,384: application.mjs:1797/:2930,
+//     run.send / waves.send message args at 16,384: application.mjs:1797/:2930,
 //     coordination-store.mjs:4292, schemas application-semantics.mjs:299/:523/:1596 +
 //     mcp-northbound.mjs:357/:412/:485) is cataloged as the named admission lane
 //     run.legacy_send.body at its LIVE 16,384 value, hard with coaching. F1's alias-door

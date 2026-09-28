@@ -90,7 +90,7 @@ test('MCPWEB-L1: the bridge reaches the ordinary owner-local socket resident thr
 
   const application = await connectBatonWebApplication({ cwd: repo, env, home });
   const card = application.card();
-  for (const command of ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.stop']) {
+  for (const command of ['application.help', 'run.start', 'run.inspect', 'run.stop']) {
     assert.ok(card.commands.includes(command), `ordinary command ${command} is advertised`);
   }
 

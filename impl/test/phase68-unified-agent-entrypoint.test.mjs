@@ -246,7 +246,6 @@ test('contextual CLI help preserves semantic application.help while the package 
     kind: 'command', name: 'application.help',
     args: { topic: 'run.inspect', depth: 'outline' }, idempotencyKey: 'help-a',
   });
-  assert.equal(parseBatonCli(['run', 'do', '--help']).args.topic, 'run.act');
   assert.equal(parseBatonCli(['run', 'stop', '--help']).args.topic, 'run.stop');
 });
 
@@ -273,9 +272,7 @@ test('local CLI help topics, default operations, actions, and selectors cannot d
     assert.equal(batonCliHelp(definition.helpTopic).startsWith('No local help'), false, operation);
   }
   for (const [kind, action] of Object.entries(registry.actions)) {
-    const command = action.genericCli === true
-      ? registry.cli.commands.find((candidate) => candidate.id === 'run.do')
-      : registry.cli.commands.find((candidate) => candidate.action === kind);
+    const command = registry.cli.commands.find((candidate) => candidate.action === kind);
     assert.ok(command, `action ${kind} has no CLI projection`);
     assert.equal(command.operation === undefined || registry.defaultOperations.includes(command.operation), true);
     const rendered = batonCliHelp(action.helpTopic);
@@ -295,7 +292,7 @@ test('local CLI help topics, default operations, actions, and selectors cannot d
 test('bound Pythonic facade cascades start, inspect, semantic action, continuation, and stop', async () => {
   const calls = [];
   const principal = { actor: 'agent:test', principalId: 'agent', sessionId: 'session' };
-  const approve = { kind: 'approve_plan', actionId: 'action-approve' };
+  const approve = { kind: 'approve_plan', planDigest: 'a'.repeat(64) };
   const application = {
     async command(name, args, caller) {
       calls.push({ name, args, caller });
@@ -304,7 +301,7 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
         runId: 'run-bound', outline: { actions: [approve] },
         continuation: { operation: 'run.inspect', arguments: { runId: 'run-bound', depth: 'outline', cursor: 4, waitMs: 100 } },
       };
-      if (name === 'run.act') return { runId: 'run-bound', outline: { actions: [] }, action: 'approved' };
+      if (name === 'run.approve') return { runId: 'run-bound', outline: { actions: [] }, action: 'approved' };
       if (name === 'run.answer') return { runId: 'run-bound', attention: [] };
       if (name === 'run.steer') return { runId: 'run-bound', steered: true };
       if (name === 'run.stop') return { runId: 'run-bound', terminal: true };
@@ -321,13 +318,13 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
   await run.steer('worker-one', 'Continue with the focused implementation.');
   await run.stop();
   assert.deepEqual(calls.map(({ name }) => name), [
-    'run.start', 'run.inspect', 'run.inspect', 'run.act', 'run.answer', 'run.steer', 'run.stop',
+    'run.start', 'run.inspect', 'run.inspect', 'run.approve', 'run.answer', 'run.steer', 'run.stop',
   ]);
   assert.deepEqual(calls[0].args, {
     intent: { objective: 'Improve Baton', resultIntent: 'change', route: { model: 'gpt-5.6-sol', effort: 'high' } },
   });
   assert.deepEqual(calls[3].args, {
-    runId: 'run-bound', actionId: 'action-approve', inputs: {},
+    runId: 'run-bound', planDigest: 'a'.repeat(64),
   });
   assert.deepEqual(calls[4].args, {
     runId: 'run-bound', requestId: 'request-one', answer: { decision: 'allow' },

@@ -133,12 +133,6 @@ function fixture(t) {
         principalId: sessionPrincipal.userId, sessionId: sessionPrincipal.sessionId,
       }, context);
     },
-    async actionAuthority() {
-      return {
-        schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
-        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64),
-      };
-    },
   };
   const web = new WebNorthbound({
     coordinator: {}, coordination, sessions, application,

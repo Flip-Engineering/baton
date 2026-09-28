@@ -25,8 +25,8 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
 | `run.attention.watch` | `ordinary` | `baton run attention watch` | `baton run attention watch RUN_ID --kind member_terminal --cursor 0` |
 | `run.debug` | `ordinary` | `baton run debug` | `baton run debug RUN_ID` |
-| `run.do` | `ordinary` | `baton run do` | `baton run do RUN_ID ACTION_ID` |
 | `run.evidence` | `ordinary` | `baton run evidence` | `baton run evidence RUN_ID` |
+| `run.interrupt` | `ordinary` | `baton run interrupt` | `baton run interrupt RUN_ID` |
 | `run.knowledge.seed` | `ordinary` | `baton run knowledge seed` | `baton run knowledge seed RUN_ID --type Finding --grounding observed --body TEXT` |
 | `run.list` | `ordinary` | `baton run list` | `baton run list` |
 | `run.member.view` | `ordinary` | `baton run member view` | `baton run member view RUN_ID` |
@@ -35,6 +35,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.resultpin` | `ordinary` | `baton run resultpin` | `baton run resultpin run:1` |
 | `run.scratchpad.elevate` | `ordinary` | `baton run scratchpad elevate` | `baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON` |
 | `run.scratchpad.read` | `ordinary` | `baton run scratchpad read` | `baton run scratchpad read RUN_ID --scope shared --cursor 0` |
+| `run.select` | `ordinary` | `baton run select` | `baton run select RUN_ID ROLE --reason R` |
 | `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |
 | `run.start` | `ordinary` | `baton run` | `baton run "Ship it" --model gpt-5.6-sol --effort low` |
 | `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
@@ -352,7 +353,6 @@ baton run review RUN_ID --exact glm/glm-5.2@xhigh \
 baton run integrate RUN_ID --strategy ff-only \
   --reason 'Integrate the adopted independently reviewed result.'
 baton run stop RUN_ID --reason 'Operator cancelled this Run.'
-baton run do RUN_ID ACTION_ID --inputs '{"key":"value"}'
 baton help run
 baton credentials install kimi
 ```
@@ -361,8 +361,7 @@ baton credentials install kimi
 `--exact HARNESS/MODEL@EFFORT` or the `--model/--effort` (plus disambiguating `--harness`)
 manual pair, with optional `--profile`, `--run-id`, and `--scope`. The ordinary zero-assembly
 deployment defines the single profile `default`, so `--profile` is normally omitted; naming an
-undefined profile is refused `application_profile_not_found`. `baton run do` drives any advertised
-RunView action by its `actionId`. When no connection exists yet, `baton doctor` offers
+undefined profile is refused `application_profile_not_found`. When no connection exists yet, `baton doctor` offers
 `baton serve` (ordinary) before `baton setup` (explicit network deployments).
 
 `baton review` is the ordinary objective-first independent-review preset. Its two exact routes

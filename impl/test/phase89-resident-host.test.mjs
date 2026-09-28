@@ -269,7 +269,7 @@ test('RH3 RED: connectBaton discovers an authenticated resident and returns a re
         schemaVersion: 1,
         repoId: fixture.repoId,
         commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-          'run.workstreams', 'run.act', 'run.stop'],
+          'run.workstreams', 'run.stop'],
         agentExperience: {
           registryVersion: batonModule.APPLICATION_SEMANTIC_REGISTRY.version,
           registryDigest: batonModule.APPLICATION_SEMANTIC_REGISTRY.digest,

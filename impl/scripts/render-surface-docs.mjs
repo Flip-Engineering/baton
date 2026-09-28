@@ -64,8 +64,7 @@ const HOST_LOCAL_CLI_KEYS = new Set(['run.debug']);
 /**
  * Ordinary CLI principal inventory: the canonical operation keys the CLI's dispatch surface
  * reaches — the web-client transport projection (its own key, an `application.commands` alias, or
- * its legacy dispatch alias) plus the host-local port and the semantic-action verb the contract
- * pins as served.
+ * its legacy dispatch alias) plus the host-local port.
  *
  * 2026-09-14 audit (U-N2/U-G5): the old filter silently DROPPED any registry row that claimed the
  * cli surface but had no dispatch path, so the doc could never disagree with the registry and
@@ -94,19 +93,9 @@ export function servedCliOrdinaryKeys() {
     const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
       .find((op) => op.key === canonical);
     if (!operation) continue;
-    // The table's Example column is the row's own dispatch shape: a semantic-action verb
-    // (run.interrupt, run.select, …) compiles to `{kind:'semantic-action'}` and is taught by its
-    // action kind, not by this command table. Only command-shaped rows belong here.
     const witness = resolveOperationSurfaces(operation).witnesses.cli;
     if (witness?.kind !== 'command') continue;
     keys.add(canonical);
-  }
-  // docs/36 §9 M5 — run.send is a semantic-action CLI verb (its registry row carries
-  // `action: 'send'` and no legacy application-command spelling); the deleted run.steer alias was
-  // its only prior path into this inventory. The alias is gone at M5, the CLI verb stays served,
-  // so the contract pins it here beside the host-local port.
-  if (APPLICATION_SEMANTIC_REGISTRY.cli.commands.some((row) => row.id === 'run.send')) {
-    keys.add('run.send');
   }
   for (const key of HOST_LOCAL_CLI_KEYS) keys.add(key);
   return APPLICATION_SEMANTIC_REGISTRY.canonicalOperations

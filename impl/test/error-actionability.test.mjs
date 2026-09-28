@@ -15,8 +15,8 @@
 // ROW INVENTORY (contract-fold.md §4; every pin becomes a row at its named stage):
 //   W1  F1 × web   — unknown_top_level_field body names the offending key in `field`
 //   W2  F1 × web   — unknown_argument_field body names the offending arg key
-//   W3  F1 × web   — a run.act exactObject refusal surfaces the named validator refusal
-//                    (application_action_invalid), not application_command_arguments_invalid
+//   W3  F1 × web   — a run.approve exactObject refusal surfaces the named validator refusal
+//                    (application_command_invalid), not application_command_arguments_invalid
 //   W4  F6 × web   — over-spill run.objective → 400/413 (not 503), field: objective,
 //                    {actual, cap, unit, gracefulPath} present, assertNoBodyContent passes
 //   W5  F5 × web   — waves.run malformed spec → workflow_spec_invalid (not invalid_command)
@@ -67,8 +67,8 @@
 // FOLDED per blue-team-2026-08-13-a/blueteam-160.md (§6/§7; QA UPHOLD) — the fold hardens
 // rows against gaming, never makes a row pass at HEAD (the impls don't exist):
 //   W3  fixture corrected to reach the exactObject seam (a missing required arg key, not an
-//       extra key the envelope closure rejects first) + `field: 'inputs'` pin (kills the
-//       run_act-only remap).
+//       extra key the envelope closure rejects first) + `field: 'planDigest'` pin (kills the
+//       run_approve-only remap).
 //   M3  `field` now names the offending member identity (index 1 / role designer), not any
 //       non-empty string.
 //   M5  stage marker relaxed to accept the post-R2 first-call code; the replay-sink pin is
@@ -287,21 +287,14 @@ test('W2 (F1 × web): unknown_argument_field body names the offending arg key (R
   assertActionableTriple(response.body.error, { code: 'unknown_argument_field', field: 'bogusArg', label: 'W2' });
 });
 
-test('W3 (F1 × web): a run.act exactObject refusal surfaces the named validator refusal, not application_command_arguments_invalid (R4)', async (t) => {
+test('W3 (F1 × web): a run.approve exactObject refusal surfaces the named validator refusal, not application_command_arguments_invalid (R4)', async (t) => {
   const { web } = webFixture(t);
-  // Fold (blueteam-160 §7.3): the original fixture (`extraField: 1`) never reached the
-  // application-command validator — validateEnvelope's own unknown-arg closure rejects the extra
-  // key first (verified at HEAD: the row reddened as `invalid_command`/`unknown_argument_field`,
-  // the WRONG seam). A MISSING required arg key (`inputs`) passes the envelope arg closure and
-  // reaches the run.act exactObject validator, which throws `application_action_invalid`
-  // (application.mjs run.act arm). The offending key is `inputs`.
+  // Omit the required Plan digest to exercise application command validation.
   const response = await web.execute(webContext(), webEnvelope({
-    command: 'run_act', args: { runId: 'run-web-a', actionId: 'act-1' },
+    command: 'run_approve', args: { runId: 'run-web-a' },
   }));
-  assert.equal(response.status, 400, 'a malformed run.act envelope refuses 400');
-  // The field pin (fold B1 hardening) defeats a run_act-only remap: a canned
-  // `error(400, 'application_action_invalid', validation)` never names the offending arg key.
-  assertActionableTriple(response.body.error, { code: 'application_action_invalid', field: 'inputs', label: 'W3' });
+  assert.equal(response.status, 400, 'a malformed run.approve envelope refuses 400');
+  assertActionableTriple(response.body.error, { code: 'application_command_invalid', field: 'planDigest', label: 'W3' });
   assert.notEqual(response.body.error.code, 'application_command_arguments_invalid',
     'W3: the validator\'s own named code must survive, not the anonymous collapse');
 });

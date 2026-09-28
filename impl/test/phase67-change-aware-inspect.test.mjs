@@ -32,7 +32,6 @@ function fixture({ cursor = 7, phase = 'executing', authorize = async () => true
     _detached: false,
     _followControllers: new Set(),
     _runDeliveryRegistrations: new Map(),
-    _semanticActions: () => [],
     _findRun: () => current,
     _buildView: async () => ({
       cursor: viewCursor, phase: viewPhase, narrative: 'bounded', progress: {}, attention: [],

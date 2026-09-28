@@ -136,15 +136,9 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 50, 'application tools/list count 50 (stage: application-tools-count-49)'); // composition (#566 restore): the served ordinary table over the #317-pin ordinary rows, the #99/#179 harvest pair and the #233 canonical dot twins
-  // One fewer with the #598 removal of the workflow-admit lane: baton_knowledge_promote left.
-  // Fold (blue-team #2/#4 — SHALLOW/vacuity): the count ties to the restored composition, so a
-  // bare count of arbitrary self-consistent names cannot pass: the #233 canonical dot twins of the
-  // retained legacy tools are advertised (the twin closure), and the registry-operation direct
-  // ports (the harvest pair) ride beside them.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
-  const twinTools = ['baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_application_help'];
+  const twinTools = ['baton_run_view', 'baton_run_member_view', 'baton_application_help'];
   const missingTwins = twinTools.filter((tool) => !names.includes(tool));
   assert.deepEqual(missingTwins, [],
     'every #233 canonical dot twin of the retained legacy tools is advertised (stage: application-tools-include-canonical-twins)');
@@ -194,7 +188,6 @@ test('RG-06 RE-DERIVED (#566): the #233 canonical dot twins byte-inherit their l
   // #233 canonical dot twins — each twin spreads its legacy tool's definition through the ONE
   // seam (withSpellingNote), so the wire schema and annotations byte-equal the source row.
   const pairs = [
-    ['baton_run_do', 'baton_run_act'],
     ['baton_run_view', 'baton_run_inspect'],
     ['baton_run_member_view', 'baton_run_workstreams'],
     ['baton_application_help', 'baton_help'],

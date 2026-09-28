@@ -12,7 +12,6 @@ const NOTIFICATION_KEYS = Object.freeze([
   'run.member.send',
   'run.watch',
 ].filter((key) => APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.some((operation) => operation.key === key)));
-const ACTION_KINDS = new Set(Object.keys(APPLICATION_SEMANTIC_REGISTRY.actions));
 const CLAIM_PRIORITY = Object.freeze({ legacy_alias: 1, transport: 2, canonical: 3 });
 
 // The registry owns its alias rows (application-semantics.mjs SURFACE_ALIAS_ROWS), and the
@@ -58,16 +57,11 @@ function surfaceAliasesFor(operation, surface) {
 }
 
 function admissionFor(operation) {
-  const action = ACTION_KINDS.has(operation.liveMethod) ? operation.liveMethod : null;
+
   return Object.freeze(Object.fromEntries(SURFACES.map((surface) => [surface, Object.freeze({
-    // `declared` preserves the registry's reachability claim. A surface adapter may realize that
-    // capability as a direct transport name, a legacy alias, or (for MCP action-backed verbs) the
-    // generic run.do authorized-action dispatcher. The production surface census resolves which
-    // concrete path exists; this registry does not invent standalone tools.
     declared: operation.surfaces.includes(surface),
     canonicalName: operation.names?.[surface] ?? null,
     aliases: Object.freeze([...new Set(surfaceAliasesFor(operation, surface))].sort()),
-    ...(action ? { authorizedAction: Object.freeze({ kind: action, via: 'run.do' }) } : {}),
   })])));
 }
 
@@ -277,9 +271,6 @@ function assertNoCapabilityDrop(surface) {
 }
 
 export function assertCliMcpControlParity() {
-  // Parity means identical semantics for the shared canonical capability, not identical transport
-  // topology. MCP-only kernel/advanced capability remains intact, and an authorized action reached
-  // through run.do is not forced into a fake standalone tool merely to resemble the CLI.
   assertNoCapabilityDrop('cli');
   assertNoCapabilityDrop('mcp');
   const unresolvedAliases = ambiguousLegacyAliases();

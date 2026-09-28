@@ -13,7 +13,7 @@ const AUDIT_SCRIPT = new URL('../scripts/control-surface-audit.mjs', import.meta
 
 test('SA1: every inventory dimension extracts non-empty', () => {
   const inventory = collectSurfaceInventory();
-  for (const key of ['registryOperations', 'registryActions', 'commandDefinitions', 'webCommands',
+  for (const key of ['registryOperations', 'commandDefinitions', 'webCommands',
     'cliCommands', 'mcpFleetTools', 'mcpBatonTools', 'embeddedMethods',
     'mcpWebBridgeCommands', 'phaseLiterals']) {
     assert.ok(Array.isArray(inventory[key]) && inventory[key].length > 0, `${key} extracts non-empty`);
@@ -29,7 +29,6 @@ test('SA1: every inventory dimension extracts non-empty', () => {
 test('SA2: known anchors from each dialect are present', () => {
   const inventory = collectSurfaceInventory();
   assert.ok(inventory.registryOperations.includes('run.start'));
-  assert.ok(inventory.registryActions.includes('approve_plan'));
   assert.ok(inventory.commandDefinitions.includes('run.approve'));
   assert.ok(inventory.webCommands.includes('run_start'), 'web derivation (dots to underscores) holds');
   for (const command of ['spawn', 'provider_status', 'goal_define',
@@ -55,7 +54,7 @@ test('SA2: known anchors from each dialect are present', () => {
 
 test('SA3: the renderer emits every section as markdown', () => {
   const rendered = renderSurfaceAudit();
-  for (const heading of ['Semantic registry operations', 'Semantic registry actions',
+  for (const heading of ['Semantic registry operations',
     'Application command definitions', 'Web bus admitted command names', 'CLI verb rows',
     'MCP fleet_* dialect', 'MCP baton_* dialect', 'MCP-over-Web bridge subset',
     'Embedded client methods',

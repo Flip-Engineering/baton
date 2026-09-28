@@ -168,12 +168,6 @@ function stalledStopFixture() {
         principalId: principal.userId, sessionId: principal.sessionId,
       }, context);
     },
-    async actionAuthority() {
-      return {
-        schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
-        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64),
-      };
-    },
   };
   const web = new WebNorthbound({
     coordinator: {}, coordination, sessions, application,
@@ -201,12 +195,6 @@ function codedRefusalFixture(code) {
     async authorizeReplay() { return true; },
     async command() {
       throw Object.assign(new Error(`issue473 refused: ${code}`), { code, detail: { runId: 'run-issue473' } });
-    },
-    async actionAuthority() {
-      return {
-        schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
-        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64),
-      };
     },
   };
   const web = new WebNorthbound({

@@ -65,7 +65,7 @@ function view(runId, digestCharacter, phase, {
 
 function driveApplication() {
   const calls = [];
-  const approve = action('approve_plan', 'approve-plan');
+  const approve = { ...action('approve_plan', 'approve-plan'), planDigest: 'a'.repeat(64) };
   const question = action('answer_question', 'answer-question', {
     required: ['text'], priority: 'required',
   });
@@ -79,7 +79,7 @@ function driveApplication() {
         if (name === 'run.start') {
           return view('run-drive', 'a', 'awaiting_plan_approval', { actions: [approve] });
         }
-        if (name === 'run.act' && args.actionId === approve.actionId) {
+        if (name === 'run.approve') {
           return view('run-drive', 'b', 'running', { continuation: true, cursor: 1 });
         }
         if (name === 'run.inspect' && inspectCount++ === 0) {
@@ -87,7 +87,7 @@ function driveApplication() {
             actions: [question], continuation: true, cursor: 2,
           });
         }
-        if (name === 'run.act' && args.actionId === question.actionId) {
+        if (name === 'run.answer') {
           return view('run-drive', 'd', 'running', { continuation: true, cursor: 3 });
         }
         if (name === 'run.inspect') {
@@ -152,26 +152,26 @@ test('RD1: drive follows an advertised input-free action; complete follows conti
 
   const progressed = await run.drive();
   assert.equal(progressed.outline.phase, 'running');
-  assert.deepEqual(fixture.calls.slice(0, 2).map(({ name }) => name), ['run.start', 'run.act']);
+  assert.deepEqual(fixture.calls.slice(0, 2).map(({ name }) => name), ['run.start', 'run.approve']);
   assert.deepEqual(fixture.calls[1].args, {
-    runId: 'run-drive', actionId: 'approve-plan', inputs: {},
+    runId: 'run-drive', planDigest: 'a'.repeat(64),
   });
 
   const paused = await run.complete();
   assert.equal(paused.outline.attention.state, 'required');
   assert.deepEqual(paused.outline.actions.map(({ kind }) => kind), ['answer_question']);
   assert.equal(
-    fixture.calls.some(({ name, args }) => name === 'run.act' && args.actionId === 'answer-question'),
+    fixture.calls.some(({ name, args }) => name === 'run.answer'),
     false,
     'completion must never invent an answer to user attention',
   );
 
-  await run.act('answer_question', { text: 'Continue with the bounded task.' });
+  await run.answer('question-1', { text: 'Continue with the bounded task.' });
   const completed = await run.complete();
   assert.equal(completed.terminal, true);
   assert.equal(completed.outline.phase, 'completed');
   assert.deepEqual(fixture.calls.map(({ name }) => name), [
-    'run.start', 'run.act', 'run.inspect', 'run.act', 'run.inspect',
+    'run.start', 'run.approve', 'run.inspect', 'run.answer', 'run.inspect',
   ]);
 });
 

@@ -611,7 +611,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         state.stops.push({ role, via: 'run.stop', receipt: receipt?.stop ?? null, ownership: receipt?.ownership ?? null });
         return { stopped: true, role, receipt };
       } catch (error) {
-        if (!['application_action_scope_mismatch', 'application_workflow_member_stop_unavailable'].includes(error?.code)
+        if (!['application_workflow_member_stop_unavailable'].includes(error?.code)
           || Date.now() > deadline) throw error;
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       }

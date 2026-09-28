@@ -8,18 +8,6 @@
 // stay untouched; this module is purely additive (L3). The caller owns deployment + semantics +
 // `baton.close()` (L7).
 //
-// Steering touches turn checkpoints only (L4): nudge dedup is keyed on `checkpoint.requestId`
-// (de818e3), never on the classification string (the run-m1-wave.mjs:146-149 anti-pin). Liveness
-// is the cursor-stripped status view, per member (#396): the store-global `cursor` is stripped
-// exactly as `semanticViewDigest` strips it, so a deployment-wide cursor flap never reads as
-// liveness; each member's stall clock starts at its OWN last observed progress — one live
-// member never resets a sibling's clock and one hung member never holds a sibling's receipt.
-// The L6 termination law
-// applies a per-member unproductivity budget across a full nudge cycle (park → nudge → re-park
-// with an unchanged `changedPathsDigest`), and `claim_turn` resolves a parked `workerResult` into
-// `work_completed` — opt-in (`finalization: 'claim-on-stall'`) because claim is terminal on a
-// stale checkpoint.
-
 import { createHash, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 
@@ -38,19 +26,9 @@ const OBJECTIVE_MAX_BYTES = FRAME_LIMITS['wave.member.objective'].value;
 // retired; the key is unknown here and refuses loudly. The drive settles on member terminality
 // or the stall finalization the wave author chose, never on a wall-clock cap.
 const DEFAULT_POLICY = Object.freeze({
-  steering: 'nudge-on-checkpoint',
-  completionMessage: 'Continue the current turn.',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 5_000,
-  finalization: 'none',
-  unproductiveNudgeBudget: 1,
-  // CP8 (#88): the per-member corrective-nudge COUNT budget drawn on a claim_premature_liveness
-  // refusal (the claim-time liveness preflight). Parallel to unproductiveNudgeBudget; consumed on
-  // DELIVERED acknowledgment only (D8). 2 = the largest legitimate per-member claim cadence
-  // observed in the acceptance suite (phase11-persistent-sessions:372/:379 claims two successive
-  // checkpoints) with one to spare — a third corrective cycle is a permanently diffless worker.
-  refusalNudgeBudget: 2,
   saltObjectives: true,
   preflight: true,
   evidencePath: null,
@@ -77,8 +55,6 @@ const DEFAULT_POLICY = Object.freeze({
 });
 
 const POLICY_FIELDS = Object.freeze(new Set(Object.keys(DEFAULT_POLICY)));
-const STEERING_MODES = Object.freeze(new Set(['nudge-on-checkpoint', 'none']));
-const FINALIZATIONS = Object.freeze(new Set(['none', 'claim-on-stall']));
 const SETTLEMENTS = Object.freeze(new Set(['kg-ritual', 'none']));
 
 function driverError(message, code, extra = {}) {
@@ -93,22 +69,6 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
-
-// #111-F3 (carried by the #79 fold): the corrective nudge COACHES instead of the bare
-// completionMessage. A claim_premature_liveness refusal already carries TG4-sanitized fields —
-// `liveness` is per-class COUNTS only (never path strings, never worker prose) and `reason` is
-// the fixed-shape hub text ("no in-scope diff …"). Compose them; never raw gate internals.
-function correctiveCoaching(liveness, reason, fallback) {
-  const counts = liveness && typeof liveness === 'object'
-    ? Object.entries(liveness)
-      .filter(([, value]) => Number.isSafeInteger(value))
-      .map(([key, value]) => `${key}=${value}`)
-      .join(', ')
-    : null;
-  const why = typeof reason === 'string' && reason.length > 0 ? reason : 'no in-scope diff in this pause epoch';
-  if (counts) return `${why}; liveness {${counts}}`;
-  return why || fallback;
-}
 
 function assertInteger(value, field) {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -129,26 +89,11 @@ function freezePolicy(raw) {
     throw driverError(`wave driver policy field "${unknown}" is unknown`, 'wave_driver_policy_invalid');
   }
   const policy = { ...DEFAULT_POLICY, ...raw };
-  if (!STEERING_MODES.has(policy.steering)) {
-    throw driverError(`wave driver policy steering is invalid: ${String(policy.steering)}`, 'wave_driver_policy_invalid');
-  }
-  if (typeof policy.completionMessage !== 'string' || policy.completionMessage.length === 0) {
-    throw driverError('wave driver policy completionMessage is invalid', 'wave_driver_policy_invalid');
-  }
   assertInteger(policy.pollIntervalMs, 'pollIntervalMs');
   assertInteger(policy.stallTimeoutMs, 'stallTimeoutMs');
   assertInteger(policy.settleTimeoutMs, 'settleTimeoutMs');
-  if (!FINALIZATIONS.has(policy.finalization)) {
-    throw driverError(`wave driver policy finalization is invalid: ${String(policy.finalization)}`, 'wave_driver_policy_invalid');
-  }
   if (!SETTLEMENTS.has(policy.settlement)) {
     throw driverError(`wave driver policy settlement is invalid: ${String(policy.settlement)}`, 'wave_driver_policy_invalid');
-  }
-  if (!Number.isSafeInteger(policy.unproductiveNudgeBudget) || policy.unproductiveNudgeBudget < 0) {
-    throw driverError('wave driver policy unproductiveNudgeBudget is invalid', 'wave_driver_policy_invalid');
-  }
-  if (!Number.isSafeInteger(policy.refusalNudgeBudget) || policy.refusalNudgeBudget < 0) {
-    throw driverError('wave driver policy refusalNudgeBudget is invalid', 'wave_driver_policy_invalid');
   }
   if (typeof policy.saltObjectives !== 'boolean') {
     throw driverError('wave driver policy saltObjectives is invalid', 'wave_driver_policy_invalid');
@@ -384,113 +329,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const startOptions = { ...options, members: saltedMembers, allowTerminalReplay: true };
     const totalMembers = saltedMembers.length;
 
-    const nudges = [];
-    const claims = [];
-    // L6 per-member state across polls: digest = changedPathsDigest at the last nudge; nudges =
-    // unchanged-digest nudge cycles in the current streak (resets when the digest changes); done =
-    // budget exhausted, stop nudging; refusalsNudged = corrective nudges delivered against the
-    // refusalNudgeBudget (CP8); claimed stays per-member ("one claim" vs "settled").
-    const memberState = new Map();
-    const freshState = () => ({ digest: null, nudges: 0, done: false, refusalsNudged: 0, claimed: false });
-    const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
-    const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
-    // #414: the retirement ledger for the unsteerable rule above. lastFailureByRequestId keeps
-    // the last delivery failure per pause so the retirement row can name it; retiredRequestIds
-    // keeps the one-row-per-pause discipline; retiredByRole carries the same retirement onto
-    // the settle outcome's per-member row. The budget name is the policy-field-style name of
-    // the consecutive-delivery-failure budget (NOT unproductiveNudgeBudget — that is the L6
-    // treadmill budget). K itself is a literal today (`>= 3` below); #414 leaves it untouched.
-    const DELIVERY_FAILURE_BUDGET = 'deliveryFailureBudget';
-    const lastFailureByRequestId = new Map();
-    const retiredRequestIds = new Set();
-    const retiredByRole = new Map();
-    // #414: retire a member from nudging with ONE steering row on the nudge evidence shape —
-    // role, runId, requestId, outcome 'nudge_retired', the exhausted budget name and the count
-    // that exhausted it (derived from the observed failures, never re-typed), the last delivery
-    // message, and `next` naming the per-member stall clock (#396) that now judges it.
-    const retireNudge = (role, runId, requestId) => {
-      if (retiredRequestIds.has(requestId)) return;
-      retiredRequestIds.add(requestId);
-      const count = failuresByRequestId.get(requestId) ?? 0;
-      const last = lastFailureByRequestId.get(requestId) ?? null;
-      nudges.push({
-        role, runId, requestId, at: new Date().toISOString(), outcome: 'nudge_retired',
-        budget: DELIVERY_FAILURE_BUDGET, count,
-        ...(typeof last?.message === 'string' ? { message: last.message } : {}),
-        next: `stall-clock:${role}`,
-      });
-      retiredByRole.set(role, { budget: DELIVERY_FAILURE_BUDGET, count });
-    };
-    // CP8: claim attempts key per pauseId — a refused claim must not consume the driver's one
-    // claim for the NEXT pause record (the CP6 "claimable later" contract at the driver layer).
-    const claimedPauseIds = new Set();
-    // CP8: one corrective nudge per claim_premature_liveness refusal, exempt from the L4
-    // one-nudge-per-pause dedup exactly once, drawn from the per-member refusalNudgeBudget and
-    // consumed on DELIVERED acknowledgment (D8 — a {ok:false} delivery VALUE consumes nothing).
-    // Exhaustion is record-only: the refusal is on the claims evidence, no nudge, and the pause
-    // pends to the driver's PRE-EXISTING stall clock.
-    const correctiveNudge = async (role, runHandle, checkpoint, state, liveness = null, reason = null) => {
-      const at = new Date().toISOString();
-      try {
-        // #111-F3: coach with the sanitized {liveness counts, reason: no in-scope diff} — never
-        // the bare completionMessage (a worker refused for analysis-only output needs the WHY).
-        const message = correctiveCoaching(liveness, reason, policy.completionMessage);
-        const result = await runHandle.act('nudge_turn', { message });
-        if (result && typeof result === 'object' && result.ok === false) {
-          throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
-            code: result.result ?? 'nudge_refused',
-          });
-        }
-        state.refusalsNudged += 1;
-        nudges.push({ role, requestId: checkpoint.requestId, at });
-        nudgedRequestIds.add(checkpoint.requestId);
-        failuresByRequestId.delete(checkpoint.requestId);
-        lastFailureByRequestId.delete(checkpoint.requestId);
-      } catch (error) {
-        // D8: a refused corrective delivery arrives as a VALUE and consumes no budget.
-        failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
-        const message = String(error?.message ?? error);
-        lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
-        nudges.push({
-          role, requestId: checkpoint.requestId, at,
-          error: { code: error?.code ?? null, message },
-        });
-      }
-    };
-    async function claimOnce(role, runHandle, checkpoint, claims, state) {
-      if (claimedPauseIds.has(checkpoint.requestId)) return;
-      claimedPauseIds.add(checkpoint.requestId);
-      const at = new Date().toISOString();
-      let code;
-      let liveness = null;
-      let reason = null;
-      try {
-        const result = await runHandle.act('claim_turn', {});
-        if (result && typeof result === 'object' && result.ok === false) {
-          // #111-F3: carry the TG4-sanitized refusal fields into the corrective nudge so it can
-          // coach with {liveness counts, reason: no in-scope diff} instead of the bare completionMessage.
-          liveness = result.liveness ?? null;
-          reason = typeof result.reason === 'string' ? result.reason : null;
-          throw Object.assign(new Error(String(result.reason ?? result.result ?? 'claim refused')), {
-            code: result.result ?? 'claim_refused', liveness, reason,
-          });
-        }
-        state.claimed = true;
-        claims.push({ role, requestId: checkpoint.requestId, at, code: 'claimed' });
-        code = 'claimed';
-      } catch (error) {
-        // 31b5 :263-295 — claim re-runs the live trust gate and is terminal on a stale checkpoint;
-        // a scope mismatch (the pause resolved concurrently) is tolerated and recorded, never fatal.
-        code = error?.code ?? null;
-        liveness = error?.liveness ?? liveness ?? null;
-        reason = error?.reason ?? reason ?? null;
-        claims.push({ role, requestId: checkpoint.requestId, at, code });
-      }
-      if (code === 'claim_premature_liveness' && state.refusalsNudged < policy.refusalNudgeBudget) {
-        await correctiveNudge(role, runHandle, checkpoint, state, liveness, reason);
-      }
-    }
-    // Bidirectional v2 rule 3: at-most-once decision-callback dedup, keyed `${runId}:${requestId}`.
     const decisionFired = new Set();
     const decisionEvidence = []; // v2 rule 3: one driver-evidence line per fired decision.
     // Bidirectional v2 rule 6: per-member follow downgrade (application_follow_unavailable /
@@ -616,7 +454,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
         // L5: ONE status read per member per poll. The cursor-stripped digest doubles as the stall
         // marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
         const markerParts = [];
-        const paused = [];
         const decisions = []; // v2 rule 3: members with a pending decision (onDecision candidates).
         const liveMembers = []; // v2 rule 6: non-terminal members + their status-read cursor.
         const classByRole = new Map(); // v2 rule 7: reducer output drives BOTH rendering and steering.
@@ -658,9 +495,8 @@ export function createWaveDriver(baton, rawPolicy = null) {
             });
           }
           markerParts.push([role, phase, markerDigest]);
-          const claimed = memberState.get(role)?.claimed === true;
-          statusInfo.set(role, { terminal: terminal || claimed });
-          if (!terminal && !claimed) {
+          statusInfo.set(role, { terminal });
+          if (!terminal) {
             // v2 rule 7: reduce this member from the same status view — ordered, precedence-fixed.
             const interactions = interactionsOf(outline);
             const checkpoint = checkpointOf(outline);
@@ -670,12 +506,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
             // its gating interaction; a waiting (never blocked) member names its wait.
             waitingOnByRole.set(role, outline.waitingOn ?? null);
             gatedByRole.set(role, reduced.blocked ? (reduced.gated ?? null) : null);
-            // v2 rule 7 × D9: a blocked member is suppressed from nudge AND claim — the checkpoint
-            // (if any) is NOT admitted to the steerable `paused` set while an interaction is
-            // pending. A WAITING member is suppressed the same way: the `!reduced.waiting` clause
-            // keeps a named wait (capacity_ceiling/dispatch_pending/spawning/plan_approval/
-            // provider_stalled) out of the claim cadence and the claim-on-stall fan-out.
-            if (checkpoint && !reduced.blocked && !reduced.waiting) paused.push({ role, run: runHandle, checkpoint });
             // v2 rule 3 × rule 7: fire the decision callback ONLY for the GATED (first-by-requestId)
             // interaction — a decision behind an earlier question/approval waits its turn. Rule 4
             // already caps a worker at one pending decision, so this gates, never drops, a decision.
@@ -751,85 +581,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
         }
 
-        // L4/L6 steering.
-        if (policy.steering === 'nudge-on-checkpoint') {
-          for (const { role, run: runHandle, checkpoint } of paused) {
-            const state = memberState.get(role) ?? freshState();
-            if (state.done) {
-              // L6 done + claim-on-stall: the member's live-rechecked admission (claim) resolves the
-              // parked workerResult into work_completed NOW — no waiting for the stall clock (D6).
-              if (policy.finalization === 'claim-on-stall' && !claimedPauseIds.has(checkpoint.requestId)) {
-                await claimOnce(role, runHandle, checkpoint, claims, state);
-              }
-              memberState.set(role, state);
-              continue;
-            }
-            if (nudgedRequestIds.has(checkpoint.requestId)) continue; // L4: one nudge per pause
-            // Persistent delivery failure is unsteerable, not infinite retry: after K consecutive
-            // failures on the same requestId, stop nudging it and let the stall clock judge (the
-            // retry stream itself keeps the marker alive and starves the stall fan-out).
-            // #414: the retirement is a steering line, not silence — the first poll that sees
-            // the exhausted budget records ONE nudge_retired row naming the budget, the count,
-            // the last failure message and the stall clock that now judges; later polls stay quiet.
-            if ((failuresByRequestId.get(checkpoint.requestId) ?? 0) >= 3) {
-              retireNudge(role, runHandle.id, checkpoint.requestId);
-              continue;
-            }
-            const unchanged = state.digest !== null && state.digest === checkpoint.changedPathsDigest;
-            // v2 rule 7: the treadmill (unproductive budget) is for CLAIM-ABSENT checkpoints. An
-            // unproductive re-park that carries a completed claim is claimed at THIS poll without
-            // burning the remaining budget — the first sighting still nudges (digest unset), so a
-            // productive claim-checkpoint keeps getting work (L6/D1/D6 unchanged).
-            const claimReady = checkpoint.claim != null && policy.finalization === 'claim-on-stall';
-            if (unchanged && (claimReady || state.nudges >= policy.unproductiveNudgeBudget)) {
-              // L6: a re-park with an unchanged changedPathsDigest after the budget is the treadmill
-              // — the member is done; stop nudging it.
-              state.done = true;
-              if (policy.finalization === 'claim-on-stall' && !claimedPauseIds.has(checkpoint.requestId)) {
-                await claimOnce(role, runHandle, checkpoint, claims, state);
-              }
-              memberState.set(role, state);
-              continue;
-            }
-            const at = new Date().toISOString();
-            try {
-              const result = await runHandle.act('nudge_turn', { message: policy.completionMessage });
-              // D8: an expected refusal arrives as a VALUE ({ok:false, result:'delivery_exception'}),
-              // not a thrown error — inspect the result or a failed delivery is misrecorded as a
-              // successful nudge and the requestId is wrongly consumed.
-              if (result && typeof result === 'object' && result.ok === false) {
-                throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
-                  code: result.result ?? 'nudge_refused',
-                });
-              }
-              nudges.push({ role, requestId: checkpoint.requestId, at });
-              nudgedRequestIds.add(checkpoint.requestId);
-              failuresByRequestId.delete(checkpoint.requestId);
-              lastFailureByRequestId.delete(checkpoint.requestId);
-              if (unchanged) state.nudges += 1;
-              else { state.digest = checkpoint.changedPathsDigest ?? null; state.nudges = 1; }
-            } catch (error) {
-              // D8: a nudge rejection (delivery_exception / scope mismatch) is recorded and polling
-              // continues. The requestId is NOT consumed so a one-shot scripted failure recovers on
-              // the next poll; a persistently failing nudge is bounded by the K=3 unsteerable rule
-              // above, then by stall/cap.
-              failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
-              const message = String(error?.message ?? error);
-              lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
-              nudges.push({
-                role, requestId: checkpoint.requestId, at,
-                error: { code: error?.code ?? null, message },
-              });
-            }
-            memberState.set(role, state);
-          }
-        }
-
-        // Settled? Members without a run failed to start (settled); claimed members settled this poll.
         const failedToStart = totalMembers - runs.size;
         let settled = failedToStart;
         for (const [role, info] of statusInfo) {
-          if (info.terminal || memberState.get(role)?.claimed === true) settled += 1;
+          if (info.terminal) settled += 1;
         }
         if (settled === totalMembers) { basis = 'completed'; break; }
 
@@ -868,39 +623,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
         }
         if (rosterAccounted) {
-          if (policy.finalization === 'claim-on-stall') {
-            // D9: claim fan-out at stall — per stalled member only (a member that just showed
-            // progress is never claimed as stall collateral); scope mismatch tolerated and
-            // recorded. A waiting member is never claimed (the paused admission suppresses it).
-            const stalledRoles = new Set(stalledNow.map((entry) => entry.role));
-            for (const { role, run: runHandle, checkpoint } of paused) {
-              if (!stalledRoles.has(role)) continue;
-              const state = memberState.get(role) ?? freshState();
-              if (!claimedPauseIds.has(checkpoint.requestId)) await claimOnce(role, runHandle, checkpoint, claims, state);
-              memberState.set(role, state);
-            }
-            // Recovered must be measured AFTER the claims: a member whose claim was tolerated as
-            // concurrently-resolved is settled in reality — re-read each member instead of trusting
-            // the pre-claim status snapshot, with a bounded retry so a resolution landing during the
-            // re-read itself can't strand the basis at 'stall'.
-            let recovered = failedToStart;
-            for (let attempt = 0; attempt < 3 && recovered < totalMembers; attempt += 1) {
-              if (attempt > 0) await new Promise((resolveWait) => { setTimeout(resolveWait, 100); });
-              recovered = failedToStart;
-              for (const [role, runHandle] of runs) {
-                if (memberState.get(role)?.claimed === true) { recovered += 1; continue; }
-                try {
-                  const status = await runHandle.status();
-                  const view = status?.view ?? status ?? {};
-                  const phase = canonicalRunPhase(view.phase) ?? null;
-                  if (view.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING) recovered += 1;
-                } catch { /* an unreadable member counts as unrecovered */ }
-              }
-            }
-            basis = recovered === totalMembers ? 'completed' : 'stall';
-          } else {
-            basis = 'stall';
-          }
+          basis = 'stall';
           // #396: publish the per-member adjudication — the stall rows name each stalled
           // member with its own last-progress instant and its dependency (if any); the
           // waiting rows name each member behind a real dependency (never stalled).
@@ -958,8 +681,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
       // behind a real dependency (never stalled). Both are empty on a clean completion.
       stalls,
       waiting,
-      nudges,
-      claims,
       // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
       decisions: decisionEvidence,
       // Bidirectional v2 rule 6: one downgrade line per member that lost the follow path.
@@ -975,17 +696,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
       },
       settlement: { errors: (settlementResult?.errors ?? []).slice(0, 8) },
     };
-    // #414: the wave settle outcome for a retired member carries the same retirement — its
-    // per-member row names `retired: {budget, count}` beside the #396 waitingOn row (which the
-    // spread above preserves), so `waves progress` renders which budget was exhausted and what
-    // judged it next. Copied onto fresh row objects: the handle's stored outcomes stay pristine.
-    if (retiredByRole.size > 0) {
-      receipt.outcomes = receipt.outcomes.map((outcome) => {
-        const retired = retiredByRole.get(outcome?.role);
-        return retired ? { ...outcome, retired: { ...retired } } : outcome;
-      });
-    }
-
     // D9 (epic #103): the campaign-state record + post-close briefing mint. Both run in the
     // driver's guaranteed post-close window — AFTER wave.close() (the finally above) and the
     // receipt build, BEFORE the receipt file write (D9 §mint-site). They are advisory, never

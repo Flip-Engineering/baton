@@ -90,12 +90,10 @@ function substitutedArgv(example) {
 
 // D4 alias/kind normalization: the parse result → the row's operation key.
 //   {kind:'command', name}          → the parsed command name (a canonical or legacy spelling)
-//   {kind:'semantic-action', ...}    → run.<actionKind>
 //   {kind:'adopt'|'export'|...}      → run.<kind>
 function parseResultToKey(result) {
   if (!result || typeof result !== 'object') return null;
   if (result.kind === 'command') return result.name ?? null;
-  if (result.kind === 'semantic-action') return `run.${result.actionKind}`;
   if (typeof result.kind === 'string') return `run.${result.kind}`;
   return null;
 }
@@ -308,11 +306,10 @@ test('R5 (cli-example-shape-leg-red): every served row compiles its Example AND 
     assert.ok(served.includes(mustServe), `R5: ${mustServe} must remain a served CLI row`);
   }
   // Containment law: every served row resolves into the CLI web whitelist ∪ the web card (via the
-  // alias map). run.debug is host-local and run.send is a semantic-action CLI verb — neither is a
-  // web-served row, so both are legitimately outside the whitelist.
+  // alias map). run.debug is a host-local command.
   const whitelist = new Set([...CLI_WEB_COMMANDS, ...webCardCommands()]);
   for (const key of served) {
-    if (key === 'run.debug' || key === 'run.send') continue;
+    if (key === 'run.debug') continue;
     assert.ok(whitelist.has(key) || whitelist.has(canon(key)),
       `R5: served row ${key} is neither whitelisted nor card-admitted`);
   }

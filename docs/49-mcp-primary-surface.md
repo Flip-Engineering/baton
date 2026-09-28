@@ -117,7 +117,6 @@ impl/src/wake-stream.mjs:121-326, never extended by this design).
 | `send` | `runId`, `body` | the message-lane outcome (as `baton_run_message_send` answers today) | — |
 | `stop` | `runId`, `reason`, `idempotencyKey` | the stop receipt | — |
 | `answer` | `runId`, `requestId`, `answer`, `idempotencyKey` | the settlement receipt (incl. the landed distinct `already_resolved` outcome) | — |
-| `do` | `runId`, `actionId`, `inputs`, `idempotencyKey` | the action's outcome | — |
 
 Judgment calls beyond the issue's named set, stated: `list` (discovery — a reconnected
 orchestrator cannot otherwise find its runs), `answer` and `do` (without them an orchestrator
@@ -368,7 +367,6 @@ it against impl/MCP.md on every run, so a tool added to the inventory without a 
 | `baton_runs` | `baton_run {verb: "list"}` |
 | `baton_run_message_send` | `baton_run {verb: "send"}` |
 | `baton_decision_answer` | `baton_run {verb: "answer"}` |
-| `baton_run_act` / `baton_run_do` | `baton_run {verb: "do"}` |
 | `baton_run_knowledge_seed` | `baton_knowledge {verb: "seed"}` |
 | `baton_evidence_search` | `baton_knowledge {verb: "search"}` |
 | `baton_swarm_create` / `list` / `view` / `update` / `recruit` / `guide` / `capture` / `check` | `baton_swarm` with the same verb |

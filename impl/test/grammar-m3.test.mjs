@@ -177,12 +177,12 @@ test('M3-5: the member clock carries a generation and the run-level clock does n
   // (member.interrupt) carries one.
 
   const memberInterrupt = parseBatonCli(['run', 'member', 'interrupt', 'run-m3', 'reviewer', '--generation', '2']);
-  assert.equal(memberInterrupt.actionKind, 'interrupt');
-  assert.deepEqual(memberInterrupt.inputs, { recipient: 'reviewer', generation: 2 });
+  assert.equal(memberInterrupt.name, 'run.interrupt');
+  assert.deepEqual(memberInterrupt.args, { runId: 'run-m3', recipient: 'reviewer', generation: 2 });
   const runInterrupt = parseBatonCli(['run', 'interrupt', 'run-m3', '--to', 'reviewer']);
-  assert.deepEqual(runInterrupt.inputs, { recipient: 'reviewer' });
+  assert.deepEqual(runInterrupt.args, { runId: 'run-m3', recipient: 'reviewer' });
   const runSend = parseBatonCli(['run', 'send', 'run-m3', 'Continue.']);
-  assert.equal(Object.hasOwn(runSend.inputs, 'generation'), false);
+  assert.equal(Object.hasOwn(runSend.args, 'generation'), false);
 
   // A bare-role recipient with more than one live seat and no advertised role is ambiguous — the
   // existing application_control_recipient_ambiguous refusal requires an explicit address.
@@ -197,7 +197,7 @@ test('M3-6: the work sentinel is accepted by run.send only, and refused for memb
   assert.doesNotThrow(
     () => controlApp([liveSeat('only')])._resolveSemanticControlTarget(CURRENT, 'work', 'send'),
   );
-  assert.equal(parseBatonCli(['run', 'send', 'run-m3', 'Continue.', '--to', 'work']).inputs.recipient, 'work');
+  assert.equal(parseBatonCli(['run', 'send', 'run-m3', 'Continue.', '--to', 'work']).args.recipient, 'work');
 
   // The member ops left the tree with the removed run.member.send / run.member.stop
   // transports, so the reserved sentinel is no longer reachable through them: each

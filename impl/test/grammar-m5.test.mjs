@@ -26,7 +26,7 @@ const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), '
 
 // docs/36 §4.1 — the banned surface verbs (synonyms). The canonical tree must not contain any.
 const BANNED_VERB_FIXTURES = [
-  'run.show', 'run.status', 'run.inspect', 'run.act', 'run.notify', 'run.follow',
+  'run.show', 'run.status', 'run.inspect', 'run.notify', 'run.follow',
   'run.wait', 'run.progress', 'run.events', 'run.output', 'run.episode', 'run.steer',
   'baton_run_steer', 'run_steer', 'fleet_run_steer', 'baton run steer',
 ];
@@ -76,8 +76,8 @@ test('M5-3: run.steer is deleted as a surface alias and canonical run.send stays
     /run send/u,
   );
   const sendCli = parseBatonCli(['run', 'send', 'run-m5', 'Refocus.', '--to', 'review', '--now']);
-  assert.equal(sendCli.actionKind, 'send');
-  assert.deepEqual(sendCli.inputs, { message: 'Refocus.', recipient: 'review', delivery: 'now' });
+  assert.equal(sendCli.name, 'run.send');
+  assert.deepEqual(sendCli.args, { runId: 'run-m5', message: 'Refocus.', recipient: 'review', delivery: 'now' });
 });
 
 test('M5-4: legacy run-phase strings are grep-clean in the surface layers', () => {

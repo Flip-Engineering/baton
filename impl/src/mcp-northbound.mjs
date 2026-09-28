@@ -43,7 +43,6 @@ const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
 // dispatch, so both spellings reach one operation (M4B-3). The fleet_* kernel and reflex tables
 // are untouched.
 const CANONICAL_ORDINARY_SIBLINGS = Object.freeze([
-  ['run.do', 'baton_run_act', 'run.act'],
   ['run.view', 'baton_run_inspect', 'run.inspect'],
   ['run.member.view', 'baton_run_workstreams', 'run.workstreams'],
   ['application.help', 'baton_help', 'application.help'],
@@ -59,8 +58,10 @@ const LEGACY_ORDINARY_APPLICATION_ROWS = Object.freeze([
   ['baton_run_inspect', 'run.inspect'],
   ['baton_run_episode', 'run.episode'],
   ['baton_run_workstreams', 'run.workstreams'],
-  ['baton_run_act', 'run.act'],
   ['baton_run_stop', 'run.stop'],
+  ['baton_run_send', 'run.send'],
+  ['baton_run_interrupt', 'run.interrupt'],
+  ['baton_run_select', 'run.select'],
 ]);
 // ── D1 step 2 (issue #156): the pre-spread gap snapshot and the lifecycle sibling table ────────
 //
@@ -105,8 +106,10 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_inspect', 'run.inspect'],
     ['baton_run_episode', 'run.episode'],
     ['baton_run_workstreams', 'run.workstreams'],
-    ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
+    ['baton_run_send', 'run.send'],
+    ['baton_run_interrupt', 'run.interrupt'],
+    ['baton_run_select', 'run.select'],
     ['baton_evidence_search', 'evidence.search'],
     ['evidence.search', 'evidence.search'],
     ['baton_services_list', 'services.list'],
@@ -675,10 +678,22 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'baton_run_act',
-    description: 'Perform one currently offered Run-bound action while Baton derives authoritative coordinates.',
-    inputSchema: schema({ ...repo, ...idem, runId, actionId: runId, inputs: { type: 'object' } }, ['repoId', 'idempotencyKey', 'runId', 'actionId', 'inputs']),
+    name: 'baton_run_send',
+    description: 'Send guidance to a current Run recipient.',
+    inputSchema: schema({ ...repo, ...idem, runId, message: { type: 'string', minLength: 1 }, recipient: runId, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'message']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_interrupt',
+    description: 'Interrupt a current Run recipient while preserving its reusable session.',
+    inputSchema: schema({ ...repo, ...idem, runId, recipient: runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_select',
+    description: 'Select a verified Workflow candidate by role.',
+    inputSchema: schema({ ...repo, ...idem, runId, role: runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'reason']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_run_stop',
@@ -2203,10 +2218,6 @@ export class McpFleetServer {
       && !(Number.isSafeInteger(id) && id >= 0)) {
       return protocolError(id, -32600, 'Invalid Request');
     }
-    // Issue #344: the server-minted bound key derives over EVERY argument axis (the full
-    // request), never the transport request id — a changed axis mints a fresh key and an
-    // identical retry replays the admitted call. run.act's semantic request IS the supplied
-    // args, so the one derivation covers it too.
     const args = this.bindApplicationContext ? {
       ...suppliedArgs,
       repoId: this.boundRepoId,
@@ -2251,58 +2262,6 @@ export class McpFleetServer {
       catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('application_unavailable'));
     }
-    let semanticAuthority = null;
-    // U-E17 (#287): the dispatch identity the application facade attests one time per tool call.
-    // The run.act authority read happens BEFORE the admission mints its callId, so this call
-    // mints the dispatch identity itself and hands it to `_callTool`, which reuses it as the
-    // admitted callId — one identity for the whole tool call, so the bridge's re-attestation is
-    // shared by every facade entry of it (actionAuthority → command) instead of one per entry.
-    let dispatchCallId = null;
-    if (APPLICATION_TOOL[params.name] === 'run.act') {
-      if (typeof this.application.actionAuthority !== 'function') {
-        return protocolResult(id, toolError('application_unavailable'));
-      }
-      const scopeKey = this.callScope(params.name, args);
-      const requestDigest = this.callDigest(args);
-      const prior = this.coordination.mcpCallByScope?.(scopeKey) ?? null;
-      if (prior && prior.requestDigest !== requestDigest) {
-        try { this._audit('tool_refused', params.name, args, 'idempotency_conflict'); }
-        catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-        return protocolResult(id, toolError('idempotency_conflict'));
-      }
-      dispatchCallId = randomUUID();
-      try {
-        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
-          applicationArgs(params.name, args),
-          {
-            actor: `mcp:${this.principal.userId}:${this.principal.sessionId}`,
-            principalId: this.principal.userId,
-            sessionId: this.principal.sessionId,
-          },
-          {
-            transport: 'mcp', requestId: String(dispatchCallId), idempotencyKey: `mcp.call:${dispatchCallId}`,
-            capabilityAuthority: northboundCapabilityToken('mcp'),
-            capabilities: [...this.principal.capabilities],
-          },
-        );
-      } catch (cause) {
-        try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
-        catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-        return protocolResult(id, laneCraftedToolError(cause));
-      }
-      if (!Array.isArray(semanticAuthority?.requiredCapabilities)
-        || !semanticAuthority.requiredCapabilities.every(
-          (capability) => this.principal.capabilities.includes(capability),
-        )) {
-        try { this._audit('tool_refused', params.name, args, 'forbidden'); }
-        catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-        const required = Array.isArray(semanticAuthority?.requiredCapabilities) ? [...semanticAuthority.requiredCapabilities].sort() : null;
-        const missing = required ? required.filter((capability) => !this.principal.capabilities.includes(capability)) : null;
-        return protocolResult(id, toolError('forbidden',
-          required ? `this principal lacks the ${missing.join(', ')} capability the action requires` : 'the action authority named no capabilities',
-          { required, held: [...this.principal.capabilities].sort(), missing }));
-      }
-    }
     // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor is quota-free — it is the
     // route-picking prerequisite, and charging quota would blind callers exactly when they need
     // it (glm #6). MCP-W1 (codex #1): waves.start debits quota PER MEMBER, never once per call —
@@ -2325,12 +2284,10 @@ export class McpFleetServer {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('rate_limited'));
     }
-    return protocolResult(id, await this._callTool(params.name, args, id, semanticAuthority, dispatchCallId));
+    return protocolResult(id, await this._callTool(params.name, args, id));
   }
 
-  // `dispatchCallId` is the identity the run.act authority read minted before admission (U-E17):
-  // the same callId then rides the admission and the application context of this tool call.
-  async _callTool(name, args, requestId, semanticAuthority = null, dispatchCallId = null) {
+  async _callTool(name, args, requestId) {
     if (!STATEFUL.has(name)) {
       try {
         const observeCallId = `observe-${hash({
@@ -2372,7 +2329,7 @@ export class McpFleetServer {
         return laneCraftedToolError(cause);
       }
     }
-    const callId = dispatchCallId ?? randomUUID();
+    const callId = randomUUID();
     const scopeKey = this.callScope(name, args);
     const actor = `mcp:${this.principal.userId}:${this.principal.sessionId}`;
     let admission;
@@ -2380,14 +2337,9 @@ export class McpFleetServer {
       admission = this.coordination.admitMcpCall({
         callId, scopeKey, requestDigest: this.callDigest(args), tool: name, repoId: args.repoId,
         runId: applicationRunId(name, args), userId: this.principal.userId, sessionId: this.principal.sessionId,
-        ...(semanticAuthority ? { semanticAuthority } : {}),
       }, { actor, key: `mcp.admit:${scopeKey}` });
     } catch { return toolError('temporarily_unavailable'); }
     if (!admission.ok) return toolError(admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_call');
-    if (APPLICATION_TOOL[name] === 'run.act'
-      && admission.call.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
-      return toolError('application_action_authority_invalid');
-    }
     if (admission.result === 'replay') {
       if (admission.call.status === 'admitted' && name === 'fleet_drain') {
         const callId = admission.call.callId;
@@ -2405,10 +2357,6 @@ export class McpFleetServer {
         return outcome;
       }
       if (admission.call.status === 'admitted' && (RECONCILABLE.has(name) || (name === 'fleet_spawn' && args.goalPlan))) {
-        if (APPLICATION_TOOL[name] === 'run.act'
-          && admission.call.sessionId !== this.principal.sessionId) {
-          return toolError('forbidden');
-        }
         const admittedCallId = admission.call.callId;
         const admittedActor = `mcp:${admission.call.userId}:${admission.call.sessionId ?? this.principal.sessionId}`;
         const admittedPrincipal = {
@@ -2421,7 +2369,6 @@ export class McpFleetServer {
           outcome = toolResult(await (APPLICATION_TOOL[name]
             ? this._dispatchApplicationOnce(
               name, args, admittedActor, admittedCallId, admittedPrincipal,
-              admission.call.semanticAuthority ?? null,
             )
             : this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)));
         }
@@ -2452,9 +2399,6 @@ export class McpFleetServer {
             idempotencyKey: `mcp.call:${admission.call.callId}`,
             capabilityAuthority: northboundCapabilityToken('mcp'),
             capabilities: [...this.principal.capabilities],
-            ...(APPLICATION_TOOL[name] === 'run.act' ? {
-              semanticAuthority: admission.call.semanticAuthority,
-            } : {}),
             ...(sessionAuthority ? { sessionAuthority: clone(sessionAuthority) } : {}),
           });
         } catch (cause) { return laneCraftedToolError(cause); }
@@ -2480,7 +2424,6 @@ export class McpFleetServer {
         : APPLICATION_TOOL[name]
           ? this._dispatchApplicationOnce(
             name, args, actor, callId, this.principal,
-            admission.call.semanticAuthority ?? null,
           )
           : this._dispatch(name, args, actor, callId)));
     }
@@ -2519,18 +2462,18 @@ export class McpFleetServer {
     return pending;
   }
 
-  _dispatchApplicationOnce(name, args, actor, callId, principal, semanticAuthority = null) {
+  _dispatchApplicationOnce(name, args, actor, callId, principal) {
     const existing = this._applicationDispatches.get(callId);
     if (existing) return existing;
     const pending = Promise.resolve().then(
-      () => this._dispatch(name, args, actor, callId, principal, semanticAuthority),
+      () => this._dispatch(name, args, actor, callId, principal),
     );
     this._applicationDispatches.set(callId, pending);
     return pending;
   }
 
 
-  async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
+  async _dispatch(name, args, actor, callId, principal = this.principal) {
     let value;
     if (APPLICATION_TOOL[name]) {
       value = await this.application.command(
@@ -2543,7 +2486,6 @@ export class McpFleetServer {
         },
         {
           ...this._applicationDispatchContext(args, callId, principal),
-          ...(APPLICATION_TOOL[name] === 'run.act' ? { semanticAuthority } : {}),
         },
       );
     }

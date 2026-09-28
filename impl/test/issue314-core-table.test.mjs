@@ -42,9 +42,6 @@ function fixture(t, options = {}) {
     repoId: REPO_ID,
     card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
     async authorizeReplay() { return true; },
-    async actionAuthority() {
-      return { schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop', requiredCapabilities: ['emergency_stop'], authorityDigest: 'x' };
-    },
     async command(name) { return { schemaVersion: 1, command: name }; },
     async contextEval() { throw new Error('unused'); },
     async decisionList() { return { decisions: [] }; },
@@ -205,7 +202,6 @@ const PARITY = Object.freeze([
   { tool: 'baton_run', verb: 'send', flat: 'baton_run_message_send', args: { runId: 'run:parity', kind: 'inform', body: 'parity body' } },
   { tool: 'baton_run', verb: 'stop', flat: 'baton_run_stop', args: { runId: 'run:parity', reason: 'parity stop', idempotencyKey: 'parity:run-stop' } },
   { tool: 'baton_run', verb: 'answer', flat: 'baton_decision_answer', args: { runId: 'run:parity', requestId: 'request:parity', answer: { text: 'yes' }, idempotencyKey: 'parity:answer' } },
-  { tool: 'baton_run', verb: 'do', flat: 'baton_run_act', args: { runId: 'run:parity', actionId: 'action:parity', inputs: {}, idempotencyKey: 'parity:do' } },
   { tool: 'baton_swarm', verb: 'create', flat: 'baton_swarm_create', args: { purpose: 'parity swarm', idempotencyKey: 'parity:swarm-create' } },
   { tool: 'baton_swarm', verb: 'list', flat: 'baton_swarm_list', args: {} },
   { tool: 'baton_swarm', verb: 'view', flat: 'baton_swarm_view', args: { swarmId: 'swarm:parity' } },

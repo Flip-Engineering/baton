@@ -361,7 +361,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   assert.equal(inspected.result.isError, false);
   const helped = await server.handle({
     jsonrpc: '2.0', id: 6, method: 'tools/call', params: {
-      name: 'baton_help', arguments: { topic: 'run.act.approve_plan', depth: 'outline' },
+      name: 'baton_help', arguments: { topic: 'run.approve', depth: 'outline' },
     },
   });
   assert.equal(helped.result.isError, false);

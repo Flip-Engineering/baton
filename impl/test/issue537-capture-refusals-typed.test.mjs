@@ -84,10 +84,6 @@ function fixture(code) {
     async command() {
       throw Object.assign(new Error(`issue537 refused: ${code}`), { code, detail: { participantId: 'author' } });
     },
-    async actionAuthority() {
-      return { schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
-        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64) };
-    },
   };
   const web = new WebNorthbound({
     coordinator: {}, coordination, sessions, application,

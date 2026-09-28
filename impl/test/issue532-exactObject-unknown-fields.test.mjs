@@ -56,7 +56,7 @@ test('exactObject refuses a primitive', () => {
 // Issue #536: the strict read is explicit per call. An authorization boundary keeps the closed
 // shape (#535's rule) — the session-authority envelope and the semantic action authority are
 // grants, so an undeclared field is a claim the grantor never vouched, never an extension.
-import { normalizeCommandContext, normalizeSemanticAuthority } from '../src/application-observation.mjs';
+import { normalizeCommandContext, } from '../src/application-observation.mjs';
 
 test('exactObject rejects unknown fields only when the caller passes rejectUnknown', () => {
   assert.throws(

@@ -132,16 +132,11 @@ function applicationRow(row) {
   const mcpDeclared = row.surfaces.includes('mcp');
   const webDeclared = row.surfaces.includes('web');
   const embeddedDirect = row.surfaces.includes('embedded');
-  // Every CLI-declared registry operation resolves a live CLI spelling — the command transport the
-  // CLI's dispatch authority gates on, the run.do semantic-action verb, or the host verb that
-  // implements the capability in process (surface-resolution.mjs probes exactly this). Issue #582:
-  // the census that excepted one key from the declaration is gone; the declaration is the truth.
   const cliDirect = cliDeclared;
   const mcpDirect = candidateNames(row, 'mcp').some((name) => combinedMcpNameSet.has(name));
   const webDirect = candidateNames(row, 'web').some((name) => webCommandNames.has(name));
-  const cliAction = row.admission?.cli?.authorizedAction ?? null;
-  const mcpAction = row.admission?.mcp?.authorizedAction ?? null;
-  const operatorFacing = !hostLocal && [cliDirect, mcpDirect, webDirect, cliAction, mcpAction].some(Boolean);
+
+  const operatorFacing = !hostLocal && [cliDirect, mcpDirect, webDirect].some(Boolean);
   const remotePosture = hostLocal ? 'host_local'
     : operatorFacing ? 'operator'
       : semantic.profile === 'worker' ? 'worker_internal' : 'embedded_only';
@@ -187,9 +182,6 @@ function applicationRow(row) {
     parityRequired: operatorFacing,
     invocation: {
       applicationCommand,
-      cliAction,
-      mcpAction,
-      actionIdRequiredForFallback: Boolean(cliAction || mcpAction),
     },
     surfaces: {
       cli: {
@@ -200,7 +192,6 @@ function applicationRow(row) {
           ...(cliDirect ? ['direct'] : []),
           ...(webDirect ? ['authenticated_web'] : []),
           ...(mcpDirect ? ['mcp_descriptor'] : []),
-          ...(cliAction ? ['run.do'] : []),
           ...(!cliDirect && operatorFacing ? ['surface.invoke'] : []),
         ]),
         reachable: cliDirect || operatorFacing,
@@ -212,7 +203,6 @@ function applicationRow(row) {
         via: unique([
           ...(mcpDirect ? ['direct'] : []),
           ...(operatorFacing ? ['baton_surface_invoke'] : []),
-          ...(mcpAction ? ['run.do'] : []),
         ]),
         reachable: mcpDirect || operatorFacing,
       },
@@ -459,22 +449,8 @@ export function prepareApplicationSurfaceInvocation(row, args = {}, { surface = 
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
     throw new BatonControlError('surface_arguments_invalid', 'surface invocation args must be an object', { field: 'args' });
   }
-  const action = row.invocation?.[`${surface}Action`] ?? null;
+
   const direct = row.surfaces?.[surface]?.direct === true;
-  if (action && Object.hasOwn(args, 'actionId')) {
-    const { actionId, runId, ...inputs } = args;
-    if (typeof runId !== 'string' || runId.length === 0 || typeof actionId !== 'string' || actionId.length === 0) {
-      throw new BatonControlError('surface_action_coordinates_invalid', 'runId and actionId are required for run.do fallback');
-    }
-    return freeze({ command: 'run.act', args: { runId, actionId, inputs }, path: 'run.do', action: action.kind });
-  }
-  if (action && !direct) {
-    throw new BatonControlError(
-      'surface_action_id_required',
-      `${row.id} is authorized by the current Run action; pass its actionId`,
-      { field: 'actionId', action: 'inspect_run_actions' },
-    );
-  }
   return freeze({
     command: row.invocation.applicationCommand,
     args: clone(args),

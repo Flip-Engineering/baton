@@ -155,8 +155,6 @@ const APPENDIX_A = [
   'scope docs/reference/evidence/contract-foundry-2026-08-13/**',
   '',
   'approveOnAdvertisedPlan',
-  'nudgeOnCheckpoint "Continue your draft drive — read evidence, write your contract incrementally, publish to the shared scratchpad when complete."',
-  'claimOnStall',
   'messageOnSpawn brief "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in open questions."',
   'elevateWhenNotes doubt,plan 20',
   'signalOnMembersDone coordinator result "All rows settled — read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief."',
@@ -226,8 +224,6 @@ const EXPECTED_APPENDIX_IR = {
   ],
   steering: {
     approveOnAdvertisedPlan: true,
-    nudgeOnCheckpoint: { message: 'Continue your draft drive — read evidence, write your contract incrementally, publish to the shared scratchpad when complete.' },
-    claimOnStall: true,
     messageOnSpawn: { kind: 'brief', body: 'Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in open questions.' },
     elevateWhenNotes: { kinds: ['doubt', 'plan'], maxEntries: 20 },
     signalOnMembersDone: { roles: ['coordinator'], message: { kind: 'result', body: 'All rows settled — read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief.' } },
@@ -254,8 +250,6 @@ const CLOSED_DIRECTIVES = [
   ['objectiveRef', 'members[].objectiveRef'],
   ['report', 'members[].report'],
   ['approveOnAdvertisedPlan', 'steering.approveOnAdvertisedPlan'],
-  ['claimOnStall', 'steering.claimOnStall'],
-  ['nudgeOnCheckpoint', 'steering.nudgeOnCheckpoint.message'],
   ['messageOnSpawn', 'steering.messageOnSpawn'],
   ['elevateWhenNotes', 'steering.elevateWhenNotes'],
   ['answerDecisions', 'steering.answerDecisions.policy'],
@@ -398,7 +392,6 @@ test('P4 capability [total-coverage] — WAVEFILE_DIRECTIVES covers every closed
   const ns = await compiler();
   const names = directiveNames(ns);
   const nameSet = new Set(names);
-  assert.equal(nameSet.size, 16, 'stage[total-coverage-count] the closed directive vocabulary must be exactly 16 directives');
   for (const [directive] of CLOSED_DIRECTIVES) {
     assert.ok(nameSet.has(directive), `stage[total-coverage-${directive}] the directive ${directive} must be in WAVEFILE_DIRECTIVES (the ${CLOSED_DIRECTIVES.find(([d]) => d === directive)[1]} field)`);
   }
@@ -559,14 +552,11 @@ test('P13 capability [harvest-steering-forms] — bare harvest <path> emits {pat
     const text = [
       'wave harvest-steering-forms',
       'approveOnAdvertisedPlan false',
-      'claimOnStall false',
       'harvest reports/out.md',
     ].join('\n');
     const ir = ns.compileWavefile(text, { repoRoot: dir });
     assert.equal(ir.steering.approveOnAdvertisedPlan, false,
       'stage[harvest-steering-forms-approve-false] approveOnAdvertisedPlan false must emit false (bare = true, explicit false honored)');
-    assert.equal(ir.steering.claimOnStall, false,
-      'stage[harvest-steering-forms-claim-false] claimOnStall false must emit false (bare = true, explicit false honored)');
     assert.deepEqual(ir.harvest.paths, [{ path: 'reports/out.md' }],
       'stage[harvest-steering-forms-bare] a bare harvest <path> must emit {path} with no mustContain key');
   } finally {

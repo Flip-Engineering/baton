@@ -85,8 +85,7 @@ Authority:
   inventories. Supplying --mcp-config (or BATON_MCP_CONFIG) asks the configured existing MCP
   server for its exact profile-specific catalogue and schemas. Application effects use the
   authenticated resident Web command plane only when that command is actually admitted there.
-  MCP-native and MCP-only operations use the configured MCP authority. Action-dispatched
-  operations require actionId and lower through the current Run's authorized run.do action.
+  MCP-native and MCP-only operations use the configured MCP authority.
   surface watch composes the existing run.follow, attention, decision, and optional Wave progress
   projections; it does not create a second notification bus or bypass their authorization.
   Embedded-only worker/kernel capabilities are visible in catalog/describe but are not promoted

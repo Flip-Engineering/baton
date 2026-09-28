@@ -57,14 +57,14 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
   );
   const send = parseBatonCli(['run', 'send', 'run-a', 'Refocus.', '--to', 'review', '--now']);
   assert.deepEqual(send, {
-    kind: 'semantic-action', actionKind: 'send', runId: 'run-a',
-    inputs: { message: 'Refocus.', recipient: 'review', delivery: 'now' },
+    kind: 'command', name: 'run.send',
+    args: { runId: 'run-a', message: 'Refocus.', recipient: 'review', delivery: 'now' },
     idempotencyKey: send.idempotencyKey,
   });
   const interrupt = parseBatonCli(['run', 'interrupt', 'run-a', '--to', 'work', '--reason', 'Review now']);
-  assert.equal(interrupt.kind, 'semantic-action');
-  assert.equal(interrupt.actionKind, 'interrupt');
-  assert.deepEqual(interrupt.inputs, { recipient: 'work', reason: 'Review now' });
+  assert.equal(interrupt.kind, 'command');
+  assert.equal(interrupt.name, 'run.interrupt');
+  assert.deepEqual(interrupt.args, { runId: 'run-a', recipient: 'work', reason: 'Review now' });
   assert.equal(parseBatonCli(['run', 'stop', 'run-a', '--reason', 'Cancelled']).name, 'run.stop');
   assert.equal(parseBatonCli(['run', 'evidence', 'run-a']).name, 'run.evidence');
   assert.deepEqual(parseBatonCli(['serve', './deployment.mjs']), { kind: 'serve', configPath: './deployment.mjs' });
@@ -113,17 +113,17 @@ test('UC1b: ordinary CLI mutations project a true outline and hide internal auth
       route: full.route,
       workerPolicy: full.workerPolicy,
       actions: [{
-        actionId: 'action-a', kind: 'send', label: 'Send guidance', summary: 'Guide work.',
+        kind: 'send', label: 'Send guidance', summary: 'Guide work.',
         destructive: false, choices: ['work'], inputSchema: { type: 'object' },
-        help: { topic: 'run.act.send' },
+        help: { topic: 'run.send' },
       }],
     },
   });
   assert.equal(shown.depth, 'outline');
   assert.deepEqual(shown.outline.progress, { current: 'provider', summary: 'Provider active' });
   assert.deepEqual(shown.outline.actions[0], {
-    actionId: 'action-a', kind: 'send', label: 'Send guidance', summary: 'Guide work.',
-    destructive: false, choices: ['work'], help: 'baton help run.act.send',
+    kind: 'send', label: 'Send guidance', summary: 'Guide work.',
+    destructive: false, choices: ['work'], help: 'baton help run.send',
   });
   assert.equal(JSON.stringify(shown).includes('inputSchema'), false);
   assert.equal(JSON.stringify(shown).includes('workerPolicy'), false);

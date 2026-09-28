@@ -70,13 +70,9 @@
   ],
   "steering": {
     "approveOnAdvertisedPlan": true,
-    "claimOnStall": true,
-    "nudgeOnCheckpoint": {
-      "message": "Continue your draft drive — read evidence, write your contract incrementally, publish to the shared scratchpad when complete."
-    },
     "messageOnSpawn": {
       "kind": "brief",
-      "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in open questions."
+      "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity \u2192 DECISION_REQUEST with options; judgment calls are yours \u2014 record them in open questions."
     },
     "elevateWhenNotes": {
       "kinds": [
@@ -91,7 +87,7 @@
       ],
       "message": {
         "kind": "result",
-        "body": "All rows settled — read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief."
+        "body": "All rows settled \u2014 read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief."
       }
     }
   },

@@ -170,23 +170,6 @@ export const EXPLICIT_RESULT_CONSTRAINTS = Object.freeze({
 // event log"). Its ONLY consumer in 31-a is the degenerate-auto-settle liveness scan.
 export const APPLICATION_STEERING_REGISTERED_KIND = 'steering.registered';
 export const APPLICATION_WAVE_DRIVER_DETACHED_KIND = 'wave.driver_detached';
-// The `action.do` envelope fields each kind pre-fills (2026-09-14 audit, U-E5). They are
-// SERVER-DERIVED — `requestId` is the resolved action target's own identity and `response` is the
-// payload shape the action consumes — so act() accepts them beside the schema's own properties.
-// A kind absent from this table pre-fills nothing and accepts nothing extra.
-export const ACTION_INPUT_ENVELOPE = Object.freeze({
-  approve_plan: Object.freeze(['planDigest']),
-  answer_approval: Object.freeze(['requestId', 'response']),
-  answer_question: Object.freeze(['requestId', 'response']),
-  answer_decision: Object.freeze(['requestId', 'response']),
-  nudge_turn: Object.freeze(['requestId', 'response']),
-  wait_turn: Object.freeze(['requestId', 'response']),
-  claim_turn: Object.freeze(['requestId', 'response']),
-});
-// The turn kinds' pre-filled response discriminator (the coordinator's own vocabulary).
-export const ACTION_TURN_RESPONSE_KIND = Object.freeze({
-  nudge_turn: 'continue', wait_turn: 'wait', claim_turn: 'settle',
-});
 export const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
   'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
@@ -211,29 +194,6 @@ export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
   // #102 Decision 6: the degraded quorum terminal joins the closed terminal set.
   'degraded',
 ]);
-/**
- * The `action.do` block the served view mints for one action kind (2026-09-14 audit, U-E5/U-I7).
- * It is built from the SAME envelope table act() admits, so the ready-to-send block is accepted by
- * construction:
- *   - approve_plan carries the displayed planDigest (verified against the target);
- *   - the answer and turn kinds carry the exact target identity (`requestId`), never a caller-made
- *     one, plus the response payload in the action's own vocabulary. The answer kinds' payload
- *     starts as the schema's own declared defaults, so a caller fills only what the schema leaves
- *     open; the turn kinds carry their coordinator response kind (`continue`/`wait`/`settle`).
- */
-export function actionDoInputs(kind, target, inputSchema) {
-  const envelope = ACTION_INPUT_ENVELOPE[kind] ?? [];
-  if (envelope.includes('planDigest')) return { planDigest: target?.planDigest ?? null };
-  if (!envelope.includes('requestId')) return {};
-  const turnKind = ACTION_TURN_RESPONSE_KIND[kind] ?? null;
-  const defaults = Object.fromEntries(Object.entries(inputSchema?.properties ?? {})
-    .filter(([, schema]) => schema !== null && typeof schema === 'object' && schema.default !== undefined)
-    .map(([field, schema]) => [field, clone(schema.default)]));
-  return {
-    requestId: turnKind === null ? (target?.requestId ?? null) : (target?.pauseId ?? null),
-    response: turnKind === null ? defaults : { kind: turnKind, ...defaults },
-  };
-}
 /**
  * The largest prefix of `rows` whose serialized size stays inside `budgetBytes`, plus the offset
  * the next page starts at (null when the page is the whole list). The boundary is derived from the
@@ -837,42 +797,6 @@ export function normalizePrincipal(value, label) {
   }
   return deepFreeze(clone(value));
 }
-export function semanticAuthorityPayload(value) {
-  return {
-    schemaVersion: 1,
-    actionId: value.actionId,
-    kind: value.kind,
-    effect: value.effect,
-    requiredCapabilities: [...value.requiredCapabilities].sort(),
-  };
-}
-export function normalizeSemanticAuthority(value, code = 'application_context_invalid') {
-  exactObject(value,
-    ['schemaVersion', 'actionId', 'kind', 'effect', 'requiredCapabilities', 'authorityDigest'],
-    code, 'semantic action authority');
-  if (value.schemaVersion !== 1 || !validId(value.actionId) || !validId(value.kind)
-    || !validId(value.effect) || !Array.isArray(value.requiredCapabilities)
-    || value.requiredCapabilities.length === 0 || value.requiredCapabilities.length > 16
-    || value.requiredCapabilities.some((capability) => !validId(capability))
-    || new Set(value.requiredCapabilities).size !== value.requiredCapabilities.length
-    || value.requiredCapabilities.join('\0') !== [...value.requiredCapabilities].sort().join('\0')
-    || !/^[a-f0-9]{64}$/u.test(value.authorityDigest ?? '')) {
-    throw applicationError('semantic action authority is invalid', code);
-  }
-  const payload = semanticAuthorityPayload(value);
-  if (digest(payload) !== value.authorityDigest) {
-    throw applicationError('semantic action authority digest is invalid', code);
-  }
-  return deepFreeze({ ...payload, authorityDigest: value.authorityDigest });
-}
-export function capabilityEligibleSemanticActions(candidates, context) {
-  if (!context?.capabilityAuthority) return candidates;
-  return candidates.filter(({ kind }) => (
-    APPLICATION_SEMANTIC_REGISTRY.actions[kind].requiredCapabilities.every(
-      (capability) => context.capabilities.includes(capability),
-    )
-  ));
-}
 export function normalizeCommandContext(value) {
   if (value === undefined || value === null) return null;
   const fields = ['idempotencyKey', 'requestId', 'transport'];
@@ -880,7 +804,7 @@ export function normalizeCommandContext(value) {
   const hasCapabilityAuthority = Object.hasOwn(value ?? {}, 'capabilityAuthority');
   if (hasCapabilityAuthority) fields.push('capabilityAuthority');
   if (Object.hasOwn(value ?? {}, 'capabilities')) fields.push('capabilities');
-  if (Object.hasOwn(value ?? {}, 'semanticAuthority')) fields.push('semanticAuthority');
+
   exactObject(value, fields, 'application_context_invalid', 'application command context');
   if (!['direct', 'mcp', 'web'].includes(value.transport)
     || !validText(value.requestId, 256) || !validText(value.idempotencyKey, 512)) {
@@ -901,8 +825,8 @@ export function normalizeCommandContext(value) {
     }
   }
   const hasCapabilities = Object.hasOwn(value, 'capabilities');
-  const hasSemanticAuthority = Object.hasOwn(value, 'semanticAuthority');
-  if (hasCapabilityAuthority || hasCapabilities || hasSemanticAuthority) {
+
+  if (hasCapabilityAuthority || hasCapabilities) {
     if (!hasCapabilityAuthority || !hasCapabilities
       || !hasNorthboundCapabilityAuthority(value.transport, value.capabilityAuthority)
       || !Array.isArray(value.capabilities) || value.capabilities.length > 128
@@ -920,8 +844,7 @@ export function normalizeCommandContext(value) {
       capabilityAuthority: value.capabilityAuthority,
       capabilities: Object.freeze([...value.capabilities].sort()),
     } : {}),
-    ...(hasSemanticAuthority
-      ? { semanticAuthority: normalizeSemanticAuthority(value.semanticAuthority) } : {}),
+
   };
   return Object.freeze(normalized);
 }
@@ -3918,135 +3841,6 @@ export function _followPage(application, current, view, afterCursor) {
       terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
       changes,
     };
-  }
-export function _semanticActions(application, current, view, principal, context = null) {
-    const candidates = [];
-    if (view.phase === 'awaiting_plan_approval') {
-      candidates.push({
-        kind: 'approve_plan',
-        source: view.nextActions?.find((action) => action.kind === 'approve_plan') ?? null,
-        target: { planDigest: current.plan.digest },
-      });
-    }
-    for (const candidate of view.nextActions ?? []) {
-      if (candidate.kind === 'select_candidate'
-        && !candidates.some((entry) => entry.kind === candidate.kind)) {
-        candidates.push({ kind: candidate.kind, source: candidate, target: null });
-      }
-    }
-    for (const attention of view.attention ?? []) {
-      if (!['answer_approval', 'answer_question', 'answer_decision'].includes(attention.kind)
-        || !validText(attention.requestId, 4_096)) continue;
-      const target = {
-        kind: attention.kind,
-        workerId: attention.workerId ?? null,
-        requestId: attention.requestId,
-        ...(attention.kind === 'answer_approval'
-          ? { approvalKind: attention.approvalKind ?? null }
-          : attention.kind === 'answer_decision'
-            ? {
-              question: attention.question ?? null,
-              options: attention.options ?? [],
-              allowFreeResponse: attention.allowFreeResponse === true,
-              deadlineAt: attention.deadlineAt ?? null,
-            }
-            : { question: attention.question ?? null }),
-      };
-      candidates.push({ kind: attention.kind, source: attention, target });
-    }
-    // Issue #31 §2.2(6), 31-b Part F rule 13: the three steering acts are the ONLY entry points
-    // onto a `turn_checkpoint` attention entry — same guard shape as the interaction loop above,
-    // reusing `attention.requestId` (the pause record's own id) as `target.pauseId`.
-    for (const attention of view.attention ?? []) {
-      if (attention.kind !== 'turn_checkpoint' || !validText(attention.requestId, 4_096)) continue;
-      const target = {
-        workerId: attention.workerId ?? null,
-        taskId: attention.taskId ?? null,
-        turnEpoch: attention.turnEpoch ?? null,
-        pauseId: attention.requestId,
-      };
-      for (const kind of ['nudge_turn', 'wait_turn', 'claim_turn']) {
-        candidates.push({ kind, source: attention, target });
-      }
-    }
-    if (!application.driver.coordination.runStop?.(current.goal.runId)) {
-      const controls = application._semanticControlTargets(current);
-      for (const kind of ['send', 'interrupt']) {
-        const recipients = kind === 'send'
-          ? controls.sendRecipients : controls.interruptRecipients;
-        if (recipients.length === 0) continue;
-        const authorityTarget = {
-          recipients,
-          generationDigest: digest(controls.rows.filter((row) => (
-            kind === 'send' || (['working', 'blocked'].includes(row.worker.status)
-              && row.worker.sessionPreservationCapable === true)
-          )).map((row) => ({
-            workerId: row.worker.id, taskId: row.task.id, fence: row.worker.fence,
-            turnEpoch: row.worker.turnEpoch, turnState: row.worker.status, role: row.role,
-            preservationReceiptDigest: row.worker.sessionPreservation?.receiptDigest ?? null,
-            binding: row.worker.semanticControlBinding,
-          }))),
-        };
-        candidates.push({
-          kind, source: { recipients },
-          target: { recipients }, authorityTarget,
-        });
-      }
-    }
-    const stopClosesOpenDispatchAuthority = [
-      'planning', 'planning_failed', 'awaiting_plan_approval', 'approved', 'running', 'reviewing',
-    ].includes(view.phase);
-    if (!['stopped', 'closed'].includes(view.phase)
-      && (stopClosesOpenDispatchAuthority || (view.ownership?.workers ?? 0) > 0)) {
-      candidates.push({ kind: 'stop', source: null, target: null });
-    }
-    const eligible = capabilityEligibleSemanticActions(candidates, context);
-    // The view digest is invariant across every candidate (one view → one freshness token);
-    // hoisting it keeps the hot status/act path from re-hashing the whole view per action.
-    const viewDigest = semanticViewDigest(view);
-    return eligible.map(({ kind, source, target, authorityTarget = target }) => {
-      const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
-      const inputSchema = clone(definition.inputSchema);
-      if (kind === 'select_candidate' && Array.isArray(source?.roles)) {
-        inputSchema.properties.role.enum = clone(source.roles);
-      }
-      if (['send', 'interrupt'].includes(kind) && Array.isArray(source?.recipients)) {
-        inputSchema.properties.recipient.enum = clone(source.recipients);
-        if (source.recipients.includes('work')) {
-          inputSchema.properties.recipient.default = 'work';
-        } else {
-          delete inputSchema.properties.recipient.default;
-          if (!inputSchema.required.includes('recipient')) inputSchema.required.push('recipient');
-        }
-      }
-      const actionId = application._semanticActionId(current, view, principal, kind, authorityTarget, viewDigest);
-      const doInputs = actionDoInputs(kind, target, inputSchema);
-      return deepFreeze({
-        actionId,
-        kind,
-        do: { action: { kind, actionId }, inputs: doInputs },
-        label: definition.label,
-        summary: definition.summary,
-        inputSchema,
-        serverDerived: clone(definition.serverDerived),
-        effect: definition.effect,
-        requiredCapabilities: clone(definition.requiredCapabilities),
-        destructive: definition.destructive,
-        irreversible: definition.irreversible,
-        idempotent: definition.idempotent,
-        priority: definition.priority,
-        choices: ['send', 'interrupt'].includes(kind) ? clone(source?.recipients ?? [])
-          : kind === 'select_candidate' ? clone(source?.roles ?? []) : [],
-        ...(target ? { target: clone(target) } : {}),
-        freshness: {
-          registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
-          viewDigest,
-          profileDigest: current.profile.digest,
-          planDigest: current.plan?.digest ?? null,
-        },
-        help: { topic: definition.helpTopic, depth: 'outline' },
-      });
-    });
   }
 export function _episodeContext(application, current, view) {
     const bindings = application._episodeBindings(current, view);

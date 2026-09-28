@@ -89,7 +89,7 @@ test('M4B-3: a canonical MCP tool executes beside the legacy tool, reaching one 
 test('M4B-4: the C8 canonical serialization order holds and a scrambled emitter is caught', () => {
   const order = REGISTRY.serializationOrder;
   const scrambled = {
-    origin: 'https://c.test', command: 'run_do', args: {}, schemaVersion: 1,
+    origin: 'https://c.test', command: 'run_approve', args: {}, schemaVersion: 1,
     repoId: 'repo-a', idempotencyKey: 'k', commandId: 'c', runId: 'r',
   };
   const normalized = canonicalizeSerialization(order.envelope, scrambled);
@@ -100,15 +100,13 @@ test('M4B-4: the C8 canonical serialization order holds and a scrambled emitter 
   // The pin HOLDS for the normalized emit; the scrambled emitter is CAUGHT.
   assert.deepEqual(serializationOrderViolations(order.envelope, normalized), []);
   assert.equal(serializationOrderViolations(order.envelope, scrambled).length, 1);
-  // The registry-owned nested `do`/action coordinate pins likewise; a scrambled coordinate is caught.
-  assert.equal(serializationOrderViolations(order.action, { actionId: 'a', kind: 'approve_plan' }).length, 1);
-  assert.deepEqual(serializationOrderViolations(order.action, { kind: 'approve_plan', actionId: 'a' }), []);
+
 });
 
 test('M4B-6: the canonical transport names are present, mechanically derived from the registry', () => {
   // The new canonical names are present: every canonical operation's mechanically derived
   // transport names are live registry data, and the web set stays disjoint from kernel/authoring.
-  for (const key of ['run.do', 'run.view', 'run.member.view']) {
+  for (const key of ['run.view', 'run.member.view']) {
     const operation = REGISTRY.canonicalOperations.find((entry) => entry.key === key);
     assert.deepEqual(operation.names, deriveSurfaceNames(key));
   }

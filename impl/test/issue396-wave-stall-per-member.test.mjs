@@ -39,16 +39,10 @@ class FakeRun {
     this.id = id;
     this._program = program;
     this._poll = -1;
-    this.actCalls = [];
   }
   async status() {
     this._poll += 1;
     return this._program.status(this._poll, this);
-  }
-  async act(action, inputs = {}) {
-    this.actCalls.push({ action, inputs });
-    if (typeof this._program.act === 'function') return this._program.act(action, inputs, this);
-    return { ok: true };
   }
   async followOnce(options) {
     await delay(options.timeoutMs, options.signal);
@@ -75,9 +69,8 @@ function fakeWave(programsByRole) {
 }
 
 const POLICY = Object.freeze({
-  preflight: false, steering: 'none',
-  pollIntervalMs: 15, stallTimeoutMs: 250, settleTimeoutMs: 1_500,
-  finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false, settlement: 'none',
+  preflight: false,
+  pollIntervalMs: 15, stallTimeoutMs: 250, settleTimeoutMs: 1_500, saltObjectives: false, settlement: 'none',
 });
 
 // A member that progresses for `livePolls` polls (its cursor-stripped marker moves every

@@ -35,7 +35,6 @@ const DIMENSIONS = new Set(['name', 'args', 'schema', 'behavior', 'enum']);
 const RETIREMENT_PHASES = new Set(['M1', 'M2', 'M3', 'M4', 'M5']);
 const SURFACES = new Set([
   'registry.operations',
-  'registry.actions',
   'application.commands',
   'web',
   'cli',
@@ -113,7 +112,6 @@ function observation(surface, name, dimension = 'name') {
 function inventoryObservations(inventory) {
   return [
     ...inventory.registryOperations.map((name) => observation('registry.operations', name)),
-    ...inventory.registryActions.map((name) => observation('registry.actions', name)),
     ...inventory.commandDefinitions.map((name) => observation('application.commands', name)),
     ...inventory.webCommands.map((name) => observation('web', name)),
     ...inventory.cliCommands.map(({ id }) => observation('cli', `baton ${id.replaceAll('.', ' ')}`)),
@@ -166,11 +164,6 @@ function canonicalNameIndex() {
     for (const literal of literals) {
       index.set(`web\0${literal}`, profile);
       index.set(`mcp.fleet\0fleet_${literal}`, profile);
-    }
-  }
-  for (const [name, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.actions)) {
-    if (definition.operation) {
-      index.set(`registry.actions\0${name}`, definition.operation);
     }
   }
   return index;
@@ -682,7 +675,7 @@ export function lintProseInventories(options = {}) {
 // (the #159 three-way invariant's parsed/documented half; the admitted half is the round-trip pin).
 const WAVEFILE_DOCUMENTED = new Set([
   'wave', 'member', 'harness', 'model', 'effort', 'scope', 'objectiveRef', 'report',
-  'approveOnAdvertisedPlan', 'claimOnStall', 'nudgeOnCheckpoint', 'messageOnSpawn',
+  'approveOnAdvertisedPlan', 'messageOnSpawn',
   'elevateWhenNotes', 'answerDecisions', 'signalOnMembersDone', 'harvest',
 ]);
 

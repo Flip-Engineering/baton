@@ -945,9 +945,8 @@ const decisionAsk = (overrides = {}) => ({
 });
 
 const DRIVER_POLICY = Object.freeze({
-  preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 30, stallTimeoutMs: 800, settleTimeoutMs: 1_500,
-  finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false,
+  preflight: false,
+  pollIntervalMs: 30, stallTimeoutMs: 800, settleTimeoutMs: 1_500, saltObjectives: false,
 });
 
 function settledEvents(driver, requestId) {
@@ -1065,18 +1064,12 @@ class FakeRun {
     this._program = program;
     this._poll = -1;
     this.answerCalls = [];
-    this.actCalls = [];
     this.followCalls = [];
   }
 
   async status() {
     this._poll += 1;
     return this._program.status(this._poll, this);
-  }
-
-  async act(action, inputs = {}) {
-    this.actCalls.push({ action, inputs });
-    return typeof this._program.act === 'function' ? this._program.act(action, inputs, this) : { ok: true };
   }
 
   async answer(requestId, answer) {
@@ -1247,7 +1240,7 @@ test('BD-7 (reducer): a checkpoint+decision member classifies decision and is NO
   const classes = [];
   const calls = [];
   const receipt = await createWaveDriver(wave.baton, {
-    ...DRIVER_POLICY, pollIntervalMs: 20, finalization: 'claim-on-stall',
+    ...DRIVER_POLICY, pollIntervalMs: 20,
     onProgress: (_line, meta) => classes.push(...meta.classes),
     onDecision: async (payload) => { calls.push(payload); return undefined; },
   }).run({ members: wave.members });
@@ -1257,10 +1250,6 @@ test('BD-7 (reducer): a checkpoint+decision member classifies decision and is NO
     'a decision-parked member classifies decision, never bare working, even with a checkpoint present');
   assert.equal(calls.length, 1, 'onDecision fired for the gated decision');
   const member = wave.runs.get('w');
-  assert.equal(member.actCalls.filter((call) => call.action === 'nudge_turn').length, 0, 'a blocked member is not nudged');
-  assert.equal(member.actCalls.filter((call) => call.action === 'claim_turn').length, 0, 'a blocked member is not claimed');
-  assert.equal(receipt.nudges.length, 0);
-  assert.equal(receipt.claims.length, 0);
 });
 
 test('BD-7 (reducer): question and approval classify distinctly and never fire onDecision', async (t) => {
@@ -1302,46 +1291,4 @@ test('BD-7 (reducer): multiple pending interactions surface in stable requestId 
   assert.ok(classes.some(([role, cls]) => role === 'second' && cls === 'question'));
   assert.deepEqual(calls.map((call) => call.requestId), ['r-a'],
     'only the gated (first-by-requestId) decision fires; a decision behind an earlier interaction waits');
-});
-
-test('BD-7 (claim-checkpoint): a claim-checkpoint with no interaction is claimed at the next poll WITHOUT waiting for the unproductive budget', async (t) => {
-  void t;
-  const wave = fakeWave({
-    // Each re-park mints a fresh pauseId (as a real pausable worker does) but keeps the SAME
-    // changedPathsDigest — an unproductive re-park carrying a completed claim.
-    w: { status: (poll) => fakeView({ attention: [cpAtt(`cp-${Math.min(poll, 1)}`, { claim: { status: 'completed', summary: null }, changedPathsDigest: 'd0' })] }) },
-  });
-  const receipt = await createWaveDriver(wave.baton, {
-    // Budget 5 would nudge five unproductive re-parks for a claim-ABSENT checkpoint; the claim
-    // bypasses it and settles at the next poll.
-    ...DRIVER_POLICY, pollIntervalMs: 20, stallTimeoutMs: 10_000,
-    finalization: 'claim-on-stall', unproductiveNudgeBudget: 5,
-  }).run({ members: wave.members });
-
-  assert.equal(receipt.basis, 'completed');
-  assert.equal(receipt.nudges.length, 1, 'the first sighting nudges once; the claim then bypasses the remaining budget');
-  assert.equal(receipt.claims.length, 1);
-  assert.equal(receipt.claims[0].code, 'claimed');
-});
-
-// ---------------------------------------------------------------------------
-// BD-8 (no regression) — the treadmill still governs a CLAIM-ABSENT checkpoint;
-// nudge dedup per requestId holds. (wave-driver-policy-red D1–D10 is the
-// authoritative regression gate and stays green — see this suite's Verification.)
-// ---------------------------------------------------------------------------
-test('BD-8 (no regression): a claim-absent checkpoint still rides the unproductive budget to stall; nudge dedup per requestId holds', async (t) => {
-  void t;
-  const wave = fakeWave({
-    // A single persistent pauseId (cp-1) across polls: the requestId dedup must nudge it exactly
-    // once even though it is re-observed every poll; a claim-absent checkpoint then rides to stall.
-    w: { status: () => fakeView({ attention: [cpAtt('cp-1', { changedPathsDigest: 'd0' })] }) }, // no claim
-  });
-  const receipt = await createWaveDriver(wave.baton, {
-    ...DRIVER_POLICY, pollIntervalMs: 20, stallTimeoutMs: 300,
-    finalization: 'none', unproductiveNudgeBudget: 1,
-  }).run({ members: wave.members });
-
-  assert.equal(receipt.basis, 'stall', 'a claim-absent checkpoint is not claimed — the treadmill judges it');
-  assert.equal(receipt.nudges.length, 1, 'the pause is nudged exactly once (requestId dedup), then the budget stops nudging');
-  assert.equal(receipt.claims.length, 0);
 });

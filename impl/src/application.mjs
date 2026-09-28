@@ -38,8 +38,6 @@ import { searchDeploymentEvidence, validateEvidenceSearchArgs } from './evidence
 import { validateServicesListArgs } from './provider-services.mjs';
 import * as applicationObservation from './application-observation.mjs';
 import {
-  ACTION_INPUT_ENVELOPE,
-  ACTION_TURN_RESPONSE_KIND,
   APPLICATION_PROFILE_RECORD_ACTOR,
   APPLICATION_PROFILE_RECORD_KIND,
   APPLICATION_RUN_TERMINAL_PHASES,
@@ -70,7 +68,6 @@ import {
   VERIFIER_EXECUTION_STATES,
   VERIFIER_OUTCOMES,
   VERIFIER_OWNERSHIPS,
-  actionDoInputs,
   adoptionState,
   applicationError,
   assertResultIntentCoherence,
@@ -80,7 +77,6 @@ import {
   boundedPlanNodes,
   byteBoundedPage,
   capBytesToScalar,
-  capabilityEligibleSemanticActions,
   clone,
   closedEnum,
   debugGateFromLiveCode,
@@ -100,7 +96,6 @@ import {
   normalizeProfile,
   normalizeProfileRegistryEvent,
   normalizeRoute,
-  normalizeSemanticAuthority,
   objectiveFirstLine,
   objectiveReach,
   objectiveResultPolicy,
@@ -129,7 +124,6 @@ import {
   safeScopePath,
   sanitizeHex64,
   scopeEntryWithin,
-  semanticAuthorityPayload,
   semanticViewDigest,
   sessionAttachmentUnproven,
   terminalCauseNarrative,
@@ -150,7 +144,6 @@ export {
   MAX_SCRATCHPAD_VIEW_ITEMS,
   PROVIDER_EXECUTION_SETTLED_PHASES,
   VERDICT_CORRECTIVE_TABLE,
-  actionDoInputs,
   byteBoundedPage,
   goalPlanDispatchesPage,
   goalPlanReadAll,
@@ -171,9 +164,8 @@ export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
 
 
-const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
 const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
-const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
+
 // #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
 // caller omits driver options — mirrors the wave driver's documented production policy
 // (wave-driver.mjs DEFAULT_POLICY: a multi-hour wave). The interpreter's own DEFAULT_DRIVER
@@ -239,7 +231,9 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
-  'run.act': Object.freeze({ args: Object.freeze(['runId', 'actionId', 'inputs']), capabilities: Object.freeze([]), semanticCapabilities: true, web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.send': Object.freeze({ args: Object.freeze(['runId', 'message', 'recipient', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.interrupt': Object.freeze({ args: Object.freeze(['runId', 'recipient', 'reason']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.select': Object.freeze({ args: Object.freeze(['runId', 'role', 'reason']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.status': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.follow': Object.freeze({ args: Object.freeze(['runId', 'afterCursor', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.approve': Object.freeze({ args: Object.freeze(['runId', 'planDigest']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -385,71 +379,6 @@ export function applicationCardCommands() {
   return [...Object.keys(APPLICATION_COMMAND_DEFINITIONS), ...CANONICAL_CARD_COMMANDS];
 }
 
-/**
- * Normalize one semantic action's inputs (2026-09-14 audit, U-E5/U-I7). The envelope fields the
- * kind's own `do` block pre-fills are unwrapped and verified here, so the block an agent copies
- * from the view is exactly what act() accepts:
- *   - `requestId` must name the resolved action's exact target (its requestId, or its pauseId for
- *     the turn kinds) — a mismatched identity is a typed refusal naming the field, never an
- *     action performed against a different request;
- *   - `response` carries the caller's payload in the action's own vocabulary (`{decision}`,
- *     `{text}`, `{optionId}`; the turn kinds' `{kind:'continue'|'wait'|'settle'}`) and is merged
- *     into the effective inputs, so the schema's required fields are satisfied by the envelope;
- *   - `planDigest` (approve_plan) keeps its existing freshness law: it must equal the displayed
- *     Plan's digest.
- */
-export function normalizeActionInputs(action, rawInputs) {
-  const envelope = ACTION_INPUT_ENVELOPE[action.kind] ?? [];
-  const effective = {};
-  for (const [key, value] of Object.entries(rawInputs ?? {})) {
-    if (envelope.includes(key)) continue;
-    effective[key] = value;
-  }
-  if (envelope.includes('requestId') && rawInputs?.requestId !== undefined) {
-    const expected = ACTION_TURN_RESPONSE_KIND[action.kind] === undefined
-      ? (action.target?.requestId ?? null)
-      : (action.target?.pauseId ?? null);
-    if (typeof rawInputs.requestId !== 'string' || expected === null || rawInputs.requestId !== expected) {
-      throw applicationError(
-        `Run action requestId does not name the advertised ${action.kind} target`,
-        'application_action_input_invalid',
-        { field: 'requestId' },
-      );
-    }
-  }
-  if (envelope.includes('planDigest') && rawInputs?.planDigest !== undefined
-    && rawInputs.planDigest !== action.target?.planDigest) {
-    throw applicationError(
-      'Run action planDigest does not match the displayed Plan',
-      'application_action_input_invalid',
-      { field: 'planDigest' },
-    );
-  }
-  const response = envelope.includes('response') ? rawInputs?.response : undefined;
-  if (response !== undefined && response !== null) {
-    if (typeof response !== 'object' || Array.isArray(response)) {
-      throw applicationError(
-        `Run action response must be a bounded JSON object in the ${action.kind} shape`,
-        'application_action_input_invalid',
-        { field: 'response' },
-      );
-    }
-    const expectedKind = ACTION_TURN_RESPONSE_KIND[action.kind] ?? null;
-    if (expectedKind !== null && response.kind !== undefined && response.kind !== expectedKind) {
-      throw applicationError(
-        `Run action response kind must be ${expectedKind}`,
-        'application_action_input_invalid',
-        { field: 'response.kind' },
-      );
-    }
-    for (const [key, value] of Object.entries(response)) {
-      if (expectedKind !== null && key === 'kind') continue;
-      if (effective[key] === undefined) effective[key] = value;
-    }
-  }
-  return effective;
-  }
-
 
 
 /** U-F14 (issue #313): the axes a Run control's idempotency identity is judged on, in the order
@@ -502,7 +431,7 @@ function contentDigest(value) {
 
 
 // Rule 3: the canonical per-kind summaries, used when the attention item carries no bounded text
-// (approve_plan/select_candidate/turn_checkpoint are summary-less by design). Never sourced from
+// (approve_plan/select_candidate are summary-less by design). Never sourced from
 // projectBlockedInteraction's summary-less shapes (R-SP-4).
 const PROGRESS_ACTION_SUMMARIES = Object.freeze({
   approve_plan: 'Plan approval is required to proceed',
@@ -510,16 +439,9 @@ const PROGRESS_ACTION_SUMMARIES = Object.freeze({
   answer_question: 'An answer is required to proceed',
   answer_approval: 'An approval is required to proceed',
   answer_decision: 'A decision is required to proceed',
-  nudge_turn: 'A turn checkpoint requires a nudge to proceed',
 });
 
-// Rule 3: the resolving action for the rule-2 block, honestly sourced. `actionId` is carried ONLY
-// when the resolving semantic action is advertised in the current view (matched by kind against
-// the caller's semantic actions); otherwise `{kind, summary}` with NO actionId — never a
-// fabricated token (R-SP-3/8). Summary = the attention item's bounded text when present, else the
-// canonical per-kind summary. For answer_decision the bounded identity is the requestId, so a
-// consumer knows WHICH decision to answer.
-export function projectRequiredAction({ phase, attention, actions }) {
+export function projectRequiredAction({ phase, attention }) {
   let kind = null;
   let summary = null;
   if (phase === 'awaiting_plan_approval') {
@@ -542,19 +464,10 @@ export function projectRequiredAction({ phase, attention, actions }) {
         summary = typeof text === 'string' && text.length > 0
           ? boundedBlockedInteractionSummary(text) : PROGRESS_ACTION_SUMMARIES[kind];
       }
-    } else {
-      const checkpoint = (attention ?? []).find((entry) => entry?.kind === 'turn_checkpoint');
-      if (checkpoint) {
-        kind = 'nudge_turn';
-        summary = PROGRESS_ACTION_SUMMARIES.nudge_turn;
-      }
     }
   }
   if (kind === null) return null;
-  const action = (actions ?? []).find((candidate) => candidate?.kind === kind);
-  return deepFreeze(action
-    ? { kind, summary, actionId: action.actionId }
-    : { kind, summary });
+  return deepFreeze({ kind, summary });
 }
 
 
@@ -695,16 +608,6 @@ function normalizeStop(value) {
     throw applicationError('Run stop request is invalid', 'application_stop_invalid');
   }
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
-}
-
-
-
-
-
-
-function semanticAuthorityForAction(action) {
-  const payload = semanticAuthorityPayload(action);
-  return deepFreeze({ ...payload, authorityDigest: digest(payload) });
 }
 
 
@@ -1050,14 +953,6 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
-  if (name === 'run.act') {
-    exactObject(args, definition.args, 'application_action_invalid', 'Run action');
-    if (!validId(args.runId) || !validId(args.actionId) || !args.inputs
-      || typeof args.inputs !== 'object' || Array.isArray(args.inputs)) {
-      throw applicationError('Run action request is invalid', 'application_action_invalid');
-    }
-    return true;
-  }
   // Issue #338: the canonical operation's OWN validator is the field contract (evidence-search.mjs,
   // `EVIDENCE_SEARCH_FILTERS`): every filter is OPTIONAL and an unset filter is simply ABSENT — the
   // CLI omits the flags it was not given, the MCP tool omits the properties it was not given, and
@@ -1065,6 +960,18 @@ export function validateApplicationCommandArgs(name, args) {
   // declared set instead, which refused EVERY advertised form before dispatch: the web envelope
   // validates through this function, and mcp-northbound collapses the same refusal into
   // invalid_run_command. One contract, decided here for every surface.
+  if (['run.send', 'run.interrupt'].includes(name)) {
+    exactObject(args, Object.keys(args ?? {}), 'application_control_invalid', name);
+    const unknown = Object.keys(args).find((key) => !definition.args.includes(key));
+    if (unknown) throw applicationError('Run control field is unknown', 'application_control_invalid', { field: unknown });
+    if (!validId(args.runId) || (name === 'run.send' && !validText(args.message))
+      || (args.recipient !== undefined && !validId(args.recipient))
+      || (args.delivery !== undefined && !['nudge', 'now', 'turn'].includes(args.delivery))
+      || (args.reason !== undefined && !validText(args.reason))) {
+      throw applicationError('Run control inputs are invalid', 'application_action_input_invalid');
+    }
+    return true;
+  }
   if (name === 'evidence.search') {
     normalizeEvidenceSearchFilters(args);
     return true;
@@ -1770,64 +1677,28 @@ export class BatonApplication {
     return applicationObservation._runControlView(this, current, settled);
   }
 
-  async _replaySemanticControl(current, request, principal, context) {
-    if (!context?.idempotencyKey) return null;
-    const controlId = `control:${digest({
-      repoId: this.repoId,
-      runId: current.goal.runId,
-      actionId: request.actionId,
-      seed: { kind: 'request', value: context.idempotencyKey },
-    })}`;
-    const control = this._runControls(current.goal.runId)
-      .find((candidate) => candidate.controlId === controlId);
-    if (!control) return null;
-    const definition = APPLICATION_SEMANTIC_REGISTRY.actions[control.operation];
-    const semanticAuthority = semanticAuthorityForAction({
-      actionId: request.actionId,
-      kind: control.operation,
-      effect: definition.effect,
-      requiredCapabilities: definition.requiredCapabilities,
+  async _runControl(operation, request, rawPrincipal, context = null) {
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'Run control principal');
+    const definition = APPLICATION_SEMANTIC_REGISTRY.actions[operation];
+    await this._authorize('run.' + operation, principal, request.runId, {
+      effect: definition.effect, requiredCapabilities: definition.requiredCapabilities,
     });
-    await this._authorizeSemanticAuthority(semanticAuthority, principal, request.runId, context);
-    const recipient = request.inputs.recipient ?? definition.inputSchema.properties.recipient.default;
-    const delivery = control.operation === 'send'
-      ? (request.inputs.delivery ?? definition.inputSchema.properties.delivery.default) : null;
-    const message = control.operation === 'send' ? request.inputs.message : null;
-    const reason = control.operation === 'interrupt'
-      ? (request.inputs.reason ?? definition.inputSchema.properties.reason.default)
-      : 'Send Run guidance.';
-    // U-F14 (issue #313, completing the #288 axis naming): the web layer has named the moved axis
-    // (web-northbound movedAxis) since the refusal-quality landing; the application layer refused
-    // one disjunct with one message, so a retrying agent could not tell a changed message from a
-    // changed session. Name the first axis that moved, in a declared order, on the error AND in
-    // its detail — the same code, never a vaguer fact.
-    const moved = movedControlAxis(
-      {
-        recipient: control.recipient, delivery: control.delivery, message: control.message,
-        reasonDigest: control.reasonDigest, 'source.actor': control.source?.actor,
-        'source.principalId': control.source?.principalId, 'source.sessionId': control.source?.sessionId,
-      },
-      {
-        recipient, delivery, message, reasonDigest: digest(reason),
-        'source.actor': principal.actor, 'source.principalId': principal.principalId,
-        'source.sessionId': principal.sessionId,
-      },
-    );
-    if (moved !== null) {
-      throw applicationError(
-        `Run control replay conflicts with its durable admission: the ${moved} moved; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
-        'application_control_conflict',
-        { movedAxis: moved },
-      );
-    }
-    const settled = control.status === 'admitted'
-      ? await this._withRunEffect(control.runId,
-        () => this._executeRunControl(control, { recovery: true }))
-      : control;
-    return this._runControlView(current, settled);
+    return this._withRunEffect(request.runId, async () => {
+      const current = this._findRun(request.runId);
+      const targets = this._semanticControlTargets(current);
+      const choices = operation === 'send' ? targets.sendRecipients : targets.interruptRecipients;
+      const recipient = request.recipient ?? (choices.includes('work') ? 'work' : null);
+      if (!recipient) throw applicationError('Run control recipient is ambiguous; select a role',
+        'application_control_recipient_ambiguous');
+      const actionId = digest({ runId: request.runId, operation });
+      return this._performRunControl(current, {
+        kind: operation, actionId, inputSchema: definition.inputSchema, choices,
+      }, { ...request, recipient }, principal, context);
+    });
   }
 
-  async _performSemanticControl(current, action, inputs, principal, context) {
+  async _performRunControl(current, action, inputs, principal, context) {
     const operation = action.kind;
     const recipient = inputs.recipient ?? action.inputSchema.properties.recipient.default;
     const delivery = operation === 'send'
@@ -1883,10 +1754,7 @@ export class BatonApplication {
     let control = this._runControls(current.goal.runId)
       .find((candidate) => candidate.controlId === controlId);
     if (control && control.requestDigest !== core.requestDigest) {
-      // U-F14 (issue #313): the whole-request-digest comparison cannot tell the agent WHAT moved;
-      // name the first axis the two digests disagree on. The replay gate above has already ruled
-      // out the replay-visible axes, so this is the identity half: the target, the registry the
-      // action compiled under, or the actor identity the control carries.
+      // Name the first request axis that differs from the admitted control.
       const moved = movedControlAxis(
         {
           actionId: control.actionId, operation: control.operation, recipient: control.recipient,
@@ -2518,84 +2386,6 @@ export class BatonApplication {
     }
   }
 
-  async _authorizeSemanticAuthority(authority, principal, runId, context = null) {
-    const normalized = normalizeSemanticAuthority(authority, 'application_action_authority_invalid');
-    const definition = APPLICATION_SEMANTIC_REGISTRY.actions[normalized.kind];
-    if (!definition || definition.effect !== normalized.effect
-      || definition.requiredCapabilities.join('\0') !== normalized.requiredCapabilities.join('\0')) {
-      throw applicationError('semantic action authority is outside the registry',
-        'application_action_authority_invalid');
-    }
-    if (context?.capabilityAuthority) {
-      if (!context.semanticAuthority
-        || context.semanticAuthority.authorityDigest !== normalized.authorityDigest
-        || !normalized.requiredCapabilities.every((capability) => context.capabilities.includes(capability))) {
-        throw applicationError('semantic action is not authorized', 'application_unauthorized');
-      }
-    }
-    await this._authorize('run.act', principal, runId, {
-      actionId: normalized.actionId,
-      kind: normalized.kind,
-      effect: normalized.effect,
-      requiredCapabilities: normalized.requiredCapabilities,
-      authorityDigest: normalized.authorityDigest,
-    });
-    return normalized;
-  }
-
-  async _authorizeSemanticKind(kind, principal, runId) {
-    const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
-    if (!definition) {
-      throw applicationError('semantic action kind is outside the registry',
-        'application_action_authority_invalid');
-    }
-    return this._authorizeSemanticAuthority(semanticAuthorityForAction({
-      actionId: `direct-${digest({
-        schemaVersion: 1, repoId: this.repoId, runId, kind,
-        principalId: principal.principalId, sessionId: principal.sessionId,
-      })}`,
-      kind,
-      effect: definition.effect,
-      requiredCapabilities: definition.requiredCapabilities,
-    }), principal, runId);
-  }
-
-  async _resolveSemanticAction(request, principal, context = null) {
-    const current = this._findRun(request.runId);
-    const view = await this._buildView(current, this.principals.observer);
-    const action = this._semanticActions(current, view, principal, context)
-      .find((candidate) => candidate.actionId === request.actionId);
-    return { current, view, action: action ?? null };
-  }
-
-  async actionAuthority(rawRequest, rawPrincipal, rawContext = null) {
-    this._assertOpen();
-    await this.ready;
-    const context = normalizeCommandContext(rawContext);
-    validateApplicationCommandArgs('run.act', rawRequest);
-    const request = deepFreeze(clone(rawRequest));
-    const principal = normalizePrincipal(rawPrincipal, 'action authority principal');
-    await this._authorize('run.status', principal, request.runId, { operation: 'action_authority' });
-    const { action } = await this._resolveSemanticAction(request, principal, context);
-    if (!action) {
-      throw applicationError('Run action is outside the current authority scope; inspect the Run'
-        + ' for the actions it currently advertises', 'application_action_scope_mismatch');
-    }
-    return semanticAuthorityForAction(action);
-  }
-
-  async _recheckSemanticAction(current, expected, principal) {
-    const view = await this._buildView(current, this.principals.observer);
-    const action = this._semanticActions(current, view, principal)
-      .find((candidate) => candidate.actionId === expected.actionId);
-    if (!action
-      || semanticAuthorityForAction(action).authorityDigest !== expected.authorityDigest) {
-      throw applicationError('Run action authority changed before effect',
-        'application_action_scope_mismatch');
-    }
-    return action;
-  }
-
   async authorizeReplay(name, args, rawPrincipal, rawContext = null) {
     this._assertOpen();
     validateApplicationCommandArgs(name, args);
@@ -2630,16 +2420,6 @@ export class BatonApplication {
         compositionDigest: intent.composition ? digest(intent.composition) : null, scope,
       });
       this._authorizeRecursiveCommand('run.start', runId, principal, context);
-      return true;
-    }
-    if (name === 'run.act') {
-      const authority = context?.semanticAuthority
-        ?? await this.actionAuthority(args, principal);
-      if (authority.actionId !== args.actionId) {
-        throw applicationError('semantic replay authority does not match action',
-          'application_action_authority_invalid');
-      }
-      await this._authorizeSemanticAuthority(authority, principal, args.runId, context);
       return true;
     }
     if (name === 'run.approve') {
@@ -3882,7 +3662,7 @@ export class BatonApplication {
     return applicationObservation._performWorkflowMemberStop(this, current, definition, stop);
   }
 
-  async selectWorkflowCandidate(rawRequest, rawPrincipal, semanticDispatch = null) {
+  async selectWorkflowCandidate(rawRequest, rawPrincipal) {
     this._assertOpen();
     await this.ready;
     if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
@@ -3895,9 +3675,11 @@ export class BatonApplication {
     }
     const principal = normalizePrincipal(rawPrincipal, 'Workflow Candidate selector');
     const reason = rawRequest.reason.normalize('NFKC').trim();
-    if (semanticDispatch !== SEMANTIC_ACTION_DISPATCH) {
-      await this._authorizeSemanticKind('select_candidate', principal, rawRequest.runId);
-    }
+    const definitionAuthority = APPLICATION_SEMANTIC_REGISTRY.actions.select_candidate;
+    await this._authorize('run.select', principal, rawRequest.runId, {
+      role: rawRequest.role, effect: definitionAuthority.effect,
+      requiredCapabilities: definitionAuthority.requiredCapabilities,
+    });
     const current = this._findRun(rawRequest.runId);
     this._assertRunMutable(rawRequest.runId);
     if (!this._isWorkflowRun(current)) {
@@ -3950,7 +3732,7 @@ export class BatonApplication {
       key: `${APPLICATION_WORKFLOW_SELECTION_RECORD_KIND}:${current.goal.runId}:${current.plan.digest}`,
     });
     return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.act', result: 'candidate_selected', role: candidate.role },
+      action: { command: 'run.select', result: 'candidate_selected', role: candidate.role },
     });
   }
 
@@ -4256,12 +4038,6 @@ export class BatonApplication {
         })),
       ]);
     allAttention.push(...projectDecisionAttention(this.driver.coordinator, workers));
-    // Issue #31 §2.3, 31-b Part F rules 12-13: a still-unconsumed pause record is a turn
-    // checkpoint a driver can act on. Pushed ALONGSIDE — never instead of — any genuinely pending
-    // answer_question/answer_approval/answer_decision the same worker independently carries.
-    // `requestId: pauseId` is required, not decorative: `_semanticActions` skips any attention
-    // entry failing `validText(attention.requestId, 4_096)` regardless of its kind, and the pause
-    // record's own id (`pause:${taskId}:${seq}`) satisfies that guard verbatim.
     if (node?.taskId && typeof this.driver.coordinator.pausedTurns === 'function') {
       for (const paused of this.driver.coordinator.pausedTurns({ taskId: node.taskId })) {
         if (!runWorkerIds.has(paused.workerId)) continue;
@@ -4622,62 +4398,8 @@ export class BatonApplication {
     return applicationObservation._semanticProgressProjection(this, current, view, principal);
   }
 
-  // v2 rule 3, HOT PATH: the resolving action for the rule-2 block, computed WITHOUT the full
-  // semantic-action enumeration. The wave driver polls status() every few ms per member, so
-  // deriving requiredAction must cost O(blocking attention) not O(all candidates). The candidate
-  // target shapes mirror `_semanticActions` exactly (same digest inputs) so the advertised
-  // actionId is byte-identical to the one `run.act` resolves.
-  _semanticRequiredAction(current, view, principal) {
-    const attention = view.attention ?? [];
-    const phase = view.phase;
-    const nextActions = view.nextActions ?? [];
-    let kind = null;
-    let target = null;
-    let advertised = false;
-    if (phase === 'awaiting_plan_approval') {
-      kind = 'approve_plan';
-      target = { planDigest: current.plan.digest };
-      advertised = nextActions.some((entry) => entry?.kind === 'approve_plan');
-    } else if (phase === 'selection_required') {
-      kind = 'select_candidate';
-      target = null;
-      advertised = nextActions.some((entry) => entry?.kind === 'select_candidate');
-    } else {
-      const pending = attention.find((entry) => (
-        entry?.kind === 'answer_question' || entry?.kind === 'answer_approval' || entry?.kind === 'answer_decision'
-      ));
-      if (pending) {
-        kind = pending.kind;
-        advertised = validText(pending.requestId, 4_096);
-        target = {
-          kind: pending.kind,
-          workerId: pending.workerId ?? null,
-          requestId: pending.requestId,
-          ...(pending.kind === 'answer_approval'
-            ? { approvalKind: pending.approvalKind ?? null }
-            : pending.kind === 'answer_decision'
-              ? { question: pending.question ?? null, options: pending.options ?? [], allowFreeResponse: pending.allowFreeResponse === true }
-              : { question: pending.question ?? null }),
-        };
-      } else {
-        const checkpoint = attention.find((entry) => entry?.kind === 'turn_checkpoint');
-        if (checkpoint) {
-          kind = 'nudge_turn';
-          advertised = validText(checkpoint.requestId, 4_096);
-          target = {
-            workerId: checkpoint.workerId ?? null,
-            taskId: checkpoint.taskId ?? null,
-            turnEpoch: checkpoint.turnEpoch ?? null,
-            pauseId: checkpoint.requestId,
-          };
-        }
-      }
-    }
-    if (kind === null) return null;
-    const action = advertised
-      ? { kind, actionId: this._semanticActionId(current, view, principal, kind, target) }
-      : null;
-    return projectRequiredAction({ phase, attention, actions: action ? [action] : [] });
+  _semanticRequiredAction(current, view) {
+    return projectRequiredAction({ phase: view.phase, attention: view.attention });
   }
 
   _followChange(event, category) {
@@ -4769,21 +4491,6 @@ export class BatonApplication {
     }
   }
 
-  _semanticActionId(current, view, principal, kind, target = null, viewDigest = semanticViewDigest(view)) {
-    return digest({
-      schemaVersion: 1,
-      registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
-      repoId: this.repoId,
-      runId: current.goal.runId,
-      principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
-      profileDigest: current.profile.digest,
-      planDigest: current.plan?.digest ?? null,
-      viewDigest,
-      kind,
-      target,
-    });
-  }
-
 
 
   // MCP reflex surface contract Part C.6 (docs/reference/evidence/mcp-reflex-live-2026-07-22/
@@ -4807,11 +4514,6 @@ export class BatonApplication {
     await this._authorize('application.decision_list', principal, runId, {});
     const { workers } = runWorkerOwnership(this.driver, runId);
     return { decisions: projectDecisionAttention(this.driver.coordinator, workers) };
-  }
-
-
-  _semanticActions(current, view, principal, context = null) {
-    return applicationObservation._semanticActions(this, current, view, principal, context);
   }
 
   _semanticBounds(current) {
@@ -5117,10 +4819,7 @@ export class BatonApplication {
     const episodeContext = request.depth === 'index'
       || ['episode', 'workstreams'].includes(request.section)
       ? this._episodeContext(current, view) : null;
-    // 2026-09-14 audit (U-G9): the caller-scoped semantic actions ride EVERY depth, not only the
-    // outline. An agent that drilled into a section to understand a block must not have to re-fetch
-    // the outline to learn it can act — and it can never act on a stale actionId it guessed.
-    const callerActions = this._semanticActions(current, view, principal, context);
+    const callerActions = (view.nextActions ?? []);
     if (request.depth === 'outline') {
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
@@ -5128,7 +4827,7 @@ export class BatonApplication {
       // The outline's actions are scoped to THIS caller, so requiredAction is re-derived from the
       // same caller-scoped semantic actions (never the view's observer-scoped token — R-SP-3/8).
       const semanticActions = callerActions;
-      const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
+      const requiredAction = projectRequiredAction({ phase: view.phase, attention });
       // Issue #334: for a failed or inconclusive verification the outline carries the
       // shared verdict projection beside retry_verification — WHAT was checked, the
       // corrective class, and the referee's failureCapsule as the bounded sanitized
@@ -6008,14 +5707,12 @@ export class BatonApplication {
       const current = this._findRun(goal.runId, { allowUnavailableProfile: true });
       const view = await this._buildView(current, this.principals.observer);
       const semanticActions = current.profile
-        ? this._semanticActions(current, view, principal, context)
+        ? (view.nextActions ?? [])
         : [];
       const actions = semanticActions.map((action) => action.kind);
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
-      // The list advertises kinds only; requiredAction is re-derived from the CALLER-scoped
-      // semantic actions so the carried actionId (when advertised) is the caller's to act on.
-      const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
+      const requiredAction = projectRequiredAction({ phase: view.phase, attention });
       const row = deepFreeze({
         id: goal.runId,
         objective: this._resolveSpillObjective(goal.objective),
@@ -6135,132 +5832,6 @@ export class BatonApplication {
       } : {}),
       continuation,
     });
-  }
-
-  async act(rawRequest, rawPrincipal, rawContext = null) {
-    this._assertOpen();
-    await this.ready;
-    const context = normalizeCommandContext(rawContext);
-    validateApplicationCommandArgs('run.act', rawRequest);
-    let request = deepFreeze(clone(rawRequest));
-    const principal = normalizePrincipal(rawPrincipal, 'action principal');
-    await this._authorize('run.status', principal, request.runId, { operation: 'act' });
-    this._assertOpen();
-    const { current, action } = await this._resolveSemanticAction(request, principal);
-    if (!action) {
-      const controlReplay = await this._replaySemanticControl(
-        current, request, principal, context,
-      );
-      if (controlReplay) return controlReplay;
-      throw applicationError('Run action is outside the current authority scope; inspect the Run'
-        + ' for the actions it currently advertises', 'application_action_scope_mismatch');
-    }
-    const semanticAuthority = semanticAuthorityForAction(action);
-    await this._authorizeSemanticAuthority(semanticAuthority, principal, request.runId, context);
-    if (context?.sessionAuthority) {
-      throw applicationError('recursive Run command is forbidden',
-        'run_orchestrator_command_forbidden');
-    }
-    // 2026-09-14 audit (U-E5): the `action.do` envelope the served view advertises is ACCEPTED
-    // here. `requestId` names the exact advertised target (verified against the resolved action,
-    // exactly as planDigest is for approve_plan) and `response` carries the caller's answer in the
-    // action's own shape. Both are server-derived fields, so a caller that sends only the schema's
-    // own properties is unaffected — and a caller that copies `do.inputs` verbatim is no longer
-    // refused for supplying the fields the server itself minted.
-    request = deepFreeze({ ...request, inputs: normalizeActionInputs(action, request.inputs) });
-    const supplied = Object.keys(request.inputs).sort();
-    const allowed = Object.keys(action.inputSchema.properties).sort();
-    const required = [...(action.inputSchema.required ?? [])].sort();
-    if (supplied.some((field) => !allowed.includes(field)) || required.some((field) => !supplied.includes(field))) {
-      throw applicationError(
-        `Run action inputs are invalid: ${action.kind} accepts ${allowed.join(', ') || '(no caller field)'} and requires ${required.join(', ') || '(nothing)'}`,
-        'application_action_input_invalid',
-        { field: supplied.find((field) => !allowed.includes(field)) ?? required.find((field) => !supplied.includes(field)) ?? null },
-      );
-    }
-    await this._recheckSemanticAction(current, semanticAuthority, principal);
-    if (['send', 'interrupt'].includes(action.kind)) {
-      return this._withRunEffect(request.runId, async () => {
-        await this._recheckSemanticAction(current, semanticAuthority, principal);
-        return this._performSemanticControl(
-          current, action, request.inputs, principal, context,
-        );
-      });
-    }
-    if (action.kind === 'approve_plan') {
-      await this.approve(request.runId, current.plan.digest, principal);
-    } else if (action.kind === 'answer_approval') {
-      if (!['allow', 'deny', 'cancel'].includes(request.inputs.decision)
-        || !validText(action.target?.requestId, 4_096)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.answer(request.runId, action.target.requestId, { decision: request.inputs.decision }, principal);
-    } else if (action.kind === 'answer_question') {
-      if (!validText(request.inputs.text)
-        || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))
-        || !validText(action.target?.requestId, 4_096)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.answer(request.runId, action.target.requestId, { text: request.inputs.text }, principal);
-    } else if (action.kind === 'answer_decision') {
-      if (!validText(action.target?.requestId, 4_096)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const hasOptionId = request.inputs.optionId !== undefined && request.inputs.optionId !== null;
-      const hasText = request.inputs.text !== undefined && request.inputs.text !== null;
-      if (hasOptionId === hasText
-        || (hasOptionId && !validId(request.inputs.optionId))
-        || (hasText && (!validText(request.inputs.text)
-          || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))))) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.answer(request.runId, action.target.requestId,
-        hasOptionId ? { optionId: request.inputs.optionId } : { text: request.inputs.text }, principal);
-    } else if (action.kind === 'nudge_turn') {
-      if (!validText(action.target?.pauseId, 4_096)
-        || (request.inputs.message !== undefined
-          && (!validText(request.inputs.message)
-            || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.message))))) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const delivered = await this.driver.coordinator.nudgeTurn(
-        action.target.pauseId, request.inputs.message ?? DEFAULT_TURN_NUDGE_MESSAGE,
-        { actor: principal.actor },
-      );
-      // A delivery failure must be visible to the act caller — swallowing the coordinator's
-      // {ok:false} here made every failed nudge indistinguishable from a successful one.
-      if (delivered?.ok === false) {
-        throw applicationError(delivered.reason ?? 'Run turn nudge delivery failed', delivered.result ?? 'application_action_delivery_failed');
-      }
-    } else if (action.kind === 'wait_turn') {
-      if (!validText(action.target?.pauseId, 4_096)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      this.driver.coordinator.waitTurn(action.target.pauseId, { actor: principal.actor });
-    } else if (action.kind === 'claim_turn') {
-      if (!validText(action.target?.pauseId, 4_096)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const claimed = await this.driver.coordinator.claimTurn(action.target.pauseId, { actor: principal.actor });
-      if (claimed?.ok === false) {
-        throw applicationError(claimed.reason ?? 'Run turn claim delivery failed', claimed.result ?? 'application_action_delivery_failed');
-      }
-    } else if (action.kind === 'select_candidate') {
-      if (!action.choices.includes(request.inputs.role)
-        || !validText(request.inputs.reason)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      await this.selectWorkflowCandidate({
-        runId: request.runId, role: request.inputs.role, reason: request.inputs.reason,
-      }, principal, SEMANTIC_ACTION_DISPATCH);
-
-    } else if (action.kind === 'stop') {
-      normalizeStop({ runId: request.runId, reason: request.inputs.reason });
-      await this.stop(request.runId, request.inputs.reason, principal);
-    } else {
-      throw applicationError('Run action is unavailable', 'application_action_unavailable');
-    }
-    return this.inspect({ runId: request.runId, depth: 'outline' }, principal, context);
   }
 
   // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor's per-call FRESH readiness. The
@@ -6466,7 +6037,7 @@ export class BatonApplication {
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
     const recursiveEffectCommands = new Set(['run.start', 'run.stop']);
-    if (context?.sessionAuthority && name !== 'run.act'
+    if (context?.sessionAuthority
       && !recursiveReadCommands.has(name) && !recursiveEffectCommands.has(name)) {
       const runId = args?.runId ?? args?.intent?.runId ?? null;
       if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, context);
@@ -6490,9 +6061,9 @@ export class BatonApplication {
     if (name === 'run.workstreams') {
       return this.workstreams(args, principal, context);
     }
-    if (name === 'run.act') {
-      return this.act(args, principal, context);
-    }
+    if (name === 'run.send') return this._runControl('send', args, principal, context);
+    if (name === 'run.interrupt') return this._runControl('interrupt', args, principal, context);
+    if (name === 'run.select') return this.selectWorkflowCandidate(args, principal);
     if (name === 'run.status') {
       return this.status(args.runId, principal, {}, context);
     }

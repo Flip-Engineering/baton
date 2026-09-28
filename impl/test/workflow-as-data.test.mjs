@@ -43,7 +43,6 @@
 //   * named evidence lines: steering_message_undelivered (receipt.steering) ·
 //     harvest_miss (receipt.harvest) — v1.1 D3/D4, never silent
 //   * steering triggers on receipt.steering[]: answerDecisions · approveOnAdvertisedPlan ·
-//     claimOnStall · elevateWhenNotes · messageOnSpawn · nudgeOnCheckpoint · signalOnMembersDone
 //     (sorted) plus the v1.2 bounds: ≤3 messageOnSpawn attempts keyed to a DELIVERED messageId
 //     (delivered > 0 && typeof messageId === 'string') then steering_message_undelivered, elevation
 //     deduped by (runId, role) with a typed refusal retried ≤2, answerDecisions defer on non-match +
@@ -530,7 +529,6 @@ test('P2 (guard): the facade surface is a frozen recipes container with run/impl
 test('P3 (guard): createWaveDriver accepts the shipped steering/finalization vocabulary', async (t) => {
   const fx = await wadFixture(t);
   const driver = createWaveDriver(fx.baton, {
-    steering: 'nudge-on-checkpoint', finalization: 'claim-on-stall',
     pollIntervalMs: 15, stallTimeoutMs: 400,
   });
   assert.equal(typeof driver.run, 'function', 'the driver exposes run over the shipped vocabulary');
@@ -639,8 +637,6 @@ test('W1-04 (stage[steering-unknown]): unknown or mistyped steering policies ref
   const cases = [
     [validSpec({ steering: { bogusPolicy: true } }), 'bogusPolicy'],
     [validSpec({ steering: { approveOnAdvertisedPlan: 'yes' } }), 'approveOnAdvertisedPlan'],
-    [validSpec({ steering: { nudgeOnCheckpoint: 'not-an-object' } }), 'nudgeOnCheckpoint'],
-    [validSpec({ steering: { claimOnStall: 42 } }), 'claimOnStall'],
     [validSpec({ steering: { messageOnSpawn: true } }), 'messageOnSpawn'],
     [validSpec({ steering: { answerDecisions: { policy: 'not-a-map' } } }), 'answerDecisions'],
     // B6: a nested unknown field INSIDE a steering sub-object names the exact field.
@@ -845,34 +841,6 @@ test('W3-approve (stage[policy-missing:approve-on-advertised-plan]): a member wi
   assert.ok(outcome.terminal === true || outcome.phase === 'result_ready', 'the approved member settles');
 });
 
-test('W3-checkpoint (stage[policy-missing:nudge-on-checkpoint+claim-on-stall]): a checkpoint is nudged and a stalled member is claimed — both receipted', async (t) => {
-  const fx = await wadFixture(t, {
-    adapter: new PausableWaveAdapter({
-      harness: 'mock',
-      scriptsByMarker: { 'w3-chk': [{ edits: [edit('w3-chk', 1)] }] },
-    }),
-  });
-  writeObjective(fx.repo, 'w3-chk', 'write a report, then pause for a checkpoint');
-  const spec = validSpec({
-    idempotencyKey: 'w3-checkpoint',
-    members: [wadMember('w3-chk')],
-    steering: {
-      nudgeOnCheckpoint: { message: 'Continue the draft.' },
-      claimOnStall: true,
-    },
-  });
-  const receipt = await driveLane(fx.baton, 'policy-missing:nudge-on-checkpoint+claim-on-stall', spec);
-  const triggers = new Set((receipt.steering ?? []).map((event) => event.trigger));
-  assert.ok(triggers.has('nudgeOnCheckpoint'),
-    `stage[policy-missing:nudge-on-checkpoint+claim-on-stall]: nudgeOnCheckpoint fires and receipts`);
-  assert.ok(triggers.has('claimOnStall'), 'claimOnStall fires and receipts');
-  // F3: not just the trigger names — the nudged member actually RESUMED (a real 'turn' prompt
-  // followed the checkpoint; the pausable machinery advances the turn only on a genuine resume).
-  assert.ok(fx.adapter.calls.prompt.some((call) => call.mode === 'turn'),
-    'the nudged member resumed — a real turn prompt followed the checkpoint (never a trigger-name-only receipt)');
-  const outcome = receipt.outcomes[0];
-  assert.ok(outcome.terminal === true || outcome.phase === 'result_ready', 'the checkpointed member settles');
-});
 
 test('W3-message (stage[policy-missing:message-on-spawn]): a spawn-window message is sent and receipts with a durable messageId', async (t) => {
   const fx = await wadFixture(t, {

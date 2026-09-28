@@ -518,13 +518,9 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
   assert.equal(view.attention[0].question, '[credential-shaped content redacted]');
   assert.equal(JSON.stringify(view).includes(secret), false);
   const run = bindBaton(application, principal('attention-owner')).runs.open('run-attention-redaction');
-  const outline = await run.inspect();
-  const answer = outline.outline.actions.find((action) => action.kind === 'answer_question');
-  assert.equal(answer.target.requestId, view.attention[0].requestId);
-  assert.equal(answer.target.question, '[credential-shaped content redacted]');
-  assert.equal(JSON.stringify(answer).includes(secret), false);
-  const answered = await run.act(answer.actionId, { text: 'Use the configured credential reference only.' });
-  assert.equal(answered.outline.attention.count, 0);
+  assert.equal(view.attention[0].question, '[credential-shaped content redacted]');
+  await run.answer(view.attention[0].requestId, { text: 'Use the configured credential reference only.' });
+  assert.equal((await run.inspect()).outline.attention.count, 0);
   const finished = await application.wait('run-attention-redaction', principal('attention-owner'), { timeoutMs: 5_000 });
   assert.equal(finished.phase, 'work_completed');
   const retry = await application.answer(
@@ -546,13 +542,11 @@ test('UA4/UA6: pending worker approvals are unique Run actions and need no raw r
   await application.approve(proposed.runId, proposed.plan.digest, principal('approval-approver'));
   await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 250 });
   const run = bindBaton(application, principal('approval-owner')).runs.open(proposed.runId);
-  const outline = await run.inspect();
-  const action = outline.outline.actions.find((candidate) => candidate.kind === 'answer_approval');
-  assert.ok(action);
-  assert.match(action.target.requestId, /^req_/u);
-  assert.deepEqual(action.inputSchema.properties.decision.enum, ['allow', 'deny', 'cancel']);
-  const answered = await run.act(action.actionId, { decision: 'allow' });
-  assert.equal(answered.outline.attention.count, 0);
+  const status = await application.status(proposed.runId, principal('approval-owner'));
+  const request = status.attention.find((entry) => entry.kind === 'answer_approval');
+  assert.match(request.requestId, /^req_/u);
+  await run.answer(request.requestId, { decision: 'allow' });
+  assert.equal((await run.inspect()).outline.attention.count, 0);
   const finished = await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 5_000 });
   assert.equal(finished.phase, 'work_completed');
   await application.shutdown(principal('shutdown-admin'));
@@ -741,7 +735,7 @@ test('UA5/UA6: Run steering resolves ownership and the current fence inside the 
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('RC1/P91: Pythonic send settles durably and interrupt is not advertised without reusable-session proof', async () => {
+test('RC1/P91: Pythonic send settles durably', async () => {
   const { application, driver } = fixture('semantic-control', { delayMs: 1_500 });
   const proposed = await application.start(
     intent({ runId: 'run-semantic-control' }), principal('control-owner'),
@@ -751,14 +745,6 @@ test('RC1/P91: Pythonic send settles durably and interrupt is not advertised wit
   );
   const workerId = running.ownership.workerIds[0];
   const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
-  const outline = await run.inspect();
-  const sendAction = outline.outline.actions.find((action) => action.kind === 'send');
-  const interruptAction = outline.outline.actions.find((action) => action.kind === 'interrupt');
-  assert.deepEqual(sendAction.choices, ['work']);
-  assert.deepEqual(sendAction.target, { recipients: ['work'] });
-  assert.equal(JSON.stringify(sendAction).includes(workerId), false);
-  assert.equal(interruptAction, undefined);
-
   const sent = await run.send('Keep the verification boundary explicit.');
   assert.deepEqual(sent.lastAction, {
     command: 'run.send', recipient: 'work', delivery: 'nudge', result: 'ok',
@@ -802,9 +788,6 @@ test('P91 application: interrupt projects one paused attached member, then send 
   const before = driver.coordinator.list().find((worker) => worker.id === workerId);
   const taskCount = driver.coordination.snapshot().tasks.length;
   const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
-  const initial = await run.inspect();
-  assert.ok(initial.outline.actions.some((action) => action.kind === 'interrupt'));
-
   const interrupted = await run.interrupt({ reason: 'Pause only this provider turn.' });
   assert.deepEqual({
     phase: interrupted.phase,
@@ -1503,21 +1486,16 @@ test('RC3: response-loss replay returns the durable semantic outcome without a s
     intent({ runId: 'run-semantic-control-replay' }), principal('control-owner'),
   );
   await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
-  const outline = await application.inspect({
-    runId: proposed.runId, depth: 'outline',
-  }, principal('control-owner'));
-  const action = outline.outline.actions.find((candidate) => candidate.kind === 'send');
   const prompt = adapter.prompt.bind(adapter);
   let promptCalls = 0;
   adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
   const args = {
     runId: proposed.runId,
-    actionId: action.actionId,
-    inputs: { message: 'Preserve the same provider effect.', recipient: 'work', delivery: 'nudge' },
+    message: 'Preserve the same provider effect.', recipient: 'work', delivery: 'nudge',
   };
   const context = { transport: 'web', requestId: 'lost-response', idempotencyKey: 'web.command:lost-response' };
-  const first = await application.command('run.act', args, principal('control-owner'), context);
-  const replay = await application.command('run.act', args, principal('control-owner'), context);
+  const first = await application.command('run.send', args, principal('control-owner'), context);
+  const replay = await application.command('run.send', args, principal('control-owner'), context);
   assert.equal(first.lastAction.state, 'confirmed');
   assert.deepEqual(replay.lastAction, first.lastAction);
   assert.equal(promptCalls, 1);
@@ -1787,4 +1765,30 @@ test('UA4-UA8: accepted result is pinned, evidenced, and explicitly adopted with
   const stable = await application.evidence(runId, principal('result-owner'));
   assert.equal(stable.manifestDigest, evidence.manifestDigest, 'unrelated Run events do not perturb evidence identity');
   await application.shutdown(principal('shutdown-admin'));
+});
+
+test('Dedicated Run commands authorize before dispatching their effects', async () => {
+  const { application, driver } = fixture('dedicated-command-authority');
+  const calls = [];
+  const authorize = application.authorize;
+  application.authorize = async ({ command }) => { calls.push(command); return false; };
+  const requests = [
+    ['run.approve', { runId: 'run-authority', planDigest: 'a'.repeat(64) }],
+    ['run.answer', { runId: 'run-authority', requestId: 'request-authority', answer: { text: 'Continue.' } }],
+    ['run.send', { runId: 'run-authority', message: 'Continue.' }],
+    ['run.interrupt', { runId: 'run-authority', reason: 'Inspect the work.' }],
+    ['run.select', { runId: 'run-authority', role: 'candidate', reason: 'Verified candidate.' }],
+    ['run.stop', { runId: 'run-authority', reason: 'Stop the run.' }],
+  ];
+  try {
+    for (const [command, args] of requests) {
+      await assert.rejects(application.command(command, args, principal('denied')),
+        { code: 'application_unauthorized' }, command);
+      assert.equal(calls.at(-1), command);
+    }
+    assert.deepEqual(driver.coordinator.list(), []);
+  } finally {
+    application.authorize = authorize;
+    await application.shutdown(principal('shutdown-admin'));
+  }
 });

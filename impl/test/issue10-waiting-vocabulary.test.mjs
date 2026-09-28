@@ -529,17 +529,11 @@ class FakeRun {
     this.id = id;
     this._program = program;
     this._poll = -1;
-    this.actCalls = [];
     this.followCalls = [];
   }
   async status() {
     this._poll += 1;
     return this._program.status(this._poll, this);
-  }
-  async act(action, inputs = {}) {
-    this.actCalls.push({ action, inputs });
-    if (typeof this._program.act === 'function') return this._program.act(action, inputs, this);
-    return { ok: true };
   }
   async followOnce(options) {
     this.followCalls.push({ ...options });
@@ -567,14 +561,12 @@ function fakeWave(programsByRole) {
 }
 
 const DRIVER_POLICY = Object.freeze({
-  preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500,
-  finalization: 'claim-on-stall', unproductiveNudgeBudget: 1, saltObjectives: false,
+  preflight: false,
+  pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500, saltObjectives: false,
 });
 // STRIP rows: a churning waitingOn must not reset the clock (stallTimeoutMs fires first); today
 // the churn resets it every poll and the wave rides to the cap.
 const STRIP_POLICY = { ...DRIVER_POLICY, stallTimeoutMs: 250 };
-const actCallsOf = (wave, role, action) => wave.runs.get(role).actCalls.filter((call) => call.action === action);
 
 // A canonical waitingOn value for a kind (the D3 since-stamp shape). provider_stalled rides a
 // suspicion turnEpoch; the fence-less kinds read turnEpoch null.
@@ -589,7 +581,6 @@ function stripWave(kind) {
   return fakeWave({
     w: {
       status: (poll) => fakeView({ waitingOn: poll % 2 === 0 ? WAIT(kind, 'a') : WAIT(kind, 'b') }),
-      act: () => ({ ok: true }),
     },
   });
 }
@@ -1193,19 +1184,6 @@ test('D9-INVARIANT (PIN): a drivered paused task reads the three raw spawn flags
   assert.equal(raw.recoverySpawnPending, false, 'PIN: a paused task is never mid-recovery');
 });
 
-test('D9-COMPOUND (RED): a member with BOTH a claim-ready checkpoint AND waitingOn is never claimed — waiting beats checkpoint', async () => {
-  const wave = fakeWave({
-    w: {
-      status: () => fakeView({ attention: [cpAtt('cp-1', CLAIM_READY)], waitingOn: WAIT('capacity_ceiling') }),
-      act: () => ({ ok: true }),
-    },
-  });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
-  assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 0,
-    'stage[waiting-not-suppressed]: a waitingOn member is never claimed — the suppression gains `!reduced.waiting`');
-  assert.equal(receipt.claims.length, 0, 'stage[waiting-not-suppressed]: no claims evidence for a suppressed member');
-});
-
 test('D9-SHAPE (RED): reduceMember exposes BOTH flags — blocked and waiting — and a checkpoint without waitingOn keeps its class', () => {
   assert.equal(typeof waveDriverNs.reduceMember, 'function', 'stage[reduceMember-missing]: reduceMember must be exported');
   const r = waveDriverNs.reduceMember([], null, WAIT('dispatch_pending'));
@@ -1242,33 +1220,6 @@ test('WAITING_ON_KINDS (RED): the frozen CLOSED enum of exactly the five kinds',
     'stage[waiting-on-enum-missing]: the enum is frozen — a closed set, never grown silently');
   const values = [...applicationSemanticsNs.WAITING_ON_KINDS].sort();
   assert.deepEqual(values, WAITING_ON_KINDS_SORTED, 'stage[waiting-on-enum-missing]: the five closed kinds');
-});
-
-// ===========================================================================
-// §H — Exoneration pins
-// ===========================================================================
-
-test('EXO-1 (PIN): a checkpoint WITHOUT waitingOn still claims exactly once — the ordinary pause is untouched', async () => {
-  const wave = fakeWave({
-    w: {
-      status: () => fakeView({ attention: [cpAtt('cp-1', CLAIM_READY)] }),
-      act: () => ({ ok: true }),
-    },
-  });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
-  assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 1, 'a checkpoint member is claimed exactly once');
-  assert.equal(receipt.claims.length, 1, 'one claims-evidence row');
-});
-
-test('EXO-2 (PIN): a blocking interaction WITHOUT waitingOn suppresses claim — the interaction precedence is unchanged', async () => {
-  const wave = fakeWave({
-    w: {
-      status: () => fakeView({ attention: [qAtt('q-1')] }),
-      act: () => ({ ok: true }),
-    },
-  });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
-  assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 0, 'a blocked member is never claimed');
 });
 
 // ===========================================================================

@@ -41,7 +41,6 @@ async function admitAndDispatch(runtime, definition, args, dispatch) {
 }
 
 function webTransportName(capability, command) {
-  if (command === 'run.act') return 'run_act';
   if (capability.names?.web) return capability.names.web;
   return command.replaceAll('.', '_');
 }
@@ -79,7 +78,7 @@ async function invokeApplicationCapability(target, capability, args, idempotency
   } catch (error) {
     if (!['cli_command_unavailable', 'surface_unsupported'].includes(error?.code)) throw error;
   }
-  if (capability.surfaces?.web?.reachable !== true && prepared.command !== 'run.act') {
+  if (capability.surfaces?.web?.reachable !== true) {
     throw new BatonControlError(
       'surface_mcp_config_required',
       `${capability.id} is not admitted on the resident Web bus; invoke it with --mcp-config`,

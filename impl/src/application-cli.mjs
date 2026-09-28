@@ -1549,7 +1549,7 @@ export function batonCliHelp(topic = 'application') {
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
 
 const RUN_VIEW_OUTPUT_KINDS = new Set([
-  'command', 'semantic-action', 'adopt',
+  'command', 'adopt',
 ]);
 
 function compactRunResult(result) {
@@ -1567,7 +1567,7 @@ function compactRunResult(result) {
 function compactNextActions(actions) {
   if (!Array.isArray(actions)) return [];
   const allowed = new Set([
-    'kind', 'actionId', 'planDigest', 'requestId', 'role', 'reason', 'state', 'do',
+    'kind', 'planDigest', 'requestId', 'role', 'reason', 'state',
   ]);
   return actions.map((action) => Object.fromEntries(Object.entries(action ?? {})
     .filter(([key]) => allowed.has(key))));
@@ -1576,12 +1576,10 @@ function compactNextActions(actions) {
 function compactSemanticActions(actions) {
   if (!Array.isArray(actions)) return [];
   return actions.map((action) => ({
-    actionId: action.actionId,
     kind: action.kind,
     label: action.label,
     summary: action.summary,
     destructive: action.destructive === true,
-    ...(record(action.do) ? { do: action.do } : {}),
     ...(Array.isArray(action.choices) && action.choices.length > 0
       ? { choices: action.choices } : {}),
     ...(action.help?.topic ? { help: `baton help ${action.help.topic}` } : {}),
@@ -3922,17 +3920,6 @@ export function parseBatonCli(rawArgs) {
       idempotencyKey,
     };
   }
-  if (action === 'do') {
-    const actionId = id(args.shift(), 'action ID');
-    const rawInputs = take(args, '--inputs');
-    noRemainder(args);
-    let inputs = {};
-    if (rawInputs !== null) {
-      try { inputs = JSON.parse(rawInputs); } catch { throw cliError('action inputs must be JSON', 'cli_action_inputs_invalid'); }
-      if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) throw cliError('action inputs must be an object', 'cli_action_inputs_invalid');
-    }
-    return { kind: 'command', name: 'run.act', args: { runId, actionId, inputs }, idempotencyKey };
-  }
   if (action === 'status') {
     const wait = take(args, '--wait');
     const follow = flag(args, '--follow');
@@ -3969,8 +3956,8 @@ export function parseBatonCli(rawArgs) {
       throw cliError('send requires bounded guidance and at most one delivery mode');
     }
     return {
-      kind: 'semantic-action', actionKind: 'send', runId,
-      inputs: {
+      kind: 'command', name: 'run.send',
+      args: { runId,
         message, ...(recipient === null ? {} : { recipient }),
         ...(modes.length === 0 ? {} : { delivery: modes[0][1] }),
       },
@@ -3994,8 +3981,8 @@ export function parseBatonCli(rawArgs) {
       throw cliError('interrupt recipient or reason is invalid');
     }
     return {
-      kind: 'semantic-action', actionKind: 'interrupt', runId,
-      inputs: {
+      kind: 'command', name: 'run.interrupt',
+      args: { runId,
         ...(recipient === null ? {} : { recipient }),
         ...(generation === null ? {} : { generation }),
         ...(reason === null ? {} : { reason }),
@@ -4040,8 +4027,8 @@ export function parseBatonCli(rawArgs) {
     const role = id(args.shift(), 'Workflow role');
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     return {
-      kind: 'semantic-action', actionKind: 'select_candidate', runId,
-      inputs: { role, reason }, idempotencyKey,
+      kind: 'command', name: 'run.select',
+      args: { runId, role, reason }, idempotencyKey,
     };
   }
   throw cliError(`unknown run action ${action ?? ''}`);
@@ -4451,37 +4438,6 @@ export class BatonWebClient {
       || (transport === 'run.inspect' && args.cursor !== undefined);
     return waits ? null : this.requestTimeoutMs;
   }
-
-  async actionAuthority(args, idempotencyKey) {
-    id(idempotencyKey, 'idempotency key');
-    const body = await this._json('/v1/action-authority', {
-      method: 'POST',
-      headers: this._headers(true),
-      body: JSON.stringify({
-        schemaVersion: 1, repoId: this.repoId, idempotencyKey, args,
-      }),
-    });
-    const authority = body?.semanticAuthority;
-    if (body?.ok !== true || !record(authority)
-      || authority.schemaVersion !== 1
-      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(authority.actionId ?? '')
-      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(authority.kind ?? '')
-      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(authority.effect ?? '')
-      || !Array.isArray(authority.requiredCapabilities)
-      || authority.requiredCapabilities.length === 0
-      || authority.requiredCapabilities.some(
-        (capability) => !/^[A-Za-z0-9._:-]{1,256}$/u.test(capability ?? ''),
-      )
-      || new Set(authority.requiredCapabilities).size !== authority.requiredCapabilities.length
-      || !/^[a-f0-9]{64}$/u.test(authority.authorityDigest ?? '')) {
-      throw cliError('Baton Web returned invalid semantic action authority',
-        'cli_protocol_failed');
-    }
-    return Object.freeze({
-      ...authority,
-      requiredCapabilities: Object.freeze([...authority.requiredCapabilities]),
-    });
-  }
   /** Read the durable web command record until it settles. When THIS caller declared a bound
    * and it expires first, the pending refusal keeps the record addressable (its commandId)
    * beside the row that will carry the verdict (the command's observation route, e.g. the
@@ -4589,7 +4545,7 @@ export async function connectBaton({
     })),
   });
   const [doctor, session] = await Promise.all([client.doctor(), client.session()]);
-  const requiredCommands = ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'];
+  const requiredCommands = ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.stop'];
   // U-F11 (issue #288): ten causes, ten typed refusals — each naming the field it judged and the
   // remedy. Before this, all ten shared one sentence, and the registry-drift case (the one the
   // resident can explain with both digests) discarded them.
@@ -4991,18 +4947,6 @@ export async function runBatonCli(parsed, client, options = {}) {
       }
       throw error;
     }
-  }
-  if (parsed.kind === 'semantic-action') {
-    const view = await client.command('run.inspect', {
-      runId: parsed.runId, depth: 'outline',
-    }, `${parsed.idempotencyKey}:inspect`);
-    const matching = (view?.outline?.actions ?? []).filter((action) => action?.kind === parsed.actionKind);
-    if (matching.length !== 1 || !nonempty(matching[0]?.actionId)) {
-      throw cliError(`Run does not currently advertise ${parsed.actionKind}`, 'application_action_unavailable');
-    }
-    return client.command('run.act', {
-      runId: parsed.runId, actionId: matching[0].actionId, inputs: parsed.inputs,
-    }, `${parsed.idempotencyKey}:act`);
   }
   throw cliError('unsupported CLI operation');
 }
