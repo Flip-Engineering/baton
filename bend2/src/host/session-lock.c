@@ -52,7 +52,7 @@ static void baton_session_lock_call(IoWork *w) {
   free(path);free(database);
   if(call->handle<0) {call->error=errno;return;}
   int result;
-  do {result=flock(call->handle,LOCK_EX|(call->kind==3?LOCK_NB:0));} while(result<0 && errno==EINTR);
+  do {result=flock(call->handle,LOCK_EX|LOCK_NB);} while(result<0 && errno==EINTR);
   if(result<0) {call->error=errno;close(call->handle);}
 }
 
@@ -74,7 +74,7 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonSessionLock *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
-  if(kind==0 || kind==3) {
+  if(kind==3) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
     call->session=io_cstr(e,f[1],&sn);
@@ -91,10 +91,6 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   return io_work(w,baton_session_lock_call,baton_session_lock_pack);
 }
 
-#ifdef CID_SESSIONLOCK_ACQUIRE
-static Term baton_session_lock_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,0);}
-static void __attribute__((constructor)) baton_session_lock_use_acquire(void) {io_eff(CID_SESSIONLOCK_ACQUIRE,baton_session_lock_acquire,0);}
-#endif
 #ifdef CID_SESSIONLOCK_CANONICAL
 static Term baton_session_lock_canonical(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,4);}
 static void __attribute__((constructor)) baton_session_lock_use_canonical(void) {io_eff(CID_SESSIONLOCK_CANONICAL,baton_session_lock_canonical,0);}
