@@ -176,10 +176,17 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(database,session))
     acquired(database,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,""))
 
-# The keeper invokes this with the original attempt and inbox cutoff after the
-# observer exits. Attachment never launches a native process or sends its prompt.
-def recover(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+    handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+    next(handle)
+
+def observe_attached(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
     outcome : Turn.Outcome <- Turn.retained_output(db,session,id,log,harness,handle)
     observed(db,session,id,log,cursor,native,cwd,directory,handle,None{},outcome,u => run(db,session,cmd,model,effort,cwd,log,""))
+
+# The keeper invokes this with the original attempt and inbox cutoff after the
+# observer exits. Attachment never launches a native process or sends its prompt.
+def recover(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  attach_recorded(directory,observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
