@@ -1095,108 +1095,6 @@ const CANONICAL_OPERATION_SPECS = [
     authorityFields: ['kind', 'id', 'viewer'], serverDerived: ['fenceTuple'],
     liveMethod: 'taskHorizon + workflowHorizon + projectHorizon',
   }],
-  // S-1 v2: portable attach-and-harvest. Observe-class; no emergency_stop. Transport returns a
-  // closed {outcomes, waveDriverDetached} payload — live handles stay embedded-only.
-  // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Each new row
-  // rides an ordinary application command (waves.start detached {waveId, members:[{role, runId}]}
-  // with per-MEMBER quota + profile-route admission; waves.progress paginated ≤16/page cursor+
-  // nextCursor, per-member bounded — never application_run_view_oversize; waves.send/waves.stop
-  // steer/stop ONE member by runId). MCP-W3: deployment.doctor is the quota-free per-call FRESH
-  // readiness read, credential posture as metadata only (never token material).
-  ['waves.start', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves start --members JSON',
-    inputSchema: objectSchema({
-      idempotencyKey: id,
-      members: {
-        type: 'array', minItems: 1,
-        items: objectSchema({
-          role: id,
-          objective: { type: 'string', minLength: 1 },
-          exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
-          // #102 Decision 1: a member names EITHER its own exact route OR a closed group seat.
-          // The schema advertises both forms; the XOR itself is the wave admission's own typed
-          // refusal (application.mjs _normalizeWaveStart), so this row stays honest without a
-          // second enforcement copy.
-          group: objectSchema({
-            seat: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
-            size: { type: 'integer', minimum: 2 },
-            quorum: { type: 'integer', minimum: 1 },
-            strict: { type: 'boolean' },
-            editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
-          }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1 } },
-        }, ['role', 'objective']),
-      },
-    }, ['idempotencyKey', 'members']),
-  }],
-  ['waves.progress', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'observe',
-    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves progress WAVE_ID --cursor 0',
-    inputSchema: objectSchema({
-      waveId: { type: 'string', pattern: '^wave:[a-f0-9]{32}$' },
-      cursor: { type: 'integer', minimum: 0 },
-    }, ['waveId']),
-  }],
-  ['waves.send', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves send RUN_ID --message TEXT',
-    inputSchema: objectSchema({
-      runId: id, message: { type: 'string', minLength: 1 },
-      delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
-    }, ['runId', 'message']),
-  }],
-  ['waves.stop', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
-    capabilities: ['emergency_stop', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves stop RUN_ID --reason TEXT', destructive: true,
-    inputSchema: objectSchema({
-      runId: id, reason: { type: 'string', minLength: 1 },
-    }, ['runId']),
-  }],
-  // D2.5 (wave-observability-2026-08-06/contract.md §D2): waves.list — the observe verb answering
-  // the in-flight wave set for THIS deployment, sourced from the wave registry projection in the
-  // coordination store (never live run inspection). Embedded + cli + mcp + web, observe-only.
-  ['waves.list', {
-    profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp', 'web'], effect: 'observe',
-    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves list',
-    inputSchema: objectSchema({
-      cursor: { type: 'integer', minimum: 0 },
-    }, []),
-  }],
-  // Issue #114 (D2): the workflow-as-data lane — ONE closed spec drives a whole wave (the
-  // driver-killer: no per-wave bespoke script). The spec object rides the request; a specPath is
-  // containment-checked at the interpreter (the D5 lexical + realpath law). The lane stays a
-  // direct port at application.mjs — the byte-stable command table is untouched.
-  ['waves.run', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves run path/to/spec.json',
-    inputSchema: objectSchema({
-      idempotencyKey: id,
-      spec: { type: 'object' },
-      specDsl: { type: 'string', minLength: 1 },
-      specPath: { type: 'string', minLength: 1 },
-      driver: { type: 'object' },
-    }, ['idempotencyKey']),
-  }],
-  // #170 (D4/DR-2): the read-only inspectable compile seam — a wavefile (specDsl or specPath text)
-  // lowers to the closed IR object waves.run accepts; admission-free (never starts a wave).
-  ['waves.compile', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'observe',
-    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves compile path/to/spec.dsl',
-    inputSchema: objectSchema({
-      idempotencyKey: id,
-      spec: { type: 'object' },
-      specDsl: { type: 'string', minLength: 1 },
-      specPath: { type: 'string', minLength: 1 },
-    }, []),
-  }],
   ['deployment.doctor', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'deployment_read',
     capabilities: ['observe'], outputView: 'index', helpTopic: 'connection',
@@ -1211,16 +1109,6 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton run resultpin run:1',
     inputSchema: objectSchema({ runId: id }, ['runId']),
-  }],
-  ['waves.harvest', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'waves_harvest',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves harvest run:1 --onto /srv/checkout',
-    inputSchema: objectSchema({
-      onto: { type: 'string', minLength: 1 },
-      resultSha: { type: 'string', pattern: '^[a-f0-9]{40}' + String.fromCharCode(36) },
-      runId: id,
-    }, []),
   }],
   // Facade-projection epic (#87+#48, contract v2.2): the workflow-surface canonical
   // operations (Decision 11); the six MCP-projected lanes surface embedded+mcp+cli. All verbs are C4-clean.

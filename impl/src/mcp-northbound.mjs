@@ -11,7 +11,6 @@ import {
   canonicalOperationForCommand,
   deriveSurfaceNames,
 } from './application-semantics.mjs';
-import { compileWavefile } from './workflow-dsl.mjs';
 import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 import { SERVICES_LIST_INPUT_SCHEMA } from './provider-services.mjs';
@@ -151,18 +150,10 @@ const CAPABILITY = Object.freeze({
   ...Object.fromEntries([deriveSurfaceNames('services.list').mcp, 'services.list']
     .map((tool) => [tool, canonicalOperationForCommand('services.list').capabilities])),
   baton_decision_answer: ['approve', 'observe'],
-  // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and
-  // settlement tools. These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS
-  // keys), so their capability classes are registered here like the reflex tools. waves.stop is
-  // the member stop lane (emergency_stop); the settlement lease requires the explicit settlement
-  // capability class (single-orchestrator posture — never a default).
-  baton_waves_start: ['control', 'observe'],
-  baton_waves_progress: ['observe'],
-  baton_waves_send: ['control', 'observe'],
-  baton_waves_stop: ['emergency_stop', 'observe'],
-  baton_waves_list: ['observe'],
-  baton_waves_run: ['control', 'observe'],
-  baton_waves_compile: ['observe'],
+  // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface doctor and settlement tools.
+  // These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS keys), so their
+  // capability classes are registered here like the reflex tools. The settlement lease requires the
+  // explicit settlement capability class (single-orchestrator posture — never a default).
   baton_deployment_doctor: ['observe'],
   // Issue #294: the deployment wake stream's consumers. A wake read is observation; a subscription
   // is a filter over the session's own ONE attachment, never a second authority (which is why the
@@ -175,7 +166,6 @@ const CAPABILITY = Object.freeze({
   baton_knowledge_settlement_lease: ['settlement'],
   // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
   baton_run_resultpin: ['observe'],
-  baton_waves_harvest: ['control', 'observe'],
   // Facade-projection epic (#87+#48): the six ordinary workflow-surface tools (Decision 10's
   // "Who may drive what" — send/elevate/seed require the control class, the reads only observe).
   baton_run_message_send: ['control', 'observe'],
@@ -200,20 +190,12 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  // MCP-W1/W2: waves.start and the settlement tools are stateful (control effects ride the mcp.call
-  // admission ledger exactly like the matrix control tools). waves.send/waves.stop deliberately are
-  // NOT — their wire schemas carry no idempotencyKey (send/stop are per-runId member lanes whose
-  // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
-  // through the observe-path gate like the read-only tools.
-  'baton_waves_start',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
-  'baton_waves_start',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
@@ -686,94 +668,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
-  // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Start is
-  // detached — {waveId, members:[{role, runId}]}, live handles never cross transport; quota
-  // debits PER MEMBER (codex #1); profile admission rides the deployment profile's routes/scopes.
-  {
-    name: 'baton_waves_start',
-    description: 'Start a detached wave: each member starts through the deployment profile admission (exact routes + scopes) and binds to one waveId; returns {waveId, members:[{role, runId}]} — live handles never cross the transport. Quota is debited per member.',
-    inputSchema: schema({
-      ...repo, ...idem,
-      members: {
-        type: 'array', minItems: 1,
-        items: schema({
-          role: runId,
-          objective: { type: 'string', minLength: 1 },
-          exact: applicationRouteSchema,
-          // #102 Decision 1: the closed group seat — a member names this OR `exact`, and the XOR is
-          // the shape guard's own law below (the schema() idiom carries no XOR).
-          group: schema({
-            seat: applicationRouteSchema,
-            size: { type: 'integer', minimum: 2 },
-            quorum: { type: 'integer', minimum: 1 },
-            strict: { type: 'boolean' },
-            editing: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
-          }, ['seat', 'size']),
-          scope: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1 } },
-        }, ['role', 'objective']),
-      },
-    }, ['repoId', 'idempotencyKey', 'members']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_waves_progress',
-    description: 'Read one wave\'s progress projection: members paginated ≤16 per page with an explicit {cursor, nextCursor}; every member carries bounded {role, phase, progressClass, attention, knowledge}. Never an oversized frame.',
-    inputSchema: schema({
-      ...repo, waveId: { type: 'string', pattern: '^wave:[a-f0-9]{32}$' },
-      cursor: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'waveId']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_waves_send',
-    description: 'Resume-steer ONE wave member by the runId attach returned (the resume path): a message through the member\'s run. Never wave-wide.',
-    inputSchema: schema({
-      ...repo, runId, message: { type: 'string', minLength: 1 },
-    }, ['repoId', 'runId', 'message']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_waves_stop',
-    description: 'Stop ONE wave member by runId (the resume path): durably close that member run. Never wave-wide; the member lane is run.stop.',
-    inputSchema: schema({
-      ...repo, runId, reason: { type: 'string', minLength: 1 },
-    }, ['repoId', 'runId', 'reason']),
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    // #132 D2.4 (wave-observability-2026-08-06/contract.md §D2.4): the registry read. baton_waves_list
-    // answers the OPEN rows of the wave registry projection (this deployment's in-flight waves),
-    // paged ≤16 with {cursor, nextCursor}. A member run that WAS registered and then disappeared
-    // refuses wave_not_found (D5.2) — never a silent success shape.
-    name: 'baton_waves_list',
-    description: 'Read the in-flight wave registry: open rows for THIS deployment, paged ≤16 per page with {cursor, nextCursor}. Every member reads liveness \'local\'; a member run that no longer resolves refuses wave_not_found.',
-    inputSchema: schema({
-      ...repo, cursor: { type: 'integer', minimum: 0 },
-    }, ['repoId']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    // Issue #114 (D2, OQ2 folded — the family plural): the workflow-as-data interpreter lane. ONE
-    // closed spec drives a whole wave; malformed specs refuse with the field/role-named workflow_*
-    // codes the stateFailureCode allowlist preserves. specDsl (a wavefile text) compiles through
-    // the #170 seam before the interpreter.
-    name: 'baton_waves_run',
-    description: 'Run a workflow-as-data spec: one closed JSON document (members + steering + harvest) drives a whole wave through the shared interpreter. No per-wave driver script.',
-    inputSchema: schema({
-      ...repo, spec: { type: 'object' }, specDsl: { type: 'string', minLength: 1 },
-    }, ['repoId']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    // #170 (D4/DR-2): the read-only compile seam — a wavefile (specDsl text) lowers to the closed
-    // IR object baton_waves_run accepts, admission-free (it never starts a wave).
-    name: 'baton_waves_compile',
-    description: 'Compile a workflow-spec wavefile (specDsl text) to the closed workflow spec object without starting a wave.',
-    inputSchema: schema({
-      ...repo, specDsl: { type: 'string', minLength: 1 },
-    }, ['repoId', 'specDsl']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
   // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor — quota-free, per-call FRESH
   // readiness; credential posture as metadata only (source kind, expiry class), never secret
   // material. It is the route-picking prerequisite, so charging quota would blind callers exactly
@@ -900,23 +794,12 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'runId', 'type', 'grounding', 'body']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's two ordinary tools.
+  // Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's ordinary tool.
   {
     name: 'baton_run_resultpin',
     description: "Read one run's preserved result projection: the accepted pin sha, the RECORDED capture base, and the bounded changed-path/file delta (recorded-base diff, never HEAD, never pin^). Read-only.",
     inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_waves_harvest',
-    description: "Apply one preserved result's RECORDED-base delta to the deployment's main checkout with a typed three-way probe: applied-clean receipts, skipped (already_integrated | empty_delta), and typed refusals (harvest_conflict names the exact paths; onto is never touched by a refused harvest). The resultSha XOR runId source law lives in the tool's shape guard.",
-    inputSchema: schema({
-      ...repo,
-      onto: { type: 'string', minLength: 1 },
-      resultSha: { type: 'string', pattern: '^[a-f0-9]{40}$' },
-      runId,
-    }, ['repoId']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ].map((tool) => Object.freeze({
   ...tool,
@@ -1156,18 +1039,13 @@ function runProjection(value) {
   return record(value) && nonempty(value.runId) && typeof value.phase === 'string';
 }
 
-/** The row(s) a landed run/waves answer names, in the #302 `changed` spelling — `{collection, id}`
+/** The row(s) a landed run answer names, in the #302 `changed` spelling — `{collection, id}`
  * under the collection names the views themselves use. The identity the answer carries IS the row:
- * a Run for the run family (and for a wave member lane), the wave plus its member runs for
- * `waves.start`. An answer naming no identity changed no row: the receipt says so with []. */
+ * a Run for the run family and for a member lane. An answer naming no identity changed no row:
+ * the receipt says so with []. */
 function landedChangedRows(args, result) {
   const rows = [];
   const push = (collection, id) => { if (nonempty(id)) rows.push({ collection, id }); };
-  if (nonempty(result?.waveId)) {
-    push('waves', result.waveId);
-    for (const member of Array.isArray(result.members) ? result.members : []) push('runs', member?.runId ?? null);
-    return rows;
-  }
   const runId = nonempty(result?.runId) ? result.runId
     : nonempty(args?.runId) ? args.runId
       : nonempty(args?.intent?.runId) ? args.intent.runId : null;
@@ -1177,8 +1055,8 @@ function landedChangedRows(args, result) {
 
 /** The operation's own outcome: the projection's own action row (a settlement, an action's result)
  * or its stop receipt, and — for an answer that is not a projection at all — the answer verbatim
- * (the message lane's row, the knowledge seed's node, the wave start's wave). The whole view is
- * never an outcome; `view: true` is how a caller asks for that. */
+ * (the message lane's row, the knowledge seed's node). The whole view is never an outcome;
+ * `view: true` is how a caller asks for that. */
 function landedOutcome(result) {
   if (!record(result)) return result === undefined ? null : result;
   if (record(result.lastAction)) return result.lastAction;
@@ -1186,13 +1064,11 @@ function landedOutcome(result) {
   return runProjection(result) ? null : result;
 }
 
-/** The step that follows one run/waves mutation — the twin of swarmReceiptNext
+/** The step that follows one run mutation — the twin of swarmReceiptNext
  * (swarm-contract.mjs): the read that continues from the row the receipt changed, with the
  * identity the caller already holds. Null when the answer named no row to read. */
 function landedReceiptNext(args, result) {
   const rows = landedChangedRows(args, result);
-  const wave = rows.find((row) => row.collection === 'waves') ?? null;
-  if (wave !== null) return { command: 'waves.progress', args: { waveId: wave.id } };
   const run = rows.find((row) => row.collection === 'runs') ?? null;
   return run === null ? null : { command: 'run.view', args: { runId: run.id } };
 }
@@ -1349,7 +1225,6 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 // keys, so the generic application branch never maps their failures) — every one of them must
 // reach the typed stateFailureCode lane, never the generic 'command_failed'.
 const ORDINARY_EXPLICIT_TOOLS = new Set([
-  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle',
   'baton_knowledge_settlement_lease',
@@ -1357,22 +1232,19 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
   'baton_wakes_subscribe', 'baton_wakes_unsubscribe', 'baton_wakes_since',
-  // Issue #99/#179: the accessor's two explicit-dispatch tools.
-  'baton_run_resultpin', 'baton_waves_harvest',
+  // Issue #99/#179: the accessor's explicit-dispatch tool.
+  'baton_run_resultpin',
 ]);
 // The application command each explicit-dispatch tool reaches (the same knowledge the handle()
 // branches encode); deployment.doctor is a direct method, not a bridged string command.
 const EXPLICIT_TOOL_COMMANDS = Object.freeze({
-  baton_waves_start: 'waves.start', baton_waves_progress: 'waves.progress', baton_waves_send: 'waves.send',
-  baton_waves_stop: 'waves.stop', baton_waves_list: 'waves.list', baton_waves_run: 'waves.run', baton_waves_compile: 'waves.compile',
   baton_scratchpad_elevate: 'scratchpad.elevate', baton_scratchpad_settle: 'scratchpad.settle',
   baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
   baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
   baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
   baton_run_knowledge_seed: 'run.knowledge.seed',
-  // Issue #99/#179: the accessor's dispatch identities.
-  baton_run_resultpin: 'run.resultpin', baton_waves_harvest: 'waves.harvest',
+  baton_run_resultpin: 'run.resultpin',
 });
 /** The application command an ordinary tool dispatches, or null for tools that reach a direct
  * method (doctor) or the kernel. One lookup serves the host's advertisement filter and the gate. */
@@ -1706,62 +1578,9 @@ function validateArguments(name, args, maxWaitMs = null) {
     return 'invalid_knowledge_horizon';
   }
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): hand-rolled shape guards for the ordinary-surface
-  // wave ergonomics, doctor, and settlement tools (the reflex discipline — Part I: no schema
-  // evaluator, hand-rolled validation stays the authority). These tools are explicit `_dispatch`
-  // branches, so their args never pass through validateApplicationCommandArgs.
-  if (name === 'baton_waves_start') {
-    if (!Array.isArray(args.members) || args.members.length === 0) return 'invalid_wave_start';
-    const roles = new Set();
-    for (let index = 0; index < args.members.length; index += 1) {
-      const member = args.members[index];
-      // Probed record-safely: a non-object member earns the typed refusal below, never a TypeError.
-      const hasExact = record(member) && Object.hasOwn(member, 'exact');
-      const hasGroup = record(member) && Object.hasOwn(member, 'group');
-      if (!record(member) || !nonempty(member.role) || !nonempty(member.objective)
-        // #102 Decision 1: the member names exactly ONE route form — its own exact route, or a
-        // closed group whose seat every cell worker runs. The deeper group law (quorum, strict,
-        // editing) stays the application's declaration law (wave.mjs normalizeCellDeclaration),
-        // never a second copy here.
-        || hasExact === hasGroup
-        || (hasExact && (!record(member.exact) || !nonempty(member.exact.harness)
-          || !nonempty(member.exact.model) || !nonempty(member.exact.effort)))
-        || (hasGroup && (!record(member.group) || !record(member.group.seat)
-          || !nonempty(member.group.seat.harness) || !nonempty(member.group.seat.model)
-          || !nonempty(member.group.seat.effort)
-          || !Number.isSafeInteger(member.group.size) || member.group.size < 2))
-        || (Object.hasOwn(member, 'scope')
-          && (!Array.isArray(member.scope) || member.scope.length === 0
-            || member.scope.some((item) => !nonempty(item))))) {
-        // #160 M3 (error-actionability-2026-08-13/contract-fold.md §2 D4 M3): the refusal names the
-        // offending member by POSITION so the caller can fix exactly the bad wave member.
-        return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: member ${index} is invalid` };
-      }
-      if (roles.has(member.role)) {
-        return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: duplicate member role ${member.role}` };
-      }
-      roles.add(member.role);
-    }
-  }
-  if (name === 'baton_waves_progress' && (typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
-    || (Object.hasOwn(args, 'cursor') && !Number.isSafeInteger(args.cursor)))) {
-    return 'invalid_wave_progress';
-  }
-  if (name === 'baton_waves_send' && (!nonempty(args.runId) || !nonempty(args.message))) {
-    return 'invalid_wave_send';
-  }
-  if (name === 'baton_waves_run'
-    && !((record(args.spec) && !Array.isArray(args.spec)) || nonempty(args.specDsl))) {
-    return 'invalid_workflow_run';
-  }
-  if (name === 'baton_waves_compile' && !nonempty(args.specDsl)) {
-    return 'invalid_workflow_compile';
-  }
-  if (name === 'baton_waves_stop' && !nonempty(args.runId)) {
-    return 'invalid_wave_stop';
-  }
-  if (name === 'baton_waves_list' && (Object.hasOwn(args, 'cursor') && !Number.isSafeInteger(args.cursor))) {
-    return 'invalid_wave_list';
-  }
+  // doctor and settlement tools (the reflex discipline — Part I: no schema evaluator, hand-rolled
+  // validation stays the authority). These tools are explicit `_dispatch` branches, so their args
+  // never pass through validateApplicationCommandArgs.
   if (name === 'baton_scratchpad_elevate' && (!nonempty(args.runId) || !nonempty(args.taskId)
     || !nonempty(args.workerId) || !Number.isSafeInteger(args.expectedScratchpadFence)
     || args.expectedScratchpadFence < 0 || !Array.isArray(args.entryIds))) {
@@ -1844,16 +1663,6 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_run_resultpin'
     && (typeof args.runId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId))) {
     return 'invalid_run_resultpin';
-  }
-  if (name === 'baton_waves_harvest') {
-    const hasSha = Object.hasOwn(args, 'resultSha');
-    const hasRunId = Object.hasOwn(args, 'runId');
-    if (hasSha === hasRunId
-      || (hasSha && typeof args.resultSha === 'string' && !/^[a-f0-9]{40}$/.test(args.resultSha))
-      || (hasRunId && (typeof args.runId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId)))
-      || (Object.hasOwn(args, 'onto') && (typeof args.onto !== 'string' || args.onto.length === 0))) {
-      return 'invalid_waves_harvest';
-    }
   }
   return null;
 }
@@ -2305,12 +2114,10 @@ export class McpFleetServer {
     }
     // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor is quota-free — it is the
     // route-picking prerequisite, and charging quota would blind callers exactly when they need
-    // it (glm #6). MCP-W1 (codex #1): waves.start debits quota PER MEMBER, never once per call —
-    // one debit must not fan out to 64 starts.
+    // it (glm #6).
     let quota = { ok: true };
     if (params.name !== 'baton_deployment_doctor') {
-      const debitCount = params.name === 'baton_waves_start' && Array.isArray(args.members)
-        ? args.members.length : 1;
+      const debitCount = 1;
       try {
         for (let index = 0; index < debitCount; index += 1) {
           const debit = await this.takeToolQuota({
@@ -2568,73 +2375,6 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
-    // MCP-W1 (mcp-packaging-decisions v1.0): the wave ergonomics direct ports. All four dispatch
-    // to application.command('waves.*', ...) — the per-member quota already ran in `handle`, the
-    // profile/route admission lives in the application's ordinary run.start path.
-    else if (name === 'baton_waves_start') {
-      value = await this.application.command('waves.start', {
-        idempotencyKey: args.idempotencyKey, members: clone(args.members),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    else if (name === 'baton_waves_progress') {
-      value = await this.application.command('waves.progress', {
-        waveId: args.waveId, ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    else if (name === 'baton_waves_send') {
-      value = await this.application.command('waves.send', {
-        runId: args.runId, message: args.message,
-        ...(Object.hasOwn(args, 'delivery') ? { delivery: args.delivery } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    else if (name === 'baton_waves_stop') {
-      value = await this.application.command('waves.stop', {
-        runId: args.runId, ...(Object.hasOwn(args, 'reason') ? { reason: args.reason } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    // #132 D2.4: the registry read — cursor only, never repoId (the application scopes the registry
-    // to THIS deployment by construction).
-    else if (name === 'baton_waves_list') {
-      value = await this.application.command('waves.list', {
-        ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    // Issue #114 (D2): the workflow-as-data lane — the spec object drives a whole wave via waves.run.
-    // #170 (D4): a specDsl wavefile text compiles through the seam before the interpreter.
-    else if (name === 'baton_waves_run') {
-      const spec = args.specDsl !== undefined ? compileWavefile(args.specDsl) : clone(args.spec);
-      value = await this.application.command('waves.run', {
-        spec,
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    // #170 (D4/DR-2): the read-only compile seam — a wavefile lowers to the closed spec object.
-    else if (name === 'baton_waves_compile') {
-      value = { spec: compileWavefile(args.specDsl) };
-    }
     // MCP-W3: deployment.doctor — quota-free (handle), per-call FRESH doctorReadiness, secret
     // material stripped at the surface (canary-pinned by MP10).
     else if (name === 'baton_deployment_doctor') {
@@ -2645,17 +2385,6 @@ export class McpFleetServer {
     else if (name === 'baton_run_resultpin') {
       value = await this.application.command('run.resultpin', {
         runId: args.runId,
-      }, {
-        actor: actor ?? `mcp:` + principal.userId + `:` + principal.sessionId,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    else if (name === 'baton_waves_harvest') {
-      value = await this.application.command('waves.harvest', {
-        ...(Object.hasOwn(args, 'resultSha') ? { resultSha: args.resultSha } : {}),
-        ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : {}),
-        ...(Object.hasOwn(args, 'onto') ? { onto: args.onto } : {}),
       }, {
         actor: actor ?? `mcp:` + principal.userId + `:` + principal.sessionId,
         principalId: principal.userId,
