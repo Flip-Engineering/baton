@@ -66,6 +66,46 @@ def alive(pid):
     return True
 
 
+def owned_processes(directory):
+    """Read live processes whose arguments name this probe's unique directory."""
+    result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                            capture_output=True, text=True, check=True)
+    rows = []
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(None, 3)
+        if len(fields) == 4 and str(directory) in fields[3] and not fields[2].startswith('Z'):
+            rows.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                         'status': fields[2], 'command': fields[3]})
+    return rows
+
+
+def kill_owned(directory):
+    """Stop owned processes before killing them so none can launch recovery."""
+    captured = {}
+    deadline = time.monotonic() + 10
+    try:
+        while True:
+            rows = owned_processes(directory)
+            captured.update((row['pid'], row) for row in rows)
+            if all(row['status'].startswith('T') for row in rows):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Could not stop probe processes: ' + repr(rows))
+            for row in rows:
+                try:
+                    os.kill(row['pid'], signal.SIGSTOP)
+                except ProcessLookupError:
+                    pass
+    finally:
+        for pid in captured:
+            kill(pid)
+    while owned_processes(directory):
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Probe processes survived SIGKILL')
+        time.sleep(.01)
+    return list(captured.values())
+
+
 def main():
     fixture = receive.Receive()
     evidence = {'started': [], 'sessions': {}}
@@ -106,25 +146,19 @@ def main():
             })
 
         evidence['beforeKill'] = {
+            'processes': owned_processes(directory),
             'status': fixture.coord('status'),
             'worktrees': git('worktree', 'list', '--porcelain', cwd=repo).splitlines(),
             'branches': {n: git('rev-parse', 'bend2/' + n, cwd=repo) for n in NAMES},
             'inbox': {n: fixture.coord('inbox', n) for n in NAMES},
         }
 
-        # Kill the supervisors and their harness children while the host stays up.
-        for entry in evidence['started']:
-            kill(entry['native'])
-            kill(entry['supervisor'])
+        # Include retained process owners and their replacement observers.
+        evidence['killedProcesses'] = kill_owned(directory)
         for child in list(fixture.children):
-            if child.poll() is None:
-                child.kill()
-            try:
-                child.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-        time.sleep(0.5)
+            child.communicate(timeout=5)
         evidence['afterKill'] = {
+            'ownedProcesses': owned_processes(directory),
             'supervisorsAlive': [e['supervisor'] for e in evidence['started'] if alive(e['supervisor'])],
             'nativesAlive': [e['native'] for e in evidence['started'] if alive(e['native'])],
             'worktrees': git('worktree', 'list', '--porcelain', cwd=repo).splitlines(),
@@ -179,18 +213,18 @@ def main():
         for name in NAMES:
             note('resume ' + name)
             fixture.spawn(*fixture.receive_args(name))
-            stream, started = accept_any(10)
-            if started is None or started['session'] != name:
-                failures.append('%s: the resumed turn did not start' % name)
-                continue
+            resumed = accept_any(10)
+            if resumed is None:
+                raise RuntimeError('%s: the resumed turn did not start' % name)
+            stream, started = resumed
+            if started['session'] != name:
+                raise RuntimeError('%s: unexpected resumed session %s' % (name, started['session']))
             starts[name].append(started)
             controls[name] = stream
             entry = evidence['sessions'][name]
             entry['restartNative'] = started['pid']
             entry['restartResume'] = started['resume']
             entry['restartPromptHasPending'] = '[id: pending-%s]' % name in started['prompt']
-            stored = [row for row in evidence['afterRestart']['workers']
-                      if row.get('id') == name]
             try:
                 entry['secondInvocation'] = fixture.coord(*fixture.receive_args(name))
             except subprocess.TimeoutExpired:
@@ -204,7 +238,9 @@ def main():
             if name in controls:
                 fixture.action(controls[name])
         deadline = time.monotonic() + 30
-        while any(child.poll() is None for child in fixture.children) and time.monotonic() < deadline:
+        while owned_processes(directory):
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Probe processes did not finish: ' + repr(owned_processes(directory)))
             got = accept_any(1)
             if got is None:
                 continue
@@ -212,10 +248,8 @@ def main():
             starts.setdefault(started['session'], []).append(started)
             fixture.action(stream)
         for child in fixture.children:
-            try:
-                child.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
+            child.communicate(timeout=5)
+        evidence['afterCompletion'] = {'ownedProcesses': owned_processes(directory)}
 
         for name in NAMES:
             entry = evidence['sessions'][name]
@@ -245,7 +279,11 @@ def main():
         print(json.dumps(evidence, indent=2, sort_keys=True))
         return 1 if failures else 0
     finally:
-        fixture.doCleanups()
+        try:
+            if hasattr(fixture, 'directory'):
+                kill_owned(fixture.directory)
+        finally:
+            fixture.doCleanups()
 
 
 if __name__ == '__main__':
