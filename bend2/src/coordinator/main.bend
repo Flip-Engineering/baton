@@ -1,4 +1,8 @@
+# The entry imports the operative laws module. Every compile of this file,
+# including the native build of the executable, therefore verifies every
+# operative law and its proof; an unproven or false law fails that compile.
 import Base
+import ./laws.bend as Laws
 import ./store.bend as Store
 import ./turn.bend as Turn
 import ./receive.bend as Receive

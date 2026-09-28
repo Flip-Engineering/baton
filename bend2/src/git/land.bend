@@ -1002,10 +1002,15 @@ def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome
 # is the push's own exit and output: a non-zero code is the remote's refusal
 # (a non-fast-forward is the common one) and the caller names it, never reads
 # it as a landing.
+# The push argv: the declared remote is the destination and the branch is the
+# refspec. Nothing reads a default remote.
+def push_argv(branch: String, remote: String) -> List<String>:
+  Con{"push", Con{remote, Con{branch, Nil{}}}}
+
 def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
   +r2 = repo
   +b2 = branch
   +rm = remote
   do IO<T.GitOut>:
-    g : T.GitOut <- Git.runGit(r2, ["push", rm, b2])
+    g : T.GitOut <- Git.runGit(r2, push_argv(b2, rm))
     IO.pure(T.GitOut, g)
