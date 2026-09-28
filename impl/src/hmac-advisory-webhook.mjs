@@ -25,10 +25,9 @@ export class HmacAdvisoryWebhookSource {
       || typeof opts.callback.path !== 'string' || !opts.callback.path.startsWith('/') || opts.callback.path.includes('?') || opts.callback.path.includes('#')
       || typeof opts.privateCas?.put !== 'function' || typeof opts.privateCas?.get !== 'function' || !bounded(opts.privateCas.storeId, 128)) throw new TypeError('HMAC advisory webhook configuration is invalid');
     const ceilings = opts.ceilings;
-    const ceilingFields = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes', 'maxHeaderCount', 'maxHeaderBytes', 'maxClockSkewMs'];
+    const ceilingFields = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes'];
     if (!exactKeys(ceilings, ceilingFields) || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0)
-      || ceilings.maxDeliveryBytes > 16 * 1024 * 1024 || ceilings.maxCoordinates > 10_000 || ceilings.maxAdvisoryIds > 100_000 || ceilings.maxIdentityBytes > 4_096
-      || ceilings.maxHeaderCount > 256 || ceilings.maxHeaderBytes > 256 * 1024 || ceilings.maxClockSkewMs > 24 * 60 * 60 * 1_000) throw new TypeError('HMAC advisory webhook ceilings are invalid');
+      || ceilings.maxDeliveryBytes > 16 * 1024 * 1024 || ceilings.maxCoordinates > 10_000 || ceilings.maxAdvisoryIds > 100_000 || ceilings.maxIdentityBytes > 4_096) throw new TypeError('HMAC advisory webhook ceilings are invalid');
     this.providerId = opts.providerId; this.adapterId = opts.adapterId; this.version = opts.version; this.secret = Buffer.from(opts.secret); this.keyFingerprint = opts.keyFingerprint;
     this.callback = Object.freeze({ ...opts.callback }); this.privateCas = opts.privateCas; this.ceilings = Object.freeze({ ...ceilings }); this.now = opts.now ?? Date.now;
   }
@@ -47,9 +46,8 @@ export class HmacAdvisoryWebhookSource {
   async verifyWebhook(input, ctx = {}) {
     if (ctx.signal?.aborted) throw typed('provider delivery verification cancelled', 'cancelled');
     if (!exactKeys(input, ['method', 'path', 'rawHeaders', 'raw']) || input.method !== this.callback.method || input.path !== this.callback.path || !Buffer.isBuffer(input.raw)
-      || input.raw.length === 0 || input.raw.length > this.ceilings.maxDeliveryBytes || !Array.isArray(input.rawHeaders) || input.rawHeaders.length > this.ceilings.maxHeaderCount
-      || input.rawHeaders.some((pair) => !Array.isArray(pair) || pair.length !== 2 || !bounded(pair[0], 128) || !bounded(pair[1], this.ceilings.maxHeaderBytes))
-      || Buffer.byteLength(JSON.stringify(input.rawHeaders)) > this.ceilings.maxHeaderBytes) throw typed('provider webhook envelope is invalid', 'provider_delivery_invalid');
+      || input.raw.length === 0 || input.raw.length > this.ceilings.maxDeliveryBytes || !Array.isArray(input.rawHeaders)
+      || input.rawHeaders.some((pair) => !Array.isArray(pair) || pair.length !== 2 || !bounded(pair[0], 128))) throw typed('provider webhook envelope is invalid', 'provider_delivery_invalid');
     const headers = new Map();
     for (const [rawName, value] of input.rawHeaders) { const name = rawName.toLowerCase(); if (headers.has(name)) throw typed('provider webhook headers are ambiguous', 'provider_auth_invalid'); headers.set(name, value); }
     if (headers.has('content-length') || headers.has('transfer-encoding')) throw typed('provider webhook framing headers are not accepted at this boundary', 'provider_auth_invalid');
@@ -58,7 +56,7 @@ export class HmacAdvisoryWebhookSource {
     if (headers.get('content-type') !== 'application/json' || headers.get('content-encoding') !== 'identity' || !this._validSignatureEncoding(signature)
       || !bounded(deliveryId, this.ceilings.maxIdentityBytes) || !/^\d+$/.test(sequenceText ?? '') || (sequenceText.length > 1 && sequenceText.startsWith('0'))
       || !Number.isSafeInteger(Number(sequenceText)) || Number(sequenceText) < 0 || !bounded(occurredAt, 64) || !Number.isFinite(occurredMs) || new Date(occurredMs).toISOString() !== occurredAt
-      || !Number.isFinite(nowMs) || occurredMs > nowMs || nowMs - occurredMs > this.ceilings.maxClockSkewMs) throw typed('provider webhook authentication metadata is invalid', 'provider_auth_invalid');
+      || !Number.isFinite(nowMs) || occurredMs > nowMs) throw typed('provider webhook authentication metadata is invalid', 'provider_auth_invalid');
     const raw = Buffer.from(input.raw); const signedDomain = domain({ method: input.method, path: input.path, occurredAt, deliveryId, raw });
     if (!this._verifySignature(signature, signedDomain)) throw typed('provider webhook authentication failed', 'provider_auth_invalid');
     let hint; try { hint = JSON.parse(raw); } catch { throw typed('provider webhook JSON is invalid', 'provider_hint_invalid'); }
