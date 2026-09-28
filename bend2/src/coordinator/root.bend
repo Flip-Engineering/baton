@@ -43,3 +43,15 @@ def after(db: String, command: C.Command, saved: String) -> IO(Result<&1,&1,U32 
     case C.Message{id,sender,recipient,kind,body}: deliver(db,id,"1",saved)
     case C.Observe{id,worker,event}: deliver(db,id,C.terminal(event),saved)
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
+def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{output}: Done{Unit{}}
+
+# The completed native owner has released its session lock before this read.
+def wake_pending(+db: String, session: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +id : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),'');"))
+    delivered : Result<&1,&1,U32 & String,String> <- deliver(db,Tx.trim_nl(id),"1","")
+    IO.pure(Result<&1,&1,U32 & String,Unit>,wake_result(delivered))
