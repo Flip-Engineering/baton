@@ -415,12 +415,8 @@ test('PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HE
   eq(['run', 'view', 'RUN123'], ['run', 'show', 'RUN123'], 'stage[alias-view] run view must keep resolving like run show');
   eq(['run', 'list'], ['runs', 'list'], 'stage[alias-list] run list must keep resolving to runs list');
   eq(['run', 'member', 'view', 'RUN123'], ['run', 'workstreams', 'RUN123'], 'stage[alias-member-view] run member view must keep resolving like run workstreams');
-  eq(['run', 'member', 'send', 'RUN123', 'reviewer', 'hello'], ['run', 'notify', 'RUN123', 'reviewer', 'hello'], 'stage[alias-member-send] run member send must keep resolving like run notify');
-  eq(['run', 'member', 'stop', 'RUN123', 'reviewer'], ['run', 'stop-member', 'RUN123', 'reviewer'], 'stage[alias-member-stop] run member stop must keep resolving like run stop-member');
   eq(['run', 'member', 'interrupt', 'reviewer'], ['run', 'interrupt', 'reviewer'], 'stage[alias-member-interrupt] run member interrupt must keep resolving like run interrupt');
   assert.equal(parseBatonCli(['run', 'do', 'RUN123', 'ACT1'])?.name, 'run.act', 'stage[alias-do] run do must keep resolving to run.act');
-  assert.equal(parseBatonCli(['run', 'resume', 'RUN123', '--reason', 'go'])?.name, 'run.resume_work', 'stage[alias-resume] run resume must keep resolving to run.resume_work');
-  assert.equal(parseBatonCli(['run', 'retry', 'RUN123', '--reason', 'go'])?.name, 'run.retry_verification', 'stage[alias-retry] run retry must keep resolving to run.retry_verification');
 
   // (b) every recognized first-token (except the bare member prefix — PT-5's red row) still
   // dispatches at bare position to its own handling: never the objective-first run.start.

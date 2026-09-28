@@ -250,42 +250,6 @@ test('contextual CLI help preserves semantic application.help while the package 
   assert.equal(parseBatonCli(['run', 'stop', '--help']).args.topic, 'run.stop');
 });
 
-test('Workflow CLI verbs resolve the current advertised action instead of exposing action IDs', async () => {
-  const parsed = parseBatonCli([
-    'run', 'revise', 'run-workflow', '--reason', 'Apply the accepted review.',
-    '--idempotency-key', 'revision-a',
-  ]);
-  assert.deepEqual(parsed, {
-    kind: 'semantic-action', actionKind: 'revise_candidate', runId: 'run-workflow',
-    inputs: { reason: 'Apply the accepted review.' }, idempotencyKey: 'revision-a',
-  });
-  const calls = [];
-  const client = {
-    async command(name, args, key) {
-      calls.push({ name, args, key });
-      if (name === 'run.inspect') return {
-        outline: { actions: [{ kind: 'revise_candidate', actionId: 'action-server-bound' }] },
-      };
-      return { revised: true };
-    },
-  };
-  assert.deepEqual(await runBatonCli(parsed, client), { revised: true });
-  assert.deepEqual(calls, [
-    {
-      name: 'run.inspect', args: { runId: 'run-workflow', depth: 'outline' },
-      key: 'revision-a:inspect',
-    },
-    {
-      name: 'run.act',
-      args: {
-        runId: 'run-workflow', actionId: 'action-server-bound',
-        inputs: { reason: 'Apply the accepted review.' },
-      },
-      key: 'revision-a:act',
-    },
-  ]);
-});
-
 test('local CLI help topics, default operations, actions, and selectors cannot drift from the semantic registry', () => {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const commandIds = new Set(registry.cli.commands.map((command) => command.id));
@@ -326,8 +290,6 @@ test('local CLI help topics, default operations, actions, and selectors cannot d
   assert.match(registry.cli.selectorRules.routingDetail.description, /fixed route is never a manual-selector tie-breaker/u);
   assert.match(batonCliHelp('run'), new RegExp(registry.cli.selectorRules.manualRoute.description, 'u'));
   assert.match(batonCliHelp('routing'), new RegExp(registry.cli.selectorRules.routingDetail.description, 'u'));
-  assert.ok(registry.cli.commands.some((command) => command.action === 'export_result'
-    && command.usage === 'baton run export RUN_ID DIR'));
 });
 
 test('bound Pythonic facade cascades start, inspect, semantic action, continuation, and stop', async () => {

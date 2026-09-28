@@ -17,7 +17,7 @@ function fakeDeployment(log) {
         schemaVersion: 1,
         repoId: 'repo',
         resident: { state: 'ready', incarnation: 'resident:1' },
-        commands: ['run.start', 'run.inspect', 'run.recover'],
+        commands: ['run.start', 'run.inspect'],
       };
     },
   };

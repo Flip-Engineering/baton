@@ -456,7 +456,7 @@ test('A7-3 (parse): `baton waves stop run:foo --reason done` parses to { command
 
 test('A7-4 (admit): CLI_WEB_COMMANDS contains waves.send AND waves.stop', () => {
   assert.ok(CLI_WEB_COMMANDS.has('waves.send'),
-    'stage: cli-wave-whitelist-missing — at HEAD CLI_WEB_COMMANDS (application-cli.mjs:16-32) carries waves.attach/start/list/progress/run but NOT waves.send; D1.2(2) admits it, else BatonWebClient.command refuses at application-cli.mjs:2013');
+    'stage: cli-wave-whitelist-missing — CLI_WEB_COMMANDS carries waves.start/list/progress/run but NOT waves.send; D1.2(2) admits it, else BatonWebClient.command refuses');
   assert.ok(CLI_WEB_COMMANDS.has('waves.stop'),
     'stage: cli-wave-whitelist-missing — waves.stop is likewise absent at HEAD; D1.2(2) admits it');
 });

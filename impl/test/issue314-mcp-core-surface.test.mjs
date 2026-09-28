@@ -284,8 +284,6 @@ const MIGRATION = Object.freeze({
   baton_run_episode: { tool: 'baton_run', verb: 'view' },
   baton_run_inspect: { tool: 'baton_run', verb: 'view' },
   baton_run_knowledge_seed: { tool: 'baton_knowledge', verb: 'seed' },
-  baton_run_member_send: { surface: 'run.member.send' },
-  baton_run_member_stop: { surface: 'run.member.stop' },
   baton_run_member_view: { surface: 'run.member.view' },
   baton_run_message_receipt: { surface: 'run.message.receipt' },
   baton_run_message_send: { tool: 'baton_run', verb: 'send' },
@@ -314,7 +312,6 @@ const MIGRATION = Object.freeze({
   baton_wakes_since: { tool: 'baton_wakes', verb: 'since' },
   baton_wakes_subscribe: { tool: 'baton_wakes', verb: 'subscribe' },
   baton_wakes_unsubscribe: { tool: 'baton_wakes', verb: 'unsubscribe' },
-  baton_waves_attach: { surface: 'waves.attach' },
   baton_waves_compile: { surface: 'waves.compile' },
   baton_waves_list: { tool: 'baton_waves', verb: 'list' },
   baton_waves_progress: { tool: 'baton_waves', verb: 'progress' },
@@ -322,8 +319,6 @@ const MIGRATION = Object.freeze({
   baton_waves_send: { tool: 'baton_waves', verb: 'send' },
   baton_waves_start: { tool: 'baton_waves', verb: 'start' },
   baton_waves_stop: { tool: 'baton_waves', verb: 'stop' },
-  baton_workstream_notify: { surface: 'run.member.send' },
-  baton_workstream_stop: { surface: 'run.member.stop' },
   baton_surface_catalog: { tool: 'baton_surface', verb: 'catalog' },
   baton_surface_describe: { tool: 'baton_surface', verb: 'describe' },
   baton_surface_invoke: { tool: 'baton_surface', verb: 'invoke' },
@@ -579,12 +574,12 @@ test('314-e2 RED: an in-flight call at the incarnation boundary is retried once 
   };
   const facade = new BatonWebApplicationFacade(clientV1, card, SESSION, { rediscover });
   t.after(() => facade.closeWakes());
-  const outcome = await facade.command('run.review', { runId: 'run:1' }, PRINCIPAL, CONTEXT)
+  const outcome = await facade.command('run.inspect', { runId: 'run:1' }, PRINCIPAL, CONTEXT)
     .then((value) => ({ value }), (error) => ({ error }));
   assert.equal(outcome.error, undefined,
     'LAW (docs/49 §6): an in-flight call refused resident_incarnation_mismatch is retried ONCE '
     + 'against the successor after rebind — today it kills the call (and the session follows)');
-  assert.deepEqual(outcome.value, { schemaVersion: 1, command: 'run.review', via: 'successor' });
+  assert.deepEqual(outcome.value, { schemaVersion: 1, command: 'run.inspect', via: 'successor' });
   assert.equal(rediscoverCalls.length, 1, 'exactly one rebind per handoff');
   assert.deepEqual(successorKeys, predecessorKeys.slice(0, 1),
     'the retry carries the SAME derived idempotency key — the shared ledger replays the first attempt');

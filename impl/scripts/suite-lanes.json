@@ -13,7 +13,6 @@
     "test/phase45-session-auto-rejoin.test.mjs",
     "test/phase51-process-lifecycle.test.mjs",
     "test/phase56-drain-and-close.test.mjs",
-    "test/phase65-run-semantic-review-integration.test.mjs",
     "test/phase76-recovery-attempt-integration.test.mjs",
     "test/phase8-correctness.test.mjs",
     "test/phase91-semantic-interrupt-preservation.test.mjs",

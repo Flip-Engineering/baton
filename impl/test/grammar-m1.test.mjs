@@ -5,15 +5,12 @@ import {
   APPLICATION_COMMAND_DEFINITIONS,
   APPLICATION_SEMANTIC_REGISTRY,
   BatonApplication,
-  WebNorthbound,
   batonCliHelp,
   parseBatonCli,
 } from '../src/index.mjs';
 import { applicationSemanticRegistry } from '../src/application-semantics.mjs';
 import { commandKeys } from '../scripts/surface-truth.mjs';
 
-const NOW = Date.parse('2026-07-23T12:00:00.000Z');
-const ORIGIN = 'https://grammar-m1.test';
 // The card's command list derives from the command table (surface-truth.mjs) — the table keys in
 // insertion order, not a retyped literal.
 const COMMANDS_BEFORE_M1 = Object.freeze(commandKeys());
@@ -21,153 +18,12 @@ const WEB_COMMANDS_BEFORE_M1 = Object.freeze(COMMANDS_BEFORE_M1
   .filter((name) => APPLICATION_COMMAND_DEFINITIONS[name].web)
   .map((name) => name.replaceAll('.', '_')));
 
-function principal() {
-  return {
-    userId: 'grammar-user',
-    sessionId: 'grammar-session',
-    credentialId: 'grammar-credential',
-    authMethod: 'cookie',
-    csrfToken: 'grammar-csrf',
-    expiresAt: '2026-07-23T13:00:00.000Z',
-    revoked: false,
-    capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
-    repoIds: ['repo-grammar'],
-  };
-}
-
-function webContext() {
-  return {
-    principal: principal(),
-    origin: ORIGIN,
-    csrfToken: 'grammar-csrf',
-    remoteAddress: '127.0.0.1',
-    transport: 'https',
-  };
-}
-
-function webEnvelope(command, suffix) {
-  return {
-    schemaVersion: 1,
-    commandId: `grammar-${suffix}`,
-    idempotencyKey: `grammar-key-${suffix}`,
-    command,
-    args: {
-      runId: 'run-grammar',
-      role: 'worker',
-      message: 'Continue within the approved scope.',
-      delivery: 'nudge',
-    },
-    repoId: 'repo-grammar',
-    runId: 'run-grammar',
-    origin: ORIGIN,
-  };
-}
-
-function webFixture() {
-  const admitted = [];
-  const commands = new Map();
-  const coordination = {
-    admitWebCommand(record) {
-      const command = {
-        ...record,
-        status: 'admitted',
-        outcome: null,
-      };
-      admitted.push(command);
-      commands.set(record.commandId, command);
-      return { ok: true, result: 'admitted', command };
-    },
-    completeWebCommand(commandId, outcome) {
-      const command = commands.get(commandId);
-      command.status = 'completed';
-      command.outcome = outcome;
-      return command;
-    },
-    failWebCommand(commandId, outcome) {
-      const command = commands.get(commandId);
-      command.status = 'failed';
-      command.outcome = outcome;
-      return command;
-    },
-    recordWebAudit() {
-      return { result: 'recorded' };
-    },
-    webCommand(commandId) {
-      return commands.get(commandId) ?? null;
-    },
-    webCommandByScope(scopeKey) {
-      return admitted.find((command) => command.scopeKey === scopeKey) ?? null;
-    },
-  };
-  const calls = [];
-  const application = {
-    repoId: 'repo-grammar',
-    card() {
-      return {
-        schemaVersion: 1,
-        repoId: 'repo-grammar',
-        commands: [...COMMANDS_BEFORE_M1],
-      };
-    },
-    async authorizeReplay() {
-      return true;
-    },
-    async command(name, args) {
-      calls.push({ name, args });
-      return {
-        schemaVersion: 1,
-        runId: args.runId,
-        phase: 'working',
-        authority: 'same-application',
-      };
-    },
-  };
-  const web = new WebNorthbound({
-    coordinator: {},
-    coordination,
-    application,
-    repoIds: ['repo-grammar'],
-    allowedOrigins: [ORIGIN],
-    now: () => NOW,
-    stream: {},
-  });
-  return { admitted, calls, web };
-}
-
-test('M1-1: canonical Web admission reaches the legacy operation and outcome, spelling-true (M4b)', async () => {
-  const canonical = webFixture();
-  const legacy = webFixture();
-  const canonicalResult = await canonical.web.execute(
-    webContext(), webEnvelope('run_member_send', 'canonical'),
-  );
-  const legacyResult = await legacy.web.execute(
-    webContext(), webEnvelope('run_workstream_notify', 'legacy'),
-  );
-
-  assert.equal(canonicalResult.status, 200);
-  assert.equal(legacyResult.status, 200);
-  assert.deepEqual(canonicalResult.body.result, legacyResult.body.result);
-  assert.deepEqual(canonical.calls, legacy.calls);
-  // M4b — the transport flip: the canonical name is admitted first-class, its own spelling the
-  // admitted identity (never resolved to the legacy name); both still reach one operation.
-  assert.equal(canonical.admitted[0].command, 'run_member_send');
-  assert.equal(legacy.admitted[0].command, 'run_workstream_notify');
-});
-
 test('M1-2: canonical CLI verbs parse to the same legacy envelopes', () => {
   const idempotency = ['--idempotency-key', 'grammar-cli-key'];
   const pairs = [
     [
       ['run', 'view', 'run-grammar', '--depth', 'outline', ...idempotency],
       ['run', 'show', 'run-grammar', '--depth', 'outline', ...idempotency],
-    ],
-    [
-      ['run', 'member', 'send', 'run-grammar', 'worker', 'Continue.', ...idempotency],
-      ['run', 'notify', 'run-grammar', 'worker', 'Continue.', ...idempotency],
-    ],
-    [
-      ['run', 'member', 'stop', 'run-grammar', 'worker', ...idempotency],
-      ['run', 'stop-member', 'run-grammar', 'worker', ...idempotency],
     ],
   ];
   for (const [canonical, legacy] of pairs) {

@@ -192,13 +192,11 @@ rendered from it, never retyped here):
 | `baton_surface_catalog` / `describe` / `invoke` / `snapshot` / `watch` / `visualize` | `baton_surface` with the same verb |
 | `baton_help` / `baton_application_help` | `baton_surface {verb: "describe"}` |
 | `baton_run_member_view` / `baton_run_workstreams` | surface: `run.member.view` |
-| `baton_run_member_send` / `baton_workstream_notify` | surface: `run.member.send` |
-| `baton_run_member_stop` / `baton_workstream_stop` | surface: `run.member.stop` |
 | `baton_run_message_receipt` | surface: `run.message.receipt` |
 | `baton_run_scratchpad_read` / `append` / `elevate` | surface: `run.scratchpad.*` (seat-side verbs) |
 | `baton_swarm_stop` | surface: `swarm.stop` (the `emergency_stop` class) |
 | `baton_swarm_integrate` | surface: `swarm.integrate` (the root's landing verb) |
-| `baton_waves_attach` / `compile` / `run` | surface: `waves.attach` / `waves.compile` / `waves.run` |
+| `baton_waves_compile` / `run` | surface: `waves.compile` / `waves.run` |
 | `baton_scratchpad_elevate` / `baton_scratchpad_settle` / `baton_knowledge_promote` / `baton_knowledge_settlement_lease` | descriptor kernel profile, never bridged — the landed U-G3 posture, unchanged |
 | `baton_run_attention_watch` | **retired** — `baton_wakes {verb: "subscribe"}` replaces it |
 | `baton_swarm_watch` | **retired from MCP** — `baton_wakes {verb: "subscribe", swarms: [id]}` replaces it; the CLI keeps `baton swarm watch` |
@@ -269,9 +267,7 @@ Every wave tool takes the repository coordinate first (`repoId`).
    ```
 
 5. **Steer or stop** — `baton_waves_send` / `baton_waves_stop` are LIVE on the members' runIds;
-   `baton_waves_attach` returns those runIds, and re-attach IS the resume path. The attach
-   response carries `harvestReplayed: true` when the wave's detached record already settled; key
-   outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits):
+   key outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits):
 
    ```json
    { "repoId": "/absolute/path/to/your/repository", "runId": "run:r1", "message": "hello" }
@@ -281,8 +277,8 @@ Every wave tool takes the repository coordinate first (`repoId`).
    { "repoId": "/absolute/path/to/your/repository", "runId": "run:r1", "reason": "probe" }
    ```
 
-6. **Harvest** — a host that dies mid-wave leaves its runs live and steerable via re-attach; an
-   MCP host that never re-attaches leaves the wave to the drivers' own stall machinery.
+6. **Harvest** — an MCP host that stops talking to a wave leaves it to the drivers' own stall
+   machinery.
 
 ## Admit knowledge
 

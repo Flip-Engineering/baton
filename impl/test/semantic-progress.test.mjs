@@ -158,7 +158,7 @@ const webContext = () => Object.freeze({
   principal: Object.freeze({
     userId: 'web-user', sessionId: 'web-session', credentialId: 'web-cred', authMethod: 'bearer',
     expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,
-    capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
+    capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
     repoIds: [REPO_ID],
   }),
   origin: 'https://control.example.test',
@@ -167,7 +167,7 @@ const webContext = () => Object.freeze({
 
 const mcpPrincipal = () => Object.freeze({
   userId: 'mcp-user', sessionId: 'mcp-session',
-  capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
+  capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
   repoIds: [REPO_ID], expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,
 });
 

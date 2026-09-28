@@ -3363,9 +3363,6 @@ class BatonDeployment {
         }
         return this.#baton.waves.start(options);
       },
-      // S-1 v2 (deployment parity): attach-and-harvest over a prior wave's member runs —
-      // the recipes manifest-attach path rides this.
-      attach: (waveId, members, options = {}) => this.#baton.waves.attach(waveId, members, options),
     });
     // Composition v2 rule 3 (deployment parity): the recipes library on the openBaton facade,
     // bound to the deployment facade ITSELF (doctor-capable — the wave driver's preflight needs
