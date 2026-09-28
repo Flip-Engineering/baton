@@ -32,7 +32,7 @@ created with exclusive publication and is stable across deployment log-directory
 checks aggregate existing reservations and the latest free byte/inode observation in the same
 critical section that appends the new reservation. Duplicate IDs refuse. A worker reservation is
 durable before `git worktree add`; verifier reservations are durable before detached checkout.
-Capacity admission grants no path, process, provider, verification, or integration authority.
+Capacity admission grants no path, process, provider, or verification authority.
 
 ## WC4 — exact release and recovery
 

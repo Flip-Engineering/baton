@@ -61,14 +61,14 @@ Refinement creates a new task with `refines`; it never reopens a terminal task.
 Coordinator `spawn()` durably creates the task before returning a handle, including when the task
 will remain queued. It may preallocate a public pending worker handle as a local reservation, but
 the durable task `assignee` remains null until dispatch wins `claimTask`; reservation is not claim.
-Dispatch durably claims it. Input waits, recovery, cancellation, verification
-accept/reject, and integration outcomes are reflected by typed events. Restart rebuilds
+Dispatch durably claims it. Input waits, recovery, cancellation, and verification accept/reject
+outcomes are reflected by typed events. Restart rebuilds
 queued tasks, dependency readiness, assignments, terminal state, and automatic identifiers before
 dispatching anything.
 
 Every adapter- or outside-world-reaching action has a durable intent before the effect: stop,
-persistent follow-up, recovery attach, review-task creation, and local integration. If intent
-append fails, no adapter or worktree/Git merge is called. If an adapter has already confirmed
+persistent follow-up, recovery attach, and review-task creation. If intent append fails, no adapter
+or worktree effect is called. If an adapter has already confirmed
 terminal/refinement append fails, the coordinator is poisoned, resolves any public waiter with a
 typed coordination-unavailable result, kills or quarantines the ambiguous transport, and restart
 closes the still-nonterminal durable task. Asynchronous adapter callbacks may not turn an already
@@ -84,13 +84,6 @@ attempt, preserves its terminal predecessor without pretending the attempted tur
 replays the native session as orphaned. An input delivery accepted before an authoritative append
 failure commits and releases its single-consumer reservation so racing responders cannot hang or
 redeliver.
-
-Local integration uses a post-effect authority rule. `integration.requested` precedes Git;
-after a successful local merge, its decision, driver completion, and accepted integration artifact
-commit in one coordination batch. Replay requires the mapped operational digest, complete paired
-batch, task/evidence identity, SHA payload, and accepted provenance. A merge followed by authority
-storage loss poisons the live coordinator and replays integration as unknown rather than claiming
-or repeating the merge.
 
 `task.created` persists `brief`, `deps`, `refines`, `taskType`, requested vendor/model/session
 policy, and the reserved public handle ID. `task.claimed` persists assignee, resolved vendor/model,
@@ -112,9 +105,9 @@ content-addressed paths owned by Baton. Registration validates the task, snapsho
 data, and is idempotent by manifest identity. `artifact.registered` names the immutable manifest;
 `artifact.superseded` links a correction without mutation. Failed/cancelled tasks may register
 counterexamples, logs, and reports, but an artifact marked `accepted` must cite the accepting
-verification/review event. Accepted capture, verdict, independent review, and integration
-payloads carry manifest IDs through the public driver rather than leaving provenance
-split across `capturedSha` and worker prose.
+verification/review event. Accepted capture, verdict, and independent review payloads carry manifest
+IDs through the public driver rather than leaving provenance split across `capturedSha` and worker
+prose.
 
 ## CK4 — Scratch is an event-derived operational projection
 
@@ -190,7 +183,7 @@ run. An unlogged read is a failed operation, never a degraded success.
 Promotion is deterministic candidate generation, not an LLM in the control path:
 
 - accepted terminal task + verification/artifact → `knowledge.promoted{kind:'Finding'}`;
-- consequential human/orchestrator spawn, reroute, accept, integrate, publish, abort → Decision;
+- consequential human/orchestrator spawn, reroute, accept, publish, abort → Decision;
 - run boundary → Run scorecard;
 - repeated verified outcome → RouteStat/Playbook candidate;
 - cited observed Scratch fact → `knowledge.promotion_candidate{kind:'Finding'}`;
@@ -219,7 +212,7 @@ knowledge can influence routing or acceptance.
 The store is mandatory in `createDriver()` and returned as `{coordinator, story, router, log,
 coordination}`. The coordinator receives it in its constructor and invokes one non-optional
 state-changing integration point for spawn/create, dispatch/claim, input wait/resume, terminal,
-capture/verification, review, and integration. A driver state mutation with no
+capture/verification, and review. A driver state mutation with no
 coordination event is a contract failure, not an optional sink failure. Direct mutation methods
 require an actor and
 idempotency key; future MCP/web surfaces map authenticated identity into that same actor field and
@@ -238,15 +231,15 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
 6. Scratch conflicts, explicit lease expiry, replay determinism, and cross-tree warnings;
 7. causal/temporal graph rejections, bitemporal as-of query, contradiction/supersession history,
    and affected-reader tracing;
-8. public-driver task creation, terminal verdict, captured commit, review, and integration appear
-   in the durable substrate; and
+8. public-driver task creation, terminal verdict, captured commit, and review appear in the durable
+   substrate; and
 9. a full restart has identical task/artifact/Scratch/KG projections before any new dispatch.
 10. an unsatisfied-dependency task crashes before dispatch and replays pending, unassigned, with
     its exact `deps[]`, brief, requested vendor/model/session, and reserved handle identity;
 11. a multi-task DAG replays with the same ready set and cannot dispatch a dependent early;
 12. a truncated tail, sequence gap, duplicate key, missing operational evidence, and injected
     append failure all fail visibly without projection mutation;
-13. every public spawn/claim/input/terminal/capture/review/integration state change has
+13. every public spawn/claim/input/terminal/capture/review state change has
     a coordination event, and the test fails if coordinator state is nonempty while the substrate
     stream is empty;
 14. operational evidence mapping gives two worker-local events a comparable global observation
@@ -254,8 +247,8 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
 15. after a logged knowledge read, invalidating the node yields a nonempty contamination record
     and `affectedReaders()` result; a forced read-log append failure returns no recalled content.
 16. injected append failures cover create, claim, input wait/resume, stop intent, cancel terminal,
-    persistent follow-up/recovery refinement, review creation, terminal artifact batch,
-    integration intent, and knowledge/Scratch reads. Pre-effect
+    persistent follow-up/recovery refinement, review creation, terminal artifact batch, and
+    knowledge/Scratch reads. Pre-effect
     failures call no adapter or Git; post-effect failures are bounded, poison authority,
     preserve the earlier intent, never redeliver a single-consumer effect, and replay the affected
     task/attempt/session as failed, aborted, orphaned, or outcome-unknown rather than

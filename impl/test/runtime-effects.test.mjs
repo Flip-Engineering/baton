@@ -1,7 +1,7 @@
 // runtime-effects.test.mjs — issue #259, slices 9 and 12. Pins the module the coordinator's
 // effect members moved into (impl/src/runtime-effects.mjs: slice 9's _dispatch, _spawnPlanWave,
-// _resolveRecord — §3 rows 6/9/10; slice 12's entangled four — stopRunTargets, _integrate,
-// _deliver, _finalizeStop — split admission-from-effect per seam-effects-tranche-2-design.md, the
+// _resolveRecord — §3 rows 6/9/10; slice 12's tranche-2 members — stopRunTargets, _deliver,
+// _finalizeStop — split admission-from-effect per seam-effects-tranche-2-design.md, the
 // admission prefixes in runtime-admission.mjs called first, one-way) against the injected
 // recorder port (slice 6), and the coordinator that now delegates to it. Six claims are
 // load-bearing:
@@ -51,7 +51,6 @@ const parseOf = (text) => parse(Lang.JavaScript, text).root();
  * IntegrationError / noop / the closed-verdict family in runtime-recovery.mjs prevents). */
 const ADMISSION_PREFIXES = Object.freeze([
   ['stopRunTargets', '_admitRunStopTargets', '(coordinator, recorder, targetWorkerIds, actor, opts)'],
-  ['_integrate', '_admitIntegration', '(coordinator, handle, task, opts)'],
   ['_deliver', '_admitDelivery', '(coordinator, recorder, handle, mode, opts)'],
 ]);
 
@@ -212,8 +211,7 @@ test('RE3: the recorder is the only recording path — a counting wrapper sees e
       'every log row this worker produced rode the recorder, in order');
     // Slice 12, tranche 2: one driven instance of each moved member, observed through the same
     // wrapper — _deliver (a nudge to the working member), _finalizeStop (the kill's confirmed
-    // row below), and stopRunTargets (the dead target's convergence). _integrate's driven
-    // recording proof is phase11's CK8/CK9 poisoned-write pair, named in seam-slice-12.md.
+    // row below), and stopRunTargets (the dead target's convergence).
     const delivered = await coordinator._deliver(handle, 're3-nudge', 'nudge', {});
     assert.equal(delivered.ok, true, `the nudge delivered through the moved _deliver: ${JSON.stringify(delivered)}`);
     assert.ok(appends.some((event) => event.kind === 'control.nudge'),
@@ -374,7 +372,7 @@ test('RE6: the tranche-2 split — the admission/effect triad, the descriptor un
   const cls = coordRoot.findAll({ rule: { kind: 'class_declaration' } })
     .find((node) => node.field('name')?.text() === 'Coordinator');
   for (const [name, wasAsync] of [
-    ['stopRunTargets', true], ['_integrate', true], ['_deliver', true], ['_finalizeStop', false],
+    ['stopRunTargets', true], ['_deliver', true], ['_finalizeStop', false],
   ]) {
     const delegate = cls.field('body').children().find((n) => n.kind() === 'method_definition'
       && n.field('name').text() === name);

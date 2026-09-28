@@ -6,10 +6,10 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 
 const requiredCoordinationMethods = [
-  'snapshot', 'task', 'integrationAuthority', 'createTask', 'claimTask',
+  'snapshot', 'task', 'createTask', 'claimTask',
   'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement',
   'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent',
-  'recordDriver', 'completeIntegration', 'registerArtifact', 'artifact',
+  'recordDriver', 'registerArtifact', 'artifact',
   'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState',
   'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission',
   'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact',
@@ -22,7 +22,6 @@ const requiredCoordinationMethods = [
 function rehydrate(events) {
   const coordination = Object.fromEntries(requiredCoordinationMethods.map((name) => [name, () => null]));
   coordination.snapshot = () => ({ tasks: [] });
-  coordination.integrationAuthority = () => false;
   const log = {
     append: (event) => event,
     workers: () => ['durable-worker'],

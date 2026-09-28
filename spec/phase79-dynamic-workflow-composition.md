@@ -31,7 +31,7 @@ through one generation-fenced writer lease at a time.
 - A **Revision** is a new attempt derived from a Candidate plus one or more exact feedback packets.
 - A **Synthesis** is an untrusted worker attempt that consumes selected immutable candidates and
   feedback and produces one new candidate. Its output receives the ordinary fresh trust gate.
-- A **Gate** is hub-owned verification, review, approval, selection, or integration authority. A
+- A **Gate** is hub-owned verification, review, approval, or selection authority. A
   model vote or self-report is never a gate by itself.
 
 ## Composition operators
@@ -231,7 +231,7 @@ identifies the tree/environment on which it was observed; cross-tree evidence is
 
 The append-only coordination ledger remains truth. Scratch and workflow boards are typed
 materialized projections; claims/CAS are the only serialized cooperative cells. The causal graph is
-a read/explanation projection and grants no dispatch, write, review, integration, or stop authority.
+a read/explanation projection and grants no dispatch, write, review, or stop authority.
 
 ### WF8 — synthesis and selection remain untrusted
 

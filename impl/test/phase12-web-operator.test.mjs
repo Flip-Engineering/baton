@@ -52,7 +52,6 @@ function system(claims = {}) {
         profiles: [{
           name: 'standard', digest: 'a'.repeat(64), routes: [{ harness: 'grok', model: 'grok-4-code', effort: 'high' }], pathScope: ['impl/**'],
           reviewPolicy: { mode: 'required', routes: [{ harness: 'reviewer', model: 'review-model', effort: 'low' }], reportPath: '.baton/review.json', maxFindings: 20, maxReportBytes: 65_536 },
-          integrationPolicy: { mode: 'manual', strategies: ['ff-only'], requireAdoptedResult: true, requireSemanticReview: true },
           followPolicy: { mode: 'enabled', maxWaitMs: 25_000, maxChanges: 64, maxResponseBytes: 262_144, maxScanEvents: 1_024 },
         }],
       };
@@ -119,7 +118,7 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   const s = system();
   const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
   assert.match(script.headers['content-type'], /^text\/javascript/);
-  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', 'Run activity', 'activity-list', 'connectRunActivity', 'connectRunChannel', 'activityCursors', 'provider_output_opt_in_required', 'untrusted_provider', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource']) {
+  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', 'Run activity', 'activity-list', 'connectRunActivity', 'connectRunChannel', 'activityCursors', 'provider_output_opt_in_required', 'untrusted_provider', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource']) {
     assert.equal(script.body.includes(term), true, term);
   }
   assert.equal(script.body.includes("command('spawn'"), false);
@@ -265,7 +264,7 @@ test('the served desk reads the phase vocabulary the projections serve, through 
     'planning', 'planning_failed', 'awaiting_plan_approval', 'awaiting_approval',
     'approved', 'queued', 'running', 'working', 'interrupted', 'interruption_uncertain',
     'uncertain', 'paused', 'stopping', 'work_completed', 'result_ready', 'awaiting_selection',
-    'result_selected', 'reviewing', 'integrating', 'verifying', 'completed', 'failed',
+    'result_selected', 'reviewing', 'verifying', 'completed', 'failed',
     'inconclusive', 'cancelled', 'stopped', 'denied', 'degraded', 'closed', 'unmapped_literal', null,
   ];
   runInContext('globalThis.steps=phases.map(phaseStep)', context);
@@ -273,7 +272,7 @@ test('the served desk reads the phase vocabulary the projections serve, through 
     'plan', 'plan', 'plan', 'plan',
     'execute', 'execute', 'execute', 'execute', 'execute', 'execute',
     'execute', 'execute', 'execute', 'review', 'review', 'review',
-    'review', 'review', 'review', 'review', 'evidence', 'evidence',
+    'review', 'review', 'review', 'evidence', 'evidence',
     'evidence', 'evidence', 'evidence', 'evidence', 'evidence', 'evidence', 'intent', 'intent',
   ]);
 

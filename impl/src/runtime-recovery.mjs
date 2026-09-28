@@ -2246,7 +2246,7 @@ export function _createCoordinationRecoveryRefinement(coordinator, recorder, han
     });
     const next = {
       ...prior, id, deps: [], refines: prior.id, status: 'working', result: null, verdict: null,
-      capturedSha: null, integration: null, retainedResultRef: null, review: null,
+      capturedSha: null, retainedResultRef: null, review: null,
       coordinationVersion: result.task.version,
       sessionRequest: handle.sessionRequest,
     };
@@ -2314,7 +2314,6 @@ export function _createCoordinationPlanRecoveryRefinement(coordinator, recorder,
       result: null,
       verdict: null,
       capturedSha: null,
-      integration: null,
       retainedResultRef: null,
       review: null,
       coordinationVersion: result.task.version,
@@ -2912,7 +2911,6 @@ export function* _replay(coordinator, recorder) {
       let workspaceOwnerBinding = null;
       let lineage = null;
       let capturedSha = null;
-      let integration = null;
       let retainedResultRef = null;
       let checkpoint = null;
       let progressPreservation = null;
@@ -3333,14 +3331,6 @@ export function* _replay(coordinator, recorder) {
               progressPreservation = Object.freeze({ state: 'no_progress', eventSeq: e.seq });
             }
             break;
-          case 'integration.completed':
-            if (recorder.coordination?.integrationAuthority(taskId, e)) {
-              integration = e.payload ?? integration;
-            }
-            break;
-          case 'integration.refused':
-            retainedResultRef = e.payload?.retainedResultRef ?? retainedResultRef;
-            break;
           case 'lifecycle.crashed':
             if (preservedTurnEpoch !== null) break;
             providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
@@ -3596,7 +3586,6 @@ export function* _replay(coordinator, recorder) {
           sessionContext,
           lineage,
           capturedSha,
-          integration,
           retainedResultRef,
           checkpoint,
           verificationStability,
@@ -3615,7 +3604,6 @@ export function* _replay(coordinator, recorder) {
         task.sessionContext = sessionContext;
         task.lineage = lineage;
         task.capturedSha = capturedSha;
-        task.integration = integration;
         task.retainedResultRef = retainedResultRef;
         task.checkpoint = checkpoint;
         task.verificationStability = verificationStability;

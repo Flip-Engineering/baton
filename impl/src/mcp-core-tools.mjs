@@ -92,7 +92,7 @@ const CORE_TABLE = Object.freeze([
         verb: 'start', requires: Object.freeze(['intent', 'idempotencyKey']),
         dispatch: Object.freeze([Object.freeze({ tool: 'baton_run_start' })]),
         replaces: Object.freeze(['baton_run_start']),
-        wake: wakeHandoff(['attention', 'paused', 'integrated']),
+        wake: wakeHandoff(['attention', 'paused']),
       }),
       Object.freeze({
         verb: 'view', requires: Object.freeze(['runId']), omit: Object.freeze(['waitMs']),
@@ -157,7 +157,7 @@ const CORE_TABLE = Object.freeze([
         verb: 'start', requires: Object.freeze(['members', 'idempotencyKey']),
         dispatch: Object.freeze([Object.freeze({ tool: 'baton_waves_start' })]),
         replaces: Object.freeze(['baton_waves_start']),
-        wake: wakeHandoff(['attention', 'paused', 'integrated']),
+        wake: wakeHandoff(['attention', 'paused']),
       }),
       Object.freeze({
         verb: 'list', requires: Object.freeze([]),

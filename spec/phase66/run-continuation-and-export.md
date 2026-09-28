@@ -148,7 +148,7 @@ shutdown includes admitted, attached, accepted, refused, and ambiguous recovery 
 ## CE9 — evidence-bound materialized export
 
 `run.export` requires a fresh displayed evidence digest and the exact active accepted result. It
-also enforces the configured adoption, semantic-review, and integration prerequisites. Export reads
+also enforces the configured adoption and semantic-review prerequisites. Export reads
 the accepted Git object through the protected result authority; it never reads a disposable worker
 worktree or the mutable checkout. Immediately before materialization it re-resolves the protected
 result and proves that it still names the evidence-bound accepted commit.
@@ -156,7 +156,7 @@ result and proves that it still names the evidence-bound accepted commit.
 The application creates one deterministic content-addressed `directory-v1` export under its
 deployment-owned root. The completed export consists of an exact `tree/` materialization plus a
 canonical manifest beside it. The manifest binds repository, Run, Goal/Plan, node, accepted commit,
-accepted root-tree object, evidence, adoption/review/integration receipts required by policy,
+accepted root-tree object, evidence, adoption/review receipts required by policy,
 profile/policy digests, every ordinary file path/mode/blob/digest/size, totals, and export identity.
 Its file list is the accepted Git tree: every tracked ordinary file is present exactly once and no
 checkout metadata, untracked file, ignored file, worker residue, or mutable-repository content is

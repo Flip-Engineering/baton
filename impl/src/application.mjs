@@ -3755,7 +3755,6 @@ export class BatonApplication {
         route: clone(view.route),
       } : null,
       result: clone(view.result),
-      integration: clone(view.integration),
       verification: clone(view.verification),
       semanticReview: clone(view.semanticReview),
       artifacts: clone(view.evidence),
@@ -3769,10 +3768,9 @@ export class BatonApplication {
         terminalPlanState: PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase),
         acceptedArtifactsReverified: view.result === null
           || (view.result.commitArtifact !== null && view.result.verificationArtifact !== null),
-        resultRefReverified: view.result === null || ['pinned', 'integrated'].includes(view.result.preservation.state),
+        resultRefReverified: view.result === null || view.result.preservation.state === 'pinned',
         semanticDispositionConsistent: view.semanticReview.state !== 'semantic_reviewed'
           || /^[a-f0-9]{64}$/u.test(view.semanticReview.receiptDigest ?? ''),
-        integrationAuthoritative: view.integration === null || view.phase === 'completed',
       },
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
@@ -4358,14 +4356,13 @@ export class BatonApplication {
       ...(objectiveAdvice ? { advice: objectiveAdvice } : {}),
     };
     let publicResult = resultSha ? {
-      state: result?.integration ? 'integrated' : adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',
+      state: adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',
       nodeKey: node.key,
       sha: resultSha,
       commitArtifact: acceptedCommit ? { id: acceptedCommit.id, digest: acceptedCommit.digest } : null,
       verificationArtifact: acceptedVerification ? { id: acceptedVerification.id, digest: acceptedVerification.digest } : null,
       stability: resultStability,
-      preservation: result?.integration ? { state: 'integrated' }
-        : preservation ? { state: preservation.state } : { state: 'unavailable' },
+      preservation: preservation ? { state: preservation.state } : { state: 'unavailable' },
       adoption: adoption ? {
         state: adoptionState(adoption),
         receiptDigest: adoption.receipt?.receiptDigest ?? adoption.receiptDigest ?? null,
@@ -4598,7 +4595,6 @@ export class BatonApplication {
     if (event.kind.startsWith('run.stop_')) return 'cleanup';
     if (event.kind === 'driver.recorded') {
       const driverKind = event.payload?.kind ?? '';
-      if (driverKind.startsWith('integration.')) return 'integration';
       if (driverKind.startsWith('recovery.')) return 'recovery';
       if (driverKind.startsWith('verification.') || driverKind.startsWith('acceptance.')) return 'verification';
       if (driverKind === APPLICATION_WORKFLOW_SELECTION_RECORD_KIND) return 'result';
@@ -4695,7 +4691,6 @@ export class BatonApplication {
       verification: 'Run verification state changed.',
       evidence: 'Run evidence changed.',
       result: 'Run result selection changed.',
-      integration: 'Run integration state changed.',
       recovery: 'Run recovery state changed.',
       cleanup: 'Run cleanup state changed.',
     };
@@ -6321,7 +6316,6 @@ export class BatonApplication {
           mode: profile.reviewPolicy.mode, routes: clone(profile.reviewPolicy.routes),
           reportPath: profile.reviewPolicy.reportPath,
         },
-        integrationPolicy: clone(profile.integrationPolicy),
         followPolicy: { mode: profile.followPolicy.mode },
         recoveryPolicy: {
           mode: profile.recoveryPolicy.mode,

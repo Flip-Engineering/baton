@@ -261,7 +261,7 @@ test('RI6: omitted single and Workflow manifests retain the exact pre-explicit v
   assert.equal(Object.hasOwn(singleEvidence, 'resultIntent'), false);
   assert.deepEqual(Object.keys(singleEvidence), [
     'schemaVersion', 'kind', 'state', 'repoId', 'runId', 'observedThroughSeq',
-    'bindings', 'phase', 'progress', 'node', 'result', 'integration', 'verification',
+    'bindings', 'phase', 'progress', 'node', 'result', 'verification',
     'semanticReview', 'artifacts', 'stop', 'ownership', 'checks', 'manifestDigest',
   ]);
 
