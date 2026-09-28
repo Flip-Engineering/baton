@@ -69,15 +69,12 @@ default): final cumulative usage can no longer kill a worker between its finishe
 adjacent terminal protocol frame. A terminal claim only cancels the transport kill; it still enters
 the same independent trust gate.
 
-### Explicit integration and publication authority
+### Explicit integration authority
 
 `integrate(worker, {strategy:'ff-only'})` accepts only a captured, trust-gated result, reaps the
 worker/worktree/branch, refuses dirty or diverged main without history rewriting, and preserves a
 durable result ref when integration refuses. Successful integration records exact before/result/
-after SHAs. Publication is a separate single-consumer approval over an exact integrated SHA,
-credential-free remote name, full branch ref, and current authority fence. Missing approval,
-deny, timeout, stale fence, or restart performs no push. The default publisher uses argument-safe
-`git push`; tests inject a no-network publisher, so no real remote mutation was performed here.
+after SHAs.
 
 ### Stop and delivery authority is reconciled
 
@@ -234,12 +231,11 @@ These are absent, not implied by the green suite:
    native network-denied workspace policy is wire-mapped. Claude's isolated sandbox settings and
    Codex's effect require dedicated live denial probes; Grok child-network restriction is not
    available under macOS workspace mode and remains honestly carded uncontrolled.
-3. **Semantic merge depth.** Exact fast-forward integration, opt-in syntax-aware structured
-   integration, and approval-gated publication ship. The structured rung wraps a configured
-   Mergiraf-class resolver, stages and freshly verifies off-main, and fails closed; a live
-   Mergiraf binary proof is still pending on this host. True data/control-flow semantic merge,
-   stacked integration, automated rollback, deploy adapters, and a live remote-push proof remain
-   absent.
+3. **Semantic merge depth.** Exact fast-forward integration and opt-in syntax-aware structured
+   integration ship. The structured rung wraps a configured Mergiraf-class resolver, stages and
+   freshly verifies off-main, and fails closed; a live Mergiraf binary proof is still pending on
+   this host. True data/control-flow semantic merge, stacked integration, automated rollback, and
+   deploy adapters remain absent.
 4. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery plus
    deployment-opt-in supervised startup auto-rejoin ship through Phase 45. In-flight turn
    continuation and a provider-backed crash/rejoin proof remain absent. Grok's vendor-specific

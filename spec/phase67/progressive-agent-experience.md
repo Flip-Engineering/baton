@@ -197,7 +197,7 @@ separate authorization where appropriate, and prominent provenance/effect labeli
 The default MCP inventory and ordinary browser Run desk exclude worker choreography, raw ledger
 reads, fleet drain, deployment shutdown, arbitrary server paths, and advanced capability internals.
 Application shutdown remains host-only. Fleet drain is not Run stop. Advanced controls cannot bypass
-Goal/Plan, sandbox, budget, trust, evidence, integration/publication, or cleanup authority.
+Goal/Plan, sandbox, budget, trust, evidence, integration, or cleanup authority.
 
 ## AX8 — immediate emergency control
 
@@ -226,7 +226,7 @@ Acceptance requires executable proof that:
 6. stale, cross-Run, cross-repository, changed-policy, changed-Plan, changed-result, changed-fence,
    stopped, expired, and revoked action use fails closed after live revalidation;
 7. exact action retries reconcile and changed-input retries conflict without duplicate provider,
-   filesystem, integration, publication, or cleanup effects;
+   filesystem, integration, or cleanup effects;
 8. adoption, integration, recovery, and export each prove at least one application-owned cascade
    with restart and response-loss coverage rather than adapter-local composition;
 9. Direct, CLI, authenticated Web, default MCP, and browser expose the same registry digest and

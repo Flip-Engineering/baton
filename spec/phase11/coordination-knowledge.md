@@ -62,14 +62,13 @@ Coordinator `spawn()` durably creates the task before returning a handle, includ
 will remain queued. It may preallocate a public pending worker handle as a local reservation, but
 the durable task `assignee` remains null until dispatch wins `claimTask`; reservation is not claim.
 Dispatch durably claims it. Input waits, recovery, cancellation, verification
-accept/reject, and integration/publication outcomes are reflected by typed events. Restart rebuilds
+accept/reject, and integration outcomes are reflected by typed events. Restart rebuilds
 queued tasks, dependency readiness, assignments, terminal state, and automatic identifiers before
 dispatching anything.
 
 Every adapter- or outside-world-reaching action has a durable intent before the effect: stop,
-persistent follow-up, recovery attach, review-task creation, local integration, publication
-request, and publication authorization. If intent append fails, no adapter, worktree/Git merge, or
-publisher is called. If an adapter has already confirmed stop/attach/turn advancement when a later
+persistent follow-up, recovery attach, review-task creation, and local integration. If intent
+append fails, no adapter or worktree/Git merge is called. If an adapter has already confirmed
 terminal/refinement append fails, the coordinator is poisoned, resolves any public waiter with a
 typed coordination-unavailable result, kills or quarantines the ambiguous transport, and restart
 closes the still-nonterminal durable task. Asynchronous adapter callbacks may not turn an already
@@ -86,15 +85,7 @@ replays the native session as orphaned. An input delivery accepted before an aut
 failure commits and releases its single-consumer reservation so racing responders cannot hang or
 redeliver.
 
-Publication is a post-effect special case: authorization is durable before the publisher, while
-the knowledge decision and driver completion become authoritative in one coordination append
-batch after the effect. Replay accepts `publication.completed` telemetry only when that atomic
-authority record exists: the mapped operational digest, decision event, adjacent paired driver
-record, shared batch-key lineage, task identity, evidence reference, and publication payload must
-all agree. Otherwise the already integrated task remains completed, publication is reported
-unknown/not completed, and the poisoned live coordinator fails closed.
-
-Local integration uses the same post-effect authority rule. `integration.requested` precedes Git;
+Local integration uses a post-effect authority rule. `integration.requested` precedes Git;
 after a successful local merge, its decision, driver completion, and accepted integration artifact
 commit in one coordination batch. Replay requires the mapped operational digest, complete paired
 batch, task/evidence identity, SHA payload, and accepted provenance. A merge followed by authority
@@ -121,8 +112,8 @@ content-addressed paths owned by Baton. Registration validates the task, snapsho
 data, and is idempotent by manifest identity. `artifact.registered` names the immutable manifest;
 `artifact.superseded` links a correction without mutation. Failed/cancelled tasks may register
 counterexamples, logs, and reports, but an artifact marked `accepted` must cite the accepting
-verification/review event. Accepted capture, verdict, independent review, integration, and
-publication payloads carry manifest IDs through the public driver rather than leaving provenance
+verification/review event. Accepted capture, verdict, independent review, and integration
+payloads carry manifest IDs through the public driver rather than leaving provenance
 split across `capturedSha` and worker prose.
 
 ## CK4 — Scratch is an event-derived operational projection
@@ -228,7 +219,7 @@ knowledge can influence routing or acceptance.
 The store is mandatory in `createDriver()` and returned as `{coordinator, story, router, log,
 coordination}`. The coordinator receives it in its constructor and invokes one non-optional
 state-changing integration point for spawn/create, dispatch/claim, input wait/resume, terminal,
-capture/verification, review, integration, and publication. A driver state mutation with no
+capture/verification, review, and integration. A driver state mutation with no
 coordination event is a contract failure, not an optional sink failure. Direct mutation methods
 require an actor and
 idempotency key; future MCP/web surfaces map authenticated identity into that same actor field and
@@ -255,7 +246,7 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
 11. a multi-task DAG replays with the same ready set and cannot dispatch a dependent early;
 12. a truncated tail, sequence gap, duplicate key, missing operational evidence, and injected
     append failure all fail visibly without projection mutation;
-13. every public spawn/claim/input/terminal/capture/review/integration/publication state change has
+13. every public spawn/claim/input/terminal/capture/review/integration state change has
     a coordination event, and the test fails if coordinator state is nonempty while the substrate
     stream is empty;
 14. operational evidence mapping gives two worker-local events a comparable global observation
@@ -264,10 +255,10 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
     and `affectedReaders()` result; a forced read-log append failure returns no recalled content.
 16. injected append failures cover create, claim, input wait/resume, stop intent, cancel terminal,
     persistent follow-up/recovery refinement, review creation, terminal artifact batch,
-    integration intent, publication authorization, and knowledge/Scratch reads. Pre-effect
-    failures call no adapter/Git/publisher; post-effect failures are bounded, poison authority,
+    integration intent, and knowledge/Scratch reads. Pre-effect
+    failures call no adapter or Git; post-effect failures are bounded, poison authority,
     preserve the earlier intent, never redeliver a single-consumer effect, and replay the affected
-    task/attempt/session/publication as failed, aborted, orphaned, or outcome-unknown rather than
+    task/attempt/session as failed, aborted, orphaned, or outcome-unknown rather than
     fabricating success. A terminal predecessor is not rewritten merely because a later refinement
     attempt failed.
 

@@ -32,7 +32,7 @@ override it, name a subset, supply paths/PIDs, extend a deadline, or raise a bou
 
 The deployment policy also derives a fixed internal active-interaction ceiling as the minimum of
 100000, sixteen interactions per configured worker, and one interaction per four deadline
-milliseconds. It is not caller input. Active question, approval, and publication IDs have a
+milliseconds. It is not caller input. Active question, approval, and decision IDs have a
 dedicated index, so drain admission and convergence never scan the unbounded historical record map.
 Max+1 active authority refuses before admission/fencing; resolved history remains queryable.
 
@@ -58,7 +58,7 @@ controller.
 
 Every asynchronous authority path registers one coordinator-owned operation token before its first
 await and releases it in `finally`. This includes recovery and context validation; integration and
-structured merge; queued send/follow-up/orientation; question/approval response and publication;
+structured merge; queued send/follow-up/orientation; question/approval response;
 provider ingress/reconciliation; capability invoke/resume/reverify; reuse decisions; and trust-gate
 verification. Drain waits on the token set, not an incomplete hand-maintained subset. A new token
 cannot be acquired after the drain fence.
@@ -98,7 +98,7 @@ refs without a local sidecar or local worktree registration are ownership-ambigu
 Git common directory and are retained; reconciliation never claims another linked-worktree
 controller's live or dormant branch authority. A timed-out reconciliation remains one
 owned Promise that retries join; a second cleanup cannot overtake it and attest while the first can
-still mutate. Pending question/approval/publication authority is policy-cancelled/denied, while a
+still mutate. Pending question/approval/decision authority is policy-cancelled/denied, while a
 late ask after the fence is durably discarded and cannot reopen blocked state.
 
 Trusted southbound adapter code is part of Baton's TCB. Its spawn Ack is a seal: it may resolve only
@@ -331,7 +331,7 @@ homelab integration added.
    while a dispatch race joins either the pending-cancel or exact-kill case and never leaks.
 3. Working, blocked, and idle persistent workers receive one coordinator-owned two-phase kill;
    every started generation closes before confirmation and cleanup.
-4. Recovery, queued send/follow-up/orientation, integration/structured merge, publication, provider,
+4. Recovery, queued send/follow-up/orientation, integration/structured merge, provider,
    capability, reuse, trust-gate, and verification races keep drain pending until every authority
    token, verifier/base-verifier, and deferred cleanup finishes; cleanup failure/timeout stays red
    and retry can finish later.

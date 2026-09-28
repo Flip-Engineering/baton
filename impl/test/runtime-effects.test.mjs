@@ -18,10 +18,9 @@
 //      recording reroute census is pinned against the source: 6 log appends and 2 evidence maps in
 //      _dispatch, 7 log appends, 6 evidence maps and 3 driver records in _resolveRecord, 5
 //      coordination-store calls in _spawnPlanWave.
-//   4. THE PRIMITIVES MOVED ONCE — WORKTREE_FAILURE, normalizeRunId, ModelSelectionError and
-//      PublicationError are exported by the module, imported back by the coordinator, and the
-//      coordinator's export surface is unchanged (both classes stay reachable from coordinator.mjs
-//      and from index.mjs, as the same class objects).
+//   4. THE PRIMITIVES MOVED ONCE — WORKTREE_FAILURE, normalizeRunId and ModelSelectionError are
+//      exported by the module and imported back by the coordinator, and ModelSelectionError stays
+//      reachable from coordinator.mjs and from index.mjs as the same class object.
 //   5. THE MAP SEES THE MOVE — the committed seam artifact carries the runtime-effects target, and
 //      every delegate it shows with `effect:effects_port` evidence classifies as `effect`.
 
@@ -68,7 +67,7 @@ const ADMIT_DELIVERY_UNION = Object.freeze([
 
 
 
-test('RE1: the module imports neither monolith and keeps no implicit receiver outside the error classes', () => {
+test('RE1: the module imports neither monolith and keeps no implicit receiver outside the relocated error class', () => {
   const text = read(MEMBER_FILE);
   const root = parseOf(text);
   const importSources = root.findAll({ rule: { kind: 'import_statement' } })
@@ -92,9 +91,9 @@ test('RE1: the module imports neither monolith and keeps no implicit receiver ou
     for (const child of node.children()) walk(child, owner);
   };
   walk(root, '(module scope)');
-  const outside = thisSites.filter((site) => site.owner !== 'ModelSelectionError' && site.owner !== 'PublicationError');
+  const outside = thisSites.filter((site) => site.owner !== 'ModelSelectionError');
   assert.equal(outside.length, 0,
-    `implicit receivers outside the relocated error classes: ${outside.map((s) => `${s.owner}.${s.text}`).join(', ')}`);
+    `implicit receivers outside the relocated error class: ${outside.map((s) => `${s.owner}.${s.text}`).join(', ')}`);
 });
 
 test('RE2: every effects_port delegate keeps the member name, parameter list, arity, and hands over the recorder', () => {
@@ -258,14 +257,12 @@ test('RE4: the relocated primitives moved once, and the export surface is unchan
   }
   assert.ok(coordText.includes("from './runtime-effects.mjs'"),
     'the coordinator imports the relocated primitives back');
-  assert.equal(coordText.includes('export { ModelSelectionError, PublicationError };'), true,
-    'the coordinator re-exports the two error classes');
-  const { ModelSelectionError, PublicationError } = runtimeEffects;
+  assert.equal(coordText.includes('export { ModelSelectionError };'), true,
+    'the coordinator re-exports the relocated error class');
+  const { ModelSelectionError } = runtimeEffects;
   assert.equal(Coordinator === undefined, false);
   assert.equal(indexModule.ModelSelectionError, ModelSelectionError,
     'index.mjs still resolves ModelSelectionError to the same class object');
-  assert.equal(indexModule.PublicationError, PublicationError,
-    'index.mjs still resolves PublicationError to the same class object');
 });
 
 test('RE4b: a driver-built coordinator\'s port fronts the coordinator\'s own wrapped authorities', async (t) => {

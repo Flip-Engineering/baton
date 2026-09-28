@@ -188,9 +188,9 @@ host-unrestricted execution is never mislabeled as worktree-contained.
   weaken the goal or definition of done while executing it.
 - Structured postmortems and failure attribution linked to source events.
 - Verified branch integration, textual then structured/semantic merge, conflict handling, effect
-  tripwire, review artifact, and explicit approval before push/deploy/other irreversible actions.
-- Stacked integration queues, deployment adapters, health-gated rollout, rollback automation, and
-  live remote publication remain distinct approval-gated contracts rather than implied by merge.
+  tripwire, review artifact, and explicit approval before deploy and other irreversible actions.
+- Stacked integration queues, deployment adapters, health-gated rollout, and rollback automation
+  remain distinct approval-gated contracts rather than implied by merge.
 
 ### F. Routing, evaluation, and learning
 
@@ -1002,7 +1002,7 @@ Initial node-budget reservation, terminal consumed/released/held/overrun settlem
 status projection now ship. Remaining Goal/Plan work includes richer verification/evidence
 predicates, authorized continuation and recovery nodes, amendments and migration,
 child/refinement allocation, live budget reallocation or increase, portfolio scheduling, richer
-risk and multi-principal approval policy, and distinct integration/publication/deploy/rollback
+risk and multi-principal approval policy, and distinct integration/deploy/rollback
 authorities. Native session depth,
 remaining authenticated web/operator and MCP/runtime depth, deeper AST/CST/SCIP/CPG/IR/SSA/PDG
 and R4–R7 representation precision, true semantic merge, conditional e-graphs, registered
@@ -1039,7 +1039,7 @@ is explicitly out of scope.
    commands, resumable SSE observation, MCP stdio fleet tools, and direct/web/MCP drain control are
    shipped. Phase 62 also ships initial Goal/Plan commands, observation, and plan-gated spawn over
    direct/web/MCP authority. WebSocket parity, richer Goal/Plan verification/evidence, authorized
-   continuation/recovery, amendments, publication/operator depth, the production runtime, and
+   continuation/recovery, amendments, operator depth, the production runtime, and
    registered evaluations remain.**
 
 10. Finish the integrated Run application before treating further leaf capability expansion as a

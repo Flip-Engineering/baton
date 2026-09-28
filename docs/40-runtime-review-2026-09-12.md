@@ -22,7 +22,7 @@ The corrective direction is to separate participant, work, group, workspace, con
 acceptance identities, and attach constraints to the operations that need them. Structured
 commands are appropriate for effects with authority. Ordinary agent conversations and tentative
 findings need no universal input/output schema. Reproducible snapshots are valuable for specific
-checks and publication; they should not freeze all live context.
+checks; they should not freeze all live context.
 
 ## Findings and disposition
 

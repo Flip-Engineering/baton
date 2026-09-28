@@ -44,7 +44,7 @@ worker owner. The parent task must be working under that owner and must carry th
 - `run.stop`.
 
 It grants no Goal/Plan approval, answer, steer, review, adoption, integration, export, credential,
-worker, fleet-kernel, publication, or deployment-shutdown authority. Its expiry is the earlier of
+worker, fleet-kernel, or deployment-shutdown authority. Its expiry is the earlier of
 the authenticated session expiry and the deployment lease lifetime. Lease identity, request,
 policy, and payload are independently digested, and no bearer credential is persisted in the
 coordination ledger.
