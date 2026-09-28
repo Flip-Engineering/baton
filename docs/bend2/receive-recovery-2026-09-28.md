@@ -284,3 +284,18 @@ The compiler reports the equations' foreign dependencies. Kernel file-lock
 exclusivity, descriptor inheritance, native exit status and release ordering are
 host obligations covered by the process tests and probes. These application
 equations constrain Bend dispatch under that host contract.
+
+Revision `85666255213e39b1e4111af615dd30e35f424e73` passed all 27 law checks,
+including both production-source negative controls. The native suite passed
+127 Python tests and both Bend Git suites. Both supervisor-loss probes passed
+again with native executable SHA-256
+`a9f12a8fc78d9aee14197cb6faae96b1b169236e660b7ab06038d822457d9452`.
+They retained the original native completion, drained pending input, notified
+the parent and exited all owned processes.
+
+The real OMP process-loss probe also passed on this binary in 15.728 seconds.
+It requested the recorded identity, handled its refusal with fresh recovery,
+and completed the exact three-line journal. The journal was empty before the
+restart. The [ownership-law measurement record](measurements/2026-09-28-receive-ownership-laws.json)
+contains the compiler diagnostics for both negative controls and the validation
+artifact hashes. Local artifacts are under `.scratch/issue625/ownership-laws/`.
