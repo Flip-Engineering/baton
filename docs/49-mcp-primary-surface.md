@@ -382,7 +382,6 @@ it against impl/MCP.md on every run, so a tool added to the inventory without a 
 | `baton_swarm_stop` | surface: `swarm.stop` (the `emergency_stop` class) |
 | `baton_swarm_integrate` | surface: `swarm.integrate` (the root's landing verb) |
 | `baton_waves_compile` / `run` | surface: `waves.compile` / `waves.run` |
-| `baton_scratchpad_settle` / `baton_knowledge_settlement_lease` | descriptor kernel profile, never bridged — the landed U-G3 posture, unchanged |
 | `baton_run_attention_watch` | **retired** — `baton_wakes {verb: "subscribe"}` replaces it |
 | `baton_swarm_watch` | **retired from MCP** — `baton_wakes {verb: "subscribe", swarms: [id]}` replaces it; the CLI keeps `baton swarm watch` |
 

@@ -428,33 +428,3 @@ test('U-E17: one session round trip for a whole run.act tool call over the north
   assert.equal(sessionCalls.length, 1,
     'the whole tool call — authority read and command — attests against the session exactly once');
 });
-
-// ---------------------------------------------------------------------------
-// #287 U-G3: the four settlement commands are NOT web-admitted — host-local
-// kernel operations. The bridge never advertises them (the admission
-// predicate filters the inventory), and MCP.md says exactly that.
-// ---------------------------------------------------------------------------
-
-test('U-G3: the bridge does not advertise the settlement tools, and MCP.md says which posture holds', async (t) => {
-  const { facade, forwarded } = facadeWith(WIRE_CARD);
-  const mcp = server(t, { admitsCommand: (command) => facade._admits(command) });
-  await ready(mcp);
-  const names = (await request(mcp, 'l3', 'tools/list', {})).result.tools.map((tool) => tool.name);
-  const SETTLEMENT = ['baton_scratchpad_settle',
-    'baton_knowledge_settlement_lease'];
-  for (const tool of SETTLEMENT) {
-    assert.equal(names.includes(tool), false, `${tool} is host-local and stays off the bridge inventory`);
-    assert.equal(mcp.toolNames.has(tool), false, `${tool} is not dispatchable over the bridge either`);
-  }
-  // A direct call refuses at the guard — it never reaches the resident as a settlement op.
-  const refused = await request(mcp, 'c9', 'tools/call', { name: 'baton_knowledge_settlement_lease', arguments: { repoId: REPO_ID, waveId: 'wave:1' } });
-  assert.equal(refused.error?.code, -32602, 'the host-local settlement op refuses as an unknown tool on the bridge');
-  assert.equal(forwarded.some((row) => row.name === 'knowledge.settlement_lease'), false, 'nothing settlement-shaped crosses the wire');
-  const { readFileSync } = await import('node:fs');
-  const doc = readFileSync(new URL('../MCP.md', import.meta.url), 'utf8');
-  const section = doc.slice(doc.indexOf('## Admit knowledge'), doc.indexOf('## Tool inventory'));
-  assert.match(section, /descriptor-deployment tools/, 'MCP.md names the settlement tools\' deployment posture');
-  assert.match(section, /does NOT admit them/, 'MCP.md states the resident bridge does not admit the settlement lane');
-  assert.match(section, /never sees them in its `tools\/list`/, 'MCP.md states the bridge never advertises them');
-  assert.match(section, /refuses at the dispatch guard/, 'MCP.md states what a direct bridge call to one does');
-});

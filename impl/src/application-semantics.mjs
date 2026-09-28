@@ -1022,7 +1022,7 @@ const CANONICAL_OPERATION_SPECS = [
     liveMethod: 'application.decisionList',
   }],
   ['scratchpad.settle', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, expectedScratchpadFence: { type: 'integer', minimum: 0 },
       skips: { type: 'array', items: { type: 'object' } },
@@ -1034,7 +1034,7 @@ const CANONICAL_OPERATION_SPECS = [
   // sweep prior expired leases, and candidate each elevated note. The session is server-derived
   // from the calling principal; the row is embedded-only like its settlement siblings.
   ['knowledge.settlement_lease', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       waveId: id, members: { type: 'array', items: id },
     }, ['waveId']),

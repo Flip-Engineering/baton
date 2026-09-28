@@ -1237,7 +1237,7 @@ test('FP-15 (stage: tools + wire mapping absent): every newly projected refusal 
   }
 });
 
-test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the six new tools need no settlement class', async (t) => {
+test('FP-19 (GUARD, green today): ordinary tools use control and observe capabilities', async (t) => {
   const fx = await facadeFixture(t);
   const server = await realServer(fx, mockPrincipal({ capabilities: ['control', 'observe'] }));
   await initialized(server);
@@ -1262,12 +1262,6 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
     assert.equal(response.result?.isError === true && error?.code === 'forbidden', false,
       `${tool} never demands the settlement class (state-level outcomes/refusals are fine)`);
   }
-  id += 1;
-
-  const lease = await wireCall(server, id, 'baton_knowledge_settlement_lease', {
-    repoId: REPO, idempotencyKey: 'ws-h4-lease', waveId: `wave:${'a'.repeat(32)}`,
-  });
-  assert.match(resultText(lease), /forbidden/u, 'the settlement capability class is never defaulted');
 });
 
 // ===========================================================================

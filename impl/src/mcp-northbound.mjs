@@ -151,11 +151,7 @@ const CAPABILITY = Object.freeze({
   ...Object.fromEntries([deriveSurfaceNames('services.list').mcp, 'services.list']
     .map((tool) => [tool, canonicalOperationForCommand('services.list').capabilities])),
   baton_decision_answer: ['approve', 'observe'],
-  // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and
-  // settlement tools. These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS
-  // keys), so their capability classes are registered here like the reflex tools. waves.stop is
-  // the member stop lane (emergency_stop); the settlement lease requires the explicit settlement
-  // capability class (single-orchestrator posture — never a default).
+  // Explicit wave and doctor tools declare their capability classes here.
   baton_waves_start: ['control', 'observe'],
   baton_waves_progress: ['observe'],
   baton_waves_send: ['control', 'observe'],
@@ -170,8 +166,6 @@ const CAPABILITY = Object.freeze({
   baton_wakes_subscribe: ['observe'],
   baton_wakes_unsubscribe: ['observe'],
   baton_wakes_since: ['observe'],
-  baton_scratchpad_settle: ['control', 'observe'],
-  baton_knowledge_settlement_lease: ['settlement'],
   // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
   baton_run_resultpin: ['observe'],
   baton_waves_harvest: ['control', 'observe'],
@@ -198,21 +192,19 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  // MCP-W1/W2: waves.start and the settlement tools are stateful (control effects ride the mcp.call
+  // MCP-W1/W2: waves.start is stateful (control effects ride the mcp.call
   // admission ledger exactly like the matrix control tools). waves.send/waves.stop deliberately are
   // NOT — their wire schemas carry no idempotencyKey (send/stop are per-runId member lanes whose
   // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
   // through the observe-path gate like the read-only tools.
   'baton_waves_start',
-  'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
+  // MCP-W1/W2: waves.start replays idempotently on retry.
   'baton_waves_start',
-  'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -798,29 +790,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // MCP-W2 (mcp-packaging-decisions v1.0): the settlement ops become MCP tools behind the
-  // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
-  // caller field); knowledge.settlement_lease requires
-  // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
-  {
-    name: 'baton_scratchpad_settle',
-    description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
-    inputSchema: schema({
-      ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      skips: { type: 'array', items: { type: 'object' } },
-    }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-
-    name: 'baton_knowledge_settlement_lease',
-    description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
-    inputSchema: schema({
-      ...repo, ...idem, waveId: runId, members: { type: 'array', items: runId },
-    }, ['repoId', 'idempotencyKey', 'waveId']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  // Issue #206: the message lane's ordinary tools (restored per the final-landing ruling).
   {
     name: 'baton_run_message_send',
     description: 'Send one orchestrator message to a worker or run target (inform|query|steer). The target is exactly {workerId} or {runId}; the body rides the message frame lane (message.send.body). budget is optional (default 1). Returns the lane outcome verbatim.',
@@ -1334,8 +1303,6 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
   'baton_deployment_doctor',
-  'baton_scratchpad_settle',
-  'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
@@ -1348,8 +1315,6 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
 const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_waves_start: 'waves.start', baton_waves_progress: 'waves.progress', baton_waves_send: 'waves.send',
   baton_waves_stop: 'waves.stop', baton_waves_list: 'waves.list', baton_waves_run: 'waves.run', baton_waves_compile: 'waves.compile',
-  baton_scratchpad_settle: 'scratchpad.settle',
-  baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
   baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
   baton_run_scratchpad_append: 'run.scratchpad.append',
@@ -1689,7 +1654,7 @@ function validateArguments(name, args, maxWaitMs = null) {
     return 'invalid_knowledge_horizon';
   }
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): hand-rolled shape guards for the ordinary-surface
-  // wave ergonomics, doctor, and settlement tools (the reflex discipline — Part I: no schema
+  // wave ergonomics and doctor tools (the reflex discipline — Part I: no schema
   // evaluator, hand-rolled validation stays the authority). These tools are explicit `_dispatch`
   // branches, so their args never pass through validateApplicationCommandArgs.
   if (name === 'baton_waves_start') {
@@ -1744,14 +1709,6 @@ function validateArguments(name, args, maxWaitMs = null) {
   }
   if (name === 'baton_waves_list' && (Object.hasOwn(args, 'cursor') && !Number.isSafeInteger(args.cursor))) {
     return 'invalid_wave_list';
-  }
-  if (name === 'baton_scratchpad_settle' && (!nonempty(args.runId)
-    || !Number.isSafeInteger(args.expectedScratchpadFence) || args.expectedScratchpadFence < 0
-    || (Object.hasOwn(args, 'skips') && !Array.isArray(args.skips)))) {
-    return 'invalid_scratchpad_settle';
-  }
-  if (name === 'baton_knowledge_settlement_lease' && !nonempty(args.waveId)) {
-    return 'invalid_settlement_lease';
   }
   // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools'
   // hand-rolled shape guards (the wave-tools idiom — the guards are the authority, never a
@@ -2123,7 +2080,7 @@ export class McpFleetServer {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baton', version: '0.1.0' },
-        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence}${wakeSentence}`,
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves support starting, attaching and steering members. See MCP.md.${repoSentence}${wakeSentence}`,
       });
     }
     if (method === 'notifications/initialized') {
@@ -2628,29 +2585,7 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
-    // MCP-W2: the settlement tools via the S-2 sessionAuthority envelope. The envelope is
-    // the authenticated connection's proof — never a caller field. The settlement lease requires
-    // the settlement capability class (already enforced by _authority).
-    else if (name === 'baton_scratchpad_settle') {
-      value = await this.application.command('scratchpad.settle', {
-        runId: args.runId, expectedScratchpadFence: args.expectedScratchpadFence,
-        ...(Object.hasOwn(args, 'skips') ? { skips: clone(args.skips) } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
 
-    else if (name === 'baton_knowledge_settlement_lease') {
-      value = await this.application.command('knowledge.settlement_lease', {
-        waveId: args.waveId, ...(Object.hasOwn(args, 'members') ? { members: clone(args.members) } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
     // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools
     // dispatch their facade commands with the CONNECTION-derived principal (never tool args) and
     // the application context (transport mcp + capability authority). None carries a wire
@@ -2818,11 +2753,6 @@ export class McpFleetServer {
   }
 
 
-  // The proof comes from the authenticated connection. This adapter never reconstructs it from
-  // caller-named principal/session identifiers or from the lease's own stored digest.
-  _sessionAuthorityContext(principal) {
-    return { sessionAuthority: principal.sessionAuthority ?? null };
-  }
 
   // MCP-W3: per-call FRESH doctorReadiness, never open-time cached. The server may carry a
   // doctorReadiness hook (MP10 injects one); otherwise the application facade's own doctor/

@@ -213,25 +213,7 @@ test('MP5: decision.answer enforces the repository coordinate and returns alread
 // MCP-W2 — settlement tools via the S-2 envelope (stage: tools missing)
 // ===========================================================================
 
-test('MP7: the settlement tools register on MCP', async () => {
-  const { server } = setup({ principal: principal({ capabilities: ['control', 'observe', 'approve', 'settlement'] }) });
-  await initialized(server);
-  const list = await request(server, 2, 'tools/list', {});
-  const names = JSON.stringify(list.result);
-  for (const tool of ['baton_scratchpad_settle', 'baton_knowledge_settlement_lease']) {
-    assert.ok(names.includes(tool), `${tool} is advertised`);
-  }
-});
 
-test('MP9: knowledge_settlement_lease requires the settlement capability on the principal', async () => {
-  const { server } = setup({ principal: principal({ capabilities: ['control', 'observe'] }) });
-  await initialized(server);
-  const response = await call(server, 2, 'baton_knowledge_settlement_lease', {
-    repoId: REPO_ID, idempotencyKey: 'mp9-lease', waveId: `wave:${'a'.repeat(32)}`,
-  });
-  assert.equal(response.result.isError, true);
-  assert.match(resultText(response), /forbidden/, 'without the settlement capability class the tool refuses');
-});
 
 // ===========================================================================
 // MCP-W3 — quota-free fresh doctor (stage: tool missing)

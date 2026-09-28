@@ -350,17 +350,14 @@ test('KS8: a not-ready elevation refusal is recorded in settlement.errors and cl
 // KS9 — structural surface gate (regression pin; amended for the MCP-W2 fold)
 // ===========================================================================
 
-test('KS9: the settlement rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
+test('KS9: the settlement rows are embedded in the registry, CLI, and recursive gate', async () => {
   const names = ['scratchpad.settle', 'knowledge.settlement_lease'];
   const rows = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations;
   for (const name of names) {
     if (name === 'knowledge.settlement_lease') continue; // pinned by KS9b once the row lands
     const row = rows.find((entry) => entry.key === name);
     assert.ok(row, `${name} registry row exists`);
-    // Deliberate amendment (mcp-packaging-decisions v1.0 MCP-W2): the rows gain `mcp` in
-    // `surfaces`; the MCP enablement carries the S-2 sessionAuthority envelope requirement
-    // and the settlement capability class (knowledge.settlement_lease).
-    assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], `${name} surfaces carry mcp`);
+    assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded'], `${name} surfaces are embedded`);
   }
   for (const derived of ['scratchpad_settle', 'knowledge_settlement_lease']) {
     assert.equal(CLI_WEB_COMMANDS.has(derived), false, `CLI excludes ${derived}`);
@@ -378,10 +375,10 @@ test('KS9: the settlement names stay out of the recursive-dispatch allowlists (s
     'the capability allowlist is unchanged — the capability-backed recursive gate does not admit the ritual');
 });
 
-test('KS9b: the knowledge.settlement_lease registry row exists and is mcp-enabled (stage: row missing)', async () => {
+test('KS9b: the knowledge.settlement_lease registry row exists and is embedded (stage: row missing)', async () => {
   const row = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === 'knowledge.settlement_lease');
   assert.ok(row, 'the settlement_lease row lands with the implementation');
-  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], 'mcp-enabled like its siblings (MCP-W2 fold)');
+  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded'], 'embedded like its siblings (MCP-W2 fold)');
 });
 
 // ---------------------------------------------------------------------------
