@@ -99,9 +99,10 @@ failure reports, left the original input pending, and created no fresh launch
 or recovery diagnostic. All owned processes exited naturally. Direct `turn`
 retains #626's fallback. The evidence is
 `.scratch/issue625/all-process-loss/receive-626-gap/evidence.json`.
-This receive integration remains work for #626.
+The later [retained receive repair](receive-recovery-2026-09-28.md#retained-receive-fallback)
+adds this fallback and validates observer recovery during the fresh attempt.
 
 The combined native suite passed all 124 Python tests and both Bend Git suites.
 The #625 supervisor-loss probe also passed on the combined binary. The existing
-#626 regression test covers direct `turn`; it does not cover the retained
-receive case above.
+#626 regression test at that revision covers direct `turn`. The later receive
+tests and composed-tree measurements are recorded with the repair above.

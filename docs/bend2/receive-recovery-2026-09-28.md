@@ -181,6 +181,77 @@ The supervisor-loss probe passed again, and the combined native suite passed
 above remains pinned to its measured revision and binary.
 
 [The additional Codex record](codex-process-loss-2026-09-28.md) validates explicit
-direct-turn resumption after complete process loss. It also records a remaining
-#626 integration gap: retained receive does not apply the direct-turn fallback
-when OMP refuses a missing conversation.
+direct-turn resumption after complete process loss. It also records the #626
+integration failure at `276b62b5`: retained receive left input pending when OMP
+refused a missing conversation.
+
+## Retained receive fallback
+
+Revision `d8a4454840db7d8d8087c6a6d72254c19a6fc744` composes the repair onto
+`d0c06fad840008a7c9b263ba1be2a9a259f32b4d`. Both the original observer and its
+recovery command check the refused attempt's stderr and original resume value.
+A confirmed refusal enters one SQLite transaction: record a recovery input with
+the workspace's Git status, clear the refused identity on that first insertion,
+and record `<attempt>:recovery` for the parent. The original task stays pending.
+
+After native exit and this transaction, the observer releases ownership and
+invokes ordinary receive. The fresh retained attempt reads both pending inputs
+and records its native identity through observation. The old owner remains
+available until continuation and parent notice delivery finish. If the observer
+dies during the fresh attempt, its owner retains that native process and starts
+another observer. Replaying the refused attempt reads the existing recovery
+input and preserves the fresh identity. Fresh completion has a new attempt ID.
+
+Each retained attempt has a separate `native.stderr` file. Missing-result parent
+diagnostics name that file. This keeps refusal classification tied to the native
+process that produced it.
+
+The added receive tests cover worker and root fallback, pending task and workspace
+context, fresh identity recording, complete parent receipts, repeated observer
+loss during the fresh turn, and an unrelated provider failure after an older
+refusal. The workspace checks preserve an existing tracked-file change and append
+the final step. All owned fixture processes exit after completion.
+
+## Composed-tree validation
+
+The composed revision above passed `check-native.sh`: 127 Python tests, including
+22 receive tests, and both Bend Git suites. Its native executable SHA-256 is
+`54c67e34ae4c8c015a8e9dcb79c921637d2bfa7f25f54a88f946245aa327f64f`.
+The following probes used this executable after the build:
+
+```sh
+python3 docs/bend2/examples/probe-supervisor-loss.py --harness codex \
+  --output .scratch/issue625/composed/supervisor-codex.json
+python3 docs/bend2/examples/probe-supervisor-loss.py --harness omp \
+  --output .scratch/issue625/composed/supervisor-omp.json
+python3 docs/bend2/examples/probe-recovery-real-models.py --harness omp \
+  --output .scratch/issue625/composed/real-omp
+```
+
+Both controlled supervisor-loss probes passed. The immediate retry and the retry
+after terminal output returned `queued`; each original native process survived
+the observer kill. Output written after that kill and both completed reports
+were retained. Parent receipts were recorded, pending input drained, and every
+owned process exited. Neither probe started a duplicate native process.
+
+The real OMP run used `deepseek/deepseek-flash` with low thinking. It killed all
+three processes in its owned initial turn tree and requested conversation
+`01a0e991-d173-7000-a5f8-d901024e7c34`. OMP refused that resume. The fallback
+started without `--resume`, recorded
+`ompsession-turn-1:recovery`, and completed under fresh identity
+`01a0e991-eace-7000-8321-b490d50b2722`. The turn exited 0 with `agent_end`.
+Only `journal.txt` changed; it contained exactly the three requested lines in
+order. No killed process survived and no owned process remained after completion.
+Elapsed time was 22.529 seconds, including probe setup and model work. The binary
+hash was unchanged before and after the run.
+
+This real run exercises explicit direct-turn recovery after complete process
+loss. Its journal did not exist before the kill. Preservation of existing edits
+and observer loss during a fresh retained attempt are covered by the controlled
+receive tests described above. The earlier real Codex measurements retain their
+original source and executable pins.
+
+The [composed measurement record](measurements/2026-09-28-receive-626-composition.json)
+contains process IDs, native launch arguments, source and executable hashes, and
+evidence file hashes. Local artifacts are under `.scratch/issue625/composed/`,
+including `check-native.log` and `real-omp/evidence.json`.
