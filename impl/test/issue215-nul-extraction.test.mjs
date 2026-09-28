@@ -40,11 +40,16 @@ for (const relative of FILES) {
 }
 
 test('215-b: the cacheKey separators keep the NUL escape in source', () => {
-  for (const relative of FILES) {
-    const text = readFileSync(join(root, relative), 'utf8');
-    const line = text.split('\n').find((entry) => entry.includes('const cacheKey = `'));
-    assert.ok(line, `${relative} still builds its cacheKey from a template literal`);
+  // The board projection cache application.mjs carried left with the #598 board removal
+  // (f6333aac), so this row judges the files that still build a cacheKey, and at least one must.
+  const builders = FILES.flatMap((relative) => {
+    const line = readFileSync(join(root, relative), 'utf8').split('\n')
+      .find((entry) => entry.includes('const cacheKey = `'));
+    return line === undefined ? [] : [{ relative, line }];
+  });
+  assert.ok(builders.length > 0, 'a source file still builds its cacheKey from a template literal');
+  for (const { relative, line } of builders) {
     assert.ok(line.includes('\\0'), `${relative} cacheKey still separates with the NUL escape`);
-    assert.equal('\0', '\u0000', 'the escape spells the same separator the raw byte did');
   }
+  assert.equal('\0', '\u0000', 'the escape spells the same separator the raw byte did');
 });
