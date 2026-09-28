@@ -2378,7 +2378,7 @@ export function createLocalAuthenticatedWebServer(northbound) {
  * ADMITTED-name table (kernel rows included) where production admits exactly these. */
 export function webCardCommandNames() {
   return [...WEB_APPLICATION_ENTRIES, ...DIRECT_PORT_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES,
-    ...DEPLOYMENT_WEB_ENTRIES, ...CONTEXT_PACKAGE_WEB_ENTRIES]
+    ...DEPLOYMENT_WEB_ENTRIES]
     .map(([, name]) => name);
 }
 export { validateEnvelope as validateWebCommandEnvelope };

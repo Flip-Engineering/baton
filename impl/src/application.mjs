@@ -4671,18 +4671,6 @@ export class BatonApplication {
 
 
 
-  _runWaveIndex() {
-    return applicationObservation._runWaveIndex(this);
-  }
-
-  _runWaveId(runId, index = null) {
-    return applicationObservation._runWaveId(this, runId, index);
-  }
-
-  _runWaveRole(runId, index = null) {
-    return applicationObservation._runWaveRole(this, runId, index);
-  }
-
   _runCellDeclaration(runId, index = null) {
     return applicationObservation._runCellDeclaration(this, runId, index);
   }
