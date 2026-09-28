@@ -1285,12 +1285,6 @@ export async function _send(coordinator, recorder, workerId, message, mode, opts
       && preflightTask.brief?.goalPlan) {
       return { ok: false, result: 'goal_plan_continuation_not_authorized' };
     }
-    if (mode === 'turn' && preflightTask?.runId
-      && recorder.coordination.run?.(preflightTask.runId)?.status === 'sealed') {
-      throw Object.assign(new Error(`run ${preflightTask.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      });
-    }
     coordinator.tick();
     const handle = coordinator._getWorker(workerId);
     // SC4a: per-worker delivery serialization — deliveries reach the adapter strictly in

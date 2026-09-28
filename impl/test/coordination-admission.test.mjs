@@ -309,7 +309,8 @@ test('CA5: the store keeps its exact decisions across the move, and a moved memb
     const before = createHash('sha256').update(JSON.stringify(store.snapshot())).digest('hex');
     // Issue #66 (D3): snapshot().knowledge carries the folded `doubts` projection — the golden
     // moves with it; replay still reconstructs the identical bytes (asserted below).
-    assert.equal(before, '673b1dc47bb3039600e35ff5188af45482fc5d993980891b4f931bd05e2fb967',
+    // The Run seal left the plane, so the snapshot no longer carries the `runs` table.
+    assert.equal(before, '56bf1c7c15ea89d57c0aaa87294341d01f3b2ea05be7be54414de8b42e9e8dc3',
       'the projection the moved admission builds is the one the pre-move store built');
     const restarted = new CoordinationStore(root, { clock });
     assert.equal(restarted.healthCheck(), true);

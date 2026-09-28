@@ -6,7 +6,7 @@ const SAFE_COORDINATION_KINDS = new Set([
   'plan.node_budget_settled', 'plan.node_dispatched', 'plan.version_proposed',
   'run.lineage_admitted', 'run.orchestrator_lease_issued',
   'run.orchestrator_lease_revoked',
-'run.sealed', 'run.stop_admitted', 'run.stop_completed',
+  'run.stop_admitted', 'run.stop_completed',
   'run.verification_retry_admitted', 'run.verification_retry_completed',
   'task.acceptance_revoked', 'task.claimed', 'task.created', 'task.resources_released',
   'task.transitioned',
@@ -143,7 +143,7 @@ function category(kind) {
   if (kind.startsWith('resource.')) return 'resource';
   if (kind.startsWith('content.')) return 'work';
   if (kind.startsWith('context.')) return 'context';
-  if (kind.startsWith('run.result_') || kind === 'run.sealed') return 'result';
+  if (kind.startsWith('run.result_')) return 'result';
   if (kind.startsWith('run.verification_')) return 'verification';
   if (kind.startsWith('run.lineage_') || kind.startsWith('run.orchestrator_')) return 'orchestration';
   return 'lifecycle';

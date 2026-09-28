@@ -64,7 +64,7 @@ export const MAD_UNIT_CANON = new Map([
  * `_steeringRuns` is carried here because it is fold output the ledger copy cannot hand back: with
  * the events no longer cached, every family the restore installs must be one the body carries. */
 export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
-  '_tasks', '_runs', '_artifacts',
+  '_tasks', '_artifacts',
   '_reuseDecisions', '_reuseSubjects', '_reuseRiskGuards', '_reusePolicyHeads',
   '_reusePolicyTransitions', '_routeObservations', '_representations',
   '_representationRequests', '_goals', '_goalHeads', '_plans', '_planHeads',
@@ -250,7 +250,7 @@ export function repositoryId(state) { return state; }
 
 /** Moved from `CoordinationStore._runIdentityHasEffects` (issue #259 slice 1). State: the store, passed explicitly. */
 export function _runIdentityHasEffects(store, runId, ignoredSeq = null) {
-  if (store._runLineages.has(runId) || store._runs.has(runId) || store._runStopByTarget.has(runId)
+  if (store._runLineages.has(runId) || store._runStopByTarget.has(runId)
     || [...store._tasks.values()].some((task) => task.runId === runId)
     || [...store._goals.values()].some((goal) => goal.runId === runId)
     || [...store._plans.values()].some((plan) => plan.runId === runId)
@@ -371,9 +371,6 @@ export function observationTime(store, observedSeq = store._events.length) {
 
 /** Moved from `CoordinationStore.task` (issue #259 slice 1). State: `this._tasks`, passed explicitly. */
 export function task(state, id) { return clone(state.get(id) ?? null); }
-
-/** Moved from `CoordinationStore.run` (issue #259 slice 1). State: `this._runs`, passed explicitly. */
-export function run(state, id) { return clone(state.get(id) ?? null); }
 
 /** Moved from `CoordinationStore.taskResourceRelease` (issue #259 slice 1). State: `this._taskResourceReleases`, passed explicitly. */
 export function taskResourceRelease(state, taskId) {

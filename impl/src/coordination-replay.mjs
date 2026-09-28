@@ -1259,7 +1259,7 @@ export function recoveryDispatchState(store, workerId) { return clone(store._rec
 /** Moved from `CoordinationStore.createAndClaimRecoveryRefinement` (issue #259 slice 1). State: the store, passed explicitly. */
 export function createAndClaimRecoveryRefinement(store, fields, attribution, auth) {
   const priorTask = store._tasks.get(fields?.refines);
-  if (!priorTask || (fields?.runId != null && store._runs.get(fields.runId)?.status === 'sealed')) {
+  if (!priorTask) {
     throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
   }
   if (priorTask.brief?.goalPlan) {

@@ -601,7 +601,6 @@ function dispatchFailure(cause, command = null) {
   if (['oracle_unavailable', 'oracle_timeout'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'advisory source unavailable' } } };
   if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
   if (['explicit_vendor_required', 'verification_required'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'review precondition failed' } } };
-  if (['run_sealed', 'run_not_terminal', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'run state conflict' } } };
   // #521: a route blocked at readiness because no credential is projected into the worker
   // runtime is a state conflict, never a transient condition — retrying the identical request
   // cannot project a credential, so it crosses typed 409 with the readiness summary instead of
@@ -610,7 +609,7 @@ function dispatchFailure(cause, command = null) {
     code: cause.code,
     message: typeof cause?.message === 'string' && cause.message.length > 0 ? cause.message : 'no provider credential is projected into the worker runtime for this route',
   } } };
-  if (['invalid_run_id', 'run_not_found'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
+  if (cause?.code === 'invalid_run_id') return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
   if (['causal_request_invalid', 'causal_context_invalid', 'causal_audit_invalid', 'causal_trace_invalid', 'causal_recall_invalid', 'causal_correction_invalid', 'causal_contradiction_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'causal operation precondition failed' } } };
   if (['causal_repo_mismatch', 'causal_correction_forbidden', 'causal_contradiction_forbidden'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'causal repository authority forbidden' } } };
   if (['causal_audit_oversize', 'causal_trace_oversize', 'causal_audit_integrity', 'causal_recall_oversize', 'causal_recall_audit_failed', 'knowledge_recall_conflict', 'knowledge_recall_integrity', 'causal_correction_oversize', 'causal_correction_conflict', 'causal_correction_integrity', 'causal_contradiction_oversize', 'causal_contradiction_audit_failed', 'causal_contradiction_conflict', 'causal_contradiction_integrity', 'unresolved_contradiction'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'causal evidence refused' } } };

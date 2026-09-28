@@ -68,11 +68,6 @@ test('RA2/RA3: Baton selects only task-scoped receipt-before-verification-before
     assert.equal(result.payload[0].noOp, true, name); assert.equal(f.store.snapshot().lastSeq, before, name);
   }
 
-  const runScoped = await fixture({ id: 'run-scope', scope: 'actor' }); const runDigest = 'a'.repeat(64); const runPrefix = runScoped.store.snapshot().lastSeq;
-  runScoped.store.sealRunScorecard({ runId: 'run-run-scope', coordinationUpperBound: runPrefix, operationalTails: [{ taskId: 'run-scope', worker: 'w-run-scope', tail: 1 }], taskIds: ['run-scope'], scorecardDigest: runDigest, scorecard: { runId: 'run-run-scope' }, artifact: { path: '/tmp/phase52-run-scorecard', digest: runDigest, bytes: 1 }, evidence: [{ coordinationSeq: runScoped.terminalEvent.event.seq }] }, { actor: 'orchestrator', key: 'run-scope:seal' });
-  await runScoped.cairn.invoke('causal.recall', { text: 'run-scope', limit: 1, observedSeq: runScoped.store.snapshot().lastSeq, reader: { runId: 'run-run-scope' } }, context({ idempotencyKey: 'run-scope:recall' })); const runBefore = runScoped.store.snapshot().lastSeq;
-  assert.equal((await runScoped.cairn.invoke('causal.assess_recall', { observedSeq: runBefore }, context({ idempotencyKey: 'run-scope:assess' }))).payload[0].noOp, true); assert.equal(runScoped.store.snapshot().lastSeq, runBefore);
-
   const after = await fixture({ id: 'after-terminal', addOutcome: false, scope: 'actor' });
   const verification = { worker: 'w-after-terminal', seq: 1, ts: '2026-07-13T08:00:01.000Z', actor: 'policy', kind: 'verify.reverified', taskId: 'after-terminal', runId: 'run-after-terminal', harness: route.harnessResolved, modelResolved: route.modelResolved, effortResolved: route.effortResolved, routeKey: route.routeKey, payload: { accept: true } };
   after.operational.set(`${verification.worker}:1`, verification); const mapped = after.store.mapOperationalEvent(verification, { actor: 'policy', key: 'after:map' }); after.store.transitionTask('after-terminal', 'completed', 2, { actor: 'policy', key: 'after:terminal' }, mapped.evidence);

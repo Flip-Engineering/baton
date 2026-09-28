@@ -729,38 +729,6 @@ export function _validateRepresentationPayload(store, payload, event, integrity 
   return derived;
 }
 
-export function _validateRunSealPayload(store, p, eventSeq, integrity = false) {
-  const fail = (message, code) => {
-    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
-  };
-  if (!validRunId(p?.runId)) fail('runId is invalid', 'invalid_run_id');
-  if (store._runs.has(p.runId)) fail(`duplicate run seal ${p.runId}`, 'duplicate_run_seal');
-  if (!Number.isSafeInteger(p.coordinationUpperBound) || p.coordinationUpperBound !== eventSeq - 1) fail('run coordination prefix is invalid', 'run_prefix_changed');
-  const members = [...store._tasks.values()].filter((task) => task.runId === p.runId).sort((a, b) => compareCanonicalStrings(a.id, b.id));
-  if (members.length === 0) fail(`unknown run ${p.runId}`, 'run_not_found');
-  const taskIds = Array.isArray(p.taskIds) ? [...p.taskIds].sort() : [];
-  if (JSON.stringify(taskIds) !== JSON.stringify(members.map((task) => task.id))) fail('run membership is invalid', 'run_membership_changed');
-  if (members.some((task) => !TERMINAL.has(task.status))) fail(`run ${p.runId} has nonterminal tasks`, 'run_not_terminal');
-  if (!Array.isArray(p.operationalTails) || p.operationalTails.length !== members.length) fail('run operational tails are incomplete', 'run_tail_invalid');
-  const tails = new Map(p.operationalTails.map((tail) => [tail?.taskId, tail]));
-  for (const task of members) {
-    const tail = tails.get(task.id);
-    if (!tail || tail.worker !== task.assignee || !Number.isSafeInteger(tail.tail) || tail.tail < 1) fail(`invalid operational tail for ${task.id}`, 'run_tail_invalid');
-  }
-  if (!/^[a-f0-9]{64}$/.test(p.scorecardDigest ?? '') || !p.scorecard || typeof p.scorecard !== 'object' || Array.isArray(p.scorecard)) fail('run scorecard digest/row invalid', 'run_scorecard_invalid');
-  if (!p.artifact || typeof p.artifact.path !== 'string' || p.artifact.path.length === 0 || p.artifact.digest !== p.scorecardDigest || !Number.isSafeInteger(p.artifact.bytes) || p.artifact.bytes <= 0) fail('run scorecard artifact invalid', 'run_artifact_invalid');
-  const evidence = Array.isArray(p.evidence) ? p.evidence : [];
-  const evidenceSeqs = new Set();
-  for (const ref of evidence) {
-    if (!Number.isInteger(ref?.coordinationSeq) || ref.coordinationSeq < 1 || ref.coordinationSeq > p.coordinationUpperBound || !store._events[ref.coordinationSeq - 1]) fail('run scorecard evidence is invalid', 'run_evidence_invalid');
-    evidenceSeqs.add(ref.coordinationSeq);
-  }
-  if (members.some((task) => !evidenceSeqs.has(task.terminalEvent))) fail('run scorecard omits terminal task evidence', 'run_evidence_invalid');
-  const runNodeId = `run:${p.runId}`; const artifactNodeId = `run-scorecard:${p.scorecardDigest}`;
-  if (store._knowledgeNodes.has(runNodeId) || store._knowledgeNodes.has(artifactNodeId)) fail('run scorecard graph identity already exists', 'duplicate_node');
-  return { members, evidence: clone(evidence), runNodeId, artifactNodeId };
-}
-
 export function _validateRouteObservationPayload(store, p, event, integrity = false) {
   const fail = (message, code = 'route_observation_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
   const fields = ['schemaVersion', 'policyDigest', 'taskId', 'expectedTaskVersion', 'taskType', 'runId', 'routeKey', 'modelFamily', 'route', 'terminalStatus', 'verifiedWin', 'verificationEvidence', 'observedAt', 'observationDigest'];
@@ -2737,7 +2705,7 @@ export function _validateKnowledgeRecallPayload(store, payload, event, integrity
   const taskId = payload.taskId ?? null; const runId = payload.runId ?? null; const task = taskId === null ? null : store._tasks.get(taskId);
   const readerWorkerAtReceipt = task?.claimedEvent && task.claimedEvent < event.seq ? task.assignee : null;
   if ((taskId !== null && (!task || payload.readerWorker !== readerWorkerAtReceipt || runId !== null))
-    || (runId !== null && (!store._runs.has(runId) || !store._knowledgeNodes.has(`run:${runId}`) || taskId !== null || payload.readerWorker !== null))
+    || (runId !== null && (!store._knowledgeNodes.has(`run:${runId}`) || taskId !== null || payload.readerWorker !== null))
     || (taskId === null && runId === null && payload.readerWorker !== null)) fail('knowledge recall reader projection is invalid');
   let projection; try { projection = store._buildKnowledgeRecall(payload.query, payload.policy); } catch (error) { if (integrity) throw new CoordinationIntegrityError('knowledge recall projection cannot be rebuilt', 'knowledge_recall_integrity'); throw error; }
   const expectedScores = projection.nodes.map((node) => ({ id: node.id, score: node.score, reasonDigest: node.reasonDigest }));

@@ -877,7 +877,7 @@ export function _resetProjection(store) {
   // this call is dropping — the next write measures the projection it then has.
   store._checkpointCostVerdict = null;
   store._checkpointByteBreakdown = null;
-  store._events = []; store._byKey = new Map(); store._tasks = new Map(); store._runs = new Map(); store._artifacts = new Map(); store._steeringRuns = new Set();
+  store._events = []; store._byKey = new Map(); store._tasks = new Map(); store._artifacts = new Map(); store._steeringRuns = new Set();
   store._reuseDecisions = new Map(); store._reuseSubjects = new Map(); store._reuseRiskGuards = new Map(); store._reusePolicyHeads = new Map(); store._reusePolicyTransitions = [];
   store._routeObservations = new Map();
   store._representations = new Map(); store._representationRequests = new Map();
@@ -2029,9 +2029,6 @@ export function _apply(store, event) {
     store._recoveryAttemptsById.set(attempt.attemptId, attempt);
     store._recoveryAttemptHeads.set(attempt.seriesId, attempt.attemptId);
   } else if (event.kind === 'task.created') {
-    if (p.runId != null && store._runs.get(p.runId)?.status === 'sealed') {
-      throw new CoordinationIntegrityError(`task ${p.id} was admitted to sealed run ${p.runId}`, 'run_sealed');
-    }
     const topology = store._validateTaskTopology(p, store._taskTopologyHint(event), store._loading);
     if (topology) store._taskTopologies.set(p.id, topology);
     store._tasks.set(p.id, freeze({ ...clone(p), status: 'pending', assignee: null, version: 1, createdEvent: event.seq, claimedEvent: null, terminalEvent: null, artifactIds: [] }));
@@ -2214,19 +2211,6 @@ export function _apply(store, event) {
       throw new CoordinationIntegrityError('representation request alias is invalid', 'representation_integrity');
     }
     store._representationRequests.set(p.requestDigest, freeze({ identityDigest: p.identityDigest, bindingDigest: p.bindingDigest }));
-  } else if (event.kind === 'run.sealed') {
-    const { members, evidence, runNodeId, artifactNodeId } = store._validateRunSealPayload(p, event.seq, true);
-    store._runs.set(p.runId, freeze({ ...clone(p), status: 'sealed', sealedEvent: event.seq, sealedAt: event.ts }));
-    const promotion = { kind: 'RunScorecard', trigger: 'run.scorecard' };
-    const temporal = eventTime(store._events, evidence, event);
-    store._setKnowledgeNode(event, runNodeId, freeze({ id: runNodeId, type: 'Run', grounding: 'verified', body: `Sealed run ${p.runId}`, evidence, promotion, observedSeq: event.seq, observedAt: event.ts, ...temporal, validFrom: event.ts, validTo: null, validityVersion: 1 }));
-    store._setKnowledgeNode(event, artifactNodeId, freeze({ id: artifactNodeId, type: 'Artifact', grounding: 'verified', body: `Cairn scorecard ${p.scorecardDigest}`, evidence, promotion, observedSeq: event.seq, observedAt: event.ts, ...temporal, validFrom: event.ts, validTo: null, validityVersion: 1 }));
-    for (const task of members) {
-      const id = `knowledge-edge:contains:${p.runId}:${task.id}`;
-      store._setKnowledgeEdge(event, id, freeze({ id, type: 'Contains', from: runNodeId, to: `task:${task.id}`, evidence, observedSeq: event.seq, observedAt: event.ts, ...temporal, validFrom: event.ts, validTo: null, validityVersion: 1 }));
-    }
-    const producedId = `knowledge-edge:producedby:${p.scorecardDigest}:${p.runId}`;
-    store._setKnowledgeEdge(event, producedId, freeze({ id: producedId, type: 'ProducedBy', from: artifactNodeId, to: runNodeId, evidence, observedSeq: event.seq, observedAt: event.ts, ...temporal, validFrom: event.ts, validTo: null, validityVersion: 1 }));
   } else if (event.kind === 'knowledge.reuse_policy_reconciled') {
     const { version, head: priorHead } = store._validateReusePolicyPayload(p, event, true);
     if (p.priorConstraintTarget) {
@@ -3493,7 +3477,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -3790,7 +3774,6 @@ export function createTask(store, fields, auth) {
   const runId = fields.runId ?? null;
   if (runId !== null && !validRunId(runId)) throw new CoordinationRefusal('task runId is invalid', 'invalid_run_id');
   store._assertRunAdmissionOpen(runId);
-  if (runId !== null && store._runs.get(runId)?.status === 'sealed') throw new CoordinationRefusal(`run ${runId} is sealed`, 'run_sealed');
   const deps = [...(fields.deps ?? [])];
   for (const dep of deps) if (!store._tasks.has(dep)) throw new CoordinationRefusal(`missing dependency ${dep}`, 'missing_dependency');
   if (deps.includes(fields.id)) throw new CoordinationRefusal(`dependency cycle at ${fields.id}`, 'cycle');
@@ -4030,25 +4013,6 @@ export function resolveSettlementDoubt(store, fields, auth) {
     disposition: fields.disposition,
     pushId: answered ? `doubt_answer:${fields.doubtId}` : null,
   });
-}
-
-export function sealRunScorecard(store, fields, auth) {
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    const run = store.run(fields?.runId);
-    if (run && run.scorecardDigest === fields?.scorecardDigest) return freeze({ ok: true, result: 'idempotent', event: clone(prior), run });
-    throw new CoordinationRefusal('run seal idempotency conflict', 'run_seal_conflict');
-  }
-  const runId = fields?.runId;
-  if (!validRunId(runId)) throw new CoordinationRefusal('runId is invalid', 'invalid_run_id');
-  const existing = store._runs.get(runId);
-  if (existing) {
-    if (existing.scorecardDigest === fields?.scorecardDigest) return freeze({ ok: true, result: 'idempotent', event: clone(store._events[existing.sealedEvent - 1]), run: clone(existing) });
-    throw new CoordinationRefusal(`run ${runId} is already sealed`, 'run_sealed');
-  }
-  store._validateRunSealPayload(fields, store._events.length + 1, false);
-  const event = store._append('run.sealed', clone(fields), auth);
-  return freeze({ ok: true, result: 'sealed', event: clone(event), run: store.run(runId) });
 }
 
 export function claimTask(store, id, worker, expectedVersion, auth, attribution = {}) {
@@ -5354,7 +5318,7 @@ export function _prepareKnowledgeRecall(store, request, policy, actor) {
   const terms = recallTerms(request.text); if (terms.length === 0) throw new CoordinationRefusal('knowledge recall query has no searchable terms', 'causal_recall_invalid');
   const readerKeys = Object.keys(request.reader); if (readerKeys.some((key) => !['taskId', 'runId'].includes(key)) || readerKeys.length > 1) throw new CoordinationRefusal('knowledge recall reader is invalid', 'causal_recall_invalid');
   const taskId = request.reader.taskId ?? null; const runId = request.reader.runId ?? null;
-  if ((taskId !== null && (!boundedText(taskId, 256) || !store._tasks.has(taskId))) || (runId !== null && (!validRunId(runId) || !store._runs.has(runId) || !store._knowledgeNodes.has(`run:${runId}`)))) throw new CoordinationRefusal('knowledge recall reader target is invalid', 'causal_recall_invalid');
+  if ((taskId !== null && (!boundedText(taskId, 256) || !store._tasks.has(taskId))) || (runId !== null && (!validRunId(runId) || !store._knowledgeNodes.has(`run:${runId}`)))) throw new CoordinationRefusal('knowledge recall reader target is invalid', 'causal_recall_invalid');
   const types = request.types ?? []; const grounding = request.grounding ?? []; const seedNodeIds = request.seedNodeIds ?? [];
   if (!Array.isArray(types) || new Set(types).size !== types.length || types.some((type) => !KNOWLEDGE_NODE_TYPES.has(type))
     || !Array.isArray(grounding) || new Set(grounding).size !== grounding.length || grounding.some((value) => !KNOWLEDGE_GROUNDINGS.has(value))
