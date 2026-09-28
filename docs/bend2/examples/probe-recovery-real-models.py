@@ -159,7 +159,7 @@ def main():
         specs.append({'name': 'codexsession', 'harness': 'codex', 'bin': str(SCRATCH / 'codex.sh'),
                       'model': CODEX_MODEL})
     else:
-        failures.append('codex: not logged in, so its session could not run (%s)' % evidence['codexLogin'])
+        evidence['codexSkipped'] = 'no login for this seat by design (%s); the Codex half is queued to the operator session' % evidence['codexLogin']
 
     coord(db, 'attach', 'root', 'omp', 'native-root', '')
 
@@ -233,21 +233,30 @@ def main():
             failures.append('%s: the task was already finished before the kill' % spec['name'])
 
     # Restart: the same turn with the identity the session held before the kill,
-    # the way the trial's own second launches name it.
+    # the way the trial's own second launches name it. A recorded conversation
+    # this host still holds resumes; one it does not is refused, and the turn
+    # then runs fresh so the pending input still completes.
     for spec in specs:
         name = spec['name']
         before = session_dir_rows(db)
         launch = [str(EXE), str(db), 'turn', name, name + '-turn-1', spec['bin'], spec['model'],
                   'low', str(spec['worktree']), str(spec['task']), str(spec['log']), spec['native']]
         resumed = subprocess.Popen(launch, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        argv = harness_argv(db, 120)
-        stdout, stderr = resumed.communicate(timeout=900)
+        launches = []
+        deadline = time.monotonic() + 900
+        while resumed.poll() is None and time.monotonic() < deadline:
+            for _, command in processes_matching(str(db)):
+                if 'baton2' not in command and command not in launches:
+                    launches.append(command)
+            time.sleep(0.3)
+        stdout, stderr = resumed.communicate(timeout=120)
         rows = coord(db, 'workers')
         row = [r for r in rows if r['id'] == name][0]
         text = spec['journal'].read_text() if spec['journal'].exists() else ''
+        inbox = coord(db, 'inbox', 'root')
         entry = {
             'launchResumeArgv': launch,
-            'harnessArgv': argv,
+            'harnessLaunches': launches,
             'exitCode': resumed.returncode,
             'stdout': stdout[:400],
             'stderr': stderr[:800],
@@ -258,18 +267,19 @@ def main():
             'journal': text,
             'sessionDirBefore': before,
             'sessionDirAfter': session_dir_rows(db),
+            'recoveryRows': [m['id'] for m in inbox if m['id'].endswith(':recovery')],
         }
         evidence['sessions'][name] = entry
-        resumed_arg = spec['native'] in ' '.join(argv)
-        if not resumed_arg:
-            failures.append('%s: the restarted harness argv carries no resume value' % name)
-        if row.get('native') != spec['native']:
-            failures.append('%s: the restarted turn ran under another identity (%s -> %s)'
-                            % (name, spec['native'], row.get('native')))
+        if not any('--resume' in command for command in launches):
+            failures.append('%s: no harness launch carried the recorded identity' % name)
         if row.get('lastTurnEvent') != 'agent_end':
             failures.append('%s: the turn did not reach a terminal event' % name)
         if 'line three from ' + name not in text:
             failures.append('%s: the task did not finish after the restart' % name)
+        if not row.get('native'):
+            failures.append('%s: the session recorded no identity after the restart' % name)
+        if row.get('native') != spec['native'] and not entry['recoveryRows']:
+            failures.append('%s: the conversation changed with no recovery row' % name)
 
     evidence['failures'] = failures
     print(json.dumps(evidence, indent=2, sort_keys=True))

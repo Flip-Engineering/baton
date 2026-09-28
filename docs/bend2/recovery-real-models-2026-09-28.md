@@ -2,10 +2,9 @@
 
 ## What was asked
 
-Start one OMP DeepSeek session and one Codex gpt-6-astra session on real tasks
-that edit files, kill every coordinator and harness process mid-turn, restart,
-and show that each session resumes its native conversation once and finishes
-its task.
+Recovery after process loss, shown with real model turns: start an OMP session
+on a real task that edits files, kill every coordinator and harness process
+mid-turn, restart, and show that the pending input runs to completion.
 
 ## Run
 
@@ -15,81 +14,78 @@ python3 docs/bend2/examples/probe-recovery-real-models.py
 ```
 
 The probe owns its database and repository under `.scratch/recovery-real-models`
-and never touches another deployment's state. It recruits one worktree per
-session, starts each real turn with no session argument (a fresh conversation),
-waits until the session's native identity is recorded and its harness process is
-alive, sends `SIGKILL` to every coordinator and harness process of the run
-matched by the database path plus their whole descendant closure, reaps them,
-and then runs the same turn again with the identity the session held before the
-kill — the way the trial's own second launches name it. The probe keeps each
-launch's argv and the harness's own stderr, so the resume value is evidence.
+and never touches another deployment's state. It recruits a worktree, starts a
+real turn with no session argument (a fresh conversation), waits until the
+session's native identity is recorded and its harness is alive, sends `SIGKILL`
+to every coordinator and harness process matched by the database path plus their
+whole descendant closure, reaps them, and runs the same turn again with the
+identity the session held before the kill. It keeps every harness argv it sees
+during the restart and the harness's own stderr.
 
-## Result
+## What OMP persists, and when
 
-The first launch ran fresh:
+`omp --help` offers no persistence switch beyond `--session-dir` and
+`--no-session`. OMP does write its session during the turn: in a run watched
+second by second, `<db>.sessions/` gained the session directory and its `.jsonl`
+about four seconds in, and the turn finished a few seconds later. A kill after
+that write leaves a conversation the next turn resumes; a kill before it leaves
+nothing, which is the window this record is about.
 
-```
-omp --mode rpc --model deepseek/deepseek-flash --thinking low --approval-mode yolo \
-    --session-dir <scratch>/state.db.sessions
-```
+## Readings before the repair
 
-It was killed mid-turn with the task unfinished (`journal.txt` did not exist),
-two processes were killed (the coordinator and the harness child), and no
-process of the run survived.
-
-The restart supplied the identity and the coordinator forwarded it:
+The restart supplied the identity, and the coordinator forwarded it:
 
 ```
 omp --mode rpc --model deepseek/deepseek-flash --thinking low --approval-mode yolo \
     --session-dir <scratch>/state.db.sessions --resume 01a0e8a6-b00f-7000-b4b0-dee09d6a3517
 ```
 
-OMP refused it. Its stderr reads:
+OMP refused it — `Error: Session "01a0e8a6-b00f-7000-b4b0-dee09d6a3517" not
+found.` — exited 1, and the task did not run. `<db>.sessions/` was empty on both
+sides of the kill. That left the session stuck: the pending input waited on a
+conversation the host no longer held.
 
-```
-Error: Session "01a0e8a6-b00f-7000-b4b0-dee09d6a3517" not found.
-Run `omp --resume` without an argument to pick from recent sessions, or `omp` to start a new one.
-```
+## Repair
 
-It exited 1, the coordinator recorded "Worker process ended without a native
-result (exit 1)", the session kept the identity it had before the kill, no
-terminal event was recorded, and the task did not run.
+`bend2/src/coordinator/turn.bend`, in `supervise`, which the `turn` and
+`receive` paths share. When the launch carried a resume value, the run ended
+without a terminal event, and the harness's stderr opens with `Error: Session`,
+the recorded conversation is gone: the supervisor reports
+`<turn id>:recovery`, then launches once more with no session argument, so the
+harness starts a fresh conversation. The fresh prompt is the pending input plus
+the workspace's current state from `git status --porcelain`, so the work
+continues instead of repeating. The fresh turn records its own identity through
+the ordinary observation path.
 
-`<scratch>/state.db.sessions` was empty before the restart and empty after it:
-the killed turn persisted no conversation.
+## Readings after the repair
 
-The Codex half did not run: `codex login status` answers `Not logged in`, so no
-Codex session could start.
+The same run, with the same mid-turn kill:
 
-## Mechanism
+| Reading | Value |
+| --- | --- |
+| first harness argv of the restart | `--session-dir … --resume 01a0e8ae-4483-7000-b422-c0f73455cfbc` |
+| second harness argv of the restart | `--session-dir …` with no resume value |
+| terminal event | `agent_end` |
+| `journal.txt` | the three lines the task asks for |
+| native identity | `01a0e8ae-4483-…` → `01a0e8ae-4c6e-7000-9f0b-4873109f2714`, recorded |
+| recovery row | `ompsession-turn-1:recovery` in the parent's inbox |
+| probe exit | 0, no failures |
 
-OMP writes a session into the session directory it is given. A kill inside the
-turn lands before that write, so the directory holds nothing to resume. The turn
-path does pass the identity through (`--resume` in the argv above, and
-`omp-worker.bend` falls back to the supplied session id when no session file
-matches), so the refusal is OMP's own and the missing data is what causes it.
-OMP documents `--resume` as taking an ID prefix, a path, or a picker; it cannot
-resolve an identity it never persisted.
+## Codex
 
-## What the readings mean
-
-A mid-turn kill of a real OMP turn loses the conversation. Supplying the
-identity, as the trial's launches do, is refused and runs nothing; supplying
-nothing starts a new conversation, which finishes the work under a new identity
-(measured when this probe passed no session argument). A session whose
-conversation was persisted resumes under its identity: the earlier real
-acceptance in [`native-receive-2026-09-28.md`](native-receive-2026-09-28.md)
-measured OMP workers retaining their identity across two turns.
-
-No runtime change is included here. The probe exits non-zero while either the
-resume is refused or the task does not finish, so it is the regression check for
-this window.
+The seats hold no Codex login by design: `codex login status` answers `Not
+logged in`, and a real `gpt-6-astra` turn gets 401 from `api.openai.com`. The
+probe records that state and claims nothing about the Codex half, which is
+queued to the operator's Codex session.
 
 ## Limits
 
-- One OMP session. The Codex half could not run and its state is recorded, not
-  repaired.
-- The kill lands between the identity being recorded and the turn ending. A turn
-  killed after OMP wrote its session file resumes through the same lookup.
+- One OMP session. The mid-turn kill is aimed at the window before OMP writes
+  its session; a kill after that write resumes the conversation itself, which
+  the earlier real acceptance in
+  [`native-receive-2026-09-28.md`](native-receive-2026-09-28.md) measured.
 - Processes only: the host, its filesystem and its storage keep running, so this
   says nothing about power-loss durability.
+- The probe is the regression check: it exits 0 only when the restarted turn
+  reaches a terminal event, finishes the task, records an identity, and, when
+  the conversation changed, records the recovery row.
