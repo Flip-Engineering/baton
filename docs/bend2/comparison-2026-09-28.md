@@ -184,3 +184,44 @@ production read-admission change would require full coordinator validation,
 including cold initialization and the content checks above. These measurements
 establish the observed contention behavior; they provide no throughput estimate
 or general claim about every concurrent schedule.
+
+
+## Measurement on the law-bearing revision
+
+A repeat on `08ee671b62528888a2facd0d3a8ce2af34e5ef98` used the same
+nine-worker fixture, 58 initial reports, 4,096-byte bodies, three warmups and
+25 samples per operation. The old source remained `8120395a`. The
+[raw results](measurements/2026-09-28-coordinators-law-bearing.json) retain
+source, executable and benchmark hashes, dependency metadata, every sample,
+and host observations. The executable SHA-256 was
+`c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4`.
+The build and its negative controls verified 223 laws and two implementation
+mutations. That total includes the explicitly supplementary test-reader and
+corpus laws described in the source.
+
+The timing boundary and workload scope above apply. All content, routing and
+restart assertions passed. The host's one-minute load average was 8.71 before
+this run and 8.33 afterward.
+
+| Operation | Old p50 / p95, ms | Bend2 p50 / p95, ms |
+| --- | ---: | ---: |
+| Worker roster | 3.64 / 6.27 | 4.42 / 5.00 |
+| Retained reports | 5.48 / 9.25 | 7.57 / 9.56 |
+| Retain guidance | 4.55 / 5.84 | 4.75 / 6.39 |
+| Retain report | 4.28 / 5.60 | 4.55 / 5.24 |
+
+The Bend2 roster response contained 41,600 bytes for this fixture, compared
+with 41,141 bytes in the earlier run.
+
+The old coordinator retained 127.88 MiB RSS after the workload; a separate
+Bend2 roster process peaked at 4.45 MiB. Final retained storage was 1,586,771
+bytes for the old store and 561,152 bytes for Bend2. Old helper restart times
+were 142.98–143.95 ms, followed by first reads of 14.49–14.88 ms.
+
+This run again measures a smaller coordinator memory and storage footprint
+for Bend2 and faster median warm operations for the old retained runtime.
+Host load and source both changed since the earlier run, so the difference
+between these runs cannot be attributed to a runtime change.
+Native model work, parent notification, Git landing and publication remain
+outside this benchmark. Installed old dependency contents remain unpinned;
+the artifact records the direct package versions and metadata hashes.
