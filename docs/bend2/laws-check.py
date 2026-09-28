@@ -1,4 +1,4 @@
-"""Check model laws, receive application laws, and their negative controls."""
+"""Check model and operative application laws and their negative controls."""
 
 import hashlib
 import json
@@ -76,6 +76,7 @@ if version.stdout.strip() != "bend 2.0.25":
 run("open obligations", [BEND, "docs/bend2/laws.bend", "--check-only"], ROOT, 1)
 run("model proofs", [BEND, "docs/bend2/examples/laws-proof.bend", "--check-only"], ROOT, 0)
 run("receive application proofs", [BEND, "docs/bend2/receive-laws.bend", "--check-only"], ROOT, 0)
+run("operative entry proofs", [BEND, "bend2/src/coordinator/main.bend", "--check-only"], ROOT, 0)
 run("model run", [BEND, "docs/bend2/examples/laws-proof.bend"], ROOT, 0)
 transition = run("transition witness", [BEND, "docs/bend2/examples/laws-transition.bend"], ROOT, 0)
 results[-1]["passed"] = results[-1]["passed"] and "DISAGREE" not in transition.stdout
@@ -142,26 +143,34 @@ with tempfile.TemporaryDirectory(prefix="laws-check-", dir=DOCS / "examples") as
         path.write_text(source.replace(before, after))
         run(label, [BEND, "docs/bend2/examples/laws-proof.bend", "--check-only"], case, 1, location)
 
-    # Mutate the production dispatch that the receive laws import.
-    receive_mutations = [
-        ("busy receive runs its continuation",
+    # The entry must reject changes to the production ownership dispatch.
+    application_mutations = [
+        ("busy receive runs its continuation", "coordinator/receive.bend",
          'case None{}: receive_status(db,session,"queued")',
          'case None{}: again(Unit{})',
          "busy_receive_only_reports_queued"),
-        ("receive recovery starts another process",
+        ("receive recovery starts another process", "coordinator/receive.bend",
          "P.ProcessChild.attach(directory)",
          'P.ProcessChild.spawn(directory,".","")',
          "recovery_attaches_recorded_attempt"),
+        ("session admission substitutes another session", "host/session-lock.bend",
+         "SessionLock.try_acquire(canonical,session)",
+         'SessionLock.try_acquire(canonical,"another-session")',
+         "session_admission_uses_canonical_identity"),
+        ("session admission bypasses canonicalization", "host/session-lock.bend",
+         "SessionLock.canonical(database)",
+         "IO.pure(Result<&1,&1,U32 & String,String>,Done{database})",
+         "session_admission_uses_canonical_identity"),
     ]
-    for index, (label, before, after, location) in enumerate(receive_mutations):
+    for index, (label, file, before, after, location) in enumerate(application_mutations):
         case = scratch / ("receive-" + str(index))
         copy_corpus(case)
-        path = case / "bend2/src/coordinator/receive.bend"
+        path = case / "bend2/src" / file
         source = path.read_text()
         if source.count(before) != 1:
             raise SystemExit(f"Mutation anchor changed: {label}")
         path.write_text(source.replace(before, after))
-        run(label, [BEND, "docs/bend2/receive-laws.bend", "--check-only"], case, 1, location)
+        run(label, [BEND, "bend2/src/coordinator/main.bend", "--check-only"], case, 1, location)
 
     # The witness control: the same corpus with the host half dropping the last
     # retained row must report a disagreement, so the comparison is not vacuous.
@@ -190,7 +199,7 @@ with tempfile.TemporaryDirectory(prefix="laws-check-", dir=DOCS / "examples") as
         "impl/test/issue297-issue307-host-capacity.test.mjs"], ROOT, 0)
 
 report = {
-    "scope": "Pure models, receive admission and recovery IO laws over runtime code, their negative controls, the transition witness and two JavaScript regressions. Native lock and keeper semantics require host process tests.",
+    "scope": "Pure models, operative entry laws, receive admission and recovery IO laws, shared session identity laws, production-source negative controls, the transition witness and two JavaScript regressions. Native lock and keeper semantics require host process tests.",
     "compiler": str(BEND),
     "sha256": {name: hashlib.sha256((DOCS / name).read_bytes()).hexdigest() for name in FILES},
     "applicationSha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()

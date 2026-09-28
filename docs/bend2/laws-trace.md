@@ -10,9 +10,11 @@ This increment states ten quantified model obligations in [laws.bend](laws.bend)
 parts of M-5, M-10, M-14 and M-18. [laws-proof.bend](examples/laws-proof.bend) discharges those
 obligations, and [laws-transition.bend](examples/laws-transition.bend) drives the real review append
 and the real worker admission against those models on an enumerated corpus.
-**Each entry below records its own application status.** M-8 also has the partial
-receive application equations described below. Other entries retain their open
-obligations. The compiler TODOs in `laws.bend` name the open model obligations.
+The coordinator entry imports [operative application laws](../../bend2/src/coordinator/laws.bend)
+over runtime functions. Every entry compile verifies their proofs, including the
+[receive ownership laws](../../bend2/src/coordinator/receive-laws.bend) under M-8.
+The broader application obligations below retain their stated scope. The compiler
+TODOs in the separate model `laws.bend` are discharged by `laws-proof.bend`.
 
 Language evidence uses [the reference pin](reference/README.md),
 `bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868`, Bend 2.0.25.
@@ -21,9 +23,11 @@ Quantities, and Modules. [laws-check.evidence.md](examples/laws-check.evidence.m
 records the commands, outputs and failures. `python3 docs/bend2/laws-check.py <bend>`
 checks the models, the transition witness, the negative controls and two existing
 JavaScript regression rows.
-It also checks [receive ownership laws](receive-laws.bend) over the real runtime's
-busy admission and recorded-attempt attachment. Negative controls mutate those
-production dispatch branches while retaining the laws. These IO equations rely
+It also checks the coordinator entry and receive ownership laws over the real
+runtime's busy admission, recorded-attempt attachment and shared canonical session
+identity. Negative controls mutate those production functions and compile the entry
+while retaining the laws. `node bend2/scripts/laws-check.mjs <bend>` removes each
+runtime law's proof in turn and requires the entry compile to fail. These IO equations rely
 on the host effect contract; kernel locking, inherited descriptor custody and
 native-exit-only release are exercised by the [receive process tests and probes](receive-recovery-2026-09-28.md).
 It is a bounded evidence check. Root owns the separate deployment command
@@ -76,7 +80,7 @@ historical JavaScript test proves the complete approved prohibition.
 | M-4 | Extracted. CUST-1/4/6/11: `shared-workspace-custody.mjs`; `worktree.mjs` removal and physical-owner publication | `workspace-preservation.test.mjs` dirty/ignored content and live-holder rows; `phase92.2-physical-workspace-owner-red.test.mjs` failure-atomic publication | Disposal proof over actual observation, generation and effect pending |
 | M-5 | Partly enforced. CL-07: `swarm-state.mjs` review append; LEDG-1/7/10/19: ledger/replay; WAKE-3/5, PROP-2: stream obligations | `swarm-state.test.mjs` opposing reviews; `issue296-swarm-integrate.test.mjs` 296f; ledger/stream inventory rows | Two quantified pure-model review lemmas checked; application recovery/compaction/delivery proof pending |
 | M-7 | Partly enforced. AB-09/14, CL-02, PM-11/07, CUST-8, AB-05: `swarm-native-bridge.mjs` token-derived identity; runtime/fold attribution | `swarm-native-bridge.test.mjs`; `issue292-coupling-truth.test.mjs`; `shared-workspace-custody.test.mjs` T5 | Actual authentication/attribution theorem pending |
-| M-8 | Partly enforced. PM-08, AB-04/05/06/10/11/12, CAP-7/12/14, PR-01, CL-15: runtime grants, claim and lease instance checks; native receive session ownership (#625) | `issue423-claims-proposals-state.test.mjs`; `issue373-read-only-recruit.test.mjs`; `bend2/test/receive.py` and the supervisor-loss probes; PM-08 refusal has a test gap | Receive admission and attachment IO equations checked against actual runtime functions, with host assumptions; full resource/action/time authority and granting-authority proofs pending |
+| M-8 | Partly enforced. PM-08, AB-04/05/06/10/11/12, CAP-7/12/14, PR-01, CL-15: runtime grants, claim and lease instance checks; native receive session ownership (#625) | `issue423-claims-proposals-state.test.mjs`; `issue373-read-only-recruit.test.mjs`; `bend2/test/receive.py` and the supervisor-loss probes; PM-08 refusal has a test gap | Receive admission, attachment and canonical session identity IO equations checked against actual runtime functions by every entry compile, with host assumptions; full resource/action/time authority and granting-authority proofs pending |
 | M-10 | Partly enforced. CAP-2/3/15, DEV-1, PROP-1, AB-12: `host-capacity.mjs` worker admission; other cutoff boundaries | `issue297-issue307-host-capacity.test.mjs` HC-2; remaining inventory rows | Retained pure-model worker lemma checked; application-wide cutoff/data retention proof pending |
 | M-11 | Extracted. CL-17: `swarm-event-schemas.mjs` and `swarm-contract.mjs` separate caller kinds from driver facts | `swarm-refusals.test.mjs`, fabricated driver-row refusal | Actual decoder-to-effect theorem pending |
 | M-12 | Extracted. DEV-2, LEDG-6: managed-work acceptance and durable intent boundary | `issue290-ledger-sync.test.mjs` covers persistence; DEV-2 cites the operator contract | Acknowledgment/managed-completion dependency proof pending |

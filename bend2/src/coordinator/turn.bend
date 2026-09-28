@@ -420,6 +420,5 @@ def acquired(+db: String, +worker: String, +id: String, cmd: String, model: Stri
 def run(+db: String, +worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String) -> IO(Unit):
   do IO<Unit>:
     recorded : String <- IO.try(String,Store.commit(db,C.Session{worker}))
-    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(database,worker))
-    acquired(database,worker,id,cmd,model,effort,cwd,task,log,session,String.is_empty(recorded),lock)
+    Lock.SessionLock.acquire_session(Unit,db,worker,
+      +database => lock => acquired(database,worker,id,cmd,model,effort,cwd,task,log,session,String.is_empty(recorded),lock))
