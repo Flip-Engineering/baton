@@ -160,7 +160,7 @@ Reproduce with a currently supported subscription model:
 ```sh
 BEND=/path/to/bend sh bend2/scripts/build-native.sh > build.log 2>&1
 python3 bend2/scripts/accept-receive-recovery.py \
-  --source "$PWD" --revision 589ea5cec0a24a0bf0ceee81938a3f171fb0fbba \
+  --source "$PWD" --revision 276b62b5baef6e6aae17f60c364957b96a08cf35 \
   --coordinator .scratch/bend2/baton2 --build-log build.log \
   --output /path/to/new-run --model gpt-6-astra --effort medium
 ```
@@ -170,3 +170,17 @@ source and executable hashes, process IDs, report-body hashes and artifact paths
 The full live evidence also records the runtime source manifest, process start
 identity, native launch arguments and complete parent receipts. The two native
 usage frames remain in that evidence with their original counter values.
+
+## Integration with the process-loss repair
+
+The reproduction command above uses the integrated revision `276b62b5`, based on
+upstream `cd2310af`. Its native binary SHA-256 is
+`6b7f8f7c0207a92198de12f2bfacbac17398a015155ed8665120d3c9c7691c91`.
+The supervisor-loss probe passed again, and the combined native suite passed
+124 Python tests and both Bend Git suites. The original real observer-loss run
+above remains pinned to its measured revision and binary.
+
+[The additional Codex record](codex-process-loss-2026-09-28.md) validates explicit
+direct-turn resumption after complete process loss. It also records a remaining
+#626 integration gap: retained receive does not apply the direct-turn fallback
+when OMP refuses a missing conversation.

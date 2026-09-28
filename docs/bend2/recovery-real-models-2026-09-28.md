@@ -13,14 +13,13 @@ BEND=/path/to/bend sh bend2/scripts/build-native.sh
 python3 docs/bend2/examples/probe-recovery-real-models.py
 ```
 
-The probe owns its database and repository under `.scratch/recovery-real-models`
-and never touches another deployment's state. It recruits a worktree, starts a
-real turn with no session argument (a fresh conversation), waits until the
-session's native identity is recorded and its harness is alive, sends `SIGKILL`
-to every coordinator and harness process matched by the database path plus their
-whole descendant closure, reaps them, and runs the same turn again with the
-identity the session held before the kill. It keeps every harness argv it sees
-during the restart and the harness's own stderr.
+The probe creates a new database and repository under `--output`, or in a
+generated directory under `.scratch/`. It recruits a worktree per selected
+harness, starts a fresh conversation and waits for its native identity. It
+freezes the owned process trees, sends `SIGKILL`, verifies that the initial
+coordinator and harness were killed, and explicitly restarts the turn with the
+recorded identity. Wrappers record complete launch arguments and process IDs.
+Native logs and failure evidence remain in the output directory.
 
 ## What OMP persists, and when
 
@@ -47,14 +46,16 @@ conversation the host no longer held.
 
 ## Repair
 
-`bend2/src/coordinator/turn.bend`, in `supervise`, which the `turn` and
-`receive` paths share. When the launch carried a resume value, the run ended
+`bend2/src/coordinator/turn.bend`, in `supervise`, handles direct `turn`.
+Retained `receive` uses a separate path; its remaining integration gap is
+recorded in [the Codex validation](codex-process-loss-2026-09-28.md).
+When the launch carried a resume value, the run ended
 without a terminal event, and the harness's stderr opens with `Error: Session`,
 the recorded conversation is gone: the supervisor reports
 `<turn id>:recovery`, then launches once more with no session argument, so the
 harness starts a fresh conversation. The fresh prompt is the pending input plus
-the workspace's current state from `git status --porcelain`, so the work
-continues instead of repeating. The fresh turn records its own identity through
+the workspace's current state from `git status --porcelain`, and asks the agent
+to continue the task with the existing work. The fresh turn records its identity through
 the ordinary observation path.
 
 ## Readings after the repair
@@ -73,10 +74,11 @@ The same run, with the same mid-turn kill:
 
 ## Codex
 
-The seats hold no Codex login by design: `codex login status` answers `Not
-logged in`, and a real `gpt-6-astra` turn gets 401 from `api.openai.com`. The
-probe records that state and claims nothing about the Codex half, which is
-queued to the operator's Codex session.
+The original seats held no Codex login. The operator's Codex session subsequently
+ran the probe through its ChatGPT subscription login. Codex resumed its recorded
+conversation and completed the task at `d499a0a9` and on the combined #625/#626
+runtime. [The Codex record](codex-process-loss-2026-09-28.md) gives the source
+pins, process observations, task result and validation boundary.
 
 ## Limits
 
