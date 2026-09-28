@@ -434,5 +434,170 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w5 and w6')
         self.assertEqual(self.scratch_trees('w6'), [])
 
+    def budget_status(self, tree):
+        """The exit status of the selected budget check run in TREE."""
+        return subprocess.run(
+            [sys.executable, 'budget-selected.py'],
+            cwd=tree, capture_output=True, text=True,
+        ).returncode
+
+    def holding_checks(self):
+        """The budget fixture: a selected check and a check script that waits.
+
+        The first check run of the landing under test takes an attempt-local
+        marker directory outside the checked trees, reports the outcome it
+        evaluated over the fixture socket, and waits for a release byte. Later
+        runs of that attempt find the marker and return their own verdict at
+        once. A failing run prints the four hex failure-identity fields.
+        """
+        marker = self.directory / 'budget-held'
+        (self.repo / 'budget-selected.py').write_text(
+            'import pathlib, unittest\n'
+            'class Budget(unittest.TestCase):\n'
+            '    def test_capacity(self):\n'
+            '        left = int(pathlib.Path("left.txt").read_text())\n'
+            '        right = int(pathlib.Path("right.txt").read_text())\n'
+            '        self.assertLessEqual(left + right, 10)\n'
+            'if __name__ == "__main__":\n'
+            '    unittest.main()\n')
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        listener.settimeout(30)
+        self.addCleanup(listener.close)
+        (self.repo / 'check-held.sh').write_text(
+            '#!/bin/sh\n'
+            f'exec {shlex.quote(sys.executable)} {shlex.quote(str(self.repo / "check-held.py"))} "$1"\n')
+        (self.repo / 'check-held.py').write_text(
+            'import json, pathlib, socket, subprocess, sys\n'
+            f'marker = pathlib.Path({str(marker)!r})\n'
+            'selected = sys.argv[1]\n'
+            'run = subprocess.run([sys.executable, selected], capture_output=True, text=True)\n'
+            'report = {"selected": selected, "passed": run.returncode == 0,\n'
+            '          "left": int(pathlib.Path("left.txt").read_text()),\n'
+            '          "right": int(pathlib.Path("right.txt").read_text())}\n'
+            'try:\n'
+            '    marker.mkdir()\n'
+            '    first = True\n'
+            'except FileExistsError:\n'
+            '    first = False\n'
+            'if first:\n'
+            f'    with socket.create_connection({listener.getsockname()!r}, timeout=30) as peer:\n'
+            '        peer.sendall((json.dumps(report) + "\\n").encode())\n'
+            '        released = peer.recv(1)\n'
+            '    if released != b"1":\n'
+            '        raise SystemExit("the check was not released")\n'
+            'if run.returncode:\n'
+            '    fields = [selected, "Budget.test_capacity", "assertion", "-"]\n'
+            '    print(" ".join(field.encode().hex() for field in fields))\n'
+            'raise SystemExit(run.returncode)\n')
+        (self.repo / 'left.txt').write_text('4\n')
+        (self.repo / 'right.txt').write_text('4\n')
+        self.git('add', 'budget-selected.py', 'check-held.sh', 'check-held.py',
+                 'left.txt', 'right.txt')
+        self.git('commit', '-q', '-m', 'budget fixtures')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.git('checkout', '-q', '--detach')
+        return listener
+
+    def accept_check(self, listener):
+        """Accept the held check; return its connection and its event."""
+        connection = listener.accept()[0]
+        connection.settimeout(30)
+        self.addCleanup(connection.close)
+        data = b''
+        while not data.endswith(b'\n'):
+            part = connection.recv(65536)
+            if not part:
+                self.fail('the check closed its connection before its event')
+            data += part
+        return connection, json.loads(data)
+
+    def start_landing(self, worker, check, selected):
+        """Start a checked landing in the background; return its process."""
+        return subprocess.Popen(
+            [str(EXE), str(self.db), 'land-checked', worker, str(self.repo),
+             'main', check, selected],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def stop_landing(self, process):
+        """Stop a landing this test started and read whatever it produced."""
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+
+    def scratch_paths(self, worker):
+        """The scratch trees an attempt by WORKER left under the repository."""
+        return sorted((self.repo / '.scratch').glob(f'bend2-land-{worker}-*'))
+
+    def test_target_moving_under_a_held_candidate_blocks_and_keeps_it(self):
+        # Two worker changes that pass alone but fail together. The candidate
+        # of one is checked, held, and the other lands meanwhile.
+        listener = self.holding_checks()
+        a_commit = self.recruit_and_write('wa', 'wa-branch', 'wta', 'left.txt', '6\n')
+        b_commit = self.recruit_and_write('wb', 'wb-branch', 'wtb', 'right.txt', '6\n')
+        self.assertEqual(self.budget_status(self.repo / 'wta'), 0)
+        self.assertEqual(self.budget_status(self.repo / 'wtb'), 0)
+        under = self.start_landing('wb', 'check-held.sh', 'budget-selected.py')
+        self.addCleanup(self.stop_landing, under)
+        held, event = self.accept_check(listener)
+        self.assertTrue(event['passed'], event)
+        self.assertEqual((event['left'], event['right']), (4, 6))
+        moved = self.call('land-checked', 'wa', self.repo, 'main',
+                          str(ROOT / 'bend2/scripts/check-unittest.sh'), 'budget-selected.py')
+        self.assertEqual(moved['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        held.sendall(b'1')
+        held.close()
+        out, err = under.communicate(timeout=120)
+        self.assertEqual(under.returncode, 0, err)
+        result = json.loads(out)
+        # The landing holds the candidate it checked and the basis it checked
+        # against. The target moved while that check ran, so the landing
+        # blocks and names the retry it wants.
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('rerun land-checked', result['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('show', 'main:left.txt').strip(), '6')
+        self.assertEqual(self.git('show', 'main:right.txt').strip(), '4')
+        self.assertEqual(self.git('rev-parse', 'wa-branch').strip(), a_commit)
+        self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
+        self.assertEqual((self.repo / 'wtb' / 'right.txt').read_text(), '6\n')
+        kept = self.scratch_paths('wb')
+        self.assertEqual(len(kept), 2)
+        candidates = [tree for tree in kept if not tree.name.endswith('-target')]
+        targets = [tree for tree in kept if tree.name.endswith('-target')]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual((candidates[0] / 'left.txt').read_text(), '4\n')
+        self.assertEqual((candidates[0] / 'right.txt').read_text(), '6\n')
+        # The explicit retry prepares the combination on the moved target,
+        # checks it, and blocks on a failure the target does not show.
+        again = self.call('land-checked', 'wb', self.repo, 'main',
+                          str(ROOT / 'bend2/scripts/check-unittest.sh'), 'budget-selected.py')
+        self.assertEqual(again['status'], 'blocked')
+        self.assertIn('new failures', again['reason'])
+        self.assertIn('budget-selected.py'.encode().hex(), again['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
+        retried = self.scratch_paths('wb')
+        self.assertEqual(len(retried), 2)
+        failed = [tree for tree in retried if self.budget_status(tree)]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual((failed[0] / 'left.txt').read_text(), '6\n')
+        self.assertEqual((failed[0] / 'right.txt').read_text(), '6\n')
+        checked_target = [tree for tree in retried if tree.name.endswith('-target')]
+        self.assertEqual(len(checked_target), 1)
+        self.assertEqual(self.budget_status(checked_target[0]), 0)
+        self.assertEqual((checked_target[0] / 'left.txt').read_text(), '6\n')
+        self.assertEqual((checked_target[0] / 'right.txt').read_text(), '4\n')
+        final = self.directory / 'final-target'
+        self.git('worktree', 'add', '--detach', str(final), 'main')
+        self.assertEqual(self.budget_status(final), 0)
+
 if __name__ == '__main__':
     unittest.main()
