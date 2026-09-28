@@ -30,11 +30,16 @@ type Command is Data:
   Turns{id: String}
   Invalid{}
 
+def escape_char(+head: Char, tail: String, quote: Bool) -> String:
+  match quote:
+    case True{}: SCon{head,SCon{head,tail}}
+    case False{}: SCon{head,tail}
+
 def escaped(s: String) -> String:
   match s:
     case SNil{}: ""
     case SCon{+h, tail}:
-      Bool.pick(String, Char.is_eq(h, Char.from_u32(39)), "''", SCon{h, SNil{}}) ++ escaped(tail)
+      escape_char(h,escaped(tail),Char.is_eq(h,Char.from_u32(39)))
 
 def q(s: String) -> String:
   "'" ++ escaped(s) ++ "'"

@@ -188,14 +188,16 @@ def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 &
     case True{}: T.Text.append(log,line ++ "\n")
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
+# Read the OMP frame type once for log retention and event observation.
+def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
+  match omp:
+    case False{}: IO.pure(String,"")
+    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' ELSE '' END ELSE '' END FROM frame;"))
+
 # The live #379 trial filled the disk with OMP's cumulative message_update
 # snapshots. message_end supplies the complete message; keep every other frame.
-def record_frame(db: String, log: String, +line: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match omp:
-    case False{}: T.Text.append(log,line ++ "\n")
-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      keep : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='message_update' THEN 0 ELSE 1 END ELSE 1 END;"))
-      append_frame(log,line,String.eq(keep,"1\n"))
+def record_frame(log: String, line: String, kind: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  append_frame(log,line,Bool.not(String.eq(kind,"message_update\n")))
 
 def terminal_event(db: String, +event: String, +previous: String, relevant: Bool) -> IO(String):
   match relevant:
@@ -227,8 +229,9 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
         IO.pure(Outcome,Ended{status_text(status),event,remember_write(first_error,sent)})
     case Done{Some{+line}}:
       do IO<Outcome>:
-        written : Result<&1,&1,U32 & String,Unit> <- record_frame(db,log,line,String.eq(harness,"omp\n"))
-        +relevant : Bool <- Guidance.relevant(db,line,String.eq(harness,"omp\n"))
+        +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
+        written : Result<&1,&1,U32 & String,Unit> <- record_frame(log,line,kind)
+        +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
         next_cursor : String <- Guidance.observe(db,worker,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
         +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
