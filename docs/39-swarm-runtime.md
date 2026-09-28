@@ -249,7 +249,7 @@ runtime's own wake: it blocks until an event that concerns the swarm (a particip
 pauses, a contribution or review lands, a member dies, the organization changes) and returns the
 refreshed view with `watch.event` naming what woke it. The bounded form
 (`--timeout-ms`, with or without `--wake-class`) answers the wake FRAME first —
-`watch {reason: event|timeout, matchedSeq, event, events, pendingSince}` (#433: `events` carries EVERY admitted wake row since `afterSeq`, `pendingSince` is null because the answer drops none of them, and `matchedSeq` is the last carried one) — over the `outline` projection by default;
+`watch {reason: event|timeout, matchedSeq, event, events, pendingSince}` (#433: `events` carries EVERY admitted wake row since `afterSeq` up to the frame bound, `pendingSince` the first uncarried seq, `matchedSeq` the last carried one) — over the `outline` projection by default;
 rows ride the answer only when the caller names a wider `--projection` (#356), and a stream that
 ends says why (`baton.wake_stream_ended.reason`, a closed set). `baton swarm watch <id> --follow` turns
 that into a feed: one JSON line per wake (`baton.swarm_wake`: the event, the `attention` rows, every
@@ -479,8 +479,8 @@ wake that IS a recruitment names the route the seat was started under. The row i
 `roleBytes` (the full length) and `roleRef {kind: 'swarm.participant_joined', seq}` (the ledger
 row that holds the whole text); `workspace.commits` is the NEWEST-bound tail under
 `view.workspace.commits` with `commitsTotal` beside it, and a participantId-scoped read carries the
-list whole while a bridge PAGE drops the array and keeps the count. A 36-seat roster's
-participants projection is answered whole. The row also carries `activity {lastEventKind,
+list whole while a bridge PAGE drops the array and keeps the count. A 36-seat roster answers its
+participants projection in one `wire.frame`. The row also carries `activity {lastEventKind,
 lastEventAt, turnsCompleted, contributions}` and `usage {tokens, providerCalls}` (#268, docs/46
 §1.2), folded ONCE per view by `_seatActivity` over the ledger the view already holds — a row is
 attributed to a seat when it names the seat, its run, a binding worker or one of their tasks, the
@@ -568,9 +568,15 @@ command line and the failed exit — and two projections read the ledger (never 
 the last `view.attention_push.items` tool rows the coordinator's one derivation projects from that
 worker's log.
 
-**The bridge answers a frame of any size whole.** One JSON frame per direction is buffered in
-process memory and read and answered in full. No frame is bounded, so no answer is narrowed,
-paged or refused for its size: a caller reads exactly the slice it asked for.
+**The bridge's frame bound is negotiated, declared, and never truncated.** One JSON frame per
+direction is buffered under the `wire.frame` substrate row from `limits.mjs` (overridable per bridge
+with `maxFrameBytes`); `issue()` publishes the bound to the participant's environment and the client
+buffers under THAT, so a deployment that raises the ceiling does not get answers its own client
+rejects. An answer over the bound is refused typed (`swarm_bridge_frame_exceeded`, 413) with the
+narrower projection that MEASURABLY fits: the bridge re-projects the answer it already holds through
+the same slicer the runtime builds views with and names the widest one under the ceiling — never a
+declared table of sizes, never a truncation, and never a second hardcoded number. Asking again with
+the named projection is the fix, and the test does exactly that.
 
 ## The brief carries the Baton surface (issue #309, 2026-09-14)
 
@@ -715,7 +721,6 @@ permissions the view names — one table, four surfaces that cannot disagree:
 | `run.knowledge.seed` | contribute | pin a durable fact — typed, grounded, evidence-linked — that peers must be able to find |
 | `run.board.post` / `run.board.read` | contribute / read | keep runnable state on, and read back, the board bound to the participant's OWN run |
 | `run.scratchpad.append` / `run.scratchpad.read` | contribute / read | note working state (the shared scope is visible to peers) and read it or the shared scope back |
-| `run.scratchpad.elevate` | contribute | elevate one's own scratchpad entries to candidate Findings |
 | `evidence.search` | read | find a fact or a contribution by text, participant, kind or path across the deployment |
 
 **Retired from the participant surface, with the reason.** A verb without a participant situation
@@ -726,8 +731,6 @@ is not kept alive by an advertisement the loop cannot use:
   lane.
 - `scratchpad.settle` — the scratchpad settles when the run's tasks are terminal, which is the
   workflow terminal sweep, never a live participant's act mid-loop.
-- `scratchpad.elevate` (the embedded wrapper) — superseded for participants by
-  `run.scratchpad.elevate`, whose task identity the runtime binds server-side.
 - Context packs (`context.pack_granted`, orientation ratings) — run/attempt grant receipts of the
   wave lane. The swarm's pack is the recruit-time shared context (`basis`) plus
   `swarm.context_updated`, both of which already reach the participant.
@@ -765,7 +768,8 @@ deployment), participant, kind (a knowledge node type, or a `type`/`kind` a cont
 names), path (case-sensitive, over refs, work and path-like body text) and free text
 (case-insensitive, over body text and row identities). The operation rebuilds a per-deployment
 index from the coordination ledger on every call, so every row carries its seq/ts and the
-cursor IS the ledger seq; the page carries every matching row, and no numeric page cap exists.
+cursor IS the ledger seq; the page boundary derives from the same `wire.frame` row the bridge
+answers under — never a numeric page cap.
 
 The extended wire shape is wired through the deployment dispatch (issue #338): the canonical
 registry row carries all six optional filters with nothing required, the application's own
@@ -1183,7 +1187,7 @@ the #503 brief block) but pinned only for three retired verbs. `swarm-knowledge.
 derives the whole knowledge/scratchpad/board/context/package family from the canonical registry
 and asserts the participant bridge refuses every member the brief does not teach — 22 rows at
 this writing: the wave-settlement lane (`knowledge.settlement_lease`,
-`scratchpad.settle`, the kernel `scratchpad.elevate`), the S-2 orchestrator board and package
+`scratchpad.settle`), the S-2 orchestrator board and package
 tools, the worker `board.claim`/`board.report` wire frames, the orchestrator knowledge reads
 (`knowledge.recall`, `knowledge.horizon`), and the context engine (`context.eval`/`map`/`reduce`/
 `retry`). A new family verb lands red until it is taught to participants or classified off their

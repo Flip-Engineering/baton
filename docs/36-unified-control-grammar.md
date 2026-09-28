@@ -183,7 +183,7 @@ to the *ordinary* surface, where approval is the only plan verb and it lives on 
 | read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth, **optionally change-aware** (`--cursor N --wait D` — the registry's own preferred continuation, `application-semantics.mjs:137-141`) **or condition-awaiting** (`--until settled\|terminal`, absorbing `run.wait`'s deployment-bounded settle-block, R-OP-9/R-KM-2); `watch` = the only **event-channel** read (`channel: progress\|events\|output\|changes`, `--to RECIPIENT` for output, inherits `followPolicy` gating and per-channel cursors); `list` = bounded collections; `help` = self-description |
 | lifecycle | `start`, `approve`, `stop`, `recover`, `resume`, `retry` | exactly today's authority semantics |
 | interaction | `answer`, `send`, `interrupt` | `answer` settles answerable attention (§7.3); `send`/`interrupt` run-level forms resolve the live recipient as today; member forms are `{role, generation?}`-addressed |
-| trust | `review`, `adopt`, `select`, `feedback`, `revise`, `export` | the evidence→review→adoption chain, unchanged semantics; `select`/`feedback` address a **candidate**, not a member (R-OP-16) |
+| trust | `review`, `adopt`, `select`, `feedback`, `revise`, `integrate`, `export` | the evidence→integration chain, unchanged semantics; `select`/`feedback` address a **candidate**, not a member (R-OP-16) |
 | object | board: `post`, `claim`†², `report`†², `retitle`, `reorder`, `close`, `read`; package: `admit`, `attach`, `read`; context: `eval`, `map`, `reduce`, `retry` | reflex/REPL/context families; `context.map/reduce/retry` are plan-proposal verbs (R-CX-1, R-KM-9) |
 | meta | `do` | the generic executor for an advertised action; takes the advertised `{kind, actionId, inputs}` and nothing else. **Named verbs are peers, not sugar** (R-OP-4): they carry their own schemas and admission and never inherit `do`'s freshness/semantic-authority machinery; `do` never sheds it. L2 constrains the *advertised* set, not the verb set. |
 
@@ -372,13 +372,13 @@ Canonical enum (non-terminal → terminal):
 ```
 planning → awaiting_approval → queued → working ⇄ paused
                                         working → interrupted | uncertain
-        → verifying → result_ready → [awaiting_selection → result_selected] → reviewing
+        → verifying → result_ready → [awaiting_selection → result_selected] → reviewing → integrating
 terminal: completed | failed | cancelled | stopped | denied     transitional: stopping
 ```
 
 `result_ready` is **provider-settled and deliberately non-terminal** (R-CX-4; the two-lifecycle
 comment at `application.mjs:117-118` and `phase67-run-terminality.test.mjs` are the binding
-contracts): adoption, selection, review, and export all act after it. The registry
+contracts): adoption, selection, review, integration, and export all act after it. The registry
 predicates: `providerSettled = {result_ready, awaiting_selection, result_selected} ∪ terminals`;
 `applicationTerminal = {completed, failed, cancelled, stopped, denied}`.
 

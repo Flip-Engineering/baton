@@ -33,8 +33,8 @@ evidence and disagreement are retained in
    contract and current evidence are retained in closed
    [GitHub #2](https://github.com/user/baton/issues/2).
 3. **Trust spine:** immutable briefs, pinned verification, red→green, changed-line coverage,
-   mutation, independent-family oracle, and opt-in structured staging with post-effect poison
-   semantics.
+   mutation, independent-family oracle, ff integration, and opt-in structured staging with
+   post-effect poison semantics.
 4. **Governance substrate:** scoped runtime homes/credentials, canonical token/USD/wall budgets,
    hard stops, deterministic watchdogs, and verified-outcome adaptive routing.
 5. **Shared coordination/knowledge substrate:** operational ledger/cursors/replay, durable task and
@@ -317,8 +317,8 @@ evidence and disagreement are retained in
   reservation, terminal consumed/released/held/overrun settlement, replay, and status projection
   now ship. Richer verification/evidence predicates, authorized continuation/recovery nodes,
   amendments and migration, child/refinement allocation, live budget reallocation or increase,
-  portfolio scheduling, richer risk/multi-principal approval, and distinct deploy/rollback
-  authorities remain partial or pending.
+  portfolio scheduling, richer risk/multi-principal approval, and distinct
+  integration/deploy/rollback authorities remain partial or pending.
 - Canonical determinism is only locally hardened so far. Phase 62 plan and provider-policy ordering
   are locale-independent, but multiple Atlas, Cairn, supply-chain, capacity, and projection
   artifacts still use host-locale `localeCompare`. A repository-wide canonical-order audit,
@@ -333,7 +333,7 @@ evidence and disagreement are retained in
 - Full Claude/Codex sandbox denial parity, contamination UX, operator
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
 - Exact cross-vendor semantic review is wired into the Run application, and a real independent GLM
-  review has passed immutable-target, report, evidence, adoption, and cleanup gates.
+  review has passed immutable-target, report, evidence, adoption, integration, and cleanup gates.
   Continuous semantic review automation, structured reject postmortems, and broad semantic-oracle
   accuracy are not proven; one successful report is route evidence rather than universal semantic
   correctness. The remaining oracle gap is tracked in
@@ -512,7 +512,7 @@ evidence and disagreement are retained in
 - Unattended full-permission launch remains the default harness preference, with exact per-harness
   requested/resolved/observed attestation and honest containment gaps. It grants the child its
   native tool mode, not ambient Baton authority to widen repository scope, routes, credentials,
-  approval, publication, or stop ownership.
+  approval, integration, publication, or stop ownership.
 - The initial common RLM/REPL substrate is the immutable Context expression builder followed by the
   closed Program IR and durable effect-boundary runtime. It may feel Pythonic at the authoring
   surface while compiling to one canonical schema. A general persistent Python/JavaScript/custom
@@ -528,15 +528,15 @@ evidence and disagreement are retained in
   fleet lifecycle. `baton serve` separately owns listener admission and exact application shutdown.
   That historical cursor/recovery/export/multi-node statement is superseded by the checkpoint
   above; it is retained here only as the sequence that led to the current application.
-  Phase 65 now ships exact independent structured semantic review across direct/Web/MCP/CLI/browser
-  surfaces, and one bounded progress board consolidates the normal
-  Plan/dispatch/provider/verification/semantic/result/cleanup state. Terminal evidence manifests and
-  non-merging result adoption now ship. Run stop now closes dispatch in the coordination ledger,
+  Phase 65 now ships exact independent structured semantic review and separately authorized,
+  fresh-evidence-bound local integration across direct/Web/MCP/CLI/browser surfaces. Terminal evidence manifests and
+  non-merging result adoption now ship, and one bounded progress board consolidates the normal
+  Plan/dispatch/provider/verification/semantic/result/cleanup state. Run stop now closes dispatch in the coordination ledger,
   snapshots exact targets, resumes before startup scheduling, and reaps without disturbing other Runs. Fleet-wide shutdown is named
   `application.shutdown` and must not masquerade as `run.close`. The credential-filtered Phase 65
   recursive proof ran the same application registry from intent through exact independent real-GLM
-  review, adoption, completion, and pre-shutdown reap; it is evidence for that exercised route, not
-  a claim of universal provider or semantic correctness.
+  review, adoption, fast-forward integration, completion, and pre-shutdown reap; it is evidence for
+  that exercised route, not a claim of universal provider or semantic correctness.
 - Trust ramp policy, richer Goal/Plan verification/evidence and amendment authority,
   impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
@@ -550,7 +550,7 @@ evidence and disagreement are retained in
   validation, closure/destructuring/catch binding support, deeper behavioral/provenance attestation
   overlays, and representation choreography. Phase 61 closes fixed graph-backed R1 structural,
   R2 SCIP, and R3 bounded CPG production; it does not satisfy deeper precision or R4–R7 gates.
-- True semantic merge, deploy adapters, and rollback automation.
+- True semantic merge, stacked integration, deploy adapters, and rollback automation.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
   deeper operator surfaces, and OpenTelemetry GenAI export.
 - Deeper authenticated web user-to-orchestrator policy/control, and the remaining retention,

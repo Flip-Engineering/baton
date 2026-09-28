@@ -663,35 +663,6 @@ test('A3-2 stage[web-append-admission-missing]: the direct-port admission is the
 
 
 // ---------------------------------------------------------------------------
-// A6 — D1 shared-write is ephemeral (law 4, H1.2)
-// ---------------------------------------------------------------------------
-
-test('A6-1 stage[append-candidacy-shortcut-missing]: the append verb lands as a direct EPHEMERAL write — it never mints a scratch-fact / KG candidacy (law 4)', async () => {
-  // GREEN — the elevation lane is the ONLY candidacy mint today: the elevate direct port exists and
-  // routes to scratchpadElevate (application.mjs:12523 → :13131-13151), the pre-existing settlement
-  // lane (elevateTaskScratchpad, coordination-store.mjs:14173+). The append verb must NOT ride it.
-  const elevateBranch = grepLines('application.mjs', "name === 'run.scratchpad.elevate'");
-  assert.ok(elevateBranch.length > 0, 'the elevate direct port exists (application.mjs:12523) — the elevation lane is the pre-existing candidacy mint (law 4 scope note)');
-  // RED — the append verb must be a direct shared write in the direct-port block
-  // (application.mjs:12514-12523) that does NOT route through scratchpadElevate/elevateTaskScratchpad.
-  // At HEAD no append branch exists — the verb is unwritten, so no ephemeral write exists to be
-  // held separate from candidacy.
-  const appendBranch = codeLines('application.mjs', "name === 'run.scratchpad.append'");
-  stageAssert(appendBranch.length > 0, 'append-candidacy-shortcut-missing',
-    'the append verb must land in the direct-port dispatch block as an ephemeral shared write (D1 law 4, tight-cell-contract.md:818-822) — never a scratch-fact/KG candidacy shortcut; at HEAD the branch is absent (the verb is unwritten). GREEN condition: a direct shared write exists only via the unlanded tight-cell shared-write kernel path (G8)');
-  // The ephemeral discriminator (the blueteam A6-1 fold): the branch must be CODE (comment-flip
-  // killed above), its OWN direct port (not the elevate branch — which routes to scratchpadElevate),
-  // and its dispatch must NOT route to the elevation/candidacy lane.
-  const elevateDispatch = srcAnchor('application.mjs', "name === 'run.scratchpad.elevate'");
-  stageAssert(appendBranch[0].line !== elevateDispatch.line,
-    'append-candidacy-shortcut-missing',
-    'the append branch must be its OWN direct port, never an alias of the elevate branch — a shared append needs no elevation (law 4)');
-  stageAssert(!/scratchpadElevate|elevateTaskScratchpad/u.test(appendBranch[0].text),
-    'append-candidacy-shortcut-missing',
-    'the append branch routes to an EPHEMERAL write method — never scratchpadElevate/elevateTaskScratchpad (the direct-port branches are single-line `return this.X(args, principal)` dispatches, application.mjs:12514-12523) — a shallow impl that aliases append onto the elevation lane fails (law 4)');
-});
-
-// ---------------------------------------------------------------------------
 // A7 — D3 bounds through the surface (OQ4, G8)
 // ---------------------------------------------------------------------------
 
@@ -781,26 +752,11 @@ test('A7-3 stage[append-worker-cap-missing]: the 129th worker:<ownId> append ref
 // PIN rows — green at HEAD; each kills a plausible WRONG implementation.
 // ---------------------------------------------------------------------------
 
-test('P-A1 PIN: the read/elevate half of the parity table stays served — CLI parser + CLI_WEB_COMMANDS + MCP + registry all agree (the substrate the write completes)', () => {
-  // The write verb completes the parity table (control-surface-audit.md:85), it never displaces the
-  // served read/elevate half. A wrong impl that regresses read/elevate while adding append fails.
-  const read = capture(() => parseBatonCli(['run', 'scratchpad', 'read', 'run:m1', '--scope', 'shared']));
-  assert.equal(read.ok, true, 'run.scratchpad.read still parses');
-  assert.equal(read.value?.name, 'run.scratchpad.read', 'read stays served');
-  const elevate = capture(() => parseBatonCli(['run', 'scratchpad', 'elevate', 'run:m1', '--task', 'task:m1', '--entries', '[]']));
-  assert.equal(elevate.ok, true, 'run.scratchpad.elevate still parses');
-  assert.equal(elevate.value?.name, 'run.scratchpad.elevate', 'elevate stays served');
-  // 2026-09-14 audit (#289): the whitelist is DERIVED now (the card projection of the dispatch
-  // authority), so a source-region window over a literal no longer holds the names. The set
-  // membership is the stronger, stable form of the same pin.
-  assert.ok(CLI_WEB_COMMANDS.has('run.scratchpad.read'), 'read is in CLI_WEB_COMMANDS');
-  assert.ok(CLI_WEB_COMMANDS.has('run.scratchpad.elevate'), 'elevate is in CLI_WEB_COMMANDS');
-  const mcpNames = mcpApplicationToolNames();
-  assert.ok(mcpNames.includes('baton_run_scratchpad_read') && mcpNames.includes('baton_run_scratchpad_elevate'),
-    'read/elevate are served on MCP (mcp-northbound.mjs:652-668)');
-  const sem = readFileSync(fileURLToPath(new URL('../src/application-semantics.mjs', import.meta.url)), 'utf8');
-  assert.ok(sem.includes("'run.scratchpad.read'") && sem.includes("'run.scratchpad.elevate'"),
-    'read/elevate have semantic-registry rows (application-semantics.mjs:1678-1695)');
+test('scratchpad read remains available through CLI and MCP', () => {
+  const read = parseBatonCli(['run', 'scratchpad', 'read', 'run:m1', '--scope', 'shared']);
+  assert.equal(read.name, 'run.scratchpad.read');
+  assert.ok(CLI_WEB_COMMANDS.has('run.scratchpad.read'));
+  assert.ok(mcpApplicationToolNames().includes('baton_run_scratchpad_read'));
 });
 
 test('P-A4 PIN: the kernel _byKey replay binding has NO scope term — the two-scope namespacing is the SURFACE\'s job (H3.1), never a kernel-envelope amendment', () => {

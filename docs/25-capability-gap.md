@@ -28,8 +28,9 @@ of all non-shipped rows (22 of 66) are deliberate scope discipline rather than f
 The row counts remain a historical phase-10 snapshot, not a current shipped count. Phase 11 has
 since shipped exact orchestrator-level model selection, persistent follow-up/resume/fork/recovery,
 isolated runtime homes, canonical token/USD thresholds and hard stops, deterministic watchdog
-actions, red→green/changed-line coverage/mutation gates, and independent oracle provenance. Current
-code/evidence overrides the older row status wherever those capabilities appear.
+actions, red→green/changed-line coverage/mutation gates, independent oracle provenance, and
+fast-forward integration. Current code/evidence overrides the
+older row status wherever those capabilities appear.
 
 Phase 29 additionally ships the capability-plane narrow waist: deployments can register existing
 Atlas modules with explicit bounds and trusted contexts; Coordinator owns invocation; authenticated
@@ -56,7 +57,7 @@ That is a complete phase-10 fleet driver, not a complete realization of every re
 
 ## Former high-priority debt, reconciled honestly
 
-The snapshot has seven high-priority rows. They collapse into three implementation programs.
+The snapshot has seven high-priority rows. They collapse into four implementation programs.
 
 ### 1. Session continuity and branching
 
@@ -87,6 +88,13 @@ mutation command must report a nonzero all-killed population when required. Inde
 review tasks receive immutable spec/Git evidence and record reviewer vendor/model family; a
 same-family fallback cannot satisfy a required oracle gate.
 
+### 4. Integration and irreversible-side-effect approval
+
+The first safe vertical now ships. `integrate()` reaps the accepted worker and applies only an
+explicit clean fast-forward; divergence/dirty state refuses without rewriting history and retains
+a durable result ref. Semantic conflict handling, stacked integration, and deploy adapters remain
+debt.
+
 ## Historical Phase-10 fences (status superseded by doc 28)
 
 This section records the Phase-10 decision boundary; it is not current status. Since then Baton has
@@ -107,8 +115,8 @@ goal explicitly excluded.
 
 ## Historical order of pursuit and current continuation
 
-Items 1, 2, the ACI registry portion of 3, MCP stdio, and authenticated HTTPS/SSE control from
-item 5 have shipped. The current continuation is: close audited ACI contract
+Items 1, 2, the ACI registry portion of 3, major bounded portions of 4, MCP stdio, and authenticated
+HTTPS/SSE control from item 5 have shipped. The current continuation is: close audited ACI contract
 drift; build Cairn Rung 0 and Cartographer/Quartermaster on the shared substrate; then Vantage,
 Evidence Ladder, and Skill Forge/computer use; deepen session/governance/northbound production
 surfaces; and pursue conditional representation research only through its explicit Decisions.

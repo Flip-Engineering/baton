@@ -273,7 +273,7 @@ Baton should not copy that northbound posture. Loopback should be the default. N
 should require TLS and scoped authenticated sessions, with origin/CSRF protections, revocation,
 idempotency, authority rechecks, and durable audit events. Full-permission harness launch should
 remain distinct from Baton authority: a child may receive full native harness permissions without
-receiving broader repository, Plan, route, or credential authority.
+receiving broader repository, Plan, route, credential, or integration authority.
 
 ## Exact Baton mapping
 
@@ -321,7 +321,7 @@ episode.help()
 
 An Episode contains a bounded semantic summary plus exact refs to output lineage, Attempts,
 routes, artifacts, raw traces, termination, and cleanup. The summary can be regenerated and can
-never grant completion, selection, or retry authority.
+never grant completion, selection, integration, or retry authority.
 
 ### Stage B — resumable workstream handle
 

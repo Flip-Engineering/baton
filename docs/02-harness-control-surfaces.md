@@ -143,8 +143,8 @@ active turns; two interrupts and four kills confirmed; all processes, worktrees,
 branches were reaped. Evidence: `reference/evidence/grok-multi-reap-2026-07-10/`.
 
 Phase 11 subsequently wired exact model selection, resume/fork/recovery, token/USD governance,
-red→green/coverage/mutation acceptance, and independent oracle provenance. Remaining depth is
-tracked in `25-capability-gap.md`.
+red→green/coverage/mutation acceptance, independent oracle provenance, and fast-forward
+integration. Remaining depth is tracked in `25-capability-gap.md`.
 
 Phase 51 now gives every shipped real-child adapter the same closed process vocabulary without
 flattening their provider handshakes: coordinator-selected generation and exact PID/group

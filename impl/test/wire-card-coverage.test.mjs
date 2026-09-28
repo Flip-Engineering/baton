@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 
 const WORKFLOW_SIX = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.elevate',
+  'run.scratchpad.read',
   'run.knowledge.seed',
 ]);
 

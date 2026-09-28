@@ -218,7 +218,7 @@ test('MP7: the settlement tools register on MCP', async () => {
   await initialized(server);
   const list = await request(server, 2, 'tools/list', {});
   const names = JSON.stringify(list.result);
-  for (const tool of ['baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease']) {
+  for (const tool of ['baton_scratchpad_settle', 'baton_knowledge_settlement_lease']) {
     assert.ok(names.includes(tool), `${tool} is advertised`);
   }
 });

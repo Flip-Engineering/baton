@@ -394,7 +394,7 @@ test('FP-01-attention (stage: port absent): run.attention.watch dispatches; shap
   }
 });
 
-test('FP-01-scratchpad (stage: ports absent): run.scratchpad.read/elevate dispatch; closed scopes and entry shapes', async (t) => {
+test('FP-01-scratchpad (stage: ports absent): run.scratchpad.read dispatch; closed scopes', async (t) => {
   const fx = await facadeFixture(t, { authorize: REFUSE_ALL });
   const wave = principalOf('wave-owner');
   const read = await facadeError(() => fx.application.command('run.scratchpad.read', {
@@ -402,11 +402,6 @@ test('FP-01-scratchpad (stage: ports absent): run.scratchpad.read/elevate dispat
   }, wave, null));
   assert.notEqual(read?.code, 'application_command_unavailable', 'stage: run.scratchpad.read must dispatch');
   assert.equal(read?.code, 'application_unauthorized', 'a shape-valid read reaches the policy seam');
-  const elevate = await facadeError(() => fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:a3', taskId: 'task-1', entryIds: [ENTRY_ID(1)],
-  }, wave, null));
-  assert.notEqual(elevate?.code, 'application_command_unavailable', 'stage: run.scratchpad.elevate must dispatch');
-  assert.equal(elevate?.code, 'application_unauthorized', 'a shape-valid elevate reaches the policy seam');
   const readCases = [
     { runId: 'run:a3', scope: 'bogus' }, // scope outside the closed pattern
     { runId: 'run:a3', scope: 'worker:' }, // empty worker id
@@ -416,17 +411,6 @@ test('FP-01-scratchpad (stage: ports absent): run.scratchpad.read/elevate dispat
   for (const args of readCases) {
     const refusal = await facadeError(() => fx.application.command('run.scratchpad.read', args, wave, null));
     assert.equal(refusal?.code, 'application_scratchpad_read_invalid', `read closure: ${JSON.stringify(args)}`);
-  }
-  const elevateCases = [
-    { runId: 'run:a3', taskId: 'task-1', entryIds: 'not-an-array' },
-    { runId: 'run:a3', taskId: 'task-1', entryIds: ['not-an-entry-id'] },
-    { runId: 'run:a3', taskId: 'task-1', entryIds: [ENTRY_ID(1), ENTRY_ID(1)] }, // duplicates
-    { runId: 'run:a3', taskId: 'task-1', entryIds: Array.from({ length: 129 }, (_, i) => ENTRY_ID(i + 1)) }, // >128
-    { runId: 'run:a3', entryIds: [ENTRY_ID(1)] }, // missing taskId
-  ];
-  for (const args of elevateCases) {
-    const refusal = await facadeError(() => fx.application.command('run.scratchpad.elevate', args, wave, null));
-    assert.equal(refusal?.code, 'application_scratchpad_elevate_invalid', `elevate closure: ${JSON.stringify(args)}`);
   }
 });
 
@@ -868,132 +852,7 @@ test('FP-09-constancy (stage: facade read absent): unknown ≡ foreign at the po
 });
 
 // ===========================================================================
-// Section E — run.scratchpad.elevate (stage: facade projection absent; the
-// store lane + coordinator wrapper are landed). FP-10: the steering-registered
-// selection ceremony with elevated ≥ 1 (red-team blocker #1), the fence-bound
-// retry law (wrapper retry → empty, never idempotent — blocker #2), the
-// ordering hazard row, resolve-then-authorize constancy, and the STORE-DIRECT
-// postures pinned separately (guard rows — green today by construction).
-// ===========================================================================
-
-test('FP-10-happy (stage: facade elevate absent): a steering-registered run settles with elevated ≥ 1, receipt verbatim', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  const handle = await spawnMember(fx, { runId: 'run:e1' });
-  const task = fx.coordination.task(handle.taskId);
-  const first = writeNote(fx, { runId: 'run:e1', taskId: task.id, workerId: handle.id, text: 'finding one', key: 'ws-e1-a' });
-  const second = writeNote(fx, { runId: 'run:e1', taskId: task.id, workerId: handle.id, text: 'finding two', key: 'ws-e1-b' });
-  completeTask(fx, task.id);
-  const receipt = await fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:e1', taskId: task.id,
-    entryIds: [first.entry.entryId, second.entry.entryId],
-  }, wave, null);
-  assert.equal(receipt?.schemaVersion, 1);
-  assert.equal(receipt?.ok, true);
-  assert.equal(receipt?.result, 'settled');
-  assert.ok(Array.isArray(receipt?.elevated) && receipt.elevated.length >= 1,
-    'the selection is HONORED on a steering-registered run — a silent discard greens nothing (blocker #1)');
-  assert.match(receipt?.dispositionDigest ?? '', /^[a-f0-9]{64}$/u);
-  assert.ok(Number.isSafeInteger(receipt?.reapEventSeq), 'the reap event is receipted');
-  assert.ok(Number.isSafeInteger(receipt?.observedFence) && Number.isSafeInteger(receipt?.scratchpadFence),
-    'both fences ride the verbatim store receipt');
-  assert.equal(receipt?.scratchpadFence, fx.coordination.scratchpadFence('run:e1', `worker:${handle.id}`),
-    'the post-reap fence is the store\'s live fence');
-  // The elevated content is now in the run's shared partition.
-  const shared = fx.coordination.scratchpadSnapshot('run:e1', 'shared');
-  assert.ok(shared.entries.length >= 1, 'elevated entries mint shared-scope rows');
-});
-
-test('FP-10-retry (stage: facade elevate absent): not-ready outcome; wrapper retry → empty (never idempotent); post-reap degrade', async (t) => {
-  const fx = await facadeFixture(t);
-  const wave = principalOf('wave-owner');
-  // A non-terminal task: the wrapper's typed OUTCOME, never a throw.
-  const liveHandle = await spawnMember(fx, { runId: 'run:e2-live' });
-  const liveTask = fx.coordination.task(liveHandle.taskId);
-  const notReady = await fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:e2-live', taskId: liveTask.id, entryIds: [ENTRY_ID(1)],
-  }, wave, null);
-  assert.deepEqual(notReady, { schemaVersion: 1, ok: false, result: 'scratchpad_settlement_not_ready' },
-    'a non-terminal task is the lane\'s typed outcome, verbatim');
-  // The exact-retry law, fence-bound (blocker #2): the first settle reaps and bumps
-  // the fence, so the wrapper retry derives a fresh fence → nothing left → empty.
-  const handle = await spawnMember(fx, { runId: 'run:e2' });
-  const task = fx.coordination.task(handle.taskId);
-  const note = writeNote(fx, { runId: 'run:e2', taskId: task.id, workerId: handle.id, text: 'one', key: 'ws-e2-a' });
-  completeTask(fx, task.id);
-  const args = { runId: 'run:e2', taskId: task.id, entryIds: [note.entry.entryId] };
-  const first = await fx.application.command('run.scratchpad.elevate', args, wave, null);
-  assert.equal(first?.result, 'settled');
-  assert.ok(first.elevated.length >= 1);
-  const retry = await fx.application.command('run.scratchpad.elevate', args, wave, null);
-  assert.equal(retry?.ok, true);
-  assert.equal(retry?.result, 'empty', 'a wrapper-driven exact retry returns the EMPTY successor — NEVER idempotent (the fence moved)');
-  assert.notEqual(retry?.result, 'idempotent', 'idempotent is a store-direct posture, unreachable through the wrapper');
-  assert.equal(retry?.reapEventSeq, null);
-  assert.equal(retry?.dispositionDigest, null);
-  assert.deepEqual(retry?.elevated, [], 'the honest never-double-elevate posture: a success receipt with an empty effect');
-  // The ordering row: any reap that precedes the elevate degrades it to the same
-  // empty receipt (the releaseTerminalTaskResources auto-settle hazard).
-  const raced = await spawnMember(fx, { runId: 'run:e2-raced' });
-  const racedTask = fx.coordination.task(raced.taskId);
-  const racedNote = writeNote(fx, { runId: 'run:e2-raced', taskId: racedTask.id, workerId: raced.id, text: 'raced', key: 'ws-e2-raced-a' });
-  completeTask(fx, racedTask.id);
-  // The cleanup reap lands FIRST (store-direct, the auto-settle shape: entryIds []).
-  fx.coordination.elevateTaskScratchpad({
-    runId: 'run:e2-raced', taskId: racedTask.id, workerId: raced.id,
-    expectedScratchpadFence: fx.coordination.scratchpadFence('run:e2-raced', `worker:${raced.id}`),
-    entryIds: [],
-  }, { actor: 'orchestrator', key: `scratchpad.task_settlement:${racedTask.id}` });
-  const degraded = await fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:e2-raced', taskId: racedTask.id, entryIds: [racedNote.entry.entryId],
-  }, wave, null);
-  assert.equal(degraded?.result, 'empty', 'an elevate driven AFTER a cleanup reap degrades to empty — the ordering hazard is honest');
-  assert.deepEqual(degraded?.elevated, []);
-});
-
-test('FP-10-constancy (stage: facade elevate absent): unknown ≡ cross-run ≡ foreign; selection outside the partition is the lane\'s code', async (t) => {
-  const REFUSED_RUN = 'run:e3-foreign';
-  const authorize = async (request) => !(request.runId === REFUSED_RUN || request.runId === null);
-  const fx = await facadeFixture(t, { authorize });
-  const wave = principalOf('wave-owner');
-  const ownHandle = await spawnMember(fx, { runId: 'run:e3-own' });
-  const ownTask = fx.coordination.task(ownHandle.taskId);
-  completeTask(fx, ownTask.id);
-  const foreignHandle = await spawnMember(fx, { runId: REFUSED_RUN });
-  const foreignTask = fx.coordination.task(foreignHandle.taskId);
-  completeTask(fx, foreignTask.id);
-  const unknown = await facadeError(() => fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:e3-own', taskId: 'task-never-created', entryIds: [ENTRY_ID(1)],
-  }, wave, null));
-  const crossRun = await facadeError(() => fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:e3-own', taskId: foreignTask.id, entryIds: [ENTRY_ID(1)],
-  }, wave, null));
-  const foreign = await facadeError(() => fx.application.command('run.scratchpad.elevate', {
-    runId: REFUSED_RUN, taskId: foreignTask.id, entryIds: [ENTRY_ID(1)],
-  }, wave, null));
-  for (const refusal of [unknown, crossRun, foreign]) {
-    assert.equal(refusal?.code, 'application_unauthorized');
-    assert.equal(refusal?.message, unknown?.message,
-      'unknown ≡ cross-run ≡ foreign — the entry ids a caller names are never existence-oracles');
-  }
-  // A selection outside the task partition surfaces the LANE's code byte-identically
-  // (state-dependent — the facade's shape closure cannot pre-empt it).
-  const fx2 = await facadeFixture(t);
-  const host = await spawnMember(fx2, { runId: 'run:e3-host' });
-  const hostTask = fx2.coordination.task(host.taskId);
-  const other = await spawnMember(fx2, { runId: 'run:e3-other' });
-  const otherTask = fx2.coordination.task(other.taskId);
-  const alien = writeNote(fx2, { runId: 'run:e3-other', taskId: otherTask.id, workerId: other.id, text: 'alien', key: 'ws-e3-alien' });
-  completeTask(fx2, hostTask.id);
-  completeTask(fx2, otherTask.id);
-  const viaFacade = await facadeError(() => fx2.application.command('run.scratchpad.elevate', {
-    runId: 'run:e3-host', taskId: hostTask.id, entryIds: [alien.entry.entryId],
-  }, wave, null));
-  assert.equal(viaFacade?.code, 'scratchpad_settlement_invalid', 'the lane\'s state-dependent refusal propagates with its code untouched');
-  const viaLane = await laneError(() => fx2.driver.coordinator.elevateTaskScratchpad(hostTask.id, [alien.entry.entryId]));
-  assert.equal(viaFacade?.code, viaLane?.code);
-  assert.equal(viaFacade?.message, viaLane?.message, 'byte-identical to the lane — no facade re-coding');
-});
+// Store scratchpad settlement behavior.
 
 test('FP-10-store-direct (GUARD, green today): the idempotent/conflict pair is a store-direct posture the wrapper never reaches', async (t) => {
   // The scratchpad-33.test.mjs:600-604 shape, re-pinned HERE so the projected
@@ -1196,7 +1055,6 @@ const SIX_TOOLS = [
   ['baton_run_message_receipt', 'run.message.receipt', { readOnlyHint: true, idempotentHint: true }],
   ['baton_run_attention_watch', 'run.attention.watch', { readOnlyHint: true, idempotentHint: true }],
   ['baton_run_scratchpad_read', 'run.scratchpad.read', { readOnlyHint: true, idempotentHint: true }],
-  ['baton_run_scratchpad_elevate', 'run.scratchpad.elevate', { readOnlyHint: false, idempotentHint: false }],
   ['baton_run_knowledge_seed', 'run.knowledge.seed', { readOnlyHint: false, idempotentHint: true }],
 ];
 
@@ -1239,7 +1097,6 @@ test('FP-14-dispatch (stage: tools absent): each tool dispatches its facade comm
     ['baton_run_message_receipt', 'run.message.receipt', { repoId: REPO, messageId: MSG_ID }],
     ['baton_run_attention_watch', 'run.attention.watch', { repoId: REPO, runId: 'run:h2' }],
     ['baton_run_scratchpad_read', 'run.scratchpad.read', { repoId: REPO, runId: 'run:h2', scope: 'shared' }],
-    ['baton_run_scratchpad_elevate', 'run.scratchpad.elevate', { repoId: REPO, runId: 'run:h2', taskId: 'task-1', entryIds: [ENTRY_ID(1)] }],
     ['baton_run_knowledge_seed', 'run.knowledge.seed', { repoId: REPO, runId: 'run:h2', type: 'Finding', grounding: 'observed', body: 'x' }],
   ];
   let callId = 2;
@@ -1274,7 +1131,6 @@ test('FP-14-dispatch (stage: tools absent): each tool dispatches its facade comm
     ['baton_run_message_receipt', { repoId: REPO, messageId: 'msg-1' }, /invalid_message_receipt/u],
     ['baton_run_attention_watch', { repoId: REPO, runId: 'run:h2', kind: 7 }, /invalid_attention_watch/u],
     ['baton_run_scratchpad_read', { repoId: REPO, runId: 'run:h2', scope: 'bogus' }, /invalid_scratchpad_read/u],
-    ['baton_run_scratchpad_elevate', { repoId: REPO, runId: 'run:h2', taskId: 'task-1', entryIds: 'not-an-array' }, /invalid_scratchpad_elevate/u],
     ['baton_run_knowledge_seed', { repoId: REPO, runId: 'run:h2', type: 'Bogus', grounding: 'observed', body: 'x' }, /invalid_knowledge_seed/u],
   ]) {
     const response = await wireCall(server, callId, tool, args);
@@ -1299,7 +1155,6 @@ test('FP-14-dispatch (stage: tools absent): each tool dispatches its facade comm
   }
   for (const [tool, args] of [
     ['baton_run_message_send', { repoId: REPO, runId: 'run:h2', kind: 'inform', body: 'x' }],
-    ['baton_run_scratchpad_elevate', { repoId: REPO, runId: 'run:h2', taskId: 'task-1', entryIds: [ENTRY_ID(1)] }],
     ['baton_run_knowledge_seed', { repoId: REPO, runId: 'run:h2', type: 'Finding', grounding: 'observed', body: 'x' }],
   ]) {
     const response = await wireCall(observeOnly.server, readId, tool, args);
@@ -1339,14 +1194,6 @@ test('FP-15 (stage: tools + wire mapping absent): every newly projected refusal 
   assert.match(resultText(oversize), /application_message_send_invalid/u);
   assert.match(resultText(oversize), /2048/u);
   assert.match(resultText(oversize), /3075/u, 'the refusal names the ACTUAL byte size, not the char length');
-  // The scratchpad-settlement family: a non-terminal elevate is the lane's typed
-  // OUTCOME on the wire (isError false), never a degraded error code.
-  const handle = await spawnMember(fx, { runId: 'run:h3-elev' });
-  const notReady = await wireCall(control, 5, 'baton_run_scratchpad_elevate', {
-    repoId: REPO, runId: 'run:h3-elev', taskId: handle.taskId, entryIds: [ENTRY_ID(1)],
-  });
-  assert.equal(notReady.result?.isError, false, `the typed outcome rides the wire: ${resultText(notReady)}`);
-  assert.match(resultText(notReady), /scratchpad_settlement_not_ready/u);
   // The attention lane's authority is principal-shaped (Decision 5): the DEFAULT
   // descriptor principal refuses the constant scope code AS ITSELF; a descriptor row
   // naming the orchestrator id pages. Both prove the attention family reaches the wire.
@@ -1402,7 +1249,6 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
     ['baton_run_message_receipt', , { repoId: REPO, messageId: MSG_ID }],
     ['baton_run_attention_watch', , { repoId: REPO, runId: 'run:h4' }],
     ['baton_run_scratchpad_read', , { repoId: REPO, runId: 'run:h4', scope: 'shared' }],
-    ['baton_run_scratchpad_elevate', , { repoId: REPO, runId: 'run:h4', taskId: 'task-1', entryIds: [ENTRY_ID(1)] }],
     ['baton_run_knowledge_seed', , { repoId: REPO, runId: 'run:h4', type: 'Finding', grounding: 'observed', body: 'x' }],
   ]) {
     const response = await wireCall(server, id, tool, args);
@@ -1442,7 +1288,6 @@ test('FP-16-parse (stage: verbs absent): the seven spellings parse to their comm
     [['run', 'message', 'receipt', MSG_ID], 'run.message.receipt', { messageId: MSG_ID }],
     [['run', 'attention', 'watch', 'run:i1', '--kind', 'member_terminal', '--cursor', '3'], 'run.attention.watch', { runId: 'run:i1', kind: 'member_terminal', cursor: 3 }],
     [['run', 'scratchpad', 'read', 'run:i1', '--scope', 'shared', '--cursor', '2'], 'run.scratchpad.read', { runId: 'run:i1', scope: 'shared', cursor: 2 }],
-    [['run', 'scratchpad', 'elevate', 'run:i1', '--task', 'task-1', '--entries', `["${ENTRY_ID(1)}"]`], 'run.scratchpad.elevate', { runId: 'run:i1', taskId: 'task-1', entryIds: [ENTRY_ID(1)] }],
     [['run', 'knowledge', 'seed', 'run:i1', '--type', 'Finding', '--grounding', 'observed', '--body', 'x', '--evidence', '[]'], 'run.knowledge.seed', { runId: 'run:i1', type: 'Finding', grounding: 'observed', body: 'x', evidence: [] }],
   ];
   for (const [argv, name, expectedArgs] of parses) {
@@ -1481,7 +1326,6 @@ test('FP-16-registry (stage: rows absent): six canonical operations with the pin
     ['run.message.receipt', ['embedded', 'mcp', 'cli'], ['observe'], true, 'baton run message receipt', 'baton_run_message_receipt'],
     ['run.attention.watch', ['embedded', 'mcp', 'cli'], ['observe'], true, 'baton run attention watch', 'baton_run_attention_watch'],
     ['run.scratchpad.read', ['embedded', 'mcp', 'cli'], ['observe'], true, 'baton run scratchpad read', 'baton_run_scratchpad_read'],
-    ['run.scratchpad.elevate', ['embedded', 'mcp', 'cli'], ['control', 'observe'], true, 'baton run scratchpad elevate', 'baton_run_scratchpad_elevate'],
     ['run.knowledge.seed', ['embedded', 'mcp', 'cli'], ['control', 'observe'], true, 'baton run knowledge seed', 'baton_run_knowledge_seed'],
   ];
   for (const [key, surfaces, capabilities, idempotent, cli, mcp] of expectations) {
@@ -1536,12 +1380,6 @@ test('FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming ca
       atCap: { runId: 'run:j1', kind: 'inform', body: 'x'.repeat(2048) },
       overCap: { runId: 'run:j1', kind: 'inform', body: 'x'.repeat(2049) },
       command: 'run.message.send', code: 'application_message_send_invalid', cap: /2048/u, actual: /2049/u,
-    },
-    {
-      label: 'scratchpad entryIds ≤128 unique',
-      atCap: { runId: 'run:j1', taskId: 'task-1', entryIds: Array.from({ length: 128 }, (_, i) => ENTRY_ID(i + 1)) },
-      overCap: { runId: 'run:j1', taskId: 'task-1', entryIds: Array.from({ length: 129 }, (_, i) => ENTRY_ID(i + 1)) },
-      command: 'run.scratchpad.elevate', code: 'application_scratchpad_elevate_invalid', cap: /128/u, actual: /129/u,
     },
     {
       // #436 decision (a) — the pin is stale, the gate order is already right: the
@@ -1665,45 +1503,10 @@ async function scriptPartC(port, stateA) {
       .reduce((sum, reason) => sum + (reason.count ?? 1), 0);
     pages.push({ role: query.role, count });
   }
-  // Step 6 — elevate findings per terminal member task, BEFORE any settlement/
-  // cleanup reap: worker-scope read lists the partition, then elevate honors it.
-  const elevations = [];
-  for (const query of stateA.queries) {
-    const debug = await port.command('run.debug', { runId: query.runId, limit: 1 });
-    const workerId = (debug.members ?? [])[0]?.workerId;
-    const status = await port.command('run.status', { runId: query.runId });
-    const taskIds = new Set();
-    const walk = (value) => {
-      if (Array.isArray(value)) { value.forEach(walk); return; }
-      if (value && typeof value === 'object') {
-        for (const [key, child] of Object.entries(value)) {
-          if (key === 'taskId' && typeof child === 'string') taskIds.add(child);
-          else walk(child);
-        }
-      }
-    };
-    walk(status);
-    const taskId = [...taskIds][0] ?? null;
-    const partition = await port.command('run.scratchpad.read', { runId: query.runId, scope: `worker:${workerId}` });
-    const entryIds = (partition.entries ?? []).map((entry) => entry.entryId);
-    const settled = await port.command('run.scratchpad.elevate', { runId: query.runId, taskId, entryIds });
-    elevations.push({
-      role: query.role, taskId, entryCount: entryIds.length,
-      result: settled.result, elevated: settled.elevated?.length ?? 0,
-    });
-  }
-  // Step 7 — shared reads: the elevated findings, bounded.
-  const sharedReads = [];
-  for (const query of stateA.queries) {
-    const shared = await port.command('run.scratchpad.read', { runId: query.runId, scope: 'shared' });
-    sharedReads.push({ role: query.role, entries: shared.entries?.length ?? 0 });
-  }
-  return {
-    pages, elevations, sharedReads,
-  };
+  return { pages };
 }
 
-test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFLOW ROW: the eight-step sequence through the facade ALONE', { timeout: 180000 }, async (t) => {
+test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFLOW ROW: seed, messaging and attention through the facade', { timeout: 180000 }, async (t) => {
   // THE STATIC ASSERTION (Decision 13): the script contains no createDriver /
   // coordinator.mjs / coordination-store.mjs import — INCLUDING a dynamic import()
   // of those path strings (the grep form is pinned) — AND no .driver/.coordinator/
@@ -1768,25 +1571,9 @@ test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFL
   for (const page of stateC.pages) {
     assert.ok(page.count >= 1, `member_terminal wake visible for ${page.role}`);
   }
-  for (const elevation of stateC.elevations) {
-    assert.ok(typeof elevation.taskId === 'string' && elevation.taskId.length > 0,
-      `the member taskId is discoverable through the facade projections (${elevation.role})`);
-    assert.equal(elevation.entryCount, 2, `the worker-scope read listed the partition (${elevation.role})`);
-    assert.equal(elevation.result, 'settled', `elevation settles (${elevation.role})`);
-    assert.ok(elevation.elevated >= 1,
-      `the selection is honored — elevated ≥ 1 on steering-registered wave runs (${elevation.role}; blockers #1/#2)`);
-  }
-  for (const shared of stateC.sharedReads) {
-    assert.ok(shared.entries >= 1, `elevated findings serve on the shared partition (${shared.role})`);
-  }
-
   // The seeded node is inside the orchestrator run's horizon (durable effect).
   assert.ok(fx.driver.coordinator._runHorizonNodeIds(stateA.orchRunId).has(stateA.seedNodeId));
-  // Every effect is receipted on durable events/ids — never sleep durations or turn
-  // counts (the campaign control law): the durable trail carries the seeded node,
-  // the four message ids, and the four reap receipts.
-  const events = fx.coordination.events();
-  assert.ok(events.filter((event) => event.kind === 'scratchpad.partition_reaped').length >= 4, 'four elevation reaps are durable');
+
 });
 
 test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands', async (t) => {
@@ -1803,7 +1590,6 @@ test('WS-02 (stage: steps unserved today): the eight sequence steps resolve to s
     { step: '4-receipt', cli: 'run.message.receipt', mcp: 'baton_run_message_receipt', facade: 'run.message.receipt', args: { messageId: MSG_ID } },
     { step: '5-watch', cli: 'run.attention.watch', mcp: 'baton_run_attention_watch', facade: 'run.attention.watch', args: { runId: 'run:w2' } },
     { step: '5-answer', cli: 'run.answer', mcp: 'baton_decision_answer', facade: null, args: null },
-    { step: '6-elevate', cli: 'run.scratchpad.elevate', mcp: 'baton_run_scratchpad_elevate', facade: 'run.scratchpad.elevate', args: { runId: 'run:w2', taskId: 'task-1', entryIds: [ENTRY_ID(1)] } },
     { step: '7-scratchpad', cli: 'run.scratchpad.read', mcp: 'baton_run_scratchpad_read', facade: 'run.scratchpad.read', args: { runId: 'run:w2', scope: 'shared' } },
 
   ];
@@ -1830,7 +1616,7 @@ test('FP-18 (mixed: guards + the accessor and pre-gate rows red today): the proj
   // Guards (green today, must stay green): the byte-stable table gains no keys, and
   // the wave driver's stall machinery is NOT consumed by the inbox.
   const SIX = ['run.message.send', 'run.message.receipt', 'run.attention.watch',
-    'run.scratchpad.read', 'run.scratchpad.elevate', 'run.knowledge.seed'];
+    'run.scratchpad.read', 'run.knowledge.seed'];
   for (const key of SIX) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, key), false,
       `${key} is a DIRECT PORT — the byte-stable command table is untouched (grammar-m3 stays green)`);
@@ -1864,7 +1650,6 @@ test('FP-18 (mixed: guards + the accessor and pre-gate rows red today): the proj
     'run.message.receipt': 'application_message_receipt_invalid',
     'run.attention.watch': 'application_attention_watch_invalid',
     'run.scratchpad.read': 'application_scratchpad_read_invalid',
-    'run.scratchpad.elevate': 'application_scratchpad_elevate_invalid',
     'run.knowledge.seed': 'application_knowledge_seed_invalid',
   };
   for (const [name, code] of Object.entries(expectedCodes)) {

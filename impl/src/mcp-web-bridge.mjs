@@ -37,7 +37,7 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.evidence',
   'run.episode', 'run.workstreams',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
+  'run.scratchpad.read', 'run.scratchpad.append',
   'run.knowledge.seed',
   'runs.list',
   'waves.start', 'waves.list', 'waves.progress', 'waves.send',
@@ -53,7 +53,7 @@ const BRIDGE_FLOOR_COMMANDS = Object.freeze(
 );
 const MUTATIONS = new Set([
   'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve',
-  'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
+  'run.message.send', 'run.scratchpad.append',
   'run.knowledge.seed',
   'waves.start', 'waves.send', 'waves.stop', 'waves.run',
 ]);

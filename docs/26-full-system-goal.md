@@ -60,7 +60,7 @@ to the recursive run are green.
 
 After those gates, dogfooding is continuous: Baton implements, verifies, reviews, integrates,
 kills, and reaps the workers that improve Baton itself. Manual diagnosis may explain a rejected
-result but may not bypass Baton's normal fresh-verification authority.
+result but may not bypass Baton's normal fresh-verification and integration authority.
 
 ## Complete capability catalog
 
@@ -132,7 +132,7 @@ runtime isolation.
 The general launch default is the harness's approval-free/high-autonomy mode. Baton maps that
 intent per harness (for example, native Kimi ACP `yolo`) and observes it before work where the
 protocol permits. This does not delegate Plan, route, credential, verification, result adoption,
-publication, or kill/reap authority to the worker.
+integration, publication, or kill/reap authority to the worker.
 
 Autonomy, access, and containment are separate axes. Today, Codex uses `approvalPolicy=never` with
 `danger-full-access`, Claude-family workers use `bypassPermissions` with their command sandbox
@@ -960,12 +960,14 @@ Accepted verification now provisionally pins the exact commit before disposable 
 `run.adopt` records an exact restart-safe result selection without merging, checking out, changing
 the working tree, or publishing. It does not advance a semantically unverified Run to `completed`.
 Direct, authenticated Web/browser, and MCP share those commands.
-Phase 65 continues the same registry with `run.review`. Review policy pins an exact independent
-harness/model/effort allowlist and a closed report contract; Baton verifies the report from
-immutable Git objects, validates Unicode-scalar source anchors and active evidence references,
-derives conservative semantic state, and reaps the reviewer. Web, MCP, CLI, and the browser desk
-remain thin. Restart, forgery, extra-edit, stale-evidence, and stop-race contracts are executable in
-`impl/test/phase65-run-semantic-review-integration.test.mjs`.
+Phase 65 continues the same registry with `run.review` and `run.integrate`. Review policy pins an
+exact independent harness/model/effort allowlist and a closed report contract; Baton verifies the
+report from immutable Git objects, validates Unicode-scalar source anchors and active evidence
+references, derives conservative semantic state, and reaps the reviewer. Integration has distinct
+authority and requires fresh evidence plus configured adoption/semantic gates before calling the
+existing local Coordinator transaction. Web, MCP, CLI, and the browser desk remain thin; neither
+command pushes or deploys. Restart, forgery, extra-edit, stale-evidence, stop-race, dirty-checkout,
+and non-fast-forward contracts are executable in `impl/test/phase65-run-semantic-review-integration.test.mjs`.
 The 2026-07-14 recursive Phase 65 proof exercised the application rather than assembling kernel
 features: one Mock implementer produced a confined accepted result, real project-key GLM
 `glm-4.7`/low independently reviewed only the exact changed-path projection, Baton adopted that
