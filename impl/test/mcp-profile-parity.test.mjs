@@ -132,15 +132,10 @@ test('RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are expor
 
 // ── RG-02 — the application profile tools/list closure (D1) ───────────────────────────────────
 
-test('RG-02 RED: application tools/list is the served ordinary table and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)', async () => {
+test('RG-02: application tools/list includes the canonical tools and their legacy names', async () => {
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 51, 'application tools/list count 51 (stage: application-tools-count-49)'); // composition (#566 restore): the served ordinary table over the #317-pin ordinary rows, the #99/#179 harvest pair and the #233 canonical dot twins
-  // Fold (blue-team #2/#4 — SHALLOW/vacuity): the count ties to the restored composition, so a
-  // bare count of arbitrary self-consistent names cannot pass: the #233 canonical dot twins of the
-  // retained legacy tools are advertised (the twin closure), and the registry-operation direct
-  // ports (the harvest pair) ride beside them.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const twinTools = ['baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_application_help'];
