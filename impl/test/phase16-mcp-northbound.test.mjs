@@ -35,8 +35,6 @@ function setup(overrides = {}) {
     async resumeCapability(name, op, ref, cursor, ctx) { calls.push(['resumeCapability', name, op, ref, cursor, ctx]); return { op, status: 'ok', summary: 'resumed' }; },
     async reverifyCapability(name, op, claim, args, ctx) { calls.push(['reverifyCapability', name, op, claim, args, ctx]); return { op, status: 'ok', summary: 'reverified' }; },
     async orientWorker(workerId, args, note, ctx) { calls.push(['orientWorker', workerId, args, note, ctx]); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
-    async decideReuse(decision, ctx) { calls.push(['decideReuse', decision, ctx]); return { ok: true, result: 'recorded', decision: { id: 'reuse-decision:test' } }; },
-    async recheckReuseDecision(recheck, ctx) { calls.push(['recheckReuseDecision', recheck, ctx]); return { ok: true, result: 'guarded', targets: [] }; },
     async kill(workerId, actor, opts) { calls.push(['kill', workerId, actor, opts]); return { result: 'killed' }; },
     ...overrides.coordinator,
   };
