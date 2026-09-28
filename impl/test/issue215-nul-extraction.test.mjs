@@ -1,12 +1,16 @@
 // Issue #215 — NUL extraction from application.mjs + coordination-store.mjs.
 //
-// OBSERVED: the two files carry raw 0x00 bytes inside cacheKey template literals
+// OBSERVED: the two files carried raw 0x00 bytes inside cacheKey template literals
 // (application.mjs line 543, coordination-store.mjs line 2457, three bytes each).
 // `grep` treats a file with a NUL byte as binary and fails silently, so every suite
 // row that pins those sources carries a NUL-workaround instead of a plain read.
 // The NUL separator itself is legitimate (it cannot collide with real key text);
 // only its spelling in source is wrong: a raw byte instead of the `\0` escape,
 // which evaluates to the identical runtime string.
+//
+// application.mjs no longer builds a cacheKey: the #598 board removal took the board view
+// cache and its key with it, so only coordination-store.mjs is still pinned for the
+// separator spelling. 215-a keeps pinning both files NUL-clean.
 //
 // What this file pins, on the real source bytes:
 //   a  neither file contains a raw 0x00 byte;
@@ -39,8 +43,10 @@ for (const relative of FILES) {
   });
 }
 
+const CACHE_KEY_FILES = Object.freeze(['src/coordination-store.mjs']);
+
 test('215-b: the cacheKey separators keep the NUL escape in source', () => {
-  for (const relative of FILES) {
+  for (const relative of CACHE_KEY_FILES) {
     const text = readFileSync(join(root, relative), 'utf8');
     const line = text.split('\n').find((entry) => entry.includes('const cacheKey = `'));
     assert.ok(line, `${relative} still builds its cacheKey from a template literal`);
