@@ -5643,7 +5643,7 @@ export class Coordinator {
       const diagnosticCheckpoint = ['inconclusive', 'candidate_failed'].includes(verdict.outcome);
       // An accepted commit must remain reachable independently of its disposable task branch.
       // Standard Baton deployments provide this authority; legacy injected worktree fixtures may
-      // omit it and therefore remain unable to expose Run-level adoption.
+      // omit it, so the pin below is attempted only when that authority exists.
       let retainedResultRef = null;
       let checkpoint = null;
       if (accept && captured?.sha && typeof this._worktrees?.retainResult === 'function'

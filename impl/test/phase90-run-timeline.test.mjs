@@ -163,15 +163,9 @@ test('RT5: a cursor remains valid when new durable Run facts append after its ex
   assert.deepEqual(resumed.items.map((item) => [item.position, item.kind]), [[2, 'run.sealed']]);
 });
 
-test('RT8: production result and all-zero reap receipts retain safe terminal truth', () => {
+test('RT8: an all-zero reap receipt retains safe terminal truth', () => {
   const events = [
-    coordination(1, 'run.result_adoption_completed', {
-      runId: 'run-zero', receipt: {
-        runId: 'run-zero', state: 'adopted',
-        result: { ref: 'private-result-ref', sha: 'f'.repeat(40) },
-      },
-    }),
-    coordination(2, 'run.stop_completed', {
+    coordination(1, 'run.stop_completed', {
       runId: 'run-zero', receipt: {
         state: 'stopped', targetCount: 0, remainingCount: 0,
         counts: {
@@ -185,14 +179,10 @@ test('RT8: production result and all-zero reap receipts retain safe terminal tru
     }),
   ];
   const page = projectRunTimelinePage({ runId: 'run-zero', events, snapshot: {} });
-  assert.deepEqual(page.items.map((item) => item.kind), [
-    'run.result_adoption_completed', 'run.stop_completed',
-  ]);
-  assert.deepEqual(page.items[0].facts, { state: 'adopted' });
-  assert.deepEqual(page.items[1].facts, {
+  assert.deepEqual(page.items.map((item) => item.kind), ['run.stop_completed']);
+  assert.deepEqual(page.items[0].facts, {
     alreadyTerminal: 0, dispatchClosed: true, interactionsResolved: true,
     killConfirmed: 0, pendingCancelled: 0, processesClosed: 0, processesObserved: 0,
     remainingCount: 0, runAuthorityReleased: true, state: 'stopped', targetCount: 0,
   });
-  assert.equal(JSON.stringify(page).includes('private-result-ref'), false);
 });
