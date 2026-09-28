@@ -255,3 +255,32 @@ The [composed measurement record](measurements/2026-09-28-receive-626-compositio
 contains process IDs, native launch arguments, source and executable hashes, and
 evidence file hashes. Local artifacts are under `.scratch/issue625/composed/`,
 including `check-native.log` and `real-omp/evidence.json`.
+
+## Application ownership laws
+
+[receive-laws.bend](receive-laws.bend) states the receive ownership obligations
+under M-8's exclusive-claim clause. For a canonical coordinator database and
+session, a surviving keeper retains native ownership until native exit. A busy
+receive reports `queued`; recovery attaches to the recorded attempt.
+
+The checked equations import `coordinator/receive.bend`. The first constrains
+`Receive.acquired` for every launch argument and continuation when acquisition
+returns no lock. The second constrains `Receive.attach_recorded`: it invokes
+`ProcessChild.attach` with the supplied attempt directory and passes the returned
+handle to its continuation. `Receive.recover` uses this attachment function and
+the existing output observation and pending-input continuation.
+
+`laws-check.py` checks these equations through `laws.bend` and also checks the
+application file directly. Two negative controls mutate copies of the actual
+receive source: one executes a continuation while busy, and one launches a new
+process during recovery. Each must fail at its named law with expected and
+observed terms. The mutation copies retain the runtime import graph.
+
+```sh
+python3 docs/bend2/laws-check.py /path/to/bend
+```
+
+The compiler reports the equations' foreign dependencies. Kernel file-lock
+exclusivity, descriptor inheritance, native exit status and release ordering are
+host obligations covered by the process tests and probes. These application
+equations constrain Bend dispatch under that host contract.

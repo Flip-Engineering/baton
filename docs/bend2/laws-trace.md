@@ -21,7 +21,11 @@ Quantities, and Modules. [laws-check.evidence.md](examples/laws-check.evidence.m
 records the commands, outputs and failures. `python3 docs/bend2/laws-check.py <bend>`
 checks the models, the transition witness, the negative controls and two existing
 JavaScript regression rows.
-At this revision the check reports 24 rows, 0 failed.
+It also checks [receive ownership laws](receive-laws.bend) over the real runtime's
+busy admission and recorded-attempt attachment. Negative controls mutate those
+production dispatch branches while retaining the laws. These IO equations rely
+on the host effect contract; kernel locking, inherited descriptor custody and
+native-exit-only release are exercised by the [receive process tests and probes](receive-recovery-2026-09-28.md).
 It is a bounded evidence check. Root owns the separate deployment command
 `npm test --prefix impl`; this lane did not execute it. The check runs under
 `/opt/homebrew/bin/python3` on this host; the `python3` first on `PATH` is an asdf shim

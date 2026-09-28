@@ -1,6 +1,6 @@
 # CLAIM: the quantified M-5 history, M-10 worker and M-14 refusal model
-# obligations check. Actual application laws remain open as recorded in
-# ../laws-trace.md.
+# obligations check. The imported receive laws check the runtime's busy admission
+# and attachment dispatch. Their host assumptions are recorded in ../receive-laws.bend.
 # Reference: ../reference/README.md, bend 2.0.25, a4952426.
 # Evidence: laws-check.evidence.md.
 import Base
