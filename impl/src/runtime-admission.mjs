@@ -1700,12 +1700,6 @@ export function send(coordinator, recorder, workerId, message, mode, opts = {}) 
       && task.brief?.goalPlan) {
       return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
     }
-    if (mode === 'turn' && task?.runId
-      && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
-      return Promise.reject(Object.assign(new Error(`run ${task.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      }));
-    }
     return coordinator._withAuthorityOp(() => coordinator._send(workerId, message, mode, opts));
   }
 
@@ -2359,12 +2353,6 @@ export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
       && task && TERMINAL_TASK_STATUSES.has(task.status) && task.brief?.goalPlan) {
       return { admitted: false, result: { ok: false, result: 'goal_plan_continuation_not_authorized' } };
     }
-    if (mode === 'turn' && task?.runId
-      && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
-      throw Object.assign(new Error(`run ${task.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      });
-    }
     if (opts.semanticTarget && !coordinator._semanticTargetMatches(
       handle, opts.semanticTarget, opts.semanticTargetDigest,
     )) {
@@ -2407,9 +2395,6 @@ export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
     // could ever consume it. `nudgeTurn` holds the record's single-consumer reservation, so a
     // delivery racing an in-flight act waits for it instead of double-admitting a turn.
     if (opts.continueParticipant === true || mode === 'turn') {
-      if (task.runId && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
-        return { admitted: false, result: { ok: false, result: 'run_sealed' } };
-      }
       const pause = coordinator.pausedTurns({ workerId })[0];
       if (pause) return { admitted: true, handoff: 'nudgeTurn', pause };
     }

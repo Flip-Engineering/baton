@@ -156,11 +156,11 @@ test('RT5: a cursor remains valid when new durable Run facts append after its ex
   const snapshot = { tasks: [{ id: 'task-a', runId: 'run-a' }] };
   const firstEvents = [coordination(1, 'task.created', { id: 'task-a', runId: 'run-a' })];
   const first = projectRunTimelinePage({ runId: 'run-a', events: firstEvents, snapshot });
-  const appended = [...firstEvents, coordination(2, 'run.sealed', { runId: 'run-a', state: 'completed' })];
+  const appended = [...firstEvents, coordination(2, 'run.stop_completed', { runId: 'run-a', state: 'completed' })];
   const resumed = projectRunTimelinePage({
     runId: 'run-a', events: appended, snapshot, cursor: first.cursor,
   });
-  assert.deepEqual(resumed.items.map((item) => [item.position, item.kind]), [[2, 'run.sealed']]);
+  assert.deepEqual(resumed.items.map((item) => [item.position, item.kind]), [[2, 'run.stop_completed']]);
 });
 
 test('RT8: an all-zero reap receipt retains safe terminal truth', () => {

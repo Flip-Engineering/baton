@@ -1151,11 +1151,6 @@ export function recover(coordinator, recorder, workerId, opts = {}) {
     if (task?.brief?.goalPlan && handle?.sessionPreservation?.state !== 'preserved') {
       return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
     }
-    if (task?.runId && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
-      return Promise.reject(Object.assign(new Error(`run ${task.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      }));
-    }
     if (handle?.sessionPreservation?.state === 'preserved') {
       const contextAuthority = coordinator._exactPreservedRecoveryContext(handle, opts);
       if (!contextAuthority.ok) return Promise.resolve(contextAuthority);
@@ -1375,12 +1370,6 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
       && !preflightPlanRecovery) {
       return { ok: false, result: 'goal_plan_continuation_not_authorized' };
     }
-    if (preflightTask?.runId
-      && recorder.coordination.run?.(preflightTask.runId)?.status === 'sealed') {
-      throw Object.assign(new Error(`run ${preflightTask.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      });
-    }
     const startup = opts.startupAuthority === coordinator._startupRecoveryAuthority && coordinator._startupRecoveryState === 'pending';
     if (!startup) coordinator.tick();
     else { if (coordinator._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (coordinator._fatalError) throw coordinator._fatalError; }
@@ -1391,11 +1380,6 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
     if (task?.brief?.goalPlan && handle.sessionPreservation?.state !== 'preserved'
       && !planRecovery) {
       return { ok: false, result: 'goal_plan_continuation_not_authorized' };
-    }
-    if (task?.runId && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
-      throw Object.assign(new Error(`run ${task.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      });
     }
     if (handle.sessionPreservation?.state === 'preserved') {
       if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
@@ -1926,8 +1910,7 @@ export async function _reattachPreservedSession(coordinator, recorder, handle, t
     const preservationAuthority = coordinator._exactProcesslessPreservationAuthority(handle, task);
     if (!preservationAuthority.ok) return preservationAuthority;
     const adapter = coordinator._adapters[handle.vendor];
-    if (task.runId && (recorder.coordination.runStop?.(task.runId)
-      || recorder.coordination.run?.(task.runId)?.status === 'sealed')) {
+    if (task.runId && recorder.coordination.runStop?.(task.runId)) {
       return { ok: false, result: 'run_stopping' };
     }
     try { await coordinator._validateSessionContext(context); }

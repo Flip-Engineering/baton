@@ -846,8 +846,6 @@ export class CoordinationStore {
 
   _validateRepresentationPayload(payload, event, integrity = false) { return coordinationAdmission._validateRepresentationPayload(this, payload, event, integrity); }
 
-  _validateRunSealPayload(p, eventSeq, integrity = false) { return coordinationAdmission._validateRunSealPayload(this, p, eventSeq, integrity); }
-
   _validateRouteObservationPayload(p, event, integrity = false) { return coordinationAdmission._validateRouteObservationPayload(this, p, event, integrity); }
 
   _validateReuseDecisionPayload(p, event, integrity = false) { return coordinationAdmission._validateReuseDecisionPayload(this, p, event, integrity); }
@@ -1026,9 +1024,6 @@ export class CoordinationStore {
   }
   task(id) {
     return coordinationInternals.task(this._tasks, id);
-  }
-  run(id) {
-    return coordinationInternals.run(this._runs, id);
   }
   routePolicy() { return coordinationLedger.routePolicy(this._routePolicy); }
   representationPolicy() { return coordinationLedger.representationPolicy(this._representationPolicy); }
@@ -1253,8 +1248,6 @@ export class CoordinationStore {
   // so repeated driver passes finish the residue. The currently-closing wave is excluded so its own
   // freshly-materialized lease is never swept (re-drive stays exactly-once).
   sweepSettlementLeases(repoId, options = {}) { return coordinationLedger.sweepSettlementLeases(this, repoId, options); }
-
-  sealRunScorecard(fields, auth) { return coordinationLedger.sealRunScorecard(this, fields, auth); }
 
   claimTask(id, worker, expectedVersion, auth, attribution = {}) { return coordinationLedger.claimTask(this, id, worker, expectedVersion, auth, attribution); }
 

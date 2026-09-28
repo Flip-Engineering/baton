@@ -37,8 +37,8 @@ const group = (items, key) => Object.fromEntries([...new Set(items.map(key))].so
 
 export class CairnRunScorecard {
   constructor(opts = {}) {
-    if (!opts.coordination || typeof opts.coordination.snapshot !== 'function' || typeof opts.coordination.sealRunScorecard !== 'function') {
-      throw new TypeError('Cairn requires durable coordination with run sealing');
+    if (!opts.coordination || typeof opts.coordination.snapshot !== 'function') {
+      throw new TypeError('Cairn requires a durable coordination snapshot');
     }
     if (typeof opts.readOperational !== 'function') throw new TypeError('Cairn requires an authoritative operational reader');
     if (typeof opts.artifactRoot !== 'string' || opts.artifactRoot.length === 0) throw new TypeError('Cairn artifactRoot required');
@@ -109,7 +109,7 @@ export class CairnRunScorecard {
   card() {
     const ops = {
       'run.scorecard': {
-        latency_class: 'interactive', deterministic: true, side_effects: ['artifact.write', 'coordination.append', 'knowledge.promote'], reverifiable: true,
+        latency_class: 'interactive', deterministic: true, side_effects: ['artifact.write'], reverifiable: true,
       },
     };
     if (this.routeAdvisor) ops['route.advice'] = { latency_class: 'interactive', deterministic: true, side_effects: [], reverifiable: true };
@@ -530,13 +530,13 @@ export class CairnRunScorecard {
     return { document, bytes, digest: sha256(bytes), evidence: [...new Map(evidence.map((ref) => [ref.coordinationSeq, ref])).values()].sort((a, b) => a.coordinationSeq - b.coordinationSeq) };
   }
 
-  _result(run) {
-    const bytes = readFileSync(run.artifact.path).byteLength;
+  _result(built) {
+    const row = built.document.row;
     return {
-      op: 'run.scorecard', status: 'ok', summary: `sealed Cairn scorecard for ${run.runId}`,
-      payload: [clone(run.scorecard)], refs: [{ kind: 'cairn-run-scorecard', digest: run.scorecardDigest, bytes, path: run.artifact.path }],
-      cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(run.scorecard)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
-      provenance: { runId: run.runId, coordinationUpperBound: run.coordinationUpperBound, deterministic: true, mergeAuthority: false, verificationAuthority: false },
+      op: 'run.scorecard', status: 'ok', summary: `Cairn scorecard for ${built.document.runId}`,
+      payload: [clone(row)], refs: [{ kind: 'cairn-run-scorecard', digest: built.digest, bytes: Buffer.byteLength(built.bytes), path: this._artifactPath(built.digest) }],
+      cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(row)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
+      provenance: { runId: built.document.runId, coordinationUpperBound: built.document.coordinationUpperBound, deterministic: true, mergeAuthority: false, verificationAuthority: false },
     };
   }
 
@@ -555,20 +555,12 @@ export class CairnRunScorecard {
     if (op !== 'run.scorecard') throw typed('unsupported Cairn operation', 'capability_op_unavailable');
     const runId = args?.runId;
     if (!validRunId(runId)) throw typed('runId is invalid', 'invalid_run_id');
-    const existing = this.coordination.run(runId);
-    if (existing) return this._result(existing);
     const built = this._build(runId);
     const path = this._artifactPath(built.digest);
     if (existsSync(path)) {
       if (sha256(readFileSync(path)) !== built.digest) throw typed('content-addressed scorecard path is occupied by different bytes', 'run_artifact_conflict');
     } else writeFileSync(path, built.bytes, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    const sealed = this.coordination.sealRunScorecard({
-      runId, coordinationUpperBound: built.document.coordinationUpperBound,
-      operationalTails: built.document.operationalTails, taskIds: built.document.operationalTails.map((tail) => tail.taskId),
-      scorecardDigest: built.digest, scorecard: built.document.row,
-      artifact: { kind: built.document.kind, path, digest: built.digest, bytes: Buffer.byteLength(built.bytes) }, evidence: built.evidence,
-    }, { actor: ctx.actor, key: `run.sealed:${runId}:${built.digest}` });
-    return this._result(sealed.run);
+    return this._result(built);
   }
 
   async reverify(claim, op, args, ctx = {}) {
@@ -611,13 +603,16 @@ export class CairnRunScorecard {
         return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
       }
       if (op !== 'run.scorecard' || !validRunId(args?.runId)) return { ok: false, reason: 'invalid_request' };
-      const run = this.coordination.run(args.runId);
-      if (!run || !existsSync(run.artifact?.path)) return { ok: false, reason: 'missing_seal_or_artifact' };
-      if (resolve(run.artifact.path) !== this._artifactPath(run.scorecardDigest)) return { ok: false, reason: 'artifact_path_mismatch' };
-      const bytes = readFileSync(run.artifact.path);
-      if (sha256(bytes) !== run.scorecardDigest || claim?.refs?.[0]?.digest !== run.scorecardDigest) return { ok: false, reason: 'artifact_digest_mismatch' };
-      const built = this._build(args.runId, run);
-      return { ok: built.digest === run.scorecardDigest && stable(built.document.row) === stable(run.scorecard), digest: built.digest };
+      const claimed = claim?.refs?.[0]?.digest;
+      if (!/^[a-f0-9]{64}$/u.test(claimed ?? '')) return { ok: false, reason: 'artifact_digest_mismatch' };
+      const path = this._artifactPath(claimed);
+      if (!existsSync(path)) return { ok: false, reason: 'missing_artifact' };
+      const bytes = readFileSync(path);
+      if (sha256(bytes) !== claimed) return { ok: false, reason: 'artifact_digest_mismatch' };
+      let pinned; try { pinned = JSON.parse(bytes.toString('utf8')); } catch { return { ok: false, reason: 'artifact_invalid' }; }
+      if (!pinned || pinned.runId !== args.runId) return { ok: false, reason: 'artifact_invalid' };
+      const built = this._build(args.runId, pinned);
+      return { ok: built.digest === claimed, digest: built.digest };
     } catch (error) {
       return { ok: false, reason: error?.code ?? 'reverify_failed' };
     }

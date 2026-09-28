@@ -318,7 +318,8 @@ test('CL5: the store keeps its exact behavior across the move, and a moved membe
     // Issue #66 (D3): snapshot().knowledge gained the folded `doubts` projection, so the
     // golden moves with the projection — the fold still builds exactly what the live class
     // builds, and replay reconstructs the identical bytes (asserted below).
-    assert.equal(before, '7f3c4a340e08aab4060b5ff3eb5b86e098ce905d53be91bd8cf705a6e2dd567b',
+    // The Run seal left the plane, so the snapshot no longer carries the `runs` table.
+    assert.equal(before, '100771363a303254e0de3e05c79f8f82aabe674db25b7fb5ab5acef53412dc80',
       'the projection the moved fold builds is the one the pre-move store built');
     const restarted = new CoordinationStore(root, { clock });
     assert.equal(restarted.healthCheck(), true);
