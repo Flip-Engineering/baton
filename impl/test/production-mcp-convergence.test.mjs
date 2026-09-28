@@ -20,12 +20,6 @@ test('MCP convergence preserves native fleet/kernel effects instead of narrowing
   assert.deepEqual(eventTypes(runtime, 'fleet_spawn'), ['command.admitted', 'effect.requested', 'effect.succeeded']);
 });
 
-test('MCP convergence also preserves MCP-only board/reflex mutation surfaces', async () => {
-  const raw = fakeServer(); const runtime = new ProductionConvergenceRuntime(); const server = wrapProductionMcpServer(raw, { runtime });
-  await server.handle({ jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'baton_board_post', arguments: { repoId: 'repo', runId: 'run:a', board: 'b', title: 'x' } } });
-  assert.deepEqual(eventTypes(runtime, 'board.post'), ['command.admitted', 'effect.requested', 'effect.succeeded']);
-});
-
 test('MCP convergence leaves observation tools transparent and unledgered as effects', async () => {
   const raw = fakeServer(); const runtime = new ProductionConvergenceRuntime(); const server = wrapProductionMcpServer(raw, { runtime });
   await server.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'fleet_list', arguments: { repoId: 'repo' } } });

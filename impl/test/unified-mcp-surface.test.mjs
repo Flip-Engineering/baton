@@ -154,9 +154,9 @@ test('configured describe resolves canonical names and corrected live aliases de
 test('configured describe reports embedded-only capability without promoting it', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
-  const response = await call(server, 'baton_surface_describe', { name: 'board.claim' }, 22);
+  const response = await call(server, 'baton_surface_describe', { name: 'repl.binding' }, 22);
   const capability = response.result.structuredContent.capability;
-  assert.equal(capability.remotePosture, 'worker_internal');
+  assert.equal(capability.remotePosture, 'embedded_only');
   assert.equal(capability.operatorFacing, false);
   assert.equal(capability.liveMcp.available, false);
   assert.equal(capability.liveMcp.source, 'not_available_in_profile');
@@ -181,11 +181,11 @@ test('generic MCP invoke dispatches native and operator application capabilities
   assert.equal(raw.quotaCalls.filter((row) => row.tool === 'baton_surface_invoke').length, 1);
 });
 
-test('generic MCP invoke refuses embedded worker authority and requires action coordinates', async () => {
+test('generic MCP invoke refuses embedded-only authority and requires action coordinates', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
   const embedded = await call(server, 'baton_surface_invoke', {
-    name: 'board.claim', args: { grantId: 'grant:a' }, idempotencyKey: 'embedded:1',
+    name: 'repl.binding', args: { runId: 'run:a' }, idempotencyKey: 'embedded:1',
   }, 31);
   assert.equal(embedded.result.isError, true);
   assert.equal(embedded.result.structuredContent.error.code, 'surface_embedded_only');

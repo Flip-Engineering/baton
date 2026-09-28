@@ -2,7 +2,7 @@
 // bidirectional-v3-2026-08-02/bidirectional-v3-decisions.md v2.0 — issue #75).
 //
 // Sixteen rows over the folded decisions: BD3-A the read port (wire grammar, horizon
-// predicate intersect, resolve-then-authorize, shared-only scratchpad, board binding,
+// predicate intersect, resolve-then-authorize, shared-only scratchpad,
 // zero-weight context.read class + self-read exclusion, renderer mandate, not-progress);
 // BD3-B context packs (supersession chain, live-head spawn CAS, expiry distinct);
 // BD3-C the message lane (minted ids, inReplyTo-only worker frames, depth 1, honest
@@ -457,7 +457,7 @@ test('C1: orchestrator sends mint message ids; worker replies carry ONLY {inRepl
   const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1' });
   const handle2 = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1' });
   const sent = await coordinator.sendMessage({
-    kind: 'inform', to: { workerId: handle.id }, body: 'the candidacy board has two items for you',
+    kind: 'inform', to: { workerId: handle.id }, body: 'the settlement queue has two items for you',
   }, { actor: 'orchestrator' });
   assert.match(sent.messageId ?? '', /^message:[a-f0-9]{64}$/u, 'the send mints a message id');
   // A worker frame naming ANY target of its own is refused outright (the target is derived, never caller-named).
@@ -551,24 +551,6 @@ test('C3: receipts are honest across process death (delivered ≠ read; acted-on
 // Coverage rows (blue-team re-verify: the remaining v2.0 decision points)
 // ===========================================================================
 
-test('A5: the board query kind reuses the S-2 board→run binding check', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:a5' });
-  const store = coordinator._coordination;
-  store.postBoardItem({ board: 'wave-settlement:wave:a5', title: 'board finding', detail: 'd' },
-    { actor: 'orchestrator', key: 'bd3-a5-post' });
-  emitContextRead(adapter, handle, { kind: 'board', board: 'wave-settlement:wave:a5' }, 'a5-read');
-  await flush(40);
-  const result = coordinator._log.read(handle.id).find((event) => event.kind === 'context.read_result');
-  assert.ok(result, 'the board query answers');
-  const body = JSON.stringify(result.payload ?? {});
-  assert.ok(body.includes('board finding'), 'an in-binding board serves its items');
-  emitContextRead(adapter, handle, { kind: 'board', board: 'board:foreign-run' }, 'a5-foreign');
-  await flush(40);
-  const foreign = coordinator._log.read(handle.id).filter((event) => event.kind === 'context.read_result').at(-1);
-  assert.equal(foreign?.payload?.ok ?? null, false, 'a board bound to another run refuses with the binding precedence');
-});
 
 test('B4: the pack reaper reports the expiry it OBSERVED — it reclaims nothing, and live history is untouched', () => {
   const store = new CoordinationStore(tmpDir(), { repoId: 'repo-bd3', clock: () => '2026-08-03T05:00:00.000Z' });
@@ -672,9 +654,13 @@ test('D2: candidacy_review wakes only for the review authority', async () => {
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   const store = coordinator._coordination;
-  const posted = store.postBoardItem({ board: 'wave-settlement:wave:d2', title: 'a finding awaits review', detail: 'd' },
-    { actor: 'orchestrator', key: 'bd3-d2-post' });
-  store.closeBoardItem(posted.item.itemId, { actor: 'orchestrator', key: 'bd3-d2-close' });
+  // Stage a pending candidacy: a candidate Finding whose promotion trigger is a live candidacy
+  // source. The inbox derives candidacy_review from the store's own candidate queue.
+  store.addKnowledgeNode({
+    id: 'finding:candidacy:d2', type: 'Finding', grounding: 'observed',
+    body: 'a finding awaits review', evidence: [],
+    promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' },
+  }, { actor: 'policy', key: 'bd3-d2-candidacy' });
   const page = await coordinator.attentionFollow({
     scope: { runId: coordinator._tasks.get(handle.taskId).runId }, afterCursor: 0, timeoutMs: 1,
     targets: ['candidacy_review'],

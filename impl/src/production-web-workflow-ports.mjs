@@ -8,14 +8,12 @@ const PORT_ROWS = [
   ['run_attention_watch', 'run.attention.watch', 'query', ['runId', 'kind', 'cursor']],
   ['run_scratchpad_read', 'run.scratchpad.read', 'query', ['runId', 'scope', 'cursor']],
   ['run_scratchpad_elevate', 'run.scratchpad.elevate', 'effect', ['runId', 'taskId', 'entryIds']],
-  ['run_board_post', 'run.board.post', 'effect', ['runId', 'board', 'title', 'detail', 'owner', 'evidence']],
-  ['run_board_read', 'run.board.read', 'query', ['runId', 'board']],
   ['run_knowledge_seed', 'run.knowledge.seed', 'effect', ['runId', 'type', 'grounding', 'body', 'evidence']],
   // CS-3 already shipped a bounded, whitelisted run.debug application projection and parser, but
   // deliberately omitted it from CLI_WEB_COMMANDS/Web admission. The convergence release closes
   // that parser-present/executor-dead gap without changing the projection itself.
   ['run_debug', 'run.debug', 'query', ['runId', 'member', 'limit'], {
-    dispatch: 'application', authorizationCommand: 'run_board_read',
+    dispatch: 'application', authorizationCommand: 'run_scratchpad_read',
   }],
 ];
 

@@ -297,7 +297,7 @@ const AUTHORITY_RULES = Object.freeze([
   // delegate into runtime-effects.mjs keeps the effect seam its body had there.
   { seam: 'effect', id: 'effects_port', weight: 3, call: /\bruntimeEffects\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted effects module (runtime-effects.mjs)' },
   // Slice 14: the coordinator's _handleEvent delegate and the dispatcher's family-arm calls.
-  { seam: 'effect', id: 'event_handlers_port', weight: 3, call: /\beventHandlers\.[A-Za-z_$]+\(|\b(?:processStarted|processReady|processClosed|processReapUnconfirmed|turnCompleted|crashed|exited|questionCancelled|questionAsked|approvalRequested|decisionRequested|interactionSettled|resourceTokens|scratchpadWrite|contextRead|orientationRate|boardClaim|boardReport|messageSend|nativeSubagentObserved)\(coordinator, recorder, ctx\)/u, note: 'delegates into the runtime-event-handlers/ modules (slice 14)' },
+  { seam: 'effect', id: 'event_handlers_port', weight: 3, call: /\beventHandlers\.[A-Za-z_$]+\(|\b(?:processStarted|processReady|processClosed|processReapUnconfirmed|turnCompleted|crashed|exited|questionCancelled|questionAsked|approvalRequested|decisionRequested|interactionSettled|resourceTokens|scratchpadWrite|contextRead|orientationRate|messageSend|nativeSubagentObserved)\(coordinator, recorder, ctx\)/u, note: 'delegates into the runtime-event-handlers/ modules (slice 14)' },
   // Slice 10 extends the port rules to the observation bucket: a member whose body is a delegate
   // into runtime-observation.mjs keeps the observation seam its body had there. Without the rule a
   // three-line delegate like `_coordMap` — whose only evidence was the coordination authority its

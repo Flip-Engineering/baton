@@ -124,7 +124,7 @@
 //         {depth, budget, remaining}. (RED — stage: facade-budget-missing, the facade rejects the
 //         budget key at HEAD)
 //   H2  PIN — RC-08/G7: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is unchanged; the
-//         eight message-lane direct ports are not table keys. Kills an impl that registers the
+//         six message-lane direct ports are not table keys. Kills an impl that registers the
 //         ports as table entries.
 //   H3  RC-09 — baton_run_message_send accepts budget {integer, minimum: 1, maximum: 8, optional}.
 //         (RED — stage: mcp-message-budget-missing)
@@ -904,10 +904,10 @@ test('H1 (RC-08): run.message.send carries budget on the outcome; run.message.re
   assert.equal(receipt?.remaining, 3, 'the facade receipt carries remaining');
 });
 
-test('H2 PIN (RC-08/G7): the byte-stable command table is untouched — the eight message-lane direct ports are not table keys', () => {
-  const EIGHT = ['run.message.send', 'run.message.receipt', 'run.attention.watch',
-    'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed'];
-  for (const key of EIGHT) {
+test('H2 PIN (RC-08/G7): the byte-stable command table is untouched — the six message-lane direct ports are not table keys', () => {
+  const SIX = ['run.message.send', 'run.message.receipt', 'run.attention.watch',
+    'run.scratchpad.read', 'run.scratchpad.elevate', 'run.knowledge.seed'];
+  for (const key of SIX) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, key), false,
       `${key} is a DIRECT PORT — the byte-stable APPLICATION_COMMAND_DEFINITIONS table is untouched (D6/G7); the projection law is reach, never semantics`);
   }

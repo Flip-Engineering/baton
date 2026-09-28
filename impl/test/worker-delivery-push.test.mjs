@@ -727,7 +727,7 @@ test('D4 (RED): an orchestrator-only kind and a lane-delivered message never ren
   // BD3-C arm: an orchestrator lane-delivered message is the delivery mechanism — the attention
   // block NEVER re-serves it (D5, R7 double-push).
   const sent = await coordinator.sendMessage(
-    { kind: 'inform', to: { workerId: handle.id }, body: 'the board carries two items' },
+    { kind: 'inform', to: { workerId: handle.id }, body: 'the lane carries two items' },
     { actor: 'orchestrator' },
   );
   await flush();

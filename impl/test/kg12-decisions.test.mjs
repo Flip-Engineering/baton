@@ -1,8 +1,8 @@
 // KG-1 + KG-2 red suite (docs/reference/evidence/repl-kg-wave-2026-07-22/kg12-decisions.md, v2
 // FINAL, issues #24/#25). Part A: three horizon projections (task/workflow/project) sharing one
 // union-fence cache rule, including the store-level projectionInputFence() backstop (P1-1 fix).
-// Part B: board-item close mints a candidate `Finding` atomically. Part C: context-package
-// admission mints a content-addressed `Source` bridge + package `Finding` + `DerivedFrom` edges.
+// Part C: context-package admission mints a content-addressed `Source` bridge + package
+// `Finding` + `DerivedFrom` edges — the candidate path the settle-time admit gate consumes.
 // Part D: the settle-time orchestrator-admit gate (`knowledge.workflow_admitted`), gated on
 // promotionActor + an active run-orchestrator lease, never a free-string actor.
 
@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { CoordinationStore, coordinationForLog } from '../src/coordination-store.mjs';
+import { CoordinationStore } from '../src/coordination-store.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
@@ -53,10 +53,15 @@ function refusalCode(fn) {
 // Part A (KG-1): three horizon projections, one union-fence cache rule
 // ============================================================
 
-function lightweightCoordinator() {
+function lightweightCoordinator(storeOpts = {}) {
   const d = dir('coordinator');
   const log = new Log(join(d, 'log'));
-  const coordination = coordinationForLog(log);
+  // `coordinationForLog`'s own wiring, plus whatever deployment policy a caller needs — the
+  // Context Program authority for KG-1b's admission row.
+  const coordination = new CoordinationStore(join(log.dir, 'coordination'), {
+    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+    ...storeOpts,
+  });
   const fences = new FenceTable();
   const coordinator = new Coordinator({
     log, coordination, fences, adapters: {},
@@ -77,52 +82,44 @@ test('KG-1a: task horizon cache hits when the fence tuple is unchanged and misse
   const taskId = 'task-a';
   coordinator._tasks.set(taskId, { id: taskId, assignee: 'worker-a', runId: 'run-a' });
 
-  const first = coordinator.taskHorizon(taskId, { board: 'shared' });
-  const again = coordinator.taskHorizon(taskId, { board: 'shared' });
+  const first = coordinator.taskHorizon(taskId);
+  const again = coordinator.taskHorizon(taskId);
   assert.equal(again, first, 'an unchanged fence tuple must return the identical cached value');
 
-  coordination.postBoardItem({ board: 'shared', title: 'X' }, auth('post-1'));
-  const afterBoard = coordinator.taskHorizon(taskId, { board: 'shared' });
-  assert.notEqual(afterBoard, first, 'a board post must miss the task-horizon cache (boardFence moved)');
-
   coordinator._bumpInteractionGeneration(taskId);
-  const afterInteraction = coordinator.taskHorizon(taskId, { board: 'shared' });
-  assert.notEqual(afterInteraction, afterBoard, 'an interaction ask/resolve must miss independently');
+  const afterInteraction = coordinator.taskHorizon(taskId);
+  assert.notEqual(afterInteraction, first, 'an interaction ask/resolve must miss independently');
 
   coordination.addKnowledgeNode({ id: 'finding:unrelated', type: 'Finding', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-1' });
-  const afterProjectionInput = coordinator.taskHorizon(taskId, { board: 'shared' });
+  const afterProjectionInput = coordinator.taskHorizon(taskId);
   assert.notEqual(afterProjectionInput, afterInteraction,
     'a direct knowledge write on an unrelated scope must miss via projectionInputFence alone (P1-1 regression)');
 
-  const stable = coordinator.taskHorizon(taskId, { board: 'shared' });
+  const stable = coordinator.taskHorizon(taskId);
   assert.equal(stable, afterProjectionInput, 'with nothing changed, the next read is a cache hit again');
 });
 
-test('KG-1b (P1-1 fix): a board claim/report, a package admission, or an unrelated knowledge write misses the task/workflow cache via projectionInputFence alone', () => {
-  const { coordinator, coordination } = lightweightCoordinator();
+test('KG-1b (P1-1 fix): a package admission or an unrelated knowledge write misses the task/workflow cache via projectionInputFence alone', () => {
+  const { coordinator, coordination } = lightweightCoordinator({ repoId, ...packageAuthority });
   const taskId = 'task-b';
   coordinator._tasks.set(taskId, { id: taskId, assignee: 'worker-b', runId: 'run-b' });
-  const posted = coordination.postBoardItem({ board: 'shared-b', title: 'X', owner: 'worker-b' }, auth('post-b1'));
 
-  const before = coordinator.taskHorizon(taskId, { board: 'shared-b' });
-  coordination.requestBoardClaim({ itemId: posted.item.itemId, owner: 'worker-b', expectedBoardFence: 1 }, auth('claim-b1', 'worker'));
-  const afterClaim = coordinator.taskHorizon(taskId, { board: 'shared-b' });
-  assert.notEqual(afterClaim, before, 'board.claim_requested never bumps boardFence but must still miss');
+  const before = coordinator.taskHorizon(taskId);
+  coordination.admitContextPackage(
+    packageFields([valueRefBranch('b1', coordination)], { runId: 'run-b', principalId: 'principal-b' }),
+    auth('admit-b1'),
+  );
+  const afterAdmission = coordinator.taskHorizon(taskId);
+  assert.notEqual(afterAdmission, before, 'a package admission bumps no named fence component and must still miss');
 
-  coordination.submitBoardReport({ itemId: posted.item.itemId, itemVersion: 1, itemDigest: posted.item.itemDigest, owner: 'worker-b', body: 'note' }, auth('report-b1', 'worker'));
-  const afterReport = coordinator.taskHorizon(taskId, { board: 'shared-b' });
-  assert.notEqual(afterReport, afterClaim, 'board.report_submitted never bumps boardFence but must still miss');
+  coordination.addKnowledgeNode({ id: 'finding:unrelated-b', type: 'Finding', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-b1' });
+  const afterKnowledge = coordinator.taskHorizon(taskId);
+  assert.notEqual(afterKnowledge, afterAdmission, 'an unrelated knowledge write must miss via projectionInputFence alone');
 });
 
-test('KG-1c: workflow horizon fence unions every board attached to the run; a decision settle bumps it, an approval/question resolve does not', () => {
-  const { coordinator, coordination } = lightweightCoordinator();
+test('KG-1c: a decision settle bumps the workflow horizon fence; an interaction ask/resolve does not', () => {
+  const { coordinator } = lightweightCoordinator();
   const runId = 'run-c';
-  coordination.postBoardItem({ board: 'run-c-board', title: 'X' }, auth('post-c1'));
-  // A direct attachment covers rule 3's `board:<name>` scope convention without requiring a full
-  // context-program-policy fixture (this lightweight coordinator's store has none configured).
-  coordination._contextPackageAttachments.set(runId, [
-    { packageDigest: 'pkg-c1', scope: 'board:run-c-board', attachedEvent: 1, attachedAt: coordination._clock() },
-  ]);
   const before = coordinator.workflowHorizon(runId);
 
   coordinator._bumpInteractionGeneration('task-c');
@@ -140,7 +137,7 @@ test('KG-1d: project horizon recomputes exactly when the store event position ad
   const first = coordinator.projectHorizon(repoId);
   const again = coordinator.projectHorizon(repoId);
   assert.equal(again, first, 'no write happened; the project horizon must be a cache hit');
-  coordination.postBoardItem({ board: 'proj-board', title: 'X' }, auth('post-proj1'));
+  coordination.addKnowledgeNode({ id: 'finding:proj-unrelated', type: 'Finding', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-proj1' });
   const after = coordinator.projectHorizon(repoId);
   assert.notEqual(after, first, 'any applied event advances this._events.length and must miss');
 });
@@ -150,7 +147,7 @@ test('KG-1e: no horizon read of any kind appends a knowledge read event', () => 
   coordinator._tasks.set('task-e', { id: 'task-e', assignee: 'worker-e', runId: 'run-e' });
   const before = coordination.queryKnowledge({}).length + 0;
   const beforeReads = coordination._knowledgeReads.length;
-  coordinator.taskHorizon('task-e', { board: null });
+  coordinator.taskHorizon('task-e');
   coordinator.workflowHorizon('run-e');
   coordinator.projectHorizon(repoId);
   assert.equal(coordination._knowledgeReads.length, beforeReads, 'a horizon projection must never append to _knowledgeReads');
@@ -162,8 +159,8 @@ test('KG-1f (P1-1 property, acceptance P1): ANY queryKnowledge-visible mutation 
   const taskId = 'task-f';
   coordinator._tasks.set(taskId, { id: taskId, assignee: 'worker-f', runId: 'run-f' });
 
-  const first = coordinator.taskHorizon(taskId, { board: 'shared-f' });
-  assert.equal(coordinator.taskHorizon(taskId, { board: 'shared-f' }), first, 'no write: cache hit');
+  const first = coordinator.taskHorizon(taskId);
+  assert.equal(coordinator.taskHorizon(taskId), first, 'no write: cache hit');
 
   // task.created mints a live Task node through the knowledge fold (coordination-store.mjs
   // :7616) — visible to queryKnowledge({}) but absent from the old kind-allowlist.
@@ -173,17 +170,17 @@ test('KG-1f (P1-1 property, acceptance P1): ANY queryKnowledge-visible mutation 
     reservedWorkerId: 'worker-minted', vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
     modelPolicy: null, effortRequested: 'high', sessionRequest: { mode: 'new' },
   }, { actor: 'orchestrator', key: 'task.created:minted' });
-  const afterTask = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  const afterTask = coordinator.taskHorizon(taskId);
   assert.notEqual(afterTask, first, 'a Task node minted by task.created must miss the horizon cache');
 
   // knowledge.invalidated flips a node's validTo — the node drops out of queryKnowledge({}).
   coordination.addKnowledgeNode({ id: 'finding:doomed', type: 'Finding', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-f1' });
-  const afterAdd = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  const afterAdd = coordinator.taskHorizon(taskId);
   assert.notEqual(afterAdd, afterTask, 'the node admission itself misses');
   coordination.invalidateKnowledge('finding:doomed', 1, 'superseded by the fence property test', { actor: 'policy', key: 'kn-doom' });
-  const afterInvalidation = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  const afterInvalidation = coordinator.taskHorizon(taskId);
   assert.notEqual(afterInvalidation, afterAdd, 'knowledge.invalidated must miss — the node dropped out of the projection');
-  assert.equal(coordinator.taskHorizon(taskId, { board: 'shared-f' }), afterInvalidation, 'nothing further changed: cache hit');
+  assert.equal(coordinator.taskHorizon(taskId), afterInvalidation, 'nothing further changed: cache hit');
 
   // Same property on the workflow horizon (run scope).
   const beforeWorkflow = coordinator.workflowHorizon('run-f');
@@ -198,90 +195,24 @@ test('KG-1f (P1-1 property, acceptance P1): ANY queryKnowledge-visible mutation 
 });
 
 // ============================================================
-// Part B (KG-2 rule 5): board-close mints a candidate Finding
-// ============================================================
-
-test('KG-2/B1: closing a board item mints exactly one Finding, grounding observed, evidence at the close event own seq, and a matching boardItemRef', () => {
-  const store = freshStore('board-close-1');
-  const posted = store.postBoardItem({ board: 'b1', title: 'do the thing', owner: 'w1' }, auth('post-1'));
-  const before = store.queryKnowledge({ types: ['Finding'] }).length;
-  const closed = store.closeBoardItem(posted.item.itemId, auth('close-1'));
-  assert.equal(closed.event.kind, 'board.item_closed');
-  const findings = store.queryKnowledge({ types: ['Finding'] });
-  assert.equal(findings.length, before + 1, 'exactly one Finding is minted');
-  const finding = findings.find((node) => node.id === `finding:board-close:${posted.item.itemId}:${posted.item.itemVersion + 1}`);
-  assert.ok(finding, 'the Finding id is deterministic per closed item-version');
-  assert.equal(finding.grounding, 'observed');
-  assert.deepEqual(finding.evidence, [{ coordinationSeq: closed.event.seq }], 'evidence points at the close event own seq');
-  assert.deepEqual(finding.boardItemRef, {
-    itemId: posted.item.itemId, itemVersion: closed.item.itemVersion, itemDigest: closed.item.itemDigest,
-  }, 'boardItemRef carries the exact closed-item triple');
-  assert.equal(finding.promotion?.trigger, 'board.item_closed');
-  const mintEvent = store._events.find((event) => event.payload?.id === finding.id);
-  assert.equal(mintEvent.actor, 'policy', 'the Finding is minted with a hardcoded policy actor regardless of the close actor');
-  store.releaseWriterLease();
-});
-
-test('KG-2/B2: a hardcoded policy actor applies regardless of the actor passed to closeBoardItem', () => {
-  const store = freshStore('board-close-2');
-  const posted = store.postBoardItem({ board: 'b2', title: 'x' }, auth('post-1', 'operator:op-1'));
-  store.closeBoardItem(posted.item.itemId, auth('close-1', 'operator:op-1'));
-  const findingId = `finding:board-close:${posted.item.itemId}:${posted.item.itemVersion + 1}`;
-  const mintEvent = store._events.find((event) => event.payload?.id === findingId);
-  assert.equal(mintEvent.actor, 'policy');
-  store.releaseWriterLease();
-});
-
-test('KG-2/B3: replaying the same idempotency key mints no duplicate Finding; a second close with a different key refuses board_item_not_open', () => {
-  const store = freshStore('board-close-3');
-  const posted = store.postBoardItem({ board: 'b3', title: 'x' }, auth('post-1'));
-  store.closeBoardItem(posted.item.itemId, auth('close-1'));
-  const countAfterFirst = store.queryKnowledge({ types: ['Finding'] }).length;
-  store.closeBoardItem(posted.item.itemId, auth('close-1'));
-  assert.equal(store.queryKnowledge({ types: ['Finding'] }).length, countAfterFirst, 'idempotent replay mints nothing new');
-  assert.equal(
-    refusalCode(() => store.closeBoardItem(posted.item.itemId, auth('close-2'))),
-    'board_item_not_open',
-    'a second close with a different idempotency key is refused by the state-machine guard, not id collision',
-  );
-  assert.equal(store.queryKnowledge({ types: ['Finding'] }).length, countAfterFirst, 'the refused second close mints nothing');
-  store.releaseWriterLease();
-});
-
-test('KG-2/B4: the Finding id never collides across two different items or two versions of the same item', () => {
-  const store = freshStore('board-close-4');
-  const a = store.postBoardItem({ board: 'b4', title: 'a' }, auth('post-a'));
-  const b = store.postBoardItem({ board: 'b4', title: 'b' }, auth('post-b'));
-  store.closeBoardItem(a.item.itemId, auth('close-a'));
-  store.closeBoardItem(b.item.itemId, auth('close-b'));
-  const findings = store.queryKnowledge({ types: ['Finding'] });
-  const ids = findings.map((node) => node.id);
-  assert.equal(new Set(ids).size, ids.length, 'no id collision across different items');
-
-  const c = store.postBoardItem({ board: 'b4', title: 'c' }, auth('post-c'));
-  store.retitleBoardItem(c.item.itemId, { title: 'c2' }, auth('retitle-c'));
-  store.closeBoardItem(c.item.itemId, auth('close-c'));
-  const findingsAfterRetitle = store.queryKnowledge({ types: ['Finding'] });
-  assert.equal(new Set(findingsAfterRetitle.map((node) => node.id)).size, findingsAfterRetitle.length,
-    'a retitled-then-closed item still mints a uniquely-versioned Finding id');
-  store.releaseWriterLease();
-});
-
-// ============================================================
 // Part C (KG-2 rule 6): package citation, Source-node bridge
 // ============================================================
 
 const programPolicy = normalizeContextProgramPolicy(DEFAULT_CONTEXT_PROGRAM_POLICY);
 
+// The Context Program authority a package admission needs — shared by Part C's package fixture
+// and the Part D candidate mint (the surviving candidate path into the admit gate).
+const packageAuthority = Object.freeze({
+  deploymentBaseSha: '1'.repeat(40),
+  contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
+  contextEnvironmentDigest: '2'.repeat(64),
+  contextReferenceIdentity: '3'.repeat(64),
+  contextReferenceRead: () => { throw Object.assign(new Error('unused in this suite'), { code: 'context_artifact_unavailable' }); },
+  contextSourceAttest: () => { throw new Error('not used in this suite'); },
+});
+
 function packageStore(label) {
-  return freshStore(label, {
-    deploymentBaseSha: '1'.repeat(40),
-    contextProgramPolicy: DEFAULT_CONTEXT_PROGRAM_POLICY,
-    contextEnvironmentDigest: '2'.repeat(64),
-    contextReferenceIdentity: '3'.repeat(64),
-    contextReferenceRead: () => { throw Object.assign(new Error('unused in this suite'), { code: 'context_artifact_unavailable' }); },
-    contextSourceAttest: () => { throw new Error('not used in this suite'); },
-  });
+  return freshStore(label, packageAuthority);
 }
 
 function valueRefBranch(name, store, seed = name) {
@@ -374,7 +305,7 @@ const lineagePolicy = Object.freeze({
 const workflowAdmissionPolicy = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
 
 function settleFixture(label) {
-  const store = freshStore(label, { runLineagePolicy: lineagePolicy });
+  const store = freshStore(label, { runLineagePolicy: lineagePolicy, ...packageAuthority });
   const runId = `run-${label}`;
   const taskId = `task-${label}`;
   const workerId = `worker-${label}`;
@@ -404,10 +335,14 @@ function settleFixture(label) {
   const leaseId = `run-orchestrator-lease:${digest(leaseIdentity)}`;
   const issued = store.issueRunOrchestratorLease(leaseRequest, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
   const lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
-  const posted = store.postBoardItem({ board: `board-${label}`, title: 'do the thing' }, auth(`post-${label}`));
-  const closed = store.closeBoardItem(posted.item.itemId, auth(`close-${label}`));
-  const candidateFindingId = `finding:board-close:${posted.item.itemId}:${closed.item.itemVersion}`;
-  return { store, runId, taskId, lease, candidateFindingId, closed };
+  // The candidate Finding comes from a context-package admission — the candidate path the admit
+  // gate consumes.
+  const admitted = store.admitContextPackage(
+    packageFields([valueRefBranch('candidate', store, label)], { runId, principalId: `principal-${label}` }),
+    auth(`admit-${label}`),
+  );
+  const candidateFindingId = `finding:package:${admitted.package.packageDigest}`;
+  return { store, runId, taskId, lease, candidateFindingId };
 }
 
 test('KG-2/D1: admitWorkflowFinding refuses an ineligible candidate (not observed / not a Finding) with workflow_admit_ineligible', () => {
@@ -416,7 +351,7 @@ test('KG-2/D1: admitWorkflowFinding refuses an ineligible candidate (not observe
     refusalCode(() => f.store.admitWorkflowFinding(repoId, f.runId, 'finding:does-not-exist', workflowAdmissionPolicy, auth('admit-wf-1'), f.lease)),
     'workflow_admit_ineligible',
   );
-  f.store.addKnowledgeNode({ id: 'finding:verified-already', type: 'Finding', grounding: 'verified', evidence: [{ coordinationSeq: 1 }], promotion: { kind: 'Finding', trigger: 'board.item_closed' } }, { actor: 'policy', key: 'kn-verified' });
+  f.store.addKnowledgeNode({ id: 'finding:verified-already', type: 'Finding', grounding: 'verified', evidence: [{ coordinationSeq: 1 }], promotion: { kind: 'Finding', trigger: 'package.admitted' } }, { actor: 'policy', key: 'kn-verified' });
   assert.equal(
     refusalCode(() => f.store.admitWorkflowFinding(repoId, f.runId, 'finding:verified-already', workflowAdmissionPolicy, auth('admit-wf-2'), f.lease)),
     'workflow_admit_ineligible',

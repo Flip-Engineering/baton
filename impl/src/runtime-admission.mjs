@@ -76,8 +76,6 @@ const COORDINATION_MUTATORS = new Set([
   'admitContextEffectCall',
   'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
   'recordTaskResourceRelease',
-  'admitBoardCommand',
-  'requestBoardClaim', 'submitBoardReport', 'expireBoardClaim',
   'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
 ]);
 
@@ -2287,72 +2285,13 @@ export function _answerCodeOrient(coordinator, recorder, handle, task, query, ru
     throw Object.assign(new Error(`unknown orientation op "${query.op}"`), { code: 'context_read_invalid' });
   }
 
-export function admitBoardCommand(coordinator, recorder, envelope) {
-    coordinator.tick();
-    return recorder.coordination.admitBoardCommand(envelope);
-  }
-
-export function admitWorkerBoardCommand(coordinator, recorder, kind, workerId, payload) {
-    coordinator.tick();
-    const key = payload?.idempotencyKey ?? null;
-    const result = (partial) => ({ ...partial, ...(key ? { idempotencyKey: key } : {}) });
-    let handle;
-    try { handle = coordinator._getWorker(workerId); } catch { return result({ ok: false, result: 'worker_not_active' }); }
-    const task = coordinator._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
-      return result({ ok: false, result: 'worker_not_active' });
-    }
-    // Closed frame re-validation (the wire scanner already rejects identity/scope fields; this is
-    // the coordinator-level discipline for a direct adapter event, bd3 A1b). A frame carrying a
-    // caller-named identity field is refused /invalid/ before any state lookup.
-    if (kind === 'claim') {
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || Object.keys(payload).sort().join(',') !== 'expectedBoardFence,grantId,idempotencyKey,itemId'
-        || typeof payload.grantId !== 'string' || payload.grantId.length === 0
-        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
-        || !Number.isSafeInteger(payload.expectedBoardFence) || payload.expectedBoardFence < 0
-        || typeof payload.idempotencyKey !== 'string'
-        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(payload.idempotencyKey)) {
-        return result({ ok: false, result: 'board_claim_invalid' });
-      }
-    } else if (kind === 'report') {
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || Object.keys(payload).sort().join(',') !== 'body,expectedClaimVersion,grantId,idempotencyKey,itemDigest,itemId,itemVersion'
-        || typeof payload.grantId !== 'string' || payload.grantId.length === 0
-        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
-        || !Number.isSafeInteger(payload.itemVersion) || payload.itemVersion <= 0
-        || typeof payload.itemDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.itemDigest)
-        || !Number.isSafeInteger(payload.expectedClaimVersion) || payload.expectedClaimVersion <= 0
-        || typeof payload.body !== 'string' || payload.body.length === 0
-        || typeof payload.idempotencyKey !== 'string'
-        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(payload.idempotencyKey)) {
-        return result({ ok: false, result: 'board_report_invalid' });
-      }
-    } else {
-      return result({ ok: false, result: 'board_worker_command_invalid' });
-    }
-    const durableTask = recorder.coordination.task(task.id);
-    if (!durableTask || !Number.isSafeInteger(durableTask.version)) {
-      return result({ ok: false, result: 'worker_not_active' });
-    }
-    const processGeneration = Number.isSafeInteger(handle.processGeneration) ? handle.processGeneration : 0;
-    try {
-      return result(recorder.coordination.admitWorkerBoardCommand({
-        kind, grantId: payload.grantId, payload, workerId,
-        taskId: task.id, taskVersion: durableTask.version, processGeneration,
-        idempotencyKey: payload.idempotencyKey,
-      }));
-    } catch (error) {
-      return result({ ok: false, result: error?.code ?? 'board_worker_scope_refused' });
-    }
-  }
 
 export function admitReplManifest(coordinator, recorder, workerId, fields, opts = {}) {
     coordinator.tick();
     const handle = coordinator._getWorker(workerId);
     const task = coordinator._tasks.get(handle.taskId);
     // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
-    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
+    // and its scratch traffic from the just-completed turn (a trailing write racing the
     // turn-completed frame) must not be spuriously refused `task_not_active`.
     if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
     if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Repl manifest admission requires idempotencyKey');

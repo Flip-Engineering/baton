@@ -1,12 +1,12 @@
 // runtime-event-handlers.test.mjs — issue #259, slice 14. Pins the _handleEvent family split:
 // the dispatcher spine (prologue guards, switch, post-switch tail, the two stop-confirmation
-// arms and the default arm) plus the four family modules (20 arms over the mutable ctx record),
+// arms and the default arm) plus the four family modules (18 arms over the mutable ctx record),
 // against the injected recorder port. Five claims are load-bearing:
 //
 //   1. RECEIVER DISCIPLINE, ONE-WAY IMPORTS — family modules import no sibling family module;
 //      the dispatcher imports the four; nothing but coordinator.mjs imports the dispatcher; the
 //      recorder is the only recording path (no this._log/this._coordination spelling survives).
-//   2. THE ARM CENSUS — the pre-move switch's 19 case groups map bijectively to the 20 family
+//   2. THE ARM CENSUS — the switch's 21 case groups map bijectively to the 18 family
 //      functions plus the three dispatcher-local arms; the ctx key list is frozen at the 11 the
 //      arms read, and nativeObservationEvent is the ONLY ctx key an arm assigns (the write-back
 //      surface the design's gate amendment pins).
@@ -51,8 +51,6 @@ const ARM_MAP = Object.freeze({
   'scratchpad.write': ['observation-events', 'scratchpadWrite'],
   'context.read': ['observation-events', 'contextRead'],
   'orientation.rate': ['observation-events', 'orientationRate'],
-  'board.claim': ['observation-events', 'boardClaim'],
-  'board.report': ['observation-events', 'boardReport'],
   'message.send': ['observation-events', 'messageSend'],
   'native.subagent_observed': ['observation-events', 'nativeSubagentObserved'],
   'control.interrupt_confirmed': ['dispatcher', null],

@@ -33,7 +33,7 @@ const conformanceScript = fileURLToPath(
 );
 
 
-// The eight facade ports (application-cli.mjs:29-31) — whitelisted for the CLI, refused on the
+// The six facade ports (application-cli.mjs:29-31) — whitelisted for the CLI, refused on the
 // web surface (R7).
 const FACADE_PORTS = [
   'run.message.send',
@@ -41,8 +41,6 @@ const FACADE_PORTS = [
   'run.attention.watch',
   'run.scratchpad.read',
   'run.scratchpad.elevate',
-  'run.board.post',
-  'run.board.read',
   'run.knowledge.seed',
 ];
 
@@ -67,7 +65,6 @@ const FIXTURES = Object.freeze({
   TEXT: 'hello',
   DIGEST: 'ab'.repeat(32),
   ACTION_ID: 'act-1',
-  BOARD: 'b1',
   DIR: 'out',
   MESSAGE_ID: `message:${'a'.repeat(64)}`,
   TASK_ID: 't1',

@@ -110,10 +110,9 @@ function validateAllowlist(allowlist) {
 }
 
 // ---------------------------------------------------------------------------
-// Text hygiene for web-derived content (BU-2-3). Control characters stripped (the
-// board-title convention, coordinator.mjs:302), NFKC + SECRET_SHAPED_TEXT redaction +
-// byte cap. The frame is a result-side projection — the durable artifact keeps the
-// full readability extract.
+// Text hygiene for web-derived content (BU-2-3). Control characters stripped, NFKC +
+// SECRET_SHAPED_TEXT redaction + byte cap. The frame is a result-side projection — the
+// durable artifact keeps the full readability extract.
 // ---------------------------------------------------------------------------
 
 function sanitizeWebExtract(text) {

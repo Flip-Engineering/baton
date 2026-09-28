@@ -297,7 +297,7 @@ const wireCall = (server, id, name, args) => wireRequest(server, id, 'tools/call
 const resultText = (response) => response?.result?.content?.[0]?.text ?? '';
 const wireErrorCode = (response) => { try { return JSON.parse(resultText(response))?.error?.code ?? null; } catch { return null; } };
 
-// The board-authority-red lease ceremony: an orchestrator task on runId, a claimed
+// The control-lane lease ceremony: an orchestrator task on runId, a claimed
 // worker, and an issued run-orchestrator lease (for the control-lane pre-gate rows).
 function authorityOn(fx, { runId, principalId, sessionId }) {
   const coordination = fx.coordination;
