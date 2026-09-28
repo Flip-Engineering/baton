@@ -176,16 +176,6 @@ export function constructor(store, root, opts = {}) {
       ? null : normalizeCanonicalOrderMigration(opts[CANONICAL_ORDER_MIGRATION], store._canonicalOrderPolicy);
     store._canonicalOrderReceipt = null;
     mkdirSync(root, { recursive: true });
-    store._advisoryFeedCards = store._configureAdvisoryFeedCards(opts.advisoryFeedCards ?? []);
-    store._advisoryReceiptReverify = opts.advisoryReceiptReverify ?? null;
-    store._advisoryPollReverify = opts.advisoryPollReverify ?? null;
-    store._providerAttemptPolicy = null;
-    if (opts.providerAttemptPolicy !== undefined) {
-      const policy = opts.providerAttemptPolicy; const fields = ['intervalMs', 'maxBatch', 'maxAttempts', 'initialBackoffMs', 'maxBackoffMs', 'maxStateRows'];
-      if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || Object.values(policy).some((value) => !Number.isSafeInteger(value) || value <= 0)
-        || policy.initialBackoffMs > policy.maxBackoffMs || policy.intervalMs > 24 * 60 * 60 * 1_000 || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('provider attempt policy is invalid');
-      store._providerAttemptPolicy = freeze(clone(policy));
-    }
     // #286 G-41: the scratchpad partition ceilings are the deployment's own admitted bound, not a
     // bare literal — set `scratchpadPartitionPolicy` to raise them. The defaults are the documented
     // values (128 worker / 512 shared); they are ADMISSION bounds only, never replay validation, so
@@ -242,12 +232,6 @@ export function constructor(store, root, opts = {}) {
     store._checkpointAuthorityDigest = canonicalDigest({
       schemaVersion: 1,
       repoId: store._repoId,
-      advisoryFeedCards: [...store._advisoryFeedCards.values()]
-        .map(({ card, cardDigest }) => ({ card, cardDigest }))
-        .sort((left, right) => compareCanonicalStrings(left.card.providerId, right.card.providerId)),
-      advisoryReceiptReverify: typeof store._advisoryReceiptReverify === 'function',
-      advisoryPollReverify: typeof store._advisoryPollReverify === 'function',
-      providerAttemptPolicy: store._providerAttemptPolicy,
       canonicalOrderPolicy: store._canonicalOrderPolicy,
       routePolicy: store._routePolicy,
       representationPolicy: store._representationPolicy,
