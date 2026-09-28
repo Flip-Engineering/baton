@@ -173,3 +173,49 @@ command and answer, and checked commit parents and tree IDs with read-only Git
 commands. Its result is `.scratch/recovery18/landing-evidence.json` in the
 assigned checkout. No native or JS suite was rerun for this documentation
 change. Deployment verification remains unperformed.
+
+## Issue 621 landing and scratch cleanup
+
+The #621 trial landed as `0f32037b41378c6c300aa8d5597fb3249b20db0a`,
+with parent `cd721550d4125fa7e07809664e7956c37740e11a`. The worker tip
+`b944569969e7e0815a063eef6bf193afba1e347a`, lead landing
+`3e8d26e8d93296635f9676a2a32224f2a5cddf2f` and root landing all have tree
+`999a15f2ecdb02d4eb34e695dbefc8c2786977fa`.
+
+The worker has two commits above the lane base. The lead landing's complete
+message matches their subjects in topological order, oldest first, with the
+tip subject as its title and the worker branch trailer. The root retains that
+message and appends the lead branch trailer. Both landing parents equal the
+lane base. Read-only assertions verified both complete messages, parents and
+tree IDs on 2026-09-28.
+
+`state/trial.db.trial/issue-621-root-land-checked.log` contains the root command
+on its first line and the successful landing answer on its second line. The
+lead's native record is:
+
+```text
+state/trial.db.session-69737375652d3632312d6c656164/
+  2026-09-28T09-12-34-248Z_01a0e749-94c8-7000-847b-15d87ecef0c6.jsonl
+```
+
+Tool call `call_00_avyr0N6x5jSpSddMG6EW6798` invokes `land-checked` for
+`issue-621-worker-impl` onto `bend2/issue-621-lead`. Its matching result contains
+the successful `3e8d26e8` landing answer. The Git lane reported the root's ruling
+that this native tool record supplies the lead-level evidence. The generated
+`issue-621-lead-task.md` still requested a separate landing file; the kit's root
+instructions now direct task assignments and reviews to the native record.
+
+The kit checkout was at `9e008263` when inspected. The trial repository's
+`.scratch` directory was empty, and Git registered no `.scratch/bend2-land-*`
+worktree. The Git lane's earlier observations establish the cleanup during the
+landing: both lead checkouts existed while checks ran and were removed when
+the command answered. That report is
+`contribution-cb27c9741bba1d1c17e9d19aac4b70ef` (seq 347333). It also records
+63 passing tests in the landed tree's seven selected files and 59 passing tests
+in the base's six pre-existing files.
+
+The architect's read-only verification is retained at
+`.scratch/recovery18/issue621-evidence.json`. It matched the native call and
+result by tool-call ID and parsed the root command and answer. This documentation
+and instruction change reran no native or JS suite and changed no live trial
+file or process. Deployment verification remains unperformed.

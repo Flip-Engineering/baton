@@ -38,6 +38,10 @@ comments, requested outcome, relevant files, constraints and selected test files
 Read the issue with `gh` in `$TRIAL_REPO` and include its text so the lead and its
 workers can act from their task files. State any operator decision on the issue.
 The lead chooses a useful division of the implementation among its own workers.
+Use the lead's native tool log as its landing record in the assignment and review.
+The OMP adapter stores it under `$DB.session-<hex of lead ID>/`; match the
+`land-checked` tool call to its result using the tool-call ID. The root records
+its own command and answer in the root landing file described below.
 
 Deliver this task in the background with all standard streams redirected. The
 message invokes the registered lead adapter:
