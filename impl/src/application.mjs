@@ -71,7 +71,6 @@ import {
   VERIFIER_OUTCOMES,
   VERIFIER_OWNERSHIPS,
   actionDoInputs,
-  adoptionState,
   applicationError,
   assertResultIntentCoherence,
   authority,
@@ -1468,7 +1467,6 @@ export class BatonApplication {
     this._detached = false;
     this._runStopPromises = new Map();
     this._workflowMemberStopPromises = new Map();
-    this._runAdoptionPromises = new Map();
     this._runRetryPromises = new Map();
     this._runRetryControllers = new Map();
     this._runEffectChains = new Map();
@@ -1489,7 +1487,6 @@ export class BatonApplication {
       .then(() => this._reconcileRunStops())
       .then(() => this._reconcileRunControls())
       .then(() => this._reconcileWorkflowMemberStops())
-      .then(() => this._reconcileResultAdoptions())
       .then(() => this._reconcileRunVerificationRetries())
       .then(() => this._reconcileApprovedRuns())
       .then(() => this._reconcileSemanticReviews());
@@ -2775,23 +2772,6 @@ export class BatonApplication {
     return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedStops, failures });
   }
 
-  async _reconcileResultAdoptions() {
-    this._assertOpen();
-    if (typeof this.driver.coordination.pendingRunResultAdoptions !== 'function'
-      || typeof this.driver.coordination.runResultAdoption !== 'function'
-      || typeof this.driver.coordination.completeRunResultAdoption !== 'function'
-      || typeof this.driver.coordinator.preserveResult !== 'function') {
-      throw applicationError('application driver lacks accepted-result adoption authority', 'application_config_invalid');
-    }
-    const pending = this.driver.coordination.pendingRunResultAdoptions(MAX_RUN_RECORDS);
-    const failures = [];
-    for (const adoption of pending) {
-      try { await this._performResultAdoption(adoption); }
-      catch (error) { failures.push({ runId: adoption.runId, nodeKey: adoption.nodeKey, code: error?.code ?? 'application_adoption_incomplete' }); }
-    }
-    return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedAdoptions: pending.length, failures });
-  }
-
   _semanticTarget(current, view) {
     return applicationObservation._semanticTarget(this, current, view);
   }
@@ -3021,10 +3001,6 @@ export class BatonApplication {
         error: { code: error?.code ?? 'application_review_report_invalid' },
       };
     }
-  }
-
-  _performResultAdoption(adoption) {
-    return applicationObservation._performResultAdoption(this, adoption);
   }
 
   _performRunStop(stop) {
@@ -3716,14 +3692,10 @@ export class BatonApplication {
     }
     if (this._isWorkflowRun(current)) return this._buildWorkflowEvidence(current, view);
     const task = view.nodes[0]?.taskId ? this.driver.coordination.task(view.nodes[0].taskId) : null;
-    const adoption = current.plan
-      ? this.driver.coordination.runResultAdoption?.(runId, current.plan.nodes[0].key) ?? null
-      : null;
     const reviewTask = view.semanticReview?.taskId ? this.driver.coordination.task(view.semanticReview.taskId) : null;
     const relevantSeqs = [task?.createdEvent, task?.claimedEvent, task?.terminalEvent,
       reviewTask?.createdEvent, reviewTask?.claimedEvent, reviewTask?.terminalEvent,
       ...(view.evidence ?? []).map((artifact) => this.driver.coordination.artifact(artifact.id)?.createdEvent),
-      adoption?.admittedEvent, adoption?.completedEvent,
       this.driver.coordination.runStop?.(runId)?.admittedEvent,
       this.driver.coordination.runStop?.(runId)?.completedEvent].filter(Number.isSafeInteger);
     const core = {
@@ -4111,7 +4083,6 @@ export class BatonApplication {
     const acceptedVerification = artifacts.find((artifact) => activeAccepted(artifact) && artifact.kind === 'verification') ?? null;
     const resultSha = acceptedCommit?.refs?.sha ?? null;
     const resultStability = acceptedVerification?.stability ?? result?.verificationStability ?? null;
-    const adoption = this.driver.coordination.runResultAdoption?.(runId, node.key) ?? null;
     let preservation = null;
     if (workerId && resultSha) {
       // #216 (row-git-batch): a page-level batch (waves.list) pre-resolves every member's
@@ -4353,17 +4324,14 @@ export class BatonApplication {
       ...(objectiveAdvice ? { advice: objectiveAdvice } : {}),
     };
     let publicResult = resultSha ? {
-      state: adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',
+      state: result?.integration ? 'integrated' : 'accepted',
       nodeKey: node.key,
       sha: resultSha,
       commitArtifact: acceptedCommit ? { id: acceptedCommit.id, digest: acceptedCommit.digest } : null,
       verificationArtifact: acceptedVerification ? { id: acceptedVerification.id, digest: acceptedVerification.digest } : null,
       stability: resultStability,
-      preservation: preservation ? { state: preservation.state } : { state: 'unavailable' },
-      adoption: adoption ? {
-        state: adoptionState(adoption),
-        receiptDigest: adoption.receipt?.receiptDigest ?? adoption.receiptDigest ?? null,
-      } : null,
+      preservation: result?.integration ? { state: 'integrated' }
+        : preservation ? { state: preservation.state } : { state: 'unavailable' },
     } : null;
     const semanticReview = await this._semanticReview(current, {
       nodes: [node], result: publicResult,
