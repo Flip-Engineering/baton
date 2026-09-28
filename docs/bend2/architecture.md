@@ -91,7 +91,9 @@ session ID. `turn` and `receive` acquire the same OS file lock for each logical
 session. Its key uses the canonical database path and UTF-8 session identity.
 Different sessions use different locks and can run concurrently. The supervisor
 retains ownership until the native process exits and releases it before parent
-delivery. The lock records no durable session state.
+delivery. An overlapping direct `turn` returns an active-session error; queued
+input uses messages and `receive`. Both commands use the canonical database
+path for OMP conversation storage. The lock records no durable session state.
 
 | Worker harness | Native protocol and retained identity |
 | --- | --- |
