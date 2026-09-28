@@ -118,7 +118,7 @@ test('WN2/WN6: the session authenticator terminates an established stream after 
   const web = new WebNorthbound({
     coordinator: { list() { return []; } }, coordination, authenticate,
     repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'], now: () => clock,
-    pollMs: 5, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+    pollMs: 5,
   });
   class Response extends EventEmitter {
     constructor() { super(); this.output = ''; this.writableLength = 0; }
@@ -150,7 +150,6 @@ test('WN2/WN6: durable revocation during a replay withholds the remaining synchr
   const web = new WebNorthbound({
     coordinator: {}, coordination, authenticate, repoIds: ['repo-a'],
     allowedOrigins: ['https://control.example.test'], now: () => clock,
-    maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
   });
   class Response extends EventEmitter {
     constructor() { super(); this.output = ''; this.writableLength = 0; }
