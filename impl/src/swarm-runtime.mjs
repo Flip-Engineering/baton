@@ -92,13 +92,19 @@ const GATE_SKIPPED_LINE = 'skipped — no_affected_tests';
  * dropped — the ONE shape the refusal detail and the durable failure row are composed from. A
  * stderr tail is always named with the step that spoke it, so neither reader has to guess whose
  * words those were. */
-function gateFailureFacts({ selection = null, skipped = null, stderrTail = null, exit = null, regenerated = null } = {}) {
+function gateFailureFacts({
+  selection = null, skipped = null, stderrTail = null, exit = null, regenerated = null, rejudged = null,
+} = {}) {
   return {
     ...(selection === null ? {} : { selection }),
     ...(skipped === null ? {} : { skipped }),
     ...(stderrTail === null ? {} : { stderrTail, script: INTEGRATION_GATE_RUNNER }),
     ...(Number.isSafeInteger(exit) ? { exit } : {}),
     ...(Array.isArray(regenerated) ? { regenerated } : {}),
+    // Issue #617: a landing that moved the target under its gate and re-judged a narrowed set
+    // names the tests that second run judged, so the durable failure row says which selection the
+    // refused verdict covers.
+    ...(rejudged === null ? {} : { rejudged }),
   };
 }
 
@@ -7380,6 +7386,12 @@ export class SwarmRuntime {
     if (typeof error.phase === 'string') detail.phase = error.phase;
     if (typeof error.withdrawnBy === 'string') detail.withdrawnBy = error.withdrawnBy;
     if (typeof error.supersededBy === 'string') detail.supersededBy = error.supersededBy;
+    // Issue #617: a refusal raised after the target moved under the gate names the head the
+    // re-base took and the tests the second gate call judged, so the refusal and the durable
+    // failure row name the same narrowed selection the failed verdict covers.
+    if (typeof error.reboundOnto === 'string') detail.reboundOnto = error.reboundOnto;
+    if (error.rejudged !== undefined && error.rejudged !== null) detail.rejudged = error.rejudged;
+    else if (context.rejudged !== undefined && context.rejudged !== null) detail.rejudged = context.rejudged;
     return detail;
   }
 
@@ -7605,12 +7617,57 @@ export class SwarmRuntime {
     let gateTail = null;
     let gateExit = null;
     let gateRegenerated = null;
+    // Issue #617: what the landing's SECOND gate call re-judged when the target moved under the
+    // first one — the mapped files and the verdict line — or null when it re-judged nothing. Kept
+    // apart from `gateSelection`, which stays the landing's own selection from the first call.
+    let gateRejudged = null;
     /** The change as the squash carried it BEFORE the regenerators wrote — read by this runtime's
      * own regenerate callback, never guessed at afterwards (see `regenerated` below). */
     let changedBeforeRegeneration = null;
     // #576: the stop's settle waits on this landing through its unwind, so the abandoned-attempt
     // row it may record lands before the writer lease is released.
     const landingDone = this._trackLanding();
+    /** Issue #463/#617: ONE gate run over an explicit file set, under this resident's supervision.
+     * The deployment's own runner answers when it configured one (a fixture's, an operator's), else
+     * the supervised out-of-process suite runner that holds the host verify lease (#459) — admitted
+     * through the RESIDENT's own host-capacity authority when it has one (the same authority a
+     * seat's admission runs through, so both read one host observation), else through the suite
+     * runner's own seam. A withdraw that fired while the run was live kills the child: the verdict
+     * that comes back is the kill's own debris — an interrupted run, not a judged red — so the
+     * abort's reason names the outcome for the durable row and the refusal (#600). */
+    const runGateSet = async (dir, files, gateContext) => {
+      if (integrationAbort.signal.aborted) {
+        throw Object.assign(new Error('integration withdrawn before gate run'),
+          { code: 'integrate_withdrawn' });
+      }
+      {
+        const entry = this._pendingIntegrations.get(args.contributionId);
+        if (entry) entry.phase = 'running';
+      }
+      const verdict = typeof authority.runGates === 'function'
+        ? await authority.runGates(dir, files, {
+          ...gateContext, selection: gateSelection, contributionId: args.contributionId })
+        : await defaultIntegrationGates(dir, files, {
+          ...gateContext, selection: gateSelection, contributionId: args.contributionId },
+        { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null,
+          signal: integrationAbort.signal });
+      if (integrationAbort.signal.aborted) {
+        throw integrationAbort.signal.reason
+          ?? Object.assign(new Error('integration withdrawn (running)'), { code: 'integrate_withdrawn' });
+      }
+      gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
+        ? verdict.stderrTail : null;
+      gateExit = Number.isSafeInteger(verdict?.exit) ? verdict.exit : null;
+      return {
+        files,
+        verdictLine: verdict?.verdictLine ?? null,
+        unexpected: Array.isArray(verdict?.unexpected) ? verdict.unexpected : [],
+        // Issue #593: the blocking rows the change's own run did not reproduce ride the gate
+        // verdict to the receipt, so a reader sees them instead of only the verdict line.
+        ...(Array.isArray(verdict?.unconfirmed) && verdict.unconfirmed.length > 0
+          ? { unconfirmed: verdict.unconfirmed } : {}),
+      };
+    };
     try {
       const regenerate = typeof authority.regenerate === 'function'
         ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool });
@@ -7655,6 +7712,27 @@ export class SwarmRuntime {
           return regenerate(dir, regenerateContext);
         },
         runGates: async (dir, changed, gateContext) => {
+          // Issue #617: the target moved under the first gate run and the squash was re-based onto
+          // the head it carries now. The work the moved commits added was never judged, so it goes
+          // through the ONE selector, is mapped the way the runner takes a gate file, and is
+          // narrowed to the tests the first call actually judged. A move whose own paths select
+          // none of them re-judges nothing (#596) and the judgments already made stand.
+          if (gateContext?.rebased) {
+            const moved = selectFromRepository({
+              root: dir, changedPaths: [...(gateContext.rebased.movedPaths ?? [])],
+            });
+            const judged = new Set(Array.isArray(gateContext.judged) ? gateContext.judged : []);
+            const affected = moved.files
+              .map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file))
+              .filter((file) => judged.has(file))
+              .sort();
+            if (affected.length === 0) {
+              return { files: [], verdictLine: null, unexpected: [], reused: true };
+            }
+            const judgedAgain = await runGateSet(dir, affected, gateContext);
+            gateRejudged = { files: [...affected], verdictLine: judgedAgain.verdictLine };
+            return judgedAgain;
+          }
           const runner = selectFromRepository({ root: dir, changedPaths: changed });
           const files = runner.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file)).sort();
           gateSelection = Object.freeze({
@@ -7674,45 +7752,7 @@ export class SwarmRuntime {
             gateSkipped = 'no_affected_tests';
             return { files: [], verdictLine: GATE_SKIPPED_LINE, unexpected: [] };
           }
-          // The deployment's own runner when it configured one (a fixture's, an operator's), else
-          // the supervised out-of-process suite runner that holds the host verify lease (#459) —
-          // admitted through the RESIDENT's own host-capacity authority when it has one (the same
-          // authority a seat's admission runs through, so both read one host observation), else
-          // through the suite runner's own seam.
-          if (integrationAbort.signal.aborted) {
-            throw Object.assign(new Error('integration withdrawn before gate run'),
-              { code: 'integrate_withdrawn' });
-          }
-          {
-            const entry = this._pendingIntegrations.get(args.contributionId);
-            if (entry) entry.phase = 'running';
-          }
-          const verdict = typeof authority.runGates === 'function'
-            ? await authority.runGates(dir, files, {
-              ...gateContext, selection: gateSelection, contributionId: args.contributionId })
-            : await defaultIntegrationGates(dir, files, {
-              ...gateContext, selection: gateSelection, contributionId: args.contributionId },
-            { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null,
-              signal: integrationAbort.signal });
-          // A withdraw that fired while the gate ran kills the child: the verdict that comes
-          // back is the kill's own debris — an interrupted run, not a judged red — so the
-          // abort's reason names the outcome for the durable row and the refusal (#600).
-          if (integrationAbort.signal.aborted) {
-            throw integrationAbort.signal.reason
-              ?? Object.assign(new Error('integration withdrawn (running)'), { code: 'integrate_withdrawn' });
-          }
-          gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
-            ? verdict.stderrTail : null;
-          gateExit = Number.isSafeInteger(verdict?.exit) ? verdict.exit : null;
-          return {
-            files,
-            verdictLine: verdict?.verdictLine ?? null,
-            unexpected: Array.isArray(verdict?.unexpected) ? verdict.unexpected : [],
-            // Issue #593: the blocking rows the change's own run did not reproduce ride the gate
-            // verdict to the receipt, so a reader sees them instead of only the verdict line.
-            ...(Array.isArray(verdict?.unconfirmed) && verdict.unconfirmed.length > 0
-              ? { unconfirmed: verdict.unconfirmed } : {}),
-          };
+          return runGateSet(dir, files, gateContext);
         },
       });
     } catch (error) {
@@ -7725,6 +7765,10 @@ export class SwarmRuntime {
       const landingFacts = gateFailureFacts({
         selection: gateSelection, skipped: gateSkipped, stderrTail: gateTail, exit: gateExit,
         regenerated: gateRegenerated,
+        // Issue #617: a refusal raised after a re-judged gate set names the tests that set judged —
+        // the landing's own fact when its error carries one, else this runtime's record of the
+        // second run — so neither the refusal nor the row reads as a whole-selection verdict.
+        rejudged: error?.rejudged ?? gateRejudged,
       });
       if (started !== null && pool.fenced === true) {
         // Issue #576: the stop fenced the pool and reaped this landing's gate run — the durable
