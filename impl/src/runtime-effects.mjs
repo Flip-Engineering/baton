@@ -892,13 +892,6 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     const task = coordinator._tasks.get(handle.taskId);
     const stamp = coordinator._fences.issue(workerId);
     const harness = coordinator._harnessOf(handle.vendor);
-    if (opts.controlId) {
-      recorder.log.append({
-        worker: workerId, harness, turnEpoch: coordinator._safeTurnEpoch(handle),
-        kind: 'control.delivery_requested', actor: opts.actor ?? 'orchestrator',
-        payload: { controlId: opts.controlId, mode },
-      });
-    }
     const ack = await coordinator._adapters[handle.vendor].prompt(workerId, message, mode);
     const check = coordinator._fences.check(workerId, stamp);
     const currentTurnEpoch = coordinator._fences.current(workerId).turnEpoch;
@@ -912,7 +905,6 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
         actor: opts.actor ?? 'orchestrator',
         payload: {
           op: 'send', mode, attempted: stamp, current: check.current, phase: 'post_delivery',
-          ...(opts.controlId ? { controlId: opts.controlId } : {}),
         },
       });
       // C3: delivery already happened despite the staleness — say so, loudly.
@@ -924,7 +916,7 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
         actor: 'policy',
         payload: {
           op: 'send', mode, message, deliveredDespiteStale: true, attempted: stamp,
-          current: check.current, ...(opts.controlId ? { controlId: opts.controlId } : {}),
+          current: check.current,
         },
       });
       return {
@@ -934,13 +926,6 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     }
 
     if (ack && ack.ok === false) {
-      if (opts.controlId) {
-        recorder.log.append({
-          worker: workerId, harness, turnEpoch: currentTurnEpoch,
-          kind: 'control.delivery_refused', actor: opts.actor ?? 'orchestrator',
-          payload: { controlId: opts.controlId, mode, result: ack.reason ?? 'delivery_refused' },
-        });
-      }
       return { ok: false, result: ack.reason ?? 'delivery_refused', reason: ack.reason };
     }
 
@@ -950,7 +935,7 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     const ev = {
       worker: workerId, harness, turnEpoch: currentTurnEpoch, kind,
       actor: opts.actor ?? 'orchestrator',
-      payload: { message, ...(opts.controlId ? { controlId: opts.controlId } : {}), ...(opts.guidance ? { guidance: opts.guidance } : {}) },
+      payload: { message, ...(opts.guidance ? { guidance: opts.guidance } : {}) },
     };
     if (ack && ack.emulated === true) ev.emulated = true;
     recorder.log.append(ev);
@@ -958,7 +943,7 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     // for a currently-declared stall. Neither steer nor nudge is a REARM kind — they never re-arm
     // the watchdog; they claim the stall for the ladder.
     if ((mode === 'steer' || mode === 'nudge') && handle.watchdogActions?.has('stall')) {
-      coordinator._armStallCycle(handle, task, { nudgeId: mode === 'nudge' ? `nudge:${workerId}:${recorder.log.tail(workerId)}` : null, controlId: opts.controlId ?? null });
+      coordinator._armStallCycle(handle, task, { nudgeId: mode === 'nudge' ? `nudge:${workerId}:${recorder.log.tail(workerId)}` : null });
     }
     recordDeliveryMessage(coordinator, recorder, workerId, message, mode, opts);
     return { ok: true, result: 'ok', emulated: ack && ack.emulated === true };
@@ -976,7 +961,6 @@ export function _finalizeStop(coordinator, recorder, workerId, waiter) {
       worker: workerId, harness, turnEpoch: handle ? coordinator._safeTurnEpoch(handle) : 0, kind, actor: 'worker',
       payload: {
         ...(waiter.providerSealVerdict?.seal ? { usageSeal: waiter.providerSealVerdict.seal } : {}),
-        ...(waiter.controlId ? { controlId: waiter.controlId } : {}),
       },
       ...(handle ? coordinator._routeAttribution(handle) : {}),
     };

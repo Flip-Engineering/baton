@@ -56,7 +56,7 @@ export const LOGICAL_CALL_PHASES = new Set(['requested', 'progress', 'completed'
 
 export const RUN_TIMELINE_OPERATIONAL_KINDS = new Set([
   'content.file_edit', 'content.message', 'content.tool_call',
-  'control.delivery_amended', 'control.delivery_refused', 'control.delivery_requested',
+  'control.delivery_amended',
   'control.follow_up_requested', 'control.interrupt_confirmed',
   'control.interaction_superseded', 'control.interrupt_requested',
   'control.session_preservation_reattached',
@@ -2693,7 +2693,6 @@ export function _refuseStallReap(coordinator, recorder, handle, error) {
     if (handle?.watchdogActions?.has('stall')) {
       coordinator._armStallCycle(handle, coordinator._tasks.get(handle.taskId), {
         nudgeId: handle.stallSeamCycle?.nudgeId ?? null,
-        controlId: handle.stallSeamCycle?.controlId ?? null,
       });
     }
   }

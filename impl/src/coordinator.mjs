@@ -1106,7 +1106,7 @@ export class Coordinator {
     const startedEvent = this._log.append({
       worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started',
       actor, ...this._routeAttribution(handle, task),
-      payload: { nudged: true, pauseId, controlId: opts.controlId ?? null },
+      payload: { nudged: true, pauseId },
     });
     // (i) drain the queued adapter events.
     for (const event of admission.events) this._handleEvent(event, handle.vendor);
@@ -3362,7 +3362,7 @@ export class Coordinator {
       turnEpoch: this._safeTurnEpoch(handle), kind: 'control.follow_up_requested',
       actor: opts.actor ?? 'orchestrator', ...this._routeAttribution(handle, task),
       payload: {
-        message, expectedFence: opts.expectedFence ?? null, controlId: opts.controlId,
+        message, expectedFence: opts.expectedFence ?? null,
         preservedTurn: true,
       },
     });
@@ -3401,7 +3401,7 @@ export class Coordinator {
         ...this._routeAttribution(handle, task),
         payload: {
           op: 'send', mode: 'turn', deliveredDespiteStale: true,
-          reason: 'run_stop_after_provider_acceptance', controlId: opts.controlId,
+          reason: 'run_stop_after_provider_acceptance',
         },
       });
       return {
@@ -3439,7 +3439,7 @@ export class Coordinator {
       ...this._routeAttribution(handle, task),
       payload: {
         followUp: true, afterInterrupt: true, preservedSession: true,
-        controlId: opts.controlId, continuation,
+        continuation,
       },
     });
     for (const event of admission.events) this._handleEvent(event, handle.vendor);
@@ -3474,7 +3474,6 @@ export class Coordinator {
       kind: 'control.follow_up_requested', actor: opts.actor ?? 'orchestrator',
       payload: {
         message, expectedFence: opts.expectedFence ?? null,
-        ...(opts.controlId ? { controlId: opts.controlId } : {}),
       },
     });
     const requestedEvidence = this._coordMapEvent(requestedEvent);
@@ -3540,7 +3539,7 @@ export class Coordinator {
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
       kind: 'lifecycle.turn_started', actor: 'orchestrator',
       ...this._routeAttribution(handle, activeTask),
-      payload: { followUp: true, message, ...(opts.controlId ? { controlId: opts.controlId } : {}) },
+      payload: { followUp: true, message },
     });
     for (const event of admission.events) this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     return { ok: true, result: 'ok', emulated: ack.emulated === true };
@@ -3577,13 +3576,6 @@ export class Coordinator {
       return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };
     }
     if (then !== undefined && handle.providerGovernance) return this._interruptThenGoverned(handle, then, actor);
-    if (opts.controlId !== undefined
-      && !/^control:[a-f0-9]{64}$/u.test(opts.controlId)) {
-      throw new TypeError('interrupt control identity is invalid');
-    }
-    if (opts.preserveTurn === true && !opts.controlId) {
-      throw new TypeError('preserved-turn interrupt requires semantic control identity');
-    }
     if (opts.preserveTurn === true && (!handle.sessionRef
       || !['native', 'emulated'].includes(
         this._adapters[handle.vendor]?.card()?.sessions?.multiTurn,
@@ -3599,7 +3591,6 @@ export class Coordinator {
           turnEpoch: this._safeTurnEpoch(handle), kind: 'control.stale_rejected', actor,
           payload: {
             op: 'interrupt', phase: 'semantic_binding', result: 'semantic_target_drift',
-            ...(opts.controlId ? { controlId: opts.controlId } : {}),
           },
         });
         return { ok: false, result: 'semantic_target_drift' };
@@ -3608,7 +3599,7 @@ export class Coordinator {
         return { ok: false, result: 'worker_not_active' };
       }
       return this._beginStop(handle, 'interrupt', then, actor,
-        opts.controlId ? { controlId: opts.controlId, preserveTurn: opts.preserveTurn === true } : undefined);
+        opts.preserveTurn === true ? { preserveTurn: true } : undefined);
     };
     if (opts.preserveTurn !== true) return begin();
     // Semantic interrupt shares the per-worker delivery slot with sends. Its complete v2
@@ -3795,7 +3786,6 @@ export class Coordinator {
         // The physical waiter now belongs to kill. Original interrupt callers retain their
         // requested disposition in typed request entries and settle separately below.
         existing.preserveTurn = false;
-        existing.controlId = null;
         existing.then = undefined;
         existing.confirmationPayload = null;
         existing.providerSealVerdict = null;
@@ -3815,7 +3805,6 @@ export class Coordinator {
       }
       return new Promise((resolve) => existing.requests.push({
         resolve, requestedMode: mode, preserveTurn: context?.preserveTurn === true,
-        controlId: context?.controlId ?? null,
       }));
     }
 
@@ -3825,7 +3814,7 @@ export class Coordinator {
     const turnEpoch = this._safeTurnEpoch(handle);
     const reqKind = mode === 'kill' ? 'kill.requested' : 'control.interrupt_requested';
     const reqPayload = mode === 'kill' ? { rule, actor } : {
-      then: then ?? null, actor, ...(context?.controlId ? { controlId: context.controlId } : {}),
+      then: then ?? null, actor,
     };
     const requested = this._log.append({ worker: handle.id, harness, turnEpoch, kind: reqKind, actor, payload: reqPayload });
     const evidence = this._coordMapEvent(requested);
@@ -3882,7 +3871,6 @@ export class Coordinator {
       finalized: false,
       timerHandle: null,
       then: mode === 'interrupt' ? then : undefined,
-      controlId: context?.controlId ?? null,
       preserveTurn: context?.preserveTurn === true,
       retainUnownedWorktree: context?.retainUnownedWorktree === true,
       confirmationPayload: null,
@@ -3913,13 +3901,11 @@ export class Coordinator {
         ? Promise.resolve(this._adapters[handle.vendor].kill(handle.id))
         : Promise.resolve(this._adapters[handle.vendor].interrupt(handle.id, then, {
           preserveTurn: context?.preserveTurn === true,
-          controlId: context?.controlId ?? null,
         }));
     this._wireAck(waiter, call, waiter.operationGeneration, mode);
 
     return new Promise((resolve) => waiter.requests.push({
       resolve, requestedMode: mode, preserveTurn: context?.preserveTurn === true,
-      controlId: context?.controlId ?? null,
     }));
   }
 
@@ -4288,8 +4274,8 @@ export class Coordinator {
   /** D4 rung 2: arm the stall-seam cycle on a claim (control.steer / control.nudge). The answer
    * set is the D2 REARM_KINDS (never TG2 scratchpad/capability evidence); expiry is
    * working-compatible on _progressNudgeWindowMs ?? 300_000. */
-    _armStallCycle(handle, task, { nudgeId, controlId }) {
-    return runtimeObservation._armStallCycle(this, this._recorder, handle, task, { nudgeId, controlId });
+    _armStallCycle(handle, task, { nudgeId }) {
+    return runtimeObservation._armStallCycle(this, this._recorder, handle, task, { nudgeId });
   }
 
   /** D4 rung 3: a claimed stall-seam window that expires unanswered. Gated on no in-flight turn

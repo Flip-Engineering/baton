@@ -2361,7 +2361,6 @@ export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
         actor: opts.actor ?? 'orchestrator',
         payload: {
           op: 'send', phase: 'semantic_binding', result: 'semantic_target_drift',
-          ...(opts.controlId ? { controlId: opts.controlId } : {}),
         },
       });
       return { admitted: false, result: { ok: false, result: 'semantic_target_drift' } };
@@ -2372,9 +2371,6 @@ export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
     const preservedSuccessor = opts.resumePreservedTurn === true
       && handle.status === 'interrupted'
       && handle.sessionPreservation?.state === 'preserved';
-    if (opts.resumePreservedTurn === true && !opts.controlId) {
-      throw new TypeError('preserved-turn successor requires semantic control identity');
-    }
     if (preservedSuccessor) return { admitted: true, handoff: 'preservedSuccessor' };
     if (opts.internalKindToken === ORIENTATION_DELIVERY && !['working', 'blocked'].includes(handle.status)) return { admitted: false, result: { ok: false, result: 'worker_not_active' } };
     const card = coordinator._adapters[handle.vendor]?.card();
@@ -2419,7 +2415,7 @@ export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
           actor: opts.actor ?? 'orchestrator',
           payload: {
             op: 'send', mode, attempted: opts.expectedFence, current: preCheck.current,
-            phase: 'pre_delivery', ...(opts.controlId ? { controlId: opts.controlId } : {}),
+            phase: 'pre_delivery',
           },
         });
         return { admitted: false, result: { ok: false, result: 'stale_fence', current: preCheck.current } };
