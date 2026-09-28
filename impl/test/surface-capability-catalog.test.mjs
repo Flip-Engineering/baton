@@ -46,15 +46,15 @@ test('the catalog preserves application, live MCP-native, CLI-native and embedde
 });
 
 test('action-dispatched operations use the existing run.do authority and require action coordinates', () => {
-  const integrate = resolveUnifiedCapability('run.integrate');
-  const prepared = prepareApplicationSurfaceInvocation(integrate, {
-    runId: 'run:a', actionId: 'action:integrate', strategy: 'ff-only',
+  const send = resolveUnifiedCapability('run.send');
+  const prepared = prepareApplicationSurfaceInvocation(send, {
+    runId: 'run:a', actionId: 'action:send', message: 'go',
   }, { surface: 'cli' });
   assert.equal(prepared.command, 'run.act');
   assert.equal(prepared.path, 'run.do');
   assert.equal(prepared.args.runId, 'run:a');
-  assert.equal(prepared.args.actionId, 'action:integrate');
-  assert.deepEqual(prepared.args.inputs, { strategy: 'ff-only' });
+  assert.equal(prepared.args.actionId, 'action:send');
+  assert.deepEqual(prepared.args.inputs, { message: 'go' });
 });
 
 test('direct and generic reachability reflect existing live transports rather than declarations alone', () => {
