@@ -1284,13 +1284,16 @@ const OMP_CATALOG_ARGS = Object.freeze(['models', '--json', '--no-extensions']);
 // catalog edit invalidates it at once and a steady file is read once per edit.
 let ompCatalogMemo = null;
 
-// #500: the read is bounded — a 20 s timeout on the omp child and an 8 MiB ceiling on its
-// answer; a read that overruns either returns null and readiness renders the typed blocked
-// row. Operator-declared; the #500 pin test records the values.
+// #530: the read carries no deadline and no answer ceiling. `omp models --json` is the harness's
+// own local listing — no network — and its whole answer is read (`maxBuffer: Infinity`, the rule
+// the repository's own git listings follow since #530 removed the derived listing buffer). A read
+// that cannot run at all — an absent binary, a refused run — still returns null and readiness
+// renders the same typed blocked row; the two #500 source pins for the removed literals are
+// replaced by the behavioral rows in issue500-deployment-capacity.test.mjs.
 function defaultOmpCatalogRead() {
   try {
     return execFileSync('omp', [...OMP_CATALOG_ARGS], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 20_000, maxBuffer: 8 * 1024 * 1024,
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: Infinity,
     });
   } catch { return null; }
 }
@@ -1592,12 +1595,12 @@ function locallyConfiguredRoutes(repoRoot) {
 
 function commandCandidates(name, extras = []) {
   const candidates = [...extras];
-  // #500: the PATH probe is bounded at 5 s — command resolution never hangs the open on an
-  // unresponsive which.
+  // #530: the probe carries no deadline. which(1) is a local read of PATH and the set it answers
+  // is the whole of it; a name it finds nowhere, and a probe that fails, leave the caller's own
+  // capability probe to decide — the same rule the codex and muse probes above follow.
   try {
-    candidates.push(...execFileSync('/usr/bin/which', ['-a', name], {
-      encoding: 'utf8', timeout: 5_000,
-    }).split('\n').filter(Boolean));
+    candidates.push(...execFileSync('/usr/bin/which', ['-a', name], { encoding: 'utf8' })
+      .split('\n').filter(Boolean));
   } catch { /* an unavailable executable is handled by the caller's capability probe */ }
   return [...new Set(candidates)];
 }
