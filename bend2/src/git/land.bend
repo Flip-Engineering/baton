@@ -895,15 +895,31 @@ def scratch_remove1(repo: String, dir: String) -> IO(Unit):
     _g : T.GitOut <- Git.runGit(r2, ["worktree", "remove", "--force", d2])
     IO.pure(Unit, Unit{})
 
+# The trees one attempt prepared: the candidate and its "-target" sibling.
+# A landed or already-merged attempt removes exactly these two; any other
+# answer keeps them.
+def settle_paths(scratch: String) -> List<String>:
+  +s2 = scratch
+  Con{s2, Con{Tx.str_cat(s2, "-target"), Nil{}}}
+
+def drop_list(repo: String, dirs: List<String>) -> IO(Unit):
+  match dirs:
+    case Nil{}:
+      +r2 = repo
+      do IO<Unit>:
+        _p : T.GitOut <- Git.runGit(r2, ["worktree", "prune"])
+        IO.pure(Unit, Unit{})
+    case Con{d, rest}:
+      +r2 = repo
+      do IO<Unit>:
+        _a : Unit <- scratch_remove1(r2, d)
+        drop_list(r2, rest)
+
 # One attempt's two trees, removed together.
 def drop_scratch(repo: String, scratch: String) -> IO(Unit):
   +r2 = repo
   +s2 = scratch
-  do IO<Unit>:
-    _a : Unit <- scratch_remove1(r2, s2)
-    _b : Unit <- scratch_remove1(r2, Tx.str_cat(s2, "-target"))
-    _p : T.GitOut <- Git.runGit(r2, ["worktree", "prune"])
-    IO.pure(Unit, Unit{})
+  drop_list(r2, settle_paths(s2))
 
 # One worktree-list line: a registered tree under the worker's prefix belongs
 # to an earlier attempt the worker has now replaced.
@@ -1006,6 +1022,27 @@ def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome
 # refspec. Nothing reads a default remote.
 def push_argv(branch: String, remote: String) -> List<String>:
   Con{"push", Con{remote, Con{branch, Nil{}}}}
+
+# The destination position of a push argv, and its refspec position. An argv
+# that is not a push argv answers the empty string for either position.
+def push_remote(argv: List<String>) -> String:
+  match argv:
+    case Con{op, rest}:
+      match rest:
+        case Con{remote, tail}: remote
+        case Nil{}: ""
+    case Nil{}: ""
+
+def push_refspec(argv: List<String>) -> String:
+  match argv:
+    case Con{op, rest}:
+      match rest:
+        case Con{remote, tail}:
+          match tail:
+            case Con{ref, more}: ref
+            case Nil{}: ""
+        case Nil{}: ""
+    case Nil{}: ""
 
 def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
   +r2 = repo

@@ -676,3 +676,318 @@ law m4_debris_empty_added_drops_nothing:
 
 def m4_debris_empty_added_drops_nothing(repo, index, dir):
   {==}
+
+# ---------------------------------------------------------------------------
+# Landing pipeline, second increment: the judged pairing, the compare-and-swap
+# advance, the outcome answers, the scratch-tree disposal, the push path and
+# the both-trees check runs. Each law is stated over the function in
+# land.bend that implements it.
+
+# M-3a: the judged pair carries the candidate verdict and the target verdict
+# for one selected file. A candidate failure the target run also shows is
+# dropped; one the target does not show is named.
+
+# M-3a: no candidate lines means the carried set is unchanged.
+law m3a_no_candidates_leaves_acc:
+  {L.new_lines_go(Nil{}, "targ", Con{"a", Nil{}}) == Con{"a", Nil{}} : List<String>}
+
+def m3a_no_candidates_leaves_acc():
+  {==}
+
+# M-3a: a candidate failure line the target block shows is dropped.
+law m3a_new_lines_shared_is_dropped:
+  {L.new_lines_go(Con{"a", Nil{}}, "a", Nil{}) == Nil{} : List<String>}
+
+def m3a_new_lines_shared_is_dropped():
+  {==}
+
+# M-3a: a candidate failure line the target block does not show is kept.
+law m3a_new_lines_novel_is_kept:
+  {L.new_lines_go(Con{"b", Nil{}}, "a", Nil{}) == Con{"b", Nil{}} : List<String>}
+
+def m3a_new_lines_novel_is_kept():
+  {==}
+
+# M-3a: a candidate failure against a passing target run always blocks and
+# names the uncovered line.
+law m3a_uncovered_target_blocks:
+  for hex: String
+  for file: String
+  for acc: List<String>
+  {L.pair_targ(hex, L.VPass{}, file, acc) == Con{"?uncovered: " ++ hex, acc} : List<String>}
+
+def m3a_uncovered_target_blocks(hex, file, acc):
+  {==}
+
+# M-3a: a candidate failure the target failure block shows contributes nothing.
+law m3a_target_failure_compares_same_block:
+  {L.pair_targ("a", L.VFail{"a"}, "f", Nil{}) == Nil{} : List<String>}
+
+def m3a_target_failure_compares_same_block():
+  {==}
+
+# M-3a: a candidate failure the target failure block does not show is named.
+law m3a_target_missing_failure_is_named:
+  {L.pair_targ("b", L.VFail{"a"}, "f", Nil{}) == Con{"b", Nil{}} : List<String>}
+
+def m3a_target_missing_failure_is_named():
+  {==}
+
+# M-3a: no paired files means no blocking lines.
+law m3a_pairs_news_empty_is_empty:
+  {L.pairs_news(Nil{}) == Nil{} : List<String>}
+
+def m3a_pairs_news_empty_is_empty():
+  {==}
+
+# M-3a: a file that passed on the candidate contributes nothing, whatever the
+# target verdict is.
+law m3a_pairs_news_pass_is_silent:
+  for f: String
+  for tv: L.Verdict
+  {L.pairs_news(Con{L.PV{f, L.VPass{}, tv}, Nil{}}) == Nil{} : List<String>}
+
+def m3a_pairs_news_pass_is_silent(f, tv):
+  {==}
+
+# M-3a: the advance checks the basis it prepared the candidate against. A
+# target that is not a fast-forward of the basis blocks instead of moving.
+law m3a_ff_not_fastforward_blocks:
+  for wc: String
+  for tb: String
+  {L.ff_stage4_ff(False{}, wc, tb) == L.FFDone{T.LBlocked{"not a fast-forward; rebase the worker branch onto the target"}} : L.FFLD}
+
+def m3a_ff_not_fastforward_blocks(wc, tb):
+  {==}
+
+# M-3a: a target that is a fast-forward of the basis carries the pair on.
+law m3a_ff_fastforward_carries_pair:
+  for wc: String
+  for tb: String
+  {L.ff_stage4_ff(True{}, wc, tb) == L.FFNext{wc, tb} : L.FFLD}
+
+def m3a_ff_fastforward_carries_pair(wc, tb):
+  {==}
+
+# M-3a: every blocking line the judging named blocks the landing with its
+# content.
+law m3a_judged_block_names_news:
+  for repo: String
+  for target: String
+  for scratch: String
+  for tip: String
+  for cand: String
+  {L.ld_judged_news(Con{"x", Nil{}}, repo, target, scratch, tip, cand) == IO.pure(L.Ld, L.LdDone{T.LBlocked{"new failures: x"}}) : IO(L.Ld)}
+
+def m3a_judged_block_names_news(repo, target, scratch, tip, cand):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-3b: one logical effect per operation identity. The advance is a
+# compare-and-swap: a target that moved takes the rebase path once, and a
+# second move is refused rather than landed twice.
+
+# M-3b: a second move of the target is refused, naming the basis it moved from.
+law m3b_second_move_is_refused:
+  for cand: String
+  for basis: String
+  {L.ld_adv_next(True{}, cand, basis) == IO.pure(L.Ld, L.LdFail{T.FCmd{"land", "target moved again: " ++ basis}}) : IO(L.Ld)}
+
+def m3b_second_move_is_refused(cand, basis):
+  {==}
+
+# M-3b: the first move of the target rebases the candidate once more.
+law m3b_first_move_rebases_once:
+  for cand: String
+  for basis: String
+  {L.ld_adv_next(False{}, cand, basis) == IO.pure(L.Ld, L.LdRe{cand, basis}) : IO(L.Ld)}
+
+def m3b_first_move_rebases_once(cand, basis):
+  {==}
+
+# M-3b: a compare-and-swap that still matches the basis lands the candidate.
+law m3b_cas_success_lands:
+  for out: String
+  for target: String
+  for cand: String
+  {L.ld_update_ok(True{}, out, target, cand) == L.LdDone{T.LLanded{target, cand}} : L.Ld}
+
+def m3b_cas_success_lands(out, target, cand):
+  {==}
+
+# M-3b: a compare-and-swap that no longer matches the basis fails the attempt
+# by name instead of landing twice.
+law m3b_cas_miss_refuses_retry:
+  for out: String
+  for target: String
+  for cand: String
+  {L.ld_update_ok(False{}, out, target, cand) == L.LdFail{T.FCmd{"land", "git update-ref failed"}} : L.Ld}
+
+def m3b_cas_miss_refuses_retry(out, target, cand):
+  {==}
+
+# M-3b: an advance the host never started is a failure, never a landing.
+law m3b_update_broken_is_not_a_landing:
+  for detail: String
+  for target: String
+  for cand: String
+  {L.ld_update_pick(T.GBroken{detail}, target, cand) == L.LdFail{T.FCmd{"land", detail}} : L.Ld}
+
+def m3b_update_broken_is_not_a_landing(detail, target, cand):
+  {==}
+
+# M-3b: the fast-forward compare-and-swap lands while the target is still at
+# the recorded tip.
+law m3b_ff_cas_success_lands:
+  for wc: String
+  for target: String
+  {L.ff_stage5_ok(True{}, wc, target) == L.FFDone{T.LLanded{target, wc}} : L.FFLD}
+
+def m3b_ff_cas_success_lands(wc, target):
+  {==}
+
+# M-3b: the fast-forward compare-and-swap refuses when the target moved.
+law m3b_ff_cas_miss_refuses_retry:
+  for wc: String
+  for target: String
+  {L.ff_stage5_ok(False{}, wc, target) == L.FFDone{T.LBlocked{"target moved during landing; retry"}} : L.FFLD}
+
+def m3b_ff_cas_miss_refuses_retry(wc, target):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-3c: the answer names the outcome actually reached.
+
+# M-3c: a conflict answers conflict, naming the unmerged files and the tree
+# that keeps them.
+law m3c_conflict_answers_conflict:
+  for files: String
+  for dir: String
+  {L.outcome_json(T.LConflict{files, dir}) == "{\"status\":\"conflict\",\"files\":\"" ++ files ++ "\",\"dir\":\"" ++ dir ++ "\"}" : String}
+
+def m3c_conflict_answers_conflict(files, dir):
+  {==}
+
+# M-3c: a finished fast-forward stage answers the outcome it reached.
+law m3c_ff_done_answers_its_outcome:
+  for outcome: T.LandOutcome
+  {L.ff_answer(L.FFDone{outcome}) == IO.pure(T.LandOutcome, outcome) : IO(T.LandOutcome)}
+
+def m3c_ff_done_answers_its_outcome(outcome):
+  {==}
+
+# M-3c: an unfinished fast-forward stage answers a refusal, never an effect.
+law m3c_ff_next_is_not_an_effect:
+  for wc: String
+  for tb: String
+  {L.ff_answer(L.FFNext{wc, tb}) == IO.pure(T.LandOutcome, T.LBlocked{"unreachable stage"}) : IO(T.LandOutcome)}
+
+def m3c_ff_next_is_not_an_effect(wc, tb):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-4: a landing that answers landed or already removes exactly the candidate
+# and target scratch worktrees it prepared, and a refused, conflicted or
+# failed landing keeps them.
+
+# M-4: the settled trees are exactly the candidate and its "-target" sibling.
+law m4_settle_paths_are_exactly_the_two_trees:
+  for +s: String
+  {L.settle_paths(s) == Con{s, Con{s ++ "-target", Nil{}}} : List<String>}
+
+def m4_settle_paths_are_exactly_the_two_trees(s):
+  {==}
+
+# M-4: a conflicted landing keeps the trees that carry the unmerged paths.
+law m4_conflict_keeps_the_trees:
+  for files: String
+  for dir: String
+  for repo: String
+  for scratch: String
+  {L.ld_settle(L.LdDone{T.LConflict{files, dir}}, repo, scratch) == IO.pure(L.Ld, L.LdDone{T.LConflict{files, dir}}) : IO(L.Ld)}
+
+def m4_conflict_keeps_the_trees(files, dir, repo, scratch):
+  {==}
+
+# M-4: a refused landing keeps the trees for the requester.
+law m4_blocked_keeps_the_trees:
+  for reason: String
+  for repo: String
+  for scratch: String
+  {L.ld_settle(L.LdDone{T.LBlocked{reason}}, repo, scratch) == IO.pure(L.Ld, L.LdDone{T.LBlocked{reason}}) : IO(L.Ld)}
+
+def m4_blocked_keeps_the_trees(reason, repo, scratch):
+  {==}
+
+# M-4: a failed landing keeps the trees for the requester.
+law m4_failed_keeps_the_trees:
+  for fail: T.GitFail
+  for repo: String
+  for scratch: String
+  {L.ld_settle(L.LdFail{fail}, repo, scratch) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
+
+def m4_failed_keeps_the_trees(fail, repo, scratch):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-18: the push runs at the destination the argv names. The projectors read
+# the destination and refspec positions of the argv the push runs.
+
+# M-18: the destination position of the push argv is the declared remote.
+law m18_push_remote_is_the_destination:
+  for branch: String
+  for remote: String
+  {L.push_remote(L.push_argv(branch, remote)) == remote : String}
+
+def m18_push_remote_is_the_destination(branch, remote):
+  {==}
+
+# M-18: the refspec position of the push argv is the declared branch.
+law m18_push_refspec_is_the_branch:
+  for branch: String
+  for remote: String
+  {L.push_refspec(L.push_argv(branch, remote)) == branch : String}
+
+def m18_push_refspec_is_the_branch(branch, remote):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-10: every selected file runs on both trees, and every candidate failure
+# the target does not show is named. The pairing recurses over the whole
+# selection with no count or clock.
+
+# M-10: one new candidate failure is named.
+law m10_pairs_news_names_every_new_failure:
+  {L.pairs_news(Con{L.PV{"f", L.VFail{"b"}, L.VFail{"a"}}, Nil{}}) == Con{"b", Nil{}} : List<String>}
+
+def m10_pairs_news_names_every_new_failure():
+  {==}
+
+# M-10: every selected file is judged; no file is truncated.
+law m10_pairs_news_runs_every_selected_file:
+  {L.pairs_news(Con{L.PV{"f", L.VFail{"b"}, L.VFail{"a"}}, Con{L.PV{"g", L.VFail{"c"}, L.VFail{""}}, Nil{}}}) == Con{"c", Con{"b", Nil{}}} : List<String>}
+
+def m10_pairs_news_runs_every_selected_file():
+  {==}
+
+# M-10: a target tree that could not be prepared fails the attempt by name.
+law m10_target_tree_failure_blocks:
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  for tip: String
+  for cand: String
+  for tw: String
+  {L.ld_tree_runs(False{}, repo, target, script, files, scratch, tip, cand, tw) == IO.pure(L.Ld, L.LdFail{T.FCmd{"land", "target worktree failed"}}) : IO(L.Ld)}
+
+def m10_target_tree_failure_blocks(repo, target, script, files, scratch, tip, cand, tw):
+  {==}
+
+# M-10: an unjudged candidate run blocks and names the file and its cause.
+law m10_unjudged_candidate_names_file_and_cause:
+  {L.pairs_news(Con{L.PV{"f", L.VNone{"why"}, L.VPass{}}, Nil{}}) == Con{"?unjudged candidate: f: why", Nil{}} : List<String>}
+
+def m10_unjudged_candidate_names_file_and_cause():
+  {==}
