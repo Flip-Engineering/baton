@@ -75,7 +75,6 @@ const REPL_CELL_ID = /^cell:[a-f0-9]{64}$/u;
 
 const REPL_CELL_MEDIA_TYPE = 'application/vnd.baton.context-value+json';
 
-const MAX_REPL_BINDINGS = 512;
 
 
 

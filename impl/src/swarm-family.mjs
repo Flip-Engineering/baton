@@ -30,7 +30,6 @@ const SETTLED = (promise) => Promise.resolve().then(promise).then(
  *   swarm runtime, a permission refusal). Empty and unavailable are different truths.
  */
 export async function readSwarmFamily(client, {
-  swarmLimit = MAX_FAMILY_SWARMS,
   participantLimit = MAX_FAMILY_PARTICIPANTS,
   attentionLimit = MAX_FAMILY_ATTENTION,
 } = {}) {
@@ -48,7 +47,7 @@ export async function readSwarmFamily(client, {
   const rows = Array.isArray(listed.value) ? listed.value : [];
   const swarms = [];
   const attention = [];
-  for (const row of rows.slice(0, swarmLimit)) {
+  for (const row of rows) {
     const swarmId = row?.swarmId;
     if (typeof swarmId !== 'string' || swarmId.length === 0) continue;
     // One bounded slice per family axis: the roster with runtime state, and the swarm's

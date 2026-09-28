@@ -130,7 +130,7 @@ test('terminal reserves accept exact bounded nano-USD only', () => {
   for (const usd of [-0.01, Infinity, -Infinity, NaN, '0']) rejects(withReserve({ tokens: 0, usd }));
 });
 
-test('bounded identifiers, known harness coverage, route uniqueness, and the 1024-route ceiling fail closed', () => {
+test('bounded identifiers, known harness coverage, and route uniqueness fail closed, with no route-count ceiling', () => {
   rejects(policy(), []);
   rejects(policy(), ['codex', 'codex', 'grok']);
   rejects(policy(), ['codex', 'grok', '../escape']);
@@ -142,7 +142,7 @@ test('bounded identifiers, known harness coverage, route uniqueness, and the 102
 
   const exact = Array.from({ length: 1024 }, (_, index) => route({ model: `model-${index}` }));
   assert.equal(normalizeProviderGovernancePolicy(policy({ routes: exact }), ['codex']).projection.routes.length, 1024);
-  rejects(policy({ routes: [...exact, route({ model: 'model-over' })] }), ['codex']);
+  assert.equal(normalizeProviderGovernancePolicy(policy({ routes: [...exact, route({ model: 'model-over' })] }), ['codex']).projection.routes.length, 1025);
 });
 
 test('governance cards are closed and reject contradictory capability claims', () => {
