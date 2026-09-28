@@ -404,12 +404,13 @@ class Land(unittest.TestCase):
     def holding_checks(self):
         """The budget fixture: a selected check and a check script that waits.
 
-        The check script runs the selected file in the tree it is given, sends
-        the run's outcome over the fixture socket, and waits for a release byte
-        before reporting it. A caller can therefore hold a candidate check
-        after it has evaluated the candidate, and move the target meanwhile.
-        A failing run prints the four hex failure-identity fields.
+        The first check run of the landing under test takes an attempt-local
+        marker directory outside the checked trees, reports the outcome it
+        evaluated over the fixture socket, and waits for a release byte. Later
+        runs of that attempt find the marker and return their own verdict at
+        once. A failing run prints the four hex failure-identity fields.
         """
+        marker = self.directory / 'budget-held'
         (self.repo / 'budget-selected.py').write_text(
             'import pathlib, unittest\n'
             'class Budget(unittest.TestCase):\n'
@@ -422,23 +423,30 @@ class Land(unittest.TestCase):
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
         listener.listen()
-        listener.settimeout(60)
+        listener.settimeout(30)
         self.addCleanup(listener.close)
         (self.repo / 'check-held.sh').write_text(
             '#!/bin/sh\n'
             f'exec python3 "{self.repo}/check-held.py" "$1"\n')
         (self.repo / 'check-held.py').write_text(
             'import json, pathlib, socket, subprocess, sys\n'
+            f'marker = pathlib.Path({str(marker)!r})\n'
             'selected = sys.argv[1]\n'
             'run = subprocess.run([sys.executable, selected], capture_output=True, text=True)\n'
             'report = {"selected": selected, "passed": run.returncode == 0,\n'
             '          "left": int(pathlib.Path("left.txt").read_text()),\n'
             '          "right": int(pathlib.Path("right.txt").read_text())}\n'
-            f'with socket.create_connection({listener.getsockname()!r}, timeout=60) as peer:\n'
-            '    peer.sendall((json.dumps(report) + "\\n").encode())\n'
-            '    released = peer.recv(1)\n'
-            'if released != b"1":\n'
-            '    raise SystemExit("the check was not released")\n'
+            'try:\n'
+            '    marker.mkdir()\n'
+            '    first = True\n'
+            'except FileExistsError:\n'
+            '    first = False\n'
+            'if first:\n'
+            f'    with socket.create_connection({listener.getsockname()!r}, timeout=30) as peer:\n'
+            '        peer.sendall((json.dumps(report) + "\\n").encode())\n'
+            '        released = peer.recv(1)\n'
+            '    if released != b"1":\n'
+            '        raise SystemExit("the check was not released")\n'
             'if run.returncode:\n'
             '    fields = [selected, "Budget.test_capacity", "assertion", "-"]\n'
             '    print(" ".join(field.encode().hex() for field in fields))\n'
@@ -453,14 +461,15 @@ class Land(unittest.TestCase):
         return listener
 
     def accept_check(self, listener):
-        """Accept one fixture check; return its connection and its event."""
+        """Accept the held check; return its connection and its event."""
         connection = listener.accept()[0]
+        connection.settimeout(30)
         self.addCleanup(connection.close)
         data = b''
         while not data.endswith(b'\n'):
             part = connection.recv(65536)
             if not part:
-                self.fail('a check closed its connection before its event')
+                self.fail('the check closed its connection before its event')
             data += part
         return connection, json.loads(data)
 
@@ -481,30 +490,13 @@ class Land(unittest.TestCase):
             process.kill()
             process.communicate()
 
-    def release_later_checks(self, listener, process):
-        """Release the checks a landing sends besides its held candidate one.
-
-        The candidate check of a selected file runs before its target check, so
-        the landing under test holds the first connection. Every later check is
-        released at once; the process exits when its checks are all answered.
-        """
-        listener.settimeout(0.2)
-        while process.poll() is None:
-            try:
-                connection = listener.accept()[0]
-            except socket.timeout:
-                continue
-            self.addCleanup(connection.close)
-            connection.sendall(b'1')
-            connection.close()
-
     def scratch_paths(self, worker):
         """The scratch trees an attempt by WORKER left under the repository."""
         return sorted((self.repo / '.scratch').glob(f'bend2-land-{worker}-*'))
 
     def test_target_moving_under_a_held_candidate_blocks_and_keeps_it(self):
         # Two worker changes that pass alone but fail together. The candidate
-        # of one is checked, held, and only then does the other land.
+        # of one is checked, held, and the other lands meanwhile.
         listener = self.holding_checks()
         a_commit = self.recruit_and_write('wa', 'wa-branch', 'wta', 'left.txt', '6\n')
         b_commit = self.recruit_and_write('wb', 'wb-branch', 'wtb', 'right.txt', '6\n')
@@ -521,24 +513,30 @@ class Land(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         held.sendall(b'1')
         held.close()
-        self.release_later_checks(listener, under)
         out, err = under.communicate(timeout=120)
         self.assertEqual(under.returncode, 0, err)
         result = json.loads(out)
         # The landing holds the candidate it checked and the basis it checked
         # against. The target moved while that check ran, so the landing
-        # refuses and leaves the target, the worker, and both scratch trees.
+        # blocks and names the retry it wants.
         self.assertEqual(result['status'], 'blocked')
-        self.assertIn('retry', result['reason'].lower())
+        self.assertIn('rerun land-checked', result['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual(self.git('show', 'main:left.txt').strip(), '6')
+        self.assertEqual(self.git('show', 'main:right.txt').strip(), '4')
         self.assertEqual(self.git('rev-parse', 'wa-branch').strip(), a_commit)
         self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
         self.assertEqual((self.repo / 'wtb' / 'right.txt').read_text(), '6\n')
-        kept = self.scratch_trees('wb')
+        kept = self.scratch_paths('wb')
         self.assertEqual(len(kept), 2)
-        self.assertIn(f'{kept[0]}-target', kept)
-        # The explicit retry checks the same selection against the moved
-        # target, finds a failure the target does not show, and blocks.
+        candidates = [tree for tree in kept if not tree.name.endswith('-target')]
+        targets = [tree for tree in kept if tree.name.endswith('-target')]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual((candidates[0] / 'left.txt').read_text(), '4\n')
+        self.assertEqual((candidates[0] / 'right.txt').read_text(), '6\n')
+        # The explicit retry prepares the combination on the moved target,
+        # checks it, and blocks on a failure the target does not show.
         again = self.call('land-checked', 'wb', self.repo, 'main',
                           str(ROOT / 'bend2/scripts/check-unittest.sh'), 'budget-selected.py')
         self.assertEqual(again['status'], 'blocked')
@@ -546,10 +544,17 @@ class Land(unittest.TestCase):
         self.assertIn('budget-selected.py'.encode().hex(), again['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('rev-parse', 'wb-branch').strip(), b_commit)
-        failed = [tree for tree in self.scratch_paths('wb') if self.budget_status(tree)]
+        retried = self.scratch_paths('wb')
+        self.assertEqual(len(retried), 2)
+        failed = [tree for tree in retried if self.budget_status(tree)]
         self.assertEqual(len(failed), 1)
         self.assertEqual((failed[0] / 'left.txt').read_text(), '6\n')
         self.assertEqual((failed[0] / 'right.txt').read_text(), '6\n')
+        checked_target = [tree for tree in retried if tree.name.endswith('-target')]
+        self.assertEqual(len(checked_target), 1)
+        self.assertEqual(self.budget_status(checked_target[0]), 0)
+        self.assertEqual((checked_target[0] / 'left.txt').read_text(), '6\n')
+        self.assertEqual((checked_target[0] / 'right.txt').read_text(), '4\n')
         final = self.directory / 'final-target'
         self.git('worktree', 'add', '--detach', str(final), 'main')
         self.assertEqual(self.budget_status(final), 0)
