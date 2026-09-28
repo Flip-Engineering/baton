@@ -507,7 +507,7 @@ function seedTaskNode(store, id) {
 }
 
 function workflowAdmissionPolicyFor(rid) {
-  return Object.freeze({ repoId: rid, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
+  return Object.freeze({ repoId: rid, });
 }
 
 function recallPolicyFor(rid) {

@@ -113,9 +113,9 @@ function normalizePath(value, label) {
 }
 
 // Set-like by path (§93.4): reject duplicate normalized paths, sort by unsigned UTF-16.
-export function normalizePathArray(value, label, { min, max }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+export function normalizePathArray(value, label, { min, max = null }) {
+  if (!Array.isArray(value) || value.length < min || (max !== null && value.length > max)) {
+    fail(max === null ? `${label} must contain at least ${min} entries` : `${label} must contain ${min}..${max} entries`);
   }
   const paths = value.map((entry, index) => normalizePath(entry, `${label}[${index}]`));
   if (new Set(paths).size !== paths.length) fail(`${label} contains duplicate paths`);
@@ -123,9 +123,9 @@ export function normalizePathArray(value, label, { min, max }) {
 }
 
 // Set-like SafeId array: reject duplicates, sort by unsigned UTF-16 name.
-export function normalizeSafeIdSet(value, label, { min, max }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+export function normalizeSafeIdSet(value, label, { min, max = null }) {
+  if (!Array.isArray(value) || value.length < min || (max !== null && value.length > max)) {
+    fail(max === null ? `${label} must contain at least ${min} entries` : `${label} must contain ${min}..${max} entries`);
   }
   const names = value.map((entry, index) => safeId(entry, `${label}[${index}]`));
   if (new Set(names).size !== names.length) fail(`${label} contains duplicates`);
@@ -240,9 +240,9 @@ export function predicatePortRefs(predicate) {
   return [];
 }
 
-function digestSet(value, label, { min, max }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+function digestSet(value, label, { min, max = null }) {
+  if (!Array.isArray(value) || value.length < min || (max !== null && value.length > max)) {
+    fail(max === null ? `${label} must contain at least ${min} entries` : `${label} must contain ${min}..${max} entries`);
   }
   const digests = value.map((entry, index) => digestValue(entry, `${label}[${index}]`));
   if (new Set(digests).size !== digests.length) fail(`${label} contains duplicates`);
@@ -278,7 +278,7 @@ export function validateJoin(join, { policy, memberNames = null, label = 'Join' 
     return {
       kind,
       contractDigests: digestSet(join.contractDigests, `${label} all_verified.contractDigests`,
-        { min: 1, max: policy.maxEvidenceRefs }),
+        { min: 1 }),
     };
   }
   if (kind === 'first_verified') {
@@ -333,7 +333,7 @@ export function validateSelector(selector, { policy, candidateNames = null, labe
     return {
       kind,
       contractDigests: digestSet(selector.contractDigests, `${label} all_verified.contractDigests`,
-        { min: 1, max: policy.maxEvidenceRefs }),
+        { min: 1 }),
     };
   }
   if (kind === 'evidence_ranked') {

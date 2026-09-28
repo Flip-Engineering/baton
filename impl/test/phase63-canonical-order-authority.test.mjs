@@ -32,10 +32,7 @@ test('canonical request identity preserves prototype-named JSON fields', () => {
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase63-${name}-`));
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-const policy = Object.freeze({
-  maxLedgerBytes: 1024 * 1024, maxEventBytes: 64 * 1024,
-  maxEvents: 1_000, maxReceiptBytes: 64 * 1024,
-});
+const policy = Object.freeze({});
 
 test('CO1: canonical case fold is deterministic for Unicode, Turkish I, and fullwidth dot', () => {
   assert.equal(foldCanonicalCase('Straße'), 'straße');
@@ -162,8 +159,9 @@ test('CO4/CO6: exact migration retry is immutable and changed cut authority conf
   const retry = migrateCanonicalOrderLedger(directory, { policy, migration: request, clock: () => '2026-07-14T02:03:00.000Z' });
   assert.deepEqual(retry, first);
   assert.deepEqual(readFileSync(join(directory, 'canonical-order-receipt.json')), receiptBytes);
-  const narrower = { ...request, maxEvents: request.maxEvents - 1 };
-  assert.throws(() => migrateCanonicalOrderLedger(directory, { policy, migration: narrower }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_migration_invalid');
+  // #530: the four cut ceilings left the policy, so a migration carries no cut fields to narrow; a
+  // migration whose mode differs from the recorded receipt still conflicts.
+  assert.throws(() => migrateCanonicalOrderLedger(directory, { policy, migration: migration({ mode: 'reset_empty' }) }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_migration_invalid');
   assert.equal(existsSync(join(directory, 'writer.lease')), false);
 });
 
@@ -198,24 +196,10 @@ test('CO5/CO6: unknown history, receipt symlinks, and oversize receipts fail clo
   assert.equal(existsSync(join(unknownRoot, 'canonical-order-receipt.json')), false);
   assert.equal(existsSync(join(unknownRoot, 'writer.lease')), false);
 
-  const eventRoot = root('oversize-event');
-  const legacy = new CoordinationStore(eventRoot); legacy.createTask(task('oversize'), { actor: 'orchestrator', key: 'oversize:create' }); legacy.releaseWriterLease({ requireOwned: true });
-  const eventBytes = readFileSync(join(eventRoot, 'events.jsonl'));
-  const eventPolicy = { ...policy, maxEventBytes: eventBytes.byteLength - 1 };
-  assert.throws(() => migrateCanonicalOrderLedger(eventRoot, { policy: eventPolicy, migration: { ...eventPolicy, mode: 'adopt_compatible', expectedPrefixDigest: sha256(eventBytes), expectedEvents: 1 } }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_migration_invalid');
-  assert.equal(existsSync(join(eventRoot, 'canonical-order-receipt.json')), false);
-  assert.equal(existsSync(join(eventRoot, 'writer.lease')), false);
-
   const symlinkRoot = root('receipt-symlink'); const target = join(symlinkRoot, 'outside.json');
   writeFileSync(target, '{}\n'); symlinkSync(target, join(symlinkRoot, 'canonical-order-receipt.json'));
   assert.throws(() => new CoordinationStore(symlinkRoot, { canonicalOrderPolicy: policy }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_integrity');
   unlinkSync(join(symlinkRoot, 'canonical-order-receipt.json'));
-
-  const tinyRoot = root('tiny-receipt'); const tinyPolicy = { ...policy, maxReceiptBytes: 64 };
-  const tiny = new CoordinationStore(tinyRoot, { canonicalOrderPolicy: tinyPolicy });
-  assert.throws(() => tiny.claimWriterLease(), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_integrity');
-  assert.equal(existsSync(join(tinyRoot, 'canonical-order-receipt.json')), false);
-  assert.equal(existsSync(join(tinyRoot, 'writer.lease')), false);
 
   const resetRoot = root('reset-empty');
   const reset = migrateCanonicalOrderLedger(resetRoot, { policy, migration: migration({ mode: 'reset_empty' }) });

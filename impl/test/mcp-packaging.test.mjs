@@ -224,7 +224,7 @@ test('MP7: the four settlement tools register on MCP and promote requires the se
   const noEnvelope = await call(server, 3, 'baton_knowledge_promote', {
     repoId: REPO_ID, idempotencyKey: 'mp7-promote',
     runId: 'run-a', candidateFindingId: 'finding:package-admitted:x:1',
-    policy: { repoId: REPO_ID, maxBatchBytes: 1024, maxResultBytes: 1024 },
+    policy: { repoId: REPO_ID, },
     lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
   });
   assert.equal(noEnvelope.result.isError, true);
@@ -280,7 +280,7 @@ test('MP8: a REPLAYED admission with a foreign session refuses the session code 
     body: 'the wave candidacy the admission reviews', evidence: [],
     promotion: { kind: 'Finding', trigger: 'package.admitted' },
   }, { actor: 'orchestrator', key: 'candidacy:mp8' });
-  const policy = Object.freeze({ repoId: REPO_ID, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
+  const policy = Object.freeze({ repoId: REPO_ID, });
   const first = store.admitWorkflowFinding(REPO_ID, 'run-settlement:wave:mp8', candidateFindingId, policy,
     { actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`, principalId: sessionA.principalId, sessionId: sessionA.sessionId, sessionAuthorityDigest: sessionA.authorityDigest },
     lease);

@@ -1420,7 +1420,7 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
   // before and after this rung — the guard).
   const promote = await wireCall(server, id, 'baton_knowledge_promote', {
     repoId: REPO, idempotencyKey: 'ws-h4-promote', runId: 'run:h4', candidateFindingId: 'finding:x:1',
-    policy: { repoId: REPO, maxBatchBytes: 1024, maxResultBytes: 1024 },
+    policy: { repoId: REPO, },
     lease: { id: 'x', digest: '0'.repeat(64), issuedEvent: 1 },
   });
   id += 1;

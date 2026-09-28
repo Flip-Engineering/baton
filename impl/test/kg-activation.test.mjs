@@ -97,7 +97,7 @@ function valueRefBranch(name, store, seed = name) {
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });
-const workflowAdmissionPolicy = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
+const workflowAdmissionPolicy = Object.freeze({ repoId, });
 
 // A context-package admission mints the `observed` package Finding the admit gate consumes — the
 // candidate path both fixtures below mint from.

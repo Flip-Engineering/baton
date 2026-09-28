@@ -527,19 +527,15 @@ export function _canonicalOrderFail(message, code = 'canonical_order_integrity')
 }
 
 export function _readCanonicalLedger(store) {
-  const policy = store._canonicalOrderPolicy;
   const raw = existsSync(store.file) ? readFileSync(store.file) : Buffer.alloc(0);
-  if (raw.byteLength > policy.maxLedgerBytes) store._canonicalOrderFail('coordination ledger exceeds canonical-order byte ceiling', 'canonical_order_migration_invalid');
   if (raw.byteLength === 0) return { raw, events: [], offsets: [] };
   if (raw.at(-1) !== 0x0a) store._canonicalOrderFail('coordination ledger has a truncated canonical-order prefix');
   const text = raw.toString('utf8');
   if (!Buffer.from(text, 'utf8').equals(raw)) store._canonicalOrderFail('coordination ledger is not exact UTF-8');
   const lines = text.slice(0, -1).split('\n');
-  if (lines.length > policy.maxEvents) store._canonicalOrderFail('coordination ledger exceeds canonical-order event ceiling', 'canonical_order_migration_invalid');
   const events = []; const offsets = []; let offset = 0;
   for (let index = 0; index < lines.length; index += 1) {
     const framedBytes = Buffer.byteLength(lines[index], 'utf8') + 1;
-    if (framedBytes > policy.maxEventBytes) store._canonicalOrderFail(`coordination event ${index + 1} exceeds canonical-order byte ceiling`, 'canonical_order_migration_invalid');
     let event;
     try { event = JSON.parse(lines[index]); }
     catch { store._canonicalOrderFail(`coordination event ${index + 1} is invalid JSON`); }
@@ -5572,7 +5568,6 @@ export function recordContextRead(store, fields, auth) {
     }
     return { ok: true, result: 'idempotent', event: clone(prior) };
   }
-  store._assertOrientationReceiptCeiling(payload);
   const event = store._append('context.read', payload, auth);
   return { ok: true, result: 'recorded', event: clone(event) };
 }

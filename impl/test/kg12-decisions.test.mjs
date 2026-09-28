@@ -302,7 +302,7 @@ test('KG-2/C3: a branch with no valueRef produces no Source node and no DerivedF
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });
-const workflowAdmissionPolicy = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
+const workflowAdmissionPolicy = Object.freeze({ repoId, });
 
 function settleFixture(label) {
   const store = freshStore(label, { runLineagePolicy: lineagePolicy, ...packageAuthority });

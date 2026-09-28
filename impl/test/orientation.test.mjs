@@ -43,9 +43,6 @@
 //   - store.mintOrientationSource({repoId, moduleKey, moduleDigest, freshnessDigest}, auth)
 //   - store.proposeOrientationCandidate({packDigest, leafDigest}, auth)
 //   - store.mergeOrientationMap({repoId, moduleKey, moduleDigest, freshnessDigest})
-//   - CoordinationStore opts.orientationReceiptCeilings {maxReceiptsPerAttempt,
-//     maxReceiptBytesPerAttempt, maxProposalsPerAttempt}; AtlasCodeIndex
-//     opts.maxOrientationStorageBytes
 //   - the `orientation.rate` wire kind ({packDigest, rating, idempotencyKey})
 //   - OR-S1's brief-field probe (orientation ?? contextPacks ?? packs) for the L0 grant
 //   - the `context.pack_granted` event kind (O-6: appended atomically with the spawn binding
@@ -54,8 +51,7 @@
 //   - the code lane answers through the Coordinator's `capabilities` registry seam
 //     (coordinator.mjs:821): OR-L5/OR-L10 wire a real AtlasCodeIndex over a real git repo
 //     there; OR-L8 exercises the ONE renderer at coordinator._renderContextRead
-//   - invented refusal codes: `orientation_receipt_ceiling` (O-2 per-attempt ceilings,
-//     OR-E3/OR-E8) and `orientation_propose_refused` (O-2 prior-receipt verification, OR-E9)
+//   - invented refusal codes: `orientation_propose_refused` (O-2 prior-receipt verification, OR-E9)
 //
 // Red-first: written against the v1.0 contract BEFORE implementation. Every row fails today for
 // the NAMED stage in its title (missing lane / missing class / missing gate in existing
@@ -295,7 +291,7 @@ const promotionPolicy = (overrides = {}) => ({ repoId: 'repo-a', minScratchReade
 const lineagePolicy = Object.freeze({
   schemaVersion: 1, maxDepth: 3, maxChildrenPerRun: 2, maxDescendantsPerRoot: 4, leaseTtlMs: 60_000,
 });
-const workflowAdmissionPolicy = Object.freeze({ repoId: 'repo-a', maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
+const workflowAdmissionPolicy = Object.freeze({ repoId: 'repo-a', });
 
 function admissionFixture(label) {
   const store = makeStore(label, { runLineagePolicy: lineagePolicy });
@@ -919,13 +915,12 @@ test('OR-S3 (pin) [campaign-law]: orientation packs invalidate CAUSALLY only —
   const orientationIdentifiers = [
     'code.orient', 'orientation-map', 'orientation-region', 'orientation-detail',
     'mintOrientationSource', 'recordOrientationRating', 'proposeOrientationCandidate', 'mergeOrientationMap',
-    'orientationReceiptCeilings', 'maxOrientationStorageBytes',
     'orientation.rating_recorded', 'orientation.leaf_proposed', 'orientation.overlay_proposed',
     'context.pack_granted', 'normalizedQueryDigest', 'freshnessDigest',
     'overlayOmissions', 'overlay_dangling', 'overlay_conflict',
     'orientation_unavailable', 'orientation_base_stale', 'orientation_artifact_retired',
     'orientation_storage_exhausted', 'orientation_rating_refused', 'orientation_rating_conflict',
-    'orientation_receipt_ceiling', 'orientation_propose_refused',
+    'orientation_propose_refused',
   ];
   const clockVocabulary = /validity\s*:|ttl\s*:|expiresAt|context_pack_expired|Date\.now\(|Date\.parse\(|\bnow\(\)|setTimeout\(|setInterval\(/u;
   const srcDir = join(import.meta.dirname, '..', 'src');
@@ -1033,10 +1028,8 @@ test('OR-E2 [stage: context-read-class-missing]: context.read replay is hub-deri
     'same-key/different-content refuses (the shipped readKnowledge request-digest pattern)');
 });
 
-test('OR-E3 [stage: receipt-ceiling-missing]: per-attempt receipt count/byte ceilings refuse BEFORE append — writes never continue past the ceiling', () => {
-  // The per-attempt ceiling knobs are the O-2 constructive flood control this epic adds
-  // (the red team confirmed maxScanEvents is a scan ceiling, NOT a write bound).
-  const store = makeStore('e3', { orientationReceiptCeilings: { maxReceiptsPerAttempt: 2, maxReceiptBytesPerAttempt: 4096, maxProposalsPerAttempt: 2 } });
+test('OR-E3 (#530): the per-attempt receipt ceilings left — a third receipt admits', () => {
+  const store = makeStore('e3');
   complete(store, 'a', 'w-a');
   complete(store, 'b', 'w-b');
   const tuple = (n) => ({
@@ -1046,12 +1039,9 @@ test('OR-E3 [stage: receipt-ceiling-missing]: per-attempt receipt count/byte cei
   });
   store.recordContextRead(tuple(1), { actor: 'worker:w-b', key: 'or-e3-r1' });
   store.recordContextRead(tuple(2), { actor: 'worker:w-b', key: 'or-e3-r2' });
-  const before = store.snapshot().lastSeq;
   const refusal = refusalCode(() => store.recordContextRead(tuple(3), { actor: 'worker:w-b', key: 'or-e3-r3' }));
-  assert.equal(refusal, 'orientation_receipt_ceiling',
-    'the per-attempt count ceiling refuses with the invented typed code (header) BEFORE append — an arbitrary error name never passes (blue-team T-16)');
-  assert.equal(store.snapshot().lastSeq, before, 'no event is appended past the ceiling');
-  assert.equal(store.events().filter((event) => event.kind === 'context.read').length, 2, 'the admitted receipts survive intact');
+  assert.equal(refusal, null, '#530: no receipt count ceiling refuses the third receipt');
+  assert.equal(store.events().filter((event) => event.kind === 'context.read').length, 3, 'every receipt is appended');
 });
 
 test('OR-E4 [stage: admission-vocabulary-unamended]: orientation.leaf_proposed admits through the orchestrator/operator gate ONLY — worker self-admission refuses', () => {
@@ -1106,8 +1096,8 @@ test('OR-E5 [stage: overlay-machinery-missing]: the producer mints a KG Source p
     'the generated half answers for the requested module coordinate');
 });
 
-test('OR-E8 [stage: receipt-ceiling-missing]: per-attempt receipt BYTE and PROPOSAL ceilings refuse BEFORE append (OR-E3 covers the count leg)', () => {
-  const store = makeStore('e8', { orientationReceiptCeilings: { maxReceiptsPerAttempt: 1000, maxReceiptBytesPerAttempt: 700, maxProposalsPerAttempt: 1 } });
+test('OR-E8 (#530): the per-attempt receipt byte and proposal ceilings left', () => {
+  const store = makeStore('e8');
   complete(store, 'a', 'w-a');
   complete(store, 'b', 'w-b');
   const tuple = (n) => ({
@@ -1115,23 +1105,17 @@ test('OR-E8 [stage: receipt-ceiling-missing]: per-attempt receipt BYTE and PROPO
     op: 'code.orient.map', normalizedQueryDigest: digest({ op: 'code.orient.map', n }),
     packDigest: `${n}`.padEnd(64, '0'), freshnessDigest: '2'.repeat(64),
   });
-  // Byte leg: the count ceiling (1000) is deliberately out of reach so ONLY the byte bound can
-  // fire; receipts below the ceiling admit, the crossing receipt refuses before append.
-  let refusal = null; let appended = 0;
-  for (let n = 1; n <= 40 && refusal === null; n += 1) {
-    refusal = refusalCode(() => { store.recordContextRead(tuple(n), { actor: 'worker:w-b', key: `or-e8-b${n}` }); appended += 1; });
+  let refusals = 0; let appended = 0;
+  for (let n = 1; n <= 40; n += 1) {
+    refusals += refusalCode(() => { store.recordContextRead(tuple(n), { actor: 'worker:w-b', key: `or-e8-b${n}` }); appended += 1; }) === null ? 0 : 1;
   }
-  assert.equal(refusal, 'orientation_receipt_ceiling',
-    'the per-attempt BYTE ceiling refuses with the invented typed code (header) once cumulative receipt bytes cross the bound');
-  assert.ok(appended >= 1 && appended < 40,
-    'receipts below the byte ceiling admit; only the crossing receipt refuses (constructive — checked BEFORE append, never up-front, never unbounded)');
-  // Proposal leg: orientation.candidate.propose is bounded per attempt by the same ceiling family.
+  assert.equal(refusals, 0, '#530: no cumulative byte ceiling refuses a receipt');
+  assert.equal(appended, 40, 'every receipt is appended');
   const proposalRefusal = refusalCode(() => {
     store.proposeOrientationCandidate({ packDigest: '3'.repeat(64), leafDigest: '4'.repeat(64) }, { actor: 'worker:w-b', key: 'or-e8-p1' });
     store.proposeOrientationCandidate({ packDigest: '3'.repeat(64), leafDigest: '5'.repeat(64) }, { actor: 'worker:w-b', key: 'or-e8-p2' });
   });
-  assert.equal(proposalRefusal, 'orientation_receipt_ceiling',
-    'the per-attempt PROPOSAL ceiling refuses BEFORE append (today: the propose API does not exist)');
+  assert.equal(proposalRefusal, null, '#530: no proposal ceiling refuses the second proposal');
 });
 
 test('OR-E9 [stage: propose-verification-missing]: orientation.candidate.propose verifies the attempt previously received the leaf and coalesces duplicates by {leafDigest, freshnessDigest}', () => {

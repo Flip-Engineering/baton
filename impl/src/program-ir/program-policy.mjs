@@ -18,7 +18,7 @@ const DIGEST_FIELDS = Object.freeze([
 ]);
 const NUMERIC_FIELDS = Object.freeze([
   'maxProgramBytes', 'maxProgramNodes', 'maxProgramDepth', 'maxSchemaDefinitions', 'maxValueBytes',
-  'maxResultBytes', 'maxEvidenceRefs', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
+  'maxResultBytes', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
   'maxJoinMembers', 'maxJoinComparisons', 'maxStateRevisions', 'maxTraceBytes',
 ]);
 const POLICY_FIELDS = Object.freeze([

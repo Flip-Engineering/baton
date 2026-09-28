@@ -105,13 +105,12 @@ function normalizeNodeTemplate(value, { deployed, policy, roleRequestText }) {
     'definitionOfDone', 'pathScope', 'contextScope', 'risk', 'verificationContract',
     'capabilities', 'effects', 'requiredEffects', 'workerPolicyRequest',
   ], label);
-  if (!Array.isArray(value.definitionOfDone) || value.definitionOfDone.length < 1
-    || value.definitionOfDone.length > policy.maxEvidenceRefs) {
-    fail(`${label}.definitionOfDone must contain 1..maxEvidenceRefs entries`);
+  if (!Array.isArray(value.definitionOfDone) || value.definitionOfDone.length < 1) {
+    fail(`${label}.definitionOfDone must contain at least 1 entry`);
   }
   const definitionOfDone = value.definitionOfDone.map((entry, index) => boundedText(
     entry, `${label}.definitionOfDone[${index}]`, policy.maxValueBytes));
-  const setBound = { min: 0, max: policy.maxEvidenceRefs };
+  const setBound = { min: 0 };
   const capabilities = normalizeSafeIdSet(value.capabilities, `${label}.capabilities`, setBound);
   const effects = normalizeSafeIdSet(value.effects, `${label}.effects`, setBound);
   const requiredEffects = normalizeSafeIdSet(value.requiredEffects, `${label}.requiredEffects`, setBound);
@@ -124,10 +123,8 @@ function normalizeNodeTemplate(value, { deployed, policy, roleRequestText }) {
   }
   return {
     definitionOfDone,
-    pathScope: normalizePathArray(value.pathScope, `${label}.pathScope`,
-      { min: 1, max: policy.maxEvidenceRefs }),
-    contextScope: normalizePathArray(value.contextScope, `${label}.contextScope`,
-      { min: 1, max: policy.maxEvidenceRefs }),
+    pathScope: normalizePathArray(value.pathScope, `${label}.pathScope`, { min: 1 }),
+    contextScope: normalizePathArray(value.contextScope, `${label}.contextScope`, { min: 1 }),
     risk: safeId(value.risk, `${label}.risk`),
     verificationContract: normalizeVerificationContractRef(value.verificationContract,
       `${label}.verificationContract`),

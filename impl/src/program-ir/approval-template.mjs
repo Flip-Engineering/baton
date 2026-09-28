@@ -5,7 +5,7 @@
 // usedEffectKinds; 93a.2 control-only Programs yield the empty set; repeat/child bodies are
 // independently normalized Programs bound by their own approval envelopes, never restated here),
 // repositoryScopes equal the sorted union of every **inline** catalog role template's pathScope
-// and contextScope with a [0..policy.maxEvidenceRefs] bound, and the three constraint digests
+// and contextScope, and the three constraint digests
 // recompute over the Program-canonical exact{kind, entries} preimages with set-like-by-role
 // entries. templateDigest hashes the complete template excluding itself.
 // A content_ref role template's bytes are an immutable approved artifact read only at replay, so
@@ -106,7 +106,7 @@ export function normalizeApprovalTemplate(value, {
     fail('Approval template effectKinds contains duplicates');
   }
   const repositoryScopes = normalizePathArray(normalized.repositoryScopes,
-    'Approval template repositoryScopes', { min: 0, max: policy.maxEvidenceRefs });
+    'Approval template repositoryScopes', { min: 0 });
   const routeConstraintDigest = digestValue(normalized.routeConstraintDigest,
     'Approval template routeConstraintDigest');
   const serviceTierConstraintDigest = digestValue(normalized.serviceTierConstraintDigest,

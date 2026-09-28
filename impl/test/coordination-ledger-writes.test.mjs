@@ -310,7 +310,7 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
   // The canonical-order receipt: minted by the moved _writeCanonicalReceipt under the held lease.
   const canonicalRoot = mkdtempSync(join(tmpdir(), 'baton-clw5-b-'));
   try {
-    const policy = { maxEventBytes: 65_536, maxEvents: 1_000, maxLedgerBytes: 1_048_576, maxReceiptBytes: 65_536 };
+    const policy = {};
     const store = new CoordinationStore(canonicalRoot, { clock: CLOCK, canonicalOrderPolicy: policy });
     store.claimWriterLease();
     const created = store.createTask(

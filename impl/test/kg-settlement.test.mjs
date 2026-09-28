@@ -91,7 +91,7 @@ const REVIEW_SESSION = {
   authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: 'wave-owner', sessionId: 'session-wave-owner' }),
   expiresAt: '2026-08-01T08:30:00.000Z',
 };
-const ADMISSION_POLICY = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
+const ADMISSION_POLICY = Object.freeze({ repoId, });
 
 // The workflow-admission candidate Finding: an observed, package-admitted node minted through the
 // shipped knowledge write (the settlement hook no longer mints candidacies of its own).

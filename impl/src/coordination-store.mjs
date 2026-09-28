@@ -1841,9 +1841,6 @@ export class CoordinationStore {
    * scratch.read family (zero promotion weight; minScratchReaders never counts these). */
   recordContextRead(fields, auth) { return coordinationLedger.recordContextRead(this, fields, auth); }
 
-  /** Epic #81 (O-2): per-attempt constructive receipt ceilings — count AND byte bounds checked
-   * BEFORE append. No clock (campaign law); the bound is the constructive flood control. */
-  _assertOrientationReceiptCeiling(payload) { return coordinationAdmission._assertOrientationReceiptCeiling(this, payload); }
 
   /** Epic #81 (O-4): a hub-derived KG Source node per orientation module coordinate — the anchor
    * curated-overlay leaves Cite. Source is a closed KG node type; the coordinate is the overlay's
@@ -1853,8 +1850,7 @@ export class CoordinationStore {
   /** Epic #81 (O-2/O-4): orientation.candidate.propose. The candidate is hub-minted observed
    * (callers supply only {packDigest, leafDigest}); it verifies the proposing attempt previously
    * received the orientation surface (a context.read receipt or an operator Source), coalesces
-   * duplicates by {leafDigest, freshnessDigest}, and is bounded by the per-attempt proposal
-   * ceiling. Never caller-authored body/grounding/scope. */
+   * duplicates by {leafDigest, freshnessDigest}. Never caller-authored body/grounding/scope. */
     proposeOrientationCandidate({ leafDigest, packDigest }, auth) { return coordinationLedgerWrites.proposeOrientationCandidate(this, { leafDigest, packDigest }, auth); }
 
   /** Epic #81 (O-4): merge generated module structure with the curated overlay. A curated leaf
@@ -1884,8 +1880,6 @@ export class CoordinationStore {
     orientationReadHead(workerId, packDigest) { return coordinationLedgerWrites.orientationReadHead(this, workerId, packDigest); }
 
     _orientationCandidate(leafDigest, freshnessDigest) { return coordinationLedgerWrites._orientationCandidate(this, leafDigest, freshnessDigest); }
-
-  _assertOrientationProposalCeiling(workerId) { return coordinationAdmission._assertOrientationProposalCeiling(this, workerId); }
 
   /** BD3-C: append-only lane audit receipts (message.sent / message.delivered). The delivery
    * state machine (delivered/read/actedOn/reply) is process-scoped coordinator state. */

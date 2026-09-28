@@ -42,7 +42,7 @@ import { validProcessClosedPayload, validProcessStartedPayload, validRecoveryPro
 
 // KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
 // knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
-const KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS = ['repoId', 'maxBatchBytes', 'maxResultBytes'];
+const KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS = ['repoId'];
 
 const SCRATCH_CORRECTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
 
@@ -68,9 +68,7 @@ const REPRESENTATION_AUTHORITY = Object.freeze({
 
 function validKnowledgeWorkflowAdmissionPolicy(policy) {
   if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
-  const numeric = KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS.filter((name) => name !== 'repoId');
-  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return true;
 }
 
 function validResultSha(value) { return typeof value === 'string' && /^[a-f0-9]{40,64}$/u.test(value); }
@@ -153,14 +151,13 @@ export function _validateCanonicalReceipt(store, receipt, bytes, ledger) {
   try { receiptPolicy = normalizeCanonicalOrderPolicy(receipt.policy); cutPolicy = normalizeCanonicalOrderPolicy(receipt.cutPolicy); }
   catch { store._canonicalOrderFail('canonical-order receipt policy is malformed'); }
   if (canonicalDigest(receiptPolicy) !== canonicalDigest(store._canonicalOrderPolicy)) store._canonicalOrderFail('canonical-order receipt policy differs from deployment authority');
-  if (Object.keys(cutPolicy).some((key) => cutPolicy[key] > receiptPolicy[key])) store._canonicalOrderFail('canonical-order receipt cut exceeds deployment authority');
   const core = Object.fromEntries(Object.entries(receipt).filter(([key]) => key !== 'receiptDigest'));
   if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core)), 'utf8'))) {
     store._canonicalOrderFail('canonical-order receipt digest is invalid');
   }
   const canonicalBytesValue = store._receiptBytes(receipt);
-  if (bytes.byteLength > store._canonicalOrderPolicy.maxReceiptBytes || !bytes.equals(canonicalBytesValue)) {
-    store._canonicalOrderFail('canonical-order receipt bytes are non-canonical or oversized');
+  if (!bytes.equals(canonicalBytesValue)) {
+    store._canonicalOrderFail('canonical-order receipt bytes are non-canonical');
   }
   if (receipt.throughSeq > ledger.events.length) store._canonicalOrderFail('canonical-order receipt names a missing prefix');
   const prefixBytes = receipt.throughSeq === 0 ? 0 : ledger.offsets[receipt.throughSeq - 1];
@@ -6300,29 +6297,6 @@ export function hasSwarmParticipantRun(state, runId) {
     .some((participant) => participant.runId === runId));
 }
 
-export function _assertOrientationReceiptCeiling(store, payload) {
-  if (!store._orientationReceiptCeilings) return;
-  const ceilings = store._orientationReceiptCeilings;
-  // #367: the per-attempt counter fold (built in the context.read arm of _apply) answers the
-  // count and cumulative-byte bounds in O(1) — the one canonicalBytes call below is for the
-  // INCOMING row; prior receipts are never re-scanned or re-serialized here.
-  const counter = store._contextReadAttemptCounters.get(contextReadAttemptKey(payload));
-  if ((counter?.count ?? 0) >= ceilings.maxReceiptsPerAttempt) {
-    throw new CoordinationRefusal('orientation receipt count ceiling exceeded', 'orientation_receipt_ceiling');
-  }
-  if ((counter?.bytes ?? 0) + canonicalBytes(payload) > ceilings.maxReceiptBytesPerAttempt) {
-    throw new CoordinationRefusal('orientation receipt byte ceiling exceeded', 'orientation_receipt_ceiling');
-  }
-}
-
-export function _assertOrientationProposalCeiling(store, workerId) {
-  if (!store._orientationReceiptCeilings) return;
-  const proposals = store.queryKnowledge({ types: ['Finding'] }).filter((node) => node.promotion?.trigger === 'orientation.overlay_proposed'
-    && (workerId === null || node.workerId === workerId));
-  if (proposals.length >= store._orientationReceiptCeilings.maxProposalsPerAttempt) {
-    throw new CoordinationRefusal('orientation proposal ceiling exceeded', 'orientation_receipt_ceiling');
-  }
-}
 
 export function checkScratch(store, resource, envRef) {
   if (!validEnvRef(envRef)) throw new CoordinationRefusal('scratch check requires immutable repoId/treeSha envRef', 'invalid_env_ref');
@@ -6820,7 +6794,7 @@ export function _validateWorkflowAdmissionPayload(store, payload, event, integri
   if (canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges)
     || payload.projectionDigest !== derived.projectionDigest) fail('workflow admission projection diverged');
   const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
-  if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('workflow admission receipt is invalid or oversized');
+  if (payload.receiptDigest !== canonicalDigest(core)) fail('workflow admission receipt is invalid');
   return derived;
 }
 
@@ -6892,7 +6866,6 @@ export function admitWorkflowFinding(store, repoId, runId, candidateFindingId, p
     projectionDigest: derived.projectionDigest,
   };
   const payload = { ...core, receiptDigest: canonicalDigest(core) };
-  if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('workflow admission batch exceeded deployment ceiling', 'workflow_admit_oversize');
   const fixedTs = store._clock();
   const prospective = { schemaVersion: 1, seq: store._events.length + 1, ts: fixedTs, kind: 'knowledge.workflow_admitted', actor: auth.actor, idempotencyKey: auth.key, payload };
   store._validateWorkflowAdmissionPayload(payload, prospective, false);

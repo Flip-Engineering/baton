@@ -183,7 +183,7 @@ test('P93A2-P2: ProgramPolicy numerics fail program_policy_invalid and require t
     { maxProgramNodes: 0 }, { maxProgramNodes: -1 }, { maxProgramNodes: 1.5 },
     { maxProgramBytes: Number.MAX_SAFE_INTEGER + 1 }, { maxJoinMembers: '8' },
     { maxParallelBranches: 0 }, { maxParallelBranches: -2 }, { maxParallelBranches: 4.5 },
-    { maxParallelBranches: '4' }, { maxTraceBytes: null }, { maxEvidenceRefs: 0 },
+    { maxParallelBranches: '4' }, { maxTraceBytes: null },
   ]) {
     assert.throws(() => normalizeProgramPolicy(make(bad), f.authority), policyInvalid, JSON.stringify(bad));
   }
@@ -191,7 +191,7 @@ test('P93A2-P2: ProgramPolicy numerics fail program_policy_invalid and require t
   assert.throws(() => normalizeProgramPolicy(make({}), undefined), policyInvalid);
   const NUMERIC_FIELDS = [
     'maxProgramBytes', 'maxProgramNodes', 'maxProgramDepth', 'maxSchemaDefinitions', 'maxValueBytes',
-    'maxResultBytes', 'maxEvidenceRefs', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
+    'maxResultBytes', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
     'maxJoinMembers', 'maxJoinComparisons', 'maxStateRevisions', 'maxTraceBytes',
   ];
   for (const field of NUMERIC_FIELDS) {

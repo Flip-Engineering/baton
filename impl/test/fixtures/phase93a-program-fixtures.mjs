@@ -82,7 +82,7 @@ export function programFixture() {
     lifecyclePolicyDigest: sha256('fixture lifecycle policy'),
     maxProgramBytes: 262144, maxProgramNodes: 64, maxProgramDepth: 16,
     maxSchemaDefinitions: 32, maxValueBytes: 16384, maxResultBytes: 16384,
-    maxEvidenceRefs: 16, maxParallelBranches: null, maxRepeatRounds: 8,
+    maxParallelBranches: null, maxRepeatRounds: 8,
     maxChildDepth: 4, maxEffectInstances: 16, maxJoinMembers: 8,
     maxJoinComparisons: 64, maxStateRevisions: 128, maxTraceBytes: 65536,
     ...overrides,

@@ -51,8 +51,8 @@ export function _readCanonicalReceipt(store, ledger = store._readCanonicalLedger
   let stat;
   try { stat = lstatSync(store._canonicalOrderReceiptFile); }
   catch { store._canonicalOrderFail('canonical-order receipt is unavailable'); }
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > store._canonicalOrderPolicy.maxReceiptBytes) {
-    store._canonicalOrderFail('canonical-order receipt path or size is invalid');
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
+    store._canonicalOrderFail('canonical-order receipt path is invalid');
   }
   const bytes = readFileSync(store._canonicalOrderReceiptFile);
   let receipt;
@@ -88,7 +88,7 @@ export function _ensureCanonicalOrderReceipt(store) {
     if (store._canonicalOrderMigration) {
       const migration = store._canonicalOrderMigration;
       const expectedMode = migration.mode === 'reset_empty' ? 'empty_bootstrap' : 'adopt_compatible';
-      const requestedCut = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
+      const requestedCut = {};
       if (current.mode !== expectedMode
         || canonicalDigest(current.cutPolicy) !== canonicalDigest(requestedCut)
         || (migration.mode === 'adopt_compatible' && (current.prefixDigest !== migration.expectedPrefixDigest || current.throughSeq !== migration.expectedEvents))) {
@@ -99,12 +99,11 @@ export function _ensureCanonicalOrderReceipt(store) {
   }
   if (store._canonicalOrderMigration) {
     const migration = store._canonicalOrderMigration;
-    if (Object.keys(migration).filter((key) => key !== 'mode' && !key.startsWith('expected')).some((key) => migration[key] > store._canonicalOrderPolicy[key])) {
-      store._canonicalOrderFail('canonical-order migration exceeds deployment authority', 'canonical_order_migration_invalid');
-    }
+    // #530: the four deployment ceilings left this policy, so a migration has nothing to compare
+    // against here; its declared identity is compared with the ledger below.
     if (migration.mode === 'reset_empty') {
       if (ledger.raw.byteLength !== 0 || ledger.events.length !== 0) store._canonicalOrderFail('canonical-order reset requires a newly selected empty ledger', 'canonical_order_migration_invalid');
-      const cutPolicy = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
+      const cutPolicy = {};
       return store._writeCanonicalReceipt('empty_bootstrap', ledger, cutPolicy);
     }
     if (ledger.raw.byteLength === 0 || ledger.events.length !== migration.expectedEvents
@@ -112,7 +111,7 @@ export function _ensureCanonicalOrderReceipt(store) {
       store._canonicalOrderFail('canonical-order adoption identity differs from the ledger', 'canonical_order_migration_invalid');
     }
     store._resetProjection(); _load(store);
-    const cutPolicy = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
+    const cutPolicy = {};
     return store._writeCanonicalReceipt('adopt_compatible', ledger, cutPolicy);
   }
   if (ledger.raw.byteLength !== 0) store._canonicalOrderFail('non-empty coordination history requires explicit canonical-order adoption', 'canonical_order_migration_required');

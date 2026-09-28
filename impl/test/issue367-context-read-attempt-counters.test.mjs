@@ -104,38 +104,23 @@ test('#367.a admission of the next read reads the counter — the ledger is neve
   quietRelease(store);
 });
 
-test('#367.b the count and byte ceilings refuse at the same boundary with the same code and message', (t) => {
-  // Count leg: 3 receipts on one attempt key admit, the 4th refuses before append.
+test('#367.b (#530): the receipt ceilings left — the same boundaries admit', (t) => {
   const countStore = new CoordinationStore(freshRoot(t, 'b-count'), storeOptions(ceilings(3, 1_000_000)));
-  for (let n = 1; n <= 3; n += 1) {
-    assert.equal(countStore.recordContextRead(tuple(n), auth(`bc${n}`)).result, 'recorded');
+  for (let n = 1; n <= 4; n += 1) {
+    assert.equal(countStore.recordContextRead(tuple(n), auth(`bc${n}`)).result, 'recorded',
+      `receipt ${n} admits — no per-attempt count ceiling refuses`);
   }
-  const beforeCount = countStore.snapshot().lastSeq;
-  const countRefusal = refusalOf(() => countStore.recordContextRead(tuple(4), auth('bc4')));
-  assert.ok(countRefusal, 'the per-attempt count ceiling refuses');
-  assert.equal(countRefusal.message, 'orientation receipt count ceiling exceeded');
-  assert.equal(countRefusal.code, 'orientation_receipt_ceiling');
-  assert.equal(countStore.snapshot().lastSeq, beforeCount, 'no event is appended past the count ceiling');
   quietRelease(countStore);
-
-  // Byte leg, exact boundary: B = 3·RB admits exactly three rows, the 4th refuses.
   const byteStore = new CoordinationStore(freshRoot(t, 'b-byte'), storeOptions(ceilings(1_000, 3 * RB)));
-  for (let n = 1; n <= 3; n += 1) {
-    assert.equal(byteStore.recordContextRead(tuple(n), auth(`bb${n}`)).result, 'recorded');
+  for (let n = 1; n <= 4; n += 1) {
+    assert.equal(byteStore.recordContextRead(tuple(n), auth(`bb${n}`)).result, 'recorded',
+      `receipt ${n} admits — no cumulative byte ceiling refuses`);
   }
-  const beforeByte = byteStore.snapshot().lastSeq;
-  const byteRefusal = refusalOf(() => byteStore.recordContextRead(tuple(4), auth('bb4')));
-  assert.ok(byteRefusal, 'the per-attempt byte ceiling refuses');
-  assert.equal(byteRefusal.message, 'orientation receipt byte ceiling exceeded');
-  assert.equal(byteRefusal.code, 'orientation_receipt_ceiling');
-  assert.equal(byteStore.snapshot().lastSeq, beforeByte, 'no event is appended past the byte ceiling');
   quietRelease(byteStore);
-
-  // Boundary exactness: one row-width of headroom admits the 4th — the fold must not shift it.
   const snugStore = new CoordinationStore(freshRoot(t, 'b-snug'), storeOptions(ceilings(1_000, 4 * RB)));
   for (let n = 1; n <= 4; n += 1) {
     assert.equal(snugStore.recordContextRead(tuple(n), auth(`bs${n}`)).result, 'recorded',
-      `the 4th row fits B = 4·RB exactly (row ${n})`);
+      `the 4th row admits (row ${n})`);
   }
   quietRelease(snugStore);
 });
@@ -155,13 +140,8 @@ test('#367.c a restored checkpoint judges the same ceiling — the counter rides
     assert.deepEqual(foldSnapshot(reopened), appended,
       'the restored fold equals the append-maintained fold');
 
-    // Same boundary as the live store: the 4th row refuses, identical message and code.
-    const refusal = refusalOf(() => reopened.recordContextRead(tuple(4), auth('c4')));
-    assert.ok(refusal, 'the restored fold refuses at the same byte boundary');
-    assert.equal(refusal.message, 'orientation receipt byte ceiling exceeded');
-    assert.equal(refusal.code, 'orientation_receipt_ceiling');
-
-    // The boundary is not shifted: a fresh attempt key still admits through the restored fold.
+    assert.equal(reopened.recordContextRead(tuple(4), auth('c4')).result, 'recorded',
+      '#530: the 4th row is admitted through the restored fold');
     assert.equal(reopened.recordContextRead(tuple(1, { taskId: 'task-367-other' }), auth('c-other')).result,
       'recorded', 'a fresh attempt key admits through the restored fold');
   } finally { quietRelease(reopened); }

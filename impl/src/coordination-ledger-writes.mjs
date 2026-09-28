@@ -251,20 +251,6 @@ export function constructor(store, root, opts = {}) {
     if (store._goalPlanPolicy && store._repoId !== store._goalPlanPolicy.repoId) {
       throw new TypeError('coordination repository identity differs from goal/plan authority');
     }
-    // Epic #81 (O-2): per-attempt constructive ceilings on orientation receipts/proposals — the
-    // flood control that replaces the v1 maxScanEvents scan ceiling (a scan bound, not a write
-    // bound). Checked BEFORE append; no clock participates (campaign law).
-    store._orientationReceiptCeilings = null;
-    if (opts.orientationReceiptCeilings !== undefined) {
-      const c = opts.orientationReceiptCeilings;
-      if (!c || typeof c !== 'object' || Array.isArray(c)
-        || !Number.isSafeInteger(c.maxReceiptsPerAttempt) || c.maxReceiptsPerAttempt <= 0
-        || !Number.isSafeInteger(c.maxReceiptBytesPerAttempt) || c.maxReceiptBytesPerAttempt <= 0
-        || !Number.isSafeInteger(c.maxProposalsPerAttempt) || c.maxProposalsPerAttempt <= 0) {
-        throw new TypeError('orientation receipt ceilings are invalid');
-      }
-      store._orientationReceiptCeilings = freeze(clone(c));
-    }
     store._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
       ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
     store._runLineagePolicy = opts.runLineagePolicy === undefined
@@ -344,7 +330,6 @@ export function _writeCanonicalReceipt(store, mode, ledger, cutPolicy = store._c
     const core = store._canonicalReceiptCore(mode, ledger, createdAt, cutPolicy);
     const receipt = { ...core, receiptDigest: sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core)), 'utf8')) };
     const bytes = store._receiptBytes(receipt);
-    if (bytes.byteLength > store._canonicalOrderPolicy.maxReceiptBytes) store._canonicalOrderFail('canonical-order receipt exceeds its byte ceiling');
     const temp = join(store.root, `${CANONICAL_ORDER_TEMP_PREFIX}${randomUUID()}`);
     let fd = null;
     try {
@@ -892,7 +877,6 @@ export function proposeOrientationCandidate(store, { leafDigest, packDigest }, a
     const freshnessDigest = source?.freshnessDigest ?? store._orientationWorkerFreshness(workerId) ?? '0'.repeat(64);
     const existing = store._orientationCandidate(leafDigest, freshnessDigest);
     if (existing) return { ok: true, result: 'idempotent', node: clone(existing) };
-    store._assertOrientationProposalCeiling(workerId);
     const candidateId = `orientation:candidate:${canonicalDigest({ freshnessDigest, leafDigest })}`;
     const result = store.addKnowledgeNode({
       body: `orientation overlay candidate leaf ${leafDigest.slice(0, 12)}`, evidence: [],
