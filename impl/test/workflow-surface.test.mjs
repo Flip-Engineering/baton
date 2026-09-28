@@ -701,7 +701,7 @@ test('FP-07 (stage: facade watch absent): candidacy_review discloses only to the
   // the store's promotion queue (the D2 staging's durable source).
   fx.coordination.addKnowledgeNode({
     id: 'knowledge:ws-c2-candidacy', type: 'Finding', grounding: 'observed',
-    body: 'a finding awaits review', promotion: { kind: 'Finding', trigger: 'package.admitted' },
+    body: 'a finding awaits review', promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' },
   }, { actor: 'policy', key: 'ws-c2-candidacy' });
   const queue = fx.coordination.knowledgeCandidateQueue?.({}) ?? { count: 0 };
   assert.ok((queue.count ?? 0) >= 1, 'the candidacy exists (a vacuous D2 greens nothing)');
