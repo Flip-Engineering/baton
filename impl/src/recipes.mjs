@@ -293,7 +293,7 @@ function resolveTask(templateTask, runtimeTask) {
   return `${templateTask}\n${runtimeTask}`;
 }
 
-// Render one member into the durable, serializable shape the manifest and waves.attach carry. The
+// Render one member into the durable, serializable shape the manifest carries. The
 // objective is fully rendered (task resolved + constraints + the salt line).
 export function renderMember(member, task, salt, onAdvisory) {
   const objective = renderObjective({

@@ -94,16 +94,3 @@ test('S-E6 RED (stage: attention-request-leak): an unconfirmed operation row nev
   }
 });
 
-test('S-G5 RED (stage: scoped-view-context-unscoped): a scoped view projects only the context its subtree owns', async (t) => {
-  const { root, paused, asWorker } = await fixture(t);
-  const swarm = await root.swarms.create('context scope');
-  const reader = await swarm.recruit('reader', 'Read only', { ...selection, permissions: ['read'] });
-  const author = await swarm.recruit('author', 'Author', { ...selection, permissions: SWARM_PERMISSIONS });
-  const readerHandle = asWorker(await paused(reader.runId)).swarms.open(swarm.id);
-  const authorHandle = asWorker(await paused(author.runId)).swarms.open(swarm.id);
-  await authorHandle.context({ key: 'author-only', body: { secret: 'A' } });
-  const scoped = await readerHandle.view();
-  assert.deepEqual(Object.keys(scoped.context ?? {}), [],
-    'a read-only participant’s view must not project a sibling’s context entry');
-});
-

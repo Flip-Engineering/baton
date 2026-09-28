@@ -18,13 +18,6 @@
 // ratchet (value-set scan across spellings + hand-typed byte prose, named deliberate locals
 // exempted) and the store-consumer dispositions that stay; G the folded OQ2 truncation marker.
 //
-// INVENTORY + SPLIT (v1.2, re-measured 2026-08-04 from the repo root; #598 dropped four
-// rows): 46 rows — A ×5, B ×15 (B16 run.legacy_send.body added at the blue-team fold),
-// C ×10 (C10 the wave-member byte-law oracle added), D ×6 (incl. 3 pins), E ×6, F ×3
-// (incl. 2 pins), G ×1. Split: 41 red / 5 green pins (D2, D3, D6, F2, F3); every red row
-// fails at its named stage. F1's scan counts 55 unconsolidated hits (46 at v1.1 + the nine
-// de-exempted legacy-alias door literals, retiring on import).
-//
 // Red-first: written against the v1.1 contract BEFORE implementation; every contract-mandated-
 // but-missing capability fails at a NAMED stage. Harness pattern mirrors
 // test/bidirectional-v3.test.mjs (ScriptableAdapter + Coordinator + fake worktrees for
