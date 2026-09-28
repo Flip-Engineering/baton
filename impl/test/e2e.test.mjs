@@ -343,16 +343,13 @@ test('E2E happy path: a real task runs the whole spawn->trust-gate->completed pi
   // content but never a caller-owned object whose nested verification could change mid-run.
   assert.equal(sys.adapterCalls.spawn.length, 1);
   assert.notEqual(sys.adapterCalls.spawn[0][1], brief, 'CI1: adapter receives an admission-owned snapshot');
-  // Admission adds context grants while preserving every delegation field.
+  // Admission adds the pending-attention push while preserving every delegation field. The L0
+  // orientation grant left with the context plane (#598), so the push is the only addition.
   const admitted = sys.adapterCalls.spawn[0][1];
-  const { orientation, attention, ...delegationSnapshot } = admitted;
+  const { attention, ...delegationSnapshot } = admitted;
   assert.deepEqual(delegationSnapshot, brief, 'CI1: snapshot preserves the delegation contract field for field');
-  // O-6: the pathScope-scoped L0 orientation grant — a cited, framed context-pack ADDED at
-  // admission, never a mutation of the delegation fields.
-  assert.ok(orientation && orientation.packId, 'O-6: the L0 orientation grant is cited into the brief');
   // Issue #79 (D1/D3): a worker-addressed brief always carries the pending-attention push; the
-  // empty pending set is attached as `[]` (the renderer omits the section) — asserted
-  // independently of the orientation grant so neither hides the other.
+  // empty pending set is attached as `[]` (the renderer omits the section).
   assert.deepEqual(attention, [], 'the empty pending-attention push is attached for an addressed worker');
   assert.ok(Object.isFrozen(admitted), 'CI1: admitted snapshot is immutable');
 

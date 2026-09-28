@@ -154,7 +154,7 @@ test('configured describe resolves canonical names and corrected live aliases de
 test('configured describe reports embedded-only capability without promoting it', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
-  const response = await call(server, 'baton_surface_describe', { name: 'repl.binding' }, 22);
+  const response = await call(server, 'baton_surface_describe', { name: 'run.scratchpad' }, 22);
   const capability = response.result.structuredContent.capability;
   assert.equal(capability.remotePosture, 'embedded_only');
   assert.equal(capability.operatorFacing, false);
@@ -185,7 +185,7 @@ test('generic MCP invoke refuses embedded-only authority and requires action coo
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
   const embedded = await call(server, 'baton_surface_invoke', {
-    name: 'repl.binding', args: { runId: 'run:a' }, idempotencyKey: 'embedded:1',
+    name: 'run.scratchpad', args: { runId: 'run:a' }, idempotencyKey: 'embedded:1',
   }, 31);
   assert.equal(embedded.result.isError, true);
   assert.equal(embedded.result.structuredContent.error.code, 'surface_embedded_only');
