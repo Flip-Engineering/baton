@@ -257,9 +257,6 @@ async function surfaceSnapshot(target, runtime, args) {
       ?? target.application?.doctorReadiness?.() ?? null),
     workers: await safe(() => target.coordinator?.list?.() ?? []),
     routeCapabilities: await safe(() => target.coordinator?.capabilityCards?.() ?? []),
-    providerTelemetry: await safe(() => target.coordinator?.readProviderStatus?.({}, {
-      repoId: [...(target.repoIds ?? [])][0] ?? null,
-    }) ?? null),
   };
   if (args.runId) {
     snapshot.run = await safe(() => target.application.command(

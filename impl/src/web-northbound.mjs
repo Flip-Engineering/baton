@@ -1655,8 +1655,6 @@ export class WebNorthbound {
       value = await this.coordinator.wait(Number(a.timeoutMs ?? WEB_WAIT_DEFAULT_MS));
     } else if (envelope.command === 'capabilities') {
       value = this.coordinator.capabilityCards();
-    } else if (envelope.command === 'provider_status') {
-      value = this.coordinator.readProviderStatus(a, { repoId: envelope.repoId });
     } else if (envelope.command === 'capability_invoke') {
       const capabilityCtx = {
         budgetTokens: a.budgetTokens, actor: webActor, repoId: envelope.repoId,

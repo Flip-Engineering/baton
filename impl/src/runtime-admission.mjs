@@ -432,18 +432,6 @@ export function constructor(coordinator, opts) {
     }
     coordinator._atlasStructuralEvidence = opts.atlasStructuralEvidence ?? null;
     if (coordinator._atlasStructuralEvidence !== null && typeof coordinator._atlasStructuralEvidence.classify !== 'function') throw new TypeError('Coordinator Atlas structural evidence authority is invalid');
-    coordinator._advisoryFeeds = opts.advisoryFeeds ?? null;
-    const advisoryCards = coordinator._advisoryFeeds?.cards?.() ?? [];
-    if (advisoryCards.length > 0) {
-      if (typeof coordinator._advisoryFeeds.verify !== 'function') throw new TypeError('Coordinator advisory feed registry is missing verify()');
-      for (const method of ['recordProviderDelivery', 'pendingProviderReconciliation', 'providerReceipt', 'providerProcessing']) {
-        if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      }
-      if (advisoryCards.some((card) => card.modes.includes('poll'))) {
-        if (typeof coordinator._advisoryFeeds.pollFull !== 'function' || typeof coordinator._advisoryFeeds.reverifyPollSync !== 'function') throw new TypeError('Coordinator advisory feed registry is missing poll authority');
-        for (const method of ['providerSourceHealth', 'recordProviderSourceReconciliation']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      }
-    }
     coordinator._providerReconciliation = null;
     if (opts.providerReconciliation !== undefined) {
       const config = opts.providerReconciliation; const authority = config?.indexAuthority; const card = authority?.card?.();
@@ -2034,35 +2022,6 @@ export function routeCards(coordinator, recorder) {
     return deepFreeze(Object.entries(coordinator._adapters)
       .map(([name, adapter]) => ({ name, card: JSON.parse(JSON.stringify(adapter.card())) }))
       .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-  }
-
-export function advisoryFeedCards(coordinator, recorder) {
-    coordinator._assertReadable();
-    return coordinator._advisoryFeeds?.cards?.() ?? [];
-  }
-
-export async function receiveProviderDelivery(coordinator, recorder, providerId, input, ctx = {}) {
-    await coordinator._assertOperational();
-    if (!coordinator._advisoryFeeds || coordinator.advisoryFeedCards().length === 0 || !coordinator._repoId) throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
-    if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
-    const releaseAuthority = coordinator._acquireAuthorityOp();
-    try {
-      const receipt = await coordinator._advisoryFeeds.verify(providerId, input, { signal: ctx.signal });
-      const key = `provider-delivery:${canonicalDigest({ repoId: coordinator._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
-      return recorder.coordination.recordProviderDelivery({ repoId: coordinator._repoId, receipt }, { actor: `provider:${providerId}`, key });
-    } finally { releaseAuthority(); }
-  }
-
-export async function receiveProviderWebhook(coordinator, recorder, providerId, input, ctx = {}) {
-    await coordinator._assertOperational();
-    if (!coordinator._advisoryFeeds || coordinator.advisoryFeedCards().length === 0 || !coordinator._repoId || typeof coordinator._advisoryFeeds.verifyWebhook !== 'function') throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
-    if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
-    const releaseAuthority = coordinator._acquireAuthorityOp();
-    try {
-      const receipt = await coordinator._advisoryFeeds.verifyWebhook(providerId, input, { signal: ctx.signal });
-      const key = `provider-delivery:${canonicalDigest({ repoId: coordinator._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
-      return recorder.coordination.recordProviderDelivery({ repoId: coordinator._repoId, receipt }, { actor: `provider:${providerId}`, key });
-    } finally { releaseAuthority(); }
   }
 
 export async function invokeCapability(coordinator, recorder, name, op, args, ctx = {}) {

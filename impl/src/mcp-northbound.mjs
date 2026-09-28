@@ -2743,7 +2743,6 @@ export class McpFleetServer {
     else if (name === 'fleet_result') value = await this.coordinator.result(args.workerId);
     else if (name === 'fleet_list') value = this.coordinator.list();
     else if (name === 'fleet_capabilities') value = this.coordinator.capabilityCards();
-    else if (name === 'fleet_provider_status') value = this.coordinator.readProviderStatus(Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'repoId')), { repoId: args.repoId });
     else if (name === 'fleet_capability_invoke') {
       const context = { budgetTokens: args.budgetTokens, actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}`, transport: 'mcp' };
       const action = args.action;

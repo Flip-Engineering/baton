@@ -28,9 +28,6 @@ import {
   AtlasRepresentationProducer, AtlasCodeIndex, AtlasStructuralDelta,
   AtlasStructuralEvidence, CartographerQuartermaster,
 } from './native-modules.mjs';
-import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
-import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
-import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
@@ -167,10 +164,7 @@ export { NpmProposalResolver } from './npm-proposal-resolver.mjs';
 export { PublicSupplyChainOracle } from './supply-chain-oracle.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
-export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
-export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 export { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
-export { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 export {
   BatonApplication, APPLICATION_COMMAND_DEFINITIONS, APPLICATION_SEMANTIC_REGISTRY,
   validateApplicationCommandArgs,
@@ -705,11 +699,6 @@ function refereeFn(runtime, task, result, opts) {
  * @param {{repoRoot:string, logDir:string, adapters:Record<string,object>, now?:()=>number,
  *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
- *          advisoryFeedSources?:Record<string,object>,
- *          providerReconciliation?:{budgetTokens:number,indexAuthority:object},
- *          providerPolling?:{intervalMs:number,initialBackoffMs:number},
- *          providerProcessingSchedule?:{intervalMs:number,maxBatch:number,maxAttempts:number,initialBackoffMs:number,maxBackoffMs:number,maxStateRows:number},
- *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
  *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
  *          sessionRecoveryPolicy?:{maxAttempts:number,maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
@@ -853,17 +842,6 @@ export function createDriver(opts) {
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
   });
-  const advisoryFeeds = new AdvisoryFeedRegistry({ sources: opts.advisoryFeedSources ?? {} });
-  const advisoryFeedCards = advisoryFeeds.cards();
-  if (advisoryFeedCards.length > 0 && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('advisory feed sources require one deployment-bound repoId');
-  let providerProcessingPolicy;
-  if (opts.providerProcessingSchedule !== undefined) {
-    const policy = opts.providerProcessingSchedule; const fields = ['intervalMs', 'maxBatch', 'maxAttempts', 'initialBackoffMs', 'maxBackoffMs', 'maxStateRows'];
-    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || typeof opts.repoId !== 'string' || opts.repoId.length === 0 || opts.providerReconciliation === undefined
-      || Object.values(policy).some((value) => !Number.isSafeInteger(value) || value <= 0) || policy.initialBackoffMs > policy.maxBackoffMs || policy.intervalMs > 24 * 60 * 60 * 1_000
-      || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('providerProcessingSchedule requires exact bounded deployment retry and reconciliation authority');
-    providerProcessingPolicy = Object.freeze({ ...policy });
-  }
   const workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy);
   // Issue #351 lane 3: the production open constructs the store DEFERRED and drives lane 2's
   // chunked-yielding replay through loadCoordinationStoreAsync — the open's loop beats during
@@ -882,10 +860,6 @@ export function createDriver(opts) {
     operationalRead: (worker, seq) => log.at(worker, seq),
     operationalRangeRead: (worker, throughSeq) => log.range(worker, throughSeq),
     clock: () => new Date(now()).toISOString(),
-    advisoryFeedCards,
-    advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),
-    advisoryPollReverify: (proof) => advisoryFeeds.reverifyPollSync(proof),
-    ...(providerProcessingPolicy ? { providerAttemptPolicy: providerProcessingPolicy } : {}),
     ...(routeLearningPolicy ? { routePolicy: routeLearningPolicy } : {}),
     ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
     ...(goalPlanAuthority ? { goalPlanPolicy: goalPlanAuthority.policy } : {}),
@@ -894,10 +868,6 @@ export function createDriver(opts) {
     ...(runLineagePolicy ? { runLineagePolicy } : {}),
     workflowPolicy,
   });
-  if (opts.coordination && advisoryFeedCards.length > 0) {
-    if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
-  }
-  if (opts.coordination && providerProcessingPolicy && (typeof coordination.providerAttemptPolicy !== 'function' || canonicalDigest(coordination.providerAttemptPolicy()) !== canonicalDigest(providerProcessingPolicy))) throw new TypeError('custom coordination store disagrees with deployment provider attempt policy');
   if (opts.coordination && routeLearningPolicy && (typeof coordination.routePolicy !== 'function' || typeof coordination.routeObservations !== 'function' || canonicalDigest(coordination.routePolicy()) !== canonicalDigest(routeLearningPolicy))) throw new TypeError('custom coordination store disagrees with deployment route learning policy');
   if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
   if (opts.coordination && goalPlanAuthority && (typeof coordination.goalPlanPolicy !== 'function' || canonicalDigest(coordination.goalPlanPolicy()) !== canonicalDigest(goalPlanAuthority.policy))) throw new TypeError('custom coordination store disagrees with deployment goal/plan policy');
@@ -986,20 +956,6 @@ export function createDriver(opts) {
     },
   });
   representationProducer?.bindRegistry(capabilities);
-  let providerReconciliation;
-  if (opts.providerReconciliation !== undefined) {
-    if (!opts.providerReconciliation || Object.keys(opts.providerReconciliation).sort().join(',') !== ['budgetTokens', 'indexAuthority'].sort().join(',')
-      || typeof opts.repoId !== 'string' || !Number.isSafeInteger(opts.providerReconciliation.budgetTokens) || opts.providerReconciliation.budgetTokens <= 0
-      || opts.providerReconciliation.budgetTokens > (opts.maxCapabilityBudgetTokens ?? 0)) throw new TypeError('provider reconciliation exceeds deployment capability authority');
-    providerReconciliation = { repoId: opts.repoId, budgetTokens: opts.providerReconciliation.budgetTokens, indexAuthority: opts.providerReconciliation.indexAuthority };
-  }
-  let providerRead;
-  if (opts.providerRead !== undefined) {
-    if (!opts.providerRead || Object.keys(opts.providerRead).sort().join(',') !== ['maxBytes', 'maxProcessing', 'maxProviders', 'maxStateRows'].sort().join(',')
-      || typeof opts.repoId !== 'string' || advisoryFeedCards.length === 0 || Object.values(opts.providerRead).some((value) => !Number.isSafeInteger(value) || value <= 0)
-      || opts.providerRead.maxProviders > 10_000 || opts.providerRead.maxProcessing > 100_000 || opts.providerRead.maxStateRows > 1_000_000 || opts.providerRead.maxBytes > 16 * 1024 * 1024) throw new TypeError('provider reads require deployment provider cards, repository, and bounded positive ceilings');
-    providerRead = { repoId: opts.repoId, ...opts.providerRead };
-  }
   if (opts.reuseDecisionPolicy !== undefined) {
     const card = capabilities.cards().find((item) => item.name === 'cartographer-quartermaster'); const policy = card?.reusePolicy; const ceilings = opts.reuseDecisionPolicy.policyReconcile;
     if (!policy || Object.keys(policy).sort().join(',') !== ['schemaVersion', 'policyId', 'hash', 'projection'].sort().join(',') || policy.schemaVersion !== 1 || policy.policyId !== 'quartermaster-vet-policy-v1' || !/^[a-f0-9]{64}$/.test(policy.hash ?? '') || canonicalDigest(policy.projection) !== policy.hash) throw new TypeError('reuse decision authority requires a valid Quartermaster policy card');
@@ -1084,10 +1040,6 @@ export function createDriver(opts) {
     runtimeScopes,
     capabilities,
     atlasStructuralEvidence,
-    advisoryFeeds,
-    providerReconciliation,
-    providerProcessingSchedule: providerProcessingPolicy ? { repoId: opts.repoId, ...providerProcessingPolicy } : undefined,
-    providerRead,
     routeLearningPolicy,
     ...(taskTopologyPolicy ? { taskTopologyPolicy } : {}),
     ...(runLineagePolicy ? { runLineagePolicy } : {}),
@@ -1152,24 +1104,6 @@ export function createDriver(opts) {
     });
   }
 
-  let providerPoller = null;
-  if (opts.providerPolling !== undefined) {
-    if (!opts.providerPolling || Object.keys(opts.providerPolling).sort().join(',') !== 'initialBackoffMs,intervalMs') throw new TypeError('providerPolling requires only fixed intervalMs and initialBackoffMs');
-    if (!coordination.reusePolicyState(opts.repoId)) throw new TypeError('providerPolling requires an active deployment reuse policy');
-    const pollCards = advisoryFeedCards.filter((card) => card.modes.includes('poll'));
-    providerPoller = new ProviderPollSupervisor({
-      coordinator, cards: pollCards, intervalMs: opts.providerPolling.intervalMs, initialBackoffMs: opts.providerPolling.initialBackoffMs,
-      onEvent: (event) => log.append({ worker: 'hub-provider-poller', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
-    });
-  }
-  let providerProcessor = null;
-  if (providerProcessingPolicy) {
-    if (!coordination.reusePolicyState(opts.repoId)) throw new TypeError('providerProcessingSchedule requires an active deployment reuse policy');
-    providerProcessor = new ProviderProcessingSupervisor({
-      coordinator, intervalMs: providerProcessingPolicy.intervalMs,
-      onEvent: (event) => log.append({ worker: 'hub-provider-processor', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
-    });
-  }
   const coordinatorReady = coordinator.startupReady();
   coordinatorReady.catch(() => {});
   let sessionRecovery = null; let ready = coordinatorReady.then(() => Object.freeze({ status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: Object.freeze([]) }));
@@ -1181,8 +1115,6 @@ export function createDriver(opts) {
   ready.catch(() => {});
   let driverState = 'open'; let drainPromise = null; let drainReceipt = null; let drainActor = null;
   let drainedFleet = null; let drainedSupervisors = null; let coordinatorAuthorityClosed = false; let writerAuthorityReleased = false;
-  const startProviderSupervisors = () => { if (driverState === 'open') { providerProcessor?.start(); providerPoller?.start(); } };
-  ready.then((summary) => { if (!sessionRecovery || summary.status !== 'failed') startProviderSupervisors(); }).catch(() => {});
   const closeAuthority = () => {
     const authorityClosed = coordinator.closeAuthority();
     coordination.releaseWriterLease();
@@ -1192,7 +1124,7 @@ export function createDriver(opts) {
   const close = () => {
     if (driverState === 'closed') return false;
     if (driverState !== 'open') throw Object.assign(new Error('driver close is already in progress'), { code: 'driver_closing' });
-    if (providerPoller || providerProcessor || sessionRecovery) throw Object.assign(new Error('supervised drivers require await closeAsync()'), { code: 'driver_async_close_required' });
+    if (sessionRecovery) throw Object.assign(new Error('supervised drivers require await closeAsync()'), { code: 'driver_async_close_required' });
     return closeAuthority();
   };
   const closeAsync = async () => {
@@ -1202,8 +1134,6 @@ export function createDriver(opts) {
     try {
       await coordinatorReady;
       if (sessionRecovery) await sessionRecovery.close();
-      if (providerProcessor) await providerProcessor.close();
-      if (providerPoller) await providerPoller.close();
       return closeAuthority();
     } catch (error) { driverState = 'open'; throw error; }
   };
@@ -1227,14 +1157,12 @@ export function createDriver(opts) {
         // drain() fences synchronously before returning its Promise; supervisors are then closed
         // concurrently so no new scheduled authority can enter behind the fence.
         const fleetPromise = coordinator.drain({ actor: drainActor, repoId: deploymentRepoId, idempotencyKey: driverDrainIdempotencyKey });
-        const [fleet, recoveryState, processingState, pollingState] = await Promise.all([
+        const [fleet, recoveryState] = await Promise.all([
           fleetPromise,
           closeSupervisor('session recovery', sessionRecovery),
-          closeSupervisor('provider processing', providerProcessor),
-          closeSupervisor('provider polling', providerPoller),
         ]);
         drainedFleet = fleet;
-        drainedSupervisors = Object.freeze({ sessionRecovery: recoveryState, providerProcessing: processingState, providerPolling: pollingState });
+        drainedSupervisors = Object.freeze({ sessionRecovery: recoveryState });
       }
       if (!coordinatorAuthorityClosed) {
         const coordinatorClosed = coordinator.closeAuthority();
@@ -1267,7 +1195,7 @@ export function createDriver(opts) {
   // Issue #351 lane 3: coordinationOpened is the deferred async replay's promise — non-null
   // only on the deployment open path (coordinationAsyncOpen); it must be awaited before the
   // store's first read, and it rejects typed when the replay refuses.
-  return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, hostCapacity: opts.hostCapacity ?? null, routingExcludedHarnesses: opts.routingExcludedHarnesses ?? [], ready, close, closeAsync, drainAndClose, standingLaws,
+  return { coordinator, story, router, log, coordination, coordinationOpened, sessionRecovery, hostCapacity: opts.hostCapacity ?? null, routingExcludedHarnesses: opts.routingExcludedHarnesses ?? [], ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
     repoRoot: opts.repoRoot,
