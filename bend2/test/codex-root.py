@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -36,7 +37,7 @@ class CodexRootAdapter(unittest.TestCase):
         temp = pathlib.Path(self.temp.name)
         received = temp / 'received.txt'
         native = temp / 'root.py'
-        native.write_text('#!/usr/bin/env python3\n' +
+        native.write_text('#!' + sys.executable + '\n' +
             'import sys,pathlib,subprocess,json\n' +
             f'pathlib.Path({str(received)!r}).write_text(sys.stdin.read())\n' +
             f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", "root", "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
@@ -48,7 +49,7 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertFalse(received.exists())
         self.coord('worker', 'w1', 'root', 'claude-code', 'model', 'low', str(temp), 'branch', 'base')
         worker = temp / 'worker.py'
-        worker.write_text('#!/usr/bin/env python3\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"result","result":"Completed live task."}))\n')
+        worker.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"result","result":"Completed live task."}))\n')
         worker.chmod(0o700)
         task = temp / 'task.txt'
         task.write_text('Task')
@@ -60,7 +61,7 @@ class CodexRootAdapter(unittest.TestCase):
     def test_failed_native_delivery_keeps_the_committed_report_pending(self):
         temp = pathlib.Path(self.temp.name)
         native = temp / 'root.py'
-        native.write_text('#!/usr/bin/env python3\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"turn.failed","error":{"message":"provider failed"}}))\nsys.exit(23)\n')
+        native.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"turn.failed","error":{"message":"provider failed"}}))\nsys.exit(23)\n')
         native.chmod(0o700)
         attached = subprocess.run(['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stderr)
@@ -76,7 +77,7 @@ class CodexRootAdapter(unittest.TestCase):
         temp = pathlib.Path(self.temp.name)
         calls = temp / 'calls.jsonl'
         native = temp / 'root.py'
-        native.write_text('#!/usr/bin/env python3\nimport sys,pathlib,json,subprocess\n' +
+        native.write_text('#!' + sys.executable + '\nimport sys,pathlib,json,subprocess\n' +
             f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n' +
             'body=sys.stdin.read()\n' +
             'ident="first" if "[id: first]" in body else "second"\n' +

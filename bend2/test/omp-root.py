@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -45,13 +46,13 @@ class OmpRootAdapter(unittest.TestCase):
             f'with pathlib.Path({str(root_calls)!r}).open("a") as f: f.write(json.dumps(row)+"\\n")\n'
             'subprocess.run(cmd+["ack",row["id"],"root","root reviewed lead"],check=True)\n')
         self.coord('attach', 'root', 'codex', 'native-root',
-                   json.dumps(['python3', str(root_endpoint)]))
+                   json.dumps([sys.executable, str(root_endpoint)]))
         self.coord('worker', 'lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
         self.coord('worker', 'child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
         native = temp / 'lead.py'
         calls = temp / 'lead.jsonl'
         native.write_text(
-            '#!/usr/bin/env python3\nimport json,sys,pathlib,subprocess,os\n'
+            '#!' + sys.executable + '\nimport json,sys,pathlib,subprocess,os\n'
             f'cmd={ [str(EXE), str(self.db)]!r}\n'
             'ident="first" if "[id: first]" in sys.argv[-1] else "second"\n'
             f'with pathlib.Path({str(calls)!r}).open("a") as f: f.write(json.dumps({{"args":sys.argv[1:],"cwd":os.getcwd()}})+"\\n")\n'
@@ -110,7 +111,7 @@ class OmpRootAdapter(unittest.TestCase):
         temp = pathlib.Path(self.temp.name)
         received = temp / 'received.txt'
         native = temp / 'root.py'
-        native.write_text('#!/usr/bin/env python3\n' +
+        native.write_text('#!' + sys.executable + '\n' +
             'import sys,pathlib,subprocess,json\n' +
             f'pathlib.Path({str(received)!r}).write_text(sys.argv[-1])\n' +
             f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", "root", "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
@@ -130,7 +131,7 @@ class OmpRootAdapter(unittest.TestCase):
         temp = pathlib.Path(self.temp.name)
         calls = temp / 'calls.jsonl'
         native = temp / 'root.py'
-        native.write_text('#!/usr/bin/env python3\nimport sys,pathlib,json,subprocess\n' +
+        native.write_text('#!' + sys.executable + '\nimport sys,pathlib,json,subprocess\n' +
             f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n' +
             'body=sys.argv[-1]\n' +
             'ident="first" if "[id: first]" in body else "second"\n' +
