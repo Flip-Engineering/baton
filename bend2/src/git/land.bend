@@ -6,9 +6,8 @@
 # identity (file, test, failure type, code) as AGENTS.md requires. A run with
 # no verdict blocks. The target advances through update-ref with the observed
 # tip as the old value, so the branch moves only while it still matches the
-# prepared basis. A target that moved meanwhile rebases the candidate once
-# and lands on the check result it already has; a rebase conflict returns the
-# paths and keeps the candidate worktree for the requester. A landing whose
+# prepared basis. A target that moved meanwhile returns a retry instruction
+# and keeps the checked candidate worktree for the requester. A landing whose
 # worker commit the target already contains answers LAlready without
 # preparing anything. LAlready names the worker commit on the fast-forward and
 # the checked path alike.
@@ -207,16 +206,13 @@ type PV is Data:
   PV{file: String, cv: Verdict, tv: Verdict}
 
 # The landing pipeline state: finished, refused, or carrying the values the
-# next stage needs; sha is the worker commit stage 1 resolved. LdRe reports a
-# candidate rebased onto a moved target; the pipeline advances it once more
-# and refuses if the target moves again.
+# next stage needs; sha is the worker commit stage 1 resolved.
 type Ld is Data:
   LdDone{made: T.LandOutcome}
   LdFail{fail: T.GitFail}
   LdWk{worker: String, sha: String}
   LdTip{worker: String, sha: String, tip: String}
   LdCand{tip: String, cand: String}
-  LdRe{cand: String, basis: String}
 
 def ld_unreach() -> IO(Ld):
   IO.pure(Ld, LdFail{T.FCmd{"land", "unreachable stage"}})
@@ -427,7 +423,7 @@ def ld_busy_any(lines: List<String>, want: String) -> Bool:
 def ld_update_ok(ok: Bool, out: String, target: String, cand: String) -> Ld:
   match ok:
     case True{}: LdDone{T.LLanded{target, cand}}
-    case False{}: LdFail{T.FCmd{"land", Tx.cmd_failed("git update-ref")}}
+    case False{}: LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}}
 
 def ld_update_pick(g: T.GitOut, target: String, cand: String) -> Ld:
   match g:
@@ -455,47 +451,8 @@ def ld_unmerged(scratch: String, why: String) -> IO(Ld):
     g : T.GitOut <- Git.runGit(sc, ["diff", "--name-only", "--diff-filter=U"])
     IO.pure(Ld, ld_unmerged_pick(g, sc, w2))
 
-def ld_adv_next(last: Bool, cand: String, basis: String) -> IO(Ld):
-  match last:
-    case True{}: IO.pure(Ld, LdFail{T.FCmd{"land", Tx.str_cat("target moved again: ", basis)}})
-    case False{}: IO.pure(Ld, LdRe{cand, basis})
-
-def ld_adv_head_ok(ok: Bool, cand: String, basis: String, last: Bool) -> IO(Ld):
-  match ok:
-    case True{}: ld_adv_next(last, cand, basis)
-    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "no candidate commit after rebase"}})
-
-def ld_adv_head_pick(g: T.GitOut, basis: String, scratch: String, last: Bool) -> IO(Ld):
-  match g:
-    case T.GRun{code, out}: ld_adv_head_ok(U32.is_eq(code, 0), Tx.trim_nl(out), basis, last)
-    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
-
-def ld_adv_head(basis: String, scratch: String, last: Bool) -> IO(Ld):
-  +b2 = basis
-  +s2 = scratch
-  +l2 = last
-  do IO<Ld>:
-    g : T.GitOut <- Git.runGit(s2, ["rev-parse", "HEAD"])
-    ld_adv_head_pick(g, b2, s2, l2)
-
-def ld_adv_rb_ok(ok: Bool, out: String, basis: String, cur: String, scratch: String, last: Bool) -> IO(Ld):
-  match ok:
-    case True{}: ld_adv_head(cur, scratch, last)
-    case False{}: ld_unmerged(scratch, Tx.cmd_failed("git rebase --onto"))
-
-def ld_adv_rb_pick(g: T.GitOut, basis: String, cur: String, scratch: String, last: Bool) -> IO(Ld):
-  match g:
-    case T.GRun{code, out}: ld_adv_rb_ok(U32.is_eq(code, 0), Tx.trim_nl(out), basis, cur, scratch, last)
-    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
-
-def ld_adv_rebase(basis: String, cur: String, scratch: String, last: Bool) -> IO(Ld):
-  +b2 = basis
-  +c2 = cur
-  +s2 = scratch
-  +l2 = last
-  do IO<Ld>:
-    g : T.GitOut <- Git.runGit(s2, ["rebase", "--onto", c2, b2])
-    ld_adv_rb_pick(g, b2, c2, s2, l2)
+def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
+  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
 
 def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +r2 = repo
@@ -503,65 +460,55 @@ def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> 
   +c2 = cand
   +b2 = basis
   do IO<Ld>:
-    g : T.GitOut <- Git.runGit(r2, ["update-ref", Tx.str_cat("refs/heads/", t2), c2, b2])
+    g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
     IO.pure(Ld, ld_update_pick(g, t2, c2))
 
-def ld_adv_same(same: Bool, cur: String, repo: String, target: String, cand: String, basis: String, scratch: String, last: Bool) -> IO(Ld):
+def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   match same:
     case True{}: ld_adv_update(repo, target, cand, basis)
-    case False{}: ld_adv_rebase(basis, cur, scratch, last)
+    case False{}: IO.pure(Ld, LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}})
 
-def ld_adv_tip_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String, scratch: String, last: Bool) -> IO(Ld):
+def ld_adv_tip_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   match g:
     case T.GRun{code, out}:
       +b2 = basis
       +o2 = Tx.trim_nl(out)
-      ld_adv_same(Tx.str_eq(o2, b2), o2, repo, target, cand, b2, scratch, last)
+      Bool.pick(IO(Ld), U32.is_eq(code, 0),
+        ld_adv_same(Tx.str_eq(o2, b2), repo, target, cand, b2),
+        IO.pure(Ld, LdFail{T.FCmd{"land", "the target commit could not be read before publication"}}))
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
-def ld_adv_tip(repo: String, target: String, cand: String, basis: String, scratch: String, last: Bool) -> IO(Ld):
+def ld_adv_tip(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +r2 = repo
   +t2 = target
   +c2 = cand
   +b2 = basis
-  +s2 = scratch
-  +l2 = last
   do IO<Ld>:
     g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", Tx.str_cat(t2, "^{commit}")])
-    ld_adv_tip_pick(g, r2, t2, c2, b2, s2, l2)
+    ld_adv_tip_pick(g, r2, t2, c2, b2)
 
-def ld_adv_busy_go(busy: Bool, repo: String, target: String, cand: String, basis: String, scratch: String, last: Bool) -> IO(Ld):
+def ld_adv_busy_go(busy: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   match busy:
     case True{}: IO.pure(Ld, LdFail{T.FTargetBusy{target}})
-    case False{}: ld_adv_tip(repo, target, cand, basis, scratch, last)
+    case False{}: ld_adv_tip(repo, target, cand, basis)
 
-def ld_adv_busy(g: T.GitOut, repo: String, target: String, cand: String, basis: String, scratch: String, last: Bool) -> IO(Ld):
+def ld_adv_busy(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   match g:
     case T.GRun{code, out}:
       +t3 = target
-      ld_adv_busy_go(ld_busy_any(Tx.split_lines(out), ld_busy_branch(t3)), repo, t3, cand, basis, scratch, last)
+      ld_adv_busy_go(ld_busy_any(Tx.split_lines(out), ld_busy_branch(t3)), repo, t3, cand, basis)
     case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
 
-# One advance attempt: refuse a target held by a worktree, update the branch
-# only while it still matches the basis, and rebase the candidate onto a
-# moved target. `last` refuses a second move; the pipeline routes LdRe back
-# here once with `last` set.
-def ld_advance(repo: String, target: String, cand: String, basis: String, scratch: String, last: Bool) -> IO(Ld):
+# Publish the checked candidate against its checked basis. A changed target
+# returns an explicit retry result; the next invocation prepares both trees.
+def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +r2 = repo
   +t2 = target
   +c2 = cand
   +b2 = basis
-  +s2 = scratch
-  +l2 = last
   do IO<Ld>:
     gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-    ld_adv_busy(gl, r2, t2, c2, b2, s2, l2)
-
-def ld_advance1(repo: String, target: String, cand: String, basis: String, scratch: String) -> IO(Ld):
-  ld_advance(repo, target, cand, basis, scratch, False{})
-
-def ld_advance2(repo: String, target: String, cand: String, basis: String, scratch: String) -> IO(Ld):
-  ld_advance(repo, target, cand, basis, scratch, True{})
+    ld_adv_busy(gl, r2, t2, c2, b2)
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
@@ -774,7 +721,7 @@ def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: S
 # run does not show blocks; otherwise the advance starts.
 def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   match news:
-    case Nil{}: ld_advance1(repo, target, cand, tip, scratch)
+    case Nil{}: ld_advance(repo, target, cand, tip)
     case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", news))}})
 
 def ld_judged(pvs: List<PV>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
@@ -812,7 +759,6 @@ def ld_answer(r: Ld) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
     case LdWk{worker, sha}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
     case LdTip{worker, sha, tip}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
     case LdCand{tip, cand}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
-    case LdRe{cand, basis}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
 
 def ld_go1(r: Ld, repo: String, target: String) -> IO(Ld):
   match r:
@@ -821,7 +767,6 @@ def ld_go1(r: Ld, repo: String, target: String) -> IO(Ld):
     case LdWk{worker, sha}: ld_stage2(repo, target, worker, sha)
     case LdTip{worker, sha, tip}: ld_unreach()
     case LdCand{tip, cand}: ld_unreach()
-    case LdRe{cand, basis}: ld_unreach()
 
 def ld_go2(r: Ld, repo: String, scratch: String) -> IO(Ld):
   match r:
@@ -830,7 +775,6 @@ def ld_go2(r: Ld, repo: String, scratch: String) -> IO(Ld):
     case LdWk{worker, sha}: ld_unreach()
     case LdTip{worker, sha, tip}: ld_stage3(repo, worker, sha, tip, scratch)
     case LdCand{tip, cand}: ld_unreach()
-    case LdRe{cand, basis}: ld_unreach()
 
 def ld_go3(r: Ld, scratch: String) -> IO(Ld):
   match r:
@@ -839,7 +783,6 @@ def ld_go3(r: Ld, scratch: String) -> IO(Ld):
     case LdWk{worker, sha}: ld_unreach()
     case LdTip{worker, sha, tip}: ld_stage4(scratch, worker, sha, tip)
     case LdCand{tip, cand}: ld_unreach()
-    case LdRe{cand, basis}: ld_unreach()
 
 def ld_go4(r: Ld, repo: String, scratch: String) -> IO(Ld):
   match r:
@@ -848,7 +791,6 @@ def ld_go4(r: Ld, repo: String, scratch: String) -> IO(Ld):
     case LdWk{worker, sha}: ld_unreach()
     case LdTip{worker, sha, tip}: ld_stage5(repo, scratch, worker, sha, tip)
     case LdCand{tip, cand}: ld_unreach()
-    case LdRe{cand, basis}: ld_unreach()
 
 def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<String>, scratch: String) -> IO(Ld):
   match r:
@@ -857,17 +799,6 @@ def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<Stri
     case LdWk{worker, sha}: ld_unreach()
     case LdTip{worker, sha, tip}: ld_unreach()
     case LdCand{tip, cand}: ld_stage6(repo, target, script, files, scratch, tip, cand)
-    case LdRe{cand, basis}: ld_unreach()
-
-# The stage-6 outcome is already final or carries LdRe for the second advance.
-def ld_go6(r: Ld, repo: String, target: String, scratch: String) -> IO(Ld):
-  match r:
-    case LdDone{made}: IO.pure(Ld, LdDone{made})
-    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
-    case LdWk{worker, sha}: ld_unreach()
-    case LdTip{worker, sha, tip}: ld_unreach()
-    case LdCand{tip, cand}: ld_unreach()
-    case LdRe{cand, basis}: ld_advance2(repo, target, cand, basis, scratch)
 
 # The scratch trees one attempt prepared live under the repository's scratch
 # root, the candidate and its "-target" sibling. PREFIX is the part of their
@@ -987,7 +918,6 @@ def ld_settle(r: Ld, repo: String, scratch: String) -> IO(Ld):
     case LdWk{worker, sha}: IO.pure(Ld, LdWk{worker, sha})
     case LdTip{worker, sha, tip}: IO.pure(Ld, LdTip{worker, sha, tip})
     case LdCand{tip, cand}: IO.pure(Ld, LdCand{tip, cand})
-    case LdRe{cand, basis}: IO.pure(Ld, LdRe{cand, basis})
 
 # land prepares the candidate, judges it against the target and advances the
 # target branch. The scratch path must not exist. A landed answer removes the
@@ -1006,8 +936,7 @@ def land_checked(repo: String, target: String, worker: String, script: String, f
     d : Ld <- ld_go3(c, s2)
     e : Ld <- ld_go4(d, r2, s2)
     f : Ld <- ld_go5(e, r2, t2, k2, files, s2)
-    g : Ld <- ld_go6(f, r2, t2, s2)
-    settled : Ld <- ld_settle(g, r2, s2)
+    settled : Ld <- ld_settle(f, r2, s2)
     ld_answer(settled)
 
 # The coordinator's current entry point: the fast-forward landing.
