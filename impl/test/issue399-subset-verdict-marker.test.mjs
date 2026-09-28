@@ -30,7 +30,6 @@ import { join, resolve } from 'node:path';
 import { computeVerdict, formatVerdict } from '../scripts/suite-verdict.mjs';
 import {
   deriveSuiteCoverage,
-  isSuiteAcceptanceVerdict,
   renderSuiteCoverageNote,
   renderSuiteVerdictHeadline,
 } from '../src/verification-presentation.mjs';
@@ -72,7 +71,6 @@ test('(a) a named-file run prints the SUBSET headline and writes coverage.kind s
   const document = JSON.parse(readFileSync(verdictPath, 'utf8'));
   assert.deepEqual(document.coverage, { kind: 'subset', files: 1, canonical },
     'the verdict document carries the subset marker with the counts');
-  assert.equal(isSuiteAcceptanceVerdict(document), false, 'a subset document is NOT the acceptance');
   assert.match(renderSuiteCoverageNote(document) ?? '', /1 of \d+ files.*not the .*acceptance/u,
     'the consumer renders the subset sentence naming the subset');
 });
@@ -87,13 +85,11 @@ test('(b) a full (canonical-selection) verdict keeps the byte-identical headline
   assert.deepEqual({ ...coverage }, { kind: 'full', files: 214, canonical: 214 });
   assert.equal(renderSuiteVerdictHeadline(headline, coverage), headline,
     'a full run renders byte-identical to today');
-  assert.equal(isSuiteAcceptanceVerdict({ coverage }), true, 'a full document stays the acceptance');
   assert.equal(renderSuiteCoverageNote({ coverage }), null, 'a full verdict carries no subset sentence');
 });
 
 test('(c) the verdict consumer refuses a subset document as the acceptance in one sentence', () => {
   const document = { coverage: { kind: 'subset', files: 3, canonical: 214 } };
-  assert.equal(isSuiteAcceptanceVerdict(document), false);
   const note = renderSuiteCoverageNote(document);
   assert.equal(typeof note, 'string', 'the subset sentence renders');
   assert.match(note, /3 of 214 files/u, 'the sentence names the subset counts');

@@ -20,12 +20,9 @@
 //   (d) `baton swarm integrate … --follow` returns on the outcome row;
 //   (e) a leftover `integrate-*` checkout is swept when the resident opens, and the swept name is
 //       recorded on the open's own row and on the next landing's start row;
-//   (f) a gate run that cannot take the host verify lease refuses typed `integrate_gates_busy`
-//       naming the holder it waited behind — before any child is spawned, never blocking.
 //
 // Red-before: written before the implementation. At HEAD (a) stalls until the gate run returns,
-// (b)/(c)/(d)/(e) find no start row, no durable failure row, no follow leg and no sweep, and (f)
-// has no such refusal at all.
+// and (b)/(c)/(d)/(e) find no start row, no durable failure row, no follow leg and no sweep.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +34,6 @@ import { dirname, join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
-import { SWARM_REFUSAL_CODES } from '../src/swarm-refusals.mjs';
 import { validateSwarmCommand } from '../src/swarm-contract.mjs';
 import { wakeClassFor } from '../src/wake-stream.mjs';
 import { HostCapacityAuthority } from '../src/host-capacity.mjs';
@@ -172,12 +168,10 @@ async function world(t, { gate = {} } = {}) {
   // this file ever queues in the machine's shared verdict namespace (the authority's root is the
   // one thing a deployment names by environment).
   const capacityRoot = join(directory, 'host-capacity');
-  const hostedEnv = { root: process.env.BATON_HOST_CAPACITY_ROOT, wait: process.env.BATON_HOST_CAPACITY_WAIT_MS };
+  const hostedEnv = { root: process.env.BATON_HOST_CAPACITY_ROOT };
   process.env.BATON_HOST_CAPACITY_ROOT = capacityRoot;
-  process.env.BATON_HOST_CAPACITY_WAIT_MS = '300';
   t.after(() => {
-    for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hostedEnv.root],
-      ['BATON_HOST_CAPACITY_WAIT_MS', hostedEnv.wait]]) {
+    for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hostedEnv.root]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });
@@ -235,9 +229,9 @@ async function world(t, { gate = {} } = {}) {
   // constructor that never got built.
   const pool = SupervisedProcesses === undefined ? null : new SupervisedProcesses();
   // The host this landing admits its gate run through: a STAGED one with room for one verdict, so
-  // a row tests the landing's own admission rule and never the machine the suite happens to run on
-  // (`suiteQueueTimeoutDecision` refuses on a live `load`/`budget` shortfall, and this repository's
-  // host may well be saturated). `blockVerifyBudget` fills the lane when a row wants it taken.
+  // a row tests the landing's own admission rule and never the machine the suite happens to run on,
+  // whose budget this repository's own suites and landings may already hold. `blockVerifyBudget`
+  // fills the lane when a row wants it taken.
   const G = 1024 ** 3;
   const hostCapacity = new HostCapacityAuthority({
     root: capacityRoot, residentId: 'issue459-resident', pollMs: 10,
@@ -458,8 +452,6 @@ test('459c: a red gate lands integration_failed with the unexpected rows and the
   // sibling of `contribution_recorded` announces both halves of a landing.
   assert.equal(wakeClassFor({ kind: 'driver.recorded', payload: { kind: 'swarm.integration_failed' } }).wakeClass,
     'contribution_integrated', 'a failed landing wakes the landing class');
-  assert.ok(Object.hasOwn(SWARM_REFUSAL_CODES, 'integrate_gates_busy'),
-    'the gate run\'s own refusal is in the family\'s ONE closed set');
 });
 
 // ── (d) `--follow` returns on the outcome row ────────────────────────────────────────────────────
@@ -539,7 +531,7 @@ test('459e: a leftover integrate-* checkout is swept when the resident opens, an
   assert.equal(answer.integration.squashSha, git(w.repo, 'rev-parse', 'master'));
 });
 
-// ── (f) a gate run that cannot take the verify lease refuses typed, never blocks ─────────────────
+// ── (f) a gate run behind the verify lease waits in the queue, and lands once it frees ───────────
 
 /**
  * The staged-authority blocker #424's rows use: one live verify lease fills the whole verdict

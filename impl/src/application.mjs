@@ -6,7 +6,7 @@ import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
 import { MAX_CELL_SIZE, normalizeCellDeclaration } from './wave.mjs';
-import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
+import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
   planRouteMatches, planSingleExactRoute,
@@ -66,7 +66,6 @@ import {
   EPISODE_TOPICS,
   EXPLICIT_RESULT_CONSTRAINTS,
   MAX_ATTENTION,
-  MAX_ATTENTION_TEXT_BYTES,
   MAX_RUN_RECORDS,
   MAX_RUN_VIEW_BYTES,
   MAX_SCRATCHPAD_VIEW_BYTES,
@@ -506,15 +505,6 @@ function movedControlAxis(stored, replayed, axes = CONTROL_IDENTITY_AXES) {
 }
 
 
-/** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
- * gracefulPath} on the thrown error AND a human message composed by the ONE helper. */
-function coachingApplicationError(row, actual, cap = row?.value) {
-  return Object.assign(new Error(composeFrameLimitRefusal(row, actual, cap)), {
-    code: row?.refusalCode ?? 'size_exceeded',
-    cap, actual, unit: 'bytes', gracefulPath: frameLimitRefusalPath(row, cap),
-  });
-}
-
 // codex #2 / glm #3 (mcp-packaging-decisions v1.0): the already_resolved outcome names its author
 // when the resolution record carries one (a settlement can be superseded, drained, or
 // semantically interrupted — the record's own actor is the honest resolvedBy, never a caller field).
@@ -712,7 +702,7 @@ function normalizeAnswer(value) {
     throw applicationError('Run answer is invalid', 'application_answer_invalid');
   }
   if (Object.keys(value).sort().join(',') === 'text') {
-    if (!validText(value.text, MAX_ATTENTION_TEXT_BYTES)
+    if (!validText(value.text)
       || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.text))) {
       throw applicationError('Run answer is invalid', 'application_answer_invalid');
     }
@@ -814,7 +804,7 @@ export function projectRunVerdictSurface(verification) {
 function normalizeSteer(value) {
   exactObject(value, ['runId', 'target', 'mode', 'message', 'reason'], 'application_steer_invalid', 'Run steer');
   if (!validId(value.runId) || !validId(value.target) || !['nudge', 'now', 'turn'].includes(value.mode)
-    || !validText(value.message, MAX_ATTENTION_TEXT_BYTES) || !validText(value.reason, 1_024)
+    || !validText(value.message) || !validText(value.reason)
     || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.message) || pattern.test(value.reason))) {
     throw applicationError('Run steer request is invalid', 'application_steer_invalid');
   }
@@ -823,12 +813,13 @@ function normalizeSteer(value) {
 
 function normalizeStop(value) {
   exactObject(value, ['runId', 'reason'], 'application_stop_invalid', 'Run stop');
-  if (!validId(value.runId) || !validText(value.reason, 1_024)
+  if (!validId(value.runId) || !validText(value.reason)
     || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
     throw applicationError('Run stop request is invalid', 'application_stop_invalid');
   }
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
+
 
 
 
@@ -1165,6 +1156,7 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
+
   if (name === 'run.wait') {
     // docs/36 §4.1 read row / R-OP-9 — `until` is an optional condition selector, so run.wait
     // validates as a subset (like run.inspect) rather than an exact-args command; without it the
@@ -2022,10 +2014,10 @@ export class BatonApplication {
     const reason = operation === 'interrupt'
       ? (inputs.reason ?? action.inputSchema.properties.reason.default) : 'Send Run guidance.';
     if (!action.choices.includes(recipient)
-      || (operation === 'send' && (!validText(message, FRAME_LIMITS['run.legacy_send.body'].value)
+      || (operation === 'send' && (!validText(message)
         || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(message))
         || !['nudge', 'now', 'turn'].includes(delivery)))
-      || !validText(reason, 1_024)) {
+      || !validText(reason)) {
       throw applicationError('Run control inputs are invalid', 'application_action_input_invalid');
     }
     this._assertRunMutable(current.goal.runId);
@@ -3600,16 +3592,11 @@ export class BatonApplication {
     const context = normalizeCommandContext(rawContext);
     const requestedIntent = this._resolveIntent(rawIntent);
     const owner = normalizePrincipal(rawOwner, 'goal owner');
-    // Decision 4: run.objective is graceful — oversize up to the spill.body ceiling is ADMITTED
-    // with a durable spill artifact; beyond the ceiling draws the typed coaching refusal (never
-    // the numberless application_intent_invalid of the worker-AX error-quality receipt). The goal
-    // record stores a bounded head + citation; readers resolve the citation to the full body.
+    // Decision 4: run.objective is graceful — a body past the lane's declared value is ADMITTED
+    // with a durable spill artifact. The goal record stores a bounded head + citation; readers
+    // resolve the citation to the full body.
     const objectiveBytes = Buffer.byteLength(requestedIntent.objective);
     const objectiveCap = FRAME_LIMITS['run.objective'].value;
-    const spillCeiling = FRAME_LIMITS['spill.body'].value;
-    if (objectiveBytes > spillCeiling) {
-      throw coachingApplicationError(FRAME_LIMITS['run.objective'], objectiveBytes, spillCeiling);
-    }
     let storedObjective = requestedIntent.objective;
     if (objectiveBytes > objectiveCap && typeof this.driver.coordination.mintSpill === 'function') {
       const minted = this.driver.coordination.mintSpill({ body: requestedIntent.objective, lane: 'run.objective' },
@@ -4146,7 +4133,7 @@ export class BatonApplication {
     if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
       || Object.keys(rawRequest).sort().join(',') !== ['reason', 'role', 'runId'].sort().join(',')
       || !validId(rawRequest.runId) || !validId(rawRequest.role)
-      || !validText(rawRequest.reason, 1_024)
+      || !validText(rawRequest.reason)
       || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(rawRequest.reason))) {
       throw applicationError('Workflow member stop is invalid',
         'application_workflow_member_stop_invalid');
@@ -4229,7 +4216,7 @@ export class BatonApplication {
     if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
       || Object.keys(rawRequest).sort().join(',') !== ['reason', 'role', 'runId'].sort().join(',')
       || !validId(rawRequest.runId) || !validId(rawRequest.role)
-      || !validText(rawRequest.reason, 1_024)
+      || !validText(rawRequest.reason)
       || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(rawRequest.reason))) {
       throw applicationError('Workflow Candidate selection is invalid',
         'application_workflow_selection_invalid');
@@ -4408,6 +4395,7 @@ export class BatonApplication {
       eligibility: workflowEligibilityProjection(eligibility),
     });
   }
+
 
   async _workflowRoundSummaries(current, observer) {
     return applicationObservation._workflowRoundSummaries(this, current, observer);
@@ -5188,7 +5176,7 @@ export class BatonApplication {
 
   _replaySemanticResumeAction(current, request, principal) {
     if (!request.inputs || Object.keys(request.inputs).sort().join(',') !== 'reason'
-      || !validText(request.inputs.reason, 1_024)) return null;
+      || !validText(request.inputs.reason)) return null;
     const principalScopeDigest = digest({ principalId: principal.principalId, sessionId: principal.sessionId });
     const reasonDigest = digest(request.inputs.reason);
     const workers = this.driver.coordinator.list().filter((handle) => handle.runId === request.runId);
@@ -7179,7 +7167,7 @@ export class BatonApplication {
       }
       await this.answer(request.runId, action.target.requestId, { decision: request.inputs.decision }, principal);
     } else if (action.kind === 'answer_question') {
-      if (!validText(request.inputs.text, MAX_ATTENTION_TEXT_BYTES)
+      if (!validText(request.inputs.text)
         || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))
         || !validText(action.target?.requestId, 4_096)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
@@ -7193,7 +7181,7 @@ export class BatonApplication {
       const hasText = request.inputs.text !== undefined && request.inputs.text !== null;
       if (hasOptionId === hasText
         || (hasOptionId && !validId(request.inputs.optionId))
-        || (hasText && (!validText(request.inputs.text, MAX_ATTENTION_TEXT_BYTES)
+        || (hasText && (!validText(request.inputs.text)
           || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))))) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
@@ -7202,7 +7190,7 @@ export class BatonApplication {
     } else if (action.kind === 'nudge_turn') {
       if (!validText(action.target?.pauseId, 4_096)
         || (request.inputs.message !== undefined
-          && (!validText(request.inputs.message, MAX_ATTENTION_TEXT_BYTES)
+          && (!validText(request.inputs.message)
             || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.message))))) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
@@ -7230,12 +7218,13 @@ export class BatonApplication {
       }
     } else if (action.kind === 'select_candidate') {
       if (!action.choices.includes(request.inputs.role)
-        || !validText(request.inputs.reason, 1_024)) {
+        || !validText(request.inputs.reason)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.selectWorkflowCandidate({
         runId: request.runId, role: request.inputs.role, reason: request.inputs.reason,
       }, principal, SEMANTIC_ACTION_DISPATCH);
+
     } else if (action.kind === 'stop') {
       normalizeStop({ runId: request.runId, reason: request.inputs.reason });
       await this.stop(request.runId, request.inputs.reason, principal);

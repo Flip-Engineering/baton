@@ -28,7 +28,7 @@ import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
-import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
+import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts, reclaimIntegrationCheckout } from './worktree.mjs';
 import { WorktreePreserver } from './worktree-preserve.mjs';
 import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
@@ -443,7 +443,7 @@ function capBytesToScalar(text, maxBytes) {
  * the sentence, and the error carries the same {cap, actual, unit, gracefulPath} triple the run
  * layer's send refusal carries — a caller reads what to change, never a bare TypeError. `field`
  * names the LANE, so the wire maps it to the argument the caller must shorten. */
-function peerBodyRefusal(row, actual, cap = FRAME_LIMITS['spill.body'].value) {
+function peerBodyRefusal(row, actual, cap = row?.value) {
   return Object.assign(new Error(composeFrameLimitRefusal(row, actual, cap)), {
     code: row.refusalCode ?? 'size_exceeded', field: row.lane,
     cap, actual, unit: row.unit, gracefulPath: frameLimitRefusalPath(row, cap),
@@ -2067,6 +2067,28 @@ export class SwarmRuntime {
     this._recordIntegrationRow('swarm.integration_swept', {
       repoRoot: authority.repoRoot, swept: [...swept],
     }, { actor: principal?.actor ?? 'runtime' }, `integration-sweep:${this._sweepId ??= randomUUID()}`);
+  }
+
+  /** Issue #619: a landing that has ENDED leaves no host artifact behind. Two artifacts name it —
+   * the host-capacity queue row (`integrate:<swarm>:<contribution>`), which pins the verify lane
+   * it queued in because the lane admits by queue order, and the scratch checkout its own start row
+   * named, which bars the same contribution's next attempt with `WorktreeAlreadyExistsError`. Both
+   * are reclaimed here, wherever the landing ends: withdrawn, superseded, refused or landed. The
+   * request-level cleanup inside `acquire` already takes the row of a wait that left, and
+   * `landContribution` already removes the checkout on every exit it reaches — this is the
+   * landing's own reclamation for the exits those cannot reach. Neither step decides fate: a host
+   * that cannot reclaim still lands, and the next incarnation's open sweeps what is left (#459). */
+  async _reclaimLanding({ swarmId, contributionId, scratch }) {
+    const holder = `integrate:${swarmId}:${contributionId}`;
+    if (this.hostCapacity && typeof this.hostCapacity.withdrawQueuedHolder === 'function') {
+      try { await this.hostCapacity.withdrawQueuedHolder(holder); }
+      catch { /* the row is evidence about a lane, never a condition of the landing */ }
+    }
+    const authority = this.integration;
+    if (!authority || typeof authority.repoRoot !== 'string' || authority.repoRoot.length === 0) return;
+    if (typeof scratch !== 'string' || scratch.length === 0) return;
+    try { await reclaimIntegrationCheckout(authority.repoRoot, scratch); }
+    catch { /* a reclamation that failed is named by the next open's sweep (#459) */ }
   }
 
   /** Return this runtime's stale worker leases to the host budget. Called after any membership
@@ -5905,14 +5927,12 @@ export class SwarmRuntime {
   _notificationBody(row, message) {
     const bytes = Buffer.byteLength(message);
     const cap = FRAME_LIMITS['swarm.notify.body'].value;
-    const ceiling = FRAME_LIMITS['spill.body'].value;
-    if (bytes > ceiling) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, ceiling);
     if (bytes <= cap) return Object.freeze({ head: message, spilled: null });
     const minted = typeof this.store.mintSpill === 'function'
       ? this.store.mintSpill({ body: message, lane: row.lane },
         { actor: row.actor, key: `swarm-notify-spill:${row.receiptId}` }) : null;
     const spill = minted?.spill ?? null;
-    if (spill === null) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, ceiling);
+    if (spill === null) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, cap);
     return Object.freeze({ head: capBytesToScalar(message, cap), spilled: {
       bytes, digest: spill.digest, spill: spill.spillId } });
   }
@@ -6007,14 +6027,12 @@ export class SwarmRuntime {
   _notificationBody(message, receiptId, actor) {
     const bytes = Buffer.byteLength(message);
     const lane = FRAME_LIMITS['swarm.notify.body'];
-    const ceiling = FRAME_LIMITS['spill.body'].value;
-    if (bytes > ceiling) throw peerBodyRefusal(lane, bytes, ceiling);
     if (bytes <= lane.value) return Object.freeze({ head: message, spilled: null });
     const minted = typeof this.store.mintSpill === 'function'
       ? this.store.mintSpill({ body: message, lane: lane.lane },
         { actor, key: `swarm-notify-spill:${receiptId}` }) : null;
     const spill = minted?.spill ?? null;
-    if (spill === null) throw peerBodyRefusal(lane, bytes, ceiling);
+    if (spill === null) throw peerBodyRefusal(lane, bytes, lane.value);
     return Object.freeze({ head: capBytesToScalar(message, lane.value), spilled: {
       bytes, digest: spill.digest, spill: spill.spillId } });
   }
@@ -7385,10 +7403,6 @@ export class SwarmRuntime {
         refuse(message, 'integrate_conflict', detail); break;
       case 'integrate_gates_red':
         refuse(message, 'integrate_gates_red', detail); break;
-      // Issue #459: the gate run could not take the host verify lease within its bound. The landing
-      // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
-      case 'integrate_gates_busy':
-        refuse(message, 'integrate_gates_busy', detail); break;
       // Issue #558: the landing cannot publish — the deployment declares no shared remote, or
       // the declared remote was unreachable or refused the push (the local move is rolled back,
       // so the target holds no unpublished squash). A landing that cannot publish never reports
@@ -7579,6 +7593,7 @@ export class SwarmRuntime {
       participantId: contribution.participantId, phase: 'queued',
     });
     let started = null;
+    let scratchDir = null;
     let landed;
     // Issue #463: what this landing's OWN gate derivation and gate run answered. The worktree
     // authority raises the red error itself, and an error minted there cannot carry a fact only
@@ -7621,6 +7636,7 @@ export class SwarmRuntime {
         // still running, so a reader (and the durable record) knows where it opened even when the
         // caller that asked for it is long gone.
         started: async ({ dir }) => {
+          scratchDir = dir;
           started = this._recordIntegrationRow('swarm.integration_started', {
             swarmId: args.swarmId, contributionId: args.contributionId,
             participantId: contribution.participantId, target, scratch: dir,
@@ -7729,6 +7745,9 @@ export class SwarmRuntime {
       this._refuseLanding(error, swarm, landingFacts);
     } finally {
       landingDone();
+      await this._reclaimLanding({
+        swarmId: args.swarmId, contributionId: args.contributionId, scratch: scratchDir,
+      });
     }
     this._pendingIntegrations.delete(args.contributionId);
     const receipt = {

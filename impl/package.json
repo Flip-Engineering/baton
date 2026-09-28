@@ -40,7 +40,6 @@
     "test:unified-surfaces": "node --test test/surface-capability-catalog.test.mjs test/surface-cli.test.mjs test/unified-cli-surface.test.mjs test/unified-mcp-surface.test.mjs",
     "test:production-convergence": "node --test test/production-convergence.test.mjs test/production-convergence-persistence.test.mjs test/production-deployment-convergence.test.mjs test/production-real-substrate-convergence.test.mjs test/production-cli-convergence.test.mjs test/production-mcp-convergence.test.mjs test/production-attention-authorization.test.mjs test/production-web-convergence.test.mjs test/production-web-workflow-ports.test.mjs test/converged-export-surface.test.mjs",
     "test:package": "node scripts/release-package-smoke.mjs",
-    "test:watch": "node scripts/run-suite.mjs --all --watch",
     "status:generate": "node scripts/generate-release-status.mjs",
     "demo": "node demo.mjs",
     "postinstall": "node scripts/postinstall.mjs",

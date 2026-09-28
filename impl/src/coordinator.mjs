@@ -24,7 +24,7 @@ import {
 import {
   attentionItemLine, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse } from './messages.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { observeAdapterEvents } from './adapter.mjs';
@@ -87,7 +87,7 @@ import { ModelSelectionError, PublicationError, WORKTREE_FAILURE, normalizeRunId
 export { ModelSelectionError, PublicationError };
 import { KILL_RULES, LOGICAL_CALL_PHASES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES, REARM_KINDS, RUN_TIMELINE_OPERATIONAL_KINDS, IntegrationError, SessionSelectionError, TERMINAL_TASK_STATUSES, addSafeTokenCounts, boundedProcessObservation, canonical, canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, logicalCallTransition, minimalBrief, normalizeSessionRequest, officialCoordinateMatches, providerProcessingFailureCode, replayProviderGovernanceRoute, startupReconcilerNext, startupReconcilerRecord, throwIfProviderCancelled, typedTerminalCode, validLogicalCallId, validLogicalCallPhase, validWorkspaceOwnerBoundPayload, workspaceOwnerExpectation } from './runtime-recovery.mjs';
 export { PUSH_REFUSAL_CODES, REARM_KINDS, IntegrationError, SessionSelectionError } from './runtime-recovery.mjs';
-// Issue #66 (K2): the frozen doubt refusal family — the closed 9-code vocabulary every doubt
+// Issue #66 (K2): the frozen doubt refusal family — the closed 8-code vocabulary every doubt
 // review refusal carries, in ACTUAL sorted order (canonical byte order; the comparator family
 // never locales).
 export const DOUBT_REFUSAL_CODES = Object.freeze([
@@ -98,7 +98,6 @@ export const DOUBT_REFUSAL_CODES = Object.freeze([
   'doubt_promote_not_authorized',
   'doubt_promote_stale',
   'doubt_promote_unknown',
-  'doubt_resolution_exceeded',
   'doubt_surface_unavailable',
 ]);
 
@@ -435,9 +434,9 @@ export function gateRunnerFile(layout, file) {
  * The lease is taken HERE, by the resident, through the runner's own seam
  * (`acquireSuiteVerifyLease`): the child then proves its parent's admission with the token digest
  * the runner publishes to its children (`BATON_SUITE_VERIFY_LEASE`, #424), so it can never queue
- * behind the process that spawned it. A lease that cannot be taken within the runner's own bound
- * refuses typed — `integrate_gates_busy` naming the holder it waited behind — BEFORE any child is
- * spawned: it never blocks, and it never half-runs a gate set.
+ * behind the process that spawned it. The wait for the lease has no bound: the run starts on the
+ * turn the verdicts ahead of it release, so no child is spawned before the lease is held and no
+ * gate set is ever half-run.
  *
  * Issue #463: the child's working directory and its file arguments are BOTH read off the runner's
  * own path (`gateRunnerLayout`). A landing handed this seam bare test basenames while the checkout
@@ -463,22 +462,6 @@ export async function runSupervisedGateRun({
       { code: 'integrate_withdrawn' });
   }
   const authority = leaseAuthority ?? createSuiteLeaseAuthority(process.env);
-  // The request ahead of this one, when the admission queue shows one: the holder the wait was
-  // behind is the fact an `integrate_gates_busy` refusal is actionable on. Read without the mutex
-  // (the same non-mutating read the participant projection uses) — evidence, never admission.
-  let ahead = null;
-  // The queue row the seam reported once, when this request waited: its position/ahead/shortfall
-  // are what a refusal names. Absent when the request was admitted (or bypassed) at once.
-  let queued = null;
-  const observeAhead = () => {
-    try {
-      const row = (authority.observeNow?.()?.queue ?? [])
-        .find((entry) => entry?.kind === 'verify' && entry.holder !== holder);
-      if (row) ahead = row.holder ?? null;
-    } catch { /* evidence only */ }
-  };
-  const poll = setInterval(observeAhead, 25);
-  if (typeof poll.unref === 'function') poll.unref();
   let lease = null;
   let degraded = null;
   // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of it
@@ -494,12 +477,7 @@ export async function runSupervisedGateRun({
     // #576: the fence signal — a stopping resident ends this wait instead of hanging behind a
     // queue it can no longer answer for.
     signal,
-    onQueued: (row) => {
-      queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
-        shortfall: row?.shortfall ?? null });
-    },
   });
-  clearInterval(poll);
   if (lease.degraded) {
     degraded = Object.freeze({ reason: lease.degraded.dimension ?? 'memory', shortfall: lease.degraded });
   }
@@ -3114,9 +3092,9 @@ export class Coordinator {
    * written to the worker's durable stream (adapter prompt acknowledged); read is the worker's
    * next turn_started in the SAME process generation; actedOn is never claimed. Receipts are
    * process-scoped coordinator state — see messageReceipt. #105 D1: the send declares a per-branch
-   * depth budget (default 1 — byte-identical to today's single-reply admission); the lane is the
-   * single budget authority — a declared budget that is not a safe integer in [1,
-   * MAX_MESSAGE_DEPTH_BUDGET] throws message_budget_invalid at the lane (D3/B-5b). */
+   * depth budget (default 1 — byte-identical to today's single-reply admission); a budget must be a
+   * safe integer of at least 1 (a smaller or non-integer budget throws message_budget_invalid at the
+   * lane, D3/B-5b). */
     _activeMessageMember(workerId) {
     return runtimeObservation._activeMessageMember(this, this._recorder, workerId);
   }
@@ -3138,7 +3116,7 @@ export class Coordinator {
 
   async sendMessage({ kind, to, body, budget = 1 } = {}, auth = {}) {
     this.tick();
-    if (!Number.isSafeInteger(budget) || budget < 1 || budget > MAX_MESSAGE_DEPTH_BUDGET) {
+    if (!Number.isSafeInteger(budget) || budget < 1) {
       const budgetError = new TypeError('message budget is invalid');
       budgetError.code = 'message_budget_invalid';
       throw budgetError;
@@ -3166,23 +3144,18 @@ export class Coordinator {
         return { ok: false, result: 'message_target_not_member' };
       }
     }
-    // Decision 4: the send lane is graceful — oversize up to the spill.body ceiling is ADMITTED
-    // with spill (head + digest citation inline, full body durable); beyond the ceiling draws the
-    // hard coaching refusal (never a bare cap-only TypeError).
+    // Decision 4: the send lane is graceful — a body past the lane's declared value is ADMITTED
+    // with spill (head + digest citation inline, full body durable). Any size is admissible.
     const bodyBytes = Buffer.byteLength(body);
     const sendCap = FRAME_LIMITS['message.send.body'].value;
-    const spillCeiling = FRAME_LIMITS['spill.body'].value;
-    if (bodyBytes > spillCeiling) {
-      throw coachingError(FRAME_LIMITS['message.send.body'], bodyBytes, spillCeiling);
-    }
     const spilled = bodyBytes > sendCap;
     let spillRecord = null;
     if (spilled) {
-      if (!this._coordination.mintSpill) throw coachingError(FRAME_LIMITS['message.send.body'], bodyBytes, spillCeiling);
+      if (!this._coordination.mintSpill) throw coachingError(FRAME_LIMITS['message.send.body'], bodyBytes, sendCap);
       const minted = this._coordination.mintSpill({ body, lane: 'message.send.body' },
         { actor: 'orchestrator', key: `message.send.spill:${canonicalDigest({ to, body })}` });
       const spill = minted?.spill ?? null;
-      if (!spill) throw coachingError(FRAME_LIMITS['message.send.body'], bodyBytes, spillCeiling);
+      if (!spill) throw coachingError(FRAME_LIMITS['message.send.body'], bodyBytes, sendCap);
       spillRecord = {
         spilled: true, bytes: bodyBytes, digest: spill.digest,
         spill: spill.spillId, head: capBytesToScalar(body, sendCap),
@@ -3389,10 +3362,6 @@ export class Coordinator {
     const handle = this._getWorker(workerId);
     if (!Number.isSafeInteger(ctx.expectedFence)) throw new TypeError('orientation push requires expectedFence');
     if (typeof note !== 'string' || note.length === 0 || note.includes('\0')) throw new TypeError('orientation push note is invalid');
-    const noteBytes = Buffer.byteLength(note);
-    if (noteBytes > FRAME_LIMITS['orientation.note'].value) {
-      throw coachingError(FRAME_LIMITS['orientation.note'], noteBytes, FRAME_LIMITS['orientation.note'].value);
-    }
     const precheck = this._fences.check(workerId, { fence: ctx.expectedFence });
     if (!precheck.ok) {
       this._log.append({
@@ -5744,12 +5713,7 @@ export class Coordinator {
     coordinationLedger.settlementReviewAuthority(store, runId, session);
     if (disposition === 'answered') {
       if (typeof fields?.resolution !== 'string' || fields.resolution.length === 0) {
-        throw new CoordinationRefusal('an answered doubt requires a bounded resolution', 'doubt_promote_invalid');
-      }
-      const bytes = Buffer.byteLength(fields.resolution);
-      if (bytes > FRAME_LIMITS['doubt.resolution.bytes'].value) {
-        throw new CoordinationRefusal(
-          composeFrameLimitRefusal(FRAME_LIMITS['doubt.resolution.bytes'], bytes), 'doubt_resolution_exceeded');
+        throw new CoordinationRefusal('an answered doubt requires a resolution', 'doubt_promote_invalid');
       }
     } else if (disposition === 'dismissed') {
       if (!coordinationLedger.DOUBT_DISMISSAL_REASONS.includes(fields?.dismissalReason)) {

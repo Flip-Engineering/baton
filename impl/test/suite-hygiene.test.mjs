@@ -116,15 +116,9 @@ test('SH6 (#571): the runner fails and reaps a timed-out file that leaves a fixt
     "});",
     '',
   ].join('\n'));
-  const calibration = {
-    baselineBasis: 'recorded', baselineProbeMs: 1, cores: 1, factor: 1,
-    load: { fifteen: 0, five: 0, one: 0 }, measuredAt: '2026-09-23T00:00:00.000Z',
-    probeMs: 1, schemaVersion: 1,
-  };
   const env = {
     ...process.env,
     BATON_HOST_CAPACITY_DISABLED: '1',
-    BATON_RG_CALIBRATION: JSON.stringify(calibration),
     BATON_TEST_TMP_PARENT: world,
     TMPDIR: world, TMP: world, TEMP: world,
   };

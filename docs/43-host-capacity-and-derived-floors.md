@@ -7,15 +7,20 @@ reservation ledger issue #307 added were removed by #610; section 4 states what 
 The code of record is `impl/src/host-capacity.mjs` (the host-wide authority and the
 derivation), `impl/src/application-deployment.mjs` (the doctor's capacity sections and the
 deployment wiring), `impl/src/contribution-service.mjs` and
-`impl/src/swarm-runtime.mjs` (the typed admission rows for `swarm.recruit`), and
-`impl/scripts/run-suite.mjs` (the suite runner's derived default
-parallelism).
+`impl/src/swarm-runtime.mjs` (the typed admission rows for `swarm.recruit`, and the per-seat
+footprint measurement a worker lease's weight comes from, over the process-group observation
+in `impl/src/process-lifecycle.mjs`), and `impl/scripts/run-suite.mjs` (the suite runner's
+derived default parallelism).
 
 ## 1. The host capacity authority (#297)
 
-Every threshold is a derivation from one observation — `os.availableParallelism()`,
-`os.totalmem()`, `os.freemem()`, `os.loadavg()[0]` — and the module mints no admission
-constant of its own (`deriveHostCapacity`):
+Every threshold is a derivation from ONE observation of the machine — cores
+(`os.availableParallelism()`), total memory (`os.totalmem()`), available memory measured
+the platform's way (darwin `vm_stat`, linux `/proc/meminfo` `MemAvailable`, `os.freemem()`
+as the fallback), the swap report (darwin `sysctl vm.swapusage`, linux `/proc/meminfo`
+`SwapTotal`/`SwapFree`), the free disk of the volume the lease root lives on (`statfs` of
+the system temp root by default), and the load average (`os.loadavg()[0]`) — and the module
+mints no admission constant of its own (`deriveHostCapacity`):
 
 | Threshold | Derivation |
 |---|---|
@@ -23,26 +28,33 @@ constant of its own (`deriveHostCapacity`):
 | `usableCores` | `cores − hubCores` |
 | `suiteCores` | `cores − hubCores` — a full suite uses every core but the hub's (the #269 measurement) |
 | `verdictLanes` | `floor(usableCores / suiteCores)` — the #269 lane formula, generalized host-wide |
-| `coreShareBytes` | `floor(totalBytes / cores)` — one core's equal share of memory, the unit the suite's cost is measured in |
-| `suiteBytes` | `coreShareBytes × suiteCores` |
+| `coreShareBytes` | `floor(totalBytes / cores)` — one core's equal share of memory |
+| `suiteBytes` | `coreShareBytes` — one verdict's memory entitlement is ONE core's share (#561) |
 | `usableBytes` | `totalBytes − coreShareBytes` |
+| `swapGrowthBytes` | `min(swapFreeBytes, diskFreeBytes)` — the swap the OS could actually page into; an unmeasured swap or disk claims no headroom (#561) |
+| `pagingBytes` | `availableBytes + swapGrowthBytes` — the memory the OS can actually hand out |
 | `saturated` | `load1m ≥ cores` — the operator's `uptime` read, derived |
-| `memoryTight` | `availableBytes < suiteBytes` |
+| `memoryTight` | `pagingBytes < suiteBytes` — paging headroom cannot fund one more verdict |
+| `diskTight` | `diskFreeBytes < suiteBytes` — the disk cannot back the paging one verdict may need |
 
 Admission weights: a `verify` lease (a full-suite verdict) charges `suiteCores` cores and
-`suiteBytes` bytes — the one cost the host has measured (#269). A `worker` lease (a
-recruited participant) charges nothing: a seat is not a thread, its footprint is not known
-before it runs, and a derived slot count per core was a hardware analogy rather than a
-measurement (operator ruling, 2026-09-18, retiring #329's one-share-per-worker rule and the
-`workerSlots` / `workerMemoryTight` rows). A worker never waits: it holds no slot,
-`roomFor` admits it unconditionally, and the host's own scheduler is the throttle (#541).
+`suiteBytes` bytes — one core's share, the #269 measurement. A `worker` lease (a recruited
+participant) charges the mean bytes of the fleet's measured worker leases (#561): each
+resident reads the resident-set bytes of every live seat's process group before it admits
+another worker and lands that number on the seat's lease, so the byte budget counts the
+memory the running seats hold. A fleet with no measurement yet admits its first worker
+weight-free, and a worker request the byte budget cannot fund waits IN ORDER like any other
+request. A worker holds no core slot: the operator ruling of 2026-09-18 retired #329's
+one-share-per-worker rule together with the `workerSlots` and `workerMemoryTight` rows.
+
 Admission never refuses for being busy — a request that does not fit waits IN ORDER as a
 visible queue entry (FIFO by enqueued timestamp, same-instant ties broken by a random
 nonce), reporting `{position, ahead}` once. The wait has no bound: a request that cannot be
 admitted now is admitted when the requests ahead of it release, and admission is never
-refused for having waited (#541). A verify on a host whose memory cannot fund one full
-suite is answered at once as degraded, with the shortfall named, and proceeds without a
-lease.
+refused for having waited (#541). A plain verify on a host whose paging headroom or disk
+cannot fund one full suite is answered at once as degraded, with the shortfall named, and
+proceeds without a lease; a `durable` verify (#561: a suite a seat started, and a landing
+gate) holds in that queue instead.
 
 ### Sharing: the host-scoped lease directory
 
@@ -57,8 +69,9 @@ nor honour this user's locks).
 
 Mutations serialize on the published-owner mutex:
 an owner record published by atomic link, counted only after re-observation, a dead
-holder reclaimed only under an exclusive reaper gate, every wait bounded by a monotonic
-deadline. A crashed resident's leases and queue entries are swept by any live resident's
+holder reclaimed only under an exclusive reaper gate, and the lock taken on the turn its
+holder releases it — a live holder is waited for, a dead one is reaped by the liveness
+check. A crashed resident's leases and queue entries are swept by any live resident's
 next observation (pid proved dead — `EPERM` counts as alive, conservative across
 users). `observe()` reads under the mutex; `observeNow()` is the doctor's non-mutating
 read.
@@ -91,47 +104,41 @@ construction. `run-suite.mjs` therefore holds ONE host-wide `verify` lease for t
 verdict: acquired from the shared authority (the seam lives in
 `impl/scripts/suite-host-lease.mjs` so tests can stage it) before the lanes start,
 released at the verdict whichever way it ends. While the request waits it prints the
-queued row — `position`, `ahead`, `shortfall`, the #329 shape. A spent wait refuses
-BEFORE any lane starts, the way a recruit refuses pre-effect — unless the dimension
-names a limit no wait could cure: a `budget` shortfall (another lease holds the lane)
-or a `load` shortfall (the host is oversubscribed) can resolve, so the run refuses; a
-`memory` shortfall means the host itself cannot fund a full suite's entitled share, a
-standing property of a small host, so the run proceeds degraded without mutual exclusion
-and warns loudly instead of bricking (`suiteQueueTimeoutDecision`; unknown failures
-fail closed to refuse). No lane ever runs starved without saying so.
+queued row — `position`, `ahead`, `shortfall`, the #329 shape. The wait has no bound
+(#541): the run is admitted when the verdicts ahead of it release, and a `budget`
+shortfall (another lease holds the lane) clears the same way, as those holders release. A
+`memory` or `disk` shortfall means the host itself cannot fund a full suite's entitled
+share, a standing property of a small host: a plain verdict is answered degraded at once,
+proceeds without the mutual exclusion a lease would buy and warns loudly instead of
+bricking. A DURABLE request (#561: a seat-run suite, and the landing gate's own start)
+holds in the queue with no deadline until measured memory funds one more suite. An
+admission that fails for a real reason (#512) is terminal — the run stops before any lane
+starts, names the failure and produces no verdict. No lane ever runs starved without
+saying so.
 `BATON_HOST_CAPACITY_DISABLED=1` stays the operator bypass (the run acquires nothing and
-touches no lease directory); a nested runner — one spawned from a test file, carrying
-`BATON_TEST_SUITE_ROOT` — stays unwired the same way deployments do, so the suite's own
-self-checks (which spawn the runner) never queue behind their parent's lease on a host
-that is oversubscribed by design. Every test-file child stays unwired through the
-`BATON_HOST_CAPACITY_DISABLED=1` the runner already pins in the child environment. The
-runner's own wait defaults short (2s): verify leases are held for whole suites and checks
-(minutes), so a longer wait would only delay the same refuse/degrade decision while
-stalling time-bound runs on a host with no room; `BATON_HOST_CAPACITY_WAIT_MS` extends it
-when queuing behind a known-finishing holder and `BATON_HOST_CAPACITY_POLL_MS` sets the
-queue poll. Catchable signals release through the verdict path's `finally`; a SIGKILL-class
-death between acquire and release holds the lease until the authority's dead-holder sweep
-reclaims it — the designed recovery for a crashed resident, not a second release path.
+touches no lease directory); a nested runner — one spawned by a test file whose parent
+HOLDS the lease, proven by the parent's token digest in `BATON_SUITE_VERIFY_LEASE` (#424)
+— stays unwired the same way deployments do, so the suite's own self-checks (which spawn
+the runner) never queue behind their parent's lease on a host that is oversubscribed by
+design. Every test-file child stays unwired through the `BATON_HOST_CAPACITY_DISABLED=1`
+the runner already pins in the child environment, and `BATON_HOST_CAPACITY_POLL_MS` sets
+the queue poll. Catchable signals release through the verdict path's `finally`; a
+SIGKILL-class death between acquire and release holds the lease until the authority's
+dead-holder sweep reclaims it — the designed recovery for a crashed resident, not a second
+release path.
 
-## 3c. The worker's verify on the participant row (#333; #332 wires the row)
+## 3c. The worker's verify in the deployment summary (#333)
 
 A worker's suite is a `verify` lease held under the seat's holder name
 (`participant:<swarmId>:<participantId>`, the same template the worker holder set mints),
 and the deployment summary's `hostCapacity.used.leases.verify` counts it — verify leases
 are counted by kind, so worker suites read beside verdict leases with no special case.
-`impl/src/host-capacity.mjs` exports the ONE derivation the swarm view's participant row
-projects through: `projectParticipantVerify(queue, verifyHolders, holder)` (pure — a queue
-entry under the name reads `{state: 'queued', position, ahead}`, a live verify lease
-under it reads `{state: 'admitted', position: null, ahead: null}`, anything else reads
-null) and the authority method `observeParticipantVerify(holder)` (the same non-mutating
-live-pid read `observeNow()` performs, folded through the derivation).
 
-Coordination note for the #332 lane, which owns `impl/src/swarm-runtime.mjs`: wire the
-row by calling `this.hostCapacity.observeParticipantVerify(
-`participant:${swarmId}:${participantId}`)` per participant (guarded by `typeof ... ===
-'function'`, so an unwired runtime keeps the row absent) and attaching the result as
-`verify` — null when the seat holds and waits on nothing. This lane does not touch
-swarm-runtime.mjs.
+The participant-row projection (`projectParticipantVerify`, and the authority's
+`observeParticipantVerify`) is removed: no caller in the runtime reached it, so the row it
+promised never appeared, and the #598 sweep took both functions with the tests that pinned them.
+A seat's place in the admission queue is the deployment summary's `queue`, whose every entry
+carries `{position, ahead, kind, holder, holderAlive}` from `observeNow()`.
 
 ## 3d. Post-admission shedding (#495)
 

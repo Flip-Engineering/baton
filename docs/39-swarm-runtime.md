@@ -930,7 +930,7 @@ caller-submittable. Refusals are typed and pre-effect where possible:
 `integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`. The gate run and
 the regenerators are asynchronous children of the resident's supervised pool, never on its loop
 (#459: `swarm.integration_started` / `swarm.integration_failed` rows, the host verify lease taken
-through the suite runner's own seam, `integrate_gates_busy` when it is spent, `--follow` observing
+through the suite runner's own seam, `--follow` observing
 the outcome row). The scratch checkout links the dependency install(s) the repository actually
 holds (#451: `impl/node_modules`), and the gate set reaches the runner at the runner's own
 layout — `test/<file>` relative to the suite root the runner runs in, both derived from the

@@ -91,12 +91,10 @@ async function world(t, { gate = {} } = {}) {
   const repo = join(directory, 'repo');
   const markerPath = join(directory, 'gate-run-finished.marker');
   const capacityRoot = join(directory, 'host-capacity');
-  const hostedEnv = { root: process.env.BATON_HOST_CAPACITY_ROOT, wait: process.env.BATON_HOST_CAPACITY_WAIT_MS };
+  const hostedEnv = { root: process.env.BATON_HOST_CAPACITY_ROOT };
   process.env.BATON_HOST_CAPACITY_ROOT = capacityRoot;
-  process.env.BATON_HOST_CAPACITY_WAIT_MS = '300';
   t.after(() => {
-    for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hostedEnv.root],
-      ['BATON_HOST_CAPACITY_WAIT_MS', hostedEnv.wait]]) {
+    for (const [key, value] of [['BATON_HOST_CAPACITY_ROOT', hostedEnv.root]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });

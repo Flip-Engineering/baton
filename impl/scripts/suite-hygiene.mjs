@@ -17,7 +17,7 @@ const RECEIPT_NAME = 'suite-owner.json';
 const FIXTURE_DIRECTORY = /^(?:baton-|bt).+-[A-Za-z0-9]{6}$/u;
 
 /** Is `name` a fixture-shaped directory — the name pattern the suite's leak check looks for? */
-export function isFixtureDirectoryName(name) {
+function isFixtureDirectoryName(name) {
   return FIXTURE_DIRECTORY.test(name);
 }
 

@@ -6,7 +6,7 @@
 // through the port; receiver explicit; no sibling family imports.
 
 import { canonicalDigest } from '../coordination-internals.mjs';
-import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from '../limits.mjs';
+import { FRAME_LIMITS } from '../limits.mjs';
 import { frameWebContent } from '../messages.mjs';
 import { noop } from '../runtime-recovery.mjs';
 
@@ -181,19 +181,10 @@ if (ctx.payload && typeof ctx.payload === 'object' && !Array.isArray(ctx.payload
           return
         }
         // Decision 6 (reply-lane parity): the reply direction of the message lane shares the send
-        // lane's economy — oversize up to the spill.body ceiling is ADMITTED with spill (head +
-        // citation), beyond the ceiling draws the hard coaching refusal on the durable stream.
+        // lane's economy — a body past the lane's declared value is ADMITTED with spill (head +
+        // citation inline, full body durable).
         const replyBytes = Buffer.byteLength(frameBody);
         const replyCap = FRAME_LIMITS['message.reply.body'].value;
-        const replySpillCeiling = FRAME_LIMITS['spill.body'].value;
-        if (replyBytes > replySpillCeiling) {
-          refuse('spill_body_exceeded', {
-            cap: replySpillCeiling, actual: replyBytes, unit: 'bytes',
-            gracefulPath: frameLimitRefusalPath(FRAME_LIMITS['message.reply.body'], replySpillCeiling),
-            message: composeFrameLimitRefusal(FRAME_LIMITS['message.reply.body'], replyBytes, replySpillCeiling),
-          });
-          return
-        }
         const replySpilled = replyBytes > replyCap;
         let replySpillRecord = null;
         if (replySpilled) {

@@ -15,11 +15,10 @@ import { serialize } from 'node:v8';
 import { ledgerCommitted, ledgerCommitFailed } from './coordination-commit.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
-import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 import { boundedAttentionText, frameWebContent, referencesWebFetchHandle, wrapHubDerived, wrapProse } from './messages.mjs';
 import { GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical, goalPlanDigest, goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planBriefMatches, planRouteAuthorityState, planRouteMatches } from './goal-plan.mjs';
 import { normalizeContextAuthority } from './context-authority.mjs';
-import { PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest, planObjectSnapshot, waveRoleRunKey } from './orchestrator-plan.mjs';
 import { projectContextCallState } from './context-call.mjs';
 import { SWARM_EVENT_KINDS, SwarmIntegrityError, foldSwarmEvent, swarmSnapshot, validateSwarmEvent } from './swarm-state.mjs';
 import { usdToNanos } from './usd.mjs';
@@ -340,10 +339,8 @@ export const SAFE_BOARD_OWNER = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 const BOARD_ITEM_STATES = new Set(['open', 'closed', 'dropped']);
 
-// Live board bound imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the store
-// is a first-class registry consumer, never a second door for a cataloged lane. A title and a
-// detail carry no byte ceiling: they are shown whole.
-const MAX_STORE_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
+// Live board bound (Decision 8): a title, a detail and a report body carry no byte ceiling; they are
+// shown whole.
 
 export const MAX_STORE_BOARD_EVIDENCE = 8;
 
@@ -422,12 +419,10 @@ export function replBindingContentDigest(core) {
 }
 
 
-// Issue #33 — typed task-horizon scratchpad bounds. These are deployment constants, not
-// caller policy, so live admission and replay use the same ceilings.
+// Issue #33 — the scratchpad's raw request walk bound: the short-circuiting walker that refuses a
+// payload no shape check could judge (a cycle, an accessor, a symbol key, a non-JSON value) walks at
+// most this many raw bytes before it refuses.
 export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
-
-export const MAX_SCRATCHPAD_ENTRY_BYTES = FRAME_LIMITS['scratchpad.entry.body'].value;
-
 // The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
 // application and northbound surfaces share ONE family name with the store that mints it (D7).
 export const BRIEFING_FAMILY = 'orchestrator-briefing';
@@ -507,7 +502,7 @@ function scratchpadRawBytes(value, limit = MAX_SCRATCHPAD_WRITE_REQUEST_BYTES) {
   return bytes;
 }
 
-function scratchpadString(value, maxBytes) {
+function scratchpadString(value, maxBytes = Number.MAX_SAFE_INTEGER) {
   if (typeof value !== 'string') throw new CoordinationRefusal('scratchpad string is invalid', 'scratchpad_entry_invalid');
   const normalized = value.normalize('NFKC').trim();
   if (normalized.length === 0 || normalized.includes('\0') || !validUnicodeScalarString(normalized)
@@ -529,14 +524,8 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
   }
   let normalized;
   if (entry.kind === 'note') {
-    // deliberate-local: note.text partition inside the capped entry (Decision 2). A
-    // steering-registered run (the wave driver's settlement binding) rides the entry body limit
-    // (FRAME_LIMITS['scratchpad.entry.body']) — the admission override is derived from the run's
-    // durable steering registration in writeScratchpad.
-    const noteCap = opts?.noteMaxBytes ?? null;
-    normalized = { kind: 'note', text: noteCap == null
-      ? scratchpadString(entry.text, 2_048)
-      : scratchpadString(entry.text, noteCap) };
+    // A note's text carries no ceiling: the entry is whatever the seat wrote.
+    normalized = { kind: 'note', text: scratchpadString(entry.text) };
   } else if (entry.kind === 'plan') {
     if (!Array.isArray(entry.steps) || entry.steps.length < 1 || entry.steps.length > 16
       || entry.steps.some((step) => !scratchpadExact(step, ['text', 'state'])
@@ -551,8 +540,8 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
       throw new CoordinationRefusal('scratchpad plan supersedes binding is invalid', 'scratchpad_entry_invalid');
     }
     normalized = {
-      kind: 'plan', objective: scratchpadString(entry.objective, 512),
-      steps: entry.steps.map((step) => ({ text: scratchpadString(step.text, 512), state: step.state })),
+      kind: 'plan', objective: scratchpadString(entry.objective),
+      steps: entry.steps.map((step) => ({ text: scratchpadString(step.text), state: step.state })),
       supersedes: supersedes === null ? null : clone(supersedes),
     };
   } else if (entry.kind === 'doubt') {
@@ -560,8 +549,8 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
       throw new CoordinationRefusal('scratchpad doubt context is invalid', 'scratchpad_entry_invalid');
     }
     normalized = {
-      kind: 'doubt', question: scratchpadString(entry.question, 1_024),
-      context: entry.context === null ? null : scratchpadString(entry.context, 2_048),
+      kind: 'doubt', question: scratchpadString(entry.question),
+      context: entry.context === null ? null : scratchpadString(entry.context),
     };
   } else if (entry.kind === 'link') {
     if (!SCRATCHPAD_RELATIONS.has(entry.relation) || !entry.target || typeof entry.target !== 'object') {
@@ -599,24 +588,7 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
   } else {
     throw new CoordinationRefusal('scratchpad kind is invalid', 'scratchpad_entry_invalid');
   }
-  const canonicalEntryBytes = canonicalBytes(normalized);
-  if (canonicalEntryBytes > MAX_SCRATCHPAD_ENTRY_BYTES) {
-    // Decision 3 (blocker 7): the canonical entry ceiling gains the coaching shape — the registry
-    // row names cap and actual; the field-level partitions inside the entry stay deliberate locals.
-    throw coachingRefusal(FRAME_LIMITS['scratchpad.entry.body'], canonicalEntryBytes, MAX_SCRATCHPAD_ENTRY_BYTES);
-  }
   return freeze(normalized);
-}
-
-
-/** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
- * gracefulPath} on the thrown error AND a human message composed by the ONE helper — numbers
- * only, never body content (AS-4). */
-export function coachingRefusal(row, actual, cap = row?.value) {
-  return Object.assign(
-    new CoordinationRefusal(composeFrameLimitRefusal(row, actual, cap), row?.refusalCode ?? 'size_exceeded'),
-    { cap, actual, unit: 'bytes', gracefulPath: frameLimitRefusalPath(row, cap) },
-  );
 }
 
 // ── the observation bucket ───────────────────────────────────────────────────────────────────────────
@@ -649,8 +621,8 @@ export function _readCanonicalLedger(store) {
 
 export function _canonicalPrefixEventDigest(store, events) {
   let ordered;
-  try { ordered = canonicalJson(events, { maxDepth: 256, maxNodes: 1_000_000 }); }
-  catch (error) { store._canonicalOrderFail(`coordination prefix cannot be canonically bounded: ${error?.message ?? error}`); }
+  try { ordered = canonicalJson(events); }
+  catch (error) { store._canonicalOrderFail(`coordination prefix is not canonically serializable: ${error?.message ?? error}`); }
   return sha256Bytes(Buffer.from(JSON.stringify(ordered), 'utf8'));
 }
 
@@ -673,7 +645,7 @@ export function _canonicalReceiptCore(store, mode, ledger, createdAt, cutPolicy 
 }
 
 export function _receiptBytes(receipt) {
-  return Buffer.from(`${JSON.stringify(canonicalJson(receipt, { maxDepth: 16, maxNodes: 128 }))}\n`, 'utf8');
+  return Buffer.from(`${JSON.stringify(canonicalJson(receipt))}\n`, 'utf8');
 }
 
 export function canonicalOrderReceipt(state) { return clone(state); }
@@ -1042,17 +1014,9 @@ export function _resetProjection(store) {
   // D2.3 (epic #132): replay-derived wave.started registry rows by waveId — the in-flight wave
   // set for THIS deployment. Rebuilt by re-applying the log in _apply; wave.closed closes rows.
   store._waveRegistry = new Map();
-  // #161 (D1): the campaign-plan object projection — planId -> plan (the contract's
-  // _plans/_planTasks naming is taken by the goal-plan fold; these are the campaign twins).
-  // Rebuilt by re-applying the log in _apply via foldPlanObjectEvent; folds apply events, they
-  // never authorize (H2.3). #161 (H2.2): the (waveId, waveRole) -> runId roster index the lane
-  // resolves pre-decomposed ownedBy.run bindings from at claim time.
-  store._campaignPlans = new Map();
   store._swarms = new Map();
-  store._waveRoleRuns = new Map();
-  // #286 G-31: the current run -> wave binding, last write wins (see the fold in _apply). The
-  // seat index above is keyed (waveId, waveRole) -> runId; this is the reverse question —
-  // which wave a run sits in NOW — and it is the one reading every wave reader shares.
+  // #286 G-31: the current run -> wave binding, last write wins (see the fold in _apply) — the
+  // one reading of "which wave does this run sit in NOW" that the wave readers share.
   store._waveBindings = new Map();
   // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
   // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
@@ -1245,9 +1209,6 @@ export function _appendBatch(store, entries, batchKind = null, beforeWrite = nul
     'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
     'scratchpad_task_settlement', 'scratchpad_link_citation',
     'scratchpad_workflow_settlement', 'scratchpad_stop_cleanup',
-    // #161 (H4.1): the plan lane's auto-demote batch — a -> doing transition that demotes the
-    // subtree's current doing task to todo in the same atomic append (the kimi behavior, DR-3).
-    ...PLAN_OBJECT_BATCH_KINDS,
   ].includes(batchKind)) {
     throw new TypeError('coordination batch kind is invalid');
   }
@@ -2670,12 +2631,6 @@ export function _apply(store, event) {
         runId: p.runId, waveId: p.waveId ?? null, waveRole: p.waveRole ?? null,
         registeredEvent: event.seq,
       }));
-      // #161 (H2.2): the (waveId, waveRole) -> runId binding — the roster row the plan lane
-      // resolves a pre-decomposed ownedBy.run (null) from at the row's claim/transition time.
-      if (typeof p.waveId === 'string' && p.waveId.length > 0
-        && typeof p.waveRole === 'string' && p.waveRole.length > 0) {
-        store._waveRoleRuns.set(waveRoleRunKey(p.waveId, p.waveRole), p.runId);
-      }
     }
     if (p?.kind === 'recovery.continuation_intent') {
       store._recoveryDispatches.set(p.workerId, store._validateRecoveryContinuationPayload(p, event, true));
@@ -2939,7 +2894,7 @@ export function _apply(store, event) {
       throw new CoordinationIntegrityError('scratchpad written entry is invalid', 'scratchpad_entry_integrity');
     }
     let normalized;
-    try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
+    try { normalized = normalizeScratchpadEntry(p.content); }
     catch { throw new CoordinationIntegrityError('scratchpad written content is invalid', 'scratchpad_entry_integrity'); }
     if (canonicalDigest(normalized) !== canonicalDigest(p.content) || store._scratchpadEntries.has(p.entryId)) {
       throw new CoordinationIntegrityError('scratchpad written entry changed during replay', 'scratchpad_entry_integrity');
@@ -2991,7 +2946,7 @@ export function _apply(store, event) {
       throw new CoordinationIntegrityError('scratchpad appended entry is invalid', 'scratchpad_entry_integrity');
     }
     let normalized;
-    try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
+    try { normalized = normalizeScratchpadEntry(p.content); }
     catch { throw new CoordinationIntegrityError('scratchpad appended content is invalid', 'scratchpad_entry_integrity'); }
     if (canonicalDigest(normalized) !== canonicalDigest(p.content) || store._scratchpadEntries.has(p.entryId)) {
       throw new CoordinationIntegrityError('scratchpad appended entry changed during replay', 'scratchpad_entry_integrity');
@@ -3575,16 +3530,6 @@ export function _apply(store, event) {
       if (store._loading && error instanceof SwarmIntegrityError) throw new SwarmReplayRefusal(event, error);
       throw error;
     }
-  } else if (PLAN_OBJECT_EVENT_KINDS.has(event.kind)) {
-    // #161 (D1/P2): the plan-object fold — the orchestrator's campaign plan state as a
-    // first-class coordination citizen. The lane module owns the closed payload shapes and the
-    // deterministic projection; an unfolderable event poisons the projection here (the TT4/board
-    // precedent). Folds apply events; they never authorize (H2.3) — ownership resolution is the
-    // lane's, and the fold resolves a pre-decomposed ownedBy.run (null) only from the durable
-    // roster facts (H2.2), so close/reopen replays the identical projection.
-    foldPlanObjectEvent(store._campaignPlans, event, {
-      resolveRunId: (waveId, role) => store._waveRoleRuns.get(waveRoleRunKey(waveId, role)) ?? null,
-    });
   } else {
     throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
   }
@@ -4546,7 +4491,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(store._campaignPlans) } : {}), ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -5684,53 +5629,8 @@ export function appendWaveClosed(store, fields, auth) {
     throw new CoordinationRefusal('wave is already closed', 'wave_already_closed');
   }
   const event = store._append('wave.closed', payload, auth);
-  // #161 (D2/P6): the wave-close elevation — the wave's plan tasks are reviewed at close.
-  store._planElevationAtWaveClose(payload.waveId, auth, event.seq);
   const record = store._waveClosures.get(payload.waveId) ?? null;
   return { ok: true, event: clone(event), record: record ? clone(record) : null };
-}
-
-export function _planElevationAtWaveClose(store, waveId, auth, closedEventSeq) {
-  if (store._campaignPlans.size === 0) return;
-  const demotions = [];
-  for (const plan of store._campaignPlans.values()) {
-    for (const taskId of Object.keys(plan.tasks).sort()) {
-      const task = plan.tasks[taskId];
-      if (task.ownedBy?.wave !== waveId) continue;
-      if (task.status === 'done') {
-        const evidence = [{ coordinationSeq: closedEventSeq }];
-        const payload = {
-          schemaVersion: 1, planId: plan.planId, taskId: task.id, evidence,
-          expectedTaskVersion: task.taskVersion,
-          requestDigest: planObjectDigest({
-            schemaVersion: 1, planId: plan.planId, taskId: task.id, evidence,
-            expectedTaskVersion: task.taskVersion,
-          }),
-        };
-        store._append('plan.task_evidence_linked', payload, {
-          actor: auth.actor,
-          key: `plan.task_evidence_linked:${plan.planId}:${task.id}:${planObjectDigest(evidence)}:v${task.taskVersion}`,
-        });
-      } else if (task.status === 'doing') {
-        demotions.push({
-          kind: 'plan.task_transitioned',
-          payload: {
-            schemaVersion: 1, planId: plan.planId, taskId: task.id, toStatus: 'todo',
-            expectedTaskVersion: task.taskVersion,
-            requestDigest: planObjectDigest({
-              schemaVersion: 1, planId: plan.planId, taskId: task.id, toStatus: 'todo',
-              expectedTaskVersion: task.taskVersion,
-            }),
-          },
-          auth: {
-            actor: auth.actor,
-            key: `plan.task_transitioned:${plan.planId}:${task.id}:todo:v${task.taskVersion}`,
-          },
-        });
-      }
-    }
-  }
-  if (demotions.length > 0) store._appendBatch(demotions, 'plan_auto_demote');
 }
 
 /** #511: the outcome of the request a colliding identity already names, read off the recorded row
@@ -5814,10 +5714,6 @@ export function mintSpill(store, fields, auth) {
     throw new CoordinationRefusal('spill body is required (non-empty string)', 'spill_invalid');
   }
   const bytes = Buffer.byteLength(body);
-  const spillCeiling = FRAME_LIMITS['spill.body'].value;
-  if (bytes > spillCeiling) {
-    throw coachingRefusal(FRAME_LIMITS['spill.body'], bytes, spillCeiling);
-  }
   const digest = createHash('sha256').update(body, 'utf8').digest('hex');
   const spillId = spillIdForBody(body);
   const payload = { spillId, digest, bytes, lane, body };
@@ -6085,8 +5981,7 @@ export function writeScratchpad(store, fields, auth) {
     content = normalizeScratchpadEntry(fields.entry,
       (entryId, entryDigest, requirement) => store._scratchpadResolveForWorker(
         fields.runId, fields.workerId, entryId, entryDigest, requirement,
-      ),
-      steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
+      ));
   } catch (error) {
     if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
     throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
@@ -6173,22 +6068,13 @@ export function appendScratchpad(store, fields, auth) {
     || !validRunId(fields?.runId) || !SCRATCHPAD_SCOPE.test(fields?.scope ?? '')) {
     throw new CoordinationRefusal('scratchpad append envelope is invalid', 'scratchpad_write_invalid');
   }
-  const steeringRegistered = store._steeringRuns.has(fields.runId);
   const workerId = auth.principalId;
-  // D3: the surface body bound comes from the scratchpad.entry.body admission row.
-  // Oversize notes refuse scratchpad_entry_exceeded; kernel steering-note variants
-  // do not establish a second surface bound.
-  if (typeof fields.entry?.text === 'string'
-    && Buffer.byteLength(fields.entry.text) > MAX_SCRATCHPAD_ENTRY_BYTES) {
-    throw new CoordinationRefusal('scratchpad entry body exceeds the admission bound', 'scratchpad_entry_exceeded');
-  }
   let content;
   try {
     content = normalizeScratchpadEntry(fields.entry,
       (entryId, entryDigest, requirement) => store._scratchpadResolveForWorker(
         fields.runId, workerId, entryId, entryDigest, requirement,
-      ),
-      steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
+      ));
   } catch (error) {
     if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
     throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
@@ -6668,11 +6554,7 @@ export function submitBoardReport(store, fields, auth, beforeWrite = null) {
   if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board report requires an itemId', 'invalid_board_item_id');
   if (!Number.isSafeInteger(fields.itemVersion) || fields.itemVersion <= 0) throw new CoordinationRefusal('board report requires a positive itemVersion', 'invalid_board_item_version');
   if (typeof fields.itemDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.itemDigest)) throw new CoordinationRefusal('board report requires an itemDigest', 'invalid_board_item_digest');
-  if (!boardBounded(fields.body, MAX_STORE_BOARD_REPORT_BYTES)) {
-    const reportBytes = typeof fields.body === 'string' ? Buffer.byteLength(fields.body) : 0;
-    if (reportBytes > MAX_STORE_BOARD_REPORT_BYTES) throw coachingRefusal(FRAME_LIMITS['board.report.body'], reportBytes, MAX_STORE_BOARD_REPORT_BYTES);
-    throw new CoordinationRefusal('board report body must be bounded non-empty', 'invalid_board_report');
-  }
+  if (!boardNonEmpty(fields.body)) throw new CoordinationRefusal('board report body must be non-empty', 'invalid_board_report');
   if (typeof fields.owner !== 'string' || !SAFE_BOARD_OWNER.test(fields.owner)) throw new CoordinationRefusal('board report requires a safe owner id', 'invalid_board_owner');
   const history = store._boardItemHistory.get(fields.itemId);
   const version = history?.find((rec) => rec.itemVersion === fields.itemVersion);

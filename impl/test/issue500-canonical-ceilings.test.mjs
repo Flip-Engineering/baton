@@ -5,11 +5,9 @@ import {
   canonicalJson, normalizeCanonicalOrderPolicy, sortCanonicalStrings,
 } from '../src/canonical-order.mjs';
 
-// Issue #500: pin the canonical-order implementation ceilings. The four bounds in
-// impl/src/canonical-order.mjs are operator-declared (no file derives them); this test locks
-// their live values at every enforcement face so a retune is a deliberate change, never drift.
-// Issue #530 removed the item ceiling these bounds sat beside, so `maxEvents` and the JSON
-// helper's `maxNodes` are now declared values with no implementation number behind them.
+// Issue #500 declared the canonical-order implementation ceilings; #530 removed them. This file
+// now pins what replaced them: the policy's own coherence rule (an event bound may not exceed its
+// ledger bound) and a JSON helper that serializes whatever structure it is given, at any depth.
 
 const GIB = 1024 * 1024 * 1024;
 const MIB16 = 16 * 1024 * 1024;
@@ -19,23 +17,24 @@ const policy = (fields) => ({
   maxLedgerBytes: GIB, maxEventBytes: MIB16, maxEvents: 1_000_000, maxReceiptBytes: MIB1, ...fields,
 });
 
-test('500-canonical: the policy ceilings accept their bound and refuse bound + 1', () => {
+test('500-canonical: the policy accepts any positive bounds and keeps its own coherence rule', () => {
   assert.deepEqual(normalizeCanonicalOrderPolicy(policy({})), policy({}));
-  for (const [field, bound] of [
-    ['maxLedgerBytes', GIB], ['maxEventBytes', MIB16], ['maxReceiptBytes', MIB1],
-  ]) {
-    assert.throws(() => normalizeCanonicalOrderPolicy(policy({ [field]: bound + 1 })), TypeError,
-      `${field} refuses above its ceiling`);
-  }
+  assert.deepEqual(normalizeCanonicalOrderPolicy(policy({ maxLedgerBytes: GIB * 64, maxEventBytes: MIB16 * 4, maxReceiptBytes: MIB1 * 8 })),
+    policy({ maxLedgerBytes: GIB * 64, maxEventBytes: MIB16 * 4, maxReceiptBytes: MIB1 * 8 }),
+    '#530: no implementation ceiling refuses a deployment a larger bound');
   assert.throws(() => normalizeCanonicalOrderPolicy(policy({ maxEventBytes: GIB + 1 })), TypeError,
-    'an event over the ledger ceiling refuses');
+    'an event bound over the ledger bound refuses — the policy must be coherent with itself');
 });
 
-test('500-canonical: canonicalJson judges depth against the 256 ceiling', () => {
-  assert.equal(canonicalJson({ a: 1 }, { maxDepth: 256, maxNodes: 1_000_000 }).a, 1);
-  assert.throws(() => canonicalJson({ a: 1 }, { maxDepth: 257, maxNodes: 1_000_000 }), RangeError,
-    'maxDepth above the ceiling is invalid');
+test('500-canonical: canonicalJson serializes any depth and refuses only a non-JSON shape', () => {
+  assert.equal(canonicalJson({ a: 1 }).a, 1);
   let deep = { leaf: true };
-  for (let index = 0; index < 256; index += 1) deep = { next: deep };
-  assert.throws(() => canonicalJson(deep), RangeError, 'past the default depth refuses');
+  for (let index = 0; index < 2_000; index += 1) deep = { next: deep };
+  let cursor = canonicalJson(deep);
+  for (let index = 0; index < 2_000; index += 1) cursor = cursor.next;
+  assert.equal(cursor.leaf, true, '#530: a deep structure is serialized whole');
+  assert.throws(() => canonicalJson({ a: undefined }), TypeError, 'a non-JSON value still refuses');
+  const cyclic = { a: 1 };
+  cyclic.self = cyclic;
+  assert.throws(() => canonicalJson(cyclic), TypeError, 'a cycle still refuses');
 });

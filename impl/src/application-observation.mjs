@@ -318,8 +318,8 @@ export function exactObject(value, fields, code, label, options = {}) {
   }
 }
 export function validId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value); }
-export function validText(value, maxBytes = FRAME_LIMITS['run.objective'].value) {
-  return typeof value === 'string' && value.length > 0 && !value.includes('\0') && Buffer.byteLength(value) <= maxBytes;
+export function validText(value) {
+  return typeof value === 'string' && value.length > 0 && !value.includes('\0');
 }
 /** Cap a string at maxBytes on a UTF-8 scalar boundary (the capBytes helper, messages.mjs). */
 export function capBytesToScalar(text, maxBytes) {
@@ -3347,7 +3347,7 @@ export function _workflowSelection(application, current, definition, candidates)
       })].includes(digest(core.candidate))
       || digest(core.comparedCandidates) !== digest(compared)
       || !core.reason || Object.keys(core.reason).sort().join(',') !== 'digest,text'
-      || !validText(core.reason.text, 1_024) || core.reason.digest !== digest(core.reason.text)
+      || !validText(core.reason.text) || core.reason.digest !== digest(core.reason.text)
       || !core.selectedBy || Object.keys(core.selectedBy).sort().join(',') !== 'actor,principalId,sessionId'
       || event.actor !== core.selectedBy.actor
       || event.idempotencyKey !== `${APPLICATION_WORKFLOW_SELECTION_RECORD_KIND}:${current.goal.runId}:${current.plan.digest}`) {

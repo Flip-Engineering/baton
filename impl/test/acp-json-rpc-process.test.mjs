@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { AcpJsonRpcProcess } from '../src/acp-json-rpc-process.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
-const make = (extra = {}) => new AcpJsonRpcProcess({ command: process.execPath, args: [fixture, '--serve'], setupTimeoutMs: 1000, maxFrameBytes: 1024, ...extra }).start();
+const make = (extra = {}) => new AcpJsonRpcProcess({ command: process.execPath, args: [fixture, '--serve'], setupTimeoutMs: 1000, ...extra }).start();
 
 test('ACP core correlates concurrent responses by id', async () => {
   const acp = make({ env: { ...process.env, FAKE_KIMI_MODE: 'out-of-order' } });
@@ -26,7 +26,7 @@ test('ACP core surfaces a setup timeout without closing the process', async () =
   assert.equal((await acp.closePromise).confirmed, true);
 });
 
-for (const [method, code] of [['malformed', 'acp_protocol_error'], ['oversize', 'wire_frame_oversize']]) {
+for (const [method, code] of [['malformed', 'acp_protocol_error']]) {
   test(`ACP core fails closed on ${method} protocol input`, async () => {
     const acp = make();
     try { await assert.rejects(acp.request(method), (error) => error.code === code); }
@@ -56,10 +56,13 @@ test('ACP core launches detached and kill confirms process-group reap', async ()
   assert.equal(result.confirmed, true);
 });
 
-test('ACP core bounds outbound frames before writing provider input', async () => {
-  const acp = make({ maxFrameBytes: 128 });
-  await assert.rejects(acp.request('echo', { text: 'x'.repeat(256) }), (error) => error.code === 'wire_frame_oversize');
-  await acp.kill();
+test('#530: a harness frame of any size is read, not refused', async () => {
+  const acp = make();
+  try {
+    const answer = await acp.request('big');
+    assert.equal(Buffer.byteLength(answer.text), 256 * 1024, 'a 256 KiB frame is parsed whole');
+    assert.equal(acp.failure, null, 'no wire ceiling fails the transport');
+  } finally { await acp.kill(); }
 });
 
 test('ACP core fails closed when notification handling fails', async () => {
