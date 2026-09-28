@@ -6,10 +6,13 @@
 # here. Those entries stay proposed and are not part of the operative set.
 # Approval: all 16 operative entries at 1fab9a1d, operator authorization
 # relayed in the bend2-laws-lead4 brief; final Codex review r9.1 APPROVED.
-# Actual application proofs remain open for all 16 entries; see laws-trace.md.
+# Full application proofs remain open for all 16 entries; see laws-trace.md.
 # Reference: reference/README.md, bend 2.0.25, a4952426.
 # Evidence: examples/laws-check.evidence.md.
+# receive-laws.bend states admission and recovery obligations over the real receive
+# module. Its IO proofs retain the host locking and keeper assumptions named there.
 import Base
+import ./receive-laws.bend as ReceiveLaws
 import ./examples/laws-history-model.bend as History
 import ./examples/laws-worker-model.bend as Worker
 import ./examples/laws-refusal-model.bend as Refusal

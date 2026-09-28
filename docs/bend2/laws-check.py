@@ -1,10 +1,10 @@
-"""Check the bounded law models, the transition witness and their negative controls
-at the pinned compiler."""
+"""Check model laws, receive application laws, and their negative controls."""
 
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +18,7 @@ BEND = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path("bend")
 # proof file, so a mutated model is compiled exactly as the law gate compiles it.
 FILES = [
     "laws.bend",
+    "receive-laws.bend",
     "examples/laws-history-model.bend",
     "examples/laws-worker-model.bend",
     "examples/laws-refusal-model.bend",
@@ -36,13 +37,31 @@ ENV = {**os.environ, "BEND_NO_TELEMETRY": "1"}
 results = []
 
 
+def copy_corpus(case):
+    """Preserve the application laws' imports into the real runtime source."""
+    docs = case / "docs/bend2"
+    for source in FILES:
+        destination = docs / source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(DOCS / source, destination)
+    shutil.copytree(ROOT / "bend2/src", case / "bend2/src")
+    return docs
+
+
 def run(label, argv, cwd, expected, location=None):
     result = subprocess.run(argv, cwd=cwd, env=ENV, text=True, capture_output=True)
     output = result.stdout + result.stderr
     passed = result.returncode == expected
     if location:
-        passed = passed and "- expected :" in output and "- observed :" in output
-        passed = passed and location in output
+        name = re.compile(r"(?:^|\.)" + re.escape(location) + (r"\w*" if location.endswith("_") else "") + r"$")
+        named_failure = False
+        for diagnostic in output.split("Error:")[1:]:
+            found = re.search(r"^Location:\s*(\S+)", diagnostic, re.MULTILINE)
+            if found and name.search(found.group(1)):
+                named_failure = "- expected :" in diagnostic and "- observed :" in diagnostic
+                if named_failure:
+                    break
+        passed = passed and named_failure
     results.append({"label": label, "argv": [str(x) for x in argv],
                     "cwd": str(cwd),
                     "exit": result.returncode, "expectedExit": expected,
@@ -56,6 +75,7 @@ if version.stdout.strip() != "bend 2.0.25":
 
 run("open obligations", [BEND, "docs/bend2/laws.bend", "--check-only"], ROOT, 1)
 run("model proofs", [BEND, "docs/bend2/examples/laws-proof.bend", "--check-only"], ROOT, 0)
+run("receive application proofs", [BEND, "docs/bend2/receive-laws.bend", "--check-only"], ROOT, 0)
 run("model run", [BEND, "docs/bend2/examples/laws-proof.bend"], ROOT, 0)
 transition = run("transition witness", [BEND, "docs/bend2/examples/laws-transition.bend"], ROOT, 0)
 results[-1]["passed"] = results[-1]["passed"] and "DISAGREE" not in transition.stdout
@@ -114,32 +134,47 @@ with tempfile.TemporaryDirectory(prefix="laws-check-", dir=DOCS / "examples") as
     ENV["TMPDIR"] = str(scratch)
     for index, (label, file, before, after, location) in enumerate(mutations):
         case = scratch / str(index)
-        for source in FILES:
-            destination = case / source
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(DOCS / source, destination)
-        path = case / file
+        docs = copy_corpus(case)
+        path = docs / file
         source = path.read_text()
         if source.count(before) != 1:
             raise SystemExit(f"Mutation anchor changed: {label}")
         path.write_text(source.replace(before, after))
-        run(label, [BEND, "examples/laws-proof.bend", "--check-only"], case, 1, location)
+        run(label, [BEND, "docs/bend2/examples/laws-proof.bend", "--check-only"], case, 1, location)
+
+    # Mutate the production dispatch that the receive laws import.
+    receive_mutations = [
+        ("busy receive runs its continuation",
+         'case None{}: receive_status(db,session,"queued")',
+         'case None{}: again(Unit{})',
+         "busy_receive_only_reports_queued"),
+        ("receive recovery starts another process",
+         "P.ProcessChild.attach(directory)",
+         'P.ProcessChild.spawn(directory,".","")',
+         "recovery_attaches_recorded_attempt"),
+    ]
+    for index, (label, before, after, location) in enumerate(receive_mutations):
+        case = scratch / ("receive-" + str(index))
+        copy_corpus(case)
+        path = case / "bend2/src/coordinator/receive.bend"
+        source = path.read_text()
+        if source.count(before) != 1:
+            raise SystemExit(f"Mutation anchor changed: {label}")
+        path.write_text(source.replace(before, after))
+        run(label, [BEND, "docs/bend2/receive-laws.bend", "--check-only"], case, 1, location)
 
     # The witness control: the same corpus with the host half dropping the last
     # retained row must report a disagreement, so the comparison is not vacuous.
     witness_case = scratch / "witness"
-    for source in FILES:
-        destination = witness_case / source
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(DOCS / source, destination)
-    host = witness_case / "examples/laws-transition.js"
+    witness_docs = copy_corpus(witness_case)
+    host = witness_docs / "examples/laws-transition.js"
     host_source = host.read_text()
     anchor = "for (const review of reviews) {"
     if host_source.count(anchor) != 1:
         raise SystemExit("Witness anchor changed: dropping the last row")
     host.write_text(host_source.replace(anchor, "for (const review of reviews.slice(0, -1)) {"))
     dropped = run("witness control drops a row",
-                  [BEND, str(witness_case / "examples/laws-transition.bend")], ROOT, 0)
+                  [BEND, str(witness_docs / "examples/laws-transition.bend")], ROOT, 0)
     results[-1]["passed"] = results[-1]["passed"] and "DISAGREE" in dropped.stdout
 
     binary = scratch / "laws-proof"
@@ -155,9 +190,11 @@ with tempfile.TemporaryDirectory(prefix="laws-check-", dir=DOCS / "examples") as
         "impl/test/issue297-issue307-host-capacity.test.mjs"], ROOT, 0)
 
 report = {
-    "scope": "Pure models, the transition witness and two existing JavaScript regression rows; application laws remain open.",
+    "scope": "Pure models, receive admission and recovery IO laws over runtime code, their negative controls, the transition witness and two JavaScript regressions. Native lock and keeper semantics require host process tests.",
     "compiler": str(BEND),
     "sha256": {name: hashlib.sha256((DOCS / name).read_bytes()).hexdigest() for name in FILES},
+    "applicationSha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in sorted((ROOT / "bend2/src").rglob("*")) if path.is_file()},
     "results": results,
 }
 print(json.dumps(report, indent=2))
