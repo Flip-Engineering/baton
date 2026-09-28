@@ -917,7 +917,15 @@ checkout the deployment owns, runs the regenerators and the derived gate set the
 `swarm.contribution_integrated` — the receipt of the git it actually ran, never
 caller-submittable. Refusals are typed and pre-effect where possible:
 `integrate_commit_unreachable`, `integrate_conflict`,
-`integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`. The gate run and
+`integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`,
+`integrate_parent_reverted` and `integrate_target_held`. The last two are #628. A contribution
+whose diff against its own parent restores that parent's parent content on a path the
+contribution does not declare refuses `integrate_parent_reverted`: landing it would drop work the
+parent landed, and that diff is the shape a worktree records when its HEAD moves onto a new base
+while its index stays at the old one. `integrate_target_held` refuses a landing whose target
+branch some linked checkout has current, because the fast-forward below is a ref-only move of
+that branch: it would move the checkout's HEAD and leave its index at the commit it holds, so the
+next commit recorded there would revert the landing. The gate run and
 the regenerators are asynchronous children of the resident's supervised pool, never on its loop
 (#459: `swarm.integration_started` / `swarm.integration_failed` rows, the host verify lease taken
 through the suite runner's own seam, `--follow` observing

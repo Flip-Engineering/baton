@@ -139,6 +139,16 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // `integrate_gates_red` (a real change whose derived tests ran red) and from `integrate_conflict`
   // (a real change that overlaps a landed one): nothing was ever going to land here.
   integrate_change_invalid: row(400, ['runtime'], 'the named target or the squashed range is not landable'),
+  // Issue #628: the fast-forward is a ref-only move of the target branch. A linked checkout that
+  // has that branch current moves its HEAD with the ref and keeps its index and files at the
+  // commit it held, so the next commit recorded there reverts everything the landing brought —
+  // the state one seat's worktree reached on 2026-09-28. Raised before the ref moves: the
+  // refusal names the holding worktrees, and the target is untouched.
+  integrate_target_held: row(409, ['runtime'], 'the target branch is checked out in a worktree, so the landing\'s ref-only fast-forward would leave that checkout\'s index at the commit it holds'),
+  // Issue #628: the contribution's own commit restores its parent's parent content on paths it
+  // does not declare — a diff against its own parent that reverts that parent. Raised before the
+  // landing opens: landing it would drop work the parent landed, undeclared.
+  integrate_parent_reverted: row(409, ['runtime'], 'the contribution reverts its own parent commit on paths it does not declare, so landing it would drop work the parent landed'),
   // Issue #576: the resident stopped while the landing was in flight — the drain cancelled and
   // reaped its gate runners, and the abandoned attempt is recorded so the lead can retry it.
   integrate_landing_abandoned: row(409, ['runtime'], 'the resident stopped while this landing was in flight, so its gate run was cancelled and the attempt abandoned'),

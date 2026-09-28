@@ -53,7 +53,7 @@ import {
   unaccountedFiles, verdictFailures,
 } from './suite-comparison.mjs';
 import { selectFromRepository } from './verification-selection.mjs';
-import { landContribution } from './worktree.mjs';
+import { landContribution, parentRevertedPaths } from './worktree.mjs';
 // Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
 // a tail nobody else's bound describes.
@@ -7154,6 +7154,9 @@ export class SwarmRuntime {
       // not merge", and only the caller can decide which it meant.
       detail.otherContributionId = this._landedBy(swarm, error.paths);
     }
+    // Issue #628: the worktrees whose own HEAD the refused fast-forward would have moved — the
+    // checkouts the target branch is current in, named so the caller moves them off it.
+    if (Array.isArray(error.holders)) detail.holders = [...error.holders];
     if (Array.isArray(error.unexpected)) {
       detail.unexpected = error.unexpected;
       detail.verdictLine = error.verdictLine ?? null;
@@ -7250,6 +7253,12 @@ export class SwarmRuntime {
       // and the detail names both heads.
       case 'integrate_target_diverged':
         refuse(message, 'integrate_target_diverged', detail); break;
+      // Issue #628: the target branch is checked out in a worktree, and the landing's fast-forward
+      // is a ref-only move — it would move that checkout's HEAD and leave its index at the commit
+      // it holds, so its next commit would revert everything this landing brought. Raised before
+      // the ref moves, so the target is untouched and no receipt is recorded.
+      case 'integrate_target_held':
+        refuse(message, 'integrate_target_held', detail); break;
       case 'integrate_change_invalid':
         refuse(message, 'integrate_change_invalid', detail); break;
       case 'integrate_withdrawn':
@@ -7388,6 +7397,28 @@ export class SwarmRuntime {
     const target = typeof args.target === 'string' && args.target.length > 0
       ? args.target : landingTargetOf(authority.repoRoot);
     const contract = this._contributionContract(contribution);
+    // Issue #628: a contribution whose own commit restores its parent's parent content on paths
+    // it does not declare is not a change to land — its diff against its own parent reverts that
+    // parent, so the target would lose what the parent landed. That is the shape a worktree
+    // records when its HEAD moved onto a new base while its index stayed at the old one: the
+    // landed 42196dda (2026-09-28) carried f154c260's content on the 19 paths 2e6a7e7f had just
+    // removed. `landContribution`'s target-held guard refuses the move that produces the state;
+    // this refuses any commit carrying it, whichever worktree produced it, naming the undeclared
+    // paths the target would lose. Nothing is recorded: this refusal is raised before the landing
+    // opens, so no scratch checkout, gate run or failure row exists to undo.
+    const declaredPaths = new Set((Array.isArray(contract?.items) ? contract.items : [])
+      .flatMap((item) => (Array.isArray(item?.files) ? item.files : []))
+      .filter((path) => typeof path === 'string' && path.length > 0));
+    const revertedPaths = parentRevertedPaths(authority.repoRoot, tip)
+      .filter((path) => !declaredPaths.has(path));
+    if (revertedPaths.length > 0) {
+      refuse(`Contribution ${args.contributionId} reverts its own parent commit on`
+        + ` ${revertedPaths.length} path(s) it does not declare: ${revertedPaths.slice(0, 5).join(', ')}`
+        + `${revertedPaths.length > 5 ? ', …' : ''}`, 'integrate_parent_reverted', {
+        contributionId: args.contributionId, commit: tip, paths: revertedPaths,
+        declared: [...declaredPaths].sort(), rule: 'commit-does-not-revert-its-parent',
+      });
+    }
     const subject = typeof contract?.subject === 'string' && contract.subject.length > 0
       ? contract.subject
       : typeof contribution.body === 'string' && contribution.body.length > 0

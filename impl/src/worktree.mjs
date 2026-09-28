@@ -2484,14 +2484,24 @@ function laneBranchState(repoRoot, taskId, dir) {
   return { branch, branchSha, headSha, contained };
 }
 
+/** The linked checkouts that have the branch `ref` names current — the worktrees a ref-only move
+ * of that branch takes with it. ONE derivation, read by the lane-branch repair below and by the
+ * landing's own fast-forward (#628). `listWorktrees` answers linked worktrees only, so the
+ * deployment's own checkout is never one of them. */
+function branchHolderDirs(repoRoot, ref) {
+  const branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
+  return listWorktrees(repoRoot)
+    .filter((entry) => entry.branch === branch)
+    .map((entry) => entry.dir);
+}
+
 /** Whether the lane branch is checked out in a worktree OTHER than `dir` — moving such a
  * branch would corrupt another checkout's view of its own HEAD. */
 function laneBranchHeldElsewhere(repoRoot, branch, dir) {
-  const ref = `refs/heads/${branch}`;
-  return listWorktrees(repoRoot).some((entry) => {
-    if (entry.branch !== branch && entry.branch !== ref) return false;
-    try { return realpathSync(entry.dir) !== realpathSync(dir); }
-    catch { return pathResolve(entry.dir) !== pathResolve(dir); }
+  let own;
+  try { own = realpathSync(dir); } catch { own = pathResolve(dir); }
+  return branchHolderDirs(repoRoot, branch).some((held) => {
+    try { return realpathSync(held) !== own; } catch { return pathResolve(held) !== own; }
   });
 }
 
@@ -2781,6 +2791,36 @@ const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']
  * the moment the snapshot was taken. ONE derivation: the snapshot writer commits under it and the
  * landing filter below reads it back. */
 export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
+
+/** Issue #628: the paths where `commitSha`'s diff against its OWN parent restores the parent's
+ * parent's content — that is, the paths where the commit reverts what its parent landed. Read as
+ * the set difference of two name-only diffs: a path the parent changed (`parent^..parent`) that
+ * this commit leaves exactly as `parent^` had it.
+ *
+ * That shape is the signature of a worktree whose HEAD was moved onto a new base while its index
+ * stayed at the old one: the commit it records carries the old base's content, so its diff
+ * against the new base undoes everything the new base brought. Empty for a commit with no parent,
+ * or whose parent changed nothing. The landing refuses the undeclared remainder of this set;
+ * `landContribution`'s own target-held guard refuses the move that produces it. */
+export function parentRevertedPaths(repoRoot, commitSha) {
+  // A commit this repository does not hold names no paths; the landing's own
+  // `integrate_commit_unreachable` refusal is what reports it.
+  let tip;
+  try { tip = sh('git', ['rev-parse', '--verify', `${commitSha}^{commit}`], repoRoot); }
+  catch { return Object.freeze([]); }
+  let parent;
+  try { parent = sh('git', ['rev-parse', '--verify', `${tip}^`], repoRoot); }
+  catch { return Object.freeze([]); }
+  let grandparent;
+  try { grandparent = sh('git', ['rev-parse', '--verify', `${parent}^`], repoRoot); }
+  catch { return Object.freeze([]); }
+  const changedByParent = sh('git', ['diff', '--name-only', grandparent, parent], repoRoot)
+    .split('\n').filter((line) => line.length > 0);
+  if (changedByParent.length === 0) return Object.freeze([]);
+  const held = new Set(sh('git', ['diff', '--name-only', grandparent, tip], repoRoot)
+    .split('\n').filter((line) => line.length > 0));
+  return Object.freeze(changedByParent.filter((path) => !held.has(path)).sort());
+}
 
 /**
  * Land one contribution's whole range as ONE squashed commit.
@@ -3134,6 +3174,26 @@ export async function landContribution(repoRoot, request) {
         'integrate_publish_undeclared');
     }
     if (!dryRun) {
+      // #628: this fast-forward is a REF-ONLY move of `ref`. A linked checkout that has the
+      // branch current moves its HEAD with the ref while its index and files stay at the commit
+      // it held, so the next commit recorded there reverts everything this landing brought — the
+      // state one seat's worktree reached on 2026-09-28 (the landed 42196dda carried f154c260's
+      // content on the 19 paths 2e6a7e7f had just removed). The rule `laneBranchHeldElsewhere`
+      // already applies to a lane branch applies to the landing's target: a branch a checkout
+      // holds is not moved under it, and the refusal names the holding worktrees. Read here,
+      // immediately before the move, because a checkout can appear at any point in the run.
+      // The rollback after a failed publish is deliberately not guarded: refusing there would
+      // leave the target holding the unpublished squash #558 exists to prevent.
+      const assertTargetUnheld = () => {
+        const holders = branchHolderDirs(repoRoot, ref);
+        if (holders.length === 0) return;
+        throw Object.assign(
+          mergeError(`the target ${target} is checked out in ${holders.length} worktree(s)`
+            + ` (${holders.join(', ')}); the landing moves the ref without them, so their index`
+            + ' would stay at the commit they hold', 'integrate_target_held'),
+          { holders },
+        );
+      };
       // One atomic compare-and-swap: if anything moved the target after the gates, this fails
       // rather than landing a squash computed against a head the branch no longer has.
       //
@@ -3150,6 +3210,7 @@ export async function landContribution(repoRoot, request) {
       // actually re-judged — an empty answer means the move touches none of the judged tests. The
       // re-judgment runs BEFORE the second compare-and-swap, so the verdict it produces is the one
       // the landing publishes or refuses on.
+      assertTargetUnheld();
       try {
         gitFile(['update-ref', ref, landed.squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
       } catch (error) {
@@ -3192,6 +3253,7 @@ export async function landContribution(repoRoot, request) {
           };
         }
         targetHeadBefore = moved;
+        assertTargetUnheld();
         try {
           gitFile(['update-ref', ref, landed.squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
         } catch (refused) {
