@@ -179,8 +179,9 @@ def main():
     def bend(*command):
         started = time.perf_counter_ns()
         answer = execute([args.binary, db, *command], cwd=run, env=env)
+        value = json.loads(answer.stdout)
         elapsed = (time.perf_counter_ns() - started) / 1e6
-        return json.loads(answer.stdout), {'wall_ms': elapsed, 'result_bytes': len(answer.stdout)}
+        return value, {'wall_ms': elapsed, 'result_bytes': len(answer.stdout)}
 
     old = None
     try:
@@ -304,7 +305,7 @@ def main():
                             'guidance_write': 'swarm.guide retained for one-shot worker / message guidance',
                             'report_write': 'swarm.update contribution_recorded / report to parent'},
                 'old_durability': 'Real fsync wrapper; durable_ms includes scheduled group fsync before helper response. dispatch_ms ends when the runtime returns.',
-                'timing': 'Monotonic wall time; deterministic interleaving; warmups excluded; p95 nearest rank; no cache flush.',
+                'timing': 'Monotonic wall time including caller JSON parsing on both sides; deterministic interleaving; warmups excluded; p95 nearest rank; no cache flush.',
                 'correctness': 'Every roster and report read checked; exact Unicode body and report IDs checked before and after three old process restarts; guidance bodies checked in retained records.',
                 'limitations': ['Old worker recruitment uses controlled ports; no provider or native process launch.',
                                'Old Web/CLI transport, auth, host-capacity service and delivery endpoints are excluded.',
