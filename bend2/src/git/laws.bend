@@ -9,6 +9,9 @@ import ./types.bend as T
 import ./process.bend as P
 import ./land.bend as L
 import ./debris.bend as Deb
+import ./text.bend as Tx
+import ./status.bend as WS
+import ./create-worktree.bend as CW
 
 # ---------------------------------------------------------------------------
 # M-2: an unresolved external attempt stays unresolved until justified.
@@ -274,4 +277,402 @@ law m18_push_destination_is_the_declared_remote:
   {L.push_argv(branch, remote) == Con{"push", Con{remote, Con{branch, Nil{}}}} : List<String>}
 
 def m18_push_destination_is_the_declared_remote(branch, remote):
+  {==}
+
+# ---------------------------------------------------------------------------
+# Text helpers: the argv encoding and the run-result parser. M-2 keeps an
+# unresolved attempt unresolved; M-11 reads established facts from the
+# observed output and invents nothing; M-5 keeps accepted lines and order.
+
+# M-2: a run the host never started stays unstarted, carrying its own detail.
+law m2_tx_failed_run_invents_no_status:
+  for +code: U32
+  for +text: String
+  {Tx.run_res(Fail{(code, text)}) == T.RSpawn{text} : T.RunRes}
+
+def m2_tx_failed_run_invents_no_status(code, text):
+  {==}
+
+# M-11: the status is read from the observed output line, never invented. An
+# "exit N" first line answers exit N, and the answer carries only the output
+# that followed the status line.
+law m11_tx_exit_reads_the_observed_status:
+  {Tx.run_res(Done{"exit 0\n"}) == T.RRun{T.SExit{0}, ""} : T.RunRes}
+
+def m11_tx_exit_reads_the_observed_status():
+  {==}
+
+# M-11: a "signal N" first line answers the killing signal, not a status.
+law m11_tx_signal_reads_the_observed_status:
+  {Tx.run_res(Done{"signal 9\n"}) == T.RRun{T.SSignal{9}, ""} : T.RunRes}
+
+def m11_tx_signal_reads_the_observed_status():
+  {==}
+
+# M-2: a process that answered nothing stays unresolved until justified.
+law m2_tx_empty_answer_stays_unresolved:
+  {Tx.run_res(Done{""}) == T.RSpawn{"process answered nothing"} : T.RunRes}
+
+def m2_tx_empty_answer_stays_unresolved():
+  {==}
+
+# M-2: a status line naming no known outcome stays unresolved, never a guess.
+law m2_tx_unknown_token_stays_unresolved:
+  {Tx.run_res(Done{"bogus 0\n"}) == T.RSpawn{"unknown status token"} : T.RunRes}
+
+def m2_tx_unknown_token_stays_unresolved():
+  {==}
+
+# M-11: an empty argv encodes to no bytes; the encoder fabricates nothing.
+law m11_tx_empty_argv_encodes_nothing:
+  {Tx.enc_argv(Nil{}) == "" : String}
+
+def m11_tx_empty_argv_encodes_nothing():
+  {==}
+
+# M-5: one argument survives the encoding with its byte length and content.
+law m5_tx_single_argv_keeps_length_and_content:
+  {Tx.enc_argv(Con{"ab", Nil{}}) == "2:ab" : String}
+
+def m5_tx_single_argv_keeps_length_and_content():
+  {==}
+
+# M-5: no input lines means no lines out; the splitter invents none.
+law m5_tx_no_lines_from_empty:
+  {Tx.split_lines(SNil{}) == Nil{} : List<String>}
+
+def m5_tx_no_lines_from_empty():
+  {==}
+
+# M-5: one line without a newline survives the split as itself.
+law m5_tx_single_line_survives_split:
+  {Tx.split_lines("a") == Con{"a", Nil{}} : List<String>}
+
+def m5_tx_single_line_survives_split():
+  {==}
+
+# M-5: joining no lines answers the empty string.
+law m5_tx_join_empty_is_empty:
+  for +sep: String
+  {Tx.join(sep, Nil{}) == "" : String}
+
+def m5_tx_join_empty_is_empty(sep):
+  {==}
+
+# M-5: joining one line answers that line unchanged.
+law m5_tx_join_single_is_identity:
+  for +sep: String
+  for +a: String
+  {Tx.join(sep, Con{a, Nil{}}) == a : String}
+
+def m5_tx_join_single_is_identity(sep, a):
+  {==}
+
+# M-5: no NUL-separated fields means no fields out.
+law m5_tx_no_fields_from_empty_nul:
+  {Tx.split_nul(SNil{}) == Nil{} : List<String>}
+
+def m5_tx_no_fields_from_empty_nul():
+  {==}
+
+# ---------------------------------------------------------------------------
+# Worktree status: the observed state of one worktree. M-2 carries the
+# observed branch, commit and dirty flag into the answer and keeps a refusal
+# a refusal; M-14 names the actual failed rule in every refusal rendering.
+
+# M-2: the branch a successful stage read is the branch the answer carries.
+law m2_ws_stage1_ok_carries_the_observed_branch:
+  {WS.ws_stage1_ok(True{}, "main\n") == WS.WSNext{"main", SNil{}} : WS.WS}
+
+def m2_ws_stage1_ok_carries_the_observed_branch():
+  {==}
+
+# M-14: a failed branch read names the git command that failed.
+law m14_ws_stage1_fail_names_the_command:
+  for +out: String
+  {WS.ws_stage1_ok(False{}, out) == WS.WSFail{T.FCmd{"worktree-status", Tx.cmd_failed("git rev-parse --abbrev-ref HEAD")}} : WS.WS}
+
+def m14_ws_stage1_fail_names_the_command(out):
+  {==}
+
+# M-2: the commit a successful stage read is the commit the answer carries.
+law m2_ws_stage2_ok_carries_the_observed_commit:
+  {WS.ws_stage2_ok(True{}, "abc123\n", "main") == WS.WSNext{"main", "abc123"} : WS.WS}
+
+def m2_ws_stage2_ok_carries_the_observed_commit():
+  {==}
+
+# M-14: a failed commit read names the git command that failed.
+law m14_ws_stage2_fail_names_the_command:
+  for +out: String
+  for +branch: String
+  {WS.ws_stage2_ok(False{}, out, branch) == WS.WSFail{T.FCmd{"worktree-status", Tx.cmd_failed("git rev-parse HEAD")}} : WS.WS}
+
+def m14_ws_stage2_fail_names_the_command(out, branch):
+  {==}
+
+# M-2: empty porcelain output answers a clean worktree, never a dirty one.
+law m2_ws_stage3_clean_reports_clean:
+  {WS.ws_stage3_ok(True{}, SNil{}, "main", "abc") == WS.WSDone{T.Wt{"main", "abc", False{}}} : WS.WS}
+
+def m2_ws_stage3_clean_reports_clean():
+  {==}
+
+# M-2: porcelain output answers a dirty worktree; the flag is read, not set.
+law m2_ws_stage3_dirty_reports_dirty:
+  {WS.ws_stage3_ok(True{}, " M x\n", "main", "abc") == WS.WSDone{T.Wt{"main", "abc", True{}}} : WS.WS}
+
+def m2_ws_stage3_dirty_reports_dirty():
+  {==}
+
+# M-14: a failed porcelain read names the git command that failed.
+law m14_ws_stage3_fail_names_the_command:
+  for +out: String
+  for +branch: String
+  for +commit: String
+  {WS.ws_stage3_ok(False{}, out, branch, commit) == WS.WSFail{T.FCmd{"worktree-status", Tx.cmd_failed("git status --porcelain")}} : WS.WS}
+
+def m14_ws_stage3_fail_names_the_command(out, branch, commit):
+  {==}
+
+# M-2: a finished status answers the observed state.
+law m2_ws_done_answers_the_status:
+  {WS.ws_answer(WS.WSDone{T.Wt{"b", "c", False{}}}) == IO.pure(Result<&1,&1,T.GitFail,T.WtStatus>, Done{T.Wt{"b", "c", False{}}}) : IO(Result<&1,&1,T.GitFail,T.WtStatus>)}
+
+def m2_ws_done_answers_the_status():
+  {==}
+
+# M-2: a refused status answers the refusal, never a fabricated state.
+law m2_ws_fail_answers_the_refusal:
+  {WS.ws_answer(WS.WSFail{T.FCmd{"worktree-status", "x"}}) == IO.pure(Result<&1,&1,T.GitFail,T.WtStatus>, Fail{T.FCmd{"worktree-status", "x"}}) : IO(Result<&1,&1,T.GitFail,T.WtStatus>)}
+
+def m2_ws_fail_answers_the_refusal():
+  {==}
+
+# M-14: a clean worktree at the expected commit reports no failure.
+law m14_ws_clean_match_is_silent:
+  {WS.status_clean_fail(Done{T.Wt{"b", "c", False{}}}, "c") == "" : String}
+
+def m14_ws_clean_match_is_silent():
+  {==}
+
+# M-14: a dirty worktree names the dirt the check did not expect.
+law m14_ws_clean_dirty_names_the_rule:
+  {WS.status_clean_fail(Done{T.Wt{"b", "c", True{}}}, "c") == "status: worktree unexpectedly dirty" : String}
+
+def m14_ws_clean_dirty_names_the_rule():
+  {==}
+
+# M-14: a worktree at another commit names the mismatch.
+law m14_ws_clean_mismatch_names_the_rule:
+  {WS.status_clean_fail(Done{T.Wt{"b", "other", False{}}}, "c") == "status: commit mismatch" : String}
+
+def m14_ws_clean_mismatch_names_the_rule():
+  {==}
+
+# M-14: a touched worktree whose dirty flag is set reports no failure.
+law m14_ws_dirty_present_is_silent:
+  {WS.status_dirty_fail(Done{T.Wt{"b", "c", True{}}}, "c") == "" : String}
+
+def m14_ws_dirty_present_is_silent():
+  {==}
+
+# M-14: a touched worktree whose dirty flag is missing names the rule.
+law m14_ws_dirty_missing_names_the_rule:
+  {WS.status_dirty_fail(Done{T.Wt{"b", "c", False{}}}, "c") == "status: dirty flag missing after touch" : String}
+
+def m14_ws_dirty_missing_names_the_rule():
+  {==}
+
+# M-14: a refusal over the failing command stays silent only for that command.
+law m14_ws_cmd_refusal_names_the_command:
+  {WS.status_cmd_fail(Fail{T.FCmd{"worktree-status", Tx.cmd_failed("git status --porcelain")}}, "git status --porcelain") == "" : String}
+
+def m14_ws_cmd_refusal_names_the_command():
+  {==}
+
+# M-14: an answer where a refusal was owed names the expectation.
+law m14_ws_cmd_success_names_the_expectation:
+  {WS.status_cmd_fail(Done{T.Wt{"b", "c", False{}}}, "git status --porcelain") == "status: expected a refusal for a path Git cannot read" : String}
+
+def m14_ws_cmd_success_names_the_expectation():
+  {==}
+
+# ---------------------------------------------------------------------------
+# Create-worktree: one worker branch and worktree from an explicit base. M-2
+# carries the resolved base and the created identity into the answer; M-4
+# keeps the resolved base when a later guard refuses instead of disposing it;
+# M-14 names the taken branch, the taken path, the unknown base, or the git
+# command that failed.
+
+# M-2: the base a successful resolve read is the base the pipeline carries.
+law m2_cw_stage1_ok_carries_the_resolved_base:
+  {CW.cw_stage1_ok(True{}, "abc123\n", "main") == CW.CWNext{"abc123"} : CW.CW}
+
+def m2_cw_stage1_ok_carries_the_resolved_base():
+  {==}
+
+# M-14: an unresolvable base names the base the caller supplied.
+law m14_cw_stage1_fail_names_the_base:
+  for +out: String
+  for +base: String
+  {CW.cw_stage1_ok(False{}, out, base) == CW.CWFail{T.FUnknownBase{base}} : CW.CW}
+
+def m14_cw_stage1_fail_names_the_base(out, base):
+  {==}
+
+# M-14: a taken branch names the branch instead of reusing it.
+law m14_cw_stage2_taken_names_the_branch:
+  for +out: String
+  for +bc: String
+  for +branch: String
+  {CW.cw_stage2_ok(True{}, out, bc, branch) == CW.CWFail{T.FBranchExists{branch}} : CW.CW}
+
+def m14_cw_stage2_taken_names_the_branch(out, bc, branch):
+  {==}
+
+# M-4: a free branch keeps the resolved base the first stage made.
+law m4_cw_stage2_free_keeps_the_base:
+  for +out: String
+  for +bc: String
+  for +branch: String
+  {CW.cw_stage2_ok(False{}, out, bc, branch) == CW.CWNext{bc} : CW.CW}
+
+def m4_cw_stage2_free_keeps_the_base(out, bc, branch):
+  {==}
+
+# M-14: a taken path names the path instead of overwriting it.
+law m14_cw_stage3_taken_names_the_path:
+  for +bc: String
+  for +path: String
+  {CW.cw_stage3_ok(True{}, bc, path) == CW.CWFail{T.FPathExists{path}} : CW.CW}
+
+def m14_cw_stage3_taken_names_the_path(bc, path):
+  {==}
+
+# M-4: a free path keeps the resolved base the earlier stages made.
+law m4_cw_stage3_free_keeps_the_base:
+  for +bc: String
+  for +path: String
+  {CW.cw_stage3_ok(False{}, bc, path) == CW.CWNext{bc} : CW.CW}
+
+def m4_cw_stage3_free_keeps_the_base(bc, path):
+  {==}
+
+# M-2: a successful add answers the branch, the path and the resolved base.
+law m2_cw_stage4_ok_answers_branch_path_and_base:
+  for +out: String
+  for +bc: String
+  for +br: String
+  for +p: String
+  {CW.cw_stage4_ok(True{}, out, bc, br, p) == CW.CWDone{T.WCreated{br, p, bc}} : CW.CW}
+
+def m2_cw_stage4_ok_answers_branch_path_and_base(out, bc, br, p):
+  {==}
+
+# M-14: a failed add names the git command that failed.
+law m14_cw_stage4_fail_names_the_command:
+  for +out: String
+  for +bc: String
+  for +br: String
+  for +p: String
+  {CW.cw_stage4_ok(False{}, out, bc, br, p) == CW.CWFail{T.FCmd{"create-worktree", Tx.cmd_failed("git worktree add")}} : CW.CW}
+
+def m14_cw_stage4_fail_names_the_command(out, bc, br, p):
+  {==}
+
+# M-14: the branch-exists reader stays silent only for that refusal.
+law m14_cw_branch_reader_names_the_branch:
+  {CW.is_branch_exists_fail(Fail{T.FBranchExists{"b"}}) == "" : String}
+
+def m14_cw_branch_reader_names_the_branch():
+  {==}
+
+# M-14: the path-exists reader stays silent only for that refusal.
+law m14_cw_path_reader_names_the_path:
+  {CW.is_path_exists_fail(Fail{T.FPathExists{"p"}}) == "" : String}
+
+def m14_cw_path_reader_names_the_path():
+  {==}
+
+# M-14: the unknown-base reader stays silent only for that refusal.
+law m14_cw_base_reader_names_the_base:
+  {CW.is_unknown_base_fail(Fail{T.FUnknownBase{"base"}}) == "" : String}
+
+def m14_cw_base_reader_names_the_base():
+  {==}
+
+# ---------------------------------------------------------------------------
+# Debris: the added paths the repository's own rules exclude, removed from
+# the index before the tree is written. M-4 keeps custody of the right index
+# (the worktree's own when INDEX is empty, a named private file otherwise),
+# names every dropped set on the answer, and drops nothing when nothing was
+# excluded. M-18 does not apply here: no publication destination is chosen.
+
+# M-4: an empty INDEX judges the worktree's own index in place.
+law m4_debris_empty_index_uses_the_own_index:
+  for +dir: String
+  for args: List<String>
+  {Deb.debris_argv(SNil{}, dir, args) == Con{"git", Con{"-C", Con{dir, args}}} : List<String>}
+
+def m4_debris_empty_index_uses_the_own_index(dir, args):
+  {==}
+
+# M-4: a private INDEX names its file, so the worktree's index stays intact.
+law m4_debris_private_index_is_named:
+  for +dir: String
+  for args: List<String>
+  {Deb.debris_argv("priv", dir, args) == Con{"/usr/bin/env", Con{"GIT_INDEX_FILE=priv", Con{"git", Con{"-C", Con{dir, args}}}}} : List<String>}
+
+def m4_debris_private_index_is_named(dir, args):
+  {==}
+
+# M-4: the dropped set is named as one space-joined line.
+law m4_debris_note_names_the_dropped_set:
+  {Deb.debris_note_of("a\nb\n") == "a b" : String}
+
+def m4_debris_note_names_the_dropped_set():
+  {==}
+
+# M-4: a successful rm answers the judged set; the worktree files stay, only
+# the index entries go.
+law m4_debris_rm_names_the_judged_set:
+  {Deb.debris_rm_pick(True{}, SNil{}, "a\nb\n") == IO.pure(Deb.Debris, Deb.DFine{"a b"}) : IO(Deb.Debris)}
+
+def m4_debris_rm_names_the_judged_set():
+  {==}
+
+# M-4: a failed rm names the git command that failed, not a dropped set.
+law m4_debris_rm_fail_names_the_command:
+  for +out: String
+  for +judged: String
+  {Deb.debris_rm_pick(False{}, out, judged) == IO.pure(Deb.Debris, Deb.DFail{Tx.cmd_failed("git rm --cached")}) : IO(Deb.Debris)}
+
+def m4_debris_rm_fail_names_the_command(out, judged):
+  {==}
+
+# M-4: no excluded path means a fine empty drop, never a failure.
+law m4_debris_nothing_excluded_is_fine:
+  for +out: String
+  {Deb.debris_none(True{}, out) == IO.pure(Deb.Debris, Deb.DFine{""}) : IO(Deb.Debris)}
+
+def m4_debris_nothing_excluded_is_fine(out):
+  {==}
+
+# M-4: a judgement that cannot be made fails the caller by name.
+law m4_debris_judge_fail_names_the_command:
+  for +out: String
+  {Deb.debris_none(False{}, out) == IO.pure(Deb.Debris, Deb.DFail{Tx.cmd_failed("git check-ignore --no-index")}) : IO(Deb.Debris)}
+
+def m4_debris_judge_fail_names_the_command(out):
+  {==}
+
+# M-4: no added paths means nothing to drop and nothing dropped.
+law m4_debris_empty_added_drops_nothing:
+  for +repo: String
+  for +index: String
+  for +dir: String
+  {Deb.debris_judge(repo, index, dir, Nil{}) == IO.pure(Deb.Debris, Deb.DFine{""}) : IO(Deb.Debris)}
+
+def m4_debris_empty_added_drops_nothing(repo, index, dir):
   {==}
