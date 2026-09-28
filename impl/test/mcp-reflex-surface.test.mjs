@@ -1,17 +1,4 @@
-// MCP reflex surface red suite (Slice 1), binding contract: docs/reference/evidence/
-// mcp-reflex-live-2026-07-22/mcp-reflex-surface-decisions.md (v2 FINAL, de68345).
-//
-// Slice 1 scope (Part J): registration machinery (Parts A, F) + baton_context_eval (Part B) +
-// baton_decision_list/baton_decision_answer (Part C) + inventory/error tests (Part H). The package
-// (Part E) tools are Slice 2, a separate seat binding coordination-store.mjs
-// methods this task's file scope does not include.
-//
-// This file tests the MCP-northbound wiring (registration, dispatch routing, typed-error reach,
-// the answer-shape guard, and the Web-bridge boundary) against a mocked `application` facade —
-// the same style phase16-mcp-northbound.test.mjs and reflex1-decision-requests.test.mjs use
-// for the ordinary `fleet_run_*`/`baton_run_*` tools. The underlying semantic behavior of
-// `application.contextEval` itself is exhaustively covered by
-// impl/test/reflex4-context-eval.test.mjs; this file does not re-derive it.
+// MCP decision tool registration, dispatch, refusal mapping and bridge behavior.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -42,7 +29,6 @@ function principal(overrides = {}) {
 
 function mockApplication(overrides = {}) {
   const commandCalls = [];
-  const contextEvalCalls = [];
   const decisionListCalls = [];
   const application = {
     repoId: REPO_ID,
@@ -53,27 +39,19 @@ function mockApplication(overrides = {}) {
       if (overrides.command) return overrides.command(name, args, appPrincipal, context);
       return { schemaVersion: 1, runId: args.runId, phase: 'running' };
     },
-    async contextEval(request, appPrincipal, context) {
-      contextEvalCalls.push({ request, principal: appPrincipal, context });
-      if (overrides.contextEval) return overrides.contextEval(request, appPrincipal, context);
-      if ((request.runId === undefined) === (request.manifestDigest === undefined)) {
-        throw Object.assign(new Error('Context evaluation request is invalid'), { code: 'application_context_eval_invalid' });
-      }
-      return { item: { id: `cell:${'a'.repeat(64)}`, value: { kind: 'cell' } } };
-    },
     async decisionList(request, appPrincipal, context) {
       decisionListCalls.push({ request, principal: appPrincipal, context });
       if (overrides.decisionList) return overrides.decisionList(request, appPrincipal, context);
       return { decisions: [] };
     },
   };
-  return { application, commandCalls, contextEvalCalls, decisionListCalls };
+  return { application, commandCalls, decisionListCalls };
 }
 
 function setup(overrides = {}) {
   const directory = overrides.directory ?? root();
   const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
-  const { application, commandCalls, contextEvalCalls, decisionListCalls } = overrides.applicationBundle ?? mockApplication(overrides.applicationOverrides ?? {});
+  const { application, commandCalls, decisionListCalls } = overrides.applicationBundle ?? mockApplication(overrides.applicationOverrides ?? {});
   const server = new McpFleetServer({
     coordinator: overrides.coordinator ?? {},
     coordination,
@@ -87,7 +65,7 @@ function setup(overrides = {}) {
     maxMessageBytes: 256 * 1024,
     takeToolQuota: overrides.takeToolQuota ?? (async () => ({ ok: true })),
   });
-  return { server, coordination, application, commandCalls, contextEvalCalls, decisionListCalls, directory };
+  return { server, coordination, application, commandCalls, decisionListCalls, directory };
 }
 
 const request = (server, id, method, params) => server.handle({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
@@ -321,8 +299,8 @@ test('bridge boundary: an ordinary-surface (Web-bridge shaped) server refuses ev
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   // baton_decision_answer is now an ADMITTED ordinary member (MCP-W1); the reflex-only names
-  // that must not cross are context_eval + the matrix reflex rows.
-  for (const name of ['baton_context_eval', 'baton_decision_list']) {
+  // that must not cross are the matrix reflex rows.
+  for (const name of ['baton_decision_list']) {
     const response = await request(server, 2, 'tools/call', { name, arguments: { repoId: REPO_ID } });
     assert.equal(response.error?.code, -32602, `${name} must be an unknown tool on the ordinary surface`);
   }

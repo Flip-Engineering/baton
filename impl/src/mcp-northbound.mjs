@@ -115,11 +115,6 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
   ].map(([tool, name]) => [tool, name]),
 ));
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval has no MCP tool here (not
-// in MCP_APPLICATION_ENTRIES above, not in ORDINARY_APPLICATION_ENTRIES/
-// ORDINARY_APPLICATION_TOOL_DEFINITIONS below) because it is not an APPLICATION_COMMAND_DEFINITIONS
-// entry at all — see the note above that table in application.mjs. It is reachable only as a
-// direct method call, `application.contextEval(...)`, today.
 const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   // The hand-rows-only served set (the pre-spread snapshot's source, above) …
   ...PRE_SPREAD_ORDINARY_ENTRIES,
@@ -155,7 +150,6 @@ const CAPABILITY = Object.freeze({
   // spellings from the canonical operation's capability classes.
   ...Object.fromEntries([deriveSurfaceNames('services.list').mcp, 'services.list']
     .map((tool) => [tool, canonicalOperationForCommand('services.list').capabilities])),
-  baton_context_eval: ['observe'],
   baton_decision_answer: ['approve', 'observe'],
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and
   // settlement tools. These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS
@@ -199,11 +193,11 @@ const CAPABILITY = Object.freeze({
 // (never APPLICATION_COMMAND_DEFINITIONS keys — Part A.2). The read-only subset
 // (REFLEX_READ_ONLY_TOOLS, below near the reflex table) extends the observe-path error gate.
 const REFLEX_TOOL_NAMES = new Set([
-  'baton_context_eval', 'baton_decision_answer',
+  'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.map((operation) => operation.names.mcp),
 ]);
 const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_kill', 'fleet_drain',
-  'baton_context_eval', 'baton_decision_answer',
+  'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
   // MCP-W1/W2: waves.start and the settlement tools are stateful (control effects ride the mcp.call
@@ -215,7 +209,7 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
-const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
+const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
   // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
@@ -2561,19 +2555,6 @@ export class McpFleetServer {
           ...(APPLICATION_TOOL[name] === 'run.act' ? { semanticAuthority } : {}),
         },
       );
-    }
-    // Reflex surface contract Part B: an explicit branch (never an APPLICATION_COMMAND_DEFINITIONS
-    // key — Part A.2) calling the direct command port `application.contextEval(...)`. The branch
-    // STRIPS repoId/idempotencyKey before the call; `validateContextEvalArgs` refuses unknown
-    // keys, so everything else in `args` (runId/manifestDigest/role/program) passes through
-    // unchanged for the method's own exactly-one-of enforcement.
-    else if (name === 'baton_context_eval') {
-      const { repoId: _repoId, idempotencyKey: _idempotencyKey, ...request } = args;
-      value = await this.application.contextEval(request, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
     }
     // Reflex surface contract Part C.6: a read-only direct command port reading
     // `projectDecisionAttention` for the Run's own workers — never a ledger event.
