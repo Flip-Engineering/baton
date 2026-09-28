@@ -1277,9 +1277,6 @@ export class CoordinationStore {
   }
   providerSourceHealth(repoId, providerId, sourceEpoch) { return coordinationLedger.providerSourceHealth(this, repoId, providerId, sourceEpoch); }
   providerAttemptPolicy() { return coordinationLedger.providerAttemptPolicy(this._providerAttemptPolicy); }
-  advisoryFeedCards() {
-    return coordinationInternals.advisoryFeedCards(this._advisoryFeedCards);
-  }
   pendingProviderReconciliation(repoId, coordinate) { return coordinationLedger.pendingProviderReconciliation(this, repoId, coordinate); }
   dueProviderProcessing(repoId, at) {
     return coordinationInternals.dueProviderProcessing(this, repoId, at);

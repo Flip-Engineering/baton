@@ -491,8 +491,6 @@ export function artifact(state, id) { return clone(state.get(id) ?? null); }
 /** Moved from `CoordinationStore.providerProcessing` (issue #259 slice 1). State: `this._providerProcessing`, passed explicitly. */
 export function providerProcessing(state, id) { return clone(state.get(id) ?? null); }
 
-/** Moved from `CoordinationStore.advisoryFeedCards` (issue #259 slice 1). State: `this._advisoryFeedCards`, passed explicitly. */
-export function advisoryFeedCards(state) { return [...state.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => compareCanonicalStrings(a.providerId, b.providerId)); }
 
 /** Moved from `CoordinationStore.dueProviderProcessing` (issue #259 slice 1). State: the store, passed explicitly. */
 export function dueProviderProcessing(store, repoId, at) {
