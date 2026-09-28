@@ -887,7 +887,7 @@ export function _resetProjection(store) {
   store._evidence = new Map(); store._scratchFacts = new Map(); store._scratchClaims = new Map(); store._scratchReads = [];
   store._knowledgeNodes = new Map(); store._knowledgeEdges = new Map(); store._knowledgeNodeHistory = new Map(); store._knowledgeEdgeHistory = new Map(); store._knowledgeReads = []; store._knowledgeRecallAssessments = new Map(); store._contamination = [];
   store._webCommands = new Map(); store._webCommandScopes = new Map(); store._mcpCalls = new Map(); store._mcpCallScopes = new Map();
-  store._fleetDrains = new Map(); store._runStops = new Map(); store._runStopByTarget = new Map(); store._runControls = new Map();
+  store._fleetDrains = new Map(); store._runStops = new Map(); store._runStopByTarget = new Map(); store._runControls = new Map(); store._runResultAdoptions = new Map();
   store._runVerificationRetries = new Map();
   store._runOrchestratorLeases = new Map(); store._runLineages = new Map(); store._runLineageEventSeqs = new Map(); store._runChildrenByParent = new Map();
   store._recoveryDispatches = new Map(); store._taskTopologies = new Map();
@@ -1709,6 +1709,8 @@ export function _validSessionPreservationReceipt(receipt, allowHistorical = fals
   const core = clone(receipt); delete core.receiptDigest;
   return receipt.receiptDigest === canonicalDigest(core);
 }
+
+export function _runResultAdoptionKey(runId, nodeKey) { return `${runId}\0${nodeKey}`; }
 
 
 
@@ -2705,6 +2707,17 @@ export function _apply(store, event) {
     store._runStops.set(p.runId, freeze({
       ...clone(old), status: 'stopped', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
     }));
+  } else if (event.kind === 'run.result_adoption_admitted') {
+    store._validateRunResultAdoptionAdmission(p, event, true);
+    store._runResultAdoptions.set(store._runResultAdoptionKey(p.runId, p.nodeKey), freeze({
+      ...clone(p), actor: event.actor, status: 'pending', admittedEvent: event.seq, admittedAt: event.ts,
+      receipt: null, completedEvent: null, completedAt: null,
+    }));
+  } else if (event.kind === 'run.result_adoption_completed') {
+    const old = store._validateRunResultAdoptionCompletion(p, event, true);
+    store._runResultAdoptions.set(store._runResultAdoptionKey(p.runId, p.nodeKey), freeze({
+      ...clone(old), status: 'adopted', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
+    }));
   } else if (event.kind === 'run.verification_retry_admitted') {
     store._validateRunVerificationRetryAdmission(p, event, true);
     store._runVerificationRetries.set(store._runVerificationRetryKey(p.runId, p.nodeKey), freeze({
@@ -3508,7 +3521,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -3610,6 +3623,39 @@ export function goalPlanSummary(store, repoId, limit = 100_000, cursor = 0) {
     plans: page.rows.filter((row) => row.plan).map((row) => clone(row.plan)),
     truncated: page.truncated, nextCursor: page.nextCursor,
   });
+}
+
+export function runResultAdoption(store, runId, nodeKey) {
+  if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run result adoption coordinates are invalid');
+  return clone(store._runResultAdoptions.get(store._runResultAdoptionKey(runId, nodeKey)) ?? null);
+}
+
+export function pendingRunResultAdoptions(state, limit = 1_000) {
+  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run result adoption scan limit is invalid');
+  return [...state.values()].filter((adoption) => adoption.status === 'pending')
+    .sort((a, b) => a.admittedEvent - b.admittedEvent).slice(0, limit).map(clone);
+}
+
+export function completeRunResultAdoption(store, fields, auth) {
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+    || Object.keys(fields).sort().join(',') !== ['nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')) {
+    throw new CoordinationRefusal('run result adoption completion is invalid', 'run_result_adoption_invalid');
+  }
+  const payload = clone(fields);
+  const adoption = store._runResultAdoptions.get(store._runResultAdoptionKey(fields.runId, fields.nodeKey));
+  if (adoption?.status === 'adopted') {
+    const prior = store._byKey.get(auth?.key);
+    if (!prior || prior.kind !== 'run.result_adoption_completed' || prior.actor !== auth?.actor
+      || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+      throw new CoordinationRefusal('run result adoption completion conflict', 'run_result_adoption_conflict');
+    }
+    return freeze({ ok: true, result: 'replay', event: clone(prior), adoption: store.runResultAdoption(fields.runId, fields.nodeKey) });
+  }
+  const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
+  store._validateRunResultAdoptionCompletion(payload, preview, false);
+  if (store._byKey.has(auth.key)) throw new CoordinationRefusal('run result adoption completion idempotency conflict', 'run_result_adoption_conflict');
+  const event = store._append('run.result_adoption_completed', payload, auth);
+  return freeze({ ok: true, result: 'completed', event: clone(event), adoption: store.runResultAdoption(fields.runId, fields.nodeKey) });
 }
 
 export function _runVerificationRetryKey(runId, nodeKey) { return `${runId}\0${nodeKey}`; }
