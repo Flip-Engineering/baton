@@ -139,10 +139,11 @@ The supervisor keeps the latest completed assistant message in memory. If OMP's
 terminal envelope has an empty or missing message list, that completed message
 supplies the parent report.
 Codex uses `exec --json` and `exec resume SESSION`, with the task on stdin.
-Its thread event records the native session. After process exit, the supervisor
-reads the final assistant message and terminal event from the retained output
-log to produce the parent report. Codex events do not name the observed model;
-that field stays empty.
+Its thread event records the native session. The supervisor retains the
+current invocation's completed assistant messages and terminal event in memory
+and produces the parent report from those retained events after process exit.
+Earlier successful turns in the same output log do not change the report.
+Codex events do not name the observed model; that field stays empty.
 Muse uses `exec --json --prompt-file` and resumes with `--session-id`.
 Its session envelopes record the native session and observed model, and its
 terminal envelope supplies the parent report. `workers` includes the native
