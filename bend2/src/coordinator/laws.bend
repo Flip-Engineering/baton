@@ -531,9 +531,3 @@ law m18_push_destination_is_the_declared_remote:
 
 def m18_push_destination_is_the_declared_remote(branch, remote):
   {==}
-
-# CONTROL (this commit only): a deliberately false law. It carries no proof, so the native build
-# must refuse the tree. The next commit removes it and the same build must succeed.
-law control_false_law:
-  for +rows: U32
-  {U32.add(rows, 0) == U32.add(rows, 1) : U32}
