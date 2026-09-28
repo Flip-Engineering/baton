@@ -1772,35 +1772,7 @@ export class CoordinationStore {
 
   queryKnowledgeEdges(query = {}) { return coordinationLedger.queryKnowledgeEdges(this, query); }
 
-  _prepareKnowledgeRecall(request, policy, actor) { return coordinationLedger._prepareKnowledgeRecall(this, request, policy, actor); }
-
   _buildKnowledgeRecall(query, policy, opts = {}) { return coordinationLedger._buildKnowledgeRecall(this, query, policy, opts); }
-
-  _validateKnowledgeRecallPayload(payload, event, integrity = false) { return coordinationAdmission._validateKnowledgeRecallPayload(this, payload, event, integrity); }
-
-  _newKnowledgeRecallReceipt(prepared) { return coordinationLedger._newKnowledgeRecallReceipt(this, prepared); }
-
-  #knowledgeRecallPreview(request, policy, auth) { return coordinationLedger.knowledgeRecallPreview(this, request, policy, auth); }
-
-  recallKnowledgeBounded(request, policy, auth, beforeAppend = null) { return coordinationLedger.recallKnowledgeBounded(this, request, policy, auth, beforeAppend); }
-
-  reverifyKnowledgeRecall(request, policy, actor, eventSeq) { return coordinationLedger.reverifyKnowledgeRecall(this, request, policy, actor, eventSeq); }
-  _recallAssessmentCandidate(receipt, observedSeq) {
-    return coordinationInternals._recallAssessmentCandidate(this, receipt, observedSeq);
-  }
-
-  _buildKnowledgeRecallAssessment(repoId, observedSeq, policy, actor, assessmentEventSeq = this._events.length + 1) { return coordinationLedger._buildKnowledgeRecallAssessment(this, repoId, observedSeq, policy, actor, assessmentEventSeq); }
-
-  _validateKnowledgeRecallAssessmentPayload(payload, event, integrity = false) { return coordinationAdmission._validateKnowledgeRecallAssessmentPayload(this, payload, event, integrity); }
-
-  _newKnowledgeRecallAssessment(repoId, observedSeq, policy, auth) { return coordinationLedger._newKnowledgeRecallAssessment(this, repoId, observedSeq, policy, auth); }
-
-  assessKnowledgeRecallBatch(repoId, observedSeq, policy, auth, beforeAppend = null) { return coordinationLedger.assessKnowledgeRecallBatch(this, repoId, observedSeq, policy, auth, beforeAppend); }
-
-  reverifyKnowledgeRecallAssessment(repoId, observedSeq, policy, actor, eventSeq) { return coordinationLedger.reverifyKnowledgeRecallAssessment(this, repoId, observedSeq, policy, actor, eventSeq); }
-  recallAssessments({ nodeId = null, taskId = null, observedSeq = this._events.length } = {}) {
-    return coordinationInternals.recallAssessments(this, { nodeId, taskId, observedSeq });
-  }
 
   readKnowledge(query, reader, auth) { return coordinationLedger.readKnowledge(this, query, reader, auth); }
 
