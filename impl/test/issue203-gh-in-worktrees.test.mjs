@@ -51,10 +51,10 @@ test('issue203 (a): no operator token yields no document, and a token yields the
   assert.match(read.content, /^github\.com:\n {4}oauth_token: gho_canary_token_value\n/u);
 });
 
-test("issue203 (b): the root token read trims gh's answer and answers null when gh cannot", () => {
-  assert.equal(operatorGhToken({ exec: () => '  gho_trimmed\n' }), 'gho_trimmed');
-  assert.equal(operatorGhToken({ exec: () => '   \n' }), null);
-  assert.equal(operatorGhToken({ exec: () => { throw new Error('gh absent'); } }), null);
+test("issue203 (b): the root token read trims gh's answer and answers null when gh cannot", async () => {
+  assert.equal(await operatorGhToken({ read: async () => '  gho_trimmed\n' }), 'gho_trimmed');
+  assert.equal(await operatorGhToken({ read: async () => '   \n' }), null);
+  assert.equal(await operatorGhToken({ read: async () => { throw new Error('gh absent'); } }), null);
 });
 
 test("issue203 (c): a lease's private HOME carries the projected gh credential, owner-only", () => {
@@ -77,7 +77,7 @@ test('issue203 (d): without an operator token the seat HOME projects no gh docum
 
 // The end-to-end row runs the real gh against a lease-shaped environment; it needs gh installed AND
 // an authenticated operator, and reports the missing prerequisite instead of failing.
-const operatorToken = operatorGhToken();
+const operatorToken = await operatorGhToken();
 const ghReady = (() => {
   if (operatorToken === null) return false;
   try {
