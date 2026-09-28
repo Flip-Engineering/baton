@@ -1539,5 +1539,17 @@
     "Mid-task steering was exercised through OMP DeepSeek.",
     "Muse committed on the detached repository checkout; Kimi reviewed and bound that commit to the registered worker branch before checked landing.",
     "Source review corrections after the live landing have separate local validation."
-  ]
+  ],
+  "delivery_rebase": {
+    "onto": "8f40800db41ed26e3c0547589f8e48394b573e2c",
+    "original_record_tip": "703faff5f10007841b1d0488d674c9546c95a77a",
+    "preserved_ref": "refs/heads/evidence/bend2-kimi-20260928",
+    "equivalent_source_revision": "f26bc1e9adc659567150ae957dcb47bca4183b06",
+    "equivalent_post_review_revision": "775702c47682b85169519bde401da5ea680a04e2",
+    "added_paths": [
+      "bend2/trial/root-instructions.md",
+      "docs/bend2/landing-message-2026-09-27.md"
+    ],
+    "runtime_scripts_tests_diff": ""
+  }
 }

@@ -158,3 +158,12 @@ native logs, checks, Git worktrees, `root-report.md`, `evidence.json` and `usage
 This run covers two concurrent workers, three agent levels and OMP steering.
 It changed no resident or historical trial state and performed no remote push.
 The local `bend2-trial` branch belongs to this isolated scratch clone.
+
+## Delivery revision
+
+The original run commits are retained on `evidence/bend2-kimi-20260928`, at
+`703faff5`. Delivery was rebased onto `8f40800d`, which adds trial instructions
+and the issue 621 run record. The runtime, scripts and tests remain identical
+to the validated source after that rebase. The equivalent source and final
+review revisions are `f26bc1e9` and `775702c4`; the measurement records the full
+hashes and the preserved ref.
