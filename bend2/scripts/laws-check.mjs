@@ -121,5 +121,50 @@ for (const { law, file } of rows) {
   cpSync(file, copied);
 }
 
-console.log(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${rows.length} laws, ${rows.length + 1} compiles, ${failures} failures`);
+// A mutation is a deliberate change to an implementation, made in the scratch
+// copy, that a law must refuse. The proof-removal loop above shows every law's
+// proof is required; these controls show that a law's right-hand side is not
+// the function under test, so that changing the function breaks the proof. A
+// mutation that still compiles means the law it names does not bind the code
+// it claims to bind, and it is reported as a failure.
+const MUTATIONS = [
+  {
+    name: 'm18-push-destination-substituted',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'Con{"push", Con{remote, Con{branch, Nil{}}}}',
+    replace: 'Con{"push", Con{"origin", Con{branch, Nil{}}}}',
+    law: 'm18_push_destination_is_the_declared_remote',
+  },
+  {
+    name: 'm3a-passing-candidate-contributes',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'match cv:\n    case VPass{}: acc',
+    replace: 'match cv:\n    case VPass{}: Con{"uncovered", acc}',
+    law: 'm3a_passing_candidate_contributes_nothing',
+  },
+];
+
+for (const mutation of MUTATIONS) {
+  const copied = join(SCRATCH, mutation.file);
+  cpSync(join(ROOT, mutation.file), copied);
+  const text = readFileSync(copied, 'utf8');
+  const applied = text.includes(mutation.find);
+  writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
+  const control = applied ? compile(SCRATCH) : { ok: true, output: '' };
+  const passed = applied && !control.ok && control.output.includes(mutation.law);
+  if (!passed) failures++;
+  console.log(JSON.stringify({
+    mutation: mutation.name,
+    law: mutation.law,
+    applied,
+    gate: passed ? 'refuses' : 'accepts',
+    passed,
+  }));
+  if (applied && !control.ok && !control.output.includes(mutation.law)) {
+    console.log(control.output.trimEnd());
+  }
+  cpSync(join(ROOT, mutation.file), copied);
+}
+
+console.log(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${failures} failures`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1014,36 +1014,15 @@ def land_checked(repo: String, target: String, worker: String, script: String, f
 def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
   land_fast_forward(repo, workerBranch, target)
 
-# The landed target pushed to the remote the deployment declares. The answer
-# is the push's own exit and output: a non-zero code is the remote's refusal
-# (a non-fast-forward is the common one) and the caller names it, never reads
-# it as a landing.
 # The push argv: the declared remote is the destination and the branch is the
 # refspec. Nothing reads a default remote.
 def push_argv(branch: String, remote: String) -> List<String>:
   Con{"push", Con{remote, Con{branch, Nil{}}}}
 
-# The destination position of a push argv, and its refspec position. An argv
-# that is not a push argv answers the empty string for either position.
-def push_remote(argv: List<String>) -> String:
-  match argv:
-    case Con{op, rest}:
-      match rest:
-        case Con{remote, tail}: remote
-        case Nil{}: ""
-    case Nil{}: ""
-
-def push_refspec(argv: List<String>) -> String:
-  match argv:
-    case Con{op, rest}:
-      match rest:
-        case Con{remote, tail}:
-          match tail:
-            case Con{ref, more}: ref
-            case Nil{}: ""
-        case Nil{}: ""
-    case Nil{}: ""
-
+# The landed target pushed to the remote the deployment declares. The answer
+# is the push's own exit and output: a non-zero code is the remote's refusal
+# (a non-fast-forward is the common one) and the caller names it, never reads
+# it as a landing.
 def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
   +r2 = repo
   +b2 = branch
