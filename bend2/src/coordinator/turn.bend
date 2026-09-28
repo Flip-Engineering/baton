@@ -327,10 +327,17 @@ def complete_locked(+db: String, +worker: String, +id: String, +log: String, loc
       finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
       IO.pass(Unit,combine(finished,wake))
 
-def run(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String) -> IO(Unit):
+def acquired(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.")
+    case Some{handle}: do IO<Unit>:
+      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+      result : Maybe<Outcome> <- worker_checked(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,missing)
+      complete_locked(db,worker,id,log,handle,result)
+
+def run(+db: String, +worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String) -> IO(Unit):
   do IO<Unit>:
     recorded : String <- IO.try(String,Store.commit(db,C.Session{worker}))
-    lock : U32 <- IO.try(U32,Lock.SessionLock.acquire(db,worker))
-    harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
-    result : Maybe<Outcome> <- worker_checked(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,String.is_empty(recorded))
-    complete_locked(db,worker,id,log,lock,result)
+    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(database,worker))
+    acquired(database,worker,id,cmd,model,effort,cwd,task,log,session,String.is_empty(recorded),lock)
