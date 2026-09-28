@@ -105,6 +105,8 @@ function initRepo(dir) {
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: dir });
 }
 
+const gitOf = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+
 /** One incarnation of the deployment over the shared repository and coordination log: a real
  * BatonApplication, so every recruit crosses `_admitWorkspaceAttachment`. */
 async function incarnation(t, { repo, logDir, label }) {
@@ -217,10 +219,10 @@ test('517-a: a resume-from successor of a dead predecessor binds its retained ch
 // Issue #616: the other half of a `resume-from` across a restart. Once a startup reclaims a dead
 // predecessor's checkout, the successor cannot bind a checkout that is gone — it must receive what
 // the capture recorded instead. The reclamation writes the removal's backing revision under the
-// `worktree.snapshotted` kind the carry derivation reads (#453), so the successor gets its own
-// checkout with the predecessor's content applied. Observed 2026-09-27: the resident held 105
-// registered worktrees (23 GiB) of ended seats, and the deployment's own attention rows name
-// `swarm.recruit --resume-from` for a seat whose runtime was lost.
+// `worktree.snapshotted` kind the carry derivation reads (#453), so the successor's own checkout is
+// created at that revision (#621). Observed 2026-09-27: the resident held 105 registered worktrees
+// (23 GiB) of ended seats, and the deployment's own attention rows name `swarm.recruit
+// --resume-from` for a seat whose runtime was lost.
 test('517-c: a resume-from successor receives the content of a predecessor checkout the startup reclaimed', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue517-c-'));
   const repo = join(directory, 'repo');
@@ -276,6 +278,11 @@ test('517-c: a resume-from successor receives the content of a predecessor check
     'alpha work that must survive\n',
     'the successor receives the content the reclamation captured',
   );
+  const preservedTip = gitOf(repo, ['rev-parse', `baton/${alphaWorkspaceId}`]);
+  assert.equal(gitOf(bravoWorker.worktree, ['rev-parse', 'HEAD']), preservedTip,
+    'the successor\'s own checkout starts at the revision the reclamation preserved');
+  assert.equal(bravoWorker.sessionContext.baseSha, preservedTip,
+    'and records that same revision as its base');
   const carried = third.driver.coordination.eventsView()
     .filter((row) => (row.kind === 'driver.recorded' ? row.payload?.kind : row.kind) === 'workspace.carried_from')
     .filter((row) => row.payload?.participantId === 'bravo');
@@ -283,12 +290,12 @@ test('517-c: a resume-from successor receives the content of a predecessor check
   assert.equal(carried[0].payload.predecessor, 'alpha');
   assert.equal(carried[0].payload.workspaceId, bravoWorker.sessionContext.ownerTaskId,
     'the carry names the successor\'s own checkout, because the predecessor\'s is gone');
-  assert.match(carried[0].payload.snapshotSha ?? '', /^[a-f0-9]{40,64}$/u,
+  assert.equal(carried[0].payload.snapshotSha, preservedTip,
     'the content came from the recorded capture\'s revision');
   assert.deepEqual(carried[0].payload.paths, ['carried.txt'],
     'the row names the path the capture carried');
   assert.equal(carried[0].payload.how, 'applied',
-    'the carry is the recorded snapshot applied into the successor\'s own checkout');
+    'the carry is the recorded revision the successor\'s own checkout starts at');
 });
 
 // The guard on the same rule: a checkout a successor has adopted is never the predecessor's to

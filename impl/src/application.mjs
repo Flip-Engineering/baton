@@ -1728,6 +1728,11 @@ export class BatonApplication {
     // same checkout with a FRESH native session. Deployment-local by construction — it is the
     // admission of one already-started Run, never durable Run intent.
     this._workspaceAttachments = new Map();
+    // The revision a recruited Run's fresh checkout starts at (#621), per Run: a resume-from
+    // carry whose predecessor checkout is gone starts the successor's checkout at the
+    // predecessor's preserved snapshot. Deployment-local and read once by the same dispatch that
+    // reads the attachment above, so it lives exactly as long as that map does.
+    this._runWorktreeBases = new Map();
     this._scratchpadViewCache = new Map();
     this._followControllers = new Set();
     this.ready = Promise.resolve().then(() => this._reconcileProfileRegistry())
@@ -2323,6 +2328,11 @@ export class BatonApplication {
         // The swarm resolved a live shared checkout for this Run before membership was written;
         // admission here only refuses a shape this deployment cannot honor.
         if (request.workspace) this._admitWorkspaceAttachment(request.runId, request.workspace);
+        // Issue #621: the swarm resolved that the predecessor's checkout is gone and its work is
+        // preserved at a snapshot revision, so this Run's own checkout starts there.
+        if (request.worktreeBase !== undefined) {
+          this._admitWorktreeBase(request.runId, request.worktreeBase, Boolean(request.workspace));
+        }
         // Issue #489: the participant's start DISCARDS the view it returns (the seat reads its own
         // brief and the bridge answers the shell), so a composed view over the deployment ceiling
         // must never refuse here — the recruit's whole reading leg depends on this admission.
@@ -2426,6 +2436,39 @@ export class BatonApplication {
     this._workspaceAttachments.set(runId, Object.freeze({
       workspaceId: workspace.workspaceId, context: workspace.sessionContext,
     }));
+  }
+
+  /** Admit the revision a recruited Run's fresh checkout starts at (#621), or refuse its shape
+   * naming the field that failed. The swarm sends this only for a resume-from carry whose
+   * predecessor checkout is gone: the successor's own checkout is created at the predecessor's
+   * preserved snapshot commit, so its content, HEAD and recorded base are that work. A Run names
+   * either a checkout that exists (`workspace`) or the revision a fresh checkout starts at — the
+   * two are contradictory, and the refusal says which field it judged. */
+  _admitWorktreeBase(runId, worktreeBase, attached) {
+    if (attached) {
+      throw applicationError(
+        'a Run cannot name both a shared workspace attachment and a fresh-checkout revision:'
+        + ' `workspace` names a checkout that exists, `worktreeBase` the revision a fresh checkout'
+        + ' starts at',
+        'application_worktree_base_invalid',
+        {
+          field: 'worktreeBase', observed: worktreeBase ?? null, attached: true,
+          rule: 'worktreeBase must not be combined with a shared workspace attachment',
+        },
+      );
+    }
+    if (typeof worktreeBase !== 'string' || !/^[a-f0-9]{40}$/u.test(worktreeBase)) {
+      throw applicationError(
+        `fresh-checkout revision is invalid: worktreeBase must be an exact 40-hexigit commit id`
+        + ` (observed ${JSON.stringify(worktreeBase ?? null)})`,
+        'application_worktree_base_invalid',
+        {
+          field: 'worktreeBase', observed: worktreeBase ?? null,
+          rule: 'must be a 40-hexigit commit id',
+        },
+      );
+    }
+    this._runWorktreeBases.set(runId, worktreeBase);
   }
 
   /** The deployment-wide evidence search (#312): knowledge AND contributions, filtered by swarm,
@@ -3608,6 +3651,10 @@ export class BatonApplication {
     // session (no invented native session identity) and the checkout rides as the attachment axis,
     // so adopting a shared workspace never becomes a session resume.
     const attachment = this._workspaceAttachments.get(refreshed.goal.runId) ?? null;
+    // Issue #621: the revision a resume-from carry resolved for this Run's own checkout. It rides
+    // the same committed-attachment channel the attachment above does, with the deployment's own
+    // carry token — the private authority the plan-gated spawn admits a fresh checkout base under.
+    const worktreeBase = this._runWorktreeBases.get(refreshed.goal.runId) ?? null;
     const taskId = `baton-${digest({
       repoId: this.repoId,
       runId: refreshed.goal.runId,
@@ -3622,6 +3669,10 @@ export class BatonApplication {
       effort: route.effort,
       goalPlan: gate,
       ...(attachment ? { attachedWorkspace: attachment.context } : {}),
+      ...(worktreeBase === null ? {} : {
+        worktreeBaseSha: worktreeBase,
+        derivedCarryPlanToken: this.driver.coordinator._derivedCarryPlanToken,
+      }),
       actor: this.principals.dispatcher.actor,
       principalId: this.principals.dispatcher.principalId,
       sessionId: this.principals.dispatcher.sessionId,

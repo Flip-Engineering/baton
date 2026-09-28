@@ -2015,13 +2015,17 @@ export function _validateGoalPlanDispatchPair(store, dispatchEvent, taskEvent, i
   if (canonicalDigest(expectedBinding) !== canonicalDigest(p.binding)) fail('goal/plan dispatch binding changed');
   const expectedBrief = buildAuthoritativeBrief(goal, plan, node, expectedBinding);
   const resumeAttestation = store._validPreservedResumeAttestation(p.preservedResume);
+  // Issue #621: a plan-gated dispatch whose predecessor checkout is gone records the preserved
+  // snapshot revision it starts its own checkout at, so that shape is the one plain dispatch that
+  // carries `worktreeBaseSha`; every other plain dispatch omits it.
   const expectedTaskFields = planRecovery
     ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'sessionRequest', 'relation', 'worktreeBaseSha', 'review']
     : resumeAttestation
       ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'relation', 'worktreeBaseSha']
       : planRevision
         ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'relation', 'worktreeBaseSha']
-      : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
+      : [...['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'],
+        ...(Object.hasOwn(task, 'worktreeBaseSha') ? ['worktreeBaseSha'] : [])];
   if (Object.keys(task).sort().join(',') !== expectedTaskFields.sort().join(',')) fail('goal/plan task field set changed');
   if (resumeAttestation && (!/^[a-f0-9]{40}$/.test(task.worktreeBaseSha ?? '') || task.refines !== resumeAttestation.priorTaskId)) {
     fail('preserved resume task base or lineage does not match its attestation');
