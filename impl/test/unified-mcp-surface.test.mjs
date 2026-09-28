@@ -190,14 +190,20 @@ test('generic MCP invoke refuses embedded-only authority and requires action coo
   assert.equal(embedded.result.isError, true);
   assert.equal(embedded.result.structuredContent.error.code, 'surface_embedded_only');
 
+  const missingAction = await call(server, 'baton_surface_invoke', {
+    name: 'run.send', args: { runId: 'run:a', message: 'go' }, idempotencyKey: 'action:1',
+  }, 32);
+  assert.equal(missingAction.result.isError, true);
+  assert.equal(missingAction.result.structuredContent.error.code, 'surface_action_id_required');
+
   const action = await call(server, 'baton_surface_invoke', {
-    name: 'run.integrate',
-    args: { runId: 'run:a', actionId: 'action:integrate', strategy: 'ff-only' },
+    name: 'run.send',
+    args: { runId: 'run:a', actionId: 'action:send', message: 'go' },
     idempotencyKey: 'action:2',
   }, 33);
   assert.equal(action.result.structuredContent.result.name, 'run.act');
   assert.deepEqual(action.result.structuredContent.result.args, {
-    runId: 'run:a', actionId: 'action:integrate', inputs: { strategy: 'ff-only' },
+    runId: 'run:a', actionId: 'action:send', inputs: { message: 'go' },
   });
 });
 
