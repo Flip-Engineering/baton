@@ -19,6 +19,41 @@ def output(value: String, empty: Bool) -> IO(Unit):
 def print_result(+result: String) -> IO(Unit):
   output(result, String.is_empty(result))
 
+# The entry's own answer path. An empty answer is a refusal that names the next
+# action; a non-empty answer is the command's own text, written unchanged.
+
+# M-14: an empty answer refuses with the rule and the next action it names.
+law m14_an_empty_answer_names_its_rule:
+  for +value: String
+  {output(value, True{}) == IO.die(Unit,1,"No matching session or message; inspect status and the requested ID.") : IO(Unit)}
+
+def m14_an_empty_answer_names_its_rule(value):
+  {==}
+
+# M-1: a non-empty answer is the command's own text, written as it stands.
+law m1_a_non_empty_answer_is_written_unchanged:
+  for +value: String
+  {output(value, False{}) == IO.write(value) : IO(Unit)}
+
+def m1_a_non_empty_answer_is_written_unchanged(value):
+  {==}
+
+# M-14: the entry answers the store's result as it stands, refusing exactly when
+# the store's answer was empty.
+law m14_an_empty_store_answer_is_refused:
+  {print_result(SNil{}) == output(SNil{}, True{}) : IO(Unit)}
+
+def m14_an_empty_store_answer_is_refused():
+  {==}
+
+law m1_a_stored_answer_is_written_unchanged:
+  for +h: Char
+  for +t: String
+  {print_result(SCon{h, t}) == output(SCon{h, t}, False{}) : IO(Unit)}
+
+def m1_a_stored_answer_is_written_unchanged(h, t):
+  {==}
+
 def run(db: String, command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String, Store.apply(db,command))
