@@ -630,8 +630,15 @@ export function _settledDrainHolder(coordinator, recorder, handle) {
     if (!handle || !['dead', 'exited'].includes(handle.status)) return false;
     if (!(!handle.processRef || handle.processRef.state === 'closed')) return false;
     if (coordinator._stopWaiters.has(handle.id) || coordinator._fatalStopWaiters.has(handle.id)) return false;
-    if (!handle.runId || typeof recorder.coordination?.runStop !== 'function') return false;
-    try { return recorder.coordination.runStop(handle.runId) != null; } catch { return false; }
+    // Issue #631: a drain finishes once every participant's process has exited. A dead handle whose
+    // process is EXACTLY closed holds no live work, and the custody boundary preserves whatever its
+    // checkout carries (preserve-then-reap, capture-or-retain, detach on live co-holders), so the
+    // drain releases it instead of waiting for a run stop no party will admit. The observed run
+    // (2026-09-28T19:07Z): the resident took SIGTERM with 21 live seats, disposed every drain target
+    // in ten seconds, then waited twelve minutes on closed processes whose checkouts stayed on
+    // disk, and the operator SIGKILLed it. An absent or unconfirmed process is still not permission
+    // to destroy (#351) — only an exact `closed` reaches this line.
+    return true;
   }
 
 export function _recordDrainReleases(coordinator, recorder, handle, task, released) {
