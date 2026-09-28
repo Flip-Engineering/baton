@@ -455,6 +455,73 @@ class Receive(unittest.TestCase):
         self.assertTrue(all(turn['receipt'] == 'native-reviewed' for turn in turns))
         self.eventually(lambda: not self.owned_processes(), 'keeper or recovery did not exit after replay')
 
+    def test_omp_recovery_after_input_closes_defers_guidance_until_native_exit(self):
+        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        self.worker(harness='omp')
+        self.coord('message', 'original', 'root', 'parent', 'task', 'Original work.')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, started = self.accept('parent')
+        original_body = ('Original OMP result before observer loss.\n'
+                         'The second line must reach the parent unchanged.')
+        self.action(original, body=original_body, hold_exit=True, report_input=True)
+        # The fixture reports this only after reading EOF from native stdin.
+        self.assertEqual(json.loads(original.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        original_report = self.eventually(lambda: self.coord('turns', 'parent'),
+                                          'OMP terminal was not recorded before observer loss')[0]
+        self.assertEqual(original_report['reportBody'], original_body)
+        self.message('pending-guidance', 'parent', 'Work for the next native invocation.')
+        observer.kill()
+        observer.wait(timeout=5)
+        marker = 'original native output after observer loss with stdin already closed'
+        self.action(original, progress=marker)
+        self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
+        log = self.directory / 'parent.jsonl'
+        self.eventually(lambda: marker in log.read_text(),
+                        'recovery could not read post-loss output while native stdin was closed')
+        self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
+        self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.assert_no_start()
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['pending-guidance'])
+        self.assertEqual(list(self.directory.glob('state.db.attempt-*/observer-error')), [])
+        for recovery_log in self.directory.glob('state.db.attempt-*/observer.log'):
+            self.assertNotIn('Broken pipe', recovery_log.read_text())
+        self.action(original)
+        self.assertEqual(original.readline(), b'')
+
+        arrivals = {}
+        for _ in range(2):
+            control, event = self.accept_any()
+            self.assertNotIn(event['session'], arrivals)
+            arrivals[event['session']] = (control, event)
+        self.assertEqual(set(arrivals), {'parent', 'root'})
+        continuation, resumed = arrivals['parent']
+        parent, notification = arrivals['root']
+        self.assertFalse(any(p['pid'] == started['pid'] for p in self.owned_processes()))
+        self.assertEqual(resumed['native'], started['native'])
+        self.assertIn('[id: pending-guidance]', resumed['prompt'])
+        self.assertNotIn('[id: original]', resumed['prompt'])
+        self.assertIn(original_body, notification['prompt'])
+        follow_up_body = 'Pending guidance completed by the next native invocation.'
+        self.action(continuation, body=follow_up_body)
+        self.assertEqual(continuation.readline(), b'')
+        self.action(parent)
+        self.assertEqual(parent.readline(), b'')
+        parent_again, notification = self.accept('root')
+        self.assertIn(follow_up_body, notification['prompt'])
+        self.action(parent_again)
+        self.assertEqual(parent_again.readline(), b'')
+        self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
+                        'pending guidance or its parent notification was not acknowledged')
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [original_body, follow_up_body])
+        self.assertEqual(turns[0]['id'], original_report['id'])
+        self.assertTrue(all(turn['receipt'] == 'native-reviewed' for turn in turns))
+        self.eventually(lambda: not self.owned_processes(), 'keeper or recovery did not exit naturally')
+        self.assertEqual(list(self.directory.glob('state.db.attempt-*/observer-error')), [])
+        for recovery_log in self.directory.glob('state.db.attempt-*/observer.log'):
+            self.assertNotIn('Broken pipe', recovery_log.read_text())
+
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.worker()
         self.message('first', 'parent')

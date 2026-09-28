@@ -56,7 +56,7 @@ def ProcessChild.wait(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
 def ProcessChild.signal(handle: U32, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-def ProcessChild.exited(handle: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+def ProcessChild.input_closed(handle: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
 def ProcessChild.pid(handle: U32) -> IO(Result<&1,&1,U32 & String,U32>):
