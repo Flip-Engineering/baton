@@ -278,4 +278,30 @@ sys.exit(1)
         self.assertEqual(event['result'],'Provider refused request')
         self.assertEqual(event['is_error'],1)
 
+
+    def test_unresumable_conversation_restarts_fresh_and_finishes_the_task(self):
+        # OMP answers "not found" for a conversation it never persisted; the
+        # turn then runs fresh so the pending input still completes.
+        self.call('worker','omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+args=sys.argv
+if '--resume' in args:
+    sys.stderr.write('Error: Session "%s" not found.\\n' % args[args.index('--resume')+1])
+    raise SystemExit(1)
+state=json.loads(sys.stdin.readline())
+prompt=json.loads(sys.stdin.readline())['message']
+pathlib.Path('fresh-prompt.txt').write_text(prompt)
+print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-fresh','model':{'provider':'deepseek','id':'deepseek-flash'}}}),flush=True)
+print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'fresh answer'}]}]}),flush=True)
+assert sys.stdin.read()==''
+''')
+        self.call('turn','omp-worker','omp-resume-gone',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'omp-native-gone')
+        self.assertEqual(json.loads(self.call('session','omp-worker'))['native'],'omp-fresh')
+        prompt=(self.cwd/'fresh-prompt.txt').read_text()
+        self.assertIn(self.task.read_text(),prompt)
+        self.assertIn('fresh conversation',prompt)
+        inbox=json.loads(self.call('inbox','root'))
+        self.assertEqual(inbox[-1]['body'],'fresh answer')
+        self.assertIn('omp-resume-gone:recovery',[r['id'] for r in inbox])
+
 if __name__=='__main__': unittest.main()
