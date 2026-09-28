@@ -3963,10 +3963,10 @@ class BatonDeployment {
 
   /** Issue #559: one renewal of the owner session. The resident issues exactly one `local-owner`
    * session at open and, until this, never renewed it, so an incarnation that outlived
-   * `sessionTtlMs` locked the owner out of a HEALTHY deployment: `/v1/auth/login` needs an identity
-   * provider a local resident has none of, `/v1/auth/refresh` needs an unexpired session, and every
-   * owner command is authenticated. Raising `sessionTtlMs` would leave
-   * the same ceiling further out, so the admission is renewed instead: the store ROTATES the
+   * `sessionTtlMs` locked the owner out of a HEALTHY deployment: the deployment serves no browser
+   * login or session-renewal lane, and every owner command is authenticated. Raising
+   * `sessionTtlMs` would leave the same ceiling further out, so the admission is renewed instead:
+   * the store ROTATES the
    * session (one durable `session.rotated` row, the predecessor revoked, the successor carrying the
    * same claims) and the successor's credential is written where a client reads it — the
    * `tokenFile` the published profile names.
