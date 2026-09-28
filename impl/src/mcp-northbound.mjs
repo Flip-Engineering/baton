@@ -474,7 +474,6 @@ function stateFailureCode(cause) {
     'explicit_vendor_required', 'verification_required',
     'run_sealed', 'run_not_terminal', 'run_not_found', 'invalid_run_id', 'run_membership_changed', 'run_prefix_changed',
     'causal_request_invalid', 'causal_context_invalid', 'causal_repo_mismatch', 'causal_audit_invalid', 'causal_trace_invalid', 'causal_recall_invalid', 'causal_audit_oversize', 'causal_trace_oversize', 'causal_audit_integrity', 'causal_recall_oversize', 'causal_recall_audit_failed', 'knowledge_recall_conflict', 'knowledge_recall_integrity',
-    'causal_promotion_invalid', 'causal_promotion_forbidden', 'causal_promotion_oversize', 'causal_promotion_audit_failed', 'causal_promotion_conflict', 'causal_promotion_integrity',
     'causal_correction_invalid', 'causal_correction_forbidden', 'causal_correction_oversize', 'causal_correction_conflict', 'causal_correction_integrity',
     'causal_contradiction_invalid', 'causal_contradiction_forbidden', 'causal_contradiction_oversize', 'causal_contradiction_audit_failed', 'causal_contradiction_conflict', 'causal_contradiction_integrity', 'unresolved_contradiction',
     'stale_version',
