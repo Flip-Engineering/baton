@@ -126,7 +126,6 @@ test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: tru
 // NUL-discipline source pins
 // ---------------------------------------------------------------------------
 
-const APP_SRC = fileURLToPath(new URL('../src/application.mjs', import.meta.url));
 // slice 15: the observation bucket moved to application-observation.mjs — the pins that grep the
 // moved members' own literals read that file (the seam map's application-observation target).
 const APP_OBSERVATION_SRC = fileURLToPath(new URL('../src/application-observation.mjs', import.meta.url));
