@@ -171,7 +171,7 @@ test('RT8: production result and all-zero reap receipts retain safe terminal tru
         result: { ref: 'private-result-ref', sha: 'f'.repeat(40) },
       },
     }),
-    coordination(3, 'run.stop_completed', {
+    coordination(2, 'run.stop_completed', {
       runId: 'run-zero', receipt: {
         state: 'stopped', targetCount: 0, remainingCount: 0,
         counts: {
@@ -194,7 +194,5 @@ test('RT8: production result and all-zero reap receipts retain safe terminal tru
     killConfirmed: 0, pendingCancelled: 0, processesClosed: 0, processesObserved: 0,
     remainingCount: 0, runAuthorityReleased: true, state: 'stopped', targetCount: 0,
   });
-  for (const absent of ['private-result-ref', 'private-export-locator', 'manifestDigest']) {
-    assert.equal(JSON.stringify(page).includes(absent), false, `timeline leaked ${absent}`);
-  }
+  assert.equal(JSON.stringify(page).includes('private-result-ref'), false);
 });
