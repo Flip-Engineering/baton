@@ -3,7 +3,7 @@
 # the argv as a length-prefixed string (Tx.enc_argv) and the C half forks,
 # execs and waits on a helper thread. runFull keeps the exit/signal
 # distinction the landing gate needs; runGit flattens a git command to its
-# exit code and output.
+# exit code and stdout. Child stderr is inherited for the coordinator's log.
 
 import Base
 import ./types.bend as T

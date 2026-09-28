@@ -1,8 +1,8 @@
 // The C host half of Process.run: spawn one process with an argv built from
 // the length-prefixed argument string, answer "exit <n>\n" or "signal <n>\n"
-// followed by everything the child wrote to stdout and stderr (the child's
-// stderr is duped onto stdout). A spawn or read failure answers io_fail with
-// the errno; the blocking spawn and wait run through io_work like
+// followed by everything the child wrote to stdout. The child inherits stderr
+// so diagnostics reach the coordinator's log. A spawn or read failure answers
+// io_fail with the errno; the blocking spawn and wait run through io_work like
 // effs/file_read.c.
 //
 // Argument encoding: each argv element is its UTF-8 byte length in decimal, a
@@ -72,7 +72,6 @@ static void git_proc_call(IoWork* w) {
   posix_spawn_file_actions_init(&acts);
   posix_spawn_file_actions_addclose(&acts, fds[0]);
   posix_spawn_file_actions_adddup2(&acts, fds[1], 1);
-  posix_spawn_file_actions_adddup2(&acts, fds[1], 2);
   posix_spawn_file_actions_addclose(&acts, fds[1]);
   posix_spawn_file_actions_addchdir_np(&acts, cwd);
   pid_t pid = -1;

@@ -25,13 +25,13 @@
 # Check contract: check is the path of a shell script, run as
 #   /bin/sh <check> <selected-file>
 # inside the checked tree, one run per selected file per tree. A passing run
-# exits 0. A failing run names each failure on one output line as four
+# exits 0. A failing run names each failure on one stdout line as four
 # hex-encoded fields separated by single spaces: file, test, failure type,
 # and the stable semantic code ("-" when the tool supplies none). Hex
 # encoding lets any name travel through the space-separated line, so an exact
 # line match after validation is an exact identity match. Any other output
-# line makes the run unjudged, and an unjudged run blocks the landing and
-# names the line that made it unjudged.
+# line on stdout makes the run unjudged, and an unjudged run blocks the landing
+# and names the line that made it unjudged. Stderr goes to the coordinator's log.
 #
 # The scratch worktrees one attempt prepares, the candidate and the target tree
 # named by appending "-target", are removed when the landing answers landed or
@@ -302,7 +302,8 @@ def block_ok_go(lines: List<String>, ok: Bool) -> Bool:
       block_ok_go(rest, o2)
 
 def block_ok(block: String) -> Bool:
-  block_ok_go(Tx.split_lines(block), True{})
+  +b2 = block
+  block_ok_go(Tx.split_lines(b2), Tx.non_empty(b2))
 
 def block_has_go(lines: List<String>, want: String) -> Bool:
   match lines:

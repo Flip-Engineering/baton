@@ -113,6 +113,55 @@ class Land(unittest.TestCase):
         self.assertIn('new failures', result['reason'])
         self.assertIn('6161 6161 6161 2d', result['reason'])
 
+    def diagnostic_landing(self, assertion):
+        test = self.repo / 'diagnostic-test.py'
+        test.write_text(
+            'import pathlib, sys, unittest\n'
+            'class Diagnostic(unittest.TestCase):\n'
+            '    def test_result(self):\n'
+            '        print("calibration diagnostic " + "x" * 100000, file=sys.stderr)\n'
+            f'        {assertion}\n')
+        self.git('add', test.name)
+        self.git('commit', '-q', '-m', 'diagnostic test')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit()
+        run = subprocess.run(
+            [str(EXE), str(self.db), 'land-checked', 'w1', str(self.repo),
+             'main', str(ROOT / 'bend2/scripts/check-unittest.sh'), test.name],
+            text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        result = json.loads(run.stdout)
+        self.assertEqual(run.stderr.count('calibration diagnostic ' + 'x' * 100000), 2)
+        self.assertNotIn('calibration diagnostic', run.stdout)
+        return result
+
+    def test_checked_landing_logs_stderr_with_shared_failure(self):
+        result = self.diagnostic_landing('self.fail("existing failure")')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), result['commit'])
+        self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w1')
+        self.assertEqual(self.scratch_trees('w1'), [])
+
+    def test_checked_landing_logs_stderr_with_new_failure(self):
+        result = self.diagnostic_landing('self.assertFalse(pathlib.Path("file.txt").exists())')
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('new failures', result['reason'])
+        self.assertIn('diagnostic-test.py'.encode().hex(), result['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), self.base)
+
+    def test_checked_landing_cannot_read_failure_identities_from_stderr(self):
+        (self.repo / 'check-stderr.sh').write_text('echo 6161 6161 6161 2d >&2\nexit 1\n')
+        self.git('add', 'check-stderr.sh')
+        self.git('commit', '-q', '-m', 'stderr identity fixture')
+        self.git('checkout', '-q', '--detach')
+        self.recruit_and_commit()
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-stderr.sh', 'file.txt')
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('unjudged', result['reason'])
+
     def test_checked_landing_already_merged(self):
         (self.repo / 'check-pass.sh').write_text('exit 0\n')
         self.git('add', 'check-pass.sh')

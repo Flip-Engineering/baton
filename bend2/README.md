@@ -108,7 +108,9 @@ the checked tree first, the selected file runs, and each failing case prints
 one identity line of four hex-encoded fields: file, test id, failure type, and
 semantic code. The `blocked` answer names every candidate failure line the
 target run does not show, and an unjudged check run blocks the landing. The
-answer is JSON with a `status` field: `landed` with the new target commit
+gate reads failure identities from stdout. Child stderr remains on the
+coordinator's stderr for logging. A nonzero exit with empty stdout is unjudged.
+The answer is JSON with a `status` field: `landed` with the new target commit
 (the squash candidate), `already` naming the worker commit the target
 contains, `conflict` naming the unmerged paths and the scratch worktree it
 keeps, or `blocked` with a reason. A landing that answers `landed` or
