@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { Coordinator } from '../src/coordinator.mjs';
-import { CoordinationStore, coordinationForLog } from '../src/coordination-store.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { projectRunTimelinePage } from '../src/run-timeline.mjs';
@@ -16,7 +16,6 @@ import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
 
 reapFixtureDirectories();
 
-const controlId = (suffix) => `control:${suffix.padEnd(64, '0')}`;
 const unavailableSeal = Object.freeze({
   tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null,
 });
@@ -43,79 +42,6 @@ function preservationReceipt(reattachment = 'not_required') {
   return { ...core, receiptDigest: digest(core) };
 }
 
-function legacyPreservationReceipt(reattachment = 'not_required') {
-  const core = {
-    schemaVersion: 1, state: 'preserved', transport: 'attached', reattachment,
-    sessionDigest: digest('phase91-session'), processGeneration: 3,
-    worktreeDigest: digest('phase91-worktree'), routeDigest: digest('phase91-route'),
-    planBindingDigest: digest('phase91-plan'), runAuthorityDigest: digest('phase91-run'),
-    turnEpoch: 9, fence: 12,
-  };
-  return { ...core, receiptDigest: digest(core) };
-}
-
-function admitV2Control(store, {
-  suffix, operation = 'interrupt', turnState = 'working',
-  preservationReceiptDigest = null,
-} = {}) {
-  const source = {
-    actor: 'direct:phase91-owner', principalId: 'phase91-owner', sessionId: 'phase91-session',
-  };
-  const target = {
-    workerId: 'phase91-worker', taskId: 'phase91-task', fence: 12, role: 'work',
-    activeCount: 1, turnEpoch: 9, turnState,
-    sessionDigest: digest('phase91-session'), preservationReceiptDigest,
-    processGeneration: 3,
-    worktreeDigest: digest('phase91-worktree'), routeDigest: digest('phase91-route'),
-    planBindingDigest: digest('phase91-plan'), runAuthorityDigest: digest('phase91-run'),
-  };
-  const message = operation === 'send' ? 'continue preserved work' : null;
-  const delivery = operation === 'send' ? 'turn' : null;
-  const request = {
-    actionId: digest(`phase91-action-${suffix}`), operation, recipient: 'work',
-    delivery, message, reasonDigest: digest(`phase91-reason-${suffix}`), source, target,
-    registryDigest: digest(`phase91-registry-${suffix}`),
-    turnDisposition: operation === 'interrupt' ? 'preserve_turn' : null,
-  };
-  const admissionCore = {
-    schemaVersion: 2, repoId: 'repo-phase91', runId: 'run-phase91',
-    controlId: controlId(suffix), ...request,
-    messageDigest: message === null ? null : digest(message),
-    targetDigest: digest(target), requestDigest: digest(request),
-  };
-  const admission = { ...admissionCore, admissionDigest: digest(admissionCore) };
-  const control = store.admitRunControl(admission, {
-    actor: source.actor, key: `run.control.admit:${admission.controlId}`,
-  }).control;
-  return { admission, control, source, target };
-}
-
-function beginV2Effect(store, control, source) {
-  const effectCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    admissionDigest: control.admissionDigest, targetDigest: control.targetDigest,
-    providerRequestId: `provider-control:${digest({
-      controlId: control.controlId, targetDigest: control.targetDigest,
-      admittedEvent: control.admittedEvent,
-    })}`,
-    turnDisposition: control.turnDisposition,
-  };
-  return store.beginRunControlEffect({ ...effectCore, effectDigest: digest(effectCore) }, {
-    actor: source.actor, key: `run.control.begin:${control.controlId}`,
-  }).control;
-}
-
-function continuationReceipt(target, overrides = {}) {
-  const core = {
-    schemaVersion: 1, state: 'admitted',
-    preservationReceiptDigest: target.preservationReceiptDigest,
-    sessionDigest: target.sessionDigest, taskBindingDigest: target.planBindingDigest,
-    routeDigest: target.routeDigest, turnEpoch: target.turnEpoch + 1,
-    providerAdmissionSeq: 44,
-    ...overrides,
-  };
-  return { ...core, receiptDigest: digest(core) };
-}
 
 function brief({ blocked = false } = {}) {
   return {
@@ -270,7 +196,6 @@ test('P91-1: semantic preserve-turn interrupt keeps the exact task, session, wor
   const before = f.coordinator.list()[0];
   const result = await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: before.fence,
-    controlId: controlId('91a'),
     preserveTurn: true,
   });
 
@@ -296,12 +221,11 @@ test('P91-2: coordinate-free successor send opens one governed turn on the same 
   const handle = await spawn(f, 'phase91-successor-task');
   const before = f.coordinator.list()[0];
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
-    expectedFence: before.fence, controlId: controlId('91b'), preserveTurn: true,
+    expectedFence: before.fence, preserveTurn: true,
   });
   const paused = f.coordinator.list()[0];
   const sent = await f.coordinator.send(handle.id, 'Continue the exact approved task.', 'nudge', {
     expectedFence: paused.fence,
-    controlId: controlId('91c'),
     resumePreservedTurn: true,
   });
 
@@ -333,7 +257,6 @@ test('P91-3: cancel-by-default remains low-level behavior, while preservation un
   const forced = await withLiveLoop(() => uncertain.coordinator.interrupt(
     uncertainHandle.id, undefined, 'semantic:owner', {
       expectedFence: uncertain.coordinator.list()[0].fence,
-      controlId: controlId('91d'),
       preserveTurn: true,
     },
   ));
@@ -354,7 +277,6 @@ test('P91-4: a closed transport during confirmation cannot mint a preservation r
   const handle = await spawn(f, 'phase91-closed-task');
   const result = await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('91e'),
     preserveTurn: true,
   });
   assert.notEqual(result.preservation?.state, 'preserved');
@@ -372,7 +294,7 @@ test('P91-5: whole-Run stop admitted before successor delivery forbids the succe
   const handle = await spawn(f, 'phase91-stop-race-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('91f'), preserveTurn: true,
+    preserveTurn: true,
   });
   const paused = f.coordinator.list()[0];
   const stopped = f.coordinator.stopRunTargets([handle.id], 'operator');
@@ -380,7 +302,7 @@ test('P91-5: whole-Run stop admitted before successor delivery forbids the succe
   assert.ok(['stopping', 'dead'].includes(f.coordinator.list()[0].status));
   const successor = await f.coordinator.send(handle.id, 'This must never start.', 'nudge', {
     expectedFence: paused.fence,
-    controlId: controlId('91a7'), resumePreservedTurn: true,
+    resumePreservedTurn: true,
   });
   await stopped;
 
@@ -400,7 +322,7 @@ test('P91-6: interrupt resolves a blocked interaction before exposing the preser
 
   const interrupted = await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('91b6'), preserveTurn: true,
+    preserveTurn: true,
   });
 
   assert.equal(interrupted.preservation?.state, 'preserved');
@@ -415,7 +337,7 @@ test('P91-7: processless replay refuses a receipt without exact durable Plan con
   const handle = await spawn(f, 'phase91-restart-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('91c7'), preserveTurn: true,
+    preserveTurn: true,
   });
   const priorReceipt = f.coordinator.list()[0].sessionPreservation;
   const resumed = sessionAdapter();
@@ -446,90 +368,16 @@ test('P91-8: a stale semantic send fence cannot consume the preserved-session re
   const handle = await spawn(f, 'phase91-stale-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('91e8'), preserveTurn: true,
+    preserveTurn: true,
   });
   const paused = f.coordinator.list()[0];
   const stale = await f.coordinator.send(handle.id, 'stale continuation', 'nudge', {
     expectedFence: paused.fence - 1,
-    controlId: controlId('91f8'), resumePreservedTurn: true,
+    resumePreservedTurn: true,
   });
   assert.equal(stale.result, 'stale_fence');
   assert.equal(f.adapter.calls.prompt.length, 0);
   assert.equal(f.coordinator.list()[0].sessionPreservation.state, 'preserved');
-});
-
-test('P91-9: preserve-turn choice and closed receipt survive admission, acknowledgement, settlement, and replay', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-control-store-'));
-  const store = new CoordinationStore(root);
-  const source = {
-    actor: 'direct:phase91-owner', principalId: 'phase91-owner', sessionId: 'phase91-session',
-  };
-  const target = {
-    workerId: 'phase91-worker', taskId: 'phase91-task', fence: 12, role: 'work',
-    activeCount: 1, turnEpoch: 9, turnState: 'working',
-    sessionDigest: digest('phase91-session'), preservationReceiptDigest: null,
-    processGeneration: 3,
-    worktreeDigest: digest('phase91-worktree'), routeDigest: digest('phase91-route'),
-    planBindingDigest: digest('phase91-plan'), runAuthorityDigest: digest('phase91-run'),
-  };
-  const request = {
-    actionId: digest('phase91-action'), operation: 'interrupt', recipient: 'work',
-    delivery: null, message: null, reasonDigest: digest('phase91-reason'), source, target,
-    registryDigest: digest('phase91-registry'), turnDisposition: 'preserve_turn',
-  };
-  const admissionCore = {
-    schemaVersion: 2, repoId: 'repo-phase91', runId: 'run-phase91',
-    controlId: controlId('91d9'), ...request, messageDigest: null,
-    targetDigest: digest(target), requestDigest: digest(request),
-  };
-  const admission = { ...admissionCore, admissionDigest: digest(admissionCore) };
-  let control = store.admitRunControl(admission, {
-    actor: source.actor, key: `run.control.admit:${admission.controlId}`,
-  }).control;
-  assert.equal(control.turnDisposition, 'preserve_turn');
-
-  const effectCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    admissionDigest: control.admissionDigest, targetDigest: control.targetDigest,
-    providerRequestId: `provider-control:${digest({
-      controlId: control.controlId, targetDigest: control.targetDigest,
-      admittedEvent: control.admittedEvent,
-    })}`,
-    turnDisposition: 'preserve_turn',
-  };
-  control = store.beginRunControlEffect({ ...effectCore, effectDigest: digest(effectCore) }, {
-    actor: source.actor, key: `run.control.begin:${control.controlId}`,
-  }).control;
-  const outcome = {
-    result: 'confirmed', code: null, emulated: false, deliveredDespiteStale: false,
-    actualDelivery: null, preservation: preservationReceipt(), continuation: null,
-  };
-  const ackCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    effectDigest: control.effect.effectDigest,
-    providerRequestId: control.effect.providerRequestId,
-    state: 'confirmed', outcome,
-  };
-  control = store.acknowledgeRunControl({ ...ackCore, ackDigest: digest(ackCore) }, {
-    actor: source.actor, key: `run.control.ack:${control.controlId}`,
-  }).control;
-  const settlementCore = {
-    schemaVersion: 2, repoId: control.repoId, runId: control.runId,
-    controlId: control.controlId, operation: control.operation,
-    admissionDigest: control.admissionDigest, state: control.providerAck.state,
-    outcome: control.providerAck.outcome,
-  };
-  store.settleRunControl({
-    ...settlementCore, settlementDigest: digest(settlementCore),
-  }, { actor: source.actor, key: `run.control.settle:${control.controlId}` });
-  store.releaseWriterLease({ requireOwned: true });
-
-  const replay = new CoordinationStore(root);
-  const durable = replay.runControl(admission.controlId);
-  assert.equal(durable.status, 'confirmed');
-  assert.equal(durable.turnDisposition, 'preserve_turn');
-  assert.deepEqual(durable.providerAck.outcome.preservation, outcome.preservation);
-  replay.releaseWriterLease({ requireOwned: true });
 });
 
 test('P91-10: Run timeline exposes preservation truth without session or authority coordinates', () => {
@@ -546,16 +394,6 @@ test('P91-10: Run timeline exposes preservation truth without session or authori
       worker: operational.worker, workerSeq: operational.seq,
       digest: wireDigest(operational), kind: operational.kind, ts: operational.ts,
     },
-  }, {
-    schemaVersion: 1, seq: 2, ts: '2026-07-19T12:00:03.000Z',
-    kind: 'run.control_settled', actor: 'direct:owner', idempotencyKey: 'phase91-settled',
-    payload: {
-      runId: 'run-phase91-timeline', state: 'confirmed',
-      outcome: {
-        result: 'confirmed', code: null, emulated: false, deliveredDespiteStale: false,
-        actualDelivery: null, preservation: receipt, continuation: null,
-      },
-    },
   }];
   const page = projectRunTimelinePage({
     runId: 'run-phase91-timeline', events,
@@ -565,15 +403,10 @@ test('P91-10: Run timeline exposes preservation truth without session or authori
     },
     resolveOperational: () => operational,
   });
-  assert.deepEqual(page.items.map((item) => item.kind), [
-    'control.interrupt_confirmed', 'run.control_settled',
-  ]);
+  assert.deepEqual(page.items.map((item) => item.kind), ['control.interrupt_confirmed']);
   assert.deepEqual(page.items.map((item) => item.facts), [{
     preservationState: 'preserved', preservationTransport: 'attached',
     reattachment: 'confirmed',
-  }, {
-    state: 'confirmed', preservationState: 'preserved',
-    preservationTransport: 'attached', reattachment: 'confirmed',
   }]);
   const serialized = JSON.stringify(page);
   for (const secret of [
@@ -587,7 +420,7 @@ test('P91-11: two concurrent successors consume one receipt and admit exactly on
   const handle = await spawn(f, 'phase91-concurrent-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9111'), preserveTurn: true,
+    preserveTurn: true,
   });
   const paused = f.coordinator.list()[0];
   const target = {
@@ -596,13 +429,13 @@ test('P91-11: two concurrent successors consume one receipt and admit exactly on
     preservationReceiptDigest: paused.sessionPreservation.receiptDigest,
     ...paused.semanticControlBinding,
   };
-  const options = (id) => ({
-    expectedFence: paused.fence, controlId: controlId(id), resumePreservedTurn: true,
+  const options = () => ({
+    expectedFence: paused.fence, resumePreservedTurn: true,
     semanticTarget: target, semanticTargetDigest: digest(target),
   });
   const [first, second] = await Promise.all([
-    f.coordinator.send(handle.id, 'first successor', 'nudge', options('9111a')),
-    f.coordinator.send(handle.id, 'second successor', 'nudge', options('9111b')),
+    f.coordinator.send(handle.id, 'first successor', 'nudge', options()),
+    f.coordinator.send(handle.id, 'second successor', 'nudge', options()),
   ]);
   assert.equal(first.ok, true);
   assert.equal(first.actualDelivery, 'turn');
@@ -618,7 +451,7 @@ test('P91-12: stop after provider prompt acceptance makes successor outcome unkn
   const handle = await spawn(f, 'phase91-post-prompt-stop-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9112'), preserveTurn: true,
+    preserveTurn: true,
   });
   const paused = f.coordinator.list()[0];
   let releasePrompt;
@@ -634,7 +467,7 @@ test('P91-12: stop after provider prompt acceptance makes successor outcome unkn
     return { ok: true };
   };
   const successorPromise = f.coordinator.send(handle.id, 'accepted before stop', 'nudge', {
-    expectedFence: paused.fence, controlId: controlId('9112b'), resumePreservedTurn: true,
+    expectedFence: paused.fence, resumePreservedTurn: true,
   });
   await promptObserved;
   const stopPromise = f.coordinator.stopRunTargets([handle.id], 'operator');
@@ -661,7 +494,7 @@ test('P91-13: invalid provider terminal governance forbids preservation and reap
   const handle = await spawn(f, 'phase91-invalid-seal-task');
   const result = await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9113'), preserveTurn: true,
+    preserveTurn: true,
   });
   assert.equal(result.result, 'provider_governance_invalid');
   assert.equal(result.escalation, 'confirmed');
@@ -684,7 +517,7 @@ test('P91-14: kill supersedes an in-flight preserved interrupt with typed caller
   const interruptPromise = f.coordinator.interrupt(
     handle.id, undefined, 'semantic:owner', {
       expectedFence: f.coordinator.list()[0].fence,
-      controlId: controlId('9114'), preserveTurn: true,
+      preserveTurn: true,
     },
   );
   await new Promise((resolve) => setImmediate(resolve));
@@ -731,7 +564,7 @@ test('P91-15: delayed interrupt Ack cannot satisfy the later kill operation gene
   const interruptPromise = f.coordinator.interrupt(
     handle.id, undefined, 'semantic:owner', {
       expectedFence: f.coordinator.list()[0].fence,
-      controlId: controlId('9115'), preserveTurn: true,
+      preserveTurn: true,
     },
   ).then((value) => { interruptSettled = true; return value; });
   await new Promise((resolve) => setImmediate(resolve));
@@ -761,7 +594,7 @@ test('P91-16: unplanned processless reattachment refuses before a wrong-session 
   const handle = await spawn(f, 'phase91-reattach-failure-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9116'), preserveTurn: true,
+    preserveTurn: true,
   });
   const resumed = sessionAdapter();
   resumed.spawn = async (worker) => {
@@ -820,7 +653,7 @@ test('P91-17: process close after preservation fails the task, clears control, r
   internal.processRef = { ...process, startedSeq: started.seq };
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9117'), preserveTurn: true,
+    preserveTurn: true,
   });
   f.adapter.emit(handle.id, 'lifecycle.process_closed', {
     schemaVersion: 1,
@@ -898,200 +731,12 @@ test('P91-18: blocked-interaction preparation is durable and a crash before cont
   durable.releaseWriterLease({ requireOwned: true });
 });
 
-test('P91-19: schema-v2 admission rejects an incoherent interrupted receipt target', () => {
-  const store = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-phase91-v2-target-')));
-  const before = store.events().length;
-  assert.throws(() => admitV2Control(store, {
-    suffix: '9119', operation: 'interrupt', turnState: 'working',
-    preservationReceiptDigest: digest('receipt-that-cannot-exist-while-working'),
-  }), (error) => error.code === 'run_control_integrity');
-  assert.equal(store.events().length, before);
-  store.releaseWriterLease({ requireOwned: true });
-});
-
-test('P91-20: schema-v2 closed operation state rejects cross-operation preservation shapes', () => {
-  const interruptStore = new CoordinationStore(
-    mkdtempSync(join(tmpdir(), 'baton-phase91-v2-interrupt-shape-')),
-  );
-  let seeded = admitV2Control(interruptStore, { suffix: '9120a' });
-  let control = beginV2Effect(interruptStore, seeded.control, seeded.source);
-  const invalidInterruptOutcome = {
-    result: 'confirmed', code: null, emulated: false, deliveredDespiteStale: false,
-    actualDelivery: 'turn', preservation: preservationReceipt(),
-    continuation: continuationReceipt({
-      ...seeded.target, preservationReceiptDigest: preservationReceipt().receiptDigest,
-    }),
-  };
-  let ackCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    effectDigest: control.effect.effectDigest,
-    providerRequestId: control.effect.providerRequestId,
-    state: 'confirmed', outcome: invalidInterruptOutcome,
-  };
-  assert.throws(() => interruptStore.acknowledgeRunControl({
-    ...ackCore, ackDigest: digest(ackCore),
-  }, {
-    actor: seeded.source.actor, key: `run.control.ack:${control.controlId}`,
-  }), (error) => error.code === 'run_control_integrity');
-  assert.equal(interruptStore.runControl(control.controlId).status, 'effect_started');
-  interruptStore.releaseWriterLease({ requireOwned: true });
-
-  const sendStore = new CoordinationStore(
-    mkdtempSync(join(tmpdir(), 'baton-phase91-v2-send-shape-')),
-  );
-  const receiptDigest = digest('phase91-closed-preservation-receipt');
-  seeded = admitV2Control(sendStore, {
-    suffix: '9120b', operation: 'send', turnState: 'interrupted',
-    preservationReceiptDigest: receiptDigest,
-  });
-  control = beginV2Effect(sendStore, seeded.control, seeded.source);
-  const mismatchedContinuation = continuationReceipt(seeded.target, {
-    preservationReceiptDigest: digest('different-preservation-receipt'),
-  });
-  const invalidSendOutcome = {
-    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
-    actualDelivery: 'turn', preservation: null, continuation: mismatchedContinuation,
-  };
-  ackCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    effectDigest: control.effect.effectDigest,
-    providerRequestId: control.effect.providerRequestId,
-    state: 'confirmed', outcome: invalidSendOutcome,
-  };
-  assert.throws(() => sendStore.acknowledgeRunControl({
-    ...ackCore, ackDigest: digest(ackCore),
-  }, {
-    actor: seeded.source.actor, key: `run.control.ack:${control.controlId}`,
-  }), (error) => error.code === 'run_control_integrity');
-  assert.equal(sendStore.runControl(control.controlId).status, 'effect_started');
-  sendStore.releaseWriterLease({ requireOwned: true });
-});
-
-test('P91-21: schema-v2 replay rejects a corrupted closed preservation receipt', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-v2-corrupt-replay-'));
-  const store = new CoordinationStore(root);
-  const seeded = admitV2Control(store, { suffix: '9121' });
-  const control = beginV2Effect(store, seeded.control, seeded.source);
-  const outcome = {
-    result: 'confirmed', code: null, emulated: false, deliveredDespiteStale: false,
-    actualDelivery: null, preservation: preservationReceipt(), continuation: null,
-  };
-  const ackCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    effectDigest: control.effect.effectDigest,
-    providerRequestId: control.effect.providerRequestId,
-    state: 'confirmed', outcome,
-  };
-  store.acknowledgeRunControl({ ...ackCore, ackDigest: digest(ackCore) }, {
-    actor: seeded.source.actor, key: `run.control.ack:${control.controlId}`,
-  });
-  store.releaseWriterLease({ requireOwned: true });
-
-  const file = join(root, 'events.jsonl');
-  const records = readFileSync(file, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line));
-  const ack = records.find((event) => event.kind === 'run.control_provider_acked');
-  ack.payload.outcome.preservation.receiptDigest = '0'.repeat(64);
-  writeFileSync(file, `${records.map((event) => JSON.stringify(event)).join('\n')}\n`);
-  assert.throws(() => new CoordinationStore(root), (error) => (
-    error.name === 'CoordinationIntegrityError' && error.code === 'run_control_integrity'
-  ));
-});
-
-test('P91-21a: replay accepts a digest-bound historical v1 preservation receipt without reopening v1 writes', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-v1-compatible-replay-'));
-  const store = new CoordinationStore(root);
-  const seeded = admitV2Control(store, { suffix: '9121a' });
-  const control = beginV2Effect(store, seeded.control, seeded.source);
-  const outcome = {
-    result: 'confirmed', code: null, emulated: false, deliveredDespiteStale: false,
-    actualDelivery: null, preservation: legacyPreservationReceipt(), continuation: null,
-  };
-  const ackCore = {
-    schemaVersion: 2, controlId: control.controlId,
-    effectDigest: control.effect.effectDigest,
-    providerRequestId: control.effect.providerRequestId,
-    state: 'confirmed', outcome,
-  };
-  const acknowledgement = { ...ackCore, ackDigest: digest(ackCore) };
-  assert.throws(() => store.acknowledgeRunControl(acknowledgement, {
-    actor: seeded.source.actor, key: `run.control.ack:${control.controlId}`,
-  }), (error) => error.code === 'run_control_integrity');
-  store.releaseWriterLease({ requireOwned: true });
-
-  const settlementCore = {
-    schemaVersion: 2, repoId: control.repoId, runId: control.runId,
-    controlId: control.controlId, operation: control.operation,
-    admissionDigest: control.admissionDigest, state: 'confirmed', outcome,
-  };
-  const events = [
-    {
-      schemaVersion: 1, seq: 3, ts: '2026-07-20T03:39:40.969Z',
-      kind: 'run.control_provider_acked', actor: seeded.source.actor,
-      idempotencyKey: `run.control.ack:${control.controlId}`, payload: acknowledgement,
-    },
-    {
-      schemaVersion: 1, seq: 4, ts: '2026-07-20T03:39:40.970Z',
-      kind: 'run.control_settled', actor: seeded.source.actor,
-      idempotencyKey: `run.control.settle:${control.controlId}`,
-      payload: { ...settlementCore, settlementDigest: digest(settlementCore) },
-    },
-  ];
-  const file = join(root, 'events.jsonl');
-  writeFileSync(file, `${readFileSync(file, 'utf8')}${events.map(JSON.stringify).join('\n')}\n`);
-  const acceptedLedger = readFileSync(file, 'utf8');
-
-  const replay = new CoordinationStore(root);
-  assert.equal(replay.runControl(control.controlId).status, 'confirmed');
-  assert.deepEqual(replay.runControl(control.controlId).settlement.outcome, outcome);
-  replay.releaseWriterLease({ requireOwned: true });
-
-  const ackOnlyRoot = mkdtempSync(join(tmpdir(), 'baton-phase91-v1-ack-replay-'));
-  const ackOnlyEvents = acceptedLedger.trimEnd().split('\n').slice(0, 3);
-  writeFileSync(join(ackOnlyRoot, 'events.jsonl'), `${ackOnlyEvents.join('\n')}\n`);
-  const ackOnlyReplay = new CoordinationStore(ackOnlyRoot);
-  assert.equal(ackOnlyReplay.runControl(control.controlId).status, 'provider_acked');
-  assert.equal(ackOnlyReplay.settleRunControl({
-    ...settlementCore, settlementDigest: digest(settlementCore),
-  }, {
-    actor: seeded.source.actor, key: `run.control.settle:${control.controlId}`,
-  }).control.status, 'confirmed');
-  ackOnlyReplay.releaseWriterLease({ requireOwned: true });
-
-  const rejectMutation = (label, mutateReceipt) => {
-    const corruptRoot = mkdtempSync(join(tmpdir(), `baton-phase91-v1-${label}-`));
-    const rows = acceptedLedger.trimEnd().split('\n').map((line) => JSON.parse(line));
-    const ack = rows.find((event) => event.kind === 'run.control_provider_acked');
-    const settlement = rows.find((event) => event.kind === 'run.control_settled');
-    mutateReceipt(ack.payload.outcome.preservation);
-    settlement.payload.outcome = JSON.parse(JSON.stringify(ack.payload.outcome));
-    const ackBinding = { ...ack.payload };
-    delete ackBinding.ackDigest;
-    ack.payload.ackDigest = digest(ackBinding);
-    const settlementBinding = { ...settlement.payload };
-    delete settlementBinding.settlementDigest;
-    settlement.payload.settlementDigest = digest(settlementBinding);
-    writeFileSync(join(corruptRoot, 'events.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
-    assert.throws(() => new CoordinationStore(corruptRoot), (error) => (
-      error.name === 'CoordinationIntegrityError' && error.code === 'run_control_integrity'
-    ));
-  };
-  rejectMutation('digest-corruption', (receipt) => {
-    receipt.receiptDigest = '0'.repeat(64);
-  });
-  rejectMutation('authority-corruption', (receipt) => {
-    receipt.sessionDigest = digest('different-session-authority');
-    const receiptBinding = { ...receipt };
-    delete receiptBinding.receiptDigest;
-    receipt.receiptDigest = digest(receiptBinding);
-  });
-});
-
 test('P91-22: Story and Coordinator agree across preserved interrupt and successor admission', async () => {
   const f = fixture();
   const handle = await spawn(f, 'phase91-story-agreement-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9122'), preserveTurn: true,
+    preserveTurn: true,
   });
   const interruptedStory = new StoryCompiler();
   interruptedStory.ingestBatch(f.log.read(handle.id));
@@ -1101,7 +746,7 @@ test('P91-22: Story and Coordinator agree across preserved interrupt and success
   const paused = f.coordinator.list()[0];
   await f.coordinator.send(handle.id, 'Continue the same Story-bound task.', 'nudge', {
     expectedFence: paused.fence,
-    controlId: controlId('9122a'), resumePreservedTurn: true,
+    resumePreservedTurn: true,
   });
   const workingStory = new StoryCompiler();
   workingStory.ingestBatch(f.log.read(handle.id));
@@ -1130,7 +775,7 @@ test('P91-24: a preserved epoch quarantines late completion/crash and only its e
   const handle = await spawn(f, 'phase91-epoch-seal-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
     expectedFence: f.coordinator.list()[0].fence,
-    controlId: controlId('9124'), preserveTurn: true,
+    preserveTurn: true,
   });
   const paused = f.coordinator.list()[0];
   const sealedEpoch = paused.sessionPreservation.turnEpoch;
@@ -1158,7 +803,7 @@ test('P91-24: a preserved epoch quarantines late completion/crash and only its e
 
   const sent = await f.coordinator.send(handle.id, 'Open only epoch E+1.', 'nudge', {
     expectedFence: paused.fence,
-    controlId: controlId('9124a'), resumePreservedTurn: true,
+    resumePreservedTurn: true,
   });
   assert.equal(sent.continuation.turnEpoch, sealedEpoch + 1);
   f.adapter.emit(handle.id, 'lifecycle.turn_completed', {

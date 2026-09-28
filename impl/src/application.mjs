@@ -449,23 +449,6 @@ export function normalizeActionInputs(action, rawInputs) {
   return effective;
   }
 
-
-
-/** U-F14 (issue #313): the axes a Run control's idempotency identity is judged on, in the order
- * the refusal names them, and the comparison that finds the FIRST one that moved. Dotted names
- * read one level inside the stored source identity. */
-const CONTROL_IDENTITY_AXES = Object.freeze([
-  'recipient', 'delivery', 'message', 'reasonDigest',
-  'source.actor', 'source.principalId', 'source.sessionId',
-]);
-function movedControlAxis(stored, replayed, axes = CONTROL_IDENTITY_AXES) {
-  for (const axis of axes) {
-    if (stored?.[axis] !== replayed?.[axis]) return axis;
-  }
-  return null;
-}
-
-
 // codex #2 / glm #3 (mcp-packaging-decisions v1.0): the already_resolved outcome names its author
 // when the resolution record carries one (a settlement can be superseded, drained, or
 // semantically interrupted — the record's own actor is the honest resolvedBy, never a caller field).
@@ -1485,7 +1468,6 @@ export class BatonApplication {
     this._followControllers = new Set();
     this.ready = Promise.resolve().then(() => this._reconcileProfileRegistry())
       .then(() => this._reconcileRunStops())
-      .then(() => this._reconcileRunControls())
       .then(() => this._reconcileWorkflowMemberStops())
       .then(() => this._reconcileRunVerificationRetries())
       .then(() => this._reconcileApprovedRuns())
@@ -1572,259 +1554,7 @@ export class BatonApplication {
     };
   }
 
-  _runControls(runId = null) {
-    return applicationObservation._runControls(this, runId);
-  }
-
-  _controlOperationalState(control) {
-    return applicationObservation._controlOperationalState(this, control);
-  }
-
-  _normalizeRunControlOutcome(outcome, schemaVersion = 2) {
-    const base = {
-      result: validText(outcome?.result, 256) ? outcome.result : 'provider_outcome_unknown',
-      code: validText(outcome?.code, 256) ? outcome.code : null,
-      emulated: outcome?.emulated === true,
-      deliveredDespiteStale: outcome?.deliveredDespiteStale === true,
-    };
-    if (schemaVersion < 2) return base;
-    return {
-      ...base,
-      actualDelivery: ['nudge', 'now', 'turn'].includes(outcome?.actualDelivery)
-        ? outcome.actualDelivery : null,
-      preservation: outcome?.preservation ? clone(outcome.preservation) : null,
-      continuation: outcome?.continuation ? clone(outcome.continuation) : null,
-    };
-  }
-
-  _beginRunControlEffect(control) {
-    return applicationObservation._beginRunControlEffect(this, control);
-  }
-
-  _acknowledgeRunControl(control, state, outcome) {
-    return applicationObservation._acknowledgeRunControl(this, control, state, outcome);
-  }
-
-  _settleRunControl(control, state, outcome) {
-    return applicationObservation._settleRunControl(this, control, state, outcome);
-  }
-
-  async _executeRunControl(control, { recovery = false } = {}) {
-    let current = this._runControls(control.runId)
-      .find((candidate) => candidate.controlId === control.controlId) ?? control;
-    if (['confirmed', 'refused', 'outcome_unknown'].includes(current.status)) return current;
-    if (current.status === 'provider_acked') {
-      return this._settleRunControl(
-        current, current.providerAck.state, current.providerAck.outcome,
-      );
-    }
-    if (current.status === 'effect_started') {
-      const observed = this._controlOperationalState(current) ?? {
-        state: 'outcome_unknown', result: 'provider_outcome_unknown',
-        code: 'effect_started_without_conclusive_provider_evidence',
-      };
-      current = this._acknowledgeRunControl(current, observed.state, observed);
-      return this._settleRunControl(
-        current, current.providerAck.state, current.providerAck.outcome,
-      );
-    }
-    if (this.driver.coordination.runStop?.(current.runId)) {
-      return this._settleRunControl(current, 'refused', {
-        result: 'run_stopping', code: 'run_stopping',
-      });
-    }
-    if (current.schemaVersion >= 2) {
-      let liveTarget = null;
-      try {
-        liveTarget = this._resolveSemanticControlTarget(
-          this._findRun(current.runId, { allowUnavailableProfile: true }),
-          current.recipient, current.operation,
-        );
-      } catch { /* a disappeared recipient is target drift */ }
-      if (!liveTarget || digest(liveTarget) !== current.targetDigest
-        || digest(liveTarget) !== digest(current.target)) {
-        return this._settleRunControl(current, 'refused', {
-          result: 'semantic_target_drift', code: 'application_control_target_drift',
-        });
-      }
-    }
-    const handle = this.driver.coordinator.list().find((candidate) => (
-      candidate.id === current.target.workerId && candidate.runId === current.runId
-      && candidate.taskId === current.target.taskId && candidate.fence === current.target.fence
-    ));
-    if (!handle) {
-      return this._settleRunControl(current, 'refused', {
-        result: recovery ? 'recipient_not_attached' : 'recipient_replaced',
-        code: recovery ? 'application_control_recipient_not_attached'
-          : 'application_control_recipient_replaced',
-      });
-    }
-    try {
-      current = this._beginRunControlEffect(current);
-    } catch (error) {
-      if (error?.code === 'run_stopping') {
-        return this._settleRunControl(current, 'refused', {
-          result: 'run_stopping', code: 'run_stopping',
-        });
-      }
-      throw error;
-    }
-    let result;
-    try {
-      result = current.operation === 'send'
-        ? await this.driver.coordinator.send(
-          current.target.workerId, current.message,
-          current.delivery === 'now' ? 'steer' : current.delivery,
-          {
-            expectedFence: current.target.fence,
-            actor: current.source.actor,
-            controlId: current.controlId,
-            resumePreservedTurn: current.target.turnState === 'interrupted',
-            semanticTarget: current.schemaVersion >= 2 ? current.target : undefined,
-            semanticTargetDigest: current.schemaVersion >= 2 ? current.targetDigest : undefined,
-          },
-        )
-        : await this.driver.coordinator.interrupt(
-          current.target.workerId, undefined, current.source.actor,
-          {
-            expectedFence: current.target.fence, controlId: current.controlId,
-            preserveTurn: current.turnDisposition === 'preserve_turn',
-            semanticTarget: current.schemaVersion >= 2 ? current.target : undefined,
-            semanticTargetDigest: current.schemaVersion >= 2 ? current.targetDigest : undefined,
-          },
-        );
-    } catch (error) {
-      const after = this._controlOperationalState(current);
-      const outcome = after ?? {
-        state: 'outcome_unknown', result: 'provider_outcome_unknown',
-        code: error?.code ?? 'provider_control_failed',
-      };
-      current = this._acknowledgeRunControl(current, outcome.state, outcome);
-      return this._settleRunControl(
-        current, current.providerAck.state, current.providerAck.outcome,
-      );
-    }
-    const state = result?.ok === true
-      && (current.operation === 'send' ? result.result === 'ok' : result.result === 'confirmed')
-      ? 'confirmed'
-      : result?.deliveredDespiteStale === true ? 'outcome_unknown' : 'refused';
-    current = this._acknowledgeRunControl(current, state, {
-      result: result?.result ?? (state === 'confirmed' ? 'confirmed' : 'refused'),
-      code: result?.reason ?? null,
-      emulated: result?.emulated === true,
-      deliveredDespiteStale: result?.deliveredDespiteStale === true,
-      actualDelivery: result?.actualDelivery
-        ?? (current.operation === 'send' ? current.delivery : null),
-      preservation: result?.preservation ?? null,
-      continuation: result?.continuation ?? null,
-    });
-    return this._settleRunControl(
-      current, current.providerAck.state, current.providerAck.outcome,
-    );
-  }
-
-  async _reconcileRunControls() {
-    const methods = [
-      'runControl', 'runControls', 'pendingRunControls', 'admitRunControl',
-      'beginRunControlEffect', 'acknowledgeRunControl', 'settleRunControl',
-    ];
-    const available = methods.filter((method) => (
-      typeof this.driver.coordination[method] === 'function'
-    ));
-    // Compatibility-only deployments that have never admitted durable Run control do not
-    // need to fabricate that authority just to expose read-only application/card surfaces.
-    // Any partial authority, or any durable control history without its recovery methods,
-    // still fails closed before application readiness.
-    const hasControlHistory = typeof this.driver.coordination.events === 'function'
-      && this.driver.coordination.eventsView().some((event) => (
-        typeof event?.kind === 'string' && event.kind.startsWith('run.control_')
-      ));
-    if (available.length === 0 && !hasControlHistory) {
-      return deepFreeze({ schemaVersion: 1, state: 'not_configured', controls: 0 });
-    }
-    if (available.length !== methods.length) {
-      throw applicationError('application driver lacks durable Run control authority',
-        'application_config_invalid');
-    }
-    const pending = this._runControls();
-    const failures = [];
-    for (const control of pending) {
-      try {
-        await this._withRunEffect(control.runId,
-          () => this._executeRunControl(control, { recovery: true }));
-      } catch (error) {
-        failures.push({ controlId: control.controlId, code: error?.code ?? 'application_control_incomplete' });
-      }
-    }
-    if (failures.length > 0) {
-      throw Object.assign(applicationError('Run control reconciliation is incomplete',
-        'application_control_incomplete'), { failures });
-    }
-    return deepFreeze({ schemaVersion: 1, state: 'reconciled', controls: pending.length });
-  }
-
-  _runControlView(current, settled) {
-    return applicationObservation._runControlView(this, current, settled);
-  }
-
-  async _replaySemanticControl(current, request, principal, context) {
-    if (!context?.idempotencyKey) return null;
-    const controlId = `control:${digest({
-      repoId: this.repoId,
-      runId: current.goal.runId,
-      actionId: request.actionId,
-      seed: { kind: 'request', value: context.idempotencyKey },
-    })}`;
-    const control = this._runControls(current.goal.runId)
-      .find((candidate) => candidate.controlId === controlId);
-    if (!control) return null;
-    const definition = APPLICATION_SEMANTIC_REGISTRY.actions[control.operation];
-    const semanticAuthority = semanticAuthorityForAction({
-      actionId: request.actionId,
-      kind: control.operation,
-      effect: definition.effect,
-      requiredCapabilities: definition.requiredCapabilities,
-    });
-    await this._authorizeSemanticAuthority(semanticAuthority, principal, request.runId, context);
-    const recipient = request.inputs.recipient ?? definition.inputSchema.properties.recipient.default;
-    const delivery = control.operation === 'send'
-      ? (request.inputs.delivery ?? definition.inputSchema.properties.delivery.default) : null;
-    const message = control.operation === 'send' ? request.inputs.message : null;
-    const reason = control.operation === 'interrupt'
-      ? (request.inputs.reason ?? definition.inputSchema.properties.reason.default)
-      : 'Send Run guidance.';
-    // U-F14 (issue #313, completing the #288 axis naming): the web layer has named the moved axis
-    // (web-northbound movedAxis) since the refusal-quality landing; the application layer refused
-    // one disjunct with one message, so a retrying agent could not tell a changed message from a
-    // changed session. Name the first axis that moved, in a declared order, on the error AND in
-    // its detail — the same code, never a vaguer fact.
-    const moved = movedControlAxis(
-      {
-        recipient: control.recipient, delivery: control.delivery, message: control.message,
-        reasonDigest: control.reasonDigest, 'source.actor': control.source?.actor,
-        'source.principalId': control.source?.principalId, 'source.sessionId': control.source?.sessionId,
-      },
-      {
-        recipient, delivery, message, reasonDigest: digest(reason),
-        'source.actor': principal.actor, 'source.principalId': principal.principalId,
-        'source.sessionId': principal.sessionId,
-      },
-    );
-    if (moved !== null) {
-      throw applicationError(
-        `Run control replay conflicts with its durable admission: the ${moved} moved; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
-        'application_control_conflict',
-        { movedAxis: moved },
-      );
-    }
-    const settled = control.status === 'admitted'
-      ? await this._withRunEffect(control.runId,
-        () => this._executeRunControl(control, { recovery: true }))
-      : control;
-    return this._runControlView(current, settled);
-  }
-
-  async _performSemanticControl(current, action, inputs, principal, context) {
+  async _performSemanticControl(current, action, inputs, principal) {
     const operation = action.kind;
     const recipient = inputs.recipient ?? action.inputSchema.properties.recipient.default;
     const delivery = operation === 'send'
@@ -1837,7 +1567,7 @@ export class BatonApplication {
         || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(message))
         || !['nudge', 'now', 'turn'].includes(delivery)))
       || !validText(reason)) {
-      throw applicationError('Run control inputs are invalid', 'application_action_input_invalid');
+      throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
     }
     this._assertRunMutable(current.goal.runId);
     let target = this._resolveSemanticControlTarget(current, recipient, operation);
@@ -1849,76 +1579,80 @@ export class BatonApplication {
         throw applicationError('Blocked Run interaction could not be superseded for interrupt',
           'application_control_interaction_resolution_failed');
       }
-      // Resolve the interaction first, then bind the semantic admission to the resulting exact
-      // durable task generation. No provider interrupt effect has crossed yet.
+      // Resolve the interaction first, then bind the dispatch to the resulting exact durable
+      // task generation. No provider interrupt effect has crossed yet.
       current = this._findRun(current.goal.runId, { allowUnavailableProfile: true });
       target = this._resolveSemanticControlTarget(current, recipient, operation);
     }
-    const seed = context?.idempotencyKey
-      ? { kind: 'request', value: context.idempotencyKey }
-      : { kind: 'direct', value: randomUUID() };
-    const controlId = `control:${digest({
-      repoId: this.repoId, runId: current.goal.runId, actionId: action.actionId, seed,
-    })}`;
-    const source = {
-      actor: principal.actor, principalId: principal.principalId, sessionId: principal.sessionId,
-    };
-    const core = {
-      schemaVersion: 2, repoId: this.repoId, runId: current.goal.runId,
-      controlId, actionId: action.actionId, operation, recipient, delivery, message,
-      turnDisposition: operation === 'interrupt' ? 'preserve_turn' : null,
-      messageDigest: message === null ? null : digest(message), reasonDigest: digest(reason),
-      registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest, source, target,
-      targetDigest: digest(target),
-      requestDigest: digest({
-        actionId: action.actionId, operation, recipient, delivery, message,
-        turnDisposition: operation === 'interrupt' ? 'preserve_turn' : null,
-        reasonDigest: digest(reason), source, target,
-        registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
-      }),
-    };
-    let control = this._runControls(current.goal.runId)
-      .find((candidate) => candidate.controlId === controlId);
-    if (control && control.requestDigest !== core.requestDigest) {
-      // U-F14 (issue #313): the whole-request-digest comparison cannot tell the agent WHAT moved;
-      // name the first axis the two digests disagree on. The replay gate above has already ruled
-      // out the replay-visible axes, so this is the identity half: the target, the registry the
-      // action compiled under, or the actor identity the control carries.
-      const moved = movedControlAxis(
-        {
-          actionId: control.actionId, operation: control.operation, recipient: control.recipient,
-          delivery: control.delivery, message: control.message,
-          turnDisposition: control.turnDisposition, reasonDigest: control.reasonDigest,
-          targetDigest: digest(control.target ?? null), registryDigest: control.registryDigest,
-          'source.actor': control.source?.actor, 'source.principalId': control.source?.principalId,
-          'source.sessionId': control.source?.sessionId,
-        },
-        {
-          actionId: core.actionId, operation: core.operation, recipient: core.recipient,
-          delivery: core.delivery, message: core.message, turnDisposition: core.turnDisposition,
-          reasonDigest: core.reasonDigest, targetDigest: digest(core.target),
-          registryDigest: core.registryDigest, 'source.actor': core.source.actor,
-          'source.principalId': core.source.principalId, 'source.sessionId': core.source.sessionId,
-        },
-      ) ?? 'request';
-      throw applicationError(
-        `Run control idempotency identity conflicts: the ${moved} moved; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
-        'application_control_conflict',
-        { movedAxis: moved },
-      );
+    // The fence is the drift check: a recipient replaced between resolution and dispatch names no
+    // handle, and this dispatch is refused rather than sent to the successor generation.
+    const handle = this.driver.coordinator.list().find((candidate) => (
+      candidate.id === target.workerId && candidate.runId === current.goal.runId
+      && candidate.taskId === target.taskId && candidate.fence === target.fence
+    ));
+    if (!handle) {
+      throw applicationError('The Run action recipient was replaced before dispatch',
+        'application_control_recipient_replaced');
     }
-    if (!control) {
-      this.driver.coordination.admitRunControl({
-        ...core, admissionDigest: digest(core),
-      }, {
-        actor: principal.actor,
-        key: `run.control.admit:${controlId}`,
+    let result;
+    try {
+      result = operation === 'send'
+        ? await this.driver.coordinator.send(
+          target.workerId, message, delivery === 'now' ? 'steer' : delivery,
+          {
+            expectedFence: target.fence, actor: principal.actor,
+            resumePreservedTurn: target.turnState === 'interrupted',
+            semanticTarget: target, semanticTargetDigest: digest(target),
+          },
+        )
+        : await this.driver.coordinator.interrupt(
+          target.workerId, undefined, principal.actor,
+          {
+            expectedFence: target.fence, preserveTurn: true,
+            semanticTarget: target, semanticTargetDigest: digest(target),
+          },
+        );
+    } catch (error) {
+      return this._semanticActionView(current, {
+        operation, recipient, delivery, target, state: 'outcome_unknown',
+        result: 'provider_outcome_unknown', code: error?.code ?? 'provider_control_failed',
+        emulated: false, deliveredDespiteStale: false, actualDelivery: null,
+        preservation: null, continuation: null,
       });
-      control = this._runControls(current.goal.runId)
-        .find((candidate) => candidate.controlId === controlId);
     }
-    const settled = await this._executeRunControl(control);
-    return this._runControlView(current, settled);
+    const state = result?.ok === true
+      && (operation === 'send' ? result.result === 'ok' : result.result === 'confirmed')
+      ? 'confirmed'
+      : result?.deliveredDespiteStale === true ? 'outcome_unknown' : 'refused';
+    return this._semanticActionView(current, {
+      operation, recipient, delivery, target, state,
+      result: result?.result ?? (state === 'confirmed' ? 'confirmed' : 'refused'),
+      code: result?.reason ?? null,
+      emulated: result?.emulated === true,
+      deliveredDespiteStale: result?.deliveredDespiteStale === true,
+      actualDelivery: result?.actualDelivery ?? (operation === 'send' ? delivery : null),
+      preservation: result?.preservation ?? null,
+      continuation: result?.continuation ?? null,
+    });
+  }
+
+  _semanticActionView(current, outcome) {
+    return this._buildView(current, this.principals.observer, {
+      action: {
+        command: `run.${outcome.operation}`,
+        recipient: outcome.recipient,
+        delivery: outcome.delivery,
+        result: outcome.result,
+        state: outcome.state,
+        emulated: outcome.emulated,
+        deliveredDespiteStale: outcome.deliveredDespiteStale,
+        actualDelivery: outcome.actualDelivery,
+        sessionPreserved: outcome.preservation?.state === 'preserved',
+        continuation: outcome.continuation?.state ?? null,
+        onlyActiveMember: outcome.target.activeCount === 1,
+        needsAttention: false,
+      },
+    });
   }
 
   _profile(name) {
@@ -6116,10 +5850,6 @@ export class BatonApplication {
     this._assertOpen();
     const { current, action } = await this._resolveSemanticAction(request, principal);
     if (!action) {
-      const controlReplay = await this._replaySemanticControl(
-        current, request, principal, context,
-      );
-      if (controlReplay) return controlReplay;
       throw applicationError('Run action is outside the current authority scope; inspect the Run'
         + ' for the actions it currently advertises', 'application_action_scope_mismatch');
     }
@@ -6150,9 +5880,7 @@ export class BatonApplication {
     if (['send', 'interrupt'].includes(action.kind)) {
       return this._withRunEffect(request.runId, async () => {
         await this._recheckSemanticAction(current, semanticAuthority, principal);
-        return this._performSemanticControl(
-          current, action, request.inputs, principal, context,
-        );
+        return this._performSemanticControl(current, action, request.inputs, principal);
       });
     }
     if (action.kind === 'approve_plan') {
