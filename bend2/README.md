@@ -89,8 +89,6 @@ and worktree, then records the worker under its parent. A relative `PATH` is
 resolved from `REPO`; the stored workspace path is absolute. The base is stored
 as a commit ID. A matching repeated recruitment returns the existing worker.
 `worktree ID` reads its current Git branch, commit and dirty state.
-`worker` registers an existing workspace. If registration fails after Git has
-created a worktree, the checkout is retained and can be registered with `worker`.
 
 `land WORKER_ID REPO TARGET_BRANCH` looks up the worker's branch from the
 database, verifies the worker tip is a fast-forward from the target, and

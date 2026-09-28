@@ -226,9 +226,10 @@ class Land(unittest.TestCase):
         self.assertEqual(third['commit'], commit)
         self.assertEqual(self.git('rev-parse', 'main').strip(), commit)
 
-    def test_worker_with_no_branch_refused(self):
-        self.call('worker', 'w3', 'root', 'omp', 'model', 'high', '/tmp', '', '')
-        error = self.call('land', 'w3', self.repo, 'main', ok=False)
+    def test_session_with_no_branch_refused(self):
+        # An attached session records no branch, so a landing for it names that.
+        self.call('attach', 'attached-root', 'native-test', 'attached-session', '')
+        error = self.call('land', 'attached-root', self.repo, 'main', ok=False)
         self.assertIn('no recorded branch', error)
 
     def test_push_publishes_branch_to_remote(self):

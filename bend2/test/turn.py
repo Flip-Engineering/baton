@@ -28,8 +28,26 @@ print(json.dumps({"type":"assistant","message":{"content":"text containing \\\"t
 print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native-fixture","is_error":False}))
 ''')
         self.worker.chmod(0o700)
+        self.repo = self.cwd / 'repository'
+        self.repo.mkdir()
+        self.checkouts = self.cwd / 'checkouts'
+        self.checkouts.mkdir()
+        for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
+                     ['config', 'user.name', 'Turn fixture']):
+            subprocess.run(['git', '-C', str(self.repo), *argv], check=True, capture_output=True)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'commit', '-q', '-m', 'seed'],
+                       check=True, capture_output=True)
+        self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                   check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach','root','native-fixture','root-session','root-endpoint')
-        self.call('worker','worker','root','claude-code','model','high',str(self.cwd),'branch','base')
+        self.register('worker','root','claude-code','model','high',str(self.cwd),'branch','base')
+
+    def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
+        """Recruit the session into this suite's fixture repository."""
+        return self.call('recruit', name, parent, harness, model, effort, str(self.repo),
+                          branch or (name + '-branch'), str(self.checkouts / name), self.base)
 
     def tearDown(self): self.temp.cleanup()
 
@@ -58,7 +76,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(len(json.loads(self.call('inbox','root'))),1)
 
     def test_turn_id_owned_by_another_worker_does_not_replay_its_report(self):
-        self.call('worker','other','root','claude-code','model','high',str(self.cwd),'other-branch','base')
+        self.register('other','root','claude-code','model','high',str(self.cwd),'other-branch','base')
         self.call('report','turn-1','other','Other worker report')
         p=subprocess.run([str(EXE),str(self.db),'turn','worker','turn-1',str(self.worker),'model','high',str(self.cwd),str(self.task),str(self.log),''],text=True,capture_output=True)
         self.assertNotEqual(p.returncode,0)
@@ -87,7 +105,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(pathlib.Path(str(self.log)+'.stderr').read_text(),'diagnosis')
 
     def test_omp_prompt_session_route_and_terminal_report(self):
-        self.call('worker','omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
+        self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 state=json.loads(sys.stdin.readline())
 assert state['type']=='get_state'
@@ -123,7 +141,7 @@ assert sys.stdin.read()==''
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
 
     def test_omp_frame_retention_uses_exact_json_type(self):
-        self.call('worker','omp-worker','root','omp','model','low',str(self.cwd),'omp-branch','base')
+        self.register('omp-worker','root','omp','model','low',str(self.cwd),'omp-branch','base')
         retained = [
             '{"type":null,"probe":"null"}',
             '{"type":123,"probe":"number"}',
@@ -156,7 +174,7 @@ assert sys.stdin.read()==''
         final, terminal = [json.loads(line) for line in events.splitlines()]
         expected = '\n'.join(c['text'] for c in final['message']['content'] if c['type'] == 'text')
         self.assertEqual(terminal['messages'], [])
-        self.call('worker','omp-worker','root','omp','deepseek/deepseek-flash','low',str(self.cwd),'omp-branch','base')
+        self.register('omp-worker','root','omp','deepseek/deepseek-flash','low',str(self.cwd),'omp-branch','base')
         (self.cwd / 'events.jsonl').write_text(events)
         receiver = self.cwd / 'root-receiver.py'
         receiver.write_text('import json,pathlib,sqlite3,sys\n'
@@ -184,7 +202,7 @@ assert sys.stdin.read()==''
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
 
     def test_omp_guidance_receipt_follows_native_steer_acceptance(self):
-        self.call('worker','omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         body='Change focus now: report the guidance label indigo λ.'
         self.call('message','guidance-1','root','omp-worker','guidance',body)
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3
@@ -210,7 +228,7 @@ assert sys.stdin.read()==''
         self.assertEqual(json.loads(self.call('inbox','omp-worker')),[])
 
     def test_muse_resumed_turn_reads_new_task_in_recorded_session(self):
-        self.call('worker','muse-worker','root','muse','requested-model','low',str(self.cwd),'muse-branch','base')
+        self.register('muse-worker','root','muse','requested-model','low',str(self.cwd),'muse-branch','base')
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 args=sys.argv
 assert args[1]=='exec'
@@ -232,7 +250,7 @@ print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.t
         self.assertEqual(json.loads(self.call('session','muse-worker'))['native'],native)
 
     def test_codex_terminal_report_uses_final_message_and_resumes_native_thread(self):
-        self.call('worker','codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
+        self.register('codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 args=sys.argv
 assert args[1]=='exec'
@@ -263,7 +281,7 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
         self.assertEqual(len(json.loads(self.call('turns','codex-worker'))),2)
 
     def test_codex_failed_turn_retains_native_failure_for_parent(self):
-        self.call('worker','codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
+        self.register('codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys
 sys.stdin.read()
 print(json.dumps({'type':'thread.started','thread_id':'failed-codex'}))
@@ -282,7 +300,7 @@ sys.exit(1)
     def test_unresumable_conversation_restarts_fresh_and_finishes_the_task(self):
         # OMP answers "not found" for a conversation it never persisted; the
         # turn then runs fresh so the pending input still completes.
-        self.call('worker','omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 args=sys.argv
 if '--resume' in args:

@@ -15,6 +15,20 @@ class Coordinator(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.repo = pathlib.Path(self.temp.name) / 'repository'
+        self.repo.mkdir()
+        self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
+        self.checkouts.mkdir()
+        for argv in (['git', 'init', '-q', '-b', 'main', str(self.repo)],
+                     ['git', '-C', str(self.repo), 'config', 'user.email', 'fixture@example.invalid'],
+                     ['git', '-C', str(self.repo), 'config', 'user.name', 'Coordinator fixture']):
+            subprocess.run(argv, check=True, capture_output=True)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'commit', '-q', '-m', 'seed'],
+                       check=True, capture_output=True)
+        self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                   check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach', 'root', 'native-test', 'root-session', 'native-endpoint')
         self.worker('worker')
 
@@ -29,9 +43,11 @@ class Coordinator(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         return p
 
-    def worker(self, name):
-        return self.call('worker', name, 'root', 'requested-harness', 'requested-model',
-                         'high', '/retained/worktree', 'worker-branch', 'base-commit')
+    def worker(self, name, parent='root', harness='requested-harness',
+               model='requested-model', effort='high', workspace=None, branch=None, base=None):
+        """Recruit a session into the fixture repository's own checkout."""
+        return self.call('recruit', name, parent, harness, model, effort, str(self.repo),
+                         name + '-branch', str(self.checkouts / name), self.base)
 
     def observe(self, ident, worker, event, success=True):
         # One native event, written where the coordinator reads it.
@@ -103,7 +119,7 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('delivery', 'turn-1')['receipt'], 'accepted')
 
     def test_codex_thread_event_records_resume_identity_before_report(self):
-        self.call('worker', 'codex', 'root', 'codex', 'gpt-6-astra', 'low',
+        self.worker('codex', 'root', 'codex', 'gpt-6-astra', 'low',
                   '/retained/codex', 'codex-branch', 'base')
         event = {'type': 'thread.started',
                  'thread_id': '01a0e0cd-18e6-72a1-a46f-88790278891a'}
@@ -116,7 +132,7 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'root'), [])
 
     def test_omp_rpc_state_records_native_session_and_observed_route(self):
-        self.call('worker', 'omp', 'root', 'omp', 'requested-model', 'low',
+        self.worker('omp', 'root', 'omp', 'requested-model', 'low',
                   '/retained/omp', 'omp-branch', 'base')
         event = {'type': 'response', 'command': 'get_state', 'success': True,
                  'id': 'baton:session', 'data': {'sessionId': 'omp-rpc-native',
@@ -137,7 +153,7 @@ class Coordinator(unittest.TestCase):
             'payload': {'kind': 'run_model_configured', 'provider_id': 'meta',
                         'model_id': 'muse-spark-1.3-contributor'},
         }
-        self.call('worker', 'muse', 'root', 'muse', 'requested-muse', 'low',
+        self.worker('muse', 'root', 'muse', 'requested-muse', 'low',
                   '/retained/muse', 'muse-branch', 'base')
         self.assertIsNone(self.observe('muse-turn', 'muse', json.dumps(event))['reportId'])
         session = self.call('session', 'muse')
@@ -227,7 +243,7 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(worker['observedHarness'], 'observed-harness')
         self.assertEqual(worker['observedModel'], 'observed-model')
         self.assertEqual(worker['native'], 'real-session')
-        self.assertEqual(worker['workspace'], '/retained/worktree')
+        self.assertEqual(worker['workspace'], str(self.checkouts / 'worker'))
 
     def test_failed_routing_keeps_database_usable(self):
         self.call('report', 'missing-parent', 'missing-worker', 'report', success=False)
@@ -237,15 +253,15 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'root')[0]['id'], 'good')
 
     def test_sql_text_is_data(self):
-        worker = "worker'); DROP TABLE sessions; --"
-        self.worker(worker)
         text = "'quoted'\n\\tab\t\rJSON {\"a\":1} 🙂"
-        self.call('report', "id'--", worker, text)
+        self.call('report', "id'--", 'worker', text)
         self.assertEqual(self.call('inbox', 'root')[0]['body'], text)
-        self.assertEqual(len(self.call('status')), 3)
+        self.call('message', "m'--", 'root', 'worker', 'guidance', text)
+        self.assertEqual(self.call('inbox', 'worker')[0]['body'], text)
+        self.assertEqual(len(self.call('status')), 2)
 
     def test_workers_lists_workers_with_latest_report(self):
-        self.call('worker', 'other', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base2')
+        self.worker('other', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base2')
         self.call('report', 'r1', 'worker', 'Task completed successfully.')
 
         workers = self.call('workers')

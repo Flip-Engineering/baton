@@ -207,9 +207,19 @@ def main():
                    'old_initial_rss_bytes': old.ready['rss_bytes']}
         old.call('setup')
         bend('attach', 'root', 'controlled-root', 'root-session', '')
+        # Recruited sessions need a real repository and base commit.
+        benchmark_repo = run / 'benchmark-repo'
+        execute(['git', 'init', '-q', '-b', 'main', str(benchmark_repo)])
+        execute(['git', '-C', str(benchmark_repo), 'config', 'user.email', 'benchmark@example.invalid'])
+        execute(['git', '-C', str(benchmark_repo), 'config', 'user.name', 'Coordinator comparison'])
+        (benchmark_repo / 'seed.txt').write_text('benchmark seed\n')
+        execute(['git', '-C', str(benchmark_repo), 'add', 'seed.txt'])
+        execute(['git', '-C', str(benchmark_repo), 'commit', '-q', '-m', 'seed'])
+        benchmark_base = execute(['git', '-C', str(benchmark_repo), 'rev-parse', 'HEAD']).stdout.decode().strip()
         for index in range(args.workers):
-            bend('worker', f'worker-{index}', 'root', 'controlled-oneshot', 'controlled-model',
-                 'high', str(run / f'workspace-{index}'), f'branch-{index}', 'base')
+            bend('recruit', f'worker-{index}', 'root', 'controlled-oneshot', 'controlled-model',
+                 'high', str(benchmark_repo), f'branch-{index}',
+                 str(run / f'workspace-{index}'), benchmark_base)
 
         def perform(system, operation, unique):
             worker = f'worker-{unique % args.workers}'

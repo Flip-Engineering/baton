@@ -21,7 +21,25 @@ class OmpRootAdapter(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        self.repo = pathlib.Path(self.temp.name) / 'repository'
+        self.repo.mkdir()
+        self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
+        self.checkouts.mkdir()
+        for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
+                     ['config', 'user.name', 'OMP adapter fixture']):
+            subprocess.run(['git', '-C', str(self.repo), *argv], check=True, capture_output=True)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'commit', '-q', '-m', 'seed'],
+                       check=True, capture_output=True)
+        self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                   check=True, capture_output=True, text=True).stdout.strip()
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+
+    def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
+        """Recruit the session into this suite's fixture repository."""
+        return self.coord('recruit', name, parent, harness, model, effort, str(self.repo),
+                          branch or (name + '-branch'), str(self.checkouts / name), self.base)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -47,8 +65,8 @@ class OmpRootAdapter(unittest.TestCase):
             'subprocess.run(cmd+["ack",row["id"],"root","root reviewed lead"],check=True)\n')
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([sys.executable, str(root_endpoint)]))
-        self.coord('worker', 'lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
-        self.coord('worker', 'child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
+        self.register('lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
+        self.register('child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
         native = temp / 'lead.py'
         calls = temp / 'lead.jsonl'
         native.write_text(
@@ -70,12 +88,12 @@ class OmpRootAdapter(unittest.TestCase):
         lead = json.loads(self.coord('session', 'lead'))
         root = json.loads(self.coord('session', 'root'))
         self.assertEqual((lead['parent'], lead['branch'], lead['base'], lead['workspace']),
-                         ('root', 'lead-branch', 'base', str(temp)))
+                         ('root', 'lead-branch', self.base, str(self.checkouts / 'lead')))
         self.assertEqual(lead['native'], 'native-lead')
         self.assertEqual(root['native'], 'native-root')
         native_calls = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(native_calls), 2)
-        self.assertEqual(native_calls[0]['cwd'], str(temp))
+        self.assertEqual(native_calls[0]['cwd'], str(self.checkouts / 'lead'))
         prompt = native_calls[0]['args'][native_calls[0]['args'].index('--system-prompt') + 1]
         self.assertIn('inbox lead', prompt)
         self.assertIn('ack ID lead', prompt)
@@ -89,8 +107,8 @@ class OmpRootAdapter(unittest.TestCase):
     def test_failed_lead_turn_reports_to_parent_and_keeps_child_report(self):
         temp = pathlib.Path(self.temp.name)
         self.coord('attach', 'root', 'codex', 'native-root', '')
-        self.coord('worker', 'lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
-        self.coord('worker', 'child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
+        self.register('lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
+        self.register('child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
         native = temp / 'failure.sh'
         native.write_text('#!/bin/sh\nexit 23\n')
         native.chmod(0o700)
@@ -120,7 +138,7 @@ class OmpRootAdapter(unittest.TestCase):
         attached = subprocess.run(['node', str(OMP_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.assertFalse(received.exists())
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'low', str(temp), 'branch', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'low', str(temp), 'branch', 'base')
         report = temp / 'report.txt'
         report.write_text('Completed task with full report.')
         self.coord('report', 'finished', 'w1', report.read_text())
@@ -162,7 +180,7 @@ class OmpRootAdapter(unittest.TestCase):
     def test_adapter_formats_pending_report(self):
         """The adapter detects pending messages and formats them for OMP."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Task completed successfully.')
 
         # Run the adapter in --once mode with a fake OMP that just prints the prompt.
@@ -201,8 +219,8 @@ class OmpRootAdapter(unittest.TestCase):
     def test_adapter_detects_multiple_messages(self):
         """The adapter formats multiple pending messages in one prompt."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
-        self.coord('worker', 'w2', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w2', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base')
         self.coord('report', 'r1', 'w1', 'First report.')
         self.coord('report', 'r2', 'w2', 'Second report.')
 
@@ -232,7 +250,7 @@ class OmpRootAdapter(unittest.TestCase):
     def test_system_prompt_contains_coordinator_commands(self):
         """The system prompt passed to OMP includes the coordinator CLI."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'r1', 'w1', 'done')
 
         mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
@@ -260,7 +278,7 @@ class OmpRootAdapter(unittest.TestCase):
     def test_adapter_passes_print_and_json_mode(self):
         """OMP is started with --print --mode json flags."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'r1', 'w1', 'done')
 
         mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
@@ -285,7 +303,7 @@ class OmpRootAdapter(unittest.TestCase):
     def test_adapter_extracts_result_text(self):
         """The adapter extracts text from the OMP turn_end event."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'r1', 'w1', 'done')
 
         mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'

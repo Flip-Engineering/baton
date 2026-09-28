@@ -54,7 +54,25 @@ class McpRoot(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        self.repo = pathlib.Path(self.temp.name) / 'repository'
+        self.repo.mkdir()
+        self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
+        self.checkouts.mkdir()
+        for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
+                     ['config', 'user.name', 'MCP root fixture']):
+            subprocess.run(['git', '-C', str(self.repo), *argv], check=True, capture_output=True)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'commit', '-q', '-m', 'seed'],
+                       check=True, capture_output=True)
+        self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                   check=True, capture_output=True, text=True).stdout.strip()
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+
+    def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
+        """Recruit the session into this suite's fixture repository."""
+        return self.coord('recruit', name, parent, harness, model, effort, str(self.repo),
+                          branch or (name + '-branch'), str(self.checkouts / name), self.base)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -109,7 +127,7 @@ class McpRoot(unittest.TestCase):
 
     def test_pending_report_triggers_channel_notification(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Worker completed the task.')
 
         proc = self.start_mcp()
@@ -125,7 +143,7 @@ class McpRoot(unittest.TestCase):
 
     def test_report_writer_notifies_an_initialized_channel(self):
         self.coord('attach', 'root', 'claude-code', 'root-session', '')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'low', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'low', '/wt', 'br', 'base')
         self.coord('report', 'before', 'w1', 'Before attachment.')
         proc = self.start_mcp()
         self.initialize(proc)
@@ -157,7 +175,7 @@ class McpRoot(unittest.TestCase):
 
     def test_tool_ack_clears_pending_message(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Done.')
 
         proc = self.start_mcp()
@@ -194,7 +212,7 @@ class McpRoot(unittest.TestCase):
     def test_guide_sends_message_to_worker_inbox(self):
         # Set up root and worker sessions
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
 
         # Start MCP and initialize
         proc = self.start_mcp()
@@ -230,7 +248,7 @@ class McpRoot(unittest.TestCase):
 
     def test_restart_delivers_pending_report(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Pending across restart.')
 
         proc1 = self.start_mcp()
@@ -268,7 +286,7 @@ class McpRoot(unittest.TestCase):
 
     def test_workers_and_turns_tools_return_coordinator_data(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         event = pathlib.Path(self.temp.name) / 'event.json'
         event.write_text(json.dumps({'type': 'result', 'result': 'done'}))
         self.coord('observe-file', 'turn-1', 'w1', str(event))
@@ -306,7 +324,7 @@ class McpRoot(unittest.TestCase):
 
     def test_duplicate_notification_not_sent(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
-        self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'First report.')
 
         proc = self.start_mcp()

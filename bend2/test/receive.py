@@ -87,6 +87,19 @@ class Receive(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="receive ' paths ", dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
+        self.repo = self.directory / 'repository'
+        self.repo.mkdir()
+        self.checkouts = self.directory / 'checkouts'
+        self.checkouts.mkdir()
+        for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
+                     ['config', 'user.name', 'Receive fixture']):
+            subprocess.run(['git', '-C', str(self.repo), *argv], check=True, capture_output=True)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'commit', '-q', '-m', 'seed'],
+                       check=True, capture_output=True)
+        self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                   check=True, capture_output=True, text=True).stdout.strip()
         self.db = self.directory / 'state.db'
         self.fixture = self.directory / 'native fixture'
         self.fixture.write_text('#!' + sys.executable + '\n' + FIXTURE)
@@ -139,7 +152,9 @@ class Receive(unittest.TestCase):
         return child
 
     def worker(self, name='parent', harness='codex'):
-        self.coord('worker', name, 'root', harness, name, 'low', self.directory, name + '-branch', 'base')
+        """Recruit the session into a fixture repository of this run."""
+        return self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
+                          name + '-branch', str(self.checkouts / name), self.base)
 
     def receive_args(self, session, executable=None):
         return ['receive', session, str(executable or self.fixture), session, 'low',

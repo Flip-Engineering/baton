@@ -144,8 +144,6 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Invalid{}))))
     case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
       Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
-    case +verb <> id <> parent <> harness <> model <> effort <> workspace <> branch <> base <> Nil{}:
-      Bool.pick(Command, String.eq(verb,"worker"),Worker{id,parent,harness,model,effort,workspace,branch,base},Invalid{})
     case +verb <> +worker <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       Bool.pick(Command,String.eq(verb,"turn"),RunTurn{worker,id,cmd,model,effort,cwd,task,log,session},
       Bool.pick(Command,String.eq(verb,"recruit"),Recruit{worker,id,cmd,model,effort,cwd,task,log,session},Invalid{}))
