@@ -2,8 +2,8 @@
 
 Native `receive` runs Codex and OMP inbox turns through the coordinator's
 existing harness supervision. The trial launcher and lead instructions use
-this path. A session file lock covers the native process's lifetime, and the
-supervisor checks queued input after releasing ownership. Parent delivery and
+this path. The supervisor holds a session file lock while its native process
+runs, and checks queued input after releasing ownership. Parent delivery and
 the session's next queued turn can proceed concurrently.
 
 ## Observed failure
@@ -155,5 +155,49 @@ median command times for its process-per-command path.
 Claude's interactive channel adapter and the retained earlier Codex and OMP
 entry points still require Node. Existing configurations keep those endpoints
 until explicitly reconnected. The controlled tests establish process behavior
-while the supervisor runs. Host restart, loss of the supervisor while its
-native child survives, and power-loss recovery require separate validation.
+while the supervisor runs. Host restart and power-loss recovery require
+separate validation. The supervisor-loss probe below reproduces a duplicate
+native session.
+
+## Supervisor loss with a surviving child
+
+At revision `63c4ca4526ef3f62159944b20eb295aff8f46eeb`, a controlled Codex
+fixture remains alive after its receive supervisor is killed with SIGKILL.
+A second receive invocation starts another fixture with the same recorded
+native ID and the same pending message. Both native processes are alive
+concurrently. This reproduces a recovery defect in session ownership.
+
+The first observation recorded supervisor PID 29812 exiting with status -9
+and native PID 29849 surviving with parent PID 1. Retry supervisor PID 30889
+started native PID 30931 with `exec resume native-parent`. Both native PIDs
+appeared in one process observation. Message `first` remained pending until
+the retry acknowledged it. The retry then recorded one completed turn. The
+probe released its original fixture, and all four processes exited. The
+committed reproduction script repeated the overlap with native PIDs 39566 and
+40439; its supervisors and both native processes also exited after cleanup.
+
+`bend2/src/host/session-lock.c` opens the lock with `O_CLOEXEC`. The supervisor
+owns the file descriptor, so its exit releases the lock while the native child
+can remain alive. `receive.bend` admits a retry through that released lock and
+resumes the stored native ID. The fixture shows process overlap and repeated
+input delivery; it does not measure concurrent writes by a real Codex process.
+
+Reproduce with the installed Bend 2.0.25 compiler:
+
+```sh
+BEND=/path/to/bend sh bend2/scripts/build-native.sh
+python3 docs/bend2/examples/probe-supervisor-loss.py
+```
+
+The probe uses a fresh database and controlled harness processes from the
+receive test fixture. Its JSON records process IDs, the resumed native ID,
+pending input and the completed turn. It requires the current coordinator
+binary at `.scratch/bend2/baton2`. The original run's database, native log and
+JSON observation are retained at `.scratch/recovery18/supervisor-loss/` in the
+architect workspace. No runtime repair is included in this validation record.
+
+A repair must preserve exclusive use of the native session across supervisor
+loss and arrange continuation and parent notification for pending work. Keeping
+the lock in a surviving child alone would leave queued input without the
+supervisor that drains it. Recovery of the child's output and completion also
+needs an owner.
