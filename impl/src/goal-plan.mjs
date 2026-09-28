@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import { normalizeWorkflowRevision } from './workflow-revision.mjs';
-import { SECRET_SHAPED_TEXT, secretShapedText } from './messages.mjs';
 
 export class GoalPlanValidationError extends Error {
   constructor(message, code = 'goal_plan_invalid') {
@@ -82,7 +81,6 @@ function normalizedText(value, label) {
   if (typeof value !== 'string' || value.includes('\0')) fail(`${label} is invalid`, 'goal_plan_invalid');
   const normalized = value.normalize('NFKC').trim();
   if (normalized.length === 0) fail(`${label} is invalid`, 'goal_plan_invalid');
-  if (secretShapedText(normalized)) fail(`${label} contains credential-shaped content`, 'goal_plan_secret_rejected');
   return normalized;
 }
 /** The set shape is the only thing enforced: an array, non-empty where the caller says so, no
@@ -177,7 +175,6 @@ function normalizeVerification(value, deps) {
     || /[\s|&;<>`$()]/u.test(command)) fail('verification executable must be direct and repository-safe', 'plan_verification_invalid');
   if (!Array.isArray(value.arguments)
     || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0'))) fail('verification arguments are invalid', 'plan_verification_invalid');
-  if (value.arguments.some((argument) => secretShapedText(argument.normalize('NFKC')))) fail('verification arguments contain credential-shaped content', 'goal_plan_secret_rejected');
   const cwd = normalizedText(value.cwd, 'verification.cwd');
   if (cwd.startsWith('/') || cwd.includes('\\') || cwd.split('/').includes('..')) fail('verification cwd is outside repository scope', 'plan_verification_invalid');
   const envAllowlist = normalizedSet(value.envAllowlist, 'verification.envAllowlist');

@@ -603,7 +603,6 @@ test('GP3/GP8: plan verification is closed direct-exec authority with bounded cw
     shell: { ...verification(), command: 'node && false' },
     cwd_escape: { ...verification(), cwd: '../outside' },
     credential_env: { ...verification(), envAllowlist: ['GLM_API_KEY', 'PATH'] },
-    credential_argument: { ...verification(), arguments: ['--test', 'access_token=abcdefghijklmnopqrstuvwx'] },
     predecessor_mismatch: { ...verification(), requiredPredecessorEvidence: ['missing-node'] },
     output_oversize: { ...verification(), maxOutputBytes: 16 * 1024 * 1024 + 1 },
   };
@@ -621,7 +620,7 @@ test('GP3/GP8: plan verification is closed direct-exec authority with bounded cw
         routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
         capabilities: ['test'], effects: [],
       }],
-    }, storeAuth('planner', `plan:verification:${name}`)), (error) => error.code === (name === 'credential_argument' ? 'goal_plan_secret_rejected' : 'plan_verification_invalid'), name);
+    }, storeAuth('planner', `plan:verification:${name}`)), (error) => error.code === 'plan_verification_invalid', name);
     assert.equal(store.snapshot().lastSeq, before, name);
     store.releaseWriterLease();
   }
@@ -926,4 +925,23 @@ test('GP5/GP8: unauthorized Plan follow-up and recovery precede physical-owner c
   handle.workspaceOwnerProcessAuthorityValid = original.workspaceOwnerProcessAuthorityValid;
   handle.workspaceOwnerBindingDiagnostic = original.workspaceOwnerBindingDiagnostic;
   assert.equal((await driver.drainAndClose()).state, 'closed');
+});
+
+test('#630: goal, plan and verification prose accepts credential-shaped examples', () => {
+  const store = new CoordinationStore(root('prose'), { goalPlanPolicy: policy });
+  try {
+    const objective = 'Dedicated command authorization: phase64-integrated-run-application.test.mjs';
+    const goal = store.defineGoal({ objective, definitionOfDone: ['Examples accepted'], constraints: [],
+      risk: 'high', budget: goalBudget(), predecessor: null,
+    }, storeAuth('goal-owner', 'goal:prose')).goal;
+    const arguments_ = ['access_token=abcdefghijklmnopqrstuvwx'];
+    const plan = store.proposePlan({ goal: ref('goal', goal), predecessor: null, nodes: [{
+      key: 'examples', objective: 'Document -----BEGIN PRIVATE KEY----- as an example',
+      definitionOfDone: ['Examples accepted'], deps: [], pathScope: ['impl/**'], risk: 'high',
+      budget: nodeBudget(), verification: { ...verification(), arguments: arguments_ },
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['test'], effects: [],
+    }] }, storeAuth('planner', 'plan:prose')).plan;
+    assert.equal(goal.objective, objective);
+    assert.deepEqual(plan.nodes[0].verification.arguments, arguments_);
+  } finally { store.releaseWriterLease(); }
 });
