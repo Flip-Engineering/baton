@@ -65,8 +65,6 @@ def head_of_branch(r: String, branch: String) -> IO(String):
     g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", b2])
     IO.pure(String, Tx.trim_nl(out_of(g)))
 
-# G: a target that moves onto a conflicting commit returns the rebase
-# conflict and leaves the moved target where its mover put it.
 def author(r: String, wt: String, branch: String, base: String, script: String) -> IO(String):
   +r2 = r
   +w2 = wt
@@ -244,9 +242,9 @@ def remote_tip(remote: String, branch: String) -> IO(String):
 # unjudged, which blocks the landing and names the line that made it unjudged.
 def is_cause_of(res: Result<&1,&1,T.GitFail,T.LandOutcome>, want: String) -> String:
   match res:
-    case Done{T.LBlocked{+reason}}: eq_or(Tx.starts_with(reason, want), Tx.str_cat("land M: the block does not name its cause: ", Tx.trim_nl(reason)))
-    case Done{made}: "land M: outcome where a blocked landing expected"
-    case Fail{fail}: Tx.str_cat("land M: refusal where a blocked landing expected: ", Tx.trim_nl(T.fail_text(fail)))
+    case Done{T.LBlocked{+reason}}: eq_or(Tx.starts_with(reason, want), Tx.str_cat("land: the block does not name its cause: ", Tx.trim_nl(reason)))
+    case Done{made}: "land: outcome where a blocked landing expected"
+    case Fail{fail}: Tx.str_cat("land: refusal where a blocked landing expected: ", Tx.trim_nl(T.fail_text(fail)))
 
 def is_unjudged_cause(res: Result<&1,&1,T.GitFail,T.LandOutcome>) -> String:
   is_cause_of(res, "new failures: ?unjudged candidate: nid.txt: check output is not failure identities: sh: cannot open the check")
@@ -368,38 +366,67 @@ def land_h(r: String, acc: String) -> IO(Unit):
     _rm : T.RunRes <- Git.runFull(["git", "-C", r2, "worktree", "remove", Tx.str_cat(r2, "/.scratch/lt-busy")], ".")
     land_i(r2, Tx.str_cat(a2, f1))
 
-# I: an unknown worker commit refuses before anything is prepared.
+# G: a moved target requires a fresh attempt, whose merge exposes the conflict.
 def land_g(r: String, acc: String) -> IO(Unit):
   +r2 = r
   +a2 = acc
+  +scratch = Tx.str_cat(r2, "/.scratch/lt-lg")
+  +retry_scratch = Tx.str_cat(r2, "/.scratch/lt-lg-retry")
   do IO<Unit>:
-    head0 : String <- head_of(r2)
-    ahead2 : String <- head_of_branch(r2, "ahead2")
-    tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wg"), "baton/wg", head0, "printf 'ten\\n' > app.txt")
-    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"app.txt", Nil{}}, "check-move2.sh", Tx.str_cat(r2, "/.scratch/lt-lg"))
+    +head0 : String <- head_of(r2)
+    +ahead2 : String <- head_of_branch(r2, "ahead2")
+    +tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wg"), "baton/wg", head0, "printf 'ten\\n' > app.txt")
+    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"app.txt", Nil{}}, "check-move2.sh", scratch)
     head : String <- head_of(r2)
-    f1 : String <- IO.pure(String, is_conflict_file(res, "app.txt"))
+    candidate_basis : String <- head_of_branch(scratch, "HEAD^")
+    checked_basis : String <- head_of_branch(Tx.str_cat(scratch, "-target"), "HEAD")
+    worker : String <- head_of_branch(r2, "baton/wg")
+    f1 : String <- IO.pure(String, is_cause_of(res, "target moved during checked landing; rerun land-checked"))
     f2 : String <- IO.pure(String, eq_or(Tx.str_eq(head, ahead2), "land G: main is not the moved tip"))
-    land_h(r2, Tx.str_cat(a2, Tx.str_cat(f1, f2)))
+    f3 : String <- IO.pure(String, eq_or(Tx.str_eq(candidate_basis, head0), "land G: blocked candidate basis was not retained"))
+    f4 : String <- IO.pure(String, eq_or(Tx.str_eq(checked_basis, head0), "land G: checked target tree was not retained"))
+    f5 : String <- IO.pure(String, eq_or(Tx.str_eq(worker, tip), "land G: blocked attempt changed the worker tip"))
+    retry : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"app.txt", Nil{}}, "check-pass.sh", retry_scratch)
+    after : String <- head_of(r2)
+    unmerged : T.GitOut <- Git.runGit(retry_scratch, ["diff", "--name-only", "--diff-filter=U"])
+    worker_after : String <- head_of_branch(r2, "baton/wg")
+    f6 : String <- IO.pure(String, is_conflict_file(retry, "app.txt"))
+    f7 : String <- IO.pure(String, eq_or(Tx.str_eq(after, ahead2), "land G: conflict advanced the moved target"))
+    f8 : String <- IO.pure(String, eq_or(Tx.str_eq(Tx.trim_nl(out_of(unmerged)), "app.txt"), "land G: conflict evidence was not retained"))
+    f9 : String <- IO.pure(String, eq_or(Tx.str_eq(worker_after, tip), "land G: retry changed the worker tip"))
+    land_h(r2, a2 ++ f1 ++ f2 ++ f3 ++ f4 ++ f5 ++ f6 ++ f7 ++ f8 ++ f9)
 
-# H: a target held by a worktree refuses the advance.
+# F: a moved target preserves the checked trees; a fresh attempt lands on it.
 def land_f(r: String, acc: String) -> IO(Unit):
   +r2 = r
   +a2 = acc
+  +scratch = Tx.str_cat(r2, "/.scratch/lt-lf")
   do IO<Unit>:
-    head0 : String <- head_of(r2)
-    ahead : String <- head_of_branch(r2, "ahead")
-    tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wf"), "baton/wf", head0, "printf 'feat2\\n' > feat2.txt")
-    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"feat2.txt", Nil{}}, "check-move.sh", Tx.str_cat(r2, "/.scratch/lt-lf"))
-    head : String <- head_of(r2)
+    +head0 : String <- head_of(r2)
+    +ahead : String <- head_of_branch(r2, "ahead")
+    +tip : String <- author(r2, Tx.str_cat(r2, "/.scratch/lt-wf"), "baton/wf", head0, "printf 'feat2\\n' > feat2.txt")
+    res : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"feat2.txt", Nil{}}, "check-move.sh", scratch)
+    moved : String <- head_of(r2)
+    candidate_basis : String <- head_of_branch(scratch, "HEAD^")
+    checked_basis : String <- head_of_branch(Tx.str_cat(scratch, "-target"), "HEAD")
+    worker : String <- head_of_branch(r2, "baton/wf")
+    blocked : String <- IO.pure(String, is_cause_of(res, "target moved during checked landing; rerun land-checked"))
+    kept_target : String <- IO.pure(String, eq_or(Tx.str_eq(moved, ahead), "land F: blocked attempt changed the moved target"))
+    kept_candidate : String <- IO.pure(String, eq_or(Tx.str_eq(candidate_basis, head0), "land F: blocked candidate basis was not retained"))
+    kept_basis : String <- IO.pure(String, eq_or(Tx.str_eq(checked_basis, head0), "land F: checked target tree was not retained"))
+    kept_worker : String <- IO.pure(String, eq_or(Tx.str_eq(worker, tip), "land F: blocked attempt changed the worker tip"))
+    retry : Result<&1, &1, T.GitFail, T.LandOutcome> <- land_ok(r2, "main", tip, Con{"feat2.txt", Nil{}}, "check-pass.sh", Tx.str_cat(r2, "/.scratch/lt-lf-retry"))
+    +head : String <- head_of(r2)
     par : String <- parent_of(r2)
     ob : String <- blob_of(r2, "other.txt")
     fb : String <- blob_of(r2, "feat2.txt")
-    f1 : String <- IO.pure(String, is_landed(res, head))
+    worker_after : String <- head_of_branch(r2, "baton/wf")
+    f1 : String <- IO.pure(String, is_landed(retry, head))
     f2 : String <- IO.pure(String, eq_or(Tx.str_eq(par, ahead), "land F: target parent is not the moved tip"))
     f3 : String <- IO.pure(String, eq_or(Tx.str_eq(ob, "other"), "land F: other.txt missing after move"))
     f4 : String <- IO.pure(String, eq_or(Tx.str_eq(fb, "feat2"), "land F: feat2.txt missing after move"))
-    land_g(r2, Tx.str_cat(a2, Tx.str_cat(f1, Tx.str_cat(f2, Tx.str_cat(f3, f4)))))
+    f5 : String <- IO.pure(String, eq_or(Tx.str_eq(worker_after, tip), "land F: retry changed the worker tip"))
+    land_g(r2, a2 ++ blocked ++ kept_target ++ kept_candidate ++ kept_basis ++ kept_worker ++ f1 ++ f2 ++ f3 ++ f4 ++ f5)
 
 def land_e(r: String, base: String, acc: String) -> IO(Unit):
   +r2 = r
@@ -411,8 +438,6 @@ def land_e(r: String, base: String, acc: String) -> IO(Unit):
     f1 : String <- IO.pure(String, is_conflict_file(res, "app.txt"))
     land_f(r2, Tx.str_cat(a2, f1))
 
-# F: a target that moves while checks run rebases the candidate cleanly and
-# lands on the check result it already has.
 def land_d(r: String, base: String, acc: String) -> IO(Unit):
   +r2 = r
   +b2 = base
@@ -492,4 +517,3 @@ def main() -> IO(Unit):
     root : String <- IO.pure(String, Tx.trim_nl(res_out(p)))
     abs : String <- IO.pure(String, Tx.str_cat(root, Tx.str_cat("/", repo())))
     run_all(abs)
-
