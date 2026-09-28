@@ -1627,12 +1627,11 @@ export function runProgress({ phase, approval, node, route, verification, review
         : semanticReview?.state === 'review_failed' ? 'Review evidence failed closed validation'
           : semanticReview?.state === 'review_running' ? 'Independent reviewer is active'
             : 'Semantics remain explicitly unverified'),
-    stage('result', 'Accepted result', ['adopted', 'integrated'].includes(result?.state) ? 'complete'
+    stage('result', 'Accepted result', result?.state === 'integrated' ? 'complete'
       : result?.state === 'accepted' ? 'active'
         : failed || stopped ? 'stopped' : 'pending',
     result?.state === 'integrated' ? 'Reviewed result integrated under explicit authority'
-      : result?.state === 'adopted' ? 'Verified commit selected without checkout mutation'
-      : result?.state === 'accepted' ? 'Verified commit preserved; adoption available'
+      : result?.state === 'accepted' ? 'Verified commit preserved'
         : 'No accepted result'),
     stage('integration', 'Repository integration', integration?.state === 'integrated' ? 'complete'
       : semanticReview?.state === 'revision_required' || semanticReview?.state === 'review_failed' ? 'blocked'
@@ -1696,11 +1695,6 @@ export function sessionAttachmentUnproven(handle) {
     && handle.controllableAttached !== true
     && ['orphaned', 'exited', 'dead'].includes(handle.status)
     && (handle.status === 'orphaned' || handle.sessionPreservation?.state === 'preserved');
-}
-export function adoptionState(adoption) {
-  if (!adoption) return null;
-  if (adoption.status === 'adopted' || adoption.state === 'adopted' || adoption.receipt?.state === 'adopted') return 'adopted';
-  return 'adopting';
 }
 export function _loadProfileRegistry(application) {
     const records = application.driver.coordination.eventsView().filter((event) => event.kind === 'driver.recorded'
@@ -2094,59 +2088,6 @@ export function _semanticTarget(application, current, view) {
         .map((item) => ({ kind: 'artifact', id: item.id, digest: item.digest })),
     };
     return deepFreeze({ ...core, targetDigest: digest(core) });
-  }
-export function _performResultAdoption(application, adoption) {
-    const key = `${adoption.runId}\0${adoption.nodeKey}`;
-    const existing = application._runAdoptionPromises.get(key);
-    if (existing) return existing;
-    const operation = (async () => {
-      const current = application.driver.coordination.runResultAdoption(adoption.runId, adoption.nodeKey);
-      if (!current) throw applicationError('Run result adoption admission is unavailable', 'application_adoption_incomplete');
-      if (current.status === 'adopted') return current.receipt;
-      const task = application.driver.coordination.task(current.taskId);
-      if (!task?.assignee) throw applicationError('Run result adoption worker authority is unavailable', 'application_adoption_incomplete');
-      const pinned = await application.driver.coordinator.preserveResult(task.assignee, current.resultSha);
-      if (pinned.state !== 'pinned' || pinned.sha !== current.resultSha || pinned.ref !== current.retainedResultRef) {
-        throw applicationError('Run result adoption ref verification failed', 'application_adoption_incomplete');
-      }
-      const core = {
-        schemaVersion: 1,
-        state: 'adopted',
-        scope: 'run-result',
-        repoId: current.repoId,
-        runId: current.runId,
-        nodeKey: current.nodeKey,
-        taskId: current.taskId,
-        binding: {
-          admissionDigest: current.adoptionDigest,
-          evidenceDigest: current.evidenceDigest,
-          goalDigest: current.binding.goal.digest,
-          planDigest: current.binding.plan.digest,
-          approvalDigest: current.binding.approvalDigest,
-          commitArtifactId: current.binding.commitArtifact.id,
-          commitArtifactDigest: current.binding.commitArtifact.digest,
-          verificationArtifactId: current.binding.verificationArtifact.id,
-          verificationArtifactDigest: current.binding.verificationArtifact.digest,
-        },
-        result: { sha: current.resultSha, ref: pinned.ref },
-        checks: {
-          taskAccepted: true, verificationAccepted: true, refPinned: true,
-          mainUnchanged: true, worktreeIndependent: true,
-        },
-        effects: {
-          mainHeadChanged: false, indexChanged: false, workingTreeChanged: false, published: false,
-        },
-      };
-      const receipt = deepFreeze({ ...core, receiptDigest: digest(core) });
-      return application.driver.coordination.completeRunResultAdoption({
-        schemaVersion: 1, runId: current.runId, nodeKey: current.nodeKey, receipt,
-      }, { actor: current.actor, key: `run.result_adoption.complete:${current.runId}:${current.nodeKey}` }).adoption.receipt;
-    })();
-    application._runAdoptionPromises.set(key, operation);
-    operation.finally(() => {
-      if (application._runAdoptionPromises.get(key) === operation) application._runAdoptionPromises.delete(key);
-    }).catch(() => {});
-    return operation;
   }
 export function _performRunStop(application, stop) {
     const existing = application._runStopPromises.get(stop.runId);
@@ -3468,10 +3409,6 @@ export async function _buildWorkflowView(application, current, observer, options
         );
       }
     }
-    const selectedAdoption = selectedCandidate
-      ? application.driver.coordination.runResultAdoption?.(runId, selectedCandidate.nodeKey) ?? null
-      : null;
-    const selectedAdopted = adoptionState(selectedAdoption) === 'adopted';
     const allSettled = attempts.every((attempt) => (
       ['accepted', 'failed', 'cancelled'].includes(attempt.state)
     ));
@@ -3523,9 +3460,6 @@ export async function _buildWorkflowView(application, current, observer, options
         taskId: currentRevisionTask.id,
         workerId: currentRevisionTask.assignee,
       } : null;
-    const canAdoptSelected = phase === 'candidate_selected' && selectedCandidate
-      && selectedPreservation?.state === 'pinned'
-      && current.profile.resultPolicy.mode === 'manual' && !selectedAdopted;
 
     const runWorkerIds = new Set(workers.map((handle) => handle.id));
     const workerAttention = Object.entries(story.workers)
@@ -3682,7 +3616,7 @@ export async function _buildWorkflowView(application, current, observer, options
       semanticReview: { state: 'not_started', findings: [] },
       progress: { current: currentStage.key, summary: `${currentStage.label}: ${currentStage.detail}`, stages, activity: runActivity(application.driver, workers) },
       result: selection && selectedCandidate ? {
-        state: selectedAdopted ? 'adopted' : 'selected',
+        state: 'selected',
         candidate: clone(selection.candidate),
         nodeKey: selectedCandidate.nodeKey,
         taskId: selectedCandidate.taskId,
@@ -3692,11 +3626,6 @@ export async function _buildWorkflowView(application, current, observer, options
         verificationArtifact: clone(selectedCandidate.evidence.verificationArtifact),
         preservation: selectedPreservation ? { state: selectedPreservation.state }
           : { state: 'unavailable' },
-        adoption: selectedAdoption ? {
-          state: adoptionState(selectedAdoption),
-          receiptDigest: selectedAdoption.receipt?.receiptDigest
-            ?? selectedAdoption.receiptDigest ?? null,
-        } : null,
       } : readOnlyResult && phase === 'completed' ? {
         state: 'accepted_evidence_set', candidateCount: candidates.length,
         candidates: candidates.map((candidate) => ({
