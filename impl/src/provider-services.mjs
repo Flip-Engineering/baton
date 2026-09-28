@@ -38,10 +38,6 @@ export const USAGE_WINDOW_KINDS = Object.freeze(['rolling', 'fixed_clock']);
 
 const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
-// Bounded like the route table the services project (normalizeRoutes' 64).
-const MAX_SERVICES = 64;
-const MAX_SERVICE_MODELS = 64;
-const MAX_SERVICE_HARNESSES = 16;
 
 function configError(message) {
   return Object.assign(new TypeError(message), { code: 'deployment_config_invalid' });
@@ -139,7 +135,6 @@ function normalizeUsage(value, provider) {
 export function normalizeProviderServices(value = {}) {
   if (!record(value)) throw configError('advanced services must be one object keyed by provider');
   const keys = Object.keys(value);
-  if (keys.length > MAX_SERVICES) throw configError('advanced services must be a bounded record');
   return Object.freeze(keys.map((provider) => {
     const label = `advanced services ${provider}`;
     if (!PROVIDER_PATTERN.test(provider)) {
@@ -148,16 +143,14 @@ export function normalizeProviderServices(value = {}) {
     const entry = value[provider];
     closed(entry, ['baseUrl', 'credential', 'harnesses', 'models', 'usage'], label);
     if (!Array.isArray(entry.harnesses) || entry.harnesses.length === 0
-      || entry.harnesses.length > MAX_SERVICE_HARNESSES
       || entry.harnesses.some((harness) => typeof harness !== 'string' || harness.length === 0
         || harness.length > 128)) {
-      throw configError(`${label} harnesses must be a non-empty bounded string array`);
+      throw configError(`${label} harnesses must be a non-empty string array`);
     }
     if (entry.models !== undefined && (!Array.isArray(entry.models)
-      || entry.models.length > MAX_SERVICE_MODELS
       || entry.models.some((model) => typeof model !== 'string' || model.length === 0
         || model.length > 256))) {
-      throw configError(`${label} models must be a bounded string array`);
+      throw configError(`${label} models must be a string array`);
     }
     return Object.freeze({
       provider,

@@ -39,11 +39,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 
 const ID_PATTERN = '^[A-Za-z0-9._:-]{1,256}$';
 
-// The free-text shape bound the search text fields share (mirrors the #318 registry query
-// cap; a schema shape bound on an uncataloged lane, not a cataloged byte lane — hence the
-// single F1 exemption row instead of a registry import).
-const MAX_SEARCH_TEXT_BYTES = 4096;
-
 /** The filter names the canonical operation accepts — the closed vocabulary. */
 export const EVIDENCE_SEARCH_FILTERS = Object.freeze(
   ['swarmId', 'participantId', 'kind', 'path', 'query', 'afterSeq']);
@@ -58,11 +53,11 @@ export const EVIDENCE_SEARCH_INPUT_SCHEMA = Object.freeze({
       description: 'the swarm to search; omit to search the whole deployment (a participant bridge call fills in your own swarm)' }),
     participantId: Object.freeze({ type: 'string', minLength: 1, maxLength: 256, pattern: ID_PATTERN,
       description: 'the author seat; omit for every participant' }),
-    kind: Object.freeze({ type: 'string', minLength: 1, maxLength: 256,
+    kind: Object.freeze({ type: 'string', minLength: 1,
       description: 'the knowledge node type (Finding, Question, …); a contribution matches when its body names type or kind' }),
-    path: Object.freeze({ type: 'string', minLength: 1, maxLength: MAX_SEARCH_TEXT_BYTES,
+    path: Object.freeze({ type: 'string', minLength: 1,
       description: 'a path substring, matched case-sensitively over refs, work and path-like body text' }),
-    query: Object.freeze({ type: 'string', minLength: 1, maxLength: MAX_SEARCH_TEXT_BYTES,
+    query: Object.freeze({ type: 'string', minLength: 1,
       description: 'free text, matched case-insensitively over body text and row identities' }),
     afterSeq: Object.freeze({ type: 'integer', minimum: 0,
       description: 'resume after this ledger seq; the answer cursors at the ledger head' }),
@@ -98,16 +93,16 @@ export function validateEvidenceSearchArgs(args) {
   if (participantId !== null && !isId(participantId)) {
     throw searchError('Evidence search participantId must name a participant', 'participantId', 'field-predicate', `matching ${ID_PATTERN}`);
   }
-  if (kind !== null && (typeof kind !== 'string' || kind.length === 0 || kind.length > 256)) {
-    throw searchError('Evidence search kind must be non-empty text', 'kind', 'field-predicate', 'at most 256 characters');
+  if (kind !== null && (typeof kind !== 'string' || kind.length === 0)) {
+    throw searchError('Evidence search kind must be non-empty text', 'kind', 'field-predicate', 'non-empty text');
   }
-  if (path !== null && (typeof path !== 'string' || path.length === 0 || path.length > MAX_SEARCH_TEXT_BYTES)) {
-    throw searchError('Evidence search path must be non-empty text', 'path', 'field-predicate', `at most ${MAX_SEARCH_TEXT_BYTES} characters`);
+  if (path !== null && (typeof path !== 'string' || path.length === 0)) {
+    throw searchError('Evidence search path must be non-empty text', 'path', 'field-predicate', 'non-empty text');
   }
   let text = null;
   if (query !== null && query !== undefined) {
-    if (typeof query !== 'string' || query.length > MAX_SEARCH_TEXT_BYTES) {
-      throw searchError('Evidence search query must be text', 'query', 'field-predicate', `at most ${MAX_SEARCH_TEXT_BYTES} characters`);
+    if (typeof query !== 'string') {
+      throw searchError('Evidence search query must be text', 'query', 'field-predicate', 'text');
     }
     if (query.trim().length > 0) text = query.trim();
   }

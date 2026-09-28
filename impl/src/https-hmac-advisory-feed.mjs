@@ -27,9 +27,9 @@ function defaultRequest(url, opts) {
       method: 'GET', headers: opts.headers, signal: opts.signal, maxRedirects: 0,
       ...(opts.ca ? { ca: opts.ca } : {}), ...(opts.servername ? { servername: opts.servername } : {}),
     }, (res) => {
-      const chunks = []; let bytes = 0; let failed = false;
-      res.on('data', (chunk) => { if (failed) return; bytes += chunk.length; if (bytes > opts.maxBytes) { failed = true; req.destroy(typed('provider poll page exceeded byte ceiling', 'provider_poll_oversize')); return; } chunks.push(Buffer.from(chunk)); });
-      res.on('end', () => { if (!failed) resolve({ status: res.statusCode, rawHeaders: res.rawHeaders.reduce((rows, value, index, all) => index % 2 === 0 ? [...rows, [value, all[index + 1]]] : rows, []), raw: Buffer.concat(chunks) }); });
+      const chunks = [];
+      res.on('data', (chunk) => { chunks.push(Buffer.from(chunk)); });
+      res.on('end', () => { resolve({ status: res.statusCode, rawHeaders: res.rawHeaders.reduce((rows, value, index, all) => index % 2 === 0 ? [...rows, [value, all[index + 1]]] : rows, []), raw: Buffer.concat(chunks) }); });
     });
     req.on('error', reject); req.end();
   });
@@ -68,10 +68,10 @@ export class HttpsHmacAdvisoryFeedSource extends HmacAdvisoryWebhookSource {
     if (ctx.signal?.aborted) throw typed('provider poll cancelled', 'cancelled');
     if (!/^[a-f0-9]{64}$/.test(authority.cardDigest ?? '')) throw typed('provider poll card authority is invalid', 'provider_poll_invalid');
     if (!record(authority.pollToken)) throw typed('provider poll call authority is invalid', 'provider_poll_invalid');
-    let cursor = String(this.poll.initialSequence); let pollId = null; let observedAt = null; let finalSequence = null; let finalCursor = null; const pages = []; const authRows = []; let itemCount = 0; let totalBytes = 0;
-    for (let pageIndex = 0; pageIndex < this.poll.maxPages; pageIndex += 1) {
-      const response = await this.request(this.operation, { signal: ctx.signal, ca: this.ca, servername: this.servername, maxBytes: this.poll.maxPageBytes, headers: { accept: 'application/json', authorization: this.authorization, 'x-baton-cursor': cursor, 'x-baton-page-index': String(pageIndex) } });
-      if (!exact(response, ['status', 'rawHeaders', 'raw']) || response.status !== 200 || !Buffer.isBuffer(response.raw) || response.raw.length === 0 || response.raw.length > this.poll.maxPageBytes || !Array.isArray(response.rawHeaders)) throw typed(response?.status >= 300 && response?.status < 400 ? 'provider poll redirect refused' : 'provider poll response is invalid', response?.status >= 300 && response?.status < 400 ? 'provider_poll_redirect' : 'provider_poll_invalid');
+    let cursor = String(this.poll.initialSequence); let pollId = null; let observedAt = null; let finalSequence = null; let finalCursor = null; const pages = []; const authRows = []; let totalBytes = 0;
+    for (let pageIndex = 0; ; pageIndex += 1) {
+      const response = await this.request(this.operation, { signal: ctx.signal, ca: this.ca, servername: this.servername, headers: { accept: 'application/json', authorization: this.authorization, 'x-baton-cursor': cursor, 'x-baton-page-index': String(pageIndex) } });
+      if (!exact(response, ['status', 'rawHeaders', 'raw']) || response.status !== 200 || !Buffer.isBuffer(response.raw) || response.raw.length === 0 || !Array.isArray(response.rawHeaders)) throw typed(response?.status >= 300 && response?.status < 400 ? 'provider poll redirect refused' : 'provider poll response is invalid', response?.status >= 300 && response?.status < 400 ? 'provider_poll_redirect' : 'provider_poll_invalid');
       const headers = new Map();
       for (const pair of response.rawHeaders) { if (!Array.isArray(pair) || pair.length !== 2 || !bounded(pair[0], 128) || !bounded(pair[1], this.ceilings.maxHeaderBytes)) throw typed('provider poll headers are invalid', 'provider_poll_invalid'); const name = pair[0].toLowerCase(); if (headers.has(name)) throw typed('provider poll headers are ambiguous', 'provider_poll_invalid'); headers.set(name, pair[1]); }
       if (response.rawHeaders.length > this.ceilings.maxHeaderCount || Buffer.byteLength(JSON.stringify(response.rawHeaders)) > this.ceilings.maxHeaderBytes || headers.get('content-type') !== 'application/json' || headers.get('content-encoding') !== 'identity') throw typed('provider poll headers are invalid', 'provider_poll_invalid');
@@ -87,14 +87,13 @@ export class HttpsHmacAdvisoryFeedSource extends HmacAdvisoryWebhookSource {
       if (response.raw.toString('utf8') !== stable(page) || !exact(page, ['schemaVersion', 'items']) || page.schemaVersion !== 1 || !Array.isArray(page.items) || page.items.length === 0) throw typed('provider poll page body is invalid', 'provider_poll_invalid');
       const items = [];
       for (const item of page.items) {
-        if (!exact(item, ['deliveryId', 'occurredAt', 'sequence', 'raw']) || !bounded(item.deliveryId, this.ceilings.maxIdentityBytes) || !bounded(item.occurredAt, 64) || !Number.isSafeInteger(item.sequence) || item.sequence < this.poll.initialSequence || !bounded(item.raw, this.poll.maxPageBytes)) throw typed('provider poll item is invalid', 'provider_poll_invalid');
+        if (!exact(item, ['deliveryId', 'occurredAt', 'sequence', 'raw']) || !bounded(item.deliveryId, this.ceilings.maxIdentityBytes) || !bounded(item.occurredAt, 64) || !Number.isSafeInteger(item.sequence) || item.sequence < this.poll.initialSequence || typeof item.raw !== 'string' || item.raw.length === 0) throw typed('provider poll item is invalid', 'provider_poll_invalid');
         const raw = Buffer.from(item.raw, 'base64'); if (raw.length === 0 || raw.toString('base64') !== item.raw || raw.length > this.ceilings.maxDeliveryBytes) throw typed('provider poll item encoding is invalid', 'provider_poll_invalid');
         const key = sha(raw); items.push(raw); authRows.push({ sequence: item.sequence, rawDigest: key, deliveryId: item.deliveryId, occurredAt: item.occurredAt, cardDigest: authority.cardDigest, pollToken: authority.pollToken });
       }
-      itemCount += items.length; totalBytes += response.raw.length + items.reduce((sum, raw) => sum + raw.length, 0); if (itemCount > this.poll.maxItems || totalBytes > this.poll.maxTotalBytes) throw typed('provider poll exceeded deployment ceiling', 'provider_poll_oversize');
+      totalBytes += response.raw.length + items.reduce((sum, raw) => sum + raw.length, 0);
       pages.push({ raw: Buffer.from(response.raw), items }); finalCursor = metadata.cursor;
       if (metadata.nextCursor === null) break; cursor = metadata.nextCursor;
-      if (pageIndex === this.poll.maxPages - 1) throw typed('provider poll pagination exceeded deployment ceiling', 'provider_poll_oversize');
     }
     if (pages.length === 0 || authRows.length === 0 || authRows.some((row, index) => index > 0 && row.sequence !== authRows[index - 1].sequence + 1) || authRows.at(-1).sequence !== finalSequence) throw typed('provider poll sequence window is incomplete', 'provider_poll_incomplete');
     for (const row of authRows) { const queue = this._pendingPollItems.get(row.rawDigest) ?? []; queue.push({ deliveryId: row.deliveryId, occurredAt: row.occurredAt, sequence: row.sequence, cardDigest: row.cardDigest, pollToken: row.pollToken }); this._pendingPollItems.set(row.rawDigest, queue); }

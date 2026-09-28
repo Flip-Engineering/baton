@@ -1889,7 +1889,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   // evaluator, hand-rolled validation stays the authority). These tools are explicit `_dispatch`
   // branches, so their args never pass through validateApplicationCommandArgs.
   if (name === 'baton_waves_start') {
-    if (!Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64) return 'invalid_wave_start';
+    if (!Array.isArray(args.members) || args.members.length === 0) return 'invalid_wave_start';
     const roles = new Set();
     for (let index = 0; index < args.members.length; index += 1) {
       const member = args.members[index];
@@ -3174,18 +3174,20 @@ export class McpFleetServer {
     }
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     if (APPLICATION_TOOL[name] && Buffer.byteLength(JSON.stringify(toolResult(value))) > this.maxMessageBytes) {
-      // Issue #343: the swarm view tool's oversize refusal names the SWARM tool's own narrowing
-      // — participantId, a projection, a cursor — and the size it observed against the ceiling,
-      // never the Run-view selectors (depth/section/item) the generic row names for run.inspect.
-      if (APPLICATION_TOOL[name] === 'swarm.view') {
-        const observed = Buffer.byteLength(JSON.stringify(toolResult(value)));
-        throw Object.assign(new Error(
-          `baton_swarm_view's answer is ${observed} bytes against this deployment's ${this.maxMessageBytes}-byte ${FRAME_LIMITS['wire.frame'].lane} ceiling; narrow the read (a participantId, a projection, or walk the pages with cursor) — never a truncated blob`,
-        ), { code: 'application_swarm_view_oversize', wireSafe: true, field: null,
-          detail: { actual: observed, ceiling: this.maxMessageBytes, lane: FRAME_LIMITS['wire.frame'].lane,
-            narrowing: ['participantId', 'projection', 'cursor'] } });
+      // #530: the wire.frame lane is graceful — an answer past it is ADMITTED as a durable spill and
+      // the frame carries the citation its reader follows, so no read is refused for the size of its
+      // answer. Baton's own producers spill their prose lanes the same way.
+      const observed = Buffer.byteLength(JSON.stringify(toolResult(value)));
+      const serialized = JSON.stringify(toolResult(value));
+      const coordination = this.application?.driver?.coordination ?? null;
+      const minted = typeof coordination?.mintSpill === 'function'
+        ? coordination.mintSpill({ body: serialized, lane: FRAME_LIMITS['wire.frame'].lane },
+          { actor: 'mcp:application', key: `mcp.frame.spill:${name}:${observed}` })
+        : null;
+      const spill = minted?.spill ?? null;
+      if (spill !== null) {
+        value = { spilled: true, bytes: observed, digest: spill.digest, spill: spill.spillId, read: 'run.spill.read' };
       }
-      throw Object.assign(new Error('RunView exceeds the MCP response ceiling'), { code: 'application_run_view_oversize' });
     }
     return normalized(GOAL_PLAN_MUTATIONS.has(name) ? sanitizeGoalPlanProjection(value) : value);
   }

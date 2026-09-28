@@ -139,8 +139,6 @@ const invalidDriverSparsePolicies = [
   { label: 'duplicate', value: ['src', 'src'] },
   { label: 'reserved-git-root', value: ['.git/objects'] },
   { label: 'reserved-baton-root', value: ['.baton/wt'] },
-  { label: 'overlong', value: ['a'.repeat(2_049)] },
-  { label: 'max-plus-one', value: Array.from({ length: 1_025 }, (_, index) => `src/p${index}`) },
 ];
 
 for (const invalid of invalidDriverSparsePolicies) {
@@ -160,6 +158,13 @@ for (const invalid of invalidDriverSparsePolicies) {
     assert.equal(existsSync(join(repo, '.baton')), false);
   });
 }
+
+test('SP3 (#530): a long path and a large path set are admitted for their shape, not their size', () => {
+  assert.deepEqual(normalizeSparsePaths(['a'.repeat(2_049)]), ['a'.repeat(2_049)],
+    'a long path is admitted whole');
+  const many = normalizeSparsePaths(Array.from({ length: 1_025 }, (_, index) => `src/p${index}`));
+  assert.equal(many.length, 1_025, 'a large path set is admitted whole');
+});
 
 test('SP4: createDriver forwards workerSparsePaths independently from verifySparsePaths', async (t) => {
   const { repo, baseSha } = makeRepo('driver-forwarding');

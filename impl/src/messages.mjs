@@ -327,7 +327,6 @@ const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const SAFE_ITEM_ID = /^[A-Za-z0-9_.:-]{1,256}$/;
 const ITEM_DIGEST = /^[a-f0-9]{64}$/;
 // A title, a detail and a report body carry no byte ceiling; they are shown whole.
-const MAX_BOARD_EVIDENCE = 8;
 
 function validEvidenceRef(ref) {
   if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return false;
@@ -353,7 +352,7 @@ export function createBoardItem(fields) {
     errors.push('owner must be null or a safe worker id');
   }
   if (fields?.evidence !== undefined) {
-    if (!Array.isArray(fields.evidence) || fields.evidence.length > MAX_BOARD_EVIDENCE) errors.push(`evidence must be an array of 0..${MAX_BOARD_EVIDENCE} refs`);
+    if (!Array.isArray(fields.evidence)) errors.push('evidence must be an array of refs');
     else fields.evidence.forEach((ref, i) => { if (!validEvidenceRef(ref)) errors.push(`evidence[${i}] must reference a positive coordinationSeq or an artifactId`); });
   }
   if (errors.length) throw new ValidationError(errors);

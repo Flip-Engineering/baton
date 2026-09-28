@@ -652,8 +652,11 @@ test('RI9: unknown, duplicate, redundant, and conflicting result-policy markers 
       },
     },
   };
-  assert.throws(() => fallbackApplication._findRun(contradictoryRunId),
-    (error) => error.code === 'application_run_lookup_oversize');
+  const oversize = (() => {
+    try { fallbackApplication._findRun(contradictoryRunId); return null; } catch (thrown) { return thrown; }
+  })();
+  assert.notEqual(oversize?.code, 'application_run_lookup_oversize',
+    'a read never refuses for having more rows (#530)');
 });
 
 function applicationRecorder() {

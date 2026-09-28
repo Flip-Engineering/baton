@@ -15,6 +15,12 @@ import {
 // worktree.mjs). These rows pin the live value of each bound at its boundary and the refusal the
 // reader raises past it. No value or behavior changes here: a record exactly at a bound is read,
 // one byte (or path, or segment) past it refuses.
+//
+// #530 removed the four sparse-checkout bounds — the path count, the path byte length, the segment
+// depth and the aggregate byte ceiling — so 500-cap-a measures their absence: a set is admitted for
+// its shape at any size, and the shape refusals the reader shares
+// still refuse a path that is not a safe relative literal, a path that escapes the repository, and
+// a duplicate or overlapping set.
 
 function repository(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-500-cap-'));
@@ -41,28 +47,27 @@ function privateFile(path, text) {
   return path;
 }
 
-test('500-cap-a: the sparse checkout path, depth and aggregate bounds admit at the bound and refuse past it', () => {
-  const paths = Array.from({ length: 1024 }, (_, index) => `p${index}`);
-  assert.equal(normalizeSparsePaths(paths).length, 1024, '1 024 paths are admitted');
-  assert.throws(() => normalizeSparsePaths([...paths, 'p1024']), { name: 'TypeError' },
-    'a 1 025th path refuses as an unbounded array');
+test('500-cap-a: the sparse checkout path family carries no count, path-byte, depth or aggregate bound', () => {
+  const paths = Array.from({ length: 1_025 }, (_, index) => `p${index}`);
+  assert.equal(normalizeSparsePaths(paths).length, 1_025, 'a 1 025-path set is admitted');
 
-  const atPathBytes = 'a'.repeat(2048);
-  assert.deepEqual(normalizeSparsePaths([atPathBytes]), [atPathBytes], '2 048 bytes of one path are admitted');
-  assert.throws(() => normalizeSparsePaths(['a'.repeat(2049)]), /safe relative literal/u,
-    'a path one byte over 2 048 refuses');
+  const longPath = 'a'.repeat(2_049);
+  assert.deepEqual(normalizeSparsePaths([longPath]), [longPath], 'a 2 049-byte path is admitted');
 
-  const atDepth = Array.from({ length: 64 }, () => 'd').join('/');
-  assert.deepEqual(normalizeSparsePaths([atDepth]), [atDepth], '64 path segments are admitted');
-  assert.throws(() => normalizeSparsePaths([Array.from({ length: 65 }, () => 'd').join('/')]), /escapes repository/u,
-    'a 65th segment refuses');
+  const deep = Array.from({ length: 65 }, () => 'd').join('/');
+  assert.deepEqual(normalizeSparsePaths([deep]), [deep], 'a 65-segment path is admitted');
 
-  // 128 paths of exactly 2 048 bytes are 262 144 bytes — the aggregate bound itself.
+  // 129 paths of 2 048 bytes are 264 192 bytes, past the 256 KiB aggregate ceiling #530 removed.
   const wide = (index) => `${'a'.repeat(2040)}${String(index).padStart(8, '0')}`;
-  const exact = Array.from({ length: 128 }, (_, index) => wide(index));
-  assert.equal(normalizeSparsePaths(exact).length, 128, 'paths summing 256 KiB are admitted');
-  assert.throws(() => normalizeSparsePaths([...exact, wide(200)]), /aggregate byte ceiling/u,
-    'an aggregate one path over 256 KiB refuses');
+  const aggregate = Array.from({ length: 129 }, (_, index) => wide(index));
+  assert.equal(normalizeSparsePaths(aggregate).length, 129, 'a set summing past 256 KiB is admitted');
+
+  assert.throws(() => normalizeSparsePaths(['a path with spaces']), /safe relative literal/u,
+    'a path that is not a safe relative literal still refuses');
+  assert.throws(() => normalizeSparsePaths(['../escape']), /escapes repository/u,
+    'a path that escapes the repository still refuses');
+  assert.throws(() => normalizeSparsePaths(['p0', 'p0']), /unique and non-overlapping/u,
+    'a duplicate set still refuses');
 });
 
 test('500-cap-b: one physical owner id is bounded at 128 B', () => {

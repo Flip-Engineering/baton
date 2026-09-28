@@ -144,7 +144,7 @@ test('KK6: package entry point exports KimiSessionCli', async () => {
   assert.equal((await import('../src/index.mjs')).KimiSessionCli, KimiSessionCli);
 });
 
-test('KK3/KK8: credential file boundary is bounded, owner-only, symlink-safe, pointer-safe, and secret-free', () => {
+test('KK3/KK8: the credential file boundary is owner-only, symlink-safe, pointer-safe, and secret-free', () => {
   const dir = mkdtempSync(join(tmpdir(), 'baton-kimi-credential-'));
   const credential = join(dir, 'credential.json');
   writeFileSync(credential, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fixture-only' } }), { mode: 0o600 });
@@ -162,9 +162,17 @@ test('KK3/KK8: credential file boundary is bounded, owner-only, symlink-safe, po
   const symlink = join(dir, 'credential-link');
   symlinkSync(credential, symlink);
   expectCode(symlink, 'credential_file_symlink');
-  const oversized = join(dir, 'oversized');
-  writeFileSync(oversized, 'x'.repeat((16 * 1024) + 1), { mode: 0o600 });
-  expectCode(oversized, 'credential_file_size');
+  // #530 removed the 16 KiB credential byte ceiling: a file past it is read whole, and an empty
+  // file is the one size refusal left.
+  const large = join(dir, 'large');
+  writeFileSync(large, JSON.stringify({
+    env: { ANTHROPIC_AUTH_TOKEN: 'fixture-only' }, pad: 'x'.repeat(16 * 1024),
+  }), { mode: 0o600 });
+  assert.equal(loadProviderCredentialFile(large, { providerLabel: 'Kimi' }), 'fixture-only',
+    'a credential file past 16 KiB is read whole');
+  const empty = join(dir, 'empty');
+  writeFileSync(empty, '', { mode: 0o600 });
+  expectCode(empty, 'credential_file_size');
   const malformed = join(dir, 'malformed');
   writeFileSync(malformed, '{bad', { mode: 0o600 });
   expectCode(malformed, 'credential_json_malformed');

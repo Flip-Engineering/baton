@@ -52,16 +52,10 @@ test('S500-2: application-deployment.mjs credential bounds reference the registr
     'no credential bound constant may use a 64 * 1024 literal (the registry is the source)');
 });
 
-test('S500-3: kimi-credential-setup.mjs file bound references the registry row', () => {
+test('S500-3 (#530): kimi-credential-setup.mjs carries no credential file bound', () => {
   const source = readFileSync(resolve(SRC, 'kimi-credential-setup.mjs'), 'utf8');
-
-  const pattern = /const\s+FILE_MAX_BYTES\s*=\s*FRAME_LIMITS\[['"]credential\.file['"]\]\.value/;
-  assert.ok(pattern.test(source),
-    "FILE_MAX_BYTES must be assigned from FRAME_LIMITS['credential.file'].value, not a literal");
-
-  const literalPattern = /FILE_MAX_BYTES\s*=\s*16\s*\*\s*1024/;
-  assert.equal(literalPattern.test(source), false,
-    'FILE_MAX_BYTES must not use a 16 * 1024 literal (the registry is the source)');
+  assert.equal(/FILE_MAX_BYTES/.test(source), false,
+    'the setup module writes the token it is given; the credential.file lane is not restated here');
 });
 
 test('S500-4: adapter.mjs credential bound references the registry row', () => {

@@ -72,7 +72,7 @@ test('a non-JSON body composes the web_response_invalid_json cause', async () =>
 });
 
 test('the transport-time causes are enumerable in the one cause table', () => {
-  for (const cause of ['web_transport_failed', 'web_response_oversize', 'web_response_invalid_json']) {
+  for (const cause of ['web_transport_failed', 'web_response_invalid_json']) {
     const row = cliConnectionCauseRow(cause);
     assert.ok(row !== null, `${cause} is a registered cause`);
     assert.ok(nonemptyRule(row.rule) && nonemptyRule(row.remedy));

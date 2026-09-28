@@ -6,12 +6,6 @@ import {
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 
-import { FRAME_LIMITS } from './limits.mjs';
-
-// Issue #500: the file bound reads the registry's credential.file row (limits.mjs).
-const FILE_MAX_BYTES = FRAME_LIMITS['credential.file'].value;
-const PROMPT_MAX_BYTES = 12 * 1024;
-
 function setupError(code) {
   return Object.assign(new Error(`Kimi credential setup: ${code}`), { code, credentialSetupError: true });
 }
@@ -38,7 +32,6 @@ function validateToken(value) {
     throw setupError('token_invalid');
   }
   const bytes = Buffer.from(`${JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: value } })}\n`);
-  if (bytes.length > FILE_MAX_BYTES) throw setupError('token_invalid');
   return bytes;
 }
 
@@ -193,7 +186,6 @@ export function readHiddenKimiCredential({
         if (byte === 0x0a || byte === 0x0d) { finish(); return; }
         if (byte === 0x08 || byte === 0x7f) { bytes = bytes.subarray(0, Math.max(0, bytes.length - 1)); continue; }
         if (byte < 0x20 || byte === 0x1b) { finish(setupError('input_invalid')); return; }
-        if (bytes.length >= PROMPT_MAX_BYTES) { finish(setupError('token_invalid')); return; }
         bytes = Buffer.concat([bytes, Buffer.from([byte])]);
       }
     };
