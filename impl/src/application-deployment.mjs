@@ -1,11 +1,12 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { pathMatchesScope } from './path-scope.mjs';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
   openSync, readFileSync, realpathSync, rmSync, statfsSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import { promisify } from 'node:util';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
@@ -1104,24 +1105,28 @@ function dependencyProjection(repoRoot, repoId) {
   }
 }
 
-/** #203: the deadline on the root-side `gh auth token` read. A signed-out or unresponsive gh must
- * not hold the deployment open; the read answers null when this elapses. */
-const GH_TOKEN_READ_TIMEOUT_MS = 5_000;
+/** #203: the root-side `gh auth token` read runs as an asynchronous child, so the resident's own
+ * loop is never held, and it carries no time bound — a slow gh costs the deployment this read,
+ * never a seat's credential. */
+const execFileAsync = promisify(execFile);
 
 /** #203: the operator's GitHub token, read at the root through gh's own keyring lookup. macOS
  * resolves the login keychain under the real $HOME, so a member worktree's private HOME reaches
  * no keychain item — the same barrier #328 records for muse. Absent gh, an unauthenticated
  * operator, or a read that answers nothing leaves this null. */
-export function operatorGhToken({ exec = execFileSync, home = operatorHome() } = {}) {
-  let token;
-  try {
-    token = exec('gh', ['auth', 'token'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TOKEN_READ_TIMEOUT_MS,
-      env: { ...process.env, HOME: home },
-    });
-  } catch { return null; }
-  const trimmed = typeof token === 'string' ? token.trim() : '';
+export async function operatorGhToken({ read = readGhToken } = {}) {
+  let raw;
+  try { raw = await read(); } catch { return null; }
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/** The default token read: the asynchronous child, the operator's HOME, gh's own lookup. */
+async function readGhToken() {
+  const { stdout } = await execFileAsync('gh', ['auth', 'token'], {
+    encoding: 'utf8', env: { ...process.env, HOME: operatorHome() },
+  });
+  return stdout;
 }
 
 /** #203: the gh credential a member worktree's own `gh` resolves, as the ONE credential document
@@ -1129,14 +1134,14 @@ export function operatorGhToken({ exec = execFileSync, home = operatorHome() } =
  * the file lands at that HOME-relative path; the operator's keyring, which the private HOME cannot
  * reach, is never consulted by the seat. Null when no operator token is available, and a seat's gh
  * then stays exactly as it was. */
-export function ghCredentialDocument({ token = operatorGhToken() } = {}) {
+export function ghCredentialDocument({ token } = {}) {
   if (typeof token !== 'string' || token.length === 0) return null;
   const content = `github.com:\n    oauth_token: ${token}\n    git_protocol: https\n`;
   return Object.freeze({
     read: () => Object.freeze({ relativePath: '.config/gh/hosts.yml', content }),
   });
 }
-function defaultCredentialProjection(repoRoot, {
+async function defaultCredentialProjection(repoRoot, {
   projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
   museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
 } = {}) {
@@ -1188,7 +1193,7 @@ function defaultCredentialProjection(repoRoot, {
   }
   // #203: the gh credential every member worktree's own `gh` resolves — read at the root and
   // projected into each seat's private HOME by RuntimeIsolation (see ghCredentialDocument).
-  const ghCredential = ghCredentialDocument();
+  const ghCredential = ghCredentialDocument({ token: await operatorGhToken() });
   return Object.freeze({
     credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
     credentialTrees, credentialDocuments: Object.freeze(credentialDocuments), ghCredential,
@@ -4950,7 +4955,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // The open starts the reader's ONE refresh (deduped, freshness-gated, never awaited and never
   // throwable) so the first route-table read is served measured profiles instead of a cold cache.
   if (modelProfiles) modelProfiles.refresh();
-  const projection = defaultCredentialProjection(repository.root, {
+  const projection = await defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
     claudeCredentialCache,
     grokCredentialCache,
