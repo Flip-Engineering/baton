@@ -15,6 +15,21 @@ The build uses `.bend/bin/bend` or `node_modules/.bend/bin/bend`. Set `BEND` to
 another installed compiler path if needed. It emits C and links the native
 executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 
+`bend2/src/coordinator/laws.bend` states the sixteen operative entries of
+[the approved laws](../docs/bend2/laws-proposed.md) over the functions this
+tree implements them with, and proves each one beside its claim. The entry
+module imports that module, so a compile of the entry verifies every
+operative law, and the native build refuses the tree while a law is unproven
+or false.
+
+```sh
+node bend2/scripts/laws-check.mjs
+```
+
+This is the negative control for that gate. It removes one law's proof at a
+time in a copy of the tree and requires the entry's compile to fail, so a law
+whose proof the gate does not require is reported rather than assumed.
+
 `python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
 comparison of retained coordination operations with a pinned old Baton checkout.
 The [measurement report](../docs/bend2/comparison-2026-09-28.md) records its
@@ -315,8 +330,8 @@ the native executable.
 The existing JSON and replay programs are earlier experiments. Their optional
 runner, `node bend2/scripts/run-checks.mjs`, compares interpreted and native
 output with their `.expected.txt` fixtures. It can install Bend locally if
-absent. Application modules need no law annotations, frozen output fixtures or
-independent `main` function.
+absent. Those programs carry no law annotations and no dependence on the
+coordinator's laws module, which the entry imports.
 
 ## Real-route acceptance
 
