@@ -83,7 +83,6 @@ function system(adapters, route, hooks = {}) {
       create: async (taskId) => ({ path: `/tmp/${taskId}` }),
       capture: async (_path, opts) => { captureOpts.push(opts); return { sha: `sha-${captureOpts.length}`, snapshotted: true }; },
       createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},
-      integrate: async (sha) => ({ beforeSha: 'base', resultSha: sha, afterSha: sha }),
       retainResult: async () => 'refs/baton/test', releaseResult: async () => {},
       remove: async () => {}, reconcile: async () => {},
     },
@@ -306,11 +305,9 @@ test('RT11.4/5: verified low/high runs learn distinct resolved tuple keys and re
   const requested = first.log.read(low.handle.id).find((event) => event.kind === 'review.requested');
   assert.equal(requested.payload.reviewerEffortRequested, 'high');
 
-  const integrated = await first.coordinator.integrate(low.handle.id, { actor: 'orchestrator' });
-  assert.equal(integrated.ok, true);
   const namedEvents = first.log.read(low.handle.id).filter((event) =>
-    ['lifecycle.spawned', 'lifecycle.turn_started', 'resource.tokens', 'lifecycle.turn_completed', 'verify.reverified', 'integration.completed'].includes(event.kind));
-  assert.ok(namedEvents.length >= 7);
+    ['lifecycle.spawned', 'lifecycle.turn_started', 'resource.tokens', 'lifecycle.turn_completed', 'verify.reverified'].includes(event.kind));
+  assert.ok(namedEvents.length >= 5);
   for (const event of namedEvents) {
     for (const field of ['harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey']) {
       assert.equal(Object.hasOwn(event, field), true, `${event.kind} must expose ${field}`);

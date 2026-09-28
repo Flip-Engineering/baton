@@ -1,7 +1,7 @@
 // runtime-effects.mjs — issue #259, slice 9 (first tranche) and slice 12 (second tranche). The
 // coordinator effect members the seam map names first (§3 rows 6/9/10: _dispatch, _spawnPlanWave,
-// _resolveRecord) and the entangled four of tranche 2 (stopRunTargets, _integrate, _deliver,
-// _finalizeStop). Tranche 2 splits admission from effect per the slice-12 design: each split
+// _resolveRecord) and the tranche-2 members (stopRunTargets, _deliver, _finalizeStop). Tranche 2
+// splits admission from effect per the slice-12 design: each split
 // member's admission prefix lives in runtime-admission.mjs (imported one-way — admission never
 // imports effects), and the effect remainder here calls it first, so the body reads admitted →
 // act → record. stopRunTargets' two closures lift to module functions carrying a state record.
@@ -23,8 +23,8 @@ import {
 } from './process-lifecycle.mjs';
 import * as runtimeAdmission from './runtime-admission.mjs';
 import {
-  IntegrationError, KILL_RULES, ORIENTATION_DELIVERY, TERMINAL_TASK_STATUSES,
-  closedVerificationVerdict, noop, typedTerminalCode,
+  KILL_RULES, ORIENTATION_DELIVERY, TERMINAL_TASK_STATUSES,
+  noop, typedTerminalCode,
 } from './runtime-recovery.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
@@ -869,154 +869,6 @@ async function attemptRunStopTarget(coordinator, recorder, state, workerId) {
           state.dispositions.set(workerId, 'alreadyTerminal');
         }
       } catch { /* bounded convergence below retries exact physical state */ }
-}
-
-export async function _integrate(coordinator, recorder, workerId, opts = {}) {
-    coordinator.tick();
-    const handle = coordinator._getWorker(workerId);
-    const task = coordinator._tasks.get(handle.taskId);
-    runtimeAdmission._admitIntegration(coordinator, handle, task, opts);
-    // The admission prefix computes the same local for its own checks; the effect re-derives it
-    // (identical expression, identical value) rather than widening the admission return.
-    const strategy = opts.strategy ?? 'ff-only';
-
-    recorder.recordDriver('integration.requested', {
-      taskId: task.id, workerId, strategy, sha: task.capturedSha,
-      actor: opts.actor ?? 'orchestrator', effect: strategy === 'structured' ? 'staged_local_git_merge' : 'local_git_merge',
-    }, `driver.integration.requested:${task.id}:${task.capturedSha}`, opts.actor ?? 'orchestrator');
-
-    if (typeof coordinator._worktrees.retainResult === 'function') {
-      task.retainedResultRef = await coordinator._worktrees.retainResult(task.capturedSha);
-    }
-
-    const alreadyReaped = handle.processRef === null && handle.runtimeScope?.active !== true;
-    if (handle.status === 'idle' && !alreadyReaped) {
-      const stopped = await coordinator.kill(workerId, opts.actor ?? 'orchestrator', { rule: KILL_RULES.runStop });
-      if (!['confirmed', 'already_dead', 'already_stopped'].includes(stopped.result)) {
-        throw new IntegrationError('worker could not be safely stopped before integration', 'worker_stop_failed');
-      }
-    } else if (handle.status === 'exited') {
-      await coordinator.kill(workerId, opts.actor ?? 'orchestrator', { rule: KILL_RULES.runStop });
-    }
-    // Issue #568: the handle performing this cleanup is not a co-holder of the checkout it
-    // closes, so it is excluded — without it the custody rule retains a workspace whose
-    // directory is already gone because the integrating seat's own handle still lists it.
-    await coordinator._removeTaskWorktree(task, { excludeHolderId: workerId });
-
-    let integrated; let structuredStage = null; let structuredVerifyPath = null; let structuredFinalizeStarted = false; let structuredToolchainProjection = null;
-    try {
-      if (strategy === 'ff-only') {
-        integrated = await coordinator._worktrees.integrate(task.capturedSha, { strategy });
-      } else {
-        structuredStage = await coordinator._worktrees.stageStructuredIntegration(task.id, task.capturedSha);
-        const created = await coordinator._worktrees.createVerifyWorktree(`${task.id}-structured-merge`, structuredStage.stageSha);
-        structuredVerifyPath = created?.path ?? null;
-        structuredToolchainProjection = created?.toolchainProjection ?? null;
-        const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
-        if ((workerToolchainProjection || structuredToolchainProjection)
-          && (!workerToolchainProjection || !structuredToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(structuredToolchainProjection))) throw Object.assign(new Error('structured verification toolchain projection mismatch'), { code: 'structured_verification_environment_mismatch' });
-        const observedVerdict = await coordinator._referee(task, { verification: { claimedExit: null } }, {
-          pinnedVerification: task.brief.verification,
-          sandbox: structuredVerifyPath,
-        });
-        const accepted = coordinator._accept(observedVerdict, {
-          expectExit: task.brief.verification.expectExit,
-          requireRedGreen: false,
-          requireCoverage: false,
-          requireMutation: false,
-        });
-        const verdict = closedVerificationVerdict(observedVerdict, task.brief.verification);
-        recorder.log.append({
-          worker: workerId, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-          kind: 'integration.merge_reverified', actor: 'policy',
-          ...coordinator._routeAttribution(handle, task),
-          payload: { strategy, stageSha: structuredStage.stageSha, verdict, accept: accepted, ...(structuredToolchainProjection ? { toolchainProjection: structuredToolchainProjection } : {}) },
-        });
-        if (!accepted) throw Object.assign(new Error('structured merge candidate failed fresh pinned verification'), { code: 'structured_verification_failed' });
-        structuredFinalizeStarted = true;
-        integrated = { ...(await coordinator._worktrees.finalizeStructuredIntegration(structuredStage)), verdict, ...(structuredToolchainProjection ? { toolchainProjection: structuredToolchainProjection } : {}) };
-      }
-    } catch (err) {
-      if (structuredVerifyPath) await coordinator._worktrees.removeVerifyWorktree(structuredVerifyPath);
-      if (structuredStage) await coordinator._worktrees.removeStructuredIntegration(structuredStage);
-      let integrationPostEffect = err?.postEffect === true || err?.code === 'structured_post_effect_inconsistent';
-      if (strategy === 'structured' && structuredFinalizeStarted && structuredStage && !integrationPostEffect) {
-        try { integrationPostEffect = (await coordinator._worktrees.inspectStructuredIntegration(structuredStage)).effectApplied === true; }
-        catch { /* the finalizer owns tagging when Git itself becomes unreadable after the effect */ }
-      }
-      if (integrationPostEffect) {
-        const beforeSha = err?.beforeSha ?? structuredStage?.beforeSha ?? null;
-        const afterSha = err?.afterSha ?? null;
-        const incompleteEvent = recorder.log.append({
-          worker: workerId, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-          kind: 'integration.incomplete', actor: 'policy',
-          ...coordinator._routeAttribution(handle, task),
-          payload: {
-            strategy, beforeSha, afterSha, stageSha: structuredStage?.stageSha ?? null,
-            sha: task.capturedSha, retainedResultRef: task.retainedResultRef, postEffect: true,
-            reason: String(err?.message ?? err),
-          },
-        });
-        const incompleteEvidence = recorder.mapEvent(incompleteEvent);
-        recorder.recordDriver('integration.incomplete', {
-          taskId: task.id, strategy, beforeSha, afterSha,
-          stageSha: structuredStage?.stageSha ?? null, sha: task.capturedSha,
-          retainedResultRef: task.retainedResultRef, postEffect: true,
-          reason: String(err?.message ?? err), evidence: incompleteEvidence,
-        }, `driver.integration.incomplete:${task.id}:${incompleteEvent.seq}`, 'policy');
-        throw coordinator._poisonIntegration(err, strategy);
-      }
-      const refusedEvent = recorder.log.append({
-        worker: workerId, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-        kind: 'integration.refused', actor: 'policy',
-        ...coordinator._routeAttribution(handle, task),
-        payload: { strategy, sha: task.capturedSha, retainedResultRef: task.retainedResultRef, reason: String(err?.message ?? err) },
-      });
-      const refusedEvidence = recorder.mapEvent(refusedEvent);
-      recorder.recordDriver('integration.refused', {
-        taskId: task.id, strategy, sha: task.capturedSha, retainedResultRef: task.retainedResultRef,
-        reason: String(err?.message ?? err), evidence: refusedEvidence,
-      }, `driver.integration.refused:${task.id}:${refusedEvent.seq}`, 'policy');
-      throw new IntegrationError(String(err?.message ?? err), err?.code?.startsWith('structured_') ? err.code : 'non_fast_forward_or_dirty');
-    }
-    if (structuredVerifyPath) await coordinator._worktrees.removeVerifyWorktree(structuredVerifyPath);
-    if (structuredStage) await coordinator._worktrees.removeStructuredIntegration(structuredStage);
-    // Integration does not end accepted-result ownership. The result pin is shared by SHA and is
-    // also the immutable source for evidence-bound export; releasing it here can break another Run
-    // that accepted the same commit and makes integration-required delivery impossible. A later
-    // durable retention/GC authority may release pins only after every owning Run/export is closed.
-    const integration = Object.freeze({
-      ...integrated,
-      strategy,
-      actor: opts.actor ?? 'orchestrator',
-      stability: task.verificationStability ?? null,
-    });
-    const integrationEvent = recorder.log.append({
-      worker: workerId, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
-      kind: 'integration.completed', actor: opts.actor ?? 'orchestrator', payload: integration,
-      ...coordinator._routeAttribution(handle, task),
-    });
-    const integrationEvidence = recorder.mapEvent(integrationEvent);
-    if (recorder.coordination) {
-      const acceptingEvidence = recorder.coordination.task(task.id).artifactIds
-        .map((artifactId) => recorder.coordination.artifact(artifactId))
-        .filter((artifact) => artifact?.accepted === true)
-        .flatMap((artifact) => artifact.provenance ?? []);
-      recorder.coordination.completeIntegration({
-        taskId: task.id, integration, evidence: integrationEvidence,
-        artifact: {
-          taskId: task.id, kind: 'report', refs: { beforeSha: integration.beforeSha, resultSha: integration.resultSha, afterSha: integration.afterSha },
-          mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence, ...acceptingEvidence],
-        },
-        knowledge: {
-          id: `decision:integrate:${task.id}:${integrationEvent.seq}`, type: 'Decision',
-          body: `Integrated task ${task.id} at ${integration.afterSha}`, grounding: 'observed',
-          informedBy: [`task:${task.id}`], evidence: [{ coordinationSeq: integrationEvidence.coordinationSeq }],
-        },
-      }, { actor: opts.actor ?? 'orchestrator', key: `integration.commit:${task.id}:${integrationEvent.seq}` });
-    }
-    task.integration = integration;
-    return { ok: true, result: 'integrated', integration };
 }
 
 export async function _deliver(coordinator, recorder, handle, message, mode, opts) {

@@ -432,7 +432,6 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   repoRoot: 'the deployment checkout; supplied implicitly by every case',
   representationProduction: 'assembled only when representation production is configured',
   requireCoverage: 'an acceptance policy flag, read by the done gate',
-  requireIndependentOracle: 'an acceptance policy flag, read by the done gate',
   requireMutation: 'an acceptance policy flag, read by the done gate',
   requireRedGreen: 'an acceptance policy flag, read by the done gate',
   reuseDecisionPolicy: 'reached only by a reuse decision',

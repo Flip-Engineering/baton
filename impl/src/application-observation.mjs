@@ -1011,21 +1011,6 @@ function normalizeReviewPolicy(value) {
     reportPath: value.reportPath, maxFindings: value.maxFindings, maxReportBytes: value.maxReportBytes,
   });
 }
-function normalizeIntegrationPolicy(value) {
-  if (value === undefined) return deepFreeze({ mode: 'none', strategies: [], requireAdoptedResult: false, requireSemanticReview: false });
-  exactObject(value, ['mode', 'strategies', 'requireAdoptedResult', 'requireSemanticReview'], 'application_profile_invalid', 'profile integrationPolicy');
-  if (value.mode === 'none' && Array.isArray(value.strategies) && value.strategies.length === 0
-    && value.requireAdoptedResult === false && value.requireSemanticReview === false) {
-    return deepFreeze(clone(value));
-  }
-  if (value.mode !== 'manual' || !Array.isArray(value.strategies) || value.strategies.length === 0
-    || value.strategies.length > 2 || value.strategies.some((strategy) => !['ff-only', 'structured'].includes(strategy))
-    || new Set(value.strategies).size !== value.strategies.length
-    || typeof value.requireAdoptedResult !== 'boolean' || typeof value.requireSemanticReview !== 'boolean') {
-    throw applicationError('profile integrationPolicy is invalid', 'application_profile_invalid');
-  }
-  return deepFreeze({ ...clone(value), strategies: [...value.strategies].sort() });
-}
 function normalizeFollowPolicy(value) {
   if (value === undefined) return deepFreeze({
     // Disabled change waiting still permits one bounded semantic inspection. Zero response/item
@@ -1080,7 +1065,7 @@ export function normalizeProfile(name, value, repoId) {
     'nodeBudget', 'pathScope', 'verification', 'routes', 'capabilities', 'effects', 'resultPolicy',
   ];
   if (profileVersion === 2) requiredFields.push('workerPolicy');
-  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'recoveryPolicy']);
+  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'followPolicy', 'recoveryPolicy']);
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || requiredFields.some((field) => !Object.hasOwn(value, field))
     || Object.keys(value).some((field) => !allowedFields.has(field))) {
@@ -1119,7 +1104,6 @@ export function normalizeProfile(name, value, repoId) {
     } : {}),
     resultPolicy: normalizeResultPolicy(value.resultPolicy),
     reviewPolicy,
-    integrationPolicy: normalizeIntegrationPolicy(value.integrationPolicy),
     followPolicy: normalizeFollowPolicy(value.followPolicy),
     recoveryPolicy: normalizeRecoveryPolicy(value.recoveryPolicy),
   };
@@ -2340,7 +2324,7 @@ export function _buildWorkflowEvidence(application, current, view) {
         )),
         selectedResultRefReverified: view.result === null
           || view.result.state === 'selection_required'
-          || ['pinned', 'integrated'].includes(view.result.preservation?.state),
+          || view.result.preservation?.state === 'pinned',
         feedbackTargetsBound: view.feedback.every((packet) => view.candidates.some((candidate) => (
           candidate.candidateId === packet.target.candidateId
           && candidate.candidateDigest === packet.target.candidateDigest
@@ -2369,7 +2353,6 @@ export function _buildWorkflowEvidence(application, current, view) {
         )),
         providerExecutionSettled: PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase),
         applicationTerminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
-        integrationAuthoritative: view.integration === null || view.phase === 'completed',
       },
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
@@ -2511,7 +2494,7 @@ export function _planningView(application, current, cause = null, principal = ap
     const progress = runProgress({
       phase, approval: null, node: null, route: null,
       verification: { state: 'pending' }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview, result: null,
-      integration: null, resourcesSettled: runStop?.receipt?.remainingCount === 0, stop,
+      resourcesSettled: runStop?.receipt?.remainingCount === 0, stop,
     });
     const view = {
       schemaVersion: 1,
@@ -2543,7 +2526,6 @@ export function _planningView(application, current, cause = null, principal = ap
       semanticReview,
       progress,
       result: null,
-      integration: null,
       ownership: { workers: 0, workerIds: [], closed: false },
       evidence: [],
       narrative: runStop?.status === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
@@ -2619,7 +2601,7 @@ export async function _historicalProfileView(application, current, observer, opt
     const progress = runProgress({
       phase, approval: projection?.approval ?? null, node, route,
       verification: { state: verificationState }, reviewPolicyMode: 'unavailable', semanticReview,
-      result: null, integration: null, resourcesSettled, stop,
+      result: null, resourcesSettled, stop,
     });
     const terminalCause = projectTypedTerminalCause({ terminalResult, runStop });
     const planNode = current.plan?.nodes?.[0] ?? null;
@@ -2689,7 +2671,7 @@ export async function _historicalProfileView(application, current, observer, opt
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
-      result: null, integration: null,
+      result: null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
       evidence: [],
@@ -3398,7 +3380,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const handlesByTask = new Map(workers.map((handle) => [handle.taskId, handle]));
     const handlesById = new Map(workers.map((handle) => [handle.id, handle]));
     const attempts = [];
-    const resultsByTask = new Map();
     for (const binding of definition.attempts) {
       const planNode = current.plan.nodes.find((node) => node.key === binding.nodeKey);
       const node = projection.nodes.find((candidate) => candidate.key === binding.nodeKey);
@@ -3410,7 +3391,6 @@ export async function _buildWorkflowView(application, current, observer, options
         try { terminalResult = await application.driver.coordinator.result(handle.id); }
         catch (error) { if (error?.code !== 'not_found') throw error; }
       }
-      if (terminalResult && task) resultsByTask.set(task.id, terminalResult);
       const selectedDispatch = current.dispatches.find((dispatch) => (
         dispatch.binding?.nodeKey === binding.nodeKey
       )) ?? null;
@@ -3491,8 +3471,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const selectedAdoption = selectedCandidate
       ? application.driver.coordination.runResultAdoption?.(runId, selectedCandidate.nodeKey) ?? null
       : null;
-    const selectedIntegration = selectedCandidate
-      ? resultsByTask.get(selectedCandidate.taskId)?.integration ?? null : null;
     const selectedAdopted = adoptionState(selectedAdoption) === 'adopted';
     const allSettled = attempts.every((attempt) => (
       ['accepted', 'failed', 'cancelled'].includes(attempt.state)
@@ -3510,7 +3488,7 @@ export async function _buildWorkflowView(application, current, observer, options
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     let phase = !projection.approval ? 'awaiting_plan_approval'
       : projection.approval.disposition === 'rejected' ? 'denied'
-        : selection ? (selectedIntegration ? 'completed' : 'candidate_selected')
+        : selection ? 'candidate_selected'
           : readOnlyResult && allAccepted && candidates.length > 0 ? 'completed'
           : allSettled && candidates.length > 0 ? 'selection_required'
             : allSettled && anyFailed ? 'failed'
@@ -3548,10 +3526,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const canAdoptSelected = phase === 'candidate_selected' && selectedCandidate
       && selectedPreservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && !selectedAdopted;
-    const canIntegrateSelected = phase === 'candidate_selected' && selectedCandidate
-      && selectedAdopted && !selectedIntegration
-      && current.profile.integrationPolicy.mode === 'manual'
-      && current.profile.integrationPolicy.requireSemanticReview === false;
 
     const runWorkerIds = new Set(workers.map((handle) => handle.id));
     const workerAttention = Object.entries(story.workers)
@@ -3708,7 +3682,7 @@ export async function _buildWorkflowView(application, current, observer, options
       semanticReview: { state: 'not_started', findings: [] },
       progress: { current: currentStage.key, summary: `${currentStage.label}: ${currentStage.detail}`, stages, activity: runActivity(application.driver, workers) },
       result: selection && selectedCandidate ? {
-        state: selectedIntegration ? 'integrated' : selectedAdopted ? 'adopted' : 'selected',
+        state: selectedAdopted ? 'adopted' : 'selected',
         candidate: clone(selection.candidate),
         nodeKey: selectedCandidate.nodeKey,
         taskId: selectedCandidate.taskId,
@@ -3716,9 +3690,8 @@ export async function _buildWorkflowView(application, current, observer, options
         retainedResultRef: selectedCandidate.retainedResultRef,
         commitArtifact: clone(selectedCandidate.evidence.commitArtifact),
         verificationArtifact: clone(selectedCandidate.evidence.verificationArtifact),
-        preservation: selectedIntegration ? { state: 'integrated' }
-          : selectedPreservation ? { state: selectedPreservation.state }
-            : { state: 'unavailable' },
+        preservation: selectedPreservation ? { state: selectedPreservation.state }
+          : { state: 'unavailable' },
         adoption: selectedAdoption ? {
           state: adoptionState(selectedAdoption),
           receiptDigest: selectedAdoption.receipt?.receiptDigest
@@ -3733,12 +3706,6 @@ export async function _buildWorkflowView(application, current, observer, options
         })),
       } : candidates.length > 0 ? {
         state: 'selection_required', candidateCount: candidates.length,
-      } : null,
-      integration: selectedIntegration ? {
-        state: 'integrated', strategy: selectedIntegration.strategy,
-        beforeSha: selectedIntegration.beforeSha,
-        resultSha: selectedIntegration.resultSha,
-        afterSha: selectedIntegration.afterSha,
       } : null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
@@ -4264,7 +4231,6 @@ export function _episodeItem(application, current, view, topic, role = null, epi
       verificationArtifact: clone(authoritativeResult.verificationArtifact
         ?? authoritativeResult.evidence?.verificationArtifact ?? null),
       stability: authoritativeResult.stability ?? null,
-      integration: clone(role === null ? view.integration ?? null : null),
     } : null;
     const contradictions = graph.edges.filter((candidate) => candidate.type === 'contradicted_by');
     const derivations = graph.edges.filter((candidate) => (

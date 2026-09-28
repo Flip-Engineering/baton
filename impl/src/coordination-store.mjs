@@ -1482,11 +1482,6 @@ export class CoordinationStore {
   completeRecoveryDispatch(fields, auth) {
     return coordinationReplay.completeRecoveryDispatch(this, fields, auth);
   }
-  integrationAuthority(taskId, operationalEvent) {
-    return coordinationInternals.integrationAuthority(this, taskId, operationalEvent);
-  }
-
-  completeIntegration(fields, auth) { return coordinationLedger.completeIntegration(this, fields, auth); }
 
   postScratchFact(fields, auth) { return coordinationLedger.postScratchFact(this, fields, auth); }
 

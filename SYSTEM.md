@@ -62,14 +62,12 @@ second in-process controller or gains deployment-shutdown authority:
 | `run.evidence(run)` | return one bounded content-addressed terminal manifest from authoritative Goal/Plan, route, verification, result, adoption, and stop facts |
 | `run.adopt(run, node, resultSha, evidenceDigest, reason)` | designate an exact preserved verified result without merging, checking out, changing the working tree, or publishing |
 | `run.review(run, exactRoute, reason)` | run one independently routed structured semantic review over the immutable accepted result and return its grounded findings in the RunView |
-| `run.integrate(run, evidenceDigest, strategy, reason)` | apply one policy-allowed local integration only after fresh evidence, result-selection, and semantic gates pass; never push or deploy |
 
 `run.recover` is shipped (the CLI inventory's `baton run recover RUN_ID`). The Coordinator's
 `spawn`, `send`, `interrupt`, `respond`, `result`, `list`, `kill`, and `drain` are kernel primitives,
 advanced compatibility, and emergency control. An ordinary agent does not compose a workflow from
 them. Accepted commits are provisionally pinned before task cleanup; adoption is a durable human
-selection, not integration or publication. Semantic review is a separate evidence gate, and local
-integration is a separately authorized effect. `run.stop` is Run-scoped; `application.shutdown` is host-only and fleet-wide. Web/MCP expose
+selection. Semantic review is a separate evidence gate. `run.stop` is Run-scoped; `application.shutdown` is host-only and fleet-wide. Web/MCP expose
 the former and never expose the latter as a Run command.
 
 ### 3.2 The main loop (plain pseudocode)
@@ -109,7 +107,7 @@ The orchestrator directs a Run through the application; the scheduler lowers app
 
 **Every worker runs in its own git worktree** — its own working directory on its own branch, sharing one copy of the repo's history underneath (cheap). This is load-bearing plumbing, not a detail, because it does three jobs at once: (1) **isolation** — workers edit and test in parallel without clobbering each other, enforced by git itself (it won't check out the same branch twice); (2) **it's what the trust gate checks against** — re-verification runs in a *fresh* worktree at the worker's committed result, never the worker's own directory, so a doctored test or uncommitted junk can't fool it; (3) **it defines merging** — each result is a branch, so integrating accepted work is a clean branch merge, and collisions between workers are visible, not silent.
 
-The worker just sees a normal repo; the coordinator does all the worktree bookkeeping — create from a pinned clean base, confine the worker to it (the sandbox boundary), capture the result as a *commit* (never a dirty tree), re-verify in a fresh worktree at that commit, merge if accepted, and clean up on done-or-crash (with zombie worktrees reaped on restart). Workers may run their own git — commits are captured, but `push` and other irreversible outside-world actions are approval-gated. Merge collisions are avoided up front by giving concurrent workers **non-overlapping path scopes** (claimed on the shared scratchpad), with textual merge for the MVP and merge-by-meaning as a later upgrade. Full mechanics, commands, and the disk-cost / non-git / interrupt-interaction considerations: [`spec/worktrees.md`](spec/worktrees.md).
+The worker just sees a normal repo; the coordinator does all the worktree bookkeeping — create from a pinned clean base, confine the worker to it (the sandbox boundary), capture the result as a *commit* (never a dirty tree), re-verify in a fresh worktree at that commit, keep the accepted commit addressable under `refs/baton/results/<sha>`, and clean up on done-or-crash (with zombie worktrees reaped on restart). Workers may run their own git — commits are captured, but `push` and other irreversible outside-world actions are approval-gated. Merge collisions are avoided up front by giving concurrent workers **non-overlapping path scopes** (claimed on the shared scratchpad), with textual merge for the MVP and merge-by-meaning as a later upgrade. Full mechanics, commands, and the disk-cost / non-git / interrupt-in…
 
 ### 4.2 Messaging, both ways
 Down and up, on a channel that respects turn boundaries (never interrupts a worker mid-thought — that's what steering is for). Full shapes: [`spec/communication-channel.md`](spec/communication-channel.md).

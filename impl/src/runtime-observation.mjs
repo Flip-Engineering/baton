@@ -100,7 +100,7 @@ export function projectHorizonScratchpad(capture, viewer) {
 }
 
 // Issue #259 slice 12: the closed-verdict family moved to the runtime-recovery base layer (the
-// effect seam's _integrate reads closedVerificationVerdict, and effects must not import this
+// coordinator's verification paths read closedVerificationVerdict, and effects must not import this
 // module — observation already imports effects). The surface holds: every moved name is
 // re-exported, so an importer of runtime-observation.mjs resolves the same bindings.
 export {
@@ -1027,7 +1027,7 @@ export function *_seedCoordinationTasksPasses(coordinator, recorder) {
         sessionRequest: durable.sessionRequest ?? Object.freeze({ mode: 'new' }), worktreeBaseSha: durable.worktreeBaseSha ?? durable.review?.baseSha ?? null,
         sessionContext: null, lineage: null, refines: durable.refines ?? null,
         status: durable.status, assignee: workerId, worktree: null, result: null, verdict: null,
-        capturedSha: null, integration: null, retainedResultRef: null,
+        capturedSha: null, retainedResultRef: null,
         review: durable.review ? Object.freeze({ ...durable.review }) : null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
         physicalWorkspaceCleanupCompleted: false, workspaceCleanupDeferred: null,
       };
@@ -1500,7 +1500,7 @@ export function _createCoordinationRefinement(coordinator, recorder, handle, pri
     });
     const next = {
       ...prior, id, deps: [], refines: prior.id, status: 'working', result: null, verdict: null,
-      capturedSha: null, integration: null, retainedResultRef: null, review: null,
+      capturedSha: null, retainedResultRef: null, review: null,
       coordinationVersion: claimed.task.version,
     };
     coordinator._tasks.set(id, next);

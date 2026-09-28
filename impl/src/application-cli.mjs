@@ -1549,14 +1549,14 @@ export function batonCliHelp(topic = 'application') {
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
 
 const RUN_VIEW_OUTPUT_KINDS = new Set([
-  'command', 'semantic-action', 'adopt', 'integrate',
+  'command', 'semantic-action', 'adopt',
 ]);
 
 function compactRunResult(result) {
   if (!record(result)) return null;
   const keys = [
     'state', 'status', 'nodeKey', 'sha', 'verdict', 'summary', 'adopted',
-    'reviewed', 'integrated', 'strategy',
+    'reviewed',
   ];
   const projected = Object.fromEntries(keys
     .filter((key) => result[key] !== undefined)

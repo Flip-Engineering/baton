@@ -350,7 +350,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   assert.equal(answer.receipt.changed[0].id, 'run-kimi-orchestrator');
   assert.deepEqual(answer.next, { command: 'run.view', args: { runId: 'run-kimi-orchestrator' } });
   assert.match(answer.wake.subscriptionId, /^wake-sub:/u);
-  assert.deepEqual(answer.wake.settleOn, ['attention', 'paused', 'integrated']);
+  assert.deepEqual(answer.wake.settleOn, ['attention', 'paused']);
   assert.equal(JSON.stringify(called).includes('internalStartRecord'), false);
   assert.equal((await server.handle(call)).result.isError, false);
   const inspected = await server.handle({

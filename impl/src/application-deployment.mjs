@@ -1878,10 +1878,6 @@ function applicationProfile(repoId, routes, verification) {
     requiredEffects: ['repository_edit'],
     workerPolicy: DEFAULT_WORKER_POLICY_REQUEST,
     resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
-    integrationPolicy: {
-      mode: 'manual', strategies: ['ff-only', 'structured'],
-      requireAdoptedResult: true, requireSemanticReview: false,
-    },
     followPolicy: {
       // #500: the follow/inspect response ceiling IS the registry's view.run.bytes row —
       // the one Run-view ceiling, shed-flagged with the #489 narrowing ladder as its

@@ -90,7 +90,6 @@ async function buildFixture() {
         capabilities: ['code', 'test'],
         effects: ['repository_edit'],
         resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
-        integrationPolicy: { mode: 'none', strategies: [], requireAdoptedResult: false, requireSemanticReview: false },
       },
     },
     principals: {

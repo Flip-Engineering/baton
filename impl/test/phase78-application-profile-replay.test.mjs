@@ -339,9 +339,9 @@ test('a profile with every optional policy omitted has one canonical self-verify
   assert.equal(records.length, 1);
   assert.equal(records[0].payload.profileDigest, profileDigest);
   assert.equal(digest(records[0].payload.profileDefinition), profileDigest);
-  assert.deepEqual(Object.fromEntries(['reviewPolicy', 'integrationPolicy', 'followPolicy', 'recoveryPolicy']
+  assert.deepEqual(Object.fromEntries(['reviewPolicy', 'followPolicy', 'recoveryPolicy']
     .map((name) => [name, records[0].payload.profileDefinition[name].mode])), {
-    reviewPolicy: 'none', integrationPolicy: 'none', followPolicy: 'none', recoveryPolicy: 'none',
+    reviewPolicy: 'none', followPolicy: 'none', recoveryPolicy: 'none',
   });
   await second.shutdown(principal('shutdown'));
 });

@@ -21,7 +21,7 @@ function freeze(value) {
 export const CANONICAL_RUN_PHASES = Object.freeze([
   'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
   'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
-  'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
+  'reviewing', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
   'denied', 'stopping',
   // #102 Decision 6: the cell's quorum-reached partial rest is canonical terminal truth.
   'degraded',

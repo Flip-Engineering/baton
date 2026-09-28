@@ -109,8 +109,8 @@ Fresh verifier sandboxes use collision-resistant paths and joined idempotent cle
 scoped to one exact common-Git registration, preserves live siblings, captures expected Git
 diagnostics, and fails typed unless both the directory and administrative record are absent. The
 ordinary authenticated local owner has the minimum additional `retry_verification` capability so a
-currently advertised reason-only retry and its contextual help are usable without adoption,
-review, integration, resume, or shutdown authority.
+currently advertised reason-only retry and its contextual help are usable without adoption, review,
+resume, or shutdown authority.
 
 ## 5. Route truth
 
@@ -176,9 +176,8 @@ truth.
    HARNESS/MODEL@EFFORT` selects the identical row. No credential value, runtime path, deployment
    factory, provider probe, or silent route substitution crosses this surface.
 4. **P0.4 — advertised defaults execute.** High-level Run helpers materialize defaults from the
-   currently advertised action schema. In particular, `run.integrate()` uses both the advertised
-   strategy and reason; it does not maintain a divergent client-only default. The server validates
-   the resulting closed input and retains final reauthorization.
+   currently advertised action schema and do not maintain a divergent client-only default. The
+   server validates the resulting closed input and retains final reauthorization.
 5. **P0.5 — progressive help closes.** `review` help explains the preset, exact-route requirement,
    and readiness command. `workflow` help identifies itself as the advanced inner surface and names
    the one supported strategy/workspace/join authority. Outline and content help link the two

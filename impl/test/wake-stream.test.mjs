@@ -100,7 +100,7 @@ async function until(predicate, frames, label, timeoutMs = 30_000, errors = []) 
 test('the wake-class table derives every class from its own ledger row, and admits nothing else', () => {
   assert.ok(WAKE_CLASSES.length >= 12, 'the table carries the documented classes');
   for (const required of ['contribution_recorded', 'checkpoint', 'paused', 'dead', 'refused', 'left',
-    'attention', 'guidance_delivered', 'recruited', 'integrated', 'capacity_pressure', 'resident_lifecycle']) {
+    'attention', 'guidance_delivered', 'recruited', 'capacity_pressure', 'resident_lifecycle']) {
     assert.ok(WAKE_CLASSES.includes(required), `the closed set carries ${required}`);
   }
   // One entry per class, one class per entry: no class is a second name for another.
@@ -356,8 +356,6 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
       'baton_decision_answer / baton run answer r1 q1 --text TEXT'],
     [{ seq: 16, ts: 'T', kind: 'message.delivered', actor: 'rt',
       payload: { messageId: 'm1', worker: 'w-1' } }, null],
-    [{ seq: 17, ts: 'T', kind: 'driver.recorded', actor: 'policy',
-      payload: { kind: 'integration.completed', taskId: 't1' } }, 'baton_run_view / baton run view {runId}'],
     [{ seq: 18, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
       payload: { worker: 'w-1', workerSeq: 6, digest: 'd', kind: 'worktree.progress_checkpointed', ts: 'T' } },
       null],

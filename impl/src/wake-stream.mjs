@@ -278,12 +278,6 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'messageId', kind: 'message', fallback: { field: 'worker', kind: 'worker' } },
   }),
   wakeRow({
-    wakeClass: 'integrated', scope: 'deployment', terminal: true, next: 'baton_run_view / baton run view {runId}',
-    summary: 'a Run result was integrated into the repository',
-    rows: [operationalKind('integration.completed')],
-    subject: { field: 'taskId', kind: 'task', fallback: { field: 'runId', kind: 'run' } },
-  }),
-  wakeRow({
     wakeClass: 'checkpoint', scope: 'deployment', terminal: false, next: null,
     summary: 'a worktree progress checkpoint was recorded',
     rows: [operationalKind('worktree.progress_checkpointed')],
