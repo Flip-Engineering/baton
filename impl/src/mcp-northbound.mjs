@@ -491,8 +491,6 @@ function stateFailureCode(cause) {
     'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
 
   if (['attention_scope_forbidden', 'attention_scope_invalid', 'attention_target_invalid'].includes(cause?.code)) return cause.code;
-  // Part F (R5, typed-error reach) — board reflex codes (mcp-reflex-surface-decisions.md
-  // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part D tools.
   // Facade-projection epic (#87+#48): the scratchpad-settlement family (scratchpad_cursor_stale is
   // deliberately NOT mapped — the fence CAS is not projected, Decision 6).
   if (['scratchpad_settlement_invalid', 'scratchpad_settlement_conflict', 'scratchpad_settlement_not_ready',
@@ -502,8 +500,6 @@ function stateFailureCode(cause) {
   // none can ever degrade to command_outcome_unknown.
   if (['temporal_incoherence', 'missing_evidence', 'invalid_evidence', 'causal_orphan',
     'missing_endpoint', 'duplicate_node', 'knowledge_node_conflict', 'reserved_knowledge_field'].includes(cause?.code)) return cause.code;
-  if (['board_admission_invalid', 'board_lease_required', 'board_session_mismatch', 'board_run_closed',
-    'board_replay_conflict'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
   // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family
