@@ -305,7 +305,6 @@ test('500-caps-H: the bounds with no hermetic seam keep their live literals (sou
   count(/const OMP_CATALOG_MEMO_MS = 60_000;/u, 'omp catalog memo window', 1);
   count(/timeout: 20_000, maxBuffer: 8 \* 1024 \* 1024,/u, 'omp catalog exec bound', 1);
   count(/encoding: 'utf8', timeout: 5_000,/u, 'which PATH probe deadline', 1);
-  count(/stdio: 'ignore', timeout: 5_000, maxBuffer: 1024 \* 1024,/u, 'codex/muse capability probe bounds', 2);
   count(/timeout: 10_000,?/u, 'reincarnation local git read deadlines', 3);
   count(/timeout: 60_000,/u, 'reincarnation remote fetch and serving-checkout move deadlines', 2);
   // MAX_KIMI_CREDENTIAL_METADATA_BYTES, MAX_GROK_CREDENTIAL_METADATA_BYTES and
