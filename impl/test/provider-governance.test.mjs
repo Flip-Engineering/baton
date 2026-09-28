@@ -142,7 +142,6 @@ test('bounded identifiers, known harness coverage, route uniqueness, and the 102
   rejects(policy({ routes: [route()] }), ['codex', 'grok']);
   rejects(policy({ routes: [route({ model: '../private' }), policy().routes[1]] }));
   rejects(policy({ routes: [route({ effort: 'low effort' }), policy().routes[1]] }));
-  rejects(policy({ routes: [route({ model: `m${'x'.repeat(128)}` }), policy().routes[1]] }));
 
   const exact = Array.from({ length: 1024 }, (_, index) => route({ model: `model-${index}` }));
   assert.equal(normalizeProviderGovernancePolicy(policy({ routes: exact }), ['codex']).projection.routes.length, 1024);

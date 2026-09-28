@@ -2291,7 +2291,6 @@ const PROVIDER_REFUSAL_SCAN_BYTES = FRAME_LIMITS['view.attention_text.bytes'].va
 // class and a stated reset instant, small enough that a refusal row never carries a provider
 // answer wholesale. Operator-declared with no derivation elsewhere in the tree; the #500 pin
 // test records the live value.
-const PROVIDER_REFUSAL_TEXT_BYTES = 1024;
 
 /** The ledger kinds a provider refusal rides: the crash cert, and the turn terminal (a
  * session-shaped adapter types its provider's refusal onto the failed turn, not a crash). */
@@ -2358,7 +2357,7 @@ function refusalEvidenceOf(payload, card, kind) {
  * token-shaped value can never cross the row even when it sits inside the bytes that survive. */
 function publishedRefusalText(text) {
   const scanned = typeof text === 'string' ? text.slice(0, PROVIDER_REFUSAL_SCAN_BYTES) : '';
-  return scanned === '' ? '' : sanitizeVerifierDiagnosticText(scanned).text.slice(0, PROVIDER_REFUSAL_TEXT_BYTES);
+  return scanned === '' ? '' : sanitizeVerifierDiagnosticText(scanned).text;
 }
 
 /** Strict ledger order: the stamped instant decides, and two rows stamped in the same millisecond

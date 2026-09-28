@@ -24,7 +24,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
-const MAX_NOTIFICATION_METHOD_PREFIX_CHARS = 512;
 
 // These app-server methods are server notifications, never JSON-RPC responses or requests.
 // Their payloads are telemetry/content and a later turn/completed notification remains the
@@ -60,7 +59,7 @@ function saturatingByteCount(current, addition) {
  */
 function discardableNotificationMethod(prefix) {
   const match = /^\s*\{\s*"method"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(
-    prefix.slice(0, MAX_NOTIFICATION_METHOD_PREFIX_CHARS),
+    prefix,
   );
   if (!match) return null;
   let method;
@@ -407,9 +406,7 @@ export class CodexAppServerCli {
   }
 
   _notificationPrefix(session, segment) {
-    const fromBuffer = session.buf.slice(0, MAX_NOTIFICATION_METHOD_PREFIX_CHARS);
-    const remaining = MAX_NOTIFICATION_METHOD_PREFIX_CHARS - fromBuffer.length;
-    return remaining > 0 ? fromBuffer + segment.slice(0, remaining) : fromBuffer;
+    return session.buf + segment;
   }
 
   _beginOversizeNotificationDiscard(session, segment, segmentBytes) {
