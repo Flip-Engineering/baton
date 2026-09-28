@@ -4953,50 +4953,6 @@ export class Coordinator {
     return runtimeAdmission.routeCards(this, this._recorder);
   }
 
-  /** Return deployment-pinned machine-ingress cards. This inventory is separate from ACI and
-   * carries no user, MCP, install, merge, or verification authority. */
-    advisoryFeedCards() {
-    return runtimeAdmission.advisoryFeedCards(this, this._recorder);
-  }
-
-  /** Admit one machine-authenticated provider delivery. The fixed provider route selects the
-   * adapter; neither a user actor nor provider body may choose authority. Durable receipt and
-   * pending fences are appended before this returns success. */
-    receiveProviderDelivery(providerId, input, ctx = {}) {
-    return runtimeAdmission.receiveProviderDelivery(this, this._recorder, providerId, input, ctx);
-  }
-
-  /** Exact HTTP-envelope variant for Baton-owned native webhook authenticators. A deployment's
-   * fixed HTTPS route supplies providerId; the body and headers cannot select a source. */
-    receiveProviderWebhook(providerId, input, ctx = {}) {
-    return runtimeAdmission.receiveProviderWebhook(this, this._recorder, providerId, input, ctx);
-  }
-
-  /** Run one deployment-pinned authenticated full poll for a degraded source, durably admit every
-   * item through ordinary delivery dedupe, then append the sole source-health recovery event. */
-  async reconcileProviderSource(providerId, ctx = {}) {
-    return runtimeRecovery.reconcileProviderSource(this, this._recorder, providerId, ctx);
-  }
-
-  /** Return a deployment-bounded, repository-scoped provider health and processing projection. */
-    readProviderStatus(request = {}, ctx = {}) {
-    return runtimeObservation.readProviderStatus(this, this._recorder, request, ctx);
-  }
-
-  /** Process one deployment-bounded batch of due provider roots. Individual official failures
-   * become sanitized durable deferrals; cancellation and writer-lease loss remain fatal to the
-   * scan and never synthesize attempt history. */
-  async reconcileDueProviderProcessing(ctx = {}) {
-    return runtimeRecovery.reconcileDueProviderProcessing(this, this._recorder, ctx);
-  }
-
-  /** Freshly reconcile one durable provider processing root without caller-selected coordinates,
-   * policy, index epoch, outcome, actor, or idempotency. Green and adverse coordinates complete as
-   * one atomic root; only independently refreshed official facts can add monotonic guard authority. */
-  async reconcileProviderProcessing(processingId, ctx = {}) {
-    return runtimeRecovery.reconcileProviderProcessing(this, this._recorder, processingId, ctx);
-  }
-
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
     invokeCapability(name, op, args, ctx = {}) {
     return runtimeAdmission.invokeCapability(this, this._recorder, name, op, args, ctx);

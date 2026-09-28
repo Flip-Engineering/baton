@@ -2271,18 +2271,6 @@ export async function _supersedeDecision(coordinator, recorder, requestId, mode,
     return { ok: true, result: 'interaction_superseded' };
   }
 
-export function readProviderStatus(coordinator, recorder, request = {}, ctx = {}) {
-    coordinator._assertReadable(); const config = coordinator._providerRead;
-    if (!config) throw Object.assign(new Error('provider status reads are not deployment-configured'), { code: 'provider_read_unavailable' });
-    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !['providerId', 'after', 'limit'].includes(key))
-      || !ctx || Object.keys(ctx).some((key) => key !== 'repoId') || ctx.repoId !== config.repoId) throw Object.assign(new Error('provider status repository authority mismatch'), { code: ctx?.repoId !== config.repoId ? 'reuse_repo_mismatch' : 'provider_read_invalid' });
-    if (request.providerId !== undefined && (!/^[A-Za-z0-9._:-]{1,128}$/.test(request.providerId) || !coordinator.advisoryFeedCards().some((card) => card.providerId === request.providerId))) throw Object.assign(new Error('provider status provider is invalid'), { code: 'provider_read_invalid' });
-    if (request.after !== undefined && !/^provider-processing:[a-f0-9]{64}$/.test(request.after)) throw Object.assign(new Error('provider status cursor is invalid'), { code: 'provider_read_invalid' });
-    if (request.limit !== undefined && (!Number.isSafeInteger(request.limit) || request.limit <= 0 || request.limit > config.maxProcessing)) throw Object.assign(new Error('provider status limit is invalid'), { code: 'provider_read_invalid' });
-    const { repoId, ...ceilings } = config;
-    return recorder.coordination.readProviderStatus(repoId, request, ceilings);
-  }
-
 export function recallKnowledge(coordinator, recorder, query, reader = {}, opts = {}) {
     coordinator.tick();
     if (!recorder.coordination) throw new Error('coordination store is required for knowledge recall');
