@@ -47,8 +47,9 @@ conversation the host no longer held.
 ## Repair
 
 `bend2/src/coordinator/turn.bend`, in `supervise`, handles direct `turn`.
-Retained `receive` uses a separate path; its remaining integration gap is
-recorded in [the Codex validation](codex-process-loss-2026-09-28.md).
+Retained `receive` applies the same refusal check through its retained attempt
+and inbox continuation path. Its repair and composed-tree measurements are
+recorded in [the receive validation](receive-recovery-2026-09-28.md#retained-receive-fallback).
 When the launch carried a resume value, the run ended
 without a terminal event, and the harness's stderr opens with `Error: Session`,
 the recorded conversation is gone: the supervisor reports
