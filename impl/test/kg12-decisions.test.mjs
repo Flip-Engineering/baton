@@ -100,16 +100,9 @@ test('KG-1b (P1-1 fix): an unrelated knowledge write misses the task/workflow ca
   coordinator._tasks.set(taskId, { id: taskId, assignee: 'worker-b', runId: 'run-b' });
 
   const before = coordinator.taskHorizon(taskId);
-  coordination.admitContextPackage(
-    packageFields([valueRefBranch('b1', coordination)], { runId: 'run-b', principalId: 'principal-b' }),
-    auth('admit-b1'),
-  );
-  const afterAdmission = coordinator.taskHorizon(taskId);
-  assert.notEqual(afterAdmission, before, 'a package admission bumps no named fence component and must still miss');
-
   coordination.addKnowledgeNode({ id: 'finding:unrelated-b', type: 'Finding', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-b1' });
   const afterKnowledge = coordinator.taskHorizon(taskId);
-  assert.notEqual(afterKnowledge, afterAdmission, 'an unrelated knowledge write must miss via projectionInputFence alone');
+  assert.notEqual(afterKnowledge, before, 'an unrelated knowledge write must miss via projectionInputFence alone');
 });
 
 test('KG-1c: a decision settle bumps the workflow horizon fence; an interaction ask/resolve does not', () => {

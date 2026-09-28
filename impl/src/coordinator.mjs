@@ -5326,6 +5326,11 @@ export class Coordinator {
   }
 
 
+  /** Rule 2: task horizon fence = (interactionGeneration(taskId), projectionInputFence()). */
+    taskHorizon(taskId) {
+    return runtimeObservation.taskHorizon(this, this._recorder, taskId);
+  }
+
     workflowHorizon(runId, { viewer = 'orchestrator' } = {}) {
     return runtimeObservation.workflowHorizon(this, this._recorder, runId, { viewer });
   }
