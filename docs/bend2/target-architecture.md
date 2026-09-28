@@ -79,12 +79,13 @@ restart. Cleanup is explicit; the initial implementation retains workspaces.
 A worker may finish a turn with uncommitted work, which its parent can inspect
 and ask it to commit.
 
-`land` takes a committed worker tip and the configured target. Git operations
-prepare a merge candidate in a separate worktree, preserving the worker's commits.
-Conflicts return their paths and the prepared worktree to the requesting agent.
-Selected checks run on the candidate; failing files run on the target to identify
-new failures as AGENTS.md requires. Missing verdicts and newly failing tests
-block the landing. Checks use task behavior as their specification.
+`land-checked` takes a committed worker tip and the configured target. Git
+operations prepare a merge candidate in a separate worktree, preserving the
+worker's commits. Conflicts return their paths and the prepared worktree to the
+requesting agent. Each selected check runs on both the candidate and the target.
+Candidate failure identities absent from the target block the landing. An
+unjudged candidate run blocks; an unjudged target run blocks when its candidate
+run fails. Checks use task behavior as their specification.
 
 A successful landing advances the target to the checked candidate only while
 its prior commit still matches. A changed target returns a retry instruction and

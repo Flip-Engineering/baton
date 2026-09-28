@@ -1,5 +1,10 @@
 # Two workers, one moving target, through the coordinator
 
+The scenarios below record the behavior measured on 2026-09-27. The current
+checked landing returns a retry instruction when the target moves and checks
+the new candidate on the next invocation. See the
+[2026-09-28 correction and regression](checked-landing-2026-09-28.md).
+
 On 2026-09-27 the coordinator's landing was exercised against the failure the
 JS runtime records as #596: two workers branch from the same target, the
 target moves under the second landing while its gate runs, and the second

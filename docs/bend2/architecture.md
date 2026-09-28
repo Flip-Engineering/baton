@@ -209,16 +209,17 @@ runs the supplied check script for each selected file on the candidate and the
 target tree. Added build output excluded by the repository's ignore rules is
 dropped from the candidate and named in its commit message. Checks emit failure
 identities comprising file, test, failure type and semantic code. Candidate
-failures absent from the target block the landing. An unjudged run also blocks
-and names its cause. The caller supplies the check script and file selection;
-the coordinator does not infer a suite from changed paths.
+failures absent from the target block the landing. An unjudged candidate run
+blocks and names its cause; an unjudged target run blocks when its candidate run
+fails. The caller supplies the check script and file selection; the coordinator
+does not infer a suite from changed paths.
 
-The target advances through a compare-and-swap ref update. If it moved during
-the check, the candidate is rebased onto the new target and the existing verdict
-is used. The current implementation makes one rebase attempt and returns a
-blocked result if the target moves again. That second-move branch is verified
-by code inspection; the recorded live scenarios move the target once. Conflicts
-name the paths and the scratch checkout they keep. A landing that answers
+The target advances through a compare-and-swap ref update using the checked
+candidate and the checked target commit as the expected old value. If the target
+moved during the checks, the command returns `blocked` with a retry instruction.
+A failed ref update returns a command failure. A new `land-checked` invocation
+prepares and checks a candidate against the current target. Conflicts name the
+paths and the scratch checkout they keep. A landing that answers
 `landed` or `already` removes the candidate and target worktrees it prepared; a
 refused or conflicted landing keeps them for the requester, and that worker's
 next landing request drops them before preparing its own. A target held by a checked-out worktree produces the current

@@ -138,3 +138,49 @@ in `.scratch/validation/check-native.log` and `check-native-fixed.log`.
 That count describes the pinned baseline. The subsequent receive implementation
 passed 104 tests across eleven files, recorded in the
 [native receive validation](native-receive-2026-09-28.md).
+
+## Held-writer reads and deferred transaction follow-up
+
+A later measurement used runtime source `9107256bc5f40075525cecc138bb762b8e2e5484`,
+source tree `5d2613c9848c27b0b426f9704e9611228c300c87`, and coordinator SHA-256
+`c6fcca8d251b38b1410c5269d53890266602dd7ef6037a9bd327b45b3ace39ed`.
+The [read-contention artifact](measurements/2026-09-28-read-contention.json)
+records the raw evidence and driver paths and hashes, SQL, source-file hashes,
+and timing boundaries. Both runs used private databases in rollback-journal
+(`delete`) mode.
+
+At this source, `Store.commit` begins `Status` and `Inbox` with `BEGIN IMMEDIATE`
+and runs schema initialization before the query. A fixture held an uncommitted
+writer transaction while both coordinator processes opened the database. Neither
+completed during the following approximately 250 ms observation. After writer commit, both
+completed successfully and returned the updated values. Their recorded elapsed
+times were 545.22 ms for `status` and 501.30 ms for `inbox root`, from immediately
+after process creation returned through captured-output collection. Direct reads
+on an already-open Python SQLite connection returned the previous committed
+snapshot while the writer remained held, in 1.542 ms and 0.082 ms respectively.
+Those query timings include fetching and parsing the JSON row.
+
+The follow-up called `/usr/lib/libsqlite3.dylib` through `ctypes`, matching the
+frozen coordinator's dynamic-library binding. That library reported SQLite
+3.54.0; the separate fixture writer used Python SQLite 3.53.0. Each deferred
+read executed `BEGIN`, the existing schema statements, the exact query and
+`COMMIT` in one `sqlite3_exec` call. With the writer held, `Status` and `Inbox`
+returned the committed snapshot in 0.195 ms and 0.156 ms. The equivalent
+`BEGIN IMMEDIATE` controls returned `SQLITE_BUSY` after the probe's 250 ms busy
+timeout, at 273.86 ms and 295.54 ms. These intervals cover SQL execution and its
+JSON callback; connection setup and process startup are outside the interval.
+
+Both individual reads on new databases initialized the three application tables
+and returned empty arrays. All ten readers in five barrier-synchronized cold
+`Status`/`Inbox` pairs completed with empty results and empty tables. The writer
+committed, subsequent reads saw its changed model and message body, and pending
+message IDs remained intact. The coordinator observation also confirmed that
+reads wrote no receipts and all reader processes exited.
+
+The 250 ms observation and busy timeout bound these tests. The production busy
+handler retries without a cutoff. Deferred `BEGIN` ran only in the direct-SQL
+probe; production source and the frozen executable remained unchanged. A
+production read-admission change would require full coordinator validation,
+including cold initialization and the content checks above. These measurements
+establish the observed contention behavior; they provide no throughput estimate
+or general claim about every concurrent schedule.
