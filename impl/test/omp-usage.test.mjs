@@ -398,16 +398,14 @@ test('PROCGEN: counterId format encodes worker+epoch+generation', () => {
   assert.equal(a.counterId, 'omp:worker-x:3:5');
 });
 
-test('PROCGEN: very long worker name hashes to omp-h: prefix within 256 bytes', () => {
+test('PROCGEN: a long worker name keeps its own counter id, unfolded', () => {
   const longWorker = 'a'.repeat(300);
   const a = new OmpTurnUsageAccumulator(longWorker, 1, 1);
-  assert.ok(a.counterId !== null);
-  assert.ok(a.counterId.startsWith('omp-h:'));
-  assert.ok(Buffer.byteLength(a.counterId) <= 256);
-  // Same inputs produce same hash (stable)
+  assert.equal(a.counterId, `omp:${longWorker}:1:1`);
+  // Same inputs produce the same id (stable)
   const b = new OmpTurnUsageAccumulator(longWorker, 1, 1);
   assert.equal(a.counterId, b.counterId);
-  // Different generation = different hash
+  // A different generation is a different id
   const c = new OmpTurnUsageAccumulator(longWorker, 1, 2);
   assert.notEqual(a.counterId, c.counterId);
 });

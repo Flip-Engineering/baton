@@ -15,7 +15,6 @@ import { dirname, join } from 'node:path';
 // #11 ClaudeCredentialCache built, vendor-adjusted to grok's HOME-relative write-back target
 // (`directory/.grok/auth.json`, never the claude flat sibling).
 
-const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const MAX_MS_EPOCH = 8_640_000_000_000_000;
 const flights = new Map();
 
@@ -30,7 +29,7 @@ function credentialError(code, message) {
 function boundedToken(value, required = true) {
   if (value === undefined && !required) return null;
   return typeof value === 'string' && value.length > 0
-    && Buffer.byteLength(value, 'utf8') <= MAX_CREDENTIAL_BYTES && !/[\0\r\n]/u.test(value)
+    && !/[\0\r\n]/u.test(value)
     ? value : null;
 }
 
@@ -59,11 +58,11 @@ function defaultFileRead(path) {
   try {
     const before = lstatSync(path);
     if (!before.isFile() || before.isSymbolicLink()
-      || before.size <= 0 || before.size > MAX_CREDENTIAL_BYTES) return null;
+      || before.size <= 0) return null;
     descriptor = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino
-      || opened.size <= 0 || opened.size > MAX_CREDENTIAL_BYTES) return null;
+      || opened.size <= 0) return null;
     return readFileSync(descriptor);
   } catch { return null; }
   finally { if (descriptor !== undefined) closeSync(descriptor); }
@@ -102,12 +101,12 @@ export function grokCredentialCandidate(value, {
 } = {}) {
   let root = value;
   if (typeof root === 'string' || Buffer.isBuffer(root)) {
-    if (Buffer.byteLength(root) <= 0 || Buffer.byteLength(root) > MAX_CREDENTIAL_BYTES) return null;
+    if (Buffer.byteLength(root) <= 0) return null;
     try { root = JSON.parse(String(root)); } catch { return null; }
   }
   if (!record(root)) return null;
   try {
-    if (Buffer.byteLength(JSON.stringify(root), 'utf8') > MAX_CREDENTIAL_BYTES) return null;
+    JSON.stringify(root);
   } catch { return null; }
   const entries = Object.entries(root);
   if (entries.length === 0 || entries.length > 32) return null;
@@ -193,7 +192,7 @@ function defaultGrokRefreshRuntime({
       clearTimeout(timer);
       resolve(result);
     };
-    const append = (current, chunk) => `${current}${String(chunk)}`.slice(-MAX_CREDENTIAL_BYTES);
+    const append = (current, chunk) => `${current}${String(chunk)}`;
     child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); });
     child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); });
     child.on('error', (error) => finish({ ok: false, error }));

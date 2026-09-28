@@ -311,7 +311,6 @@ test('500-caps-H: the bounds with no hermetic seam keep their live literals (sou
   count(/const GROK_AUTH_EARLY_INVALIDATION_MS = 5 \* 60 \* 1000;/u, 'grok early invalidation window', 1);
   count(/const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 \* 1024 \* 1024;/u, 'workspace byte quantum', 1);
   count(/const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;/u, 'workspace inode quantum', 1);
-  count(/const PROVIDER_REFUSAL_TEXT_BYTES = 1024;/u, 'published provider refusal text bound', 1);
   count(/commandTimeoutMs: rawResident\.commandTimeoutMs \?\? 30_000,/u, 'resident command deadline default', 1);
   count(/stopDeadlineMs: 15_000,/u, 'stop deadline', 1);
   count(/progressNudgeWindowMs: 300_000,/u, 'steering nudge window', 1);

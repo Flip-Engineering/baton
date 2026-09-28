@@ -1789,7 +1789,7 @@ export function _normalizeUsage(coordinator, recorder, handle, payload) {
     const normalizedRawTokens = governed ? rawTokens : Number(rawTokens);
     const normalizedRawUsd = governed ? usdFromNanos(usdToNanos(rawUsd)) : Number(rawUsd);
     const counterId = payload?.counterId ?? source;
-    if (governed && (typeof counterId !== 'string' || counterId.length === 0 || Buffer.byteLength(counterId) > 256 || counterId.includes('\0'))) return { invalidCode: 'usage_counter_invalid' };
+    if (governed && (typeof counterId !== 'string' || counterId.length === 0 || counterId.includes('\0'))) return { invalidCode: 'usage_counter_invalid' };
     const tokenMetric = payload?.tokenMetric ?? null;
     if (governed && tokensReported) {
       const expectedMetric = coordinator._adapters[handle.vendor]?.card()?.governance?.usage?.tokenMetric ?? null;
@@ -1825,7 +1825,7 @@ export function _validateTerminalUsageSeal(coordinator, recorder, handle, seal) 
       || Object.keys(seal).sort().join(',') !== fields.sort().join(',')) return { ok: false, code: 'usage_seal_invalid' };
     const availability = new Set(['reported', 'unavailable', 'not_applicable']);
     if (!availability.has(seal.tokens) || !availability.has(seal.usd)) return { ok: false, code: 'usage_seal_invalid' };
-    if (seal.counterId !== null && (typeof seal.counterId !== 'string' || seal.counterId.length === 0 || Buffer.byteLength(seal.counterId) > 256 || seal.counterId.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
+    if (seal.counterId !== null && (typeof seal.counterId !== 'string' || seal.counterId.length === 0 || seal.counterId.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
     if (seal.tokenMetric !== null && (typeof seal.tokenMetric !== 'string' || seal.tokenMetric.length === 0 || Buffer.byteLength(seal.tokenMetric) > 256 || seal.tokenMetric.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
     const reported = seal.tokens === 'reported' || seal.usd === 'reported';
     if (reported && (seal.counterId === null || !handle.providerTurn?.counterIds?.has(seal.counterId))) return { ok: false, code: 'usage_seal_counter_unobserved' };

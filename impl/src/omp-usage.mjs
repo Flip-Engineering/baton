@@ -25,13 +25,11 @@
 // TELEMETRY: agent_end.telemetry shape is not documented in the protocol reference and
 // its token field names are unverified. It is NOT used. Use agent_end.messages instead.
 
-import { createHash } from 'node:crypto';
 import { usdToNanos, usdFromNanos, USD_NANO_SCALE } from './usd.mjs';
 
 // Exported so root can declare this in the governance card when upgrading to native accounting.
 export const OMP_TOKEN_METRIC = 'message_end.totalTokens';
 
-const MAX_COUNTER_ID_BYTES = 256;
 
 function unavailableSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
@@ -44,14 +42,9 @@ function makeCounterId(worker, turnEpoch, processGeneration) {
   if (!Number.isSafeInteger(turnEpoch) || turnEpoch < 0) return null;
   if (!Number.isSafeInteger(processGeneration) || processGeneration < 0) return null;
   const candidate = `omp:${worker}:${turnEpoch}:${processGeneration}`;
-  if (!candidate.includes('\0') && Buffer.byteLength(candidate) <= MAX_COUNTER_ID_BYTES) {
+  if (!candidate.includes('\0')) {
     return candidate;
   }
-  // Long worker name: hash to stay within the coordinator contract (always 70 bytes).
-  const digest = createHash('sha256')
-    .update(`omp\0${worker}\0${turnEpoch}\0${processGeneration}`)
-    .digest('hex');
-  return `omp-h:${digest}`;
 }
 
 // Qualify raw provider+model to "provider/model".

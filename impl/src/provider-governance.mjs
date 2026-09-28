@@ -15,7 +15,6 @@ const POLICY_FIELDS = Object.freeze([
 const ROUTE_FIELDS = Object.freeze(['harness', 'model', 'effort', 'terminalReserve', 'mode']);
 const RESERVE_FIELDS = Object.freeze(['tokens', 'usd']);
 const MAX_ROUTES = 1024;
-const MAX_IDENTIFIER_BYTES = 128;
 const MAX_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_CALLS_PER_TURN = 100_000;
 const MAX_TERMINAL_RESERVE_TOKENS = 100_000_000;
@@ -41,15 +40,13 @@ function exactFields(value, fields) {
 }
 
 function boundedIdentifier(value) {
-  return typeof value === 'string'
-    && Buffer.byteLength(value) <= MAX_IDENTIFIER_BYTES
-    && IDENTIFIER.test(value);
+  return typeof value === 'string' && IDENTIFIER.test(value);
 }
 
 // Native model IDs may be provider-qualified and carry context suffixes such as [1m].
 // Validate those literal components without treating a slash as a routing mismatch.
 function boundedModelIdentifier(value) {
-  return typeof value === 'string' && Buffer.byteLength(value) <= MAX_IDENTIFIER_BYTES
+  return typeof value === 'string'
     && value.split('/').every((part) => /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]*$/u.test(part));
 }
 
