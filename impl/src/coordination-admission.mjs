@@ -51,7 +51,7 @@ const CONTRADICTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admi
 
 const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested']);
 
-const PROMOTION_FAILURE_KINDS = new Set(['integration.incomplete', 'integration.refused', 'recovery.claimed_without_spawn']);
+const PROMOTION_FAILURE_KINDS = new Set(['recovery.claimed_without_spawn']);
 
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
 
@@ -1937,7 +1937,7 @@ export function _normalizeRunResultExportRequest(store, fields, event, integrity
   const expected = [
     'schemaVersion', 'repoId', 'runId', 'nodeKey', 'taskId', 'resultSha', 'evidenceDigest',
     'profileDigest', 'exportPolicyDigest', 'exportRootDigest', 'adoptionReceiptDigest',
-    'semanticReviewTaskId', 'semanticReviewReceiptDigest', 'integrationAfterSha', 'format',
+    'semanticReviewTaskId', 'semanticReviewReceiptDigest', 'format',
     'maxFiles', 'maxBytes', 'stagingNonce', 'exportId', 'requestDigest',
   ];
   const nullableDigest = (value) => value === null || /^[a-f0-9]{64}$/.test(value ?? '');
@@ -1949,7 +1949,6 @@ export function _normalizeRunResultExportRequest(store, fields, event, integrity
       fields.exportId, fields.requestDigest].every((value) => /^[a-f0-9]{64}$/.test(value ?? ''))
     || !nullableDigest(fields.adoptionReceiptDigest) || !nullableDigest(fields.semanticReviewReceiptDigest)
     || (fields.semanticReviewTaskId !== null && !boundedText(fields.semanticReviewTaskId, 4_096))
-    || (fields.integrationAfterSha !== null && !validResultSha(fields.integrationAfterSha))
     || (fields.semanticReviewReceiptDigest === null) !== (fields.semanticReviewTaskId === null)
     || fields.format !== 'directory-v1'
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(fields.stagingNonce ?? '')
@@ -1989,18 +1988,7 @@ export function _deriveRunResultExportBinding(store, request, integrity = false)
       || target?.resultSha !== request.resultSha) fail('run result export semantic review is unavailable');
     semanticReview = { taskId: review.id, taskVersion: review.version, receiptDigest: request.semanticReviewReceiptDigest };
   }
-  let integration = null;
-  if (request.integrationAfterSha !== null) {
-    const task = store._tasks.get(request.taskId);
-    const reports = (task?.artifactIds ?? []).map((id) => store._artifacts.get(id)).filter((artifact) => artifact
-      && artifact.accepted === true && artifact.supersededBy === null
-      && !Object.hasOwn(artifact, 'acceptanceInvalidation')
-      && artifact.mediaType === 'application/vnd.baton.integration+json'
-      && artifact.refs?.resultSha === request.resultSha && artifact.refs?.afterSha === request.integrationAfterSha);
-    if (reports.length !== 1) fail('run result export integration receipt is unavailable');
-    integration = { artifactId: reports[0].id, artifactDigest: reports[0].digest, afterSha: request.integrationAfterSha };
-  }
-  return freeze({ accepted, adoption, semanticReview, integration });
+  return freeze({ accepted, adoption, semanticReview });
 }
 
 export function _validateRunResultExportAdmission(store, p, event, integrity = false) {
@@ -2008,7 +1996,7 @@ export function _validateRunResultExportAdmission(store, p, event, integrity = f
   const requestFields = [
     'schemaVersion', 'repoId', 'runId', 'nodeKey', 'taskId', 'resultSha', 'evidenceDigest',
     'profileDigest', 'exportPolicyDigest', 'exportRootDigest', 'adoptionReceiptDigest',
-    'semanticReviewTaskId', 'semanticReviewReceiptDigest', 'integrationAfterSha', 'format',
+    'semanticReviewTaskId', 'semanticReviewReceiptDigest', 'format',
     'maxFiles', 'maxBytes', 'stagingNonce', 'exportId', 'requestDigest',
   ];
   const expected = [...requestFields, 'locator', 'binding', 'admissionDigest'];

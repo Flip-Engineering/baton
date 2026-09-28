@@ -238,11 +238,6 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   assert.equal(adopted.outline.phase, 'candidate_selected');
   const adoptedStatus = await workflow.status();
   assert.equal(adoptedStatus.result.state, 'adopted');
-  const integrated = await workflow.apply({
-    strategy: 'ff-only', reason: 'Apply the explicitly selected and adopted Candidate.',
-  });
-  assert.equal(integrated.outline.phase, 'completed');
-  assert.equal(readFileSync(join(repo, 'candidate-a.txt'), 'utf8'), 'codex\n');
 
   const events = readFileSync(join(deploymentRoot, 'state', 'coordination', 'events.jsonl'), 'utf8')
     .trim().split('\n').map((line) => JSON.parse(line));
@@ -281,7 +276,7 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   });
   const replayed = await deployment.open(workflow.id).status();
   assert.equal(replayed.phase, 'stopped');
-  assert.equal(replayed.result.state, 'integrated');
+  assert.equal(replayed.result.state, 'adopted');
   assert.equal(replayed.result.candidate.role, 'builder');
   assert.equal(replayed.result.retainedResultRef, `refs/baton/results/${replayed.result.sha}`);
   const replayEvidence = await deployment.open(workflow.id).evidence();

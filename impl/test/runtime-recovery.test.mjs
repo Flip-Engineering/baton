@@ -287,7 +287,7 @@ test('RR4: the relocated primitives moved once and the coordinator export surfac
 
 test('RR7 (slice 12): the base-layer declarations are defined once, and the observation surface holds by identity', async () => {
   const observation = await import('../src/runtime-observation.mjs');
-  // noop and the closed-verdict family moved here because _integrate's effect remainder reads
+  // noop and the closed-verdict family moved here because the coordinator's verification paths read
   // closedVerificationVerdict and the acyclic order forbids effects -> observation (observation
   // already imports effects). runtime-observation re-exports them, so its surface is unchanged.
   for (const name of OBSERVATION_REEXPORTED) {

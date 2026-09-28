@@ -210,7 +210,6 @@ async function innerApplication(t, label, readiness, spawnCalls) {
         routes: [{ ...MUSE_ROUTE }],
         capabilities: ['code', 'test'],
         effects: ['repository_edit'],
-        integrationPolicy: { mode: 'none', strategies: [], requireAdoptedResult: false, requireSemanticReview: false },
         resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
       },
     },

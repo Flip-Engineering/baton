@@ -565,21 +565,6 @@ export function _poisonCoordination(coordinator, err) {
     return coordinator._fatalError;
   }
 
-export function _poisonIntegration(coordinator, err, strategy = 'structured') {
-    if (!coordinator._fatalError) {
-      const fatal = new Error(`${strategy} integration crossed its Git effect boundary before final validation completed: ${err?.message ?? err}`, { cause: err });
-      fatal.name = 'IntegrationWriteIntegrityError';
-      fatal.code = strategy === 'structured'
-        ? 'structured_post_effect_inconsistent' : 'integration_post_effect_inconsistent';
-      coordinator._fatalError = fatal;
-      for (const handle of coordinator._workers.values()) {
-        if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: fatal.code });
-        if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) handle.recoverySpawnAbort.abort({ reason: fatal.code });
-      }
-    }
-    return coordinator._fatalError;
-  }
-
 export function liveWorkspaceHolders(coordinator, physicalOwnerId, { excludeHandleId = null } = {}) {
     return workspaceHolders(coordinator._workers.values(), physicalOwnerId, { excludeHandleId });
   }

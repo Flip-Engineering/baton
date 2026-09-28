@@ -2816,8 +2816,8 @@ advertised only when the exact §93.15 eligibility says so. `apply_result` and `
 both consume `eligibility.integrate` and require the explicit `program.integrate` capability,
 current repository-write authority, the
 selected verified Candidate digest, a separately approved integration Plan/action, and the sole
-generation-fenced integrator. They append a separately registered semantic-action event and invoke
-the existing integration authority; they do not add an eighth Program effect node. They never
+generation-fenced integrator. They append a separately registered semantic-action event; they do
+not add an eighth Program effect node. They never
 follow automatically from selection, approval, consensus, completion, or a worker request.
 `export_result` cannot imply apply, push, publish, promote, or integrate.
 

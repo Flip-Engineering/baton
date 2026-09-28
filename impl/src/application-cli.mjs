@@ -1794,14 +1794,14 @@ export function batonCliHelp(topic = 'application') {
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
 
 const RUN_VIEW_OUTPUT_KINDS = new Set([
-  'command', 'semantic-action', 'adopt', 'integrate',
+  'command', 'semantic-action', 'adopt',
 ]);
 
 function compactRunResult(result) {
   if (!record(result)) return null;
   const keys = [
     'state', 'status', 'nodeKey', 'sha', 'verdict', 'summary', 'adopted',
-    'reviewed', 'integrated', 'strategy',
+    'reviewed',
   ];
   const projected = Object.fromEntries(keys
     .filter((key) => result[key] !== undefined)
@@ -4492,7 +4492,7 @@ export function parseBatonCli(rawArgs) {
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'resultpin',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
-    'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+    'retry', 'resume', 'review', 'export', 'debug']);
   // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
   // start/follow spellings, and the canonical alias first-tokens. Composed by spread — never a
   // hand-enumerated literal — so it tracks the dispatch set it guards.
@@ -4817,12 +4817,6 @@ export function parseBatonCli(rawArgs) {
     const exact = route(take(args, '--exact', { required: true }));
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     return { kind: 'command', name: 'run.review', args: { runId, route: exact, reason }, idempotencyKey };
-  }
-  if (action === 'integrate') {
-    const strategy = take(args, '--strategy', { required: true });
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    if (!['ff-only', 'structured'].includes(strategy)) throw cliError('integration strategy must be ff-only or structured');
-    return { kind: 'integrate', runId, strategy, reason, idempotencyKey };
   }
   if (action === 'export') {
     const destination = args.shift();
@@ -5904,14 +5898,6 @@ export async function runBatonCli(parsed, client, options = {}) {
     return client.command('run.act', {
       runId: parsed.runId, actionId: matching[0].actionId, inputs: parsed.inputs,
     }, `${parsed.idempotencyKey}:act`);
-  }
-  if (parsed.kind === 'integrate') {
-    const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);
-    if (!evidence?.manifestDigest) throw cliError('Run has no terminal evidence available for integration', 'application_run_not_terminal');
-    return client.command('run.integrate', {
-      runId: parsed.runId, evidenceDigest: evidence.manifestDigest,
-      strategy: parsed.strategy, reason: parsed.reason,
-    }, `${parsed.idempotencyKey}:integrate`);
   }
   if (parsed.kind === 'export') {
     const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);

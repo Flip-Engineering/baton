@@ -164,7 +164,6 @@ test('SC5-SC10: an accepted fact-bound independent oracle atomically releases an
   const driver = await correctionFixture(); const fact = driver.post('derived-release', 'SECRET derived release /Users/alice/private');
   const oracle = await driver.coordinator.spawnScratchOracle(fact.id, 'reviewer', { taskId: 'release-oracle', model: 'reviewer-model', effort: 'low', modelPolicy: { allow: ['reviewer-model'], allowFamilies: ['reviewer-family'], reasoningEffort: 'low' }, verification: { command: 'true', expectExit: 0 } });
   await until(async () => (await driver.coordinator.result(oracle.id)).ready); assert.equal((await driver.coordinator.result(oracle.id)).status, 'completed');
-  await assert.rejects(driver.coordinator.integrate(oracle.id), (error) => error.code === 'scratch_oracle_not_integrable');
   const observedSeq = driver.coordination.snapshot().lastSeq; const args = { action: 'release', scratchFactId: fact.id, oracleTaskId: 'release-oracle', observedSeq }; const context = { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'release:direct', budgetTokens: 32_000 };
   const result = await driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', args, context); const document = result.payload[0];
   assert.deepEqual(Object.keys(document).sort(), ['action', 'affectedReadCount', 'eventSeq', 'observedSeq', 'oracleTaskId', 'policyDigest', 'projectionDigest', 'receiptDigest', 'replacementGrounding', 'replacementNodeId', 'repoId', 'requestDigest'].sort());

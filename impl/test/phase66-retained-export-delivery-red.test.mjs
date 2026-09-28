@@ -60,7 +60,6 @@ function materializedExport(t, label) {
       goal: { id: `goal-${label}`, version: 1, digest: 'd'.repeat(64) },
       plan: { id: `plan-${label}`, version: 1, digest: 'e'.repeat(64), approvalDigest: 'f'.repeat(64) },
       adoptionReceiptDigest: '1'.repeat(64), semanticReviewReceiptDigest: null,
-      integrationAfterSha: null,
     },
     policy: { format: 'directory-v1', maxFiles: 32, maxBytes: 1024 * 1024 },
   });

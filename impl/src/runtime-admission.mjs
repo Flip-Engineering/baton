@@ -2,7 +2,7 @@
 // authority-op guards, the route and policy admission, the pause/interaction authority, the
 // contribution capture/check admission, and the constructor (the corpus's admission-classified
 // composition root). Slice 12 adds the tranche-2 admission prefixes (_admitRunStopTargets,
-// _admitIntegration, _admitDelivery): the refusal chains of the entangled effect members, called
+// _admitDelivery): the refusal chains of the entangled effect members, called
 // first by the effect remainders in runtime-effects.mjs (one-way — this module never imports the
 // effects module). Bodies are the members' own with two explicit boundary parameters — the
 // coordinator receiver and the injected recorder port (slice 6) — and every recording act routes
@@ -31,7 +31,7 @@ import { isTransientProviderFault } from './provider-faults.mjs';
 import { normalizeProviderGovernancePolicy, validateProviderGovernanceCard } from './provider-governance.mjs';
 import * as recorderPort from './runtime-recorder-port.mjs';
 import {
-  IntegrationError, KILL_RULES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES,
+  KILL_RULES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES,
   RUN_TIMELINE_OPERATIONAL_KINDS, TERMINAL_TASK_STATUSES,
   canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, typedTerminalCode,
 } from './runtime-recovery.mjs';
@@ -63,7 +63,7 @@ export const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
   'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
   'admitRunResultExport', 'completeRunResultExport',
-  'recordDriver', 'completeIntegration', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
+  'recordDriver', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
   'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
@@ -312,7 +312,7 @@ export class SupervisedProcesses {
 
 export function constructor(coordinator, opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     coordinator._closed = false;
@@ -654,7 +654,6 @@ export function constructor(coordinator, opts) {
     // VR6: the immutable deployment verifier-runtime identity, used to conflict a retry whose
     // admission was recorded under a different runtime policy than the one now bound.
     coordinator._verificationRuntimeDigest = opts.verificationRuntimeDigest ?? null;
-    coordinator._requireIndependentOracle = opts.requireIndependentOracle ?? false;
     // C4: injectable timer primitives for a real, unref'd stop-deadline timer.
     coordinator._setTimeout = opts.setTimeout ?? globalThis.setTimeout;
     coordinator._clearTimeout = opts.clearTimeout ?? globalThis.clearTimeout;
@@ -2022,7 +2021,6 @@ export async function result(coordinator, recorder, workerId) {
       lineage: handle.lineage ?? null,
       topology: coordinator._taskTopologyProjection(task?.id ?? handle.taskId),
       review: task?.review ?? null,
-      integration: task?.integration ?? null,
       capturedSha: task?.capturedSha ?? null,
       retainedResultRef: task?.retainedResultRef ?? null,
       verificationStability: task?.verificationStability ?? null,
@@ -2650,42 +2648,6 @@ export function _admitRunStopTargets(coordinator, recorder, targetWorkerIds, act
     if (coordinator._closed || (!drainAuthorized && coordinator._drainState !== 'open')) {
       throw Object.assign(new Error('coordinator authority is not open'), { code: 'coordinator_closed' });
     }
-}
-
-export function _admitIntegration(coordinator, handle, task, opts) {
-    if (!task || task.status !== 'completed' || !task.capturedSha) {
-      throw new IntegrationError('integration requires an accepted captured task result', 'result_not_accepted');
-    }
-    if (task.review?.kind === 'oracle' && task.review?.knowledgeTarget?.kind === 'scratch.fact') {
-      throw new IntegrationError('Scratch oracle worktrees are evidence-only and cannot be integrated', 'scratch_oracle_not_integrable');
-    }
-    if (coordinator._requireIndependentOracle) {
-      const oracle = [...coordinator._tasks.values()].find((candidate) =>
-        candidate.review?.parentTaskId === task.id
-        && candidate.review.kind === 'oracle'
-        && candidate.review.independent === true
-        && candidate.status === 'completed');
-      if (!oracle) {
-        throw new IntegrationError('integration requires a completed independent oracle from a different model family', 'independent_oracle_required');
-      }
-    }
-    const strategy = opts.strategy ?? 'ff-only';
-    if (!['ff-only', 'structured'].includes(strategy)) {
-      throw new IntegrationError(`unsupported integration strategy: ${strategy}`, 'unsupported_strategy');
-    }
-    if (!coordinator._worktrees || typeof coordinator._worktrees.integrate !== 'function') {
-      throw new IntegrationError('worktree manager does not implement integration', 'integration_unavailable');
-    }
-    if (strategy === 'structured' && (typeof coordinator._worktrees.stageStructuredIntegration !== 'function'
-      || typeof coordinator._worktrees.finalizeStructuredIntegration !== 'function'
-      || typeof coordinator._worktrees.inspectStructuredIntegration !== 'function'
-      || typeof coordinator._worktrees.removeStructuredIntegration !== 'function')) {
-      throw new IntegrationError('worktree manager does not implement structured integration', 'integration_unavailable');
-    }
-    if (handle.status === 'working' || handle.status === 'blocked' || handle.status === 'stopping' || handle.status === 'pending') {
-      throw new IntegrationError('worker must be idle, dead, exited, or orphaned before integration', 'worker_not_quiescent');
-    }
-
 }
 
 export function _admitDelivery(coordinator, recorder, handle, mode, opts) {

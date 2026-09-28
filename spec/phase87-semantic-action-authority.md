@@ -24,7 +24,6 @@ Every advertised semantic action includes `requiredCapabilities`, derived from o
 | `select_candidate`, `send_feedback`, `revise_candidate` | `control`, `observe` |
 | `stop_member`, `stop` | `emergency_stop`, `observe` |
 | `semantic_review` | `review`, `control`, `observe` |
-| `integrate` | `integrate_result`, `observe` |
 | `export_result` | `export_result`, `observe` |
 | `retry_verification` | `retry_verification`, `observe` |
 | `resume_work` | `resume_work`, `observe` |

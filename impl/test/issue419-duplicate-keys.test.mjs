@@ -70,7 +70,7 @@ test('419-c: application.mjs still declares the evidence manifest keys once each
   // pinned by existence, never by position, and the pin is the scanner's own answer for the file.
   const source = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
   assert.deepEqual(duplicateKeys(source), [], 'application.mjs declares every object key once');
-  for (const key of ['integration', 'verification', 'semanticReview']) {
+  for (const key of ['verification', 'semanticReview']) {
     assert.ok(source.includes(`${key}:`), `the evidence manifest still declares ${key}`);
   }
 });

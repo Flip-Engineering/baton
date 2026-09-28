@@ -64,7 +64,7 @@ function profile(maxFiles, maxBytes) {
     resultPolicy: { mode: 'none', maxAdoptedResults: 0, locator: 'git_ref' },
     exportPolicy: {
       mode: 'manual', format: 'directory-v1', maxFiles, maxBytes,
-      requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
+      requireAdoptedResult: false, requireSemanticReview: false,
     },
   };
 }
@@ -351,9 +351,9 @@ test('a profile with every optional policy omitted has one canonical self-verify
   assert.equal(records.length, 1);
   assert.equal(records[0].payload.profileDigest, profileDigest);
   assert.equal(digest(records[0].payload.profileDefinition), profileDigest);
-  assert.deepEqual(Object.fromEntries(['reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']
+  assert.deepEqual(Object.fromEntries(['reviewPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']
     .map((name) => [name, records[0].payload.profileDefinition[name].mode])), {
-    reviewPolicy: 'none', integrationPolicy: 'none', followPolicy: 'none',
+    reviewPolicy: 'none', followPolicy: 'none',
     exportPolicy: 'none', recoveryPolicy: 'none',
   });
   await second.shutdown(principal('shutdown'));

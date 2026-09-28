@@ -86,7 +86,6 @@ function completedExport(t, label, acceptedBytes) {
       },
       adoptionReceiptDigest: '1'.repeat(64),
       semanticReviewReceiptDigest: null,
-      integrationAfterSha: null,
     },
     policy: COMPLETED_UNDER,
   });

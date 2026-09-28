@@ -126,10 +126,6 @@ function fixture(name, {
       maxFindings: 16,
       maxReportBytes: 64 * 1024,
     },
-    integrationPolicy: {
-      mode: 'manual', strategies: ['ff-only', 'structured'],
-      requireAdoptedResult: true, requireSemanticReview: true,
-    },
   };
   const logDir = root(`${name}-log`);
   const driver = createDriver({
@@ -191,7 +187,7 @@ async function withLiveLoop(fn) {
   try { return await fn(); } finally { clearInterval(hold); }
 }
 
-test('SR1-SR10: exact independent structured review gates an evidence-bound integration and reaps reviewer ownership', async () => {
+test('SR1-SR10: exact independent structured review and adoption reap reviewer ownership', async () => {
   const f = fixture('approved');
   const runId = 'run-semantic-approved';
   await completedWork(f, runId);
@@ -218,17 +214,6 @@ test('SR1-SR10: exact independent structured review gates an evidence-bound inte
   }, principal('adopter'));
   assert.equal(adopted.result.state, 'adopted');
 
-  const beforeIntegration = await f.application.command('run.evidence', { runId }, principal('owner'));
-  assert.equal(beforeIntegration.schemaVersion, 1);
-  assert.equal(Object.hasOwn(beforeIntegration, 'resultIntent'), false);
-  const integrated = await f.application.command('run.integrate', {
-    runId, evidenceDigest: beforeIntegration.manifestDigest, strategy: 'ff-only',
-    reason: 'Integrate the adopted result after independent semantic approval.',
-  }, principal('integrator'));
-  assert.equal(integrated.phase, 'completed');
-  assert.equal(integrated.integration.state, 'integrated');
-  assert.equal(execFileSync('git', ['show', 'HEAD:impl/work.mjs'], { cwd: f.repo, encoding: 'utf8' }), 'export const fixed = true;\n');
-
   const reviewerTask = f.driver.coordination.snapshot().tasks.find((task) => task.taskType === 'review');
   assert.equal(Object.hasOwn(reviewerTask.brief, 'goalPlan'), false,
     'semantic review remains a derived Brief rather than an approved Plan node');
@@ -249,7 +234,7 @@ test('SR1-SR10: exact independent structured review gates an evidence-bound inte
   await f.application.shutdown(principal('shutdown'));
 });
 
-test('SR5/SR7/SR9: a stale source anchor fails closed and cannot authorize integration', async () => {
+test('SR5/SR7: a stale source anchor fails closed', async () => {
   const f = fixture('stale-anchor', {
     report: ({ defaultReport }) => ({
       ...defaultReport,
@@ -262,7 +247,6 @@ test('SR5/SR7/SR9: a stale source anchor fails closed and cannot authorize integ
     }),
   });
   const runId = 'run-semantic-stale';
-  const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim();
   await completedWork(f, runId);
   await f.application.command('run.review', {
     runId, route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Review exact result.',
@@ -270,11 +254,6 @@ test('SR5/SR7/SR9: a stale source anchor fails closed and cannot authorize integ
   const reviewed = await f.application.command('run.wait', { runId, timeoutMs: 5_000 }, principal('owner'));
   assert.equal(reviewed.semanticReview.state, 'review_failed');
   assert.equal(reviewed.semanticReview.error.code, 'application_review_anchor_stale');
-  const evidence = await f.application.command('run.evidence', { runId }, principal('owner'));
-  await assert.rejects(f.application.command('run.integrate', {
-    runId, evidenceDigest: evidence.manifestDigest, strategy: 'ff-only', reason: 'Must not integrate stale review.',
-  }, principal('integrator')), (error) => error.code === 'application_semantic_review_required');
-  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim(), headBefore);
   await f.application.shutdown(principal('shutdown'));
 });
 
@@ -292,7 +271,7 @@ test('SR2/SR6: same-family review is rejected before the reviewer provider sees 
   await f.application.shutdown(principal('shutdown'));
 });
 
-test('SR3/SR10: semantic approval and adoption reconstruct from durable state before later integration', async () => {
+test('SR3/SR10: semantic approval and adoption reconstruct from durable state after restart', async () => {
   let f = fixture('restart-reviewed');
   const runId = 'run-semantic-restart';
   await completedWork(f, runId);
@@ -319,11 +298,6 @@ test('SR3/SR10: semantic approval and adoption reconstruct from durable state be
     handles: f.driver.coordinator.list(),
   }));
   assert.equal(reconstructed.result.state, 'adopted');
-  const fresh = await f.application.command('run.evidence', { runId }, principal('owner'));
-  const integrated = await withLiveLoop(() => f.application.command('run.integrate', {
-    runId, evidenceDigest: fresh.manifestDigest, strategy: 'ff-only', reason: 'Integrate after durable reconstruction.',
-  }, principal('integrator')));
-  assert.equal(integrated.phase, 'completed');
   await withLiveLoop(() => f.application.shutdown(principal('second-shutdown')));
 });
 
@@ -376,7 +350,7 @@ test('SR4-SR7: unknown fields, substituted evidence, inconsistent verdicts, and 
   });
 });
 
-test('SR7/SR9: unverifiable findings and stale displayed evidence cannot authorize integration', async () => {
+test('SR7: unverifiable findings fail closed under the review policy', async () => {
   const f = fixture('unverifiable', {
     report: ({ defaultReport }) => ({
       ...defaultReport, verdict: 'unverifiable',
@@ -396,29 +370,6 @@ test('SR7/SR9: unverifiable findings and stale displayed evidence cannot authori
     runId, nodeKey: reviewed.result.nodeKey, resultSha: reviewed.result.sha,
     evidenceDigest: stale.manifestDigest, reason: 'Adoption does not bless semantic uncertainty.',
   }, principal('adopter'));
-  await assert.rejects(f.application.command('run.integrate', {
-    runId, evidenceDigest: stale.manifestDigest, strategy: 'ff-only', reason: 'Must reject uncertainty and stale evidence.',
-  }, principal('integrator')), (error) => error.code === 'application_semantic_review_required');
-  await f.application.shutdown(principal('shutdown'));
-});
-
-test('SR9: result adoption invalidates an older displayed manifest before integration', async () => {
-  const f = fixture('stale-integration-manifest');
-  const runId = 'run-stale-integration-manifest';
-  await completedWork(f, runId);
-  await f.application.command('run.review', {
-    runId, route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Approve the exact result.',
-  }, principal('review-controller'));
-  const reviewed = await f.application.command('run.wait', { runId, timeoutMs: 5_000 }, principal('owner'));
-  const stale = await f.application.command('run.evidence', { runId }, principal('owner'));
-  await f.application.command('run.adopt', {
-    runId, nodeKey: reviewed.result.nodeKey, resultSha: reviewed.result.sha,
-    evidenceDigest: stale.manifestDigest, reason: 'Adoption changes the authoritative evidence manifest.',
-  }, principal('adopter'));
-  await assert.rejects(f.application.command('run.integrate', {
-    runId, evidenceDigest: stale.manifestDigest, strategy: 'ff-only', reason: 'Reject the stale pre-adoption display.',
-  }, principal('integrator')), (error) => error.code === 'application_evidence_stale');
-  assert.notEqual((await f.application.command('run.evidence', { runId }, principal('owner'))).manifestDigest, stale.manifestDigest);
   await f.application.shutdown(principal('shutdown'));
 });
 
@@ -438,40 +389,4 @@ test('SR8: Run stop races an in-flight review to one exact fully reaped ownershi
     runId, route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Stopped Runs stay closed.',
   }, principal('review-controller')), (error) => error.code === 'application_run_stopped');
   await f.application.shutdown(principal('shutdown'));
-});
-
-test('SR9: dirty and non-fast-forward main states cannot become claimed integrations', async (t) => {
-  for (const mode of ['dirty', 'non-fast-forward']) {
-    await t.test(mode, async () => {
-      const f = fixture(`integration-${mode}`);
-      const runId = `run-integration-${mode}`;
-      await completedWork(f, runId);
-      await f.application.command('run.review', {
-        runId, route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Approve exact result before integration guard test.',
-      }, principal('review-controller'));
-      const reviewed = await f.application.command('run.wait', { runId, timeoutMs: 5_000 }, principal('owner'));
-      const evidence = await f.application.command('run.evidence', { runId }, principal('owner'));
-      await f.application.command('run.adopt', {
-        runId, nodeKey: reviewed.result.nodeKey, resultSha: reviewed.result.sha,
-        evidenceDigest: evidence.manifestDigest, reason: 'Select exact result.',
-      }, principal('adopter'));
-      const fresh = await f.application.command('run.evidence', { runId }, principal('owner'));
-      const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim();
-      if (mode === 'dirty') {
-        writeFileSync(join(f.repo, 'base.txt'), 'dirty local state\n');
-      } else {
-        writeFileSync(join(f.repo, 'main-only.txt'), 'main diverged\n');
-        execFileSync('git', ['add', 'main-only.txt'], { cwd: f.repo });
-        execFileSync('git', ['commit', '-qm', 'diverge main'], { cwd: f.repo });
-      }
-      const guardedHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim();
-      await assert.rejects(f.application.command('run.integrate', {
-        runId, evidenceDigest: fresh.manifestDigest, strategy: 'ff-only', reason: 'Guarded integration must refuse.',
-      }, principal('integrator')));
-      const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim();
-      assert.equal(headAfter, mode === 'dirty' ? headBefore : guardedHead);
-      assert.notEqual(headAfter, reviewed.result.sha);
-      await f.application.shutdown(principal('shutdown'));
-    });
-  }
 });

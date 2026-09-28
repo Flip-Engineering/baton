@@ -261,7 +261,7 @@ test('RI6: omitted single and Workflow manifests retain the exact pre-explicit v
   assert.equal(Object.hasOwn(singleEvidence, 'resultIntent'), false);
   assert.deepEqual(Object.keys(singleEvidence), [
     'schemaVersion', 'kind', 'state', 'repoId', 'runId', 'observedThroughSeq',
-    'bindings', 'phase', 'progress', 'node', 'result', 'integration', 'verification',
+    'bindings', 'phase', 'progress', 'node', 'result', 'verification',
     'semanticReview', 'artifacts', 'stop', 'ownership', 'checks', 'manifestDigest',
   ]);
 
@@ -341,95 +341,6 @@ test('RI7: an omitted historical read-only request reuses its exact durable Goal
   }), principal('owner'));
   assert.equal(fresh.resultIntent, 'change');
   assert.equal(fresh.planPreview.node.effects.includes('repository_edit'), true);
-});
-
-test('RI7b: the frozen parent digest crosses pending adopt, integrate, and export validators', async () => {
-  const manifest = structuredClone(v1Golden.single.manifest);
-  const current = {
-    goal: { ...v1Golden.single.current.goal },
-    plan: { nodes: [{ key: manifest.result.nodeKey }] },
-    profile: {
-      digest: manifest.bindings.profileDigest,
-      resultPolicy: { mode: 'manual', maxAdoptedResults: 1 },
-      integrationPolicy: {
-        mode: 'manual', strategies: ['ff-only'],
-        requireAdoptedResult: true, requireSemanticReview: true,
-      },
-      exportPolicy: {
-        mode: 'manual', format: 'directory-v1', maxFiles: 8, maxBytes: 4096,
-        requireAdoptedResult: true, requireSemanticReview: true, requireIntegration: false,
-      },
-    },
-  };
-  const before = {
-    result: { state: 'adopted', sha: manifest.result.sha },
-    semanticReview: structuredClone(manifest.semanticReview), integration: null,
-  };
-  const admitted = [];
-  const base = {
-    ready: Promise.resolve(), repoId: manifest.repoId,
-    principals: { observer: principal('observer') },
-    _assertOpen() {}, _assertRunMutable() {},
-    async _authorize() {},
-    _findRun: () => current,
-    _isWorkflowRun: () => false,
-    _buildEvidence: async () => manifest,
-    _buildView: async () => before,
-    driver: {
-      coordination: {
-        task: () => ({ assignee: 'worker-v1' }),
-        runResultAdoption: () => null,
-        admitRunResultAdoption(request) {
-          admitted.push({ seam: 'adopt', evidenceDigest: request.evidenceDigest });
-          return { adoption: request };
-        },
-      },
-      coordinator: {
-        async integrate() { return { ok: true, result: 'integrated' }; },
-      },
-    },
-    async _performResultAdoption() { return { receiptDigest: 'a'.repeat(64) }; },
-  };
-  const adopted = await BatonApplication.prototype.adopt.call(base, {
-    runId: manifest.runId, nodeKey: manifest.result.nodeKey, resultSha: manifest.result.sha,
-    evidenceDigest: manifest.manifestDigest, reason: 'Accept the frozen parent coordinate.',
-  }, principal('adopter'));
-  assert.equal(adopted.result.state, 'adopted');
-
-  const integrated = await BatonApplication.prototype._integrate.call(base, {
-    runId: manifest.runId, evidenceDigest: manifest.manifestDigest, strategy: 'ff-only',
-    reason: 'Integrate the frozen parent coordinate.',
-  }, principal('integrator'));
-  assert.equal(integrated.result.state, 'adopted');
-
-  const exportHarness = {
-    ...base,
-    exportRoot: 'fixture-export-root', exportRootDigest: 'b'.repeat(64),
-    resultExportLifecycle: {
-      deriveArchive: () => ({ descriptor: { schemaVersion: 1, state: 'delivered' } }),
-    },
-    driver: {
-      ...base.driver,
-      coordination: {
-        ...base.driver.coordination,
-        admitRunResultExport(request) {
-          admitted.push({ seam: 'export', evidenceDigest: request.evidenceDigest });
-          return { result: 'admitted', export: request };
-        },
-      },
-    },
-    async _performResultExport(request) {
-      return { schemaVersion: 1, state: 'completed', exportId: request.exportId };
-    },
-  };
-  const exported = await BatonApplication.prototype._export.call(exportHarness, {
-    runId: manifest.runId, evidenceDigest: manifest.manifestDigest,
-  }, principal('exporter'));
-  assert.equal(exported.export.state, 'completed');
-  assert.deepEqual(admitted, [
-    { seam: 'adopt', evidenceDigest: manifest.manifestDigest },
-    { seam: 'export', evidenceDigest: manifest.manifestDigest },
-  ]);
 });
 
 test('RI8: explicit markers produce distinct stable schema-v2 evidence', async (t) => {

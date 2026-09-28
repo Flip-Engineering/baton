@@ -75,7 +75,7 @@ Every application operation returns one bounded, credential-free `RunView` conta
 - requested/resolved/observed harness, model, and effort plus auto-route rationale;
 - allocated, reserved, consumed, released, held, and overrun budget state;
 - worker/process state and pending question/approval/steering attention;
-- machine verification, independent semantic-review, and integration state;
+- machine verification and independent semantic-review state;
 - process/worktree/runtime/branch/capacity/writer ownership and cleanup state;
 - content-addressed evidence references; and
 - a short provenance-linked narrative synthesized from Story and durable coordination facts.

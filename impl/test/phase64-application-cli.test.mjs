@@ -71,7 +71,6 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
   assert.deepEqual(parseBatonCli(['run', 'review', 'run-a', '--exact', 'grok/grok-4.5@low', '--reason', 'Independent review']).args, {
     runId: 'run-a', route: { harness: 'grok', model: 'grok-4.5', effort: 'low' }, reason: 'Independent review',
   });
-  assert.equal(parseBatonCli(['run', 'integrate', 'run-a', '--strategy', 'ff-only', '--reason', 'Reviewed']).kind, 'integrate');
   assert.deepEqual(parseBatonCli(['serve', './deployment.mjs']), { kind: 'serve', configPath: './deployment.mjs' });
   assert.deepEqual(parseBatonCli(['run', 'recover', 'run-a', '--idempotency-key', 'recover-a']), {
     kind: 'command', name: 'run.recover', args: { runId: 'run-a' }, idempotencyKey: 'recover-a',
@@ -233,22 +232,6 @@ test('UC3: adopt reads terminal evidence then binds its displayed digest without
   assert.deepEqual(calls, [
     { name: 'run.evidence', args: { runId: 'run-a' }, key: 'adopt-a:evidence' },
     { name: 'run.adopt', args: { runId: 'run-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: D, reason: 'Independent result selected' }, key: 'adopt-a:adopt' },
-  ]);
-});
-
-test('UC3b: integrate reads fresh terminal evidence and binds its displayed digest', async () => {
-  const calls = [];
-  const client = { command: async (name, args, key) => {
-    calls.push({ name, args, key });
-    if (name === 'run.evidence') return { manifestDigest: D };
-    return { runId: 'run-a', phase: 'completed', integration: { state: 'integrated' } };
-  } };
-  const parsed = parseBatonCli(['run', 'integrate', 'run-a', '--strategy', 'ff-only', '--reason', 'Reviewed result', '--idempotency-key', 'integrate-a']);
-  const result = await runBatonCli(parsed, client);
-  assert.equal(result.phase, 'completed');
-  assert.deepEqual(calls, [
-    { name: 'run.evidence', args: { runId: 'run-a' }, key: 'integrate-a:evidence' },
-    { name: 'run.integrate', args: { runId: 'run-a', evidenceDigest: D, strategy: 'ff-only', reason: 'Reviewed result' }, key: 'integrate-a:integrate' },
   ]);
 });
 

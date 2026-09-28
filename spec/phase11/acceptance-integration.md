@@ -1,4 +1,4 @@
-# Phase 11.3 — acceptance ladder and integration lifecycle
+# Phase 11.3 — acceptance ladder and pinned results
 
 ## AC1 — red then green is measured at pinned commits
 
@@ -27,16 +27,12 @@ references, not the implementer's prose answer. Oracle/review results pass their
 and become explicit acceptance inputs; same-family fallback is visible and cannot satisfy a
 required independent gate.
 
-## AC5 — verified integration is explicit and local-first
+## AC5 — accepted results are pinned before cleanup
 
-`integrate(worker)` is allowed only for an accepted captured SHA. Baton first stops/reaps the
-attached worker, then applies an explicit strategy. The first shipped strategy is `ff-only`: main
-must be clean and still descend directly from the task base. Success records before/result/after
-SHAs and marks the task integrated. Before branch cleanup Baton pins the captured SHA under
-`refs/baton/results/<sha>`; success releases the pin because main retains it, while refusal keeps
-the pin as durable evidence. Non-fast-forward state refuses without rewriting history.
+Baton pins the accepted captured SHA under `refs/baton/results/<sha>` before branch cleanup, so the
+verified result stays addressable after the worker's worktree and branch are reaped.
 
 ## Safety gate
 
-Temp-repo tests prove base/result freshness, coverage, mutation parsing, sandbox cleanup,
-integration success/refusal before any provider or remote probe.
+Temp-repo tests prove base/result freshness, coverage, mutation parsing, and sandbox cleanup before
+any provider or remote probe.

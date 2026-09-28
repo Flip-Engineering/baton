@@ -56,7 +56,7 @@ function profile() {
     },
     exportPolicy: {
       mode: 'manual', format: 'directory-v1', maxFiles: 8, maxBytes: 64 * 1_024,
-      requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
+      requireAdoptedResult: false, requireSemanticReview: false,
     },
   };
 }

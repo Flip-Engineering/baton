@@ -36,7 +36,7 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
   'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
-  'run.review', 'run.integrate', 'run.export', 'run.recover',
+  'run.review', 'run.export', 'run.recover',
   'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
@@ -55,7 +55,7 @@ const BRIDGE_FLOOR_COMMANDS = Object.freeze(
 );
 const MUTATIONS = new Set([
   'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve', 'run.feedback',
-  'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
+  'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review',
   'run.export', 'run.recover', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.board.post', 'run.knowledge.seed',

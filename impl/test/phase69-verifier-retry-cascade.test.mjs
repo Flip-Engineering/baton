@@ -629,13 +629,6 @@ test('RV: an initial candidate_failed result gets one exact no-provider confirma
     .some((node) => node.taskId === taskId), true, 'the original counterexample is not erased by the later pass');
   assert.deepEqual(f.driver.router.snapshot(), learningAfterFailure,
     'learning retains the original loss instead of rewriting the route as a clean win');
-  const integrated = await f.driver.coordinator.integrate(task.assignee, {
-    strategy: 'ff-only', actor: 'direct:owner',
-  });
-  assert.equal(integrated.integration.stability, 'passed_after_candidate_failure');
-  const integratedStatus = await f.application.command('run.status', { runId }, principal('owner'));
-  assert.equal(integratedStatus.integration.stability, 'passed_after_candidate_failure',
-    'integration preserves the instability classification');
 
   await f.application.shutdown(principal('restart'));
   const driver = buildDriver({

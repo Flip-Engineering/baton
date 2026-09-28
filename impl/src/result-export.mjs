@@ -987,7 +987,7 @@ export function materializeResultTree({
     || !exactObject(manifestCore, [
       'repoId', 'runId', 'nodeKey', 'taskId', 'resultSha', 'evidenceDigest',
       'profileDigest', 'exportPolicyDigest', 'goal', 'plan', 'adoptionReceiptDigest',
-      'semanticReviewReceiptDigest', 'integrationAfterSha',
+      'semanticReviewReceiptDigest',
     ]) || manifestCore.resultSha !== resultSha) {
     throw exportError('result export request or policy is invalid', 'result_export_invalid');
   }

@@ -53,7 +53,6 @@ const exportPolicy = Object.freeze({
   maxBytes: 4 * 1024 * 1024,
   requireAdoptedResult: true,
   requireSemanticReview: false,
-  requireIntegration: false,
 });
 
 function configuredAdapter() {
@@ -226,7 +225,6 @@ test('CE2: export root is deployment authority and is absent from profile/card/d
     format: exportPolicy.format,
     requireAdoptedResult: exportPolicy.requireAdoptedResult,
     requireSemanticReview: exportPolicy.requireSemanticReview,
-    requireIntegration: exportPolicy.requireIntegration,
   });
   assert.equal(Object.hasOwn(card.profiles[0].exportPolicy, 'maxFiles'), false);
   assert.equal(Object.hasOwn(card.profiles[0].exportPolicy, 'maxBytes'), false);

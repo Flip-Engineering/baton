@@ -69,7 +69,6 @@ function manifestCore(resultSha) {
     plan: { id: 'plan-export', version: 1, digest: 'e'.repeat(64), approvalDigest: 'f'.repeat(64) },
     adoptionReceiptDigest: '1'.repeat(64),
     semanticReviewReceiptDigest: null,
-    integrationAfterSha: null,
   };
 }
 

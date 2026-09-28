@@ -22,7 +22,7 @@ roles     = reviewer, challenger
 
 Each route always contains `harness`, `model`, and `effort`; no axis is inferred or erased. The
 result is one durable Run with the ordinary Plan approval, attributable Candidates, selection,
-verification, adoption, integration, and cleanup semantics. `baton.workflow(objective, { team })`
+verification, adoption, and cleanup semantics. `baton.workflow(objective, { team })`
 remains the advanced inner surface for caller-named teams of two to sixteen members. Routine
 review callers do not supply budgets, byte/file ceilings, task or fence IDs, receipt paths, or
 export coordinates.
@@ -36,9 +36,8 @@ client displays or auto-drives it. Action IDs remain principal-scoped. Execution
 the current action again, validates the trusted capability authority, calls deployment
 authorization, and rechecks freshness immediately before the effect.
 
-Client action helpers materialize defaults from the currently advertised input schema. This
-includes the integration strategy and integration reason; callers may override them only within
-the advertised choices.
+Client action helpers materialize defaults from the currently advertised input schema; callers may
+override them only within the advertised choices.
 
 ## Connected doctor
 

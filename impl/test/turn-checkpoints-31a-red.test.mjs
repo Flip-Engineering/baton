@@ -491,7 +491,7 @@ const D_PROFILE = Object.freeze({
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
   exportPolicy: {
     mode: 'manual', format: 'directory-v1', maxFiles: 128, maxBytes: 4 * 1024 * 1024,
-    requireAdoptedResult: true, requireSemanticReview: false, requireIntegration: false,
+    requireAdoptedResult: true, requireSemanticReview: false,
   },
 });
 

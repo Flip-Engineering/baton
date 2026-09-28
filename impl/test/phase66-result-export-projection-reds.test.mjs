@@ -41,7 +41,7 @@ const VERIFICATION = Object.freeze({
 
 const EXPORT_POLICY = Object.freeze({
   mode: 'manual', format: 'directory-v1', maxFiles: 128, maxBytes: 4 * 1024 * 1024,
-  requireAdoptedResult: true, requireSemanticReview: false, requireIntegration: false,
+  requireAdoptedResult: true, requireSemanticReview: false,
 });
 
 function temporary(t, label) {

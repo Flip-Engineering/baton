@@ -74,7 +74,6 @@ function materializationArguments(t, label, overrides = {}) {
       },
       adoptionReceiptDigest: '1'.repeat(64),
       semanticReviewReceiptDigest: null,
-      integrationAfterSha: null,
     },
     policy: POLICY,
     ...overrides,

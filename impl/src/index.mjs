@@ -854,53 +854,6 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       return Object.freeze([...paths].sort());
     },
-    async integrate(sha, opts = {}) {
-      const strategy = opts.strategy ?? 'ff-only';
-      if (strategy !== 'ff-only') throw new Error(`unsupported integration strategy: ${strategy}`);
-      const dirty = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
-      if (dirty) {
-        throw Object.assign(new Error('main checkout is dirty'), { code: 'ff_only_main_dirty' });
-      }
-      const beforeSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-      const postEffectError = (message, cause = null) => {
-        let afterSha = null;
-        let status = null;
-        try { afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
-        try { status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
-        return Object.assign(new Error(message, cause ? { cause } : undefined), {
-          code: 'ff_only_post_effect_inconsistent', postEffect: true,
-          beforeSha, afterSha, resultSha: sha, statusClean: status === '',
-        });
-      };
-      try {
-        localGit([
-          '-c', 'core.hooksPath=/dev/null', 'merge', '--no-verify', '--ff-only', sha,
-        ], repoRoot, { stdio: 'pipe' });
-      } catch (cause) {
-        let afterSha = null;
-        let status = null;
-        try { afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
-        try { status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
-        if (afterSha !== beforeSha || status !== '') {
-          throw postEffectError('ff-only integration crossed its Git effect boundary before failing', cause);
-        }
-        throw Object.assign(new Error('main could not fast-forward to the accepted result', { cause }), {
-          code: 'ff_only_refused', beforeSha, afterSha, resultSha: sha,
-        });
-      }
-      let afterSha;
-      let status;
-      try {
-        afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-        status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
-      } catch (cause) {
-        throw postEffectError('ff-only integration post-effect state is unreadable', cause);
-      }
-      if (afterSha !== sha || status !== '') {
-        throw postEffectError('ff-only integration post-effect validation failed');
-      }
-      return { beforeSha, resultSha: sha, afterSha };
-    },
     async stageStructuredIntegration(taskId, sha) {
       return worktreeMod.stageStructuredIntegration(repoRoot, taskId, sha, { resolver: opts.structuredMerge });
     },
@@ -1719,7 +1672,6 @@ export function createDriver(opts) {
       requireCoverage: opts.requireCoverage ?? false,
       requireMutation: opts.requireMutation ?? false,
     },
-    requireIndependentOracle: opts.requireIndependentOracle ?? false,
     story: { record: (e) => story.ingest(e) },
     now,
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,

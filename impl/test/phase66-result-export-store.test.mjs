@@ -160,7 +160,6 @@ function exportRequest(overrides = {}) {
     adoptionReceiptDigest: null,
     semanticReviewTaskId: null,
     semanticReviewReceiptDigest: null,
-    integrationAfterSha: null,
     format: 'directory-v1',
     maxFiles: 128,
     maxBytes: 4 * 1024 * 1024,
@@ -277,15 +276,6 @@ function completeSemanticReview(f, name) {
   return { taskId: reviewTaskId, task: completed.task, receiptDigest: '6'.repeat(64) };
 }
 
-function recordIntegration(f, name) {
-  const afterSha = '7'.repeat(40);
-  const artifact = f.store.registerArtifact({
-    taskId: TASK_ID, kind: 'integration', refs: { resultSha: RESULT_SHA, afterSha },
-    mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [f.evidence],
-  }, { actor: 'policy', key: `${name}:integration` }).artifact;
-  return { afterSha, artifact };
-}
-
 function assertRefusal(fn, code) {
   assert.throws(fn, (error) => error instanceof CoordinationRefusal && error.code === code);
 }
@@ -318,7 +308,6 @@ test('export admission derives one exact identity and binds accepted result auth
   assert.equal(admitted.export.binding.accepted.approvalDigest, f.approval.digest);
   assert.deepEqual(admitted.export.binding.adoption, null);
   assert.deepEqual(admitted.export.binding.semanticReview, null);
-  assert.deepEqual(admitted.export.binding.integration, null);
   const { admissionDigest, ...admissionCore } = admitted.event.payload;
   assert.equal(admissionDigest, digest(admissionCore));
   assert.deepEqual(f.store.pendingRunResultExports(), [admitted.export]);
@@ -538,17 +527,15 @@ test('CE15/CE16: restart preserves stopped-export cancellation with no publishab
   }, exactCompletionAuth(admitted.exportId)), 'run_stopping');
 });
 
-test('asserted adoption, semantic-review, and integration prerequisites require exact durable backing', async (t) => {
+test('asserted adoption and semantic-review prerequisites require exact durable backing', async (t) => {
   await t.test('all-backed', (inner) => {
     const f = fixture(inner, 'prerequisites-backed');
     const adoption = completeAdoption(f);
     const review = completeSemanticReview(f, 'prerequisites-backed');
-    const integration = recordIntegration(f, 'prerequisites-backed');
     const request = exportRequest({
       adoptionReceiptDigest: adoption.receipt.receiptDigest,
       semanticReviewTaskId: review.taskId,
       semanticReviewReceiptDigest: review.receiptDigest,
-      integrationAfterSha: integration.afterSha,
     });
     const admitted = f.store.admitRunResultExport(request, admissionAuth()).export;
     assert.deepEqual(admitted.binding.adoption, {
@@ -557,11 +544,6 @@ test('asserted adoption, semantic-review, and integration prerequisites require 
     assert.deepEqual(admitted.binding.semanticReview, {
       taskId: review.taskId, taskVersion: review.task.version, receiptDigest: review.receiptDigest,
     });
-    assert.deepEqual(admitted.binding.integration, {
-      artifactId: integration.artifact.id,
-      artifactDigest: integration.artifact.digest,
-      afterSha: integration.afterSha,
-    });
   });
 
   const rejected = [
@@ -569,7 +551,6 @@ test('asserted adoption, semantic-review, and integration prerequisites require 
     ['semantic-review', {
       semanticReviewTaskId: 'missing-review', semanticReviewReceiptDigest: '8'.repeat(64),
     }],
-    ['integration', { integrationAfterSha: '7'.repeat(40) }],
   ];
   for (const [name, override] of rejected) {
     await t.test(`missing-${name}`, (inner) => {

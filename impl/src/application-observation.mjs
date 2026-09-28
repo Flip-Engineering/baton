@@ -1061,44 +1061,27 @@ function normalizeReviewPolicy(value) {
     reportPath: value.reportPath, maxFindings: value.maxFindings, maxReportBytes: value.maxReportBytes,
   });
 }
-function normalizeIntegrationPolicy(value) {
-  if (value === undefined) return deepFreeze({ mode: 'none', strategies: [], requireAdoptedResult: false, requireSemanticReview: false });
-  exactObject(value, ['mode', 'strategies', 'requireAdoptedResult', 'requireSemanticReview'], 'application_profile_invalid', 'profile integrationPolicy');
-  if (value.mode === 'none' && Array.isArray(value.strategies) && value.strategies.length === 0
-    && value.requireAdoptedResult === false && value.requireSemanticReview === false) {
-    return deepFreeze(clone(value));
-  }
-  if (value.mode !== 'manual' || !Array.isArray(value.strategies) || value.strategies.length === 0
-    || value.strategies.length > 2 || value.strategies.some((strategy) => !['ff-only', 'structured'].includes(strategy))
-    || new Set(value.strategies).size !== value.strategies.length
-    || typeof value.requireAdoptedResult !== 'boolean' || typeof value.requireSemanticReview !== 'boolean') {
-    throw applicationError('profile integrationPolicy is invalid', 'application_profile_invalid');
-  }
-  return deepFreeze({ ...clone(value), strategies: [...value.strategies].sort() });
-}
 function normalizeExportPolicy(value) {
   if (value === undefined) return deepFreeze({
     mode: 'none', format: 'directory-v1', maxFiles: 0, maxBytes: 0,
-    requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
+    requireAdoptedResult: false, requireSemanticReview: false,
   });
   // The profile's export policy is an authority boundary: the export root is the deployment's
   // decision, so an undeclared field here is a smuggled path grant rather than a
   // forward-compatible extension (#535's authorization-boundary rule).
   exactObject(value, [
     'mode', 'format', 'maxFiles', 'maxBytes',
-    'requireAdoptedResult', 'requireSemanticReview', 'requireIntegration',
+    'requireAdoptedResult', 'requireSemanticReview',
   ], 'application_profile_invalid', 'profile exportPolicy', { rejectUnknown: true });
   if (value.mode === 'none' && value.format === 'directory-v1' && value.maxFiles === 0 && value.maxBytes === 0
-    && value.requireAdoptedResult === false && value.requireSemanticReview === false
-    && value.requireIntegration === false) {
+    && value.requireAdoptedResult === false && value.requireSemanticReview === false) {
     return deepFreeze(clone(value));
   }
   if (value.mode !== 'manual' || value.format !== 'directory-v1'
     || !Number.isSafeInteger(value.maxFiles) || value.maxFiles <= 0
     || !Number.isSafeInteger(value.maxBytes) || value.maxBytes <= 0
     || typeof value.requireAdoptedResult !== 'boolean'
-    || typeof value.requireSemanticReview !== 'boolean'
-    || typeof value.requireIntegration !== 'boolean') {
+    || typeof value.requireSemanticReview !== 'boolean') {
     throw applicationError('profile exportPolicy is invalid', 'application_profile_invalid');
   }
   return deepFreeze(clone(value));
@@ -1157,7 +1140,7 @@ export function normalizeProfile(name, value, repoId) {
     'nodeBudget', 'pathScope', 'verification', 'routes', 'capabilities', 'effects', 'resultPolicy',
   ];
   if (profileVersion === 2) requiredFields.push('workerPolicy');
-  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
+  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || requiredFields.some((field) => !Object.hasOwn(value, field))
     || Object.keys(value).some((field) => !allowedFields.has(field))) {
@@ -1196,7 +1179,6 @@ export function normalizeProfile(name, value, repoId) {
     } : {}),
     resultPolicy: normalizeResultPolicy(value.resultPolicy),
     reviewPolicy,
-    integrationPolicy: normalizeIntegrationPolicy(value.integrationPolicy),
     followPolicy: normalizeFollowPolicy(value.followPolicy),
     exportPolicy: normalizeExportPolicy(value.exportPolicy),
     recoveryPolicy: normalizeRecoveryPolicy(value.recoveryPolicy),
@@ -1674,7 +1656,7 @@ export function terminalCauseNarrative(cause) {
   if (cause?.kind === 'operator_stop') return 'Run terminated: operator_stop.';
   return null;
 }
-export function runProgress({ phase, approval, node, route, verification, reviewPolicyMode, semanticReview, result, integration, exportResult, resourcesSettled, stop }) {
+export function runProgress({ phase, approval, node, route, verification, reviewPolicyMode, semanticReview, result, exportResult, resourcesSettled, stop }) {
   const stopped = stop?.state === 'stopped' || phase === 'stopped';
   // Issue #334: 'inconclusive' is terminal with no accepted result, so the result/export
   // stages read stopped exactly like the other terminal-without-result phases.
@@ -1728,19 +1710,12 @@ export function runProgress({ phase, approval, node, route, verification, review
         : semanticReview?.state === 'review_failed' ? 'Review evidence failed closed validation'
           : semanticReview?.state === 'review_running' ? 'Independent reviewer is active'
             : 'Semantics remain explicitly unverified'),
-    stage('result', 'Accepted result', ['adopted', 'integrated'].includes(result?.state) ? 'complete'
+    stage('result', 'Accepted result', result?.state === 'adopted' ? 'complete'
       : result?.state === 'accepted' ? 'active'
         : failed || stopped ? 'stopped' : 'pending',
-    result?.state === 'integrated' ? 'Reviewed result integrated under explicit authority'
-      : result?.state === 'adopted' ? 'Verified commit selected without checkout mutation'
+    result?.state === 'adopted' ? 'Verified commit selected without checkout mutation'
       : result?.state === 'accepted' ? 'Verified commit preserved; adoption available'
         : 'No accepted result'),
-    stage('integration', 'Repository integration', integration?.state === 'integrated' ? 'complete'
-      : semanticReview?.state === 'revision_required' || semanticReview?.state === 'review_failed' ? 'blocked'
-        : semanticReview?.state === 'semantic_reviewed' ? 'active' : 'pending',
-    integration?.state === 'integrated' ? `Integrated with ${integration.strategy}`
-      : semanticReview?.state === 'semantic_reviewed' ? 'Semantic gate passed; explicit integration available'
-        : 'Integration remains gated'),
     stage('export', 'Accepted-result export', exportResult?.state === 'completed' ? 'complete'
       : exportResult?.state === 'pending' ? 'active'
         : exportResult?.state === 'cancelled' ? 'stopped'
@@ -2287,7 +2262,6 @@ export function _performResultExport(application, state) {
             },
             adoptionReceiptDigest: state.adoptionReceiptDigest,
             semanticReviewReceiptDigest: state.semanticReviewReceiptDigest,
-            integrationAfterSha: state.integrationAfterSha,
           },
         }));
       } catch (cause) {
@@ -2621,7 +2595,7 @@ export function _buildWorkflowEvidence(application, current, view) {
         )),
         selectedResultRefReverified: view.result === null
           || view.result.state === 'selection_required'
-          || ['pinned', 'integrated'].includes(view.result.preservation?.state),
+          || view.result.preservation?.state === 'pinned',
         feedbackTargetsBound: view.feedback.every((packet) => view.candidates.some((candidate) => (
           candidate.candidateId === packet.target.candidateId
           && candidate.candidateDigest === packet.target.candidateDigest
@@ -2650,7 +2624,6 @@ export function _buildWorkflowEvidence(application, current, view) {
         )),
         providerExecutionSettled: PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase),
         applicationTerminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
-        integrationAuthoritative: view.integration === null || view.phase === 'completed',
       },
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
@@ -2773,7 +2746,7 @@ export function _planningView(application, current, cause = null, principal = ap
     const progress = runProgress({
       phase, approval: null, node: null, route: null,
       verification: { state: 'pending' }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview, result: null,
-      integration: null, exportResult: null, resourcesSettled: runStop?.receipt?.remainingCount === 0, stop,
+      exportResult: null, resourcesSettled: runStop?.receipt?.remainingCount === 0, stop,
     });
     const view = {
       schemaVersion: 1,
@@ -2805,7 +2778,6 @@ export function _planningView(application, current, cause = null, principal = ap
       semanticReview,
       progress,
       result: null,
-      integration: null,
       export: null,
       ownership: { workers: 0, workerIds: [], closed: false },
       evidence: [],
@@ -2882,7 +2854,7 @@ export async function _historicalProfileView(application, current, observer, opt
     const progress = runProgress({
       phase, approval: projection?.approval ?? null, node, route,
       verification: { state: verificationState }, reviewPolicyMode: 'unavailable', semanticReview,
-      result: null, integration: null, exportResult: null, resourcesSettled, stop,
+      result: null, exportResult: null, resourcesSettled, stop,
     });
     const terminalCause = projectTypedTerminalCause({ terminalResult, runStop });
     const planNode = current.plan?.nodes?.[0] ?? null;
@@ -2953,7 +2925,7 @@ export async function _historicalProfileView(application, current, observer, opt
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
-      result: null, integration: null, export: null,
+      result: null, export: null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
       evidence: [],
@@ -3665,7 +3637,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const handlesByTask = new Map(workers.map((handle) => [handle.taskId, handle]));
     const handlesById = new Map(workers.map((handle) => [handle.id, handle]));
     const attempts = [];
-    const resultsByTask = new Map();
     for (const binding of definition.attempts) {
       const planNode = current.plan.nodes.find((node) => node.key === binding.nodeKey);
       const node = projection.nodes.find((candidate) => candidate.key === binding.nodeKey);
@@ -3677,7 +3648,6 @@ export async function _buildWorkflowView(application, current, observer, options
         try { terminalResult = await application.driver.coordinator.result(handle.id); }
         catch (error) { if (error?.code !== 'not_found') throw error; }
       }
-      if (terminalResult && task) resultsByTask.set(task.id, terminalResult);
       const selectedDispatch = current.dispatches.find((dispatch) => (
         dispatch.binding?.nodeKey === binding.nodeKey
       )) ?? null;
@@ -3758,8 +3728,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const selectedAdoption = selectedCandidate
       ? application.driver.coordination.runResultAdoption?.(runId, selectedCandidate.nodeKey) ?? null
       : null;
-    const selectedIntegration = selectedCandidate
-      ? resultsByTask.get(selectedCandidate.taskId)?.integration ?? null : null;
     const selectedAdopted = adoptionState(selectedAdoption) === 'adopted';
     const allSettled = attempts.every((attempt) => (
       ['accepted', 'failed', 'cancelled'].includes(attempt.state)
@@ -3777,7 +3745,7 @@ export async function _buildWorkflowView(application, current, observer, options
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     let phase = !projection.approval ? 'awaiting_plan_approval'
       : projection.approval.disposition === 'rejected' ? 'denied'
-        : selection ? (selectedIntegration ? 'completed' : 'candidate_selected')
+        : selection ? 'candidate_selected'
           : readOnlyResult && allAccepted && candidates.length > 0 ? 'completed'
           : allSettled && candidates.length > 0 ? 'selection_required'
             : allSettled && anyFailed ? 'failed'
@@ -3815,10 +3783,6 @@ export async function _buildWorkflowView(application, current, observer, options
     const canAdoptSelected = phase === 'candidate_selected' && selectedCandidate
       && selectedPreservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && !selectedAdopted;
-    const canIntegrateSelected = phase === 'candidate_selected' && selectedCandidate
-      && selectedAdopted && !selectedIntegration
-      && current.profile.integrationPolicy.mode === 'manual'
-      && current.profile.integrationPolicy.requireSemanticReview === false;
     const canReviseSelected = phase === 'candidate_selected'
       && revisionEligibility.state === 'eligible';
 
@@ -3949,9 +3913,6 @@ export async function _buildWorkflowView(application, current, observer, options
               kind: 'adopt_result', nodeKey: selectedCandidate.nodeKey,
               resultSha: selectedCandidate.resultSha,
             }] : []),
-            ...(canIntegrateSelected ? [{
-              kind: 'integrate', strategies: clone(current.profile.integrationPolicy.strategies),
-            }] : []),
             { kind: 'evidence' },
           ] : [{ kind: 'evidence' }],
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
@@ -3996,7 +3957,7 @@ export async function _buildWorkflowView(application, current, observer, options
       semanticReview: { state: 'not_started', findings: [] },
       progress: { current: currentStage.key, summary: `${currentStage.label}: ${currentStage.detail}`, stages, activity: runActivity(application.driver, workers) },
       result: selection && selectedCandidate ? {
-        state: selectedIntegration ? 'integrated' : selectedAdopted ? 'adopted' : 'selected',
+        state: selectedAdopted ? 'adopted' : 'selected',
         candidate: clone(selection.candidate),
         nodeKey: selectedCandidate.nodeKey,
         taskId: selectedCandidate.taskId,
@@ -4004,9 +3965,8 @@ export async function _buildWorkflowView(application, current, observer, options
         retainedResultRef: selectedCandidate.retainedResultRef,
         commitArtifact: clone(selectedCandidate.evidence.commitArtifact),
         verificationArtifact: clone(selectedCandidate.evidence.verificationArtifact),
-        preservation: selectedIntegration ? { state: 'integrated' }
-          : selectedPreservation ? { state: selectedPreservation.state }
-            : { state: 'unavailable' },
+        preservation: selectedPreservation ? { state: selectedPreservation.state }
+          : { state: 'unavailable' },
         adoption: selectedAdoption ? {
           state: adoptionState(selectedAdoption),
           receiptDigest: selectedAdoption.receipt?.receiptDigest
@@ -4021,12 +3981,6 @@ export async function _buildWorkflowView(application, current, observer, options
         })),
       } : candidates.length > 0 ? {
         state: 'selection_required', candidateCount: candidates.length,
-      } : null,
-      integration: selectedIntegration ? {
-        state: 'integrated', strategy: selectedIntegration.strategy,
-        beforeSha: selectedIntegration.beforeSha,
-        resultSha: selectedIntegration.resultSha,
-        afterSha: selectedIntegration.afterSha,
       } : null,
       export: null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
@@ -5295,7 +5249,7 @@ export function _semanticActions(application, current, view, principal, context 
       });
     }
     for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
+      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
         candidates.push({ kind: candidate.kind, source: candidate, target: null });
       }
@@ -5410,11 +5364,6 @@ export function _semanticActions(application, current, view, principal, context 
     return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
       const inputSchema = clone(definition.inputSchema);
-      if (kind === 'integrate' && source?.strategies) {
-        inputSchema.properties.strategy.enum = clone(source.strategies);
-        inputSchema.properties.strategy.default = source.strategies.includes('ff-only')
-          ? 'ff-only' : source.strategies[0];
-      }
       if (['select_candidate', 'send_feedback', 'stop_member'].includes(kind)
         && Array.isArray(source?.roles)) {
         inputSchema.properties.role.enum = clone(source.roles);
@@ -5454,8 +5403,7 @@ export function _semanticActions(application, current, view, principal, context 
         idempotent: definition.idempotent,
         priority: definition.priority,
         choices: kind === 'semantic_review' ? clone(source?.routes ?? [])
-          : kind === 'integrate' ? clone(source?.strategies ?? [])
-            : ['send', 'interrupt'].includes(kind) ? clone(source?.recipients ?? [])
+          : ['send', 'interrupt'].includes(kind) ? clone(source?.recipients ?? [])
             : (['select_candidate', 'send_feedback', 'stop_member'].includes(kind)
               || kind.startsWith('context_'))
               ? clone(source?.roles ?? []) : [],
@@ -5638,7 +5586,6 @@ export function _episodeItem(application, current, view, topic, role = null, epi
       verificationArtifact: clone(authoritativeResult.verificationArtifact
         ?? authoritativeResult.evidence?.verificationArtifact ?? null),
       stability: authoritativeResult.stability ?? null,
-      integration: clone(role === null ? view.integration ?? null : null),
       export: clone(role === null ? view.export ?? null : null),
     } : null;
     const contradictions = graph.edges.filter((candidate) => candidate.type === 'contradicted_by');
@@ -5907,7 +5854,7 @@ export function _semanticSectionItems(application, current, view, sectionId, epi
       verification: view.verification,
       semantic_review: view.semanticReview,
       result: view.result,
-      delivery: view.export ?? view.integration,
+      delivery: view.export,
       cleanup: {
         state: projectedCleanupState(view),
         terminalCause: view.terminalCause ?? null,

@@ -1,4 +1,4 @@
-# Phase 65 — Run semantic review and integration
+# Phase 65 — Run semantic review
 
 Status: shipped and green. SR1-SR12 have implementation, 96/96 focused adjacent contracts,
 1540/1540 canonical-suite evidence, adversarial refusal coverage, and a real independent GLM
@@ -11,19 +11,17 @@ a passing test, result adoption, or a Markdown heading as semantic authority.
 
 ## SR1 — one Run workflow
 
-`run.review` and `run.integrate` are commands in the same application registry as start, status,
-approve, answer, steer, stop, evidence, and adopt. Direct, authenticated Web, default MCP, CLI, and
-the browser operator use that registry and return the same bounded `RunView`. No caller assembles a
-review worker, searches logs, reads disposable worktrees, or calls Coordinator integration directly.
+`run.review` is a command in the same application registry as start, status, approve, answer, steer,
+stop, evidence, and adopt. Direct, authenticated Web, default MCP, CLI, and the browser operator use
+that registry and return the same bounded `RunView`. No caller assembles a review worker, searches
+logs, or reads disposable worktrees.
 
 ## SR2 — deployment-pinned policy and exact route
 
-A deployment profile may require semantic review and separately permit integration. Review policy
-pins a bounded report path, byte/finding ceilings, and an allowlist of exact
-`harness/model/effort` routes. Integration policy pins allowed `ff-only` and/or `structured`
-strategies and whether adoption and semantic approval are mandatory. Unknown fields, duplicate
-routes, unavailable exact routes, unsafe report paths, and a report path outside Plan scope fail
-before provider effects.
+A deployment profile may require semantic review. Review policy pins a bounded report path,
+byte/finding ceilings, and an allowlist of exact `harness/model/effort` routes. Unknown fields,
+duplicate routes, unavailable exact routes, unsafe report paths, and a report path outside Plan
+scope fail before provider effects.
 
 The caller selects the exact review route. Baton rejects a route outside policy or from the same
 harness/model family as the implementer before spawning it.
@@ -93,52 +91,35 @@ RunView. It is never normalized away. Adoption remains independent and never cha
 ## SR8 — progress and cleanup
 
 The unified progress board shows review policy, exact reviewer route, current review worker,
-semantic disposition, result selection, integration, and resource cleanup. An accepted review
+semantic disposition, result selection, and resource cleanup. An accepted review
 worker is killed/reaped after its pinned report becomes inspectable; its disposable worktree and
 process cannot remain merely because the report passed or failed.
 
 `run.stop` includes an in-flight reviewer in its exact durable target set. A stopped Run cannot
-start review or integration.
+start review.
 
-## SR9 — evidence-bound integration
+## SR10 — replay
 
-`run.integrate` requires a fresh displayed Run evidence digest, separately authorized integration
-capability, a policy-allowed strategy, the exact adopted result when policy requires adoption, and
-`semantic_reviewed` when policy requires semantic approval. Stale evidence, revision-required or
-unverifiable review, missing adoption, wrong strategy, stopped Run, dirty checkout, non-fast-forward,
-or incomplete structured staging causes no claimed integration.
-
-The existing Coordinator integration transaction remains the sole Git authority. `ff-only` is the
-default. Structured integration keeps its fresh staged verification and post-effect poison
-semantics. This command never pushes, publishes, deploys, or expands repository scope.
-
-## SR10 — completion honesty and replay
-
-A review-required, integration-required Run reaches `completed` only when the exact parent task has
-an authoritative integration receipt and the semantic report remains valid for that result. Review
-success without integration remains `work_completed`; integration cannot retroactively bless a
-stale report. Restart reconstructs the same state from durable Goal/Plan, task/review, protected-ref,
-artifact, operational-log, and integration authorities.
+Review state derives only from an active report for its exact reviewed result. Restart reconstructs
+the same state from durable Goal/Plan, task/review, protected-ref, artifact, and operational-log
+authorities.
 
 ## SR11 — northbound and operator parity
 
 Authenticated Web and MCP expose strict schemas, application-derived capabilities, repository/Run
-binding, idempotent admission, and safe errors for both commands. The CLI supports:
+binding, idempotent admission, and safe errors for the review command. The CLI supports:
 
 ```
 baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON
-baton run integrate RUN_ID --strategy ff-only|structured --reason REASON
 ```
 
-CLI integration first reads `run.evidence` and binds the displayed manifest digest; credentials
-remain environment-injected. The browser presents route selection, review findings, and integration
-confirmation inside the Run desk without unsafe HTML sinks.
+Credentials remain environment-injected. The browser presents route selection and review findings
+inside the Run desk without unsafe HTML sinks.
 
 ## SR12 — adversarial and live proof
 
 Tests cover malformed reports, stale anchors, fake evidence, same-family review, duplicate/replayed
-commands, restart, stopped Runs, concurrent review/stop, cleanup, stale integration evidence, dirty
-or non-fast-forward integration, structured post-effect failure, Web/MCP/CLI schemas, and browser
+commands, restart, stopped Runs, concurrent review/stop, cleanup, Web/MCP/CLI schemas, and browser
 rendering safety. Canonical validation must remain green.
 
 Recursive proof runs in a clean credential-filtered disposable repository through

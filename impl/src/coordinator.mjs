@@ -1249,8 +1249,8 @@ export class Coordinator {
     await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline, () => ({ reason: 'startup_cleanup_pending', timeoutMs: this._drainPolicy.timeoutMs }));
     if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
     // Operations admitted before the irreversible fence may finish, but no stop effect races
-    // them. In particular, integration/provider work cannot be relabelled as drained
-    // while it still owns an external or repository effect boundary.
+    // them. In particular, provider work cannot be relabelled as drained while it still owns an
+    // external effect boundary.
     while (this._authorityOps > 0 && this._now() < deadline) {
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
     }
@@ -2455,7 +2455,6 @@ export class Coordinator {
       result: null,
       verdict: null,
       capturedSha: null,
-      integration: null,
       retainedResultRef: null,
       review: opts.review ? Object.freeze({ ...opts.review }) : null,
       coordinationVersion,
@@ -2858,15 +2857,6 @@ export class Coordinator {
 
     async _failPreservedReattachment(handle, task, result) {
     return runtimeObservation._failPreservedReattachment(this, this._recorder, handle, task, result);
-  }
-
-  /** AC5: explicitly integrate an accepted captured commit. This never pushes. */
-  integrate(workerId, opts = {}) {
-    return this._withAuthorityOp(() => this._integrate(workerId, opts));
-  }
-
-    _integrate(workerId, opts = {}) {
-    return runtimeEffects._integrate(this, this._recorder, workerId, opts);
   }
 
   /** Preserve an accepted result under Baton's protected result-ref namespace without merging it. */
@@ -3952,7 +3942,7 @@ export class Coordinator {
       if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
     }
     // The rule an API kill names: the caller's when it states one (a drain, a startup
-    // reconciliation, an integration pre-stop), else the honest default for an operator stop.
+    // reconciliation), else the honest default for an operator stop.
     const rule = opts.rule ?? (startup ? KILL_RULES.startupReconciliation
       : draining ? KILL_RULES.drain : KILL_RULES.stopRequested);
     if (handle.status === 'dead' && (!handle.processRef || handle.processRef.state === 'closed')) {
@@ -4275,10 +4265,6 @@ export class Coordinator {
 
     _poisonCoordination(err) {
     return runtimeApi._poisonCoordination(this, err);
-  }
-
-    _poisonIntegration(err, strategy = 'structured') {
-    return runtimeApi._poisonIntegration(this, err, strategy);
   }
 
     _createCoordinationRefinement(handle, prior, relation) {

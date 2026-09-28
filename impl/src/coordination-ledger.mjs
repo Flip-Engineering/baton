@@ -5971,23 +5971,6 @@ export function recordMessage(store, kind, fields, auth) {
   return { ok: true, result: 'recorded', event: clone(event) };
 }
 
-export function completeIntegration(store, fields, auth) {
-  const prior = store._byKey.get(auth?.key);
-  if (prior) return { ok: true, result: 'idempotent', event: clone(prior) };
-  if (!store._tasks.has(fields?.taskId)) throw new CoordinationRefusal(`unknown integration task ${fields?.taskId}`, 'not_found');
-  const knowledge = store._prepareKnowledgeNode(fields.knowledge, { kind: 'Decision', trigger: 'integration' });
-  const artifact = store._prepareArtifact(fields.artifact, store._tasks.get(fields.taskId).status);
-  const events = store._appendBatch([
-    { kind: 'knowledge.promoted', payload: knowledge, auth },
-    {
-      kind: 'driver.recorded', payload: { kind: 'integration.completed', taskId: fields.taskId, integration: clone(fields.integration), evidence: clone(fields.evidence) },
-      auth: { actor: auth.actor, key: `${auth.key}:driver` },
-    },
-    { kind: 'artifact.registered', payload: artifact, auth: { actor: auth.actor, key: `${auth.key}:artifact` } },
-  ]);
-  return { ok: true, result: 'completed', event: clone(events[0]), driverEvent: clone(events[1]), artifactEvent: clone(events[2]) };
-}
-
 export function postScratchFact(store, fields, auth) {
   const prior = store._byKey.get(auth?.key);
   if (prior) return { ok: true, result: 'idempotent', event: clone(prior), fact: clone(store._scratchFacts.get(prior.payload.id)) };

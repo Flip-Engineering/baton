@@ -293,7 +293,6 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.recover': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   // S-1 v2: portable atomic attach-and-harvest. Observe-class; no emergency_stop; returns a
@@ -902,16 +901,6 @@ function normalizeReviewRequest(value) {
   });
 }
 
-function normalizeIntegrationRequest(value) {
-  exactObject(value, ['runId', 'evidenceDigest', 'strategy', 'reason'], 'application_integration_invalid', 'Run integration');
-  if (!validId(value.runId) || !/^[a-f0-9]{64}$/u.test(value.evidenceDigest ?? '')
-    || !['ff-only', 'structured'].includes(value.strategy) || !validText(value.reason, 1_024)
-    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
-    throw applicationError('Run integration request is invalid', 'application_integration_invalid');
-  }
-  return deepFreeze({ ...clone(value), reason: value.reason.normalize('NFKC').trim() });
-}
-
 
 
 
@@ -1401,7 +1390,6 @@ export function validateApplicationCommandArgs(name, args) {
   if (name === 'run.retry_verification') normalizeRetryVerification(args);
   if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
-  if (name === 'run.integrate') normalizeIntegrationRequest(args);
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
     throw applicationError('Run export target is invalid', 'application_export_invalid');
   }
@@ -3042,13 +3030,6 @@ export class BatonApplication {
       });
       return true;
     }
-    if (name === 'run.integrate') {
-      const request = normalizeIntegrationRequest(args);
-      await this._authorize(name, principal, request.runId, {
-        evidenceDigest: request.evidenceDigest, strategy: request.strategy, reasonDigest: digest(request.reason),
-      });
-      return true;
-    }
     if (name === 'run.export') {
       await this._authorize(name, principal, args.runId, { evidenceDigest: args.evidenceDigest });
       return true;
@@ -4406,7 +4387,6 @@ export class BatonApplication {
         route: clone(view.route),
       } : null,
       result: clone(view.result),
-      integration: clone(view.integration),
       verification: clone(view.verification),
       semanticReview: clone(view.semanticReview),
       artifacts: clone(view.evidence),
@@ -4420,10 +4400,9 @@ export class BatonApplication {
         terminalPlanState: PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase),
         acceptedArtifactsReverified: view.result === null
           || (view.result.commitArtifact !== null && view.result.verificationArtifact !== null),
-        resultRefReverified: view.result === null || ['pinned', 'integrated'].includes(view.result.preservation.state),
+        resultRefReverified: view.result === null || view.result.preservation.state === 'pinned',
         semanticDispositionConsistent: view.semanticReview.state !== 'semantic_reviewed'
           || /^[a-f0-9]{64}$/u.test(view.semanticReview.receiptDigest ?? ''),
-        integrationAuthoritative: view.integration === null || view.phase === 'completed',
       },
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
@@ -4802,59 +4781,6 @@ export class BatonApplication {
     });
   }
 
-  async integrate(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = normalizeIntegrationRequest(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'integration principal');
-    return this._withRunEffect(request.runId, () => this._integrate(request, principal));
-  }
-
-  async _integrate(request, principal) {
-    await this._authorize('run.integrate', principal, request.runId, {
-      evidenceDigest: request.evidenceDigest, strategy: request.strategy, reasonDigest: digest(request.reason),
-    });
-    this._assertRunMutable(request.runId);
-    const current = this._findRun(request.runId);
-    const policy = current.profile.integrationPolicy;
-    if (policy.mode !== 'manual' || !policy.strategies.includes(request.strategy)) {
-      throw applicationError('Run profile does not permit this integration strategy', 'application_integration_forbidden');
-    }
-    const before = await this._buildView(current, this.principals.observer);
-    if (before.integration) {
-      if (before.integration.strategy !== request.strategy) {
-        throw applicationError('Run is already integrated with a different strategy', 'application_integration_conflict');
-      }
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.integrate', result: 'replayed', strategy: request.strategy },
-      });
-    }
-    if (policy.requireSemanticReview && before.semanticReview.state !== 'semantic_reviewed') {
-      throw applicationError('Run integration requires a successful independent semantic review', 'application_semantic_review_required');
-    }
-    if (policy.requireAdoptedResult && before.result?.state !== 'adopted') {
-      throw applicationError('Run integration requires explicit result adoption', 'application_result_adoption_required');
-    }
-    const manifest = await this._buildEvidence(current);
-    if (manifest.manifestDigest !== request.evidenceDigest || manifest.result?.sha !== before.result?.sha
-      || manifest.semanticReview?.receiptDigest !== before.semanticReview?.receiptDigest) {
-      throw applicationError('Run integration target differs from the displayed evidence', 'application_evidence_stale');
-    }
-    const integrationTaskId = manifest.node?.taskId ?? manifest.result?.taskId;
-    const task = validText(integrationTaskId, 4_096)
-      ? this.driver.coordination.task(integrationTaskId) : null;
-    if (!task?.assignee) throw applicationError('Run integration worker authority is unavailable', 'application_integration_unavailable');
-    const outcome = await this.driver.coordinator.integrate(task.assignee, {
-      strategy: request.strategy, actor: principal.actor,
-    });
-    if (outcome?.ok !== true || outcome?.result !== 'integrated') {
-      throw applicationError('Run integration did not complete', 'application_integration_incomplete');
-    }
-    return this._buildView(current, this.principals.observer, {
-      action: { command: 'run.integrate', result: 'integrated', strategy: request.strategy, reason: request.reason },
-    });
-  }
-
   async export(rawRequest, rawPrincipal) {
     this._assertOpen();
     await this.ready;
@@ -4879,9 +4805,6 @@ export class BatonApplication {
     if (policy.requireSemanticReview && before.semanticReview?.state !== 'semantic_reviewed') {
       throw applicationError('Run export requires a successful independent semantic review', 'application_semantic_review_required');
     }
-    if (policy.requireIntegration && before.integration?.state !== 'integrated') {
-      throw applicationError('Run export requires an integrated result', 'application_integration_required');
-    }
     const evidence = await this._buildEvidence(current);
     if (evidence.manifestDigest !== request.evidenceDigest
       || !evidence.result?.sha || evidence.result.sha !== before.result?.sha
@@ -4904,7 +4827,6 @@ export class BatonApplication {
       adoptionReceiptDigest: evidence.result.adoption?.receiptDigest ?? null,
       semanticReviewTaskId: evidence.semanticReview?.taskId ?? null,
       semanticReviewReceiptDigest: evidence.semanticReview?.receiptDigest ?? null,
-      integrationAfterSha: evidence.integration?.afterSha ?? null,
       format: policy.format,
       maxFiles: policy.maxFiles,
       maxBytes: policy.maxBytes,
@@ -5796,14 +5718,13 @@ export class BatonApplication {
       ...(objectiveAdvice ? { advice: objectiveAdvice } : {}),
     };
     let publicResult = resultSha ? {
-      state: result?.integration ? 'integrated' : adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',
+      state: adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',
       nodeKey: node.key,
       sha: resultSha,
       commitArtifact: acceptedCommit ? { id: acceptedCommit.id, digest: acceptedCommit.digest } : null,
       verificationArtifact: acceptedVerification ? { id: acceptedVerification.id, digest: acceptedVerification.digest } : null,
       stability: resultStability,
-      preservation: result?.integration ? { state: 'integrated' }
-        : preservation ? { state: preservation.state } : { state: 'unavailable' },
+      preservation: preservation ? { state: preservation.state } : { state: 'unavailable' },
       adoption: adoption ? {
         state: adoptionState(adoption),
         receiptDigest: adoption.receipt?.receiptDigest ?? adoption.receiptDigest ?? null,
@@ -5813,12 +5734,6 @@ export class BatonApplication {
       nodes: [node], result: publicResult,
       plan: { approval: projection.approval ? { digest: projection.approval.digest } : null },
     });
-    const integration = result?.integration ? deepFreeze({
-      state: 'integrated', strategy: result.integration.strategy,
-      beforeSha: result.integration.beforeSha, resultSha: result.integration.resultSha,
-      afterSha: result.integration.afterSha,
-      stability: result.integration.stability ?? resultStability,
-    }) : null;
     const durableExport = this.driver.coordination.runResultExport?.(runId, node.key) ?? null;
     const exportResult = durableExport?.status === 'completed' ? clone(durableExport.receipt)
       : durableExport?.status === 'pending' ? {
@@ -5849,7 +5764,7 @@ export class BatonApplication {
     if (!runStop && node.state === 'accepted' && cellTerminalPhase === null) {
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
-      else if ((integration || durableExport?.status === 'completed')
+      else if (durableExport?.status === 'completed'
         && (current.profile.reviewPolicy.mode === 'none' || semanticReview.state === 'semantic_reviewed')) phase = 'completed';
       else phase = 'work_completed';
     }
@@ -5865,16 +5780,10 @@ export class BatonApplication {
     const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
     const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
-    const canIntegrate = !readOnlyResult && current.profile.integrationPolicy.mode === 'manual'
-      && (!current.profile.integrationPolicy.requireSemanticReview
-        || semanticReview.state === 'semantic_reviewed')
-      && (!current.profile.integrationPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
-      && !integration;
     const canExport = !readOnlyResult && current.profile.exportPolicy.mode === 'manual' && this.exportRoot !== null
       && resultSha !== null && durableExport === null
       && (!current.profile.exportPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
-      && (!current.profile.exportPolicy.requireSemanticReview || semanticReview.state === 'semantic_reviewed')
-      && (!current.profile.exportPolicy.requireIntegration || integration?.state === 'integrated');
+      && (!current.profile.exportPolicy.requireSemanticReview || semanticReview.state === 'semantic_reviewed');
     const exportActions = durableExport?.status === 'completed' && !runStop
       ? [{ kind: 'download_export', exportId: durableExport.exportId }]
       : durableExport?.status === 'pending' ? [{ kind: 'wait' }, { kind: 'status' }]
@@ -5888,7 +5797,6 @@ export class BatonApplication {
         : ['running', 'reviewing'].includes(phase) ? [{ kind: 'steer' }, { kind: 'stop' }, { kind: 'wait' }, ...attention]
           : phase === 'work_completed' ? [
             ...(canReview ? [{ kind: 'semantic_review', routes: clone(current.profile.reviewPolicy.routes) }] : []),
-            ...(canIntegrate ? [{ kind: 'integrate', strategies: clone(current.profile.integrationPolicy.strategies) }] : []),
             ...exportActions,
             { kind: 'evidence' },
             ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : []),
@@ -5913,7 +5821,7 @@ export class BatonApplication {
         stability: resultStability,
         failureOwnership: result?.verdict?.failureOwnership ?? null,
       }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
-      result: publicResult, integration, exportResult, resourcesSettled, stop: runStop ? {
+      result: publicResult, exportResult, resourcesSettled, stop: runStop ? {
         state: runStop.status, receipt: runStop.receipt,
       } : null,
     }), activity: runActivity(this.driver, workers) };
@@ -5978,7 +5886,6 @@ export class BatonApplication {
       progress,
       activity: this._activityProjection(current, workers),
       result: publicResult,
-      integration,
       export: exportResult,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
@@ -6086,7 +5993,6 @@ export class BatonApplication {
     if (event.kind.startsWith('run.stop_')) return 'cleanup';
     if (event.kind === 'driver.recorded') {
       const driverKind = event.payload?.kind ?? '';
-      if (driverKind.startsWith('integration.')) return 'integration';
       if (driverKind.startsWith('recovery.')) return 'recovery';
       if (driverKind.startsWith('verification.') || driverKind.startsWith('acceptance.')) return 'verification';
       if (driverKind === APPLICATION_WORKFLOW_SELECTION_RECORD_KIND) return 'result';
@@ -6184,7 +6090,6 @@ export class BatonApplication {
       verification: 'Run verification state changed.',
       evidence: 'Run evidence changed.',
       result: 'Run result selection changed.',
-      integration: 'Run integration state changed.',
       recovery: 'Run recovery state changed.',
       cleanup: 'Run cleanup state changed.',
     };
@@ -8567,18 +8472,6 @@ export class BatonApplication {
       const route = action.choices[request.inputs.routeIndex];
       if (!route) throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       await this.review({ runId: request.runId, route, reason: request.inputs.reason }, principal);
-    } else if (action.kind === 'integrate') {
-      if (!action.choices.includes(request.inputs.strategy) || !validText(request.inputs.reason, 1_024)) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      const evidence = await this._buildEvidence(current);
-      await this._recheckSemanticAction(current, semanticAuthority, principal);
-      await this.integrate({
-        runId: request.runId,
-        evidenceDigest: evidence.manifestDigest,
-        strategy: request.inputs.strategy,
-        reason: request.inputs.reason,
-      }, principal);
     } else if (action.kind === 'export_result') {
       const evidence = await this._buildEvidence(current);
       await this._recheckSemanticAction(current, semanticAuthority, principal);
@@ -8672,13 +8565,11 @@ export class BatonApplication {
           mode: profile.reviewPolicy.mode, routes: clone(profile.reviewPolicy.routes),
           reportPath: profile.reviewPolicy.reportPath,
         },
-        integrationPolicy: clone(profile.integrationPolicy),
         followPolicy: { mode: profile.followPolicy.mode },
         exportPolicy: {
           mode: profile.exportPolicy.mode, format: profile.exportPolicy.format,
           requireAdoptedResult: profile.exportPolicy.requireAdoptedResult,
           requireSemanticReview: profile.exportPolicy.requireSemanticReview,
-          requireIntegration: profile.exportPolicy.requireIntegration,
         },
         recoveryPolicy: {
           mode: profile.recoveryPolicy.mode,
@@ -8924,9 +8815,6 @@ export class BatonApplication {
     }
     if (name === 'run.review') {
       return this.review(args, principal);
-    }
-    if (name === 'run.integrate') {
-      return this.integrate(args, principal);
     }
     if (name === 'run.export') {
       return this.export(args, principal);

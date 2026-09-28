@@ -855,29 +855,6 @@ export function composeBriefingPack(rawInput) {
   return { ok: true, body };
 }
 
-/** Moved from `CoordinationStore.integrationAuthority` (issue #259 slice 1). State: the store, passed explicitly. */
-export function integrationAuthority(store, taskId, operationalEvent) {
-  if (typeof taskId !== 'string' || !operationalEvent || operationalEvent.kind !== 'integration.completed') return null;
-  const evidence = store._evidence.get(`${operationalEvent.worker}:${operationalEvent.seq}`);
-  if (!evidence || evidence.digest !== digest(operationalEvent) || evidence.kind !== 'integration.completed') return null;
-  const nodeId = `decision:integrate:${taskId}:${operationalEvent.seq}`;
-  const node = store._knowledgeNodes.get(nodeId);
-  if (!node || node.promotion?.trigger !== 'integration') return null;
-  const decisionEvent = store._events[node.observedSeq - 1];
-  const driverEvent = store._events[node.observedSeq];
-  const artifactEvent = store._events[node.observedSeq + 1];
-  if (decisionEvent?.kind !== 'knowledge.promoted' || decisionEvent.payload?.id !== nodeId) return null;
-  if (driverEvent?.kind !== 'driver.recorded' || driverEvent.payload?.kind !== 'integration.completed') return null;
-  if (artifactEvent?.kind !== 'artifact.registered' || artifactEvent.payload?.taskId !== taskId || artifactEvent.payload?.accepted !== true) return null;
-  if (driverEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:driver`
-    || artifactEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:artifact`) return null;
-  if (driverEvent.payload?.taskId !== taskId || driverEvent.payload?.evidence?.coordinationSeq !== evidence.coordinationSeq) return null;
-  if (digest(driverEvent.payload?.integration) !== digest(operationalEvent.payload)) return null;
-  if (digest(artifactEvent.payload?.refs) !== digest({ beforeSha: operationalEvent.payload?.beforeSha, resultSha: operationalEvent.payload?.resultSha, afterSha: operationalEvent.payload?.afterSha })) return null;
-  if (!(artifactEvent.payload?.provenance ?? []).some((ref) => ref?.coordinationSeq === evidence.coordinationSeq)) return null;
-  return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, artifactEvent: artifactEvent.seq, evidence: evidence.coordinationSeq });
-}
-
 /** Moved from `CoordinationStore.scratchpadFence` (issue #259 slice 1). State: `this._scratchpadFences`, passed explicitly. */
 export function scratchpadFence(state, runId, scope) {
   return state.get(scratchpadScopeKey(runId, scope)) ?? 0;

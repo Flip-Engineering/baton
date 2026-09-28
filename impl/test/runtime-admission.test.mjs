@@ -205,7 +205,7 @@ test('RA5: the map sees the move', () => {
   }
 });
 
-test('RA6: slice 12 — the three tranche-2 admission prefixes are admission-seamed module members that never import effects', () => {
+test('RA6: slice 12 — the two tranche-2 admission prefixes are admission-seamed module members that never import effects', () => {
   const text = read(MEMBER_FILE);
   const root = parseOf(text);
   for (const node of root.findAll({ rule: { kind: 'import_statement' } })) {
@@ -217,7 +217,6 @@ test('RA6: slice 12 — the three tranche-2 admission prefixes are admission-sea
     .map((fn) => [fn.field('name')?.text(), fn]));
   const EXPECTED = {
     _admitRunStopTargets: '(coordinator, recorder, targetWorkerIds, actor, opts)',
-    _admitIntegration: '(coordinator, handle, task, opts)',
     _admitDelivery: '(coordinator, recorder, handle, mode, opts)',
   };
   for (const [name, params] of Object.entries(EXPECTED)) {
@@ -225,7 +224,7 @@ test('RA6: slice 12 — the three tranche-2 admission prefixes are admission-sea
     assert.ok(fn, `${name}: the admission prefix lives in this module`);
     assert.equal(fn.field('parameters').text(), params, `${name}: the design's own signature`);
   }
-  // All three prefixes are sync refusal chains. The run-stop startup-reconciliation WAIT stays
+  // Both prefixes are sync refusal chains. The run-stop startup-reconciliation WAIT stays
   // in the effect body at its verbatim position: an async admission prefix would adopt one
   // settlement hop (the slice-11 lesson), and phase91's P91-12 pins the exact hop count — a stop
   // must win against a preserved-successor delivery racing it.
@@ -245,9 +244,4 @@ test('RA6: slice 12 — the three tranche-2 admission prefixes are admission-sea
   assert.ok(fns.get('_admitRunStopTargets').text().includes("'coordinator_run_stop_invalid'")
     && fns.get('_admitRunStopTargets').text().includes("'coordinator_closed'"),
   '_admitRunStopTargets throws the exact pre-move codes');
-  for (const code of ['result_not_accepted', 'scratch_oracle_not_integrable', 'independent_oracle_required',
-    'unsupported_strategy', 'integration_unavailable', 'worker_not_quiescent']) {
-    assert.ok(fns.get('_admitIntegration').text().includes(`'${code}'`),
-      `_admitIntegration throws ${code}`);
-  }
 });
