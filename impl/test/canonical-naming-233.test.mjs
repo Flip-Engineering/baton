@@ -52,10 +52,6 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate',
   'run.knowledge.seed',
-  // Issue #306 (the wiring half): the in-place reincarnation verb — the row lane A landed in
-  // application.mjs, admitted here so the CLI's two spellings reach the RUNNING resident
-  // (web-northbound.mjs DEPLOYMENT_WEB_ROWS, one row per verb, both spellings derived).
-  'deployment.reincarnate',
   // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's two direct ports,
   // web-bus admitted beside the CLI dispatch projection that reads it (#566 composition).
   'run.resultpin', 'waves.harvest',

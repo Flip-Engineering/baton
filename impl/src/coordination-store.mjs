@@ -1098,60 +1098,18 @@ export class CoordinationStore {
   _applyGoalPlanEvent(event) { return coordinationLedger._applyGoalPlanEvent(this, event); }
 
   _apply(event) { return coordinationLedger._apply(this, event); }
-  /** Issue #483: the deployment's own incarnation lifecycle, folded one row at a time — the six
-   * `host.*` kinds an incarnation writes about itself, read by `incarnationDeparture()` when a
-   * bounded wait is torn down. Last write wins per kind, exactly as the log reads:
+  /** Issue #483: this incarnation's own departure, folded one row at a time from the deployment's
+   * own `host.*` rows, read by `incarnationDeparture()` when a bounded wait is torn down:
    *
-   *   host.reincarnation_requested — a handoff began (new-turn admission closes; RECOVERABLE: a
-   *                                  handoff that fails re-publishes and this incarnation serves on)
-   *   host.successor_started       — the successor incarnation the handoff minted
-   *   host.successor_published     — …and its publication
-   *   host.reincarnated            — the handoff settled IN FAVOUR OF THE SUCCESSOR: this process
-   *                                  is not (or is no longer) the departure's incarnation
-   *   host.reincarnation_failed    — the handoff settled against the successor; this incarnation
-   *                                  went on serving
-   *   host.stop_requested          — an ordinary stop's first durable act
-   *   host.stop_waiting            — the stop's own named wait
-   *   host.stopped                 — the release that ENDED this incarnation's authority
+   *   host.stop_requested — an ordinary stop's first durable act
+   *   host.stop_waiting   — the stop's own named wait
+   *   host.stopped        — the release that ENDED this incarnation's authority
    *
-   * A handoff's own stop rows are not a departure on their own — the window can still fail — so
-   * the handoff decides at the release, where the successor is already named. */
+   * The reason is the closed set a torn-down wait crosses with: `resident_stopping`. */
   _foldIncarnationLifecycle(row) {
     const kind = row.kind;
-    if (kind === 'host.reincarnation_requested') {
-      this._incarnationHandoff = freeze({ successor: null });
-      return;
-    }
-    if (kind === 'host.successor_started' || kind === 'host.successor_published') {
-      if (this._incarnationHandoff === null) return; // a publication with no request belongs to another incarnation
-      if (typeof row.incarnation === 'string' && row.incarnation.length > 0) {
-        this._incarnationHandoff = freeze({ successor: row.incarnation });
-      }
-      return;
-    }
-    if (kind === 'host.reincarnated' || kind === 'host.reincarnation_failed') {
-      this._incarnationHandoff = null;
-      this._incarnationDeparture = null;
-      return;
-    }
-    if (kind === 'host.stop_requested' || kind === 'host.stop_waiting') {
-      if (this._incarnationHandoff !== null) return; // the handoff's own stop: the window still decides
-      this._incarnationDeparture = freeze({ reason: 'resident_stopping', successor: null });
-      return;
-    }
-    if (kind === 'host.stopped') {
-      // The release: this incarnation's authority ended — the ONE row a handoff's stop and an
-      // ordinary stop both mint, which is why the handoff decides HERE (the successor is named by
-      // then) and an ordinary stop re-states the reason its own request already set.
-      if (this._incarnationHandoff === null) {
-        this._incarnationDeparture = freeze({ reason: 'resident_stopping', successor: null });
-        return;
-      }
-      const successor = this._incarnationHandoff.successor;
-      this._incarnationDeparture = freeze({
-        reason: 'incarnation_withdrawn',
-        successor: successor === null ? null : freeze({ incarnation: successor }),
-      });
+    if (kind === 'host.stop_requested' || kind === 'host.stop_waiting' || kind === 'host.stopped') {
+      this._incarnationDeparture = freeze({ reason: 'resident_stopping' });
     }
   }
   events(fromSeq = 1, limit = null) {
@@ -1167,16 +1125,13 @@ export class CoordinationStore {
   // runtime append paths), so read-only consumers share the store's frozen references
   // instead of paying a full-log deep clone per call (the loop-starvation furnace).
   eventsView(fromSeq = 1, limit = null) { return coordinationLedger.eventsView(this._events, fromSeq, limit); }
-  /** Issue #483: is the incarnation that holds this store LEAVING, and — when the departure is a
-   * reincarnation handoff — which incarnation takes the deployment over? Null while none is.
+  /** Issue #483: is the incarnation that holds this store LEAVING? Null while none is.
    *
    * The state is folded from the deployment's own `host.*` rows APPENDED LIVE to this store (see
    * `_foldIncarnationLifecycle`); a row this store replayed at open belongs to an incarnation that
-   * is already gone and never reads as this one's departure. The reasons are the closed set a
-   * torn-down wait crosses with: `incarnation_withdrawn` (a handoff whose release ended this
-   * incarnation's authority — `successor` names the incarnation it minted), `resident_stopping`
-   * (an ordinary stop, `successor: null`). The third crossing reason, `store_closed`, is minted by
-   * the caller of a wait whose store closed with NO live departure on its ledger. */
+   * is already gone and never reads as this one's departure. `resident_stopping` is the reason a
+   * torn-down wait crosses with; the third crossing reason, `store_closed`, is minted by the
+   * caller of a wait whose store closed with NO live departure on its ledger. */
   incarnationDeparture() { return this._incarnationDeparture; }
     waitAfter(afterSeq, timeoutMs, options = {}) { return coordinationLedgerWrites.waitAfter(this, afterSeq, timeoutMs, options); }
   observationTime(observedSeq = this._events.length) {

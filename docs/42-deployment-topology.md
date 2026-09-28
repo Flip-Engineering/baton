@@ -2,7 +2,7 @@
 
 Status: proposal, 2026-09-14. Written by the root after a day of operating two clone-hosted residents
 through fourteen landings. Decisions are marked **D**; open questions **Q**. Related: #297 (host
-capacity), #294 (native wake delivery), #306 (resident reincarnation), #296 (swarm.integrate).
+capacity), #294 (native wake delivery), #296 (swarm.integrate).
 
 ## 1. What a deployment is today (observed, not designed)
 
@@ -50,8 +50,8 @@ with mutual TLS or an ssh-forwarded socket, chosen by the operator in the serve 
 publication record gains `transport: {kind, endpoint, fingerprint}` and is also written to a
 discovery location a remote root can read: the repository's remote itself
 (`refs/baton/deployments/<deploymentId>` carrying the publication as a blob), so discovery needs
-nothing but git access. **Q1**: is a ref the right discovery channel for a resident that
-reincarnates often (#306), or should the remote publish to a small registry the operator names?
+nothing but git access. **Q1**: is a ref the right discovery channel for a resident that is
+restarted often, or should the remote publish to a small registry the operator names?
 
 **D4 — Checkpoints move by ref, never by path.** A capture on a member host pushes the checkpoint
 ref to the repository's remote namespace (`refs/baton/checkpoints/<sha>`); the home records the
@@ -77,8 +77,7 @@ observation times as payload fields, never as ledger time. Ordering is `seq`, as
 
 - No cross-host worktree: a participant's checkout is on the host that runs it. Shared-checkout
   custody (#263) is therefore host-local by construction.
-- No federation of ledgers, no leader election. One home per deployment; reincarnation (#306)
-  hands the home over in place on its own host.
+- No federation of ledgers, no leader election. One home per deployment, on its own host.
 - No new principal kinds. A remote root is a session principal like a local one.
 
 ## 5. Increments

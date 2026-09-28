@@ -12,7 +12,7 @@ import {
   isReadOnlyCliDispatch, parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
 import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
-import { reincarnationProcessAlive } from '../src/application-deployment.mjs';
+import { processIsAlive } from '../src/application-deployment.mjs';
 import { BatonWebHost, SignalLifecycleOwner, describeDrainWait, signalIntentLine } from '../src/application-host.mjs';
 import { flipAnnounce, flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
@@ -118,7 +118,7 @@ function declaredServeParentPid(env = process.env) {
 }
 
 // The same cadence the successor's own predecessor watch polls at, for the same observation (a
-// process that is gone). `reincarnationProcessAlive` is that watch's primitive: `false` is the
+// process that is gone). `processIsAlive` is that watch's primitive: `false` is the
 // only reading that ends this watch — an unanswerable reading (`null`) keeps waiting, never a
 // guess. The timer is unref'd, so a watch nobody ends never holds the loop open by itself.
 const PARENT_EXIT_POLL_MS = 100;
@@ -127,7 +127,7 @@ function watchDeclaredParent(pid, onExit) {
   let ended = false;
   const poll = () => {
     if (ended) return true;
-    if (reincarnationProcessAlive(pid) !== false) return false;
+    if (processIsAlive(pid) !== false) return false;
     ended = true;
     onExit();
     return true;
@@ -202,11 +202,11 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     logLine(flipAnnounce('draining', `baton serve: the declared parent (pid ${parentPid}) is gone; stopping`, { tty: TTY, color: TTY }));
     admitParentExit();
   });
-  // Issue #482: the incarnation's OWN stop, as the serve loop's third end. A handoff schedules this
-  // incarnation's close itself (`reincarnate`), so neither a signal nor the declared parent's exit
-  // ever arrives: the loop waits, every handle goes over to the successor, and the loop drains under
-  // an unsettled top-level await — Node then ends the process with exit 13 and "Detected unsettled
-  // top-level await", which a supervisor reads as a failure. The wait is the deployment's own
+  // Issue #482: the incarnation's OWN stop, as the serve loop's third end. The deployment can close
+  // itself, so neither a signal nor the declared parent's exit ever arrives: the loop waits, and
+  // drains under an unsettled top-level await — Node then ends the process with exit 13 and
+  // "Detected unsettled top-level await", which a supervisor reads as a failure. The wait is the
+  // deployment's own
   // (`whenStopped`), so it settles on the SAME withdrawal the signal path reads first, in the same
   // act. Built before the host starts, so a stop that lands during the open is never missed; a
   // deployment that publishes no such read keeps today's behavior (there is nothing to watch).

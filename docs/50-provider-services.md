@@ -203,7 +203,7 @@ DP5's closed shapes) do not move.
 - No secret storage: `credential` names a reference of the three existing kinds; resolution reuses
   the deployment's existing env/file/keychain seams.
 - No `baton services` mutation verbs: this landing is the read family. Configuration changes are
-  a serve-time decision (a config edit and a reincarnation), not a runtime verb.
+  a serve-time decision (a config edit and a restart), not a runtime verb.
 
 ## 4. Verification
 

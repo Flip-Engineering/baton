@@ -60,17 +60,6 @@ const MUTATIONS = new Set([
 ]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
-// Issue #314 lane 3 (docs/49 §6.2): the landed failure spellings that mean "the connection this
-// session holds is not the live one" — the stale-incarnation refusal (#306) and the web
-// transport's own refusal. The session rebinds once when a dispatch meets one of them.
-const REBIND_FAILURE_CODES = new Set([
-  'resident_incarnation_mismatch', 'cli_connection_incompatible',
-  'cli_transport_failed', 'web_transport_failed',
-]);
-// docs/49 §6.5: the session-lifecycle notification's OWN kind (the method it rides is the
-// server's, beside WAKE_NOTIFICATION_METHOD in mcp-northbound.mjs).
-const REINCARNATED_FRAME_KIND = 'baton.resident_reincarnated';
-
 // Bridge refusals are composed here, never copied from a provider or an exception, so they are
 // safe to forward on the MCP wire verbatim (`wireSafe`); the northbound keeps unmarked text off it.
 function bridgeError(message, code = 'application_unavailable', detail = null) {
@@ -206,15 +195,10 @@ export function boundWakePage(page, maxFrameBytes) {
 
 export class WakeSubscriptions {
   /**
-   * `onEnd(outcome)` is the session's own mortality seam (#314 lane 3, docs/49 §6): the attachment
-   * this plane held ended, or could not be opened, and the session may want to re-bind the whole
-   * session (a resident reincarnation) before the plane re-dials. Answering `true` means the
-   * session TOOK the re-attach over — it calls `reopen()` once it has re-bound, or `resume()` to
-   * hand the reconnect back to this plane's own cadence — so the plane never races it.
-   * `onFrame(frame)` observes every frame the attachment delivered, BEFORE any subscription
-   * filter judges it (a session-level fact, never a subscriber's).
+   * `open` opens ONE attachment; the plane owns the reconnect cadence, the cursor and the
+   * subscriptions' filters.
    */
-  constructor({ open, cadenceMs, now = Date.now, onEnd = null, onFrame = null }) {
+  constructor({ open, cadenceMs, now = Date.now }) {
     if (typeof open !== 'function') throw new TypeError('wake subscriptions require an attachment opener');
     // The reconnect cadence is the caller's own deployment cadence (the resident command poll),
     // never a second invented timer constant.
@@ -222,17 +206,9 @@ export class WakeSubscriptions {
       throw new TypeError('wake subscription cadence must be a positive safe integer');
     }
     if (typeof now !== 'function') throw new TypeError('wake subscription clock must be a function');
-    if (onEnd !== null && typeof onEnd !== 'function') {
-      throw new TypeError('wake subscription end handler must be a function');
-    }
-    if (onFrame !== null && typeof onFrame !== 'function') {
-      throw new TypeError('wake subscription frame handler must be a function');
-    }
     this.open = open;
     this.cadenceMs = cadenceMs;
     this.now = now;
-    this.onEnd = onEnd;
-    this.onFrame = onFrame;
     this.deliver = null;
     this._subscriptions = new Map();
     this._attachment = null;
@@ -309,48 +285,6 @@ export class WakeSubscriptions {
     this._detach();
   }
 
-  /** Hand one SESSION-lifecycle frame to this session's client (docs/49 §6.5, #314 lane 3): it is
-   * not a wake row, so no subscription's filter judges it and it is delivered once however many
-   * subscriptions are open. The channel is the one the session's own subscription opened — a
-   * session that never subscribed has none to notify. */
-  announce(frame) {
-    if (this._closed) return;
-    const deliver = this.deliver;
-    if (deliver === null) return;
-    try {
-      const outcome = deliver(frame, null);
-      if (outcome !== null && typeof outcome?.then === 'function') outcome.then(() => {}, () => {});
-    } catch { /* the session is gone; there is nobody left to tell */ }
-  }
-
-  /** Re-open the attachment NOW through the opener this session currently holds. The session calls
-   * this after it has re-bound (the facade swaps the client under the plane), so the plane never
-   * re-dials the incarnation it just left; `_attach` keeps it ONE attachment. */
-  reopen() {
-    if (this._closed || this._subscriptions.size === 0) return;
-    if (this._timer !== null) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
-    this._stopAttachment();
-    this._attach();
-  }
-
-  /** The session could not re-bind after all (#314 lane 3): hand the reconnect back to this plane's
-   * own bounded cadence instead of attaching again in the same breath — a resident that is down is
-   * never met with a tight loop. */
-  resume() {
-    if (this._closed || this._subscriptions.size === 0) return;
-    this._scheduleReconnect();
-  }
-
-  /** The session's mortality seam: `true` means the session took the re-attach over. A handler
-   * that throws is a session fault, never a reason to drop the plane's own reconnect. */
-  _ended(outcome) {
-    if (this.onEnd === null) return false;
-    try { return this.onEnd(outcome) === true; } catch { return false; }
-  }
-
   _attach() {
     if (this._closed || this._attachment !== null || this._subscriptions.size === 0) return;
     const controller = new AbortController();
@@ -367,14 +301,14 @@ export class WakeSubscriptions {
       });
     } catch (cause) {
       this._announceRefusal(cause);
-      if (!this._ended({ status: 'error', error: cause })) this._scheduleReconnect();
+      this._scheduleReconnect();
       return;
     }
     if (attachment === null || typeof attachment !== 'object' || typeof attachment.close !== 'function') {
       try { controller.abort(); } catch { /* nothing to release */ }
       const unavailable = bridgeError('the wake attachment could not be opened', 'wake_stream_unavailable');
       this._announceRefusal(unavailable);
-      if (!this._ended({ status: 'error', error: unavailable })) this._scheduleReconnect();
+      this._scheduleReconnect();
       return;
     }
     attach.attachment = attachment;
@@ -400,7 +334,6 @@ export class WakeSubscriptions {
     if (this._closed || this._subscriptions.size === 0) return;
     if (outcome?.status === 'stopped') return; // this session's own detach
     if (outcome?.status === 'refused') this._announceRefusal(outcome.error);
-    if (this._ended(outcome)) return;
     this._scheduleReconnect();
   }
 
@@ -437,9 +370,6 @@ export class WakeSubscriptions {
     // The cursor the NEXT attach resumes from: every frame the attachment delivered, whether or not
     // any subscription's filter admitted it — a filter is never a gap for a late subscriber.
     if (ordered && (this._cursor === null || frame.seq > this._cursor)) this._cursor = frame.seq;
-    // The session observes every frame the attachment delivered — before any filter judges it —
-    // so a handoff row reaches the session even when the client subscribed to nothing else.
-    this._observed(frame);
     for (const subscription of this._subscriptions.values()) {
       if (ordered && subscription.since !== null && frame.seq <= subscription.since) continue;
       if (!wakeMatches(frame, subscription.filter)) continue;
@@ -456,13 +386,6 @@ export class WakeSubscriptions {
       this._cursor = lagged.cursor;
     }
     for (const subscription of this._subscriptions.values()) this._emit(subscription, lagged);
-  }
-
-  /** The session's frame observer, kept out of the delivery path's own failure modes: a session
-   * handler that throws never costs a subscriber its frame. */
-  _observed(frame) {
-    if (this.onFrame === null) return;
-    try { this.onFrame(frame); } catch { /* the session's own bookkeeping */ }
   }
 
   _announceRefusal(cause) {
@@ -494,12 +417,7 @@ export class WakeSubscriptions {
 }
 
 /** Remote application facade: MCP transport lifetime never owns the resident Baton application.
- *
- * Issue #314 lane 3 (docs/49 §6): a session bound to an incarnation survives that incarnation's
- * reincarnation (#306) through the optional `rediscover` construction option — the SAME discovery
- * and session establishment as the open path, answering `{client, card, session, incarnation}`.
- * A facade constructed without one (a test, an embedder, the descriptor) keeps today's behavior
- * exactly: the incarnation it opened against is the incarnation it talks to for its whole life. */
+ * The client, card and session the constructor was handed are the authority it answers under. */
 export class BatonWebApplicationFacade {
   constructor(client, applicationCard, session, options = {}) {
     if (!client || typeof client.command !== 'function' || typeof client.doctor !== 'function'
@@ -513,10 +431,7 @@ export class BatonWebApplicationFacade {
       || !Array.isArray(session.identity.capabilities) || !session.identity.capabilities.includes('observe')
       || !Array.isArray(session.identity.repoIds) || !session.identity.repoIds.includes(client.repoId)
       || !Number.isFinite(Date.parse(session.expiresAt))
-      || options === null || typeof options !== 'object' || Array.isArray(options)
-      || (options.rediscover !== undefined && typeof options.rediscover !== 'function')
-      || (options.incarnation !== undefined && options.incarnation !== null
-        && !SAFE_RUN_ID.test(options.incarnation))) {
+      || options === null || typeof options !== 'object' || Array.isArray(options)) {
       throw new TypeError('Baton Web application facade is invalid');
     }
     this.client = client;
@@ -541,18 +456,9 @@ export class BatonWebApplicationFacade {
     // connection cannot attach the stream (a mock, or a resident older than the wake feed) refuses
     // the subscription instead of holding an attachment it never opened.
     this._wakes = null;
-    // Issue #314 lane 3: the rebind authority and the coordinates this session is bound to. The
-    // resident's session id is re-minted per incarnation, so it is tracked beside the frozen
-    // client-facing principal (which never changes) rather than inside it.
-    this._rediscover = options.rediscover ?? null;
+    // The resident mints its session id per process, so the session this facade bound is tracked
+    // beside the frozen client-facing principal (which never changes).
     this._residentSessionId = session.identity.sessionId;
-    this._connection = Object.freeze({
-      incarnation: options.incarnation ?? null,
-      sessionId: session.identity.sessionId,
-    });
-    this._rebinding = null;      // the single-flight rebind promise of the handoff in flight
-    this._rebindBound = false;   // a successor is bound; no further handoff until contact
-    this._rebindDenied = false;  // the successor narrowed the grant: this session ends typed
     // Issue #314 (docs/49 §5): the sink every wake frame reaches — the MCP server installs it at
     // construction (`attachWakeDelivery`), so the explicit `baton_wakes subscribe` verb and a long
     // verb's handoff deliver through ONE session sink, whatever order they arrive in.
@@ -586,26 +492,24 @@ export class BatonWebApplicationFacade {
    * The bridge's own verified coordinates (repoId) are pinned after it; secret material never
    * rides here, and the northbound redacts credential-shaped values at the surface anyway. */
   async doctor() {
-    return this._onceAfterRebind(async () => {
-      const live = await this.client.doctor();
-      if (!live || typeof live !== 'object' || Array.isArray(live)) {
-        throw bridgeError('Remote Baton doctor is unavailable');
-      }
-      const readiness = live.deployment && typeof live.deployment === 'object' && !Array.isArray(live.deployment)
-        ? clone(live.deployment) : {};
-      // Issue #479: a resident that is stopping says so on the card every client reads (#467/#476) —
-      // the client's own doctor() carries that section beside the readiness it projects, so the MCP
-      // projection carries it too, verbatim. Null (never absent) for a resident that is not stopping,
-      // the same rule the CLI's doctor answers under.
-      const stopping = live.stopping !== null && typeof live.stopping === 'object'
-        && !Array.isArray(live.stopping) ? clone(live.stopping) : null;
-      return Object.freeze({
-        ...readiness,
-        schemaVersion: 1,
-        repoId: this.repoId,
-        ready: live.ready === true,
-        stopping,
-      });
+    const live = await this.client.doctor();
+    if (!live || typeof live !== 'object' || Array.isArray(live)) {
+      throw bridgeError('Remote Baton doctor is unavailable');
+    }
+    const readiness = live.deployment && typeof live.deployment === 'object' && !Array.isArray(live.deployment)
+      ? clone(live.deployment) : {};
+    // Issue #479: a resident that is stopping says so on the card every client reads (#467/#476) —
+    // the client's own doctor() carries that section beside the readiness it projects, so the MCP
+    // projection carries it too, verbatim. Null (never absent) for a resident that is not stopping,
+    // the same rule the CLI's doctor answers under.
+    const stopping = live.stopping !== null && typeof live.stopping === 'object'
+      && !Array.isArray(live.stopping) ? clone(live.stopping) : null;
+    return Object.freeze({
+      ...readiness,
+      schemaVersion: 1,
+      repoId: this.repoId,
+      ready: live.ready === true,
+      stopping,
     });
   }
 
@@ -613,17 +517,12 @@ export class BatonWebApplicationFacade {
    * refuses is a genuine authority change: a different identity, a bound capability the session
    * no longer carries, the served repository leaving the session scope, a revoked flag, or an
    * unparsable expiry. A moved `expiresAt` is a renewal — the session is re-attested, not
-   * invalidated.
-   *
-   * Issue #314 lane 3 (docs/49 §6.3): the ONE relaxation is `rebind` — the resident mints its
-   * session id per incarnation, so the successor's session id is admitted where the successor is
-   * being bound and NOWHERE else. Every other axis (userId, the capability superset, the repoId
-   * scope, the revocation and the expiry) is judged exactly as a dispatch judges it. */
-  _sessionAuthority(current, { rebind = false } = {}) {
+   * invalidated. */
+  _sessionAuthority(current) {
     const identity = current?.identity;
     const renewed = identity && typeof identity === 'object'
       && identity.userId === this._principal.userId
-      && (rebind === true || identity.sessionId === this._residentSessionId)
+      && identity.sessionId === this._residentSessionId
       && Array.isArray(identity.capabilities)
       && this._principal.capabilities.every((capability) => identity.capabilities.includes(capability))
       && Array.isArray(identity.repoIds) && identity.repoIds.includes(this.repoId)
@@ -669,191 +568,7 @@ export class BatonWebApplicationFacade {
     })}`;
   }
 
-  // ── the reincarnation rebind (issue #314 lane 3, docs/49 §6) ──────────────────────────────────
-  //
-  // A bridge session is bound to ONE incarnation: the connection (socket path + token, docs/48 §1)
-  // is discovered once and the old incarnation withdraws the socket when its handoff ends. The
-  // rebind is driven by FACTS — never a timer: a dispatch whose transport is gone or whose resident
-  // answers `resident_incarnation_mismatch`; the wake attachment ending with `resident_stopping`
-  // (or its socket refusing the reconnect); the `incarnation_changed` wake class naming a
-  // successor. The old incarnation's re-publish arm is respected: a `host.reincarnation_failed`
-  // row means the predecessor re-took its authority and the publication still names it — there is
-  // no successor to bind to, and the class says so with its own row.
-
-  /** The failure facts that mean "the connection this session holds is not the live one". Not a
-   * new refusal code — the landed spellings: the stale-incarnation refusal (#306, retryable) and
-   * the web transport's own refusal. A command that outlived THIS caller's request bound is not
-   * one of them: the deployment still answers and the durable receipt is the truth (R-5, #288). */
-  _rebindableFailure(cause) {
-    if (this._rediscover === null || this._rebindDenied) return false;
-    if (cause?.requestBoundElapsed === true) return false;
-    const code = cause?.code ?? null;
-    const declared = typeof cause?.cause === 'string' ? cause.cause : null;
-    return REBIND_FAILURE_CODES.has(code) || REBIND_FAILURE_CODES.has(declared);
-  }
-
-  /** The attachment ends that say the incarnation behind them is gone: a failed transport, or the
-   * resident naming its own stop (#316 b). A clean end is not one — an archive-behind end and a
-   * caller's own detach read the same — and a socket that is genuinely dead turns the plane's next
-   * attach into the `error` this accepts. */
-  _incarnationGone(outcome) {
-    if (outcome?.status === 'error') return true;
-    return outcome?.status === 'ended' && outcome.reason === 'resident_stopping';
-  }
-
-  /** The plane's mortality seam: `true` means this session owns the re-attach (the rebind re-opens
-   * the plane, or hands it back its own cadence). One handoff is never bound twice: a successor
-   * that is already bound is re-bound only after the session has been back in contact with it. */
-  _wakeEndTrigger(outcome) {
-    if (this._rebindBound || !this._incarnationGone(outcome)) return false;
-    return this._rebindAttempt() !== null;
-  }
-
-  /** Every frame the attachment delivered, before any subscription filter judges it. The handoff
-   * class is this seam's own INPUT, never "contact": a replayed `host.reincarnated` after the
-   * rebind must not mint a second handoff. Any other frame is proof the session reached the
-   * incarnation it is bound to. */
-  _wakeFrame(frame) {
-    if (frame?.wakeClass === 'incarnation_changed') {
-      if (frame?.row?.payloadKind !== 'host.reincarnated' || this._rebindBound) return;
-      this._rebindAttempt();
-      return;
-    }
-    this._noteContact();
-  }
-
-  /** The session is talking to the incarnation it is bound to: the next handoff is a new fact. */
-  _noteContact() {
-    this._rebindBound = false;
-  }
-
-  /** Start (or join) the ONE rebind of the handoff in flight. Null when there is no authority to
-   * rebind with, the session is already bound, or the successor's grant was refused. */
-  _rebindAttempt() {
-    if (this._rediscover === null || this._rebindDenied) return null;
-    if (this._rebinding === null) {
-      this._rebinding = this._performRebind().finally(() => { this._rebinding = null; });
-    }
-    return this._rebinding;
-  }
-
-  /** The rediscovery must answer THIS deployment's resident: a client and a card that still
-   * carries the registry floor (BRIDGE_FLOOR_COMMANDS) the open path required of the card it
-   * bound. */
-  _bindsDeployment(opened) {
-    const client = opened?.client ?? null;
-    const card = opened?.card ?? null;
-    return client !== null && typeof client.command === 'function'
-      && typeof client.doctor === 'function' && typeof client.session === 'function'
-      && card !== null && typeof card === 'object' && !Array.isArray(card)
-      && card.repoId === this.repoId && Array.isArray(card.commands)
-      && BRIDGE_FLOOR_COMMANDS.every((command) => card.commands.includes(command));
-  }
-
-  /**
-   * ONE rediscovery, one re-attestation, one swap. The successor's client replaces the client only
-   * AFTER its session has been attested (a narrowed grant ends the session instead of binding it);
-   * the swap clears the dispatch attestation, since that attestation belonged to the old client.
-   * The answer is `{adopted, successor, error}` — never a rejection, so the plane's seam and a
-   * dispatch's retry read the same verdict.
-   */
-  async _performRebind() {
-    const previous = this._connection;
-    let opened;
-    try {
-      opened = await this._rediscover();
-    } catch (error) {
-      // A resident that is DOWN changes nothing (docs/49 §6.7): the session keeps the client and
-      // the coordinates it holds, calls keep their typed refusals, and the plane keeps its own
-      // bounded reconnect cadence — which is also what re-attempts this discovery, never a timer.
-      this._resumeWakes();
-      return { adopted: false, successor: false, error };
-    }
-    if (!this._bindsDeployment(opened)) {
-      this._resumeWakes();
-      return { adopted: false, successor: false, error: null };
-    }
-    try {
-      this._sessionAuthority(opened.session, { rebind: true });
-    } catch (error) {
-      // docs/49 §6.3: a successor whose session narrows the grant is not a reincarnation for this
-      // session — the rebind refuses `application_unauthorized` and the session ends typed.
-      if (error?.code === 'application_unauthorized') this._rebindDenied = true;
-      this._resumeWakes();
-      return { adopted: false, successor: false, error };
-    }
-    const session = opened.session;
-    const to = Object.freeze({
-      incarnation: opened.incarnation ?? null,
-      sessionId: session.identity.sessionId,
-    });
-    const successor = to.incarnation !== previous.incarnation || to.sessionId !== previous.sessionId;
-    this.client = opened.client;
-    this._card = Object.freeze(clone(opened.card));
-    this._registryDigest = opened.card.agentExperience?.registryDigest ?? null;
-    this._residentSessionId = to.sessionId;
-    this._connection = to;
-    this._attestation = null;
-    this._rebindBound = true;
-    if (successor) this._announceReincarnation(previous, to);
-    this._reopenWakes();
-    return { adopted: true, successor };
-  }
-
-  /** docs/49 §6.5: exactly ONE session-lifecycle notification per handoff — `{from, to, cursor}`
-   * beside `notifications/baton/wake`, delivered whatever any subscription's filter admits. It is
-   * NOT a wake class: the wake table is the deployment's vocabulary, this is the session's own
-   * authority event, and its method belongs to the server that writes it (mcp-northbound). */
-  _announceReincarnation(from, to) {
-    const plane = this._wakes;
-    if (plane === null) return;   // no session notification channel was ever opened
-    plane.announce(Object.freeze({
-      schemaVersion: 1,
-      kind: REINCARNATED_FRAME_KIND,
-      from: Object.freeze({ incarnation: from.incarnation, sessionId: from.sessionId }),
-      to: Object.freeze({ incarnation: to.incarnation, sessionId: to.sessionId }),
-      cursor: plane.cursor(),
-      at: new Date().toISOString(),
-    }));
-  }
-
-  _reopenWakes() {
-    if (this._wakes !== null) this._wakes.reopen();
-  }
-
-  _resumeWakes() {
-    if (this._wakes !== null) this._wakes.resume();
-  }
-
-  /**
-   * ONE replay after a rebind for the reads and dispatches a dead transport can meet (docs/49
-   * §6.6). The operation is re-run exactly as the caller composed it — a mutation's idempotency key
-   * included, since `command` derives it BEFORE it calls this — so the shared coordination ledger
-   * replays the first attempt's receipt instead of applying it twice. A second failure propagates
-   * as the refusal it is: never `command_outcome_unknown`.
-   */
-  async _onceAfterRebind(operation) {
-    try {
-      const value = await operation();
-      this._noteContact();
-      return value;
-    } catch (cause) {
-      if (!this._rebindableFailure(cause)) throw cause;
-      const attempt = this._rebindAttempt();
-      if (attempt === null) throw cause;
-      const outcome = await attempt;
-      if (outcome.adopted !== true) throw (outcome.error ?? cause);
-      const value = await operation();
-      this._noteContact();
-      return value;
-    }
-  }
-
   async actionAuthority(args, principal, context = null) {
-    return this._onceAfterRebind(() => this._actionAuthorityOnce(args, principal, context));
-  }
-
-  async _actionAuthorityOnce(args, principal, context) {
     await this._attestSession(principal, context);
     const idempotencyKey = this._mutationKey('run.act', args, principal);
     if (typeof this.client.actionAuthority === 'function') {
@@ -880,10 +595,6 @@ export class BatonWebApplicationFacade {
   }
 
   async authorizeReplay(name, args, principal, context) {
-    return this._onceAfterRebind(() => this._authorizeReplayOnce(name, args, principal, context));
-  }
-
-  async _authorizeReplayOnce(name, args, principal, context) {
     if (!this._admits(name)) throw this._notAdmitted(name);
     if (!validContext(context)) {
       throw bridgeError('Remote Baton MCP replay authority is invalid', 'application_unauthorized');
@@ -940,12 +651,10 @@ export class BatonWebApplicationFacade {
     const idempotencyKey = keyed
       ? this._mutationKey(name, args, principal)
       : `mcp-web-${digest({ repoId: this.repoId, key: context.idempotencyKey })}`;
-    // Issue #314 lane 3 (docs/49 §6.6): the key is derived ONCE and the replay after a rebind
-    // carries it unchanged — the shared ledger replays the first attempt instead of doubling it.
-    return this._onceAfterRebind(() => this._commandOnce(name, args, idempotencyKey, principal, context));
+    return this._command(name, args, idempotencyKey, principal, context);
   }
 
-  async _commandOnce(name, args, idempotencyKey, principal, context) {
+  async _command(name, args, idempotencyKey, principal, context) {
     await this._attestSession(principal, context);
     const result = await this.client.command(name, args, idempotencyKey);
     // The start receipt names the Run it created: a receipt whose identity differs from the
@@ -998,10 +707,8 @@ export class BatonWebApplicationFacade {
     this._wakeDelivery = deliver;
   }
 
-  /** Issue #294: the session's one wake plane, created on first use. When this session holds a
-   * rebind authority (#314 lane 3) the plane reports its own ends and the frames it delivered, so
-   * the session can re-bind to a successor incarnation and resume the SAME subscription records
-   * from the same cursor. */
+  /** Issue #294: the session's one wake plane, created on first use, holding ONE attachment for
+   * every subscription this session opens. */
   _wakePlane() {
     if (this._wakes === null) {
       this._wakes = new WakeSubscriptions({
@@ -1009,10 +716,6 @@ export class BatonWebApplicationFacade {
         // The reconnect cadence IS the connection's own command cadence: no second timer constant
         // is invented here, and a deployment that polls faster reconnects faster.
         cadenceMs: this.client.pollMs,
-        ...(this._rediscover === null ? {} : {
-          onEnd: (outcome) => this._wakeEndTrigger(outcome),
-          onFrame: (frame) => this._wakeFrame(frame),
-        }),
       });
     }
     return this._wakes;
@@ -1042,7 +745,7 @@ export class BatonWebApplicationFacade {
     if (typeof this.client.wakesSince !== 'function') {
       throw bridgeError('this Baton connection cannot read the deployment wake stream', 'wake_stream_unavailable');
     }
-    const page = await this._onceAfterRebind(() => this.client.wakesSince(wakeFilterParams(params)));
+    const page = await this.client.wakesSince(wakeFilterParams(params));
     return boundWakePage(page, maxFrameBytes);
   }
 
@@ -1055,10 +758,8 @@ export class BatonWebApplicationFacade {
 }
 
 /**
- * The bridge's open path, answering the facts a session binds to. It is exported because the
- * rebind authority (docs/49 §6.1) IS this derivation: `createBatonWebMcpServer` supplies it as the
- * session's `rediscover`, so a successor incarnation is reached by exactly the discovery, doctor
- * and session establishment the first incarnation was reached by.
+ * The bridge's open path, answering the facts a session binds to: the discovered connection, the
+ * scoped client, the resident's card and the authenticated session.
  */
 export async function openBatonWebConnection(options = {}) {
   const connection = options.connection ?? discoverBatonConnection({
@@ -1103,21 +804,12 @@ export async function openBatonWebConnection(options = {}) {
     client,
     card: doctor.application,
     session,
-    incarnation: connection.incarnation ?? null,
   });
 }
 
 export async function connectBatonWebApplication(options = {}) {
   const opened = await openBatonWebConnection(options);
-  return new BatonWebApplicationFacade(opened.client, opened.card, opened.session, {
-    incarnation: opened.incarnation,
-    // docs/49 §6.1: the rebind authority re-reads the PUBLICATION — the same open path, the same
-    // discovery. A caller that handed an explicit connection (a network deployment, a test double)
-    // has no publication to re-read, so its session keeps today's behavior exactly.
-    ...(options.connection === undefined
-      ? { rediscover: () => openBatonWebConnection({ ...options }) }
-      : {}),
-  });
+  return new BatonWebApplicationFacade(opened.client, opened.card, opened.session);
 }
 
 /** Issue #529 (docs/54 §4): the wake subscription a session takes from its own bridge
