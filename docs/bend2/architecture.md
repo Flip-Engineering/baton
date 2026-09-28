@@ -143,8 +143,8 @@ invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
 SQLite inbox. A failed turn retains unacknowledged input for later delivery.
 
-Receive retains each attempt's launch arguments, initial input, recovery command
-and native stdout beside the database. A process owner holds the session lock,
+Receive retains each attempt's launch arguments, initial input, recovery command,
+native stdout and stderr beside the database. A process owner holds the session lock,
 native stdin and exit status. It restarts the Bend observer when the observer's
 connection closes before completion acknowledgment. Recovery reads the existing
 attempt with its original report ID and inbox cutoff. The owner releases its lock
@@ -153,6 +153,15 @@ finishes parent delivery and pending-input continuation. Successful acknowledgme
 removes the temporary raw stdout file; the filtered native log remains.
 The [recovery validation](receive-recovery-2026-09-28.md) records the tested
 process-loss boundary.
+
+When a resumed attempt exits without a terminal event and its stderr reports a
+missing conversation, receive records a recovery input containing the workspace's
+Git status. The same transaction clears the refused native identity and records
+a parent notice named `<attempt>:recovery`. Normal receive then reads the pending
+task and recovery input under the session lock and starts a fresh retained attempt.
+Native initialization records the fresh identity. The recovery input also records
+that the transition occurred, so replay of the refused attempt preserves the new
+identity. Fresh completion has its own attempt ID.
 
 Native initialization binds the session ID in the existing row. Later turns
 resume it. Codex retains conversations in its configured storage. OMP roots
