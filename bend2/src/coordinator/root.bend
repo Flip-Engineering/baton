@@ -49,9 +49,14 @@ def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 &
     case Fail{error}: Fail{error}
     case Done{output}: Done{Unit{}}
 
+# The first unacknowledged message for a session after the cursor, in the order
+# the store accepted them. The wake reads this one message and nothing else.
+def wake_sql(session: String, cursor: String) -> String:
+  "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),'');"
+
 # The completed native owner has released its session lock before this read.
 def wake_pending(+db: String, session: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +id : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),'');"))
+    +id : String <- IO.try(String,DB.Sql.query(db,wake_sql(session,cursor)))
     delivered : Result<&1,&1,U32 & String,String> <- deliver(db,Tx.trim_nl(id),"1","")
     IO.pure(Result<&1,&1,U32 & String,Unit>,wake_result(delivered))

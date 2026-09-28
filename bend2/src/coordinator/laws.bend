@@ -1,30 +1,61 @@
 # CLAIM: the operative laws whose real functions live in bend2/src/coordinator, each stated
 # over the function that implements it and proved beside its claim. The coordinator entry
 # imports this module, so every compile of the entry verifies every operative law, and an
-# unproven law fails that compile. This module imports the laws of the Git operations and of the
-# replay models as well.
+# unproven law fails that compile. This module imports the laws of the Git operations, the host
+# bindings and the canonical encoder as well.
 #
 # Approval: the operative set reviewed at 1fab9a1d, operator authorization relayed in the
-# bend2-laws-lead4 brief; docs/bend2/laws-proposed.md carries the statements and
-# docs/bend2/laws.bend the recorded models.
+# bend2-laws-lead4 brief; docs/bend2/laws-proposed.md carries the statements, docs/bend2/laws.bend
+# the recorded models and docs/bend2/laws-trace.md the per-entry application obligations.
 # Reference: docs/bend2/reference/README.md, bend 2.0.25, a4952426.
 #
-# M-1  no acceptance claim without recoverable matching intent
-# M-2  an unresolved external attempt stays unresolved until justified
-# M-3a publication carries its evidence conditions for the actual artifact and target
-# M-3b no duplicate logical effect under one operation identity
-# M-3c no claiming a new effect that did not occur
-# M-4  no disposal that violates custody or preservation
-# M-5  accepted facts, identities, ordering and owed events survive replay and delivery
-# M-7  no unvalidated assertion acquires authority or established attribution
-# M-8  no effect, publication, delegation or grant beyond valid authority
-# M-10 no cutoff of valid requested work or owed data
-# M-11 caller input does not fabricate established facts
-# M-12 no mandatory wait for managed work to finish before its acceptance is acknowledged
-# M-13 required progress notifications reach the agent interface without a fetch
-# M-14 a refusal states the actual failed rule and safe relevant context
-# M-17 no silent abandonment of accepted, unsettled work
-# M-18 no substitution of a publication destination
+# Which entries are bound to real functions, and to which. Every row below names the functions
+# the laws of this module and the modules it imports are stated over. No law in the entry's
+# import graph is stated over a module the entry does not reach.
+#
+# M-1  bound: C.session_result, C.message_result, C.sql(Report/Ask) and Root.result. The store's
+#      answer reads the row the transaction stored, keyed by the supplied identity, and a writer's
+#      answer names the stored result only for a delivery that reached exit 0.
+# M-2  bound: P.git_out, Tx.run_res, Turn.refusal_body, Turn.status_text, Recruit.git_status and the
+#      Git status and create-worktree stage readers, which carry an observed status or an
+#      unresolved one and never invent either.
+# M-3a bound: L.pair_cv, L.pair_targ, L.pair_news, L.run_verdict, L.exit_verdict, L.check_argv and
+#      the Git status stages. A verdict that did not run blocks, a passing candidate contributes
+#      nothing, and each selected file is paired with the candidate and target verdicts of itself.
+# M-3b bound: L.ff_stage2_ancestor and C.message_upsert. A commit the target already contains is
+#      answered already, and a repeated operation identity re-selects the stored row.
+# M-3c bound: L.outcome_json and L.ff_answer. Each answer names the outcome the landing reached.
+# M-4  bound: Deb.debris_argv, Deb.debris_note, Deb.debris_note_of and the create-worktree stage
+#      readers. The dropped set is named and the work the stages made is kept.
+# M-5  bound: P.argv, J.json_text, C.sql(Pending/Inbox/Delivery/Bind), Root.wake_sql,
+#      Receive.pending_count_sql, Turn.remember, Land.require_branch and the canonical encoder.
+#      Owed messages are named in the store's own sequence order and remain owed until receipt.
+# M-7  bound: C.schema, C.sql(Report) and C.sql(Ack). The store validates the sender it records
+#      against the sessions it holds, and a report routes to the sender's recorded parent.
+# M-8  bound: Receive.acquired, Turn.acquired, Turn.matching_turn, C.sql(Ack), C.sql(Worker) and
+#      C.sql(Attach). One native owner per session, a turn identity bound to one worker, and every
+#      write bound to the stored row it names.
+# M-10 partly bound: L.check_argv and L.append_when. The judged selection is the caller's, and a
+#      failure the decision kept stays in the answer. The retention and continuation clause over
+#      owed data is stated under M-5 above; the application-wide cutoff clause is open.
+# M-11 bound: C.terminal, C.sql(Report), L.exit_verdict, L.run_verdict, Recruit.absolute and
+#      Tx.run_res. A verdict, a terminal event and a workspace come from what was observed.
+# M-12 bound: Root.after, Root.launch, Guidance.send, Receive.continue_if and Turn.close_input. A
+#      command that owes no delivery answers from its own committed result.
+# M-13 bound: Root.after, Guidance.relevant and Turn.close_input. The commit path itself invokes
+#      the recipient's registered endpoint, at the frames that carry guidance.
+# M-14 bound: T.fail_text, Receive.registered, Receive.exit_status, Turn.supported_harness,
+#      Land.require_worker, Land.require_branch_pick, Recruit.git_status and the Git status,
+#      create-worktree and debris refusal readers. Each refusal names its own rule and subject.
+# M-17 bound: Turn.combine, Turn.send_result, Turn.remember, Turn.result_missing, Turn.diagnostic
+#      and Receive.exit_status. A failed step stays the answer, and an unsettled turn reports to
+#      its parent or names the log and inbox that continue it.
+# M-18 bound: L.push_argv. The push argv names the declared remote at the destination position.
+#
+# Not bound. The replay modules under bend2/src/replay are the earlier experiments; the entry
+# graph does not import them, so this module binds no entry to their functions. The clauses
+# laws-trace.md records as host assumptions - durability, crash windows, provider idempotency,
+# interface delivery and process lifetime - are outside what a Bend term decides.
 import Base
 import ./root.bend as Root
 import ./turn.bend as Turn
@@ -534,4 +565,100 @@ law m14_a_recorded_branch_is_answered_as_stored:
   {Land.require_branch(SCon{h, t}) == IO.pure(String, SCon{h, t}) : IO(String)}
 
 def m14_a_recorded_branch_is_answered_as_stored(h, t):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-5, M-7 and M-8 bound to the coordinator's own store, wake and delivery
+# functions. git10's review of 12c050a8 found these three entries bound to the
+# replay experiments, which the entry graph does not import. These laws bind
+# them to the functions the coordinator serves.
+
+# M-5: an owed message is delivered in the order the store accepted it. The
+# pending set is every message with no receipt, in the store's own sequence
+# order, and a delivery carries its recipient's current endpoint.
+law m5_pending_delivery_is_ordered_by_sequence:
+  {C.sql(C.Pending{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ C.delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL ORDER BY m.seq);" : String}
+
+def m5_pending_delivery_is_ordered_by_sequence():
+  {==}
+
+law m5_inbox_holds_only_unacknowledged_messages_in_order:
+  for +id: String
+  {C.sql(C.Inbox{id}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body) AS item FROM messages WHERE recipient=" ++ C.q(id) ++ " AND receipt IS NULL ORDER BY seq);" : String}
+
+def m5_inbox_holds_only_unacknowledged_messages_in_order(id):
+  {==}
+
+law m5_delivery_carries_the_recipients_current_endpoint:
+  for +id: String
+  {C.sql(C.Delivery{id}) == "SELECT " ++ C.delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ ";" : String}
+
+def m5_delivery_carries_the_recipients_current_endpoint(id):
+  {==}
+
+law m5_wake_reads_the_first_owed_message_after_the_cursor:
+  for +session: String
+  for +cursor: String
+  {Root.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),'');" : String}
+
+def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
+  {==}
+
+law m5_owed_input_is_counted_after_the_cursor:
+  for +session: String
+  for +cursor: String
+  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER);" : String}
+
+def m5_owed_input_is_counted_after_the_cursor(session, cursor):
+  {==}
+
+# M-7: the sender a caller supplies is recorded only when it names a stored
+# session. The store's own schema declares that reference, so the database
+# refuses a message from an unknown sender.
+law m7_the_store_validates_the_sender_it_records:
+  {C.schema() == "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" : String}
+
+def m7_the_store_validates_the_sender_it_records():
+  {==}
+
+# M-8: an acknowledgement is bound to the message and to the recipient it
+# names, and it keeps the first receipt. A caller cannot acknowledge a message
+# addressed to another session.
+law m8_acknowledgement_is_bound_to_its_recipient:
+  for +id: String
+  for +recipient: String
+  for +receipt: String
+  {C.sql(C.Ack{id, recipient, receipt}) == "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ " AND recipient=" ++ C.q(recipient) ++ ";" : String}
+
+def m8_acknowledgement_is_bound_to_its_recipient(id, recipient, receipt):
+  {==}
+
+# M-8: registering a worker is bound to the stored row. A repeat that names the
+# stored values is answered from that row; any other value for the identity
+# fails the write rather than replacing the stored worker.
+law m8_worker_registration_is_bound_to_the_stored_row:
+  for +id: String
+  for +parent: String
+  for +harness: String
+  for +model: String
+  for +effort: String
+  for +workspace: String
+  for +branch: String
+  for +base: String
+  {C.sql(C.Worker{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent=excluded.parent AND sessions.harness=excluded.harness AND sessions.model=excluded.model AND sessions.effort=excluded.effort AND sessions.workspace=excluded.workspace AND sessions.branch=excluded.branch AND sessions.base=excluded.base THEN sessions.id ELSE NULL END;" ++ C.session_result(id) : String}
+
+def m8_worker_registration_is_bound_to_the_stored_row(id, parent, harness, model, effort, workspace, branch, base):
+  {==}
+
+# M-8: attaching a root is bound to the row it names. The conflict clause
+# updates only a row with no parent, so an attach cannot replace a recruited
+# worker's identity, and the worker keeps its parentage and placement.
+law m8_attach_never_overwrites_a_worker_row:
+  for +id: String
+  for +harness: String
+  for +native: String
+  for +endpoint: String
+  {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ C.session_result(id) : String}
+
+def m8_attach_never_overwrites_a_worker_row(id, harness, native, endpoint):
   {==}

@@ -50,10 +50,14 @@ def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Boo
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: again(Unit{})
 
-# Busy writers have committed before trying the lock. Read again after release.
+# How much input is still owed after the cursor. Busy writers have committed
+# before trying the lock, so the owner reads this again after releasing it.
+def pending_count_sql(session: String, cursor: String) -> String:
+  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER);"
+
 def continue_pending(db: String, session: String, cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    pending : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER);"))
+    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
     continue_if(again,Bool.not(String.eq(pending,"0\n")))
 
 def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, lock: U32, +cursor: String, present: Bool, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
