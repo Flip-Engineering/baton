@@ -1,26 +1,32 @@
-"""Recovery with real model turns: start one OMP session and one Codex session on
-real tasks that edit files, kill every coordinator and harness process mid-turn,
-restart, and show each session resumes its native conversation and finishes.
+"""Manual direct-turn recovery after killing the run's coordinator and harness.
+
+Selected OMP or Codex sessions edit files. The driver kills their owned process
+trees, requests each recorded native conversation, and checks the task. An OMP
+conversation unavailable on this host restarts fresh with a recovery diagnostic
+and the existing workspace state.
 
 Run from the repository root after building .scratch/bend2/baton2:
 
-    python3 docs/bend2/examples/probe-recovery-real-models.py
+    python3 docs/bend2/examples/probe-recovery-real-models.py --harness codex
 
-The run owns its database and repository under .scratch/recovery-real-models and
-never touches another deployment's state. The restart passes the session's
-recorded native identity as the turn's final argument, the way the trial's own
-launches do, and the probe retains each launch's actual argv so the resume value
-is evidence rather than an assumption. JSON goes to stdout; the probe exits
-non-zero when a session does not resume its native conversation or does not
-finish.
+The run creates a new output directory, retains full native argv/PID records and
+logs, and writes evidence.json on success or failure. The restart passes the
+recorded identity as the turn's final argument. This exercises manual direct-turn
+resumption after native process loss. Runtime source remains unchanged.
 """
+import argparse
+import hashlib
 import json
 import os
 import pathlib
+import shlex
+import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 EXE = ROOT / '.scratch/bend2/baton2'
@@ -29,6 +35,9 @@ OMP = pathlib.Path('/opt/homebrew/bin/omp')
 CODEX = pathlib.Path('/opt/homebrew/Cellar/node/25.8.0/bin/codex')
 OMP_MODEL = 'deepseek/deepseek-flash'
 CODEX_MODEL = 'gpt-6-astra'
+EVIDENCE = {}
+OUTPUT_CREATED = False
+OWNED_ROOTS = set()
 
 TASK = '''Work only inside this directory.
 Step 1: append the line "line one from {name}" to journal.txt.
@@ -51,31 +60,16 @@ def coord(db, *args, timeout=30):
 
 def process_table():
     """Every live process as (pid, ppid, command)."""
-    listing = subprocess.run(['ps', '-ax', '-o', 'pid=,ppid=,command='],
-                             capture_output=True, text=True).stdout
+    listing = run(['ps', '-ax', '-o', 'pid=,ppid=,stat=,command=']).stdout
     rows = []
     for line in listing.splitlines():
-        fields = line.strip().split(None, 2)
-        if len(fields) == 3:
-            rows.append((int(fields[0]), int(fields[1]), fields[2]))
+        fields = line.strip().split(None, 3)
+        if len(fields) == 4 and not fields[2].startswith('Z'):
+            rows.append((int(fields[0]), int(fields[1]), fields[3]))
     return rows
 
 
-def processes_matching(*needles):
-    """Live processes whose argv names one of the needles."""
-    return [(pid, command[:400]) for pid, _, command in process_table()
-            if any(needle in command for needle in needles)]
-
-
-def kill_all(*needles):
-    """SIGKILL the matched processes and every descendant of them.
-
-    A harness child does not always carry the database path in its argv, so the
-    descendant closure is what makes the kill complete.
-    """
-    table = process_table()
-    roots = {pid for pid, _, command in table
-             if any(needle in command for needle in needles) and pid != os.getpid()}
+def descendants(roots, table):
     doomed = set(roots)
     changed = True
     while changed:
@@ -84,14 +78,39 @@ def kill_all(*needles):
             if ppid in doomed and pid not in doomed:
                 doomed.add(pid)
                 changed = True
-    commands = {pid: command[:400] for pid, _, command in table}
+    return [(pid, ppid, command) for pid, ppid, command in table if pid in doomed]
+
+
+def kill_all(roots):
+    """Freeze this run's Popen trees before injecting complete process loss."""
+    assert set(roots) <= OWNED_ROOTS and os.getpid() not in roots
+    frozen = {}
     killed = []
-    for pid in sorted(doomed, reverse=True):
-        try:
-            os.kill(pid, signal.SIGKILL)
-            killed.append({'pid': pid, 'command': commands.get(pid, '')})
-        except (ProcessLookupError, PermissionError):
-            pass
+    try:
+        while True:
+            rows = descendants(roots, process_table())
+            fresh = [row for row in rows if row[0] not in frozen]
+            if not fresh:
+                break
+            # Stop parents first, then discover children created before the stop.
+            pending = {row[0]: row for row in fresh}
+            while pending:
+                ready = [row for row in pending.values() if row[1] not in pending]
+                assert ready, pending
+                for pid, ppid, command in ready:
+                    try:
+                        os.kill(pid, signal.SIGSTOP)
+                        frozen[pid] = {'pid': pid, 'ppid': ppid, 'command': command}
+                    except ProcessLookupError:
+                        pass
+                    del pending[pid]
+    finally:
+        for pid in reversed(frozen):
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed.append(frozen[pid])
+            except ProcessLookupError:
+                pass
     return killed
 
 
@@ -105,17 +124,48 @@ def wait_for(predicate, seconds, what):
     raise RuntimeError('timed out waiting for ' + what)
 
 
-def harness_argv(db, seconds=120):
-    """This run's live harness command line, captured while it runs.
-
-    The harness child carries the run's own session directory in its argv, so
-    the database path selects it and no other seat's harness can match.
-    """
+def harness_argv(spec, observer, seconds=120):
+    """Read argv recorded by this launch's wrapper before exec."""
     def look():
-        rows = [command for _, command in processes_matching(str(db))
-                if 'baton2' not in command]
+        rows = []
+        if spec['launchRecord'].exists():
+            for line in spec['launchRecord'].read_text().splitlines():
+                row = json.loads(line)
+                if row['ppid'] == observer.pid:
+                    rows.append(row)
         return rows or None
     return wait_for(look, seconds, 'the harness argv of this run')
+
+
+def start_turn(argv, prefix):
+    with prefix.with_suffix('.stdout').open('w') as stdout, prefix.with_suffix('.stderr').open('w') as stderr:
+        child = subprocess.Popen(argv, stdout=stdout, stderr=stderr, text=True)
+    OWNED_ROOTS.add(child.pid)
+    return child
+
+
+def write_wrapper(spec):
+    helper = SCRATCH / (spec['name'] + '-launch.py')
+    spec['launchRecord'] = SCRATCH / (spec['name'] + '-launches.jsonl')
+    helper.write_text('''import json,os,pathlib,sys,time
+config=json.loads(pathlib.Path(__file__).with_suffix('.json').read_text())
+argv=[config['executable'],*config['prefix'],*sys.argv[1:]]
+with open(config['record'],'a') as output:
+    output.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'argv':argv,'unix':time.time()})+'\\n')
+if config['subscription']:
+    os.environ.pop('OPENAI_API_KEY',None)
+    os.environ.pop('CODEX_API_KEY',None)
+os.execv(argv[0],argv)
+''')
+    helper.with_suffix('.json').write_text(json.dumps({
+        'executable': spec['bin'], 'record': str(spec['launchRecord']),
+        'subscription': spec['harness'] == 'codex',
+        'prefix': ['-c', 'forced_login_method="chatgpt"'] if spec['harness'] == 'codex' else [],
+    }))
+    wrapper = SCRATCH / (spec['name'] + '-harness')
+    wrapper.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper)]) + ' "$@"\n')
+    wrapper.chmod(0o700)
+    spec['bin'] = str(wrapper)
 
 
 def session_dir_rows(db):
@@ -126,14 +176,26 @@ def session_dir_rows(db):
 
 
 def main():
-    evidence = {'sessions': {}}
+    global SCRATCH, CODEX, OUTPUT_CREATED
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--harness', choices=['codex', 'omp', 'both'], default='both')
+    parser.add_argument('--codex', default=shutil.which('codex') or str(CODEX))
+    parser.add_argument('--output', type=pathlib.Path)
+    args = parser.parse_args()
+    CODEX = pathlib.Path(args.codex).expanduser().resolve()
+    SCRATCH = (args.output or ROOT / '.scratch' / ('recovery-real-models-' + uuid.uuid4().hex[:12])).resolve()
+    evidence = EVIDENCE
+    evidence.update({'sessions': {}, 'harness': args.harness, 'output': str(SCRATCH),
+                     'source': run(['git', '-C', ROOT, 'rev-parse', 'HEAD']).stdout.strip(),
+                     'driverSha256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
+                     'boundary': 'Owned coordinator and native process loss; explicit direct-turn resume.'})
     failures = []
+    evidence['failures'] = failures
     if not EXE.exists():
-        print(json.dumps({'error': 'coordinator not built at %s' % EXE}))
-        return 1
-    if SCRATCH.exists():
-        run(['rm', '-rf', str(SCRATCH)])
-    SCRATCH.mkdir(parents=True)
+        raise RuntimeError('coordinator not built at %s' % EXE)
+    evidence['coordinatorSha256'] = hashlib.sha256(EXE.read_bytes()).hexdigest()
+    SCRATCH.mkdir(parents=True, exist_ok=False)
+    OUTPUT_CREATED = True
     db = SCRATCH / 'state.db'
 
     # Own repository with its own base commit.
@@ -148,18 +210,27 @@ def main():
     base = run(['git', '-C', str(repo), 'rev-parse', 'HEAD']).stdout.strip()
     evidence['repo'] = {'path': str(repo), 'base': base}
 
-    # The Codex side needs a login; its state is recorded, not repaired.
-    status = subprocess.run([str(CODEX), 'login', 'status'], capture_output=True, text=True)
-    evidence['codexLogin'] = status.stdout.strip() or status.stderr.strip()
+    # Codex uses the operator's subscription login.
+    codex_logged_in = False
+    if args.harness in ['codex', 'both']:
+        status = subprocess.run(['/usr/bin/env', '-u', 'OPENAI_API_KEY', '-u', 'CODEX_API_KEY',
+                                 str(CODEX), '-c', 'forced_login_method="chatgpt"', 'login', 'status'],
+                                capture_output=True, text=True)
+        evidence['codexLogin'] = (status.stdout + status.stderr).strip()
+        codex_logged_in = status.returncode == 0 and evidence['codexLogin'] == 'Logged in using ChatGPT'
+        if not codex_logged_in:
+            evidence['codexSkipped'] = 'Codex requires the operator subscription login: ' + evidence['codexLogin']
+            if args.harness == 'codex':
+                failures.append('Codex must be logged in using ChatGPT')
 
     specs = []
-    if OMP.exists():
+    if args.harness in ['omp', 'both'] and OMP.exists():
         specs.append({'name': 'ompsession', 'harness': 'omp', 'bin': str(OMP), 'model': OMP_MODEL})
-    if 'logged in' in evidence['codexLogin'].lower() and 'not logged in' not in evidence['codexLogin'].lower():
-        specs.append({'name': 'codexsession', 'harness': 'codex', 'bin': str(SCRATCH / 'codex.sh'),
+    if args.harness in ['codex', 'both'] and codex_logged_in:
+        specs.append({'name': 'codexsession', 'harness': 'codex', 'bin': str(CODEX),
                       'model': CODEX_MODEL})
-    else:
-        evidence['codexSkipped'] = 'no login for this seat by design (%s); the Codex half is queued to the operator session' % evidence['codexLogin']
+    if not specs:
+        raise RuntimeError('Selected harness is unavailable')
 
     coord(db, 'attach', 'root', 'omp', 'native-root', '')
 
@@ -171,11 +242,7 @@ def main():
         worktree = SCRATCH / (name + '-wt')
         task = SCRATCH / (name + '-task.md')
         task.write_text(TASK.format(name=name))
-        if spec['harness'] == 'codex':
-            wrapper = SCRATCH / 'codex.sh'
-            wrapper.write_text('#!/bin/sh\nunset OPENAI_API_KEY CODEX_API_KEY\n'
-                               'exec %s -c \'forced_login_method="chatgpt"\' "$@"\n' % CODEX)
-            wrapper.chmod(0o700)
+        write_wrapper(spec)
         coord(db, 'recruit', name, 'root', spec['harness'], spec['model'], 'low',
               repo, 'bend2/' + name, worktree, base)
         log = SCRATCH / (name + '.jsonl')
@@ -186,25 +253,26 @@ def main():
         spec['log'] = log
         spec['launchFresh'] = [str(EXE), str(db), 'turn', name, name + '-turn-1', spec['bin'],
                                spec['model'], 'low', str(worktree), str(task_path), str(log), '']
-        turns[name] = subprocess.Popen(spec['launchFresh'],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        turns[name] = start_turn(spec['launchFresh'], SCRATCH / (name + '-fresh'))
 
     # Wait until each turn is mid-flight and keep the argv it actually ran with.
     for spec in specs:
         name = spec['name']
 
         def started(name=name):
+            if turns[name].poll() is not None:
+                raise RuntimeError(name + ' ended before fault injection; inspect fresh stdout/stderr')
             rows = coord(db, 'workers')
             row = [r for r in rows if r['id'] == name]
             if not row or not row[0].get('native'):
                 return None
             if row[0].get('lastTurnEvent'):
                 return None
-            return processes_matching(str(db))
+            return descendants([turns[name].pid], process_table())
 
         spec['beforeKillProcesses'] = wait_for(started, 120, '%s to start its native turn' % name)
         spec['native'] = [r for r in coord(db, 'workers') if r['id'] == name][0]['native']
-        spec['freshArgv'] = harness_argv(db, 30)
+        spec['freshArgv'] = harness_argv(spec, turns[name], 30)
 
     evidence['beforeKill'] = {spec['name']: {
         'launchFreshArgv': spec['launchFresh'],
@@ -212,11 +280,12 @@ def main():
         'native': spec['native'],
         'processes': spec['beforeKillProcesses'],
         'journalExists': spec['journal'].exists(),
+        'journal': spec['journal'].read_text() if spec['journal'].exists() else '',
         'sessionDir': session_dir_rows(db),
     } for spec in specs}
 
     # Kill every coordinator and harness process of this scratch run.
-    killed = kill_all(str(db), str(SCRATCH / 'repo'))
+    killed = kill_all([child.pid for child in turns.values()])
     for child in turns.values():
         try:
             child.wait(timeout=10)
@@ -224,67 +293,129 @@ def main():
             pass
     time.sleep(0.5)
     evidence['killed'] = killed
-    survivors = processes_matching(str(db), str(SCRATCH / 'repo'))
+    killed_pids = {row['pid'] for row in killed}
+    evidence['coordinatorExitCodes'] = {name: child.returncode for name, child in turns.items()}
+    required_pids = {child.pid for child in turns.values()}
+    required_pids.update(record['pid'] for spec in specs for record in spec['freshArgv'])
+    if not required_pids <= killed_pids or any(child.returncode != -signal.SIGKILL for child in turns.values()):
+        raise RuntimeError('Fault injection did not kill every initial coordinator and harness')
+    survivors = [(pid, command) for pid, _, command in process_table() if pid in killed_pids]
     evidence['survivors'] = survivors
     if survivors:
         failures.append('a coordinator or harness process survived the kill')
+        raise RuntimeError('Owned processes survived fault injection; resume was not started')
     for spec in specs:
-        if spec['journal'].exists():
+        expected = ['line ' + word + ' from ' + spec['name'] for word in ['one', 'two', 'three']]
+        if spec['journal'].exists() and spec['journal'].read_text().splitlines() == expected:
             failures.append('%s: the task was already finished before the kill' % spec['name'])
 
-    # Restart: the same turn with the identity the session held before the kill,
-    # the way the trial's own second launches name it. A recorded conversation
-    # this host still holds resumes; one it does not is refused, and the turn
-    # then runs fresh so the pending input still completes.
+    # Request the previous conversation. OMP can refuse an unavailable
+    # conversation and restart fresh with the pending task and workspace state.
     for spec in specs:
         name = spec['name']
         before = session_dir_rows(db)
+        journal_before = spec['journal'].read_text() if spec['journal'].exists() else ''
         launch = [str(EXE), str(db), 'turn', name, name + '-turn-1', spec['bin'], spec['model'],
                   'low', str(spec['worktree']), str(spec['task']), str(spec['log']), spec['native']]
-        resumed = subprocess.Popen(launch, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        launches = []
-        deadline = time.monotonic() + 900
-        while resumed.poll() is None and time.monotonic() < deadline:
-            for _, command in processes_matching(str(db)):
-                if 'baton2' not in command and command not in launches:
-                    launches.append(command)
-            time.sleep(0.3)
-        stdout, stderr = resumed.communicate(timeout=120)
+        log_offset = spec['log'].stat().st_size if spec['log'].exists() else 0
+        resumed_prefix = SCRATCH / (name + '-resumed')
+        resumed = start_turn(launch, resumed_prefix)
+        resumed.wait()
+        # The wrapper records every launch, including OMP's fresh fallback.
+        argv = harness_argv(spec, resumed, 120)
+        stdout = resumed_prefix.with_suffix('.stdout').read_text()
+        stderr = resumed_prefix.with_suffix('.stderr').read_text()
         rows = coord(db, 'workers')
         row = [r for r in rows if r['id'] == name][0]
         text = spec['journal'].read_text() if spec['journal'].exists() else ''
-        inbox = coord(db, 'inbox', 'root')
+        with spec['log'].open('rb') as native_log:
+            native_log.seek(log_offset)
+            resumed_events = [json.loads(line) for line in native_log if line.strip()]
+        with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+            stored = connection.execute('SELECT event FROM turns WHERE id=?', (name + '-turn-1',)).fetchone()
+        terminal = json.loads(stored[0]) if stored else None
+        recovery_messages = [message for message in coord(db, 'inbox', 'root')
+                             if message['sender'] == name and message['id'] == name + '-turn-1:recovery']
         entry = {
             'launchResumeArgv': launch,
-            'harnessLaunches': launches,
+            'harnessArgv': argv,
+            'harnessLaunches': argv,
             'exitCode': resumed.returncode,
-            'stdout': stdout[:400],
-            'stderr': stderr[:800],
+            'stdout': stdout,
+            'stderr': stderr,
             'nativeBefore': spec['native'],
             'nativeAfter': row.get('native'),
             'turnEvent': row.get('lastTurnEvent'),
-            'report': row.get('latestReport', '')[:200],
+            'report': row.get('latestReport', ''),
+            'terminal': terminal,
+            'resumedNativeEvents': resumed_events,
+            'recoveryRows': [message['id'] for message in recovery_messages],
+            'recoveryMessages': recovery_messages,
+            'journalBeforeRestart': journal_before,
             'journal': text,
             'sessionDirBefore': before,
             'sessionDirAfter': session_dir_rows(db),
-            'recoveryRows': [m['id'] for m in inbox if m['id'].endswith(':recovery')],
         }
         evidence['sessions'][name] = entry
-        if not any('--resume' in command for command in launches):
-            failures.append('%s: no harness launch carried the recorded identity' % name)
-        if row.get('lastTurnEvent') != 'agent_end':
-            failures.append('%s: the turn did not reach a terminal event' % name)
-        if 'line three from ' + name not in text:
-            failures.append('%s: the task did not finish after the restart' % name)
+        if spec['harness'] == 'codex':
+            resumed_arg = any(['exec', 'resume', spec['native']] == record['argv'][i:i + 3]
+                              for record in argv for i in range(len(record['argv']) - 2))
+        else:
+            resumed_arg = any('--resume' in record['argv'] and
+                              spec['native'] in record['argv'][record['argv'].index('--resume') + 1]
+                              for record in argv)
+        if not resumed_arg:
+            failures.append('%s: the restarted harness argv carries no resume value' % name)
         if not row.get('native'):
             failures.append('%s: the session recorded no identity after the restart' % name)
-        if row.get('native') != spec['native'] and not entry['recoveryRows']:
-            failures.append('%s: the conversation changed with no recovery row' % name)
+        elif row['native'] != spec['native']:
+            if spec['harness'] == 'codex':
+                failures.append('%s: the restarted turn ran under another identity (%s -> %s)'
+                                % (name, spec['native'], row['native']))
+            elif not recovery_messages:
+                failures.append('%s: the conversation changed with no recovery row' % name)
+        expected_event = 'result' if spec['harness'] == 'codex' else 'agent_end'
+        if row.get('lastTurnEvent') != expected_event:
+            failures.append('%s: the turn did not reach a terminal event' % name)
+        if resumed.returncode or not terminal or terminal.get('is_error'):
+            failures.append('%s: resumed turn failed' % name)
+        if spec['harness'] == 'codex' and (not terminal or terminal.get('nativeEvent', {}).get('type') != 'turn.completed'):
+            failures.append('%s: Codex did not report native turn.completed' % name)
+        if spec['harness'] == 'codex':
+            resumed_ids = [event.get('thread_id') for event in resumed_events if event.get('type') == 'thread.started']
+            if not resumed_ids or any(native_id != spec['native'] for native_id in resumed_ids):
+                failures.append('%s: resumed native output did not confirm the recorded conversation' % name)
+        expected = ['line ' + word + ' from ' + name for word in ['one', 'two', 'three']]
+        if text.splitlines() != expected:
+            failures.append('%s: journal must contain each of the three expected lines once, in order' % name)
+        if not text.startswith(journal_before):
+            failures.append('%s: restart did not preserve the journal written before process loss' % name)
+        changed = run(['git', '-C', spec['worktree'], 'status', '--porcelain', '--untracked-files=all']).stdout.splitlines()
+        entry['changedFiles'] = changed
+        if changed != ['?? journal.txt']:
+            failures.append('%s: unexpected worktree changes' % name)
 
-    evidence['failures'] = failures
-    print(json.dumps(evidence, indent=2, sort_keys=True))
     return 1 if failures else 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        code = main()
+    except Exception as error:
+        EVIDENCE['error'] = repr(error)
+        code = 1
+    if EVIDENCE:
+        known = set(OWNED_ROOTS)
+        if OUTPUT_CREATED:
+            for path in SCRATCH.glob('*-launches.jsonl'):
+                known.update(json.loads(line)['pid'] for line in path.read_text().splitlines())
+        EVIDENCE['remainingProcesses'] = descendants(known, process_table())
+        if EVIDENCE['remainingProcesses']:
+            EVIDENCE.setdefault('failures', []).append('owned processes remain after the probe')
+            code = 1
+        EVIDENCE['status'] = 'passed' if code == 0 else 'failed'
+        serialized = json.dumps(EVIDENCE, indent=2, sort_keys=True) + '\n'
+        if OUTPUT_CREATED:
+            (SCRATCH / 'evidence.json').write_text(serialized)
+        print(serialized, end='')
+    sys.exit(code)
