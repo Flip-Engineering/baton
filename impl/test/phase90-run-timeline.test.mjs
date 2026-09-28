@@ -171,13 +171,7 @@ test('RT8: production result and all-zero reap receipts retain safe terminal tru
         result: { ref: 'private-result-ref', sha: 'f'.repeat(40) },
       },
     }),
-    coordination(2, 'run.result_export_completed', {
-      receipt: {
-        runId: 'run-zero', state: 'completed', fileCount: 2, byteCount: 17,
-        locator: 'private-export-locator', manifestDigest: 'b'.repeat(64),
-      },
-    }),
-    coordination(3, 'run.stop_completed', {
+    coordination(2, 'run.stop_completed', {
       runId: 'run-zero', receipt: {
         state: 'stopped', targetCount: 0, remainingCount: 0,
         counts: {
@@ -192,16 +186,13 @@ test('RT8: production result and all-zero reap receipts retain safe terminal tru
   ];
   const page = projectRunTimelinePage({ runId: 'run-zero', events, snapshot: {} });
   assert.deepEqual(page.items.map((item) => item.kind), [
-    'run.result_adoption_completed', 'run.result_export_completed', 'run.stop_completed',
+    'run.result_adoption_completed', 'run.stop_completed',
   ]);
   assert.deepEqual(page.items[0].facts, { state: 'adopted' });
-  assert.deepEqual(page.items[1].facts, { byteCount: 17, fileCount: 2, state: 'completed' });
-  assert.deepEqual(page.items[2].facts, {
+  assert.deepEqual(page.items[1].facts, {
     alreadyTerminal: 0, dispatchClosed: true, interactionsResolved: true,
     killConfirmed: 0, pendingCancelled: 0, processesClosed: 0, processesObserved: 0,
     remainingCount: 0, runAuthorityReleased: true, state: 'stopped', targetCount: 0,
   });
-  for (const absent of ['private-result-ref', 'private-export-locator', 'manifestDigest']) {
-    assert.equal(JSON.stringify(page).includes(absent), false, `timeline leaked ${absent}`);
-  }
+  assert.equal(JSON.stringify(page).includes('private-result-ref'), false);
 });

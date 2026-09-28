@@ -154,7 +154,7 @@ test('DF2: advanced root injection still produces one private deployment-owned n
   t.after(async () => { try { await deployment.close(); } catch {} });
   await deployment.ready;
 
-  for (const child of ['state', 'runtime', 'evidence']) {
+  for (const child of ['state', 'runtime']) {
     const path = join(options.deploymentRoot, child);
     assert.equal(existsSync(path), true, child);
     assert.equal(statSync(path).mode & 0o077, 0, `${child} must be owner-only`);
@@ -244,13 +244,10 @@ test('DF5: ordinary options reject driver choreography and advanced is one close
     repoId: 'caller-selected-repository-authority',
     logDir: '/tmp/caller-log',
     runtimeRoot: '/tmp/caller-runtime',
-    evidenceDir: '/tmp/caller-evidence',
     tokenBudget: 1_500_000,
     usdBudget: 25,
     wallMinutes: 30,
     providerTurns: 64,
-    exportMaxFiles: 2_000,
-    exportMaxBytes: 104_857_600,
     env: { SECRET: 'must-not-enter-the-factory-surface' },
   };
   for (const [field, value] of Object.entries(forbidden)) {

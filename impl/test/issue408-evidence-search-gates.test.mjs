@@ -54,10 +54,6 @@ function profile() {
     followPolicy: {
       mode: 'enabled', maxWaitMs: 1_000, maxChanges: 8, maxResponseBytes: 64 * 1_024, maxScanEvents: 32,
     },
-    exportPolicy: {
-      mode: 'manual', format: 'directory-v1', maxFiles: 8, maxBytes: 64 * 1_024,
-      requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
-    },
   };
 }
 
@@ -93,7 +89,6 @@ async function applicationWith(t) {
   const seam = { calls: [], allow: true };
   const app = new BatonApplication({
     driver, repoId, profiles: { deployment: profile() },
-    exportRoot: join(root, 'export'),
     principals: {
       planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer'),
     },

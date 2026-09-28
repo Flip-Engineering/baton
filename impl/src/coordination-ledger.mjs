@@ -915,7 +915,7 @@ export function _resetProjection(store) {
   store._evidence = new Map(); store._scratchFacts = new Map(); store._scratchClaims = new Map(); store._scratchReads = [];
   store._knowledgeNodes = new Map(); store._knowledgeEdges = new Map(); store._knowledgeNodeHistory = new Map(); store._knowledgeEdgeHistory = new Map(); store._knowledgeReads = []; store._knowledgeRecallAssessments = new Map(); store._contamination = [];
   store._webCommands = new Map(); store._webCommandScopes = new Map(); store._mcpCalls = new Map(); store._mcpCallScopes = new Map();
-  store._fleetDrains = new Map(); store._runStops = new Map(); store._runStopByTarget = new Map(); store._runControls = new Map(); store._runResultAdoptions = new Map(); store._runResultExports = new Map();
+  store._fleetDrains = new Map(); store._runStops = new Map(); store._runStopByTarget = new Map(); store._runControls = new Map(); store._runResultAdoptions = new Map();
   store._runVerificationRetries = new Map();
   store._runOrchestratorLeases = new Map(); store._runLineages = new Map(); store._runLineageEventSeqs = new Map(); store._runChildrenByParent = new Map();
   store._recoveryDispatches = new Map(); store._taskTopologies = new Map();
@@ -3149,24 +3149,6 @@ export function _apply(store, event) {
     // the closed tier the live process served, and the reap is idempotent for the run-stop path's
     // own call.
     for (const targetRunId of stoppedRunIds) reapRunReplBindings(store, targetRunId);
-    for (const [exportId, state] of store._runResultExports) {
-      if (!stoppedRunIds.has(state.runId) || state.status !== 'pending') continue;
-      const cancellationCore = {
-        schemaVersion: 1,
-        kind: 'run_stop',
-        runId: p.runId,
-        exportId,
-        stopEvent: event.seq,
-        reasonDigest: p.reasonDigest,
-      };
-      store._runResultExports.set(exportId, freeze({
-        ...clone(state),
-        status: 'cancelled',
-        cancellation: { ...cancellationCore, cancellationDigest: canonicalDigest(cancellationCore) },
-        cancelledEvent: event.seq,
-        cancelledAt: event.ts,
-      }));
-    }
     const sessionTargets = p.schemaVersion >= 2
       ? p.targetContextSessionIds.map((sessionId) => [sessionId, store._contextSessions.get(sessionId)])
       : [...store._contextSessions].filter(([, session]) => (
@@ -3243,17 +3225,6 @@ export function _apply(store, event) {
     const old = store._validateRunVerificationRetryCompletion(p, event, true);
     store._runVerificationRetries.set(store._runVerificationRetryKey(p.runId, p.nodeKey), freeze({
       ...clone(old), status: p.receipt.state, receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
-    }));
-  } else if (event.kind === 'run.result_export_admitted') {
-    store._validateRunResultExportAdmission(p, event, true);
-    store._runResultExports.set(p.exportId, freeze({
-      ...clone(p), actor: event.actor, status: 'pending', admittedEvent: event.seq, admittedAt: event.ts,
-      receipt: null, completedEvent: null, completedAt: null,
-    }));
-  } else if (event.kind === 'run.result_export_completed') {
-    const old = store._validateRunResultExportCompletion(p, event, true);
-    store._runResultExports.set(p.exportId, freeze({
-      ...clone(old), status: 'completed', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
     }));
   } else if (event.kind === 'web.command_admitted') {
     const command = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
@@ -4332,7 +4303,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._runResultExports.size > 0 ? { runResultExports: [...store._runResultExports.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), ...(store._runResultAdoptions.size > 0 ? { runResultAdoptions: [...store._runResultAdoptions.values()].map(clone) } : {}), ...(store._contextProgramPolicy ? { context: { policy: clone(store._contextProgramPolicy), sessions: [...store._contextSessions.values()].map(clone), cells: [...store._contextCells.values()].map(clone), calls: store.contextCalls() } } : {}), ...(store._replManifestAdmissions.size > 0 ? { repl: { manifests: [...store._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -4544,37 +4515,6 @@ export function completeRunVerificationRetry(store, fields, auth) {
     task: store.task(retry.taskId),
     artifacts: prepared.map((manifest) => store.artifact(manifest.id)),
   });
-}
-
-export function pendingRunResultExports(runResultExports, limit = 1_000) {
-  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run result export scan limit is invalid');
-  return [...runResultExports.values()].filter((state) => state.status === 'pending')
-    .sort((a, b) => a.admittedEvent - b.admittedEvent).slice(0, limit).map(clone);
-}
-
-export function completeRunResultExport(store, fields, auth) {
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-    || Object.keys(fields).sort().join(',') !== ['exportId', 'receipt', 'schemaVersion'].join(',')) {
-    throw new CoordinationRefusal('run result export completion is invalid', 'run_result_export_invalid');
-  }
-  const payload = clone(fields);
-  const state = store._runResultExports.get(fields.exportId);
-  if (state?.status === 'completed') {
-    const prior = store._byKey.get(auth?.key);
-    if (!prior || prior.kind !== 'run.result_export_completed' || prior.actor !== auth?.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-      throw new CoordinationRefusal('run result export completion conflict', 'run_result_export_conflict');
-    }
-    return freeze({ ok: true, result: 'replay', event: clone(prior), export: store.runResultExport(state.runId, state.nodeKey) });
-  }
-  if (state?.status === 'cancelled' && store._runStops.has(state.runId)) {
-    throw new CoordinationRefusal(`run ${state.runId} is stopping`, 'run_stopping');
-  }
-  const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
-  store._validateRunResultExportCompletion(payload, preview, false);
-  if (store._byKey.has(auth.key)) throw new CoordinationRefusal('run result export completion idempotency conflict', 'run_result_export_conflict');
-  const event = store._append('run.result_export_completed', payload, auth);
-  return freeze({ ok: true, result: 'completed', event: clone(event), export: store.runResultExport(state.runId, state.nodeKey) });
 }
 
 export function pendingRunControls(state, limit = 1_000) {

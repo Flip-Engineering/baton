@@ -344,8 +344,8 @@ const sections = [
   ['rounds', 'Append-only Workflow Plan rounds, immutable Candidate lineage, and current round state.'],
   ['context', 'Immutable Context sessions, pure cells, coverage, and source-grounded evidence.'],
   ['result', 'Accepted and adopted result state.'],
-  ['delivery', 'Integration and export/delivery state.'],
-  ['cleanup', 'Stop, process reaping, worktree, runtime, and export cleanup.'],
+  ['delivery', 'Integration state.'],
+  ['cleanup', 'Stop, process reaping, worktree, and runtime cleanup.'],
   ['knowledge', 'Run-related causal knowledge summaries and evidence links.'],
   ['capabilities', 'Capability work used by this Run and its bounded outcomes.'],
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));

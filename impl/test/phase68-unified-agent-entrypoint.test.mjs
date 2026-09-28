@@ -556,7 +556,7 @@ test('bound ordinary start rejects deployment policy and storage plumbing', asyn
   const baton = bindBaton({ command: async () => ({ runId: 'unused' }) }, {});
   await assert.rejects(() => baton.runs.start('Invalid plumbing', { tokens: 10_000 }),
     (error) => error?.code === 'application_client_invalid');
-  await assert.rejects(() => baton.runs.start('Invalid plumbing', { exportRoot: '/tmp/export' }),
+  await assert.rejects(() => baton.runs.start('Invalid plumbing', { internalRoot: '/tmp/private' }),
     (error) => error?.code === 'application_client_invalid');
   await assert.rejects(() => baton.runs.start('No implicit effort', { model: 'gpt-5.6-sol' }),
     (error) => error?.code === 'application_client_invalid' && /model and effort together/u.test(error.message));

@@ -331,7 +331,7 @@ Every row carries its authority profile; unmarked rows are `ordinary`.
 | `run.send` / `run.interrupt` | run-level, live-recipient-resolving; `work` sentinel accepted here only |
 | `run.stop` | `run.stop`, `fleet_run_stop`, `baton_run_stop` |
 | `run.evidence` | `run.evidence` — the one noun-read of the terminal manifest |
-| `run.review` / `run.adopt` / `run.integrate` / `run.export` | same verbs, one spelling |
+| `run.review` / `run.adopt` / `run.integrate` | same verbs, one spelling |
 | `run.select` / `run.feedback` | candidate-addressed (R-OP-16) |
 | `run.revise` / `run.recover` / `run.resume` / `run.retry` | same |
 | `run.member.view` | `run.workstreams` (roster/generations/state read; per-member episode chapters go through `run.view --role`) |
