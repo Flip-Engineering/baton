@@ -1280,11 +1280,8 @@ function ompRouteReadinessFacts(model, providerKeyFiles = DEFAULT_OMP_PROVIDER_K
 // process for a short window keyed by the operator's models.yml mtime, and never throws: an
 // unreadable catalog is a typed blocked row, never a doctor failure.
 const OMP_CATALOG_ARGS = Object.freeze(['models', '--json', '--no-extensions']);
-// #500 (extending the #342 pin): the memo window is 60 s — process-local, keyed by the
-// operator's models.yml mtime, so a catalog edit invalidates it at once and a steady file
-// re-reads at most once a minute. Operator-declared with no derivation elsewhere in the
-// tree; the #500 pin test records it.
-const OMP_CATALOG_MEMO_MS = 60_000;
+// #500 (extending the #342 pin): the memo is keyed on the operator's models.yml mtime alone, so a
+// catalog edit invalidates it at once and a steady file is read once per edit.
 let ompCatalogMemo = null;
 
 // #500: the read is bounded — a 20 s timeout on the omp child and an 8 MiB ceiling on its
@@ -1308,11 +1305,10 @@ function defaultModelProfileFetch(url, options = {}) {
 
 /** `Map<selector, {provider, id, thinking: string[]|null}>` over the harness catalog, or null
  * when omp cannot list its models (absent binary, refused run, non-JSON). */
-export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Date.now } = {}) {
+export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead } = {}) {
   let key = 'no-models-yml';
   try { key = String(lstatSync(join(operatorHome(), OMP_AGENT_MODELS)).mtimeMs); } catch { /* absent file: keyed as such */ }
-  if (catalogRead === defaultOmpCatalogRead && ompCatalogMemo && ompCatalogMemo.key === key
-    && now() - ompCatalogMemo.at < OMP_CATALOG_MEMO_MS) {
+  if (catalogRead === defaultOmpCatalogRead && ompCatalogMemo && ompCatalogMemo.key === key) {
     return ompCatalogMemo.catalog;
   }
   let parsed;
@@ -1330,7 +1326,7 @@ export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Dat
       }));
     }
   }
-  if (catalogRead === defaultOmpCatalogRead) ompCatalogMemo = { key, at: now(), catalog };
+  if (catalogRead === defaultOmpCatalogRead) ompCatalogMemo = { key, catalog };
   return catalog;
 }
 
