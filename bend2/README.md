@@ -174,6 +174,8 @@ argument to continue the same conversation. For example:
 `pending` shows reports awaiting native acceptance. Native receivers read
 messages from the database. `turn` and `receive` share process ownership for
 each logical session; separate sessions can run concurrently.
+An overlapping `turn` returns an active-session error. Send a message to queue
+input for a session with a registered receiver, or retry the turn after it exits.
 
 The check command builds the coordinator, process and Git test executables, then
 runs persistence, recruitment, Git, OS-process and controlled-protocol tests. A controlled
@@ -217,9 +219,10 @@ queued delivery described here. The trial launcher uses that native path.
 
 `python3 bend2/scripts/accept-native-receive.py --config routes.json --output .scratch/native-review`
 starts a Codex root and two OMP source reviewers in an isolated clone. The route
-file supplies each harness's executable, model and effort. Build the coordinator
-first and commit the runtime source being reviewed. The driver verifies retained
-report text, acknowledgment, native session reuse and unchanged source checkouts.
+file supplies each harness's executable, model and effort. The driver builds
+the selected committed revision in the clone; `BEND` can select an installed
+compiler. It verifies retained report text, acknowledgment, native session reuse
+and unchanged source checkouts.
 It retains the database, native logs, process records and source and binary hashes
 under the output directory. The command starts real model sessions.
 
