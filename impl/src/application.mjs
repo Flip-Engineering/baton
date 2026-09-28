@@ -3941,89 +3941,6 @@ export class BatonApplication {
     return applicationObservation._performWorkflowMemberStop(this, current, definition, stop);
   }
 
-  async stopWorkflowMember(rawRequest, rawPrincipal, semanticDispatch = null) {
-    this._assertOpen();
-    await this.ready;
-    if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
-      || Object.keys(rawRequest).sort().join(',') !== ['reason', 'role', 'runId'].sort().join(',')
-      || !validId(rawRequest.runId) || !validId(rawRequest.role)
-      || !validText(rawRequest.reason)
-      || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(rawRequest.reason))) {
-      throw applicationError('Workflow member stop is invalid',
-        'application_workflow_member_stop_invalid');
-    }
-    const principal = normalizePrincipal(rawPrincipal, 'Workflow member stop principal');
-    const reason = rawRequest.reason.normalize('NFKC').trim();
-    return this._withRunEffect(rawRequest.runId, async () => {
-      if (semanticDispatch !== SEMANTIC_ACTION_DISPATCH) {
-        await this._authorizeSemanticKind('stop_member', principal, rawRequest.runId);
-      }
-      const current = this._findRun(rawRequest.runId);
-      this._assertRunMutable(rawRequest.runId);
-      if (!this._isWorkflowRun(current)) {
-        throw applicationError('Run is not a member-addressable Workflow',
-          'application_workflow_member_stop_unavailable');
-      }
-      const definition = this._workflowDefinition(current);
-      const existing = this._workflowMemberStops(current, definition)
-        .find((row) => row.role === rawRequest.role);
-      if (existing) {
-        if (existing.reasonDigest !== digest(reason)
-          || existing.source.principalId !== principal.principalId
-          || existing.source.sessionId !== principal.sessionId) {
-          throw applicationError('Workflow member already has a different stop admission',
-            'application_workflow_member_stop_conflict');
-        }
-        await this._performWorkflowMemberStop(current, definition, existing);
-        return this._buildView(current, this.principals.observer, {
-          action: { command: 'run.act', result: 'member_stopped', role: existing.role },
-        });
-      }
-      const binding = definition.attempts.find((attempt) => attempt.role === rawRequest.role);
-      const projection = await this._goalPlanStatus(current, this.principals.observer);
-      const node = binding
-        ? projection.nodes.find((candidate) => candidate.key === binding.nodeKey) : null;
-      const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
-      const workerId = task?.assignee ?? null;
-      if (!binding || !node || ['accepted', 'failed', 'cancelled'].includes(node.state)
-        || !task || !validId(workerId)) {
-        throw applicationError('Workflow member is not active or addressable',
-          'application_workflow_member_stop_unavailable');
-      }
-      const source = {
-        actor: principal.actor, principalId: principal.principalId, sessionId: principal.sessionId,
-      };
-      const target = {
-        repoId: this.repoId, runId: current.goal.runId, planDigest: current.plan.digest,
-        role: binding.role, nodeKey: binding.nodeKey, taskId: task.id, workerId,
-      };
-      const core = {
-        schemaVersion: 1, repoId: this.repoId, runId: current.goal.runId,
-        goalDigest: current.goal.digest, planDigest: current.plan.digest,
-        definitionDigest: definition.definitionDigest,
-        role: binding.role, nodeKey: binding.nodeKey, taskId: task.id, workerId,
-        targetDigest: digest(target), reasonDigest: digest(reason), source,
-        prefix: {
-          throughSeq: this.driver.coordination.eventCursor(),
-          goalDigest: current.goal.digest, planDigest: current.plan.digest,
-          definitionDigest: definition.definitionDigest,
-        },
-      };
-      this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND, {
-        ...core, admissionDigest: digest(core),
-      }, {
-        actor: principal.actor,
-        key: `${APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND}:${current.goal.runId}:${current.plan.digest}:${binding.role}`,
-      });
-      const admitted = this._workflowMemberStops(current, definition)
-        .find((row) => row.role === binding.role);
-      await this._performWorkflowMemberStop(current, definition, admitted);
-      return this._buildView(current, this.principals.observer, {
-        action: { command: 'run.act', result: 'member_stopped', role: binding.role },
-      });
-    });
-  }
-
   async selectWorkflowCandidate(rawRequest, rawPrincipal, semanticDispatch = null) {
     this._assertOpen();
     await this.ready;
@@ -4275,8 +4192,7 @@ export class BatonApplication {
     else if (node.state === 'accepted') phase = readOnlyResult ? 'completed' : 'work_completed';
     // Issue #334 acceptance: an inconclusive verdict whose failureOwnership is
     // baseline_or_environment (the base is red — the candidate is not to blame) never reads
-    // phase 'failed'. The run's phase is the terminal 'inconclusive', with the
-    // retry_verification action still offered below.
+    // phase 'failed'. The run's phase is the terminal 'inconclusive'.
     else if (node.state === 'failed') phase = result?.verdict?.outcome === 'inconclusive'
       && result?.verdict?.failureOwnership === 'baseline_or_environment' ? 'inconclusive' : 'failed';
     else if (node.state === 'cancelled') phase = 'cancelled';
@@ -4344,9 +4260,9 @@ export class BatonApplication {
         available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved, originOutcome,
       };
     }
-    // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
-    // coordinate-free resume_work action. Preservation is not acceptance: the projection only
-    // advertises the resume, never an adopted result.
+    // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, the view
+    // reports the preserved work as available. Preservation is not acceptance: the projection
+    // never carries an adopted result.
     let resumeProjection = null;
     if (phase === 'cancelled' && result?.checkpoint?.state === 'pinned' && !runStop
       && projection.approval?.disposition === 'approved'
@@ -4539,14 +4455,6 @@ export class BatonApplication {
     const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
       ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
       : [];
-    const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
-      && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
-    const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
-    const canIntegrate = !readOnlyResult && current.profile.integrationPolicy.mode === 'manual'
-      && (!current.profile.integrationPolicy.requireSemanticReview
-        || semanticReview.state === 'semantic_reviewed')
-      && (!current.profile.integrationPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
-      && !integration;
     const nextActions = phase === 'stopping' ? [{ kind: 'wait' }, { kind: 'status' }]
       : phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
@@ -4555,16 +4463,11 @@ export class BatonApplication {
         : phase === 'interruption_uncertain' ? [{ kind: 'stop' }]
         : ['running', 'reviewing'].includes(phase) ? [{ kind: 'steer' }, { kind: 'stop' }, { kind: 'wait' }, ...attention]
           : phase === 'work_completed' ? [
-            ...(canReview ? [{ kind: 'semantic_review', routes: clone(current.profile.reviewPolicy.routes) }] : []),
-            ...(canIntegrate ? [{ kind: 'integrate', strategies: clone(current.profile.integrationPolicy.strategies) }] : []),
             { kind: 'evidence' },
-            ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : []),
           ]
             : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [
-              ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
-              ...(resumeProjection?.available ? [{ kind: 'resume_work' }] : []),
               { kind: 'evidence' },
-              ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
+            ]
               : [{ kind: 'status' }];
     const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase)
       ? resultStability === 'passed_after_candidate_failure' ? 'mechanically_verified_unstable' : 'mechanically_verified'
@@ -4947,27 +4850,6 @@ export class BatonApplication {
       kind,
       target,
     });
-  }
-
-  _replaySemanticResumeAction(current, request, principal) {
-    if (!request.inputs || Object.keys(request.inputs).sort().join(',') !== 'reason'
-      || !validText(request.inputs.reason)) return null;
-    const principalScopeDigest = digest({ principalId: principal.principalId, sessionId: principal.sessionId });
-    const reasonDigest = digest(request.inputs.reason);
-    const workers = this.driver.coordinator.list().filter((handle) => handle.runId === request.runId);
-    for (const handle of workers) {
-      const replay = this.driver.log.read(handle.id).findLast?.((event) => event.kind === 'work.resumed'
-        && event.payload?.runId === request.runId
-        && event.payload?.semanticActionId === request.actionId
-        && event.payload?.semanticPrincipalScopeDigest === principalScopeDigest
-        && event.payload?.reasonDigest === reasonDigest);
-      if (!replay) continue;
-      const resumedTask = this.driver.coordination.task(replay.payload.resumedTaskId);
-      if (resumedTask?.runId === request.runId && resumedTask.refines === replay.payload.preservedTaskId) {
-        return replay.payload;
-      }
-    }
-    return null;
   }
 
   _contextState(current) {
@@ -6780,18 +6662,6 @@ export class BatonApplication {
         current, request, principal, context,
       );
       if (controlReplay) return controlReplay;
-      const replay = this._replaySemanticResumeAction(current, request, principal);
-      if (replay) {
-        const definition = APPLICATION_SEMANTIC_REGISTRY.actions.resume_work;
-        const authority = context?.semanticAuthority ?? semanticAuthorityForAction({
-          actionId: request.actionId,
-          kind: 'resume_work',
-          effect: definition.effect,
-          requiredCapabilities: definition.requiredCapabilities,
-        });
-        await this._authorizeSemanticAuthority(authority, principal, request.runId, context);
-        return this.inspect({ runId: request.runId, depth: 'outline' }, principal);
-      }
       throw applicationError('Run action is outside the current authority scope; inspect the Run'
         + ' for the actions it currently advertises', 'application_action_scope_mismatch');
     }
