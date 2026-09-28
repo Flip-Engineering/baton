@@ -18,6 +18,13 @@ the loss of all coordinator and harness processes, with the operating system
 and its caches still up — reads the repository and the database again through
 fresh processes, and starts one `receive` per session.
 
+Process selection includes every live command naming the probe's unique fixture
+directory, including retained process owners and replacement observers. The
+probe stops that set before killing it so an owner cannot launch recovery during
+fault injection. It records the selected processes and verifies that none remain.
+After resumption, it drains fixture turns until every owned process exits before
+reading final inboxes and completion rows.
+
 ```sh
 BEND=/path/to/bend sh bend2/scripts/build-native.sh
 python3 docs/bend2/examples/probe-host-restart.py
