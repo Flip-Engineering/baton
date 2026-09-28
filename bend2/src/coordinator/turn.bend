@@ -12,6 +12,8 @@ import ../harness/claude-worker.bend as Claude
 import ../harness/omp-worker.bend as Omp
 import ../harness/muse-worker.bend as Muse
 import ../harness/codex-worker.bend as Codex
+import ../git/process.bend as GitProc
+import ../git/types.bend as G
 
 type Outcome is Data:
   Ended{status: String, event: String, error: String}
@@ -269,12 +271,76 @@ def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd
     Codex.start_worker(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
     claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
 
-def supervise(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, +session: String, +harness: String, +sessions: String, prompt: String) -> IO(Outcome):
+# The state the workspace holds when a turn restarts: the work an interrupted
+# turn had already written.
+def state_note_go(g: G.GitOut, +cwd: String) -> String:
+  match g:
+    case G.GRun{code, out}:
+      +o2 = out
+      Bool.pick(String, Tx.non_empty(o2),
+        "The workspace at " ++ cwd ++ " holds uncommitted changes:\n" ++ Tx.trim_nl(o2),
+        "The workspace at " ++ cwd ++ " holds no uncommitted changes.")
+    case G.GBroken{detail}: "The workspace at " ++ cwd ++ " could not be read for its changes: " ++ detail
+
+def state_note(cwd: String) -> IO(String):
+  +c2 = cwd
+  do IO<String>:
+    g : G.GitOut <- GitProc.runGit(c2, ["status", "--porcelain"])
+    IO.pure(String, state_note_go(g, c2))
+
+# The prompt a restarted turn delivers: the pending input plus the state the
+# interrupted turn left, so the work continues instead of repeating.
+def refused_note(cwd: String, prompt: String) -> IO(String):
+  do IO<String>:
+    note : String <- state_note(cwd)
+    IO.pure(String, prompt ++ "\n\nThe conversation this session had before was not saved, so this is a fresh conversation. " ++ note ++ "\nContinue the task and keep the work the workspace already holds.")
+
+# A resume value this host no longer holds: the harness refuses the identity
+# before any turn runs, and its stderr says so.
+def refusal_body(resumable: Bool, event: String, text: String) -> Bool:
+  Bool.and(resumable,
+    Bool.and(String.is_empty(event), Tx.starts_with(Tx.trim_nl(text), "Error: Session")))
+
+def refusal_read(resumable: Bool, event: String, text: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match text:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{value}: IO.pure(Bool,refusal_body(resumable,event,value))
+
+def refusal(+log: String, resumable: Bool, +outcome: Outcome) -> IO(Bool):
+  match outcome:
+    case Ended{status,event,error}:
+      do IO<Bool>:
+        text : Result<&1,&1,U32 & String,String> <- T.Text.read(log ++ ".stderr")
+        refusal_read(resumable,event,text)
+
+# The refused conversation is gone, so the pending input runs fresh and names
+# the state the workspace holds; the fresh turn records its own identity.
+def restart(+db: String, +worker: String, +id: String, +log: String, +note: String, +harness: String, child: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
+  do IO<Outcome>:
+    noted : Unit <- report(db,worker,id ++ ":recovery","The recorded conversation could not be resumed; the turn restarted in a fresh conversation that names the workspace's current state.")
+    started(db,worker,id,log,note,harness,child)
+
+def supervise_gone(+db: String, +worker: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +prompt: String, +first: Outcome, gone: Bool) -> IO(Outcome):
+  match gone:
+    case False{}: IO.pure(Outcome,first)
+    case True{}: do IO<Outcome>:
+      note : String <- refused_note(cwd,prompt)
+      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,"",harness,task)
+      restart(db,worker,id,log,note,harness,child)
+
+def supervise_retry(+db: String, +worker: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
+  do IO<Outcome>:
+    resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
+    gone : Bool <- refusal(log,resumable,first)
+    supervise_gone(db,worker,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
+
+def supervise(+db: String, +worker: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
   do IO<Outcome>:
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
-    native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
+    +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,native,harness,task)
-    started(db,worker,id,log,prompt,harness,child)
+    first : Outcome <- started(db,worker,id,log,prompt,harness,child)
+    supervise_retry(db,worker,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,first)
 
 def task_read(db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
   match result:
