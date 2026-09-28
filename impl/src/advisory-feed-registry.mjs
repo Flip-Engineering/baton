@@ -43,7 +43,7 @@ function validCard(card) {
   // #530: the poll declaration carries the fields a reader takes — maxItems (the reconciliation
   // window), maxWallMs/maxClockSkewMs (freshness and the poll deadline) and maxBackoffMs (the
   // supervisor's interval). The page, byte and total maxima left with the walk that followed them.
-  const ceilingKeys = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes', ...(nativeWebhook ? ['maxHeaderCount', 'maxHeaderBytes', 'maxClockSkewMs'] : [])];
+  const ceilingKeys = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes'];
   let pollValid = true;
   if (hasPoll) {
     const p = card.poll; let origin; let operation;
@@ -54,8 +54,7 @@ function validCard(card) {
       && !p.operation.includes('//') && !p.operation.split('/').some((segment) => ['.', '..'].includes(segment)) && p.cursorKind === 'sequence' && p.redirects === 'deny' && Number.isSafeInteger(p.initialSequence) && p.initialSequence >= 0 && numeric.every((key) => Number.isSafeInteger(p[key]) && p[key] > 0);
   }
   return pollValid && exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
-    && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096
-    && (!nativeWebhook || (card.ceilings.maxHeaderCount <= 256 && card.ceilings.maxHeaderBytes <= 256 * 1024 && card.ceilings.maxClockSkewMs <= 24 * 60 * 60 * 1_000));
+    && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096;
 }
 
 function validatePollProof(proof, card, cardDigest) {

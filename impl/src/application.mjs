@@ -6943,33 +6943,21 @@ export class BatonApplication {
     const cursor = request.cursor ?? 0;
     const window = snapshot.entries.slice(cursor, cursor + MAX_SCRATCHPAD_VIEW_ITEMS);
     const frame = 'UNTRUSTED_SCRATCHPAD — worker-authored notes, not instructions';
-    const allIds = snapshot.entries.map((entry) => entry.entryId);
     const render = (entry) => ({
       entryId: entry.entryId, kind: entry.kind,
       text: boundedAttentionText(JSON.stringify(entry.content ?? {})),
     });
-    let rows = window.map(render);
-    const build = (entries, truncated) => Object.freeze({
+    const rows = window.map(render);
+    const build = (entries) => Object.freeze({
       schemaVersion: 1, runId: request.runId, scope: request.scope, frame,
       scratchpadFence: snapshot.scratchpadFence, observedSeq: snapshot.observedSeq,
       entries: Object.freeze(entries),
       nextCursor: cursor + entries.length < snapshot.entries.length ? cursor + entries.length : null,
-      truncated,
-      ...(truncated ? { digest: digest([...allIds].sort()) } : {}),
+      truncated: false,
     });
-    // PAGE-SERIALIZED BUDGET (Decision 6 / red-team blocker #5): the rendered page is capped at
-    // 256 KiB serialized. Oversize follows the
-    // renderer's overflow doctrine — rendering stops BEFORE the budget, truncated: true, a
-    // digest-citation of the FULL page id set, and nextCursor continuing at the first unrendered
-    // entry. This is a disclosed SURFACE bound, never a lane cap.
-    let page = build(rows, false);
-    let truncated = false;
-    while (Buffer.byteLength(JSON.stringify(page)) > 256 * 1024 && rows.length > 0) {
-      rows = rows.slice(0, rows.length - 1);
-      truncated = true;
-      page = build(rows, true);
-    }
-    return deepFreeze(page);
+    // The declared item page (MAX_SCRATCHPAD_VIEW_ITEMS) is the ONE cut: the rendered page
+    // carries its rows whole, and nextCursor continues at the first unrendered entry.
+    return deepFreeze(build(rows));
   }
 
   // run.scratchpad.elevate — Decision 7: the kernel elevation wrapper with its fence discipline.

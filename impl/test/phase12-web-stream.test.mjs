@@ -44,7 +44,7 @@ test('WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exact
 });
 
 test('WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery', () => {
-  const { coordination, stream } = fixture({ maxBufferedBytes: 100_000 });
+  const { coordination, stream } = fixture();
   coordination.recordWebAudit({ kind: 'seed-1' }, { actor: 'test', key: 'seed-1' });
   const initial = new Response();
   stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, initial);
@@ -61,24 +61,29 @@ test('WN6: snapshot boundary and reconnect provide ordered at-least-once coordin
   reconnect.emit('close');
 });
 
-test('WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited', () => {
-  const { coordination, stream } = fixture({ replayLimit: 1, maxBufferedBytes: 32 });
+test('WN6/WN7/WN9: expired cursors and refused socket writes are typed and audited', () => {
+  const { coordination, stream } = fixture({ replayLimit: 1 });
   coordination.recordWebAudit({ kind: 'seed-1' }, { actor: 'test', key: 'seed-a' });
   coordination.recordWebAudit({ kind: 'seed-2' }, { actor: 'test', key: 'seed-b' });
   const expired = stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test', cursor: 0 }, new Response());
   assert.equal(expired.status, 409);
   assert.equal(expired.body.error.code, 'snapshot_required');
-  const response = new Response(33);
+  const refusal = coordination.events().find((event) => event.payload.kind === 'stream_snapshot_required');
+  assert.equal(refusal.payload.requestedCursor, 0);
+  assert.equal(expired.body.snapshotCursor, refusal.payload.boundary);
+  const response = new Response(0, false);
   const cursor = coordination.snapshot().lastSeq;
   assert.equal(stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test', cursor }, response), null);
   assert.equal(response.ended, true);
-  assert.equal(response.output, '', 'an overfull socket receives no additional control bytes');
-  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_backpressure_disconnect'), true);
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(response.output.split('\n\n').filter((chunk) => chunk !== '').length, 1, 'the accepted frame is the last thing the refused socket sees');
+  assert.doesNotMatch(response.output, /event: lag/, 'a refused socket write is never followed by a control frame');
+  assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_backpressure_disconnect').length, 1);
 });
 
 test('WN6/WN9: browser disconnect audits closure and never invokes worker control', () => {
   const calls = [];
-  const { coordination, stream } = fixture({ maxBufferedBytes: 100_000 });
+  const { coordination, stream } = fixture();
   const response = new Response();
   stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, response);
   response.emit('close');
@@ -110,7 +115,7 @@ test('WN6: audit ordering fails closed before live ticket state or SSE headers',
 
 test('WN6: pruning and ticket/connection ceilings are enforced', () => {
   clock = Date.parse('2026-07-11T12:00:00.000Z');
-  const { stream } = fixture({ ticketTtlMs: 10, maxTickets: 1, maxConnections: 1, maxFrameBytes: 100_000 });
+  const { stream } = fixture({ ticketTtlMs: 10, maxTickets: 1, maxConnections: 1 });
   assert.equal(stream.issue(principal(), 'https://control.test', 'repo-a').status, 201);
   assert.equal(stream.issue(principal(), 'https://control.test', 'repo-a').status, 429);
   clock += 11;
@@ -124,53 +129,64 @@ test('WN6: pruning and ticket/connection ceilings are enforced', () => {
   assert.equal(stream.activeConnections, 0);
 });
 
-test('WN6: one authority and bounded snapshot/control frames with split trust', () => {
+test('WN6: one authority, whole snapshots, and split trust', () => {
   assert.throws(() => fixture({ repoIds: ['repo-a', 'repo-b'] }), /exactly one repository/);
-  const { coordination, stream } = fixture({ maxFrameBytes: 200, maxControlFrameBytes: 512, maxBufferedBytes: 1 });
-  coordination.recordWebAudit({ kind: 'seed', prose: 'x'.repeat(500) }, { actor: 'test', key: 'large-seed' });
-  const bounded = new Response();
-  const refusal = stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, bounded);
-  assert.equal(refusal.status, 503);
-  assert.equal(refusal.body.error.code, 'temporarily_unavailable');
-  assert.equal(bounded.status, undefined);
-  assert.equal(bounded.output, '');
+  const { coordination, stream } = fixture();
+  const value = `served-whole-${'y'.repeat(500)}`;
+  coordination.postScratchFact({
+    namespace: 'tests', key: 'stream:large', value, grounding: 'observed',
+    envRef: { repoId: 'repo-a', treeSha: 'cafe1234' }, ownerTask: 't-stream',
+  }, { actor: 'w-a', key: 'fact:stream:large' });
+  const served = new Response();
+  assert.equal(stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, served), null);
+  assert.equal(served.status, 200);
+  assert.equal(served.output.includes(value), true, 'a snapshot larger than any former frame ceiling is served whole');
+  const snapshot = JSON.parse(served.output.split('\n').find((line) => line.startsWith('data: ')).slice(6));
+  assert.equal(snapshot.type, 'snapshot');
+  assert.equal(snapshot.occurrenceTrust, 'authoritative');
+  assert.equal(snapshot.contentTrust, 'mixed');
+  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_refused'), false);
   const cursor = coordination.snapshot().lastSeq;
-  const lagged = new Response(2);
-  stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test', cursor }, lagged);
-  assert.ok(Buffer.byteLength(lagged.output) <= 512);
-  const trusted = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
-  const output = new Response();
-  trusted.stream.open({ ticket: trusted.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, output);
-  assert.match(output.output, /"occurrenceTrust":"authoritative"/);
-  assert.match(output.output, /"contentTrust":"mixed"/);
-  output.emit('close');
+  const pending = new Response();
+  assert.equal(stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test', cursor }, pending), null);
+  const frames = pending.output.split('\n\n').filter((chunk) => chunk !== '')
+    .map((chunk) => JSON.parse(chunk.split('\n').find((line) => line.startsWith('data: ')).slice(6)));
+  assert.ok(frames.length >= 1);
+  assert.equal(frames.every((frame) => frame.type === 'coordination' && frame.cursor === frame.payload.seq), true);
+  assert.equal(pending.output.endsWith('\n\n'), true, 'every coordination frame is written whole');
+  served.emit('close');
+  pending.emit('close');
 });
 
 test('WN6: invalid ceilings fail closed and response setup failures release connection authority', () => {
   for (const invalid of [
-    { maxBufferedBytes: 0 }, { maxFrameBytes: Infinity }, { maxControlFrameBytes: -1 },
+    { maxControlFrameBytes: -1 }, { maxControlFrameBytes: 0 }, { maxControlFrameBytes: Infinity },
     { maxTickets: 0 }, { maxConnections: 0 }, { maxEventsPerPump: 0 },
     { ticketTtlMs: 1.5 }, { replayLimit: -1 }, { pollMs: 0 },
   ]) assert.throws(() => fixture(invalid), /safe integer/);
 
-  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  let released = 0;
+  const { coordination, stream } = fixture({
+    acquireConnection: () => ({ ok: true }), releaseConnection: () => { released += 1; },
+  });
   const issued = stream.issue(principal(), 'https://control.test', 'repo-a');
   class BrokenHeaders extends Response { writeHead() { throw new Error('socket failed'); } }
   const refused = stream.open({ ticket: issued.body.ticket, principal: principal(), origin: 'https://control.test' }, new BrokenHeaders());
   assert.equal(refused.status, 503);
   assert.equal(stream.activeConnections, 0);
+  assert.equal(released, 1);
   assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_setup_failed'), true);
 });
 
 test('WN6: write backpressure stops immediately and claimed content never inherits authoritative trust', () => {
-  const first = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const first = fixture();
   const blocked = new Response(0, false);
   first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, blocked);
   assert.equal(blocked.ended, true);
   assert.equal(first.stream.activeConnections, 0);
   assert.doesNotMatch(blocked.output, /event: lag/, 'write(false) receives no second write');
 
-  const second = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const second = fixture();
   const claim = second.coordination.claimScratch({
     resource: 'path:src/**', ownerWorker: 'w-claim', ownerTask: 't-claim', intent: 'edit',
     envRef: { repoId: 'repo-a', treeSha: 'cafe1234' }, fence: 1, leaseDeadline: 'later',
@@ -185,15 +201,15 @@ test('WN6: write backpressure stops immediately and claimed content never inheri
   output.emit('close');
 });
 
-test('WN6/EP6: lag control shares the control-frame and buffered-byte close invariant', () => {
-  const run = ({ maxFrameBytes, maxBufferedBytes = 1_000, writableLength = 0, writeResult = true, throws = false }) => {
+test('WN6/EP6: a refused socket write closes exactly once and the accepted frame is written whole', () => {
+  const run = ({ writeResult = true, throws = false } = {}) => {
     let released = 0;
     const { coordination, stream } = fixture({
-      maxFrameBytes, maxControlFrameBytes: 1_000, maxBufferedBytes,
+      maxControlFrameBytes: 1_000,
       acquireConnection: () => ({ ok: true }), releaseConnection: () => { released += 1; },
     });
     class CountResponse extends Response {
-      constructor() { super(writableLength, writeResult); this.writeCount = 0; this.endCount = 0; }
+      constructor() { super(0, writeResult); this.writeCount = 0; this.endCount = 0; }
       write(value) { this.writeCount += 1; if (throws) throw new Error('broken socket'); return super.write(value); }
       end() { this.endCount += 1; super.end(); }
     }
@@ -201,24 +217,38 @@ test('WN6/EP6: lag control shares the control-frame and buffered-byte close inva
     const ticket = stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket;
     const cursor = coordination.snapshot().lastSeq;
     assert.equal(stream.open({ ticket, principal: principal(), origin: 'https://control.test', cursor }, output), null);
-    assert.equal(output.endCount, 1); assert.equal(stream.activeConnections, 0); assert.equal(released, 1);
     const terminal = coordination.events().filter((event) => ['stream_backpressure_disconnect', 'stream_read_failed'].includes(event.payload.kind));
-    assert.equal(terminal.length, 1);
-    return output;
+    return { coordination, stream, output, terminal, released: () => released };
   };
-  const room = run({ maxFrameBytes: 1 });
-  assert.equal(room.writeCount, 1); assert.match(room.output, /event: lag/);
-  const full = run({ maxFrameBytes: 1, writableLength: 1_000 });
-  assert.equal(full.writeCount, 0); assert.equal(full.output, '');
-  const refused = run({ maxFrameBytes: 100_000, writeResult: false });
-  assert.equal(refused.writeCount, 1); assert.doesNotMatch(refused.output, /event: lag/);
-  const broken = run({ maxFrameBytes: 100_000, throws: true });
-  assert.equal(broken.writeCount, 1); assert.equal(broken.output, '');
+  const accepted = run();
+  assert.equal(accepted.output.writeCount, 1);
+  assert.match(accepted.output.output, /event: coordination/);
+  assert.equal(accepted.output.output.endsWith('\n\n'), true, 'the accepted coordination frame is written whole');
+  assert.doesNotMatch(accepted.output.output, /event: lag/, 'an accepted frame is never replaced by a lag control frame');
+  assert.equal(accepted.output.endCount, 0);
+  assert.equal(accepted.stream.activeConnections, 1);
+  assert.equal(accepted.terminal.length, 0);
+  accepted.stream.shutdown();
+  assert.equal(accepted.output.endCount, 1, 'shutdown writes its bounded control frame and ends the stream once');
+  const refused = run({ writeResult: false });
+  assert.equal(refused.output.writeCount, 1);
+  assert.equal(refused.output.endCount, 1);
+  assert.equal(refused.stream.activeConnections, 0);
+  assert.equal(refused.released(), 1);
+  assert.deepEqual(refused.terminal.map((event) => event.payload.kind), ['stream_backpressure_disconnect']);
+  assert.doesNotMatch(refused.output.output, /event: lag/);
+  const broken = run({ throws: true });
+  assert.equal(broken.output.writeCount, 1);
+  assert.equal(broken.output.output, '');
+  assert.equal(broken.output.endCount, 1);
+  assert.equal(broken.stream.activeConnections, 0);
+  assert.equal(broken.released(), 1);
+  assert.deepEqual(broken.terminal.map((event) => event.payload.kind), ['stream_read_failed']);
 });
 
 test('WN2/WN6: an established stream stops at credential expiry before reading later events', async () => {
   clock = Date.parse('2026-07-11T12:00:00.000Z');
-  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  const { coordination, stream } = fixture({ pollMs: 5 });
   const expiring = principal({ expiresAt: new Date(clock + 10).toISOString() });
   const output = new Response();
   stream.open({ ticket: stream.issue(expiring, 'https://control.test', 'repo-a').body.ticket, principal: expiring, origin: 'https://control.test' }, output);
@@ -234,7 +264,7 @@ test('WN2/WN6: an established stream stops at credential expiry before reading l
 });
 
 test('WN6/WN7: snapshot acquisition failure is typed and audited before SSE setup', () => {
-  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { coordination, stream } = fixture();
   const ticket = stream.issue(principal(), 'https://control.test', 'repo-a');
   coordination.snapshot = () => { throw new Error('coordination unavailable'); };
   const output = new Response();
@@ -250,7 +280,7 @@ test('WN6/WN7: snapshot acquisition failure is typed and audited before SSE setu
 });
 
 test('WN6/WN7: later coordination-read and socket-write exceptions close without escaping or stranding capacity', async () => {
-  const first = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  const first = fixture({ pollMs: 5 });
   const firstResponse = new Response();
   first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, firstResponse);
   const firstEvents = first.coordination.events.bind(first.coordination);
@@ -261,7 +291,7 @@ test('WN6/WN7: later coordination-read and socket-write exceptions close without
   assert.equal(first.stream.activeConnections, 0);
   assert.equal(first.coordination.events().some((event) => event.payload.kind === 'stream_read_failed'), true);
 
-  const second = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  const second = fixture({ pollMs: 5 });
   class LaterBrokenWrite extends Response {
     write(value) {
       this.writeCount = (this.writeCount ?? 0) + 1;
@@ -281,7 +311,7 @@ test('WN6/WN7: later coordination-read and socket-write exceptions close without
 test('WN2/WN6: replay is count-bounded and rechecks authorization before every emitted event', () => {
   clock = Date.parse('2026-07-11T12:00:00.000Z');
   const { coordination, stream } = fixture({
-    maxFrameBytes: 100_000, maxBufferedBytes: 100_000, maxEventsPerPump: 2,
+    maxEventsPerPump: 2,
   });
   const first = coordination.recordWebAudit({ kind: 'batch-one' }, { actor: 'test', key: 'batch-one' });
   coordination.recordWebAudit({ kind: 'batch-two' }, { actor: 'test', key: 'batch-two' });
@@ -307,7 +337,7 @@ test('WN2/WN6: replay is count-bounded and rechecks authorization before every e
 
 test('WN6: malformed/future cursors fail typed and close/error cleanup is exactly once with no later polling', async () => {
   clock = Date.parse('2026-07-11T12:00:00.000Z');
-  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  const { coordination, stream } = fixture({ pollMs: 5 });
   for (const cursor of ['not-a-cursor', Number.MAX_SAFE_INTEGER]) {
     const refusal = stream.open({
       ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket,
@@ -329,10 +359,10 @@ test('WN6: malformed/future cursors fail typed and close/error cleanup is exactl
   assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_disconnected').length, 1);
 });
 
-test('EP6: shutdown control obeys frame/buffer bounds and closes broken streams exactly once', () => {
+test('EP6: shutdown control obeys the control-frame bound and closes broken streams exactly once', () => {
   let acquired = 0; let released = 0;
   const { coordination, stream } = fixture({
-    maxFrameBytes: 100_000, maxControlFrameBytes: 64, maxBufferedBytes: 100_000,
+    maxControlFrameBytes: 64,
     acquireConnection: () => { acquired += 1; return { ok: true }; },
     releaseConnection: () => { released += 1; },
   });
@@ -353,13 +383,22 @@ test('EP6: shutdown control obeys frame/buffer bounds and closes broken streams 
   for (const output of responses) output.writeCount = 0;
   stream.shutdown();
   stream.shutdown();
-  assert.equal(responses[0].writeCount, 0, 'an already-full socket receives no shutdown write');
-  assert.equal(responses[1].writeCount, 1, 'a throwing socket receives at most one bounded shutdown write');
-  assert.equal(responses[2].writeCount, 1, 'a backpressured socket receives at most one bounded shutdown write');
+  assert.deepEqual(responses.map((output) => output.writeCount), [1, 1, 1], 'every live socket receives the one bounded shutdown control frame');
   assert.deepEqual(responses.map((output) => output.endCount), [1, 1, 1]);
   assert.equal(released, 3);
   assert.equal(stream.activeConnections, 0);
   assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_shutdown').length, 3);
+
+  const tiny = fixture({ maxControlFrameBytes: 8 });
+  const tight = new ShutdownResponse();
+  tiny.stream.open({ ticket: tiny.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, tight);
+  tight.writeCount = 0;
+  tiny.stream.shutdown();
+  tiny.stream.shutdown();
+  assert.equal(tight.writeCount, 0, 'a shutdown control frame over maxControlFrameBytes is withheld');
+  assert.equal(tight.endCount, 1);
+  assert.equal(tiny.stream.activeConnections, 0);
+  assert.equal(tiny.coordination.events().filter((event) => event.payload.kind === 'stream_shutdown').length, 1);
 });
 
 const runSnapshot = (runId = 'run-a', cursor = 7, terminal = false) => ({
@@ -406,7 +445,7 @@ test('RT5/RT7 red: an undelivered Run page never commits its candidate SSE curso
       return this.writeCount !== 2;
     }
   }
-  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { stream } = fixture({ application });
   const output = new BackpressureOnPageBody();
   await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
     repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
@@ -416,7 +455,7 @@ test('RT5/RT7 red: an undelivered Run page never commits its candidate SSE curso
   assert.equal(stream.activeConnections, 0);
 });
 
-test('RT5/RT7 red: lag reports only the last committed durable cursor', async () => {
+test('RT5/RT7 red: a whole Run page commits its own cursor and the snapshot keeps the last committed durable cursor', async () => {
   const item = {
     runId: 'run-a', position: 2, kind: 'task.created', category: 'lifecycle',
     summary: 'x'.repeat(2_000), occurrenceTrust: 'authoritative',
@@ -426,23 +465,29 @@ test('RT5/RT7 red: lag reports only the last committed durable cursor', async ()
     return args.depth === 'outline' ? runSnapshot(args.runId)
       : timelinePage({ cursor: 'candidate_cursor', items: [item] });
   } };
-  const { stream } = fixture({
-    application, maxFrameBytes: 1_200, maxControlFrameBytes: 2_000,
-    maxBufferedBytes: 100_000,
-  });
+  const { stream } = fixture({ application });
   const output = new Response();
   await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
     repoId: 'repo-a', runId: 'run-a', channel: 'events', cursor: 'committed_cursor',
     snapshot: runSnapshot(),
   }).body.ticket, principal: principal(), origin: 'https://control.test',
   cursor: 'committed_cursor' }, output);
-  assert.match(output.output, /event: lag/);
-  assert.match(output.output, /^id: committed_cursor$/m);
-  assert.doesNotMatch(output.output, /^id: candidate_cursor$/m);
-  const lag = output.output.split('\n').filter((line) => line.startsWith('data: '))
-    .map((line) => JSON.parse(line.slice(6))).find((frame) => frame.type === 'lag');
-  assert.equal(lag.cursor, 'committed_cursor');
-  assert.equal(lag.provenance.source.channelCursor, 'committed_cursor');
+  assert.doesNotMatch(output.output, /event: lag/, 'a page larger than any former frame ceiling is never replaced by a lag control frame');
+  const frames = output.output.split('\n\n').filter((chunk) => chunk !== '').map((chunk) => ({
+    id: chunk.split('\n').find((line) => line.startsWith('id: '))?.slice(4) ?? null,
+    type: chunk.split('\n').find((line) => line.startsWith('event: ')).slice(7),
+    data: JSON.parse(chunk.split('\n').find((line) => line.startsWith('data: ')).slice(6)),
+  }));
+  const snapshot = frames.find((frame) => frame.type === 'snapshot');
+  assert.equal(snapshot.data.provenance.source.channelCursor, 'committed_cursor');
+  assert.equal(snapshot.data.cursor, 7);
+  const page = frames.find((frame) => frame.type === 'events');
+  assert.equal(page.id, 'candidate_cursor');
+  assert.equal(page.data.cursor, 'candidate_cursor');
+  assert.equal(page.data.payload.items[0].summary.length, 2_000, 'the whole page body is committed, not narrowed to a ceiling');
+  assert.equal(page.data.payload.itemCount, 1);
+  assert.equal(output.output.endsWith('\n\n'), true, 'the whole page frame is on the wire');
+  stream.shutdown();
 });
 
 test('RT3/RT5 red: first progress read after a supplied cursor emits accumulated state', async () => {
@@ -452,7 +497,7 @@ test('RT3/RT5 red: first progress read after a supplied cursor emits accumulated
     return args.depth === 'outline' ? runSnapshot(args.runId, 9)
       : progressContent({ runId: args.runId, cursor: 9, summary: 'Progress accumulated after cursor 7.' });
   } };
-  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { stream } = fixture({ application });
   const output = new Response();
   await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
     repoId: 'repo-a', runId: 'run-a', channel: 'progress', cursor: 7,
@@ -490,7 +535,7 @@ test('RT1/RT4: Run wire frames are closed recursively and carry verifiable sourc
       }],
     });
   } };
-  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { stream } = fixture({ application });
   const output = new Response();
   await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
     repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review',
@@ -532,7 +577,7 @@ test('RT1/RT4/RT6: Run tickets bind every authority coordinate and start with th
       return timelinePage({ runId: args.runId, channel: 'output', recipient: args.recipient ?? null });
     },
   };
-  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { stream } = fixture({ application });
   const scope = {
     repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review',
     snapshot: runSnapshot(),
@@ -588,7 +633,7 @@ test('RT2/RT5: Run events resume with the rebuildable application cursor and rej
       return timelinePage({ cursor: 'timeline_cursor_a', items: [firstItem] });
     },
   };
-  const { stream } = fixture({ application, incarnation: 'instance-a', maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { stream } = fixture({ application, incarnation: 'instance-a' });
   const initialScope = { repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot() };
   const initial = new Response();
   await stream.open({
@@ -637,7 +682,7 @@ test('RT1: initial Run delivery proves one stable outline/page/outline cursor bo
         return timelinePage({ viewCursor: drift === 'page' ? 8 : 7 });
       },
     };
-    const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+    const { stream } = fixture({ application });
     const output = new Response();
     const refused = await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
       repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
@@ -652,7 +697,7 @@ test('RT1: initial Run delivery proves one stable outline/page/outline cursor bo
   const stable = fixture({ application: { async command(_name, args) {
     calls.push(args.depth === 'outline' ? 'outline' : 'events');
     return args.depth === 'outline' ? runSnapshot(args.runId) : timelinePage();
-  } }, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  } } });
   const output = new Response();
   await stable.stream.open({ ticket: stable.stream.issue(principal(), 'https://control.test', {
     repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
@@ -672,7 +717,7 @@ test('RT6: revocation during an awaited read and during snapshot write closes be
       await pendingRead;
       return timelinePage();
     } },
-    isPrincipalActive: () => active, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+    isPrincipalActive: () => active,
   });
   const beforeHeaders = new Response();
   const opening = first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', {
@@ -696,7 +741,7 @@ test('RT6: revocation during an awaited read and during snapshot write closes be
         }],
       });
     } },
-    isPrincipalActive: () => active, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+    isPrincipalActive: () => active,
   });
   class RevokeOnSnapshot extends Response {
     write(value) {
@@ -724,7 +769,6 @@ test('RT6: revocation during an awaited read and during snapshot write closes be
       return timelinePage();
     } },
     incarnation: 'instance-a', isPrincipalActive: () => active,
-    maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
   });
   const changedIncarnation = new Response();
   const incarnationOpening = third.stream.open({ ticket: third.stream.issue(principal(), 'https://control.test', {
@@ -746,7 +790,7 @@ test('RT1/RT5: malformed hasMore and an empty continuing page fail closed before
       page.content.hasMore = hasMore;
       return page;
     } };
-    const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+    const { stream } = fixture({ application });
     const output = new Response();
     const refused = await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
       repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
@@ -772,7 +816,7 @@ test('RT4: safe events never acquire provider content and output is separately o
       });
     },
   };
-  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const { stream } = fixture({ application });
   const events = new Response();
   await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
     repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
@@ -802,7 +846,7 @@ test('RT6/RT7/RT8: Run streams close on authorization loss, backpressure, shutdo
     repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot,
   });
   const authorized = fixture({ application, isPrincipalActive: () => active, pollMs: 5,
-    maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  });
   const revoked = new Response();
   await authorized.stream.open({ ticket: authorized.stream.issue(principal(), 'https://control.test', scoped()).body.ticket,
     principal: principal(), origin: 'https://control.test' }, revoked);
@@ -812,14 +856,14 @@ test('RT6/RT7/RT8: Run streams close on authorization loss, backpressure, shutdo
   assert.equal(authorized.coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
 
   active = true;
-  const bounded = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const bounded = fixture({ application });
   const blocked = new Response(0, false);
   await bounded.stream.open({ ticket: bounded.stream.issue(principal(), 'https://control.test', scoped()).body.ticket,
     principal: principal(), origin: 'https://control.test' }, blocked);
   assert.equal(blocked.ended, true);
   assert.equal(bounded.stream.activeConnections, 0);
 
-  const stopped = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const stopped = fixture({ application });
   const shutdown = new Response();
   await stopped.stream.open({ ticket: stopped.stream.issue(principal(), 'https://control.test', scoped()).body.ticket,
     principal: principal(), origin: 'https://control.test' }, shutdown);
@@ -828,7 +872,7 @@ test('RT6/RT7/RT8: Run streams close on authorization loss, backpressure, shutdo
   assert.match(shutdown.output, /event: shutdown/);
 
   terminal = true;
-  const finished = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const finished = fixture({ application });
   const terminalResponse = new Response();
   await finished.stream.open({ ticket: finished.stream.issue(principal(), 'https://control.test', scoped(runSnapshot('run-a', 8, true))).body.ticket,
     principal: principal(), origin: 'https://control.test' }, terminalResponse);

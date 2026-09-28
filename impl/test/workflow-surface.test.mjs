@@ -814,33 +814,29 @@ test('FP-09-read (stage: facade read absent): bounded framed pages with verbatim
   assert.ok(Array.isArray(shared?.entries));
 });
 
-test('FP-09-budget (stage: facade read absent): the 256 KiB serialized page budget truncates with a digest citation', async (t) => {
+test('FP-09-budget (stage: facade read absent): the page carries its declared item window whole, whatever its size', async (t) => {
   const fx = await facadeFixture(t);
   const wave = principalOf('wave-owner');
   const handle = await spawnMember(fx, { runId: 'run:d2' });
   const task = fx.coordination.task(handle.taskId);
   const workerScope = `worker:${handle.id}`;
-  // 64 entries whose rendered leaves are ~4 KiB each: 64 × 4,096 = 256 KiB of leaves
-  // ALONE — before ids, kinds, fences, and the envelope (red-team blocker #5's math).
+  // 70 entries whose rendered leaves are bounded per row but together far past the 256 KiB page
+  // budget the renderer used to enforce (#627 removed it). The declared item window
+  // (`view.scratchpad.items` = 64) is the ONE cut that remains.
   const bigText = 'x'.repeat(6000);
-  for (let i = 0; i < 64; i += 1) {
+  for (let i = 0; i < 70; i += 1) {
     writeNote(fx, { runId: 'run:d2', taskId: task.id, workerId: handle.id, text: `${i}:${bigText}`, key: `ws-d2-note-${i}` });
   }
   const allIds = fx.coordination.scratchpadSnapshot('run:d2', workerScope).entries.map((entry) => entry.entryId);
-  assert.equal(allIds.length, 64, 'the full window is staged');
+  assert.equal(allIds.length, 70, 'the full window is staged');
   const page = await fx.application.command('run.scratchpad.read', { runId: 'run:d2', scope: workerScope }, wave, null);
-  assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 256 * 1024,
-    'the serialized page never crosses the 256 KiB budget (the renderer\'s own page ceiling)');
-  assert.equal(page?.truncated, true, 'an over-budget page marks truncation explicitly (the renderer doctrine)');
-  assert.ok(page.entries.length >= 1 && page.entries.length < 64,
-    'rendering stops BEFORE the budget — never a raw overflow dump');
-  assert.match(page?.digest ?? '', /^[a-f0-9]{64}$/u, 'the page carries a digest citation, never raw overflow');
-  assert.equal(page?.digest, digest([...allIds].sort()),
-    'the citation digests the FULL page id set (canonicalDigest over the sorted ids), so a caller can verify completeness');
-  assert.equal(page?.nextCursor, page.entries.length,
-    'nextCursor continues at the first unrendered entry — paging continues honestly after truncation');
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) > 256 * 1024,
+    'the rendered page crosses the 256 KiB budget the renderer used to enforce');
+  assert.equal(page?.truncated, false, 'no row is dropped for size');
+  assert.equal(page.entries.length, 64, 'the declared item window renders whole');
+  assert.equal(page?.nextCursor, 64, 'nextCursor continues at the first entry outside the window');
   const rest = await fx.application.command('run.scratchpad.read', { runId: 'run:d2', scope: workerScope, cursor: page.nextCursor }, wave, null);
-  assert.ok(rest.entries.length >= 1, 'the continuation renders the unrendered remainder');
+  assert.equal(rest.entries.length, 6, 'the continuation renders the remainder');
   const rendered = new Set(page.entries.map((entry) => entry.entryId));
   assert.equal(rest.entries.some((entry) => rendered.has(entry.entryId)), false, 'no entry double-renders');
 });

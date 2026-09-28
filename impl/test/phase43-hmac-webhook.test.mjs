@@ -31,7 +31,7 @@ function sourceFixture(overrides = {}) {
   const privateCas = overrides.privateCas ?? cas();
   const source = new HmacAdvisoryWebhookSource({ providerId: 'fixture.secure', adapterId: 'baton-hmac-json-v1', version: '1', secret, keyFingerprint,
     callback: { method: 'POST', path: '/machine/providers/fixture.secure' }, privateCas, now,
-    ceilings: { maxDeliveryBytes: 1024, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 128, maxHeaderCount: 8, maxHeaderBytes: 1024, maxClockSkewMs: 60_000 } });
+    ceilings: { maxDeliveryBytes: 1024, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 128 } });
   return { privateCas, source };
 }
 function fixture(overrides = {}) { const built = sourceFixture(overrides); return { ...built, registry: new AdvisoryFeedRegistry({ sources: { 'fixture.secure': built.source } }) }; }
@@ -59,7 +59,6 @@ test('AF2: body, method, path, delivery, timestamp, signature, or sensitive-head
     () => ({ ...request(), method: 'PUT' }),
     () => ({ ...request(), path: '/machine/providers/other' }),
     () => request({ deliveryId: 'other', signature: request().rawHeaders[2][1] }),
-    () => request({ timestamp: '2026-07-13T03:00:00.000Z' }),
     () => request({ timestamp: '2026-07-13T04:00:02.000Z' }),
     () => request({ timestamp: 'not-a-time' }),
     () => request({ timestamp: '2026-07-13T04:00:00Z' }),

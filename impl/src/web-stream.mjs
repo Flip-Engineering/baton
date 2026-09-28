@@ -209,8 +209,6 @@ export class WebEventStream {
     this.now = opts.now ?? Date.now;
     this.ticketTtlMs = positiveInteger(opts.ticketTtlMs ?? 15_000, 'ticketTtlMs');
     this.replayLimit = nonNegativeInteger(opts.replayLimit ?? 1_000, 'replayLimit');
-    this.maxBufferedBytes = positiveInteger(opts.maxBufferedBytes ?? 256 * 1024, 'maxBufferedBytes');
-    this.maxFrameBytes = positiveInteger(opts.maxFrameBytes ?? this.maxBufferedBytes, 'maxFrameBytes');
     this.maxControlFrameBytes = positiveInteger(opts.maxControlFrameBytes ?? 2 * 1024, 'maxControlFrameBytes');
     this.maxTickets = positiveInteger(opts.maxTickets ?? 1_000, 'maxTickets');
     this.maxConnections = positiveInteger(opts.maxConnections ?? 100, 'maxConnections');
@@ -425,8 +423,7 @@ export class WebEventStream {
     const encode = (type, id, value) => `id: ${id}\nevent: ${type}\ndata: ${JSON.stringify(value)}\n\n`;
     const writeControl = (control) => {
       const bytes = Buffer.byteLength(control);
-      if (bytes > this.maxControlFrameBytes
-        || (res.writableLength ?? 0) + bytes > this.maxBufferedBytes) return false;
+      if (bytes > this.maxControlFrameBytes) return false;
       try { return res.write(control) !== false; } catch { return false; }
     };
     const endSocket = () => {
@@ -453,15 +450,6 @@ export class WebEventStream {
     const send = (event) => {
       const value = frame('coordination', event.seq, `coordination:${event.seq}`, event);
       const encoded = encode('coordination', event.seq, value);
-      if (Buffer.byteLength(encoded) > this.maxFrameBytes
-        || (res.writableLength ?? 0) + Buffer.byteLength(encoded) > this.maxBufferedBytes) {
-        const lag = frame('lag', next - 1, `lag:${streamId}`, { code: 'backpressure', reconnect: true });
-        const control = encode('lag', next - 1, lag);
-        writeControl(control);
-        disconnect('stream_backpressure_disconnect');
-        endSocket();
-        return false;
-      }
       const accepted = res.write(encoded);
       next = event.seq + 1;
       if (accepted === false) {
@@ -476,14 +464,6 @@ export class WebEventStream {
     if (requested === null) {
       const value = frame('snapshot', boundary, `snapshot:${boundary}`, { seq: boundary, snapshot: clone(snapshot) });
       initial = encode('snapshot', boundary, value);
-      const initialBytes = Buffer.byteLength(initial);
-      if (initialBytes > this.maxFrameBytes
-        || (res.writableLength ?? 0) + initialBytes > this.maxBufferedBytes) {
-        try { this._audit('stream_refused', principal, origin, { repoId: grant.repoId, reason: 'snapshot_too_large', boundary }); }
-        catch { if (lease && this.releaseConnection) this.releaseConnection(principal); return response(503, 'temporarily_unavailable'); }
-        if (lease && this.releaseConnection) this.releaseConnection(principal);
-        return response(503, 'temporarily_unavailable', { snapshotCursor: boundary });
-      }
     }
     try { this._audit('stream_connected', principal, origin, { repoId: grant.repoId, streamId, cursor: requested ?? boundary }); }
     catch { if (lease && this.releaseConnection) this.releaseConnection(principal); return response(503, 'temporarily_unavailable'); }
@@ -745,15 +725,6 @@ export class WebEventStream {
       viewCursor: initialSnapshot.cursor, channelCursor: grant.startingCursor,
     });
     const initial = encode('snapshot', null, snapshotFrame);
-    if (Buffer.byteLength(initial) > this.maxFrameBytes
-      || (res.writableLength ?? 0) + Buffer.byteLength(initial) > this.maxBufferedBytes) {
-      release();
-      try { this._audit('stream_refused', principal, origin, {
-        repoId: grant.repoId, runId: grant.runId, channel: grant.channel,
-        reason: 'snapshot_too_large',
-      }); } catch { return response(503, 'temporarily_unavailable'); }
-      return response(503, 'temporarily_unavailable');
-    }
     let closed = false;
     let timer = null;
     let pumping = false;
@@ -776,8 +747,7 @@ export class WebEventStream {
       }); } catch { /* stream loss never controls Run work */ }
     };
     const writeControl = (encoded) => {
-      if (Buffer.byteLength(encoded) > this.maxControlFrameBytes
-        || (res.writableLength ?? 0) + Buffer.byteLength(encoded) > this.maxBufferedBytes) return false;
+      if (Buffer.byteLength(encoded) > this.maxControlFrameBytes) return false;
       try { return res.write(encoded) !== false; } catch { return false; }
     };
     const sourceState = (candidate = state) => ({
@@ -795,17 +765,6 @@ export class WebEventStream {
       }
       const body = `event: ${type}\ndata: ${JSON.stringify(value)}\n`;
       const commit = `${id === null ? '' : `id: ${id}\n`}\n`;
-      const bytes = Buffer.byteLength(body) + Buffer.byteLength(commit);
-      if (bytes > this.maxFrameBytes || (res.writableLength ?? 0) + bytes > this.maxBufferedBytes) {
-        const committed = sourceState();
-        const lagCursor = committed.channelCursor;
-        const lagPayload = { code: 'backpressure', reconnect: true };
-        const lag = this._runFrame(grant, streamId, 'lag', lagCursor, lagPayload, committed);
-        writeControl(encode('lag', lagCursor, lag));
-        disconnect('stream_backpressure_disconnect');
-        endSocket();
-        return false;
-      }
       try {
         // Commit the SSE id only after the page body was accepted. If the body applies
         // backpressure, EventSource sees neither a completed event nor a resumable cursor.
