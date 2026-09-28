@@ -833,11 +833,9 @@ test('E1 (PIN): the run.debug scope detail is {digests, counts} in ACTUAL order 
   assert.equal(typeof detail.counts.changedPathCount, 'number', 'the count is a number');
 });
 
-test('E4 (PIN): the cross-referenced refusal laws stay alive — the #73 closed caller schema and the R5 recovery-digest pin (refusal vocabulary)', () => {
-  assert.ok(
-    grepAn('application_workflow_feedback_invalid', APP_SRC).includes('application_workflow_feedback_invalid'),
-    'a caller-authored gate-shaped verdict refuses — the #73 closed {gate, detail} caller schema (application.mjs:1597)',
-  );
+test('E4 (PIN): the R5 recovery-digest pin stays alive (refusal vocabulary)', () => {
+  // The #73 caller-authored gate-shaped verdict half left with the workflow-feedback command
+  // (#598: run.feedback carried zero external invocation and zero behavioural trace).
   assert.ok(
     memberSource('_validateRecoveryRefinementRequest').includes('recovery_refinement_conflict')
       && memberSource('_validateRecoveryRefinementRequest').includes('canonicalDigest(fields.brief)'),
