@@ -7,7 +7,6 @@ const PORT_ROWS = [
   ['run_message_receipt', 'run.message.receipt', 'query', ['messageId']],
   ['run_attention_watch', 'run.attention.watch', 'query', ['runId', 'kind', 'cursor']],
   ['run_scratchpad_read', 'run.scratchpad.read', 'query', ['runId', 'scope', 'cursor']],
-  ['run_scratchpad_elevate', 'run.scratchpad.elevate', 'effect', ['runId', 'taskId', 'entryIds']],
   ['run_knowledge_seed', 'run.knowledge.seed', 'effect', ['runId', 'type', 'grounding', 'body', 'evidence']],
   // CS-3 already shipped a bounded, whitelisted run.debug application projection and parser, but
   // deliberately omitted it from CLI_WEB_COMMANDS/Web admission. The convergence release closes

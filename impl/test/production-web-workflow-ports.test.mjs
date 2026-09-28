@@ -82,7 +82,6 @@ const CASES = [
   ['run_message_receipt', { messageId: `message:${'a'.repeat(64)}` }, 'query'],
   ['run_attention_watch', { runId: 'run:a', cursor: 0 }, 'query'],
   ['run_scratchpad_read', { runId: 'run:a', scope: 'shared', cursor: 0 }, 'query'],
-  ['run_scratchpad_elevate', { runId: 'run:a', taskId: 'task:a', entryIds: [] }, 'effect'],
   ['run_knowledge_seed', {
     runId: 'run:a', type: 'Finding', grounding: 'observed', body: 'bounded', evidence: [],
   }, 'effect'],
@@ -133,10 +132,10 @@ test('workflow Web port adapter refuses undeclared, credential-shaped and mismat
   const secret = await executeProductionWorkflowWebPort(
     second.northbound,
     ctx,
-    envelope('run_scratchpad_elevate', {
-      runId: 'run:a', taskId: 'task:a', entryIds: [{ token: 'not-accepted' }],
+    envelope('run_message_send', {
+      runId: 'run:a', kind: 'nudge', body: { token: 'not-accepted' },
     }, 'secret'),
-    PRODUCTION_WORKFLOW_WEB_PORTS.run_scratchpad_elevate,
+    PRODUCTION_WORKFLOW_WEB_PORTS.run_message_send,
   );
   assert.equal(secret.status, 400);
   assert.equal(secret.body.error.code, 'invalid_command');

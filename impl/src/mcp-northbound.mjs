@@ -170,7 +170,6 @@ const CAPABILITY = Object.freeze({
   baton_wakes_subscribe: ['observe'],
   baton_wakes_unsubscribe: ['observe'],
   baton_wakes_since: ['observe'],
-  baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
   baton_knowledge_settlement_lease: ['settlement'],
   // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
@@ -182,7 +181,6 @@ const CAPABILITY = Object.freeze({
   baton_run_message_receipt: ['observe'],
   baton_run_attention_watch: ['observe'],
   baton_run_scratchpad_read: ['observe'],
-  baton_run_scratchpad_elevate: ['control', 'observe'],
   baton_run_scratchpad_append: ['control', 'observe'],
   baton_run_knowledge_seed: ['control', 'observe'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
@@ -206,7 +204,7 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
   // through the observe-path gate like the read-only tools.
   'baton_waves_start',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_decision_answer',
@@ -214,7 +212,7 @@ const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_
     .map((operation) => operation.names.mcp),
   // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
   'baton_waves_start',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -805,16 +803,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   // caller field); knowledge.settlement_lease requires
   // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
   {
-    name: 'baton_scratchpad_elevate',
-    description: 'Elevate one terminal task\'s scratchpad entries into candidate Findings (S-2 settlement lane).',
-    inputSchema: schema({
-      ...repo, ...idem, runId, taskId: runId, workerId: runId,
-      expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['repoId', 'idempotencyKey', 'runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
     name: 'baton_scratchpad_settle',
     description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
     inputSchema: schema({
@@ -868,15 +856,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       cursor: { type: 'integer', minimum: 0 },
     }, ['repoId', 'runId', 'scope']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_run_scratchpad_elevate',
-    description: "Settle one terminal task's scratchpad partition through the coordinator's fence-bound elevation wrapper (ordinary end-of-task path). Returns the store receipt verbatim; an exact retry returns the empty successor.",
-    inputSchema: schema({
-      ...repo, runId, taskId: runId,
-      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['repoId', 'runId', 'taskId', 'entryIds']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'baton_run_scratchpad_append',
@@ -1355,10 +1334,10 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
   'baton_deployment_doctor',
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle',
+  'baton_scratchpad_settle',
   'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
+  'baton_run_scratchpad_read', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
   'baton_wakes_subscribe', 'baton_wakes_unsubscribe', 'baton_wakes_since',
   // Issue #99/#179: the accessor's two explicit-dispatch tools.
@@ -1369,11 +1348,11 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
 const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_waves_start: 'waves.start', baton_waves_progress: 'waves.progress', baton_waves_send: 'waves.send',
   baton_waves_stop: 'waves.stop', baton_waves_list: 'waves.list', baton_waves_run: 'waves.run', baton_waves_compile: 'waves.compile',
-  baton_scratchpad_elevate: 'scratchpad.elevate', baton_scratchpad_settle: 'scratchpad.settle',
+  baton_scratchpad_settle: 'scratchpad.settle',
   baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
   baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
-  baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
+  baton_run_scratchpad_append: 'run.scratchpad.append',
   baton_run_knowledge_seed: 'run.knowledge.seed',
   // Issue #99/#179: the accessor's dispatch identities.
   baton_run_resultpin: 'run.resultpin', baton_waves_harvest: 'waves.harvest',
@@ -1766,11 +1745,6 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_waves_list' && (Object.hasOwn(args, 'cursor') && !Number.isSafeInteger(args.cursor))) {
     return 'invalid_wave_list';
   }
-  if (name === 'baton_scratchpad_elevate' && (!nonempty(args.runId) || !nonempty(args.taskId)
-    || !nonempty(args.workerId) || !Number.isSafeInteger(args.expectedScratchpadFence)
-    || args.expectedScratchpadFence < 0 || !Array.isArray(args.entryIds))) {
-    return 'invalid_scratchpad_elevate';
-  }
   if (name === 'baton_scratchpad_settle' && (!nonempty(args.runId)
     || !Number.isSafeInteger(args.expectedScratchpadFence) || args.expectedScratchpadFence < 0
     || (Object.hasOwn(args, 'skips') && !Array.isArray(args.skips)))) {
@@ -1782,9 +1756,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools'
   // hand-rolled shape guards (the wave-tools idiom — the guards are the authority, never a
   // schema evaluator). A malformed DECLARED field earns the tool's own invalid_* code; a forged
-  // UNDECLARED field dies earlier at the generic key-closure (unknown_argument_field). The
-  // ordinary baton_run_scratchpad_elevate SHARES the invalid_scratchpad_elevate string the
-  // existing settlement guard returns (lawful same-class reuse, v2.2 blue-team D3).
+  // UNDECLARED field dies earlier at the generic key-closure (unknown_argument_field).
   if (name === 'baton_run_message_send') {
     if (!['inform', 'query', 'steer'].includes(args.kind)
       || typeof args.body !== 'string' || args.body.length === 0
@@ -1810,15 +1782,6 @@ function validateArguments(name, args, maxWaitMs = null) {
       || typeof args.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/.test(args.scope)
       || (Object.hasOwn(args, 'cursor') && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))) {
       return 'invalid_scratchpad_read';
-    }
-  }
-  if (name === 'baton_run_scratchpad_elevate') {
-    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
-      || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.taskId ?? '')
-      || !Array.isArray(args.entryIds) || args.entryIds.length > 128
-      || new Set(args.entryIds).size !== args.entryIds.length
-      || args.entryIds.some((id) => typeof id !== 'string' || !/^scratchpad-entry:[a-f0-9]{64}$/.test(id))) {
-      return 'invalid_scratchpad_elevate';
     }
   }
   if (name === 'baton_run_scratchpad_append') {
@@ -2362,9 +2325,8 @@ export class McpFleetServer {
           && !REFLEX_READ_ONLY_TOOLS.has(name) && !ORDINARY_EXPLICIT_TOOLS.has(name)) {
           return toolError('command_failed', typeof cause?.code === 'string' ? (cause?.message ?? null) : null);
         }
-        // The two message-elevation verbs surface their ONE typed code verbatim (application_
-        // unauthorized), never the generic 'forbidden' mapping.
-        if ((name === 'baton_run_message_receipt' || name === 'baton_run_scratchpad_elevate')
+        // Message receipts preserve the application's authorization refusal code.
+        if (name === 'baton_run_message_receipt'
           && cause?.code === 'application_unauthorized') {
           return toolError('application_unauthorized', cause?.message ?? null);
         }
@@ -2669,16 +2631,6 @@ export class McpFleetServer {
     // MCP-W2: the settlement tools via the S-2 sessionAuthority envelope. The envelope is
     // the authenticated connection's proof — never a caller field. The settlement lease requires
     // the settlement capability class (already enforced by _authority).
-    else if (name === 'baton_scratchpad_elevate') {
-      value = await this.application.command('scratchpad.elevate', {
-        runId: args.runId, taskId: args.taskId, workerId: args.workerId,
-        expectedScratchpadFence: args.expectedScratchpadFence, entryIds: clone(args.entryIds),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
     else if (name === 'baton_scratchpad_settle') {
       value = await this.application.command('scratchpad.settle', {
         runId: args.runId, expectedScratchpadFence: args.expectedScratchpadFence,
@@ -2743,14 +2695,6 @@ export class McpFleetServer {
       value = await this.application.command('run.scratchpad.read', {
         runId: args.runId, scope: args.scope,
         ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId, sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
-    else if (name === 'baton_run_scratchpad_elevate') {
-      value = await this.application.command('run.scratchpad.elevate', {
-        runId: args.runId, taskId: args.taskId, entryIds: clone(args.entryIds),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,

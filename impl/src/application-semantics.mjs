@@ -816,8 +816,8 @@ const sessionAuthoritySchema = objectSchema({
 
 // S-3 is a registry delta, not a second inventory. Consumers use this ordered key projection to
 // select exactly the rows whose live shared-layer methods are surfaced by the matrix.
-// MCP-W2 (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle
-// leave the REFLEX matrix — they are the ordinary-surface settlement tools
+// MCP-W2 (mcp-packaging-decisions v1.0): scratchpad.settle
+// leaves the REFLEX matrix — they are the ordinary-surface settlement tools
 // (their MCP tools live in the ordinary table), so the matrix projection no longer derives them.
 export const SURFACING_MATRIX_KEYS = Object.freeze([
   'run.scratchpad', 'decision.list',
@@ -826,7 +826,6 @@ export const SURFACING_MATRIX_KEYS = Object.freeze([
 const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'run.scratchpad': 'viewer-scoped worker and shared slices',
   'decision.list': 'Run-scoped observe authorization; deadlineAt is projected',
-  'scratchpad.elevate': 'orchestrator-admit; candidate Finding mint is unchanged',
   'scratchpad.settle': 'orchestrator-admit',
 
   'knowledge.recall': 'deployment-bounded recall policy',
@@ -1021,17 +1020,6 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
     inputSchema: runIdSchema, authorityFields: ['runId'], serverDerived: ['viewer'],
     liveMethod: 'application.decisionList',
-  }],
-  ['scratchpad.elevate', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, taskId: id, workerId: id,
-      expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      entryIds: { type: 'array', uniqueItems: true,
-        items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
-    authorityFields: ['runId', 'taskId', 'workerId', 'expectedScratchpadFence'],
-    serverDerived: ['actor'], liveMethod: 'elevateTaskScratchpad',
   }],
   ['scratchpad.settle', {
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
@@ -1253,15 +1241,6 @@ const CANONICAL_OPERATION_SPECS = [
       runId: id, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
       cursor: { type: 'integer', minimum: 0 },
     }, ['runId', 'scope']),
-  }],
-  ['run.scratchpad.elevate', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON',
-    inputSchema: objectSchema({
-      runId: id, taskId: id,
-      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['runId', 'taskId', 'entryIds']),
   }],
   // #158 (H2.1) / 2026-09-14 audit U-E3: ONE row. The duplicate declaration (the first was
   // observe-only, string-body, body-required; the second control-classed, JSON-bodied,

@@ -2110,7 +2110,6 @@ export class BatonApplication {
         knowledgeSeed: (request, knowledgePrincipal) => this.knowledgeSeed(request, knowledgePrincipal),
         scratchpadAppend: (request, knowledgePrincipal) => this.scratchpadAppend(request, knowledgePrincipal),
         scratchpadRead: (request, knowledgePrincipal) => this.scratchpadRead(request, knowledgePrincipal),
-        scratchpadElevate: (request, knowledgePrincipal) => this.scratchpadElevate(request, knowledgePrincipal),
       },
       // The git authority the situation projection derives from (#318): the commit the target
       // showed when the swarm was created, and the rows landed since. Never a stored count — the
@@ -6395,7 +6394,6 @@ export class BatonApplication {
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
-    if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
     // #176 (waves.* authority closure): the six waves.* verbs pass the recursive-session gate like
     // their run.* siblings — a sessionAuthority-context call refuses typed rather than dispatching
@@ -6425,7 +6423,7 @@ export class BatonApplication {
     // recursive-session gate, and deliberately absent from the capability-backed recursive
     // allowlists below. The actor is server-derived 'orchestrator'; the settlement session is
     // derived from the calling principal.
-    if (name === 'scratchpad.elevate' || name === 'scratchpad.settle'
+    if (name === 'scratchpad.settle'
       || name === 'knowledge.settlement_lease'
       || name === 'knowledge.promote_doubt' || name === 'knowledge.doubts') {
       return this._settlementCommand(name, args, principal);
@@ -6581,9 +6579,6 @@ export class BatonApplication {
         principalId: principal.principalId, sessionId: principal.sessionId,
       }),
     };
-    if (name === 'scratchpad.elevate') {
-      return coordinator.elevateTaskScratchpad(args.taskId, args.entryIds);
-    }
     if (name === 'scratchpad.settle') {
       return coordinator.settleWorkflowScratchpad(args.runId,
         { expectedScratchpadFence: args.expectedScratchpadFence, skips: args.skips });
@@ -6749,24 +6744,6 @@ export class BatonApplication {
     });
   }
 
-  _normalizeScratchpadElevate(value) {
-    // Decision 12: ≤128 unique scratchpad-entry:<64 hex> ids (the store's MAX_SCRATCHPAD_WORKER_ENTRIES).
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['runId', 'taskId', 'entryIds'].includes(key))
-      || !validId(value.runId) || !validId(value.taskId)
-      || !Array.isArray(value.entryIds)
-      || new Set(value.entryIds).size !== value.entryIds.length
-      || value.entryIds.some((id) => typeof id !== 'string' || !/^scratchpad-entry:[a-f0-9]{64}$/u.test(id))) {
-      throw applicationError('run scratchpad elevate request is invalid', 'application_scratchpad_elevate_invalid');
-    }
-    if (value.entryIds.length > 128) {
-      throw applicationError(
-        `Run scratchpad elevation entryIds exceeds the 128-entry cap (actual ${value.entryIds.length} entries)`,
-        'application_scratchpad_elevate_invalid',
-      );
-    }
-    return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
-  }
 
   // The seedable top-level types and the grounding choices ARE the canonical schema's own closed
   // sets (application-semantics), so the facade's admitted set and the bridge validator's cannot
@@ -6974,27 +6951,6 @@ export class BatonApplication {
     return deepFreeze(page);
   }
 
-  // run.scratchpad.elevate — Decision 7: the kernel elevation wrapper with its fence discipline.
-  async scratchpadElevate(rawRequest, rawPrincipal) {
-    this._assertOpen();
-    await this.ready;
-    const request = this._normalizeScratchpadElevate(rawRequest);
-    const principal = normalizePrincipal(rawPrincipal, 'scratchpad elevate principal');
-    // Resolve-then-authorize: the store's delegated task accessor. An unknown task, or a task
-    // whose runId does not equal args.runId, authorizes against the null scope: unknown ≡
-    // cross-run ≡ foreign ≡ the constant application_unauthorized (entry ids are never
-    // existence-oracles).
-    const task = this.driver.coordination.task(request.taskId);
-    const resolvedRunId = task && task.runId === request.runId ? task.runId : null;
-    if (resolvedRunId === null) {
-      throw applicationError('application command is not authorized', 'application_unauthorized');
-    }
-    await this._authorize('run.scratchpad.elevate', principal, resolvedRunId, {
-      taskId: request.taskId, entryCount: request.entryIds.length,
-    });
-    const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
-    return deepFreeze({ schemaVersion: 1, ...outcome });
-  }
 
   // run.scratchpad.append — #158: the write side of the #33 accessor pair, matching the
   // MCP tool's shipped schema (baton_run_scratchpad_append — which was a ghost until this
