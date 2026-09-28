@@ -159,7 +159,9 @@ while the supervisor runs. Recovery after loss of all coordinator and harness
 processes is validated separately in
 [`host-restart-2026-09-28.md`](host-restart-2026-09-28.md). Host reboot and
 power-loss durability remain unvalidated.
-The supervisor-loss probe below reproduces a duplicate native session.
+The supervisor-loss probe below records a duplicate native
+session at its source revision. The [receive recovery record](receive-recovery-2026-09-28.md)
+describes the repair and its validation.
 
 ## Supervisor loss with a surviving child
 
@@ -191,12 +193,13 @@ BEND=/path/to/bend sh bend2/scripts/build-native.sh
 python3 docs/bend2/examples/probe-supervisor-loss.py
 ```
 
-The probe uses a fresh database and controlled harness processes from the
+The original probe used a fresh database and controlled harness processes from the
 receive test fixture. Its JSON records process IDs, the resumed native ID,
 pending input and the completed turn. It requires the current coordinator
 binary at `.scratch/bend2/baton2`. The original run's database, native log and
 JSON observation are retained at `.scratch/recovery18/supervisor-loss/` in the
-architect workspace. No runtime repair is included in this validation record.
+architect workspace. The current probe checks recovery; its original reproduction
+remains available at revision `455d6ea7`.
 
 A repair must preserve exclusive use of the native session across supervisor
 loss and arrange continuation and parent notification for pending work. Keeping
