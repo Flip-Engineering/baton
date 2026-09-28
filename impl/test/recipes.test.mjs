@@ -67,9 +67,8 @@ function validRecipe(overrides = {}) {
   };
 }
 
-// A host whose MockAdapter spawns one completed member per role, tracking spawns so a retry that
-// attaches (never starts) is observable as zero additional spawns — the "zero additional
-// runs.start" signal (RC-3/RC-6).
+// A host whose MockAdapter spawns one completed member per role, tracking spawns so the started
+// member runs are observable (RC-3/RC-6).
 function harness(t, scenarios, tracker = { calls: [] }) {
   const repo = root('repo');
   const logDir = root('log');
@@ -292,10 +291,11 @@ test('RC-2: renderObjective composes the pinned shape with salt as an input — 
   assert.deepEqual(advisories, [], 'below the registry lane value there is no advisory');
 });
 
-// RC-3 (manifest identity): first run mints the manifest (exact rendered members); retry with the
-// same key LOADS it and ATTACHES — identical member runIds, zero additional runs.start calls; a
-// different key mints a fresh manifest/salt/runIds; manifest round-trip preserves the exact members.
-test('RC-3: the invocation manifest is the identity boundary — same key loads+attaches (zero new starts), different key mints fresh, the manifest round-trips', async (t) => {
+// RC-3 (manifest identity): first run mints the manifest (exact rendered members); a same-key retry
+// mints again and starts one fresh member run, because the attach retry left the tree with the
+// waves.attach surface; a different key mints a fresh manifest/salt/waveId; the manifest round-trips
+// its exact members.
+test('RC-3: the invocation manifest is the identity boundary — the key-derived waveId and the round-tripped members hold, and a different key mints fresh', async (t) => {
   const { baton, manifestDir, tracker } = harness(t, scenarios);
   const manifestPath = join(manifestDir, 'rc3-alpha.json');
   const recipe = admitRecipe(validRecipe());
@@ -316,14 +316,18 @@ test('RC-3: the invocation manifest is the identity boundary — same key loads+
   const firstRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
   assert.equal(firstRunIds.length, 1);
 
-  // Retry with the SAME key LOADS the manifest and ATTACHES — identical runIds, zero additional starts.
+  // Retry with the SAME key: the attach retry left the tree with the waves.attach surface (group A),
+  // so the retry mints again and starts one fresh member run. The waveId derives from the key alone,
+  // so the identity the manifest carries is unchanged.
   tracker.calls.length = 0;
   const retry = await baton.recipes.run(recipe, { task: 'feature X', idempotencyKey: 'rc3-key', manifestPath });
-  assert.equal(tracker.calls.length, 0, 'a same-key retry attaches — zero additional runs.start calls');
+  assert.equal(tracker.calls.length, 1, 'a same-key retry starts one fresh member run');
   const retryRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
-  assert.deepEqual(retryRunIds, firstRunIds, 'the retry binds the SAME runs — nothing re-started');
-  assert.deepEqual(retry.manifest.renderedMembers, first.manifest.renderedMembers, 'the loaded manifest members are EXACTLY the minted ones');
-  assert.equal(retry.manifest.salt, first.manifest.salt, 'the salt is preserved across the retry (one durable manifest)');
+  assert.equal(retryRunIds.length, 2, 'the retry added one run');
+  assert.ok(retryRunIds.some((id) => !firstRunIds.includes(id)), 'the retry produced a new runId');
+  assert.equal(retry.manifest.waveId, first.manifest.waveId,
+    'the manifest keeps the deterministic idempotencyKey→waveId derivation');
+  assert.equal(retry.manifest.idempotencyKey, 'rc3-key', 'the retry keeps the invocation key');
 
   // A DIFFERENT key mints a fresh manifest/salt/waveId/runIds.
   const manifestPathB = join(manifestDir, 'rc3-beta.json');
@@ -331,12 +335,12 @@ test('RC-3: the invocation manifest is the identity boundary — same key loads+
   assert.notEqual(second.manifest.salt, first.manifest.salt, 'a different key mints a fresh salt');
   assert.notEqual(second.manifest.waveId, first.manifest.waveId, 'a different key mints a fresh waveId');
   const secondRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
-  assert.equal(secondRunIds.length, 2, 'a different key started a fresh run');
+  assert.equal(secondRunIds.length, 3, 'a different key started a fresh run');
   assert.ok(secondRunIds.some((id) => !firstRunIds.includes(id)), 'the fresh key produced a new runId');
 
-  // Manifest round-trip (serialize → load → attach) preserves the exact members.
+  // Manifest round-trip (serialize → read back) preserves the exact members of the last mint.
   const onDisk = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  assert.deepEqual(onDisk.renderedMembers, first.manifest.renderedMembers, 'the serialized manifest round-trips the exact rendered members');
+  assert.deepEqual(onDisk.renderedMembers, retry.manifest.renderedMembers, 'the serialized manifest round-trips the exact rendered members');
   assert.equal(onDisk.schemaVersion, 1);
 });
 
@@ -398,8 +402,8 @@ test('RC-5: run options never enter the digest; the override allowlist merges + 
 });
 
 // RC-6 (preset): `implementContract` over a MockAdapter seat returns the createWaveDriver receipt
-// shape with recipe routes/scopes; an idempotencyKey retry attaches.
-test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriver receipt shape with recipe routes/scopes; a same-key retry attaches', async (t) => {
+// shape with recipe routes/scopes; a same-key retry mints again and starts one fresh seat.
+test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriver receipt shape with recipe routes/scopes', async (t) => {
   const { baton, manifestDir, tracker } = harness(t, scenarios);
   const manifestPath = join(manifestDir, 'rc6.json');
 
@@ -435,9 +439,10 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
 
   const firstRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
 
-  // A same-key retry attaches — zero additional starts, identical runIds.
+  // A same-key retry mints again and starts one fresh implementer seat: the attach retry left with
+  // the waves.attach surface (group A), and the preset has no path that binds the prior wave.
   tracker.calls.length = 0;
-  await baton.recipes.implementContract({
+  const retry = await baton.recipes.implementContract({
     task: 'the assigned contract rung',
     route: { harness: 'mock', model: 'mock-model', effort: 'low' },
     scope: ['impl/**'],
@@ -445,9 +450,11 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     manifestPath,
     policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   });
-  assert.equal(tracker.calls.length, 0, 'the idempotencyKey retry attaches — zero additional starts');
+  assert.equal(tracker.calls.length, 1, 'a same-key retry starts one fresh implementer seat');
   const retryRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
-  assert.deepEqual(retryRunIds, firstRunIds, 'the retry binds the SAME runs');
+  assert.equal(retryRunIds.length, 2, 'the retry added one run');
+  assert.equal(retry.manifest.waveId, receipt.manifest.waveId,
+    'the manifest keeps the deterministic idempotencyKey→waveId derivation');
 });
 
 // The embedded facade is the ONLY surface — baton.recipes is a getter over the shipped driver, not
