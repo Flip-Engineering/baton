@@ -29,6 +29,7 @@ import Base
 import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C
+import ./receive.bend as Receive
 import ../git/types.bend as T
 import ../git/process.bend as P
 import ../git/land.bend as L
@@ -530,4 +531,84 @@ law m18_push_destination_is_the_declared_remote:
   {L.push_argv(branch, remote) == Con{"push", Con{remote, Con{branch, Nil{}}}} : List<String>}
 
 def m18_push_destination_is_the_declared_remote(branch, remote):
+  {==}
+
+# ---------------------------------------------------------------------------
+# The coordinator store's sessions and workers. The store writes one row per
+# logical session and reads its answer back by that identity.
+
+# M-8: one native process owns a logical session at a time. A session whose
+# lock is held is answered `queued`: a second writer starts no native turn and
+# the held input stays where it is.
+law m8_one_native_owner_queues_the_second_writer:
+  for +db: String
+  for +session: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired(db, session, cmd, model, effort, cwd, log, None{}, again) == Receive.receive_status(db, session, "queued") : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m8_one_native_owner_queues_the_second_writer(db, session, cmd, model, effort, cwd, log, again):
+  {==}
+
+# M-1: the store's answer for a session reads the row the transaction stored,
+# keyed by the identity the caller supplied.
+law m1_session_answer_reads_the_stored_row:
+  for +id: String
+  {C.session_result(id) == "SELECT json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base) FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
+
+def m1_session_answer_reads_the_stored_row(id):
+  {==}
+
+# M-1: a message answer likewise reads the stored row by the supplied identity.
+law m1_message_answer_reads_the_stored_row:
+  for +id: String
+  {C.message_result(id) == "SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ ";" : String}
+
+def m1_message_answer_reads_the_stored_row(id):
+  {==}
+
+# M-3b: repeating an operation identity re-selects the stored row; it cannot
+# insert a second row. Conflicting reuse of the identity fails the write.
+law m3b_repeated_identity_reselects_the_stored_row:
+  {C.message_upsert() == " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
+
+def m3b_repeated_identity_reselects_the_stored_row():
+  {==}
+
+# M-5: recording an observation updates the native identity and the observed
+# route and leaves the parent, the workspace, the branch and the base as they
+# were.
+law m5_bind_preserves_parentage_and_placement:
+  for +id: String
+  for +native: String
+  for +harness: String
+  for +model: String
+  for +effort: String
+  {C.sql(C.Bind{id, native, harness, model, effort}) == "UPDATE sessions SET native=" ++ C.q(native) ++ ",observed_harness=" ++ C.q(harness) ++ ",observed_model=" ++ C.q(model) ++ ",observed_effort=" ++ C.q(effort) ++ " WHERE id=" ++ C.q(id) ++ ";" ++ C.session_result(id) : String}
+
+def m5_bind_preserves_parentage_and_placement(id, native, harness, model, effort):
+  {==}
+
+# M-7: a report's recipient is the parent recorded against the sender. The
+# caller supplies the sender; the routing comes from the stored session.
+law m7_report_routes_to_the_recorded_parent:
+  for +id: String
+  for +sender: String
+  for +body: String
+  {C.sql(C.Report{id, sender, body}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ C.q(sender) ++ "),'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id) : String}
+
+def m7_report_routes_to_the_recorded_parent(id, sender, body):
+  {==}
+
+# M-11: the terminal predicate is read from the record's own event fields, so
+# the caller's body cannot make a record terminal.
+law m11_terminal_reads_the_records_own_event:
+  for +event: String
+  {C.terminal(event) == "(json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ C.q(event) ++ ",'$.type')='result' OR (json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1))" : String}
+
+def m11_terminal_reads_the_records_own_event(event):
   {==}
