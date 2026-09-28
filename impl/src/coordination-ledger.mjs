@@ -2795,6 +2795,18 @@ export function _apply(store, event) {
       if (store._loading && error instanceof SwarmIntegrityError) throw new SwarmReplayRefusal(event, error);
       throw error;
     }
+  } else if (store._loading === true && !store._canonicalOrderMigration) {
+    // Issue #629: a recorded row whose kind has no fold is RETAINED HISTORY. The mechanism that
+    // wrote it left the tree with its command surface (the #598 removals: the coordination board
+    // and its lifecycle kinds first, then the context, package, publication, REPL and export
+    // families), so replay keeps the row in the ledger and the projection takes no state from it;
+    // a resident opening a ledger that already holds such rows serves the state the removals
+    // leave. This is #304's rule applied at this seam: a fold rule that refuses recorded history
+    // is a construction error, and the admission that once judged such a kind left with its
+    // mechanism. Two paths still refuse, each because it does not replay this deployment's own
+    // history: a LIVE append (a kind the fold cannot represent must never reach the projection)
+    // and a canonical-order adoption (it must judge every kind in the lineage it adopts, so
+    // unknown history still fails closed — phase63 CO5/CO6).
   } else {
     throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
   }
