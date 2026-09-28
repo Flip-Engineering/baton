@@ -6,6 +6,7 @@ import select
 import shlex
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -20,9 +21,26 @@ FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
+if args[:1]==['parent_endpoint']:
+    messages=json.loads(subprocess.check_output([config['exe'],config['db'],'inbox','root'],text=True))
+    for message in messages:
+        subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
+        with (home/'parent-deliveries.jsonl').open('a') as delivered:
+            delivered.write(json.dumps(message)+'\n')
+    print(json.dumps({'received':args[1]}))
+    sys.exit(0)
 omp='--mode' in args
 model=args[args.index('--model')+1]
 resume=args[args.index('--resume')+1] if '--resume' in args else (args[2] if args[:2]==['exec','resume'] else '')
+if config.get('record_launches'):
+    with (home/'native-launches.jsonl').open('a') as launches:
+        launches.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'resume':resume,'args':args})+'\n')
+if omp and resume and resume==config.get('missing_resume'):
+    print('Error: Session '+resume+' not found',file=sys.stderr,flush=True)
+    sys.exit(1)
+if config.get('early_failure'):
+    print(config['early_failure'],file=sys.stderr,flush=True)
+    sys.exit(1)
 native='native-'+model
 if omp:
     state=json.loads(sys.stdin.readline())
@@ -54,6 +72,11 @@ while True:
     if action.get('exit_fixture'): break
     if action.get('progress'):
         progress(action)
+        continue
+    if action.get('append_file'):
+        name,text=action['append_file']
+        with pathlib.Path(name).open('a') as target: target.write(text)
+        reply({'appended':name})
         continue
     if action.get('read_steer'):
         frame=json.loads(sys.stdin.readline())
@@ -258,6 +281,171 @@ class Receive(unittest.TestCase):
     def assert_no_start(self):
         self.assertEqual(select.select([self.server], [], [], .15)[0], [],
                          'another native process started while its session was active')
+
+    def exercise_missing_omp_fallback(self, observer_losses):
+        self.worker(harness='omp')
+        workspace = self.checkouts / 'parent'
+        journal = workspace / 'seed.txt'
+        partial = 'seed\nWork completed before the conversation was lost.\n'
+        journal.write_text(partial)
+        missing = 'missing-omp-conversation'
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update({'missing_resume': missing, 'record_launches': True})
+        config_path.write_text(json.dumps(config))
+        self.coord('connect', 'parent', missing, '')
+        self.coord('attach', 'root', 'codex', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
+        task = 'Keep seed.txt and append the final step after reading the existing work.'
+        self.coord('message', 'original-task', 'root', 'parent', 'task', task)
+        receive = self.receive_args('parent')
+        receive[5] = str(workspace)
+        observer = self.spawn(*receive)
+        fresh, started = self.accept('parent')
+        self.assertEqual(started['resume'], '')
+        self.assertNotIn('--resume', started['args'])
+        self.assertNotEqual(started['native'], missing)
+        self.assertIn('[id: original-task]', started['prompt'])
+        self.assertIn(task, started['prompt'])
+        self.assertIn('fresh conversation', started['prompt'])
+        self.assertIn(' M seed.txt', started['prompt'])
+        self.assertEqual(journal.read_text(), partial)
+        launches_path = self.directory / 'native-launches.jsonl'
+        launches = [json.loads(line) for line in launches_path.read_text().splitlines()]
+        self.assertEqual([row['resume'] for row in launches], [missing, ''])
+        self.assertFalse(any(p['pid'] == launches[0]['pid'] for p in self.owned_processes()))
+        self.eventually(lambda: self.coord('session', 'parent')['native'] == started['native'],
+                        'fresh conversation identity was not recorded')
+
+        def recovery_reports():
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                database.row_factory = sqlite3.Row
+                return [dict(row) for row in database.execute(
+                    "SELECT * FROM messages WHERE sender='parent' AND kind='report' AND id LIKE '%:recovery'")]
+
+        diagnostic = self.eventually(recovery_reports, 'missing conversation produced no recovery report')[0]
+        self.assertIn('conversation', diagnostic['body'])
+        log = self.directory / 'parent.jsonl'
+        for loss in range(observer_losses):
+            if loss == 0:
+                observer.kill()
+                observer.wait(timeout=5)
+            else:
+                recovered = self.eventually(
+                    lambda: [p for p in self.owned_processes()
+                             if p['ppid'] == started['ppid'] and '--recover-receive' in p['command']],
+                    'fresh native keeper did not replace its observer')[0]
+                os.kill(recovered['pid'], signal.SIGKILL)
+            marker = 'fresh fallback native output after observer loss ' + str(loss)
+            self.action(fresh, progress=marker)
+            self.assertEqual(json.loads(fresh.readline()), {'progress_written': marker})
+            self.eventually(lambda: log.exists() and marker in log.read_text(),
+                            'fresh native output was lost with its observer')
+            self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
+            self.assertEqual(self.coord(*receive)['status'], 'queued')
+            self.assert_no_start()
+            self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+            self.assertIn('original-task', [m['id'] for m in self.coord('inbox', 'parent')])
+            self.assertEqual([row['id'] for row in recovery_reports()], [diagnostic['id']])
+            actual = [json.loads(line) for line in launches_path.read_text().splitlines()]
+            self.assertEqual([row['pid'] for row in actual], [row['pid'] for row in launches],
+                             'observer recovery launched another native process')
+
+        completed = 'Final step completed in the fresh conversation.\n'
+        self.action(fresh, append_file=['seed.txt', completed])
+        self.assertEqual(json.loads(fresh.readline()), {'appended': 'seed.txt'})
+        body = 'Fresh conversation completed the original task.\nExisting workspace work was preserved.'
+        self.action(fresh, body=body)
+        self.assertEqual(fresh.readline(), b'')
+        if observer_losses == 0:
+            self.finish(observer)
+        self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
+                        'fresh fallback did not drain the original task and notify its parent')
+        self.eventually(lambda: not self.owned_processes(), 'fallback keeper or observer did not exit naturally')
+        self.assertEqual(journal.read_text(), partial + completed)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [body])
+        self.assertNotEqual(turns[0]['id'], diagnostic['id'].removesuffix(':recovery'))
+        self.assertEqual(turns[0]['receipt'], 'parent-received')
+        self.assertEqual([row['id'] for row in recovery_reports()], [diagnostic['id']])
+        self.assertEqual(recovery_reports()[0]['receipt'], 'parent-received')
+        delivered = [json.loads(line) for line in (self.directory / 'parent-deliveries.jsonl').read_text().splitlines()]
+        delivered_bodies = {message['id']: message['body'] for message in delivered}
+        self.assertEqual(delivered_bodies[diagnostic['id']], diagnostic['body'])
+        self.assertEqual(delivered_bodies[turns[0]['id']], body)
+        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        actual = [json.loads(line) for line in launches_path.read_text().splitlines()]
+        self.assertEqual([row['pid'] for row in actual], [row['pid'] for row in launches])
+
+    def test_missing_omp_conversation_restarts_pending_receive_with_workspace_state(self):
+        self.exercise_missing_omp_fallback(observer_losses=0)
+
+    def test_missing_omp_fresh_fallback_survives_repeated_observer_loss(self):
+        self.exercise_missing_omp_fallback(observer_losses=2)
+
+    def test_missing_omp_root_conversation_drains_task_and_recovery_context(self):
+        missing = 'missing-root-conversation'
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update({'missing_resume': missing, 'record_launches': True})
+        config_path.write_text(json.dumps(config))
+        self.coord('attach', 'root', 'omp', missing, '')
+        partial = 'seed\nRoot work completed before conversation loss.\n'
+        journal = self.repo / 'seed.txt'
+        journal.write_text(partial)
+        self.coord('message', 'root-task', 'root', 'root', 'task', 'Keep existing root work and finish seed.txt.')
+        receive = self.receive_args('root')
+        receive[5] = str(self.repo)
+        observer = self.spawn(*receive)
+        fresh, started = self.accept('root')
+        self.assertEqual(started['resume'], '')
+        self.assertNotEqual(started['native'], missing)
+        self.assertIn('[id: root-task]', started['prompt'])
+        self.assertIn('fresh conversation', started['prompt'])
+        self.assertIn(' M seed.txt', started['prompt'])
+        self.action(fresh, append_file=['seed.txt', 'Root task completed.\n'])
+        self.assertEqual(json.loads(fresh.readline()), {'appended': 'seed.txt'})
+        self.action(fresh, body='Root task completed in a fresh conversation.')
+        self.finish(observer)
+        self.assertEqual(self.coord('inbox', 'root'), [])
+        self.assertEqual(self.coord('turns', 'root'), [])
+        self.assertEqual(self.coord('session', 'root')['native'], started['native'])
+        self.assertEqual(journal.read_text(), partial + 'Root task completed.\n')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            self.assertEqual(database.execute("SELECT id FROM messages WHERE kind='report'").fetchall(), [])
+        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual([row['resume'] for row in launches], [missing, ''])
+        self.eventually(lambda: not self.owned_processes(), 'root fallback processes did not exit naturally')
+
+    def test_stale_shared_omp_refusal_does_not_restart_an_unrelated_failure(self):
+        self.worker(harness='omp')
+        native = 'existing-omp-conversation'
+        storage = pathlib.Path(str(self.db) + '.session-' + 'parent'.encode().hex())
+        storage.mkdir()
+        (storage / ('2026-09-28_' + native + '.jsonl')).write_text(json.dumps({'type': 'session', 'id': native}) + '\n')
+        self.coord('connect', 'parent', native, '')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        cause = 'Error: Provider unavailable for this fixture'
+        config.update({'early_failure': cause, 'record_launches': True})
+        config_path.write_text(json.dumps(config))
+        (self.directory / 'parent.jsonl.stderr').write_text('Error: Session from a prior attempt not found\n')
+        self.coord('message', 'task', 'root', 'parent', 'task', 'Input must remain available after provider failure.')
+        result = self.coord(*self.receive_args('parent'), ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['task'])
+        self.assertEqual(self.coord('session', 'parent')['native'], native)
+        reports = self.coord('inbox', 'root')
+        self.assertFalse(any(m['id'].endswith(':recovery') for m in reports))
+        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 1, 'an unrelated provider failure started a fresh native conversation')
+        self.assertIn(native, launches[0]['resume'])
+        diagnostics = [path for path in self.directory.glob('state.db.attempt-*/native.stderr')
+                       if cause in path.read_text()]
+        self.assertTrue(diagnostics, 'the real provider failure was not retained')
+        self.assertTrue(any(str(path) in report['body'] for path in diagnostics for report in reports),
+                        'parent diagnostic did not name a readable file containing the provider failure')
+        self.eventually(lambda: not self.owned_processes(), 'failed attempt processes did not exit naturally')
 
     def exercise_observer_loss(self, harness, retry, terminal_before_loss=False, evidence=None):
         evidence = evidence if evidence is not None else {}

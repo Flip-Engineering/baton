@@ -71,17 +71,17 @@ def keeper_cli(directory: String, lock: String, args: List<String>, internal: Bo
     case True{}: keeper(directory,U32.read(lock))
     case False{}: normal_cli(args)
 
-def recover_cli(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, internal: Bool) -> IO(Unit):
+def recover_cli(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, native: String, internal: Bool) -> IO(Unit):
   match internal:
-    case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory))
+    case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
     case False{}: execute("",C.Invalid{})
 
 def cli(args: List<String>) -> IO(Unit):
   match args:
     case +flag <> +directory <> +lock <> Nil{}:
       keeper_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"))
-    case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> Nil{}:
-      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,String.eq(flag,"--recover-receive"))
+    case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
+      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
     case other: normal_cli(other)
 
 def main() -> IO(Unit):
