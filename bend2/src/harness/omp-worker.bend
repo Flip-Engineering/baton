@@ -1,6 +1,22 @@
 import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
+import ../host/files.bend as F
+
+def select_file(directory: String, +session: String, +first: String, found: Bool) -> IO(String):
+  match found:
+    case True{}: IO.pure(String,first)
+    case False{}: do IO<String>:
+      +second : String <- IO.try(String,F.Files.find_suffix(directory,"_" ++ session ++ ".jsonl"))
+      IO.pure(String,Bool.pick(String,String.is_empty(second),session,second))
+
+# OMP accepts a session file path when continuing across worker and lead stores.
+def resume_file(primary: String, alternate: String, +session: String, enabled: Bool) -> IO(String):
+  match enabled:
+    case False{}: IO.pure(String,session)
+    case True{}: do IO<String>:
+      +first : String <- IO.try(String,F.Files.find_suffix(primary,"_" ++ session ++ ".jsonl"))
+      select_file(alternate,session,first,Bool.not(String.is_empty(first)))
 
 def arguments(cmd: String, model: String, effort: String, sessions: String) -> List<String>:
   [cmd,"--mode","rpc","--model",model,"--thinking",effort,"--approval-mode","yolo","--session-dir",sessions]

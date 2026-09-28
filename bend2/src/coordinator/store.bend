@@ -8,7 +8,10 @@ def committed(db: String, command: C.Command, result: Result<&1,&1,U32 & String,
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{saved}: Root.after(db,command,saved)
+def commit(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
+  DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ C.sql(command) ++ "COMMIT;")
+
 def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ C.sql(command) ++ "COMMIT;")
+    result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(db,command,result)

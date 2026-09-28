@@ -3,6 +3,7 @@ import Base
 type Command is Data:
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
+  Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   RunTurn{worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String}
   Attach{id: String, harness: String, native: String, endpoint: String}
   Worker{id: String, parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String}
@@ -61,9 +62,9 @@ def terminal(+event: String) -> String:
 
 def observe_sql(+id: String, +worker: String, +event: String) -> String:
   "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ q(event) ++ ",'$.thread_id') END,json_extract(" ++ q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='session' THEN json_extract(" ++ q(event) ++ ",'$.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ q(event) ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.model.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ q(event) ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ q(event) ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ q(event) ++ ",'$.message.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.message.model') END,json_extract(" ++ q(event) ++ ",'$.message.model'),json_extract(" ++ q(event) ++ ",'$.model'),observed_model) WHERE id=" ++ q(worker) ++ ";"
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id,parent,'report',CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ q(event) ++ ") END FROM sessions WHERE id=" ++ q(worker) ++ " AND " ++ terminal(event) ++ message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(worker) ++ "," ++ q(event) ++ " WHERE " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('worker',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(worker) ++ ";"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id,parent,'report',CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ q(event) ++ ") END FROM sessions WHERE id=" ++ q(worker) ++ " AND parent IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(worker) ++ "," ++ q(event) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(worker) ++ " AND parent IS NOT NULL) AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('worker',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN parent IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(worker) ++ ";"
 
 def sql(command: Command) -> String:
   match command:
@@ -102,6 +103,7 @@ def sql(command: Command) -> String:
     case ReportFile{id,sender,path}: ""
     case AskFile{id,worker,path}: ""
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
+    case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case Land{worker,repo,target}: ""
     case LandChecked{worker,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
@@ -139,6 +141,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Invalid{}))))
+    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
     case +verb <> id <> parent <> harness <> model <> effort <> workspace <> branch <> base <> Nil{}:
       Bool.pick(Command, String.eq(verb,"worker"),Worker{id,parent,harness,model,effort,workspace,branch,base},Invalid{})
     case +verb <> +worker <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
