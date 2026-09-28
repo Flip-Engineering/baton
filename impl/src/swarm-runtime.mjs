@@ -7597,11 +7597,26 @@ export class SwarmRuntime {
     const pool = this._supervisedPool();
     const gateHolder = `integrate:${args.swarmId}:${args.contributionId}`;
     const swept = [...(this._integrationSweep ?? [])];
+    // #622: the operator retried visual-lead7zb's live landing on 2026-09-28.
+    // Keep its abort controller and queue ownership when a second caller arrives.
+    const pending = this._pendingIntegrations.get(args.contributionId);
+    if (pending) {
+      refuse(`Contribution ${args.contributionId} already has a ${pending.phase} landing`
+        + ` on ${pending.target}, requested by ${pending.actor} (${pending.operationKey})`,
+      'integrate_in_flight', {
+        swarmId: pending.swarmId, contributionId: args.contributionId,
+        participantId: pending.participantId, actor: pending.actor,
+        target: pending.target, operationKey: pending.operationKey, phase: pending.phase,
+        ...(pending.started === undefined ? {} : { started: pending.started }),
+      });
+    }
     const integrationAbort = new AbortController();
-    this._pendingIntegrations.set(args.contributionId, {
+    const pendingIntegration = {
+      operationKey, actor: principal.actor, target,
       abort: integrationAbort, swarmId: args.swarmId,
       participantId: contribution.participantId, phase: 'queued',
-    });
+    };
+    this._pendingIntegrations.set(args.contributionId, pendingIntegration);
     let started = null;
     let scratchDir = null;
     let landed;
@@ -7699,6 +7714,7 @@ export class SwarmRuntime {
             // is named where the landing that would have reused its directory is announced.
             ...(swept.length === 0 ? {} : { swept }),
           }, principal, `swarm-integration-start:${operationKey}`);
+          pendingIntegration.started = { seq: started.seq, ts: started.ts, scratch: dir };
         },
         // Issue #463: the deployment's own regenerator (or the default one) wrapped so the runtime
         // holds the change as it stood BEFORE the artifacts were written. `regenerated` is then the

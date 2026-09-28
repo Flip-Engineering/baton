@@ -20,6 +20,11 @@
 //   (h) the new row survives replay byte-identically, like every other fold row.
 
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
+import { BatonWebClient, parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { WebNorthbound } from '../src/web-northbound.mjs';
+import { WebSessionStore } from '../src/web-auth.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -76,6 +81,7 @@ const ITEMS = [
 async function world(t, {
   subject = 'Lane scope guard holds on shared checkouts',
   targetMoves = null, rebase = false, accept = true, purpose = 'land the lane', detach = null,
+  regenerate = null, runGates = null,
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue296-'));
   const repo = join(directory, 'repo');
@@ -154,8 +160,8 @@ async function world(t, {
     integration: {
       repoRoot: repo,
       publishRemote,
-      regenerate: async (dir) => { write(dir, 'impl/scripts/render-surface-docs.out', '{}\n'); },
-      runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
+      regenerate: regenerate ?? (async (dir) => { write(dir, 'impl/scripts/render-surface-docs.out', '{}\n'); }),
+      runGates: runGates ?? (async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] })),
     },
   });
   t.after(() => {
@@ -479,3 +485,87 @@ test('296: an omitted target on a detached checkout two branches name refuses wi
   assert.equal(git(w.repo, 'rev-parse', 'elsewhere'), elsewhereBefore, 'elsewhere did not move');
   assert.equal(w.foldRow().integration, undefined, 'no receipt was recorded');
 });
+
+
+// #622: visual-lead7zb started its landing at 09:36Z on 2026-09-28. The
+// operator's normal and dry-run retries both returned an unclassified 503.
+for (const phase of ['queued', 'running']) {
+  test(`622: operator CLI duplicates name the ${phase} landing and preserve it`, needsGit, async (t) => {
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const hold = async () => { entered.resolve(); await release.promise; };
+    const w = await world(t, phase === 'queued'
+      ? { regenerate: hold }
+      : { runGates: async (dir, files) => {
+        await hold();
+        return { files, verdictLine: 'green', unexpected: [] };
+      } });
+    const original = w.integrate().then(value => ({ value }), error => ({ error }));
+    t.after(async () => { release.resolve(); await original; });
+    await entered.promise;
+    const started = w.store.eventsView().find(row => row.payload?.kind === 'swarm.integration_started');
+    assert.ok(started);
+    const withdrawals = [];
+    w.runtime.hostCapacity = { withdrawQueuedHolder: async holder => { withdrawals.push(holder); } };
+    const repoId = 'repo-622';
+    const origin = 'https://control.example.test';
+    const sessions = new WebSessionStore(join(w.directory, 'sessions-622'));
+    const issued = sessions.issue({ userId: 'operator-622', authMethod: 'bearer',
+      capabilities: ['observe', 'control'], repoIds: [repoId], ttlMs: 600_000,
+    }, { actor: 'fixture-622' });
+    const web = new WebNorthbound({
+      coordinator: {}, coordination: w.store, sessions, repoIds: [repoId], allowedOrigins: [origin],
+      application: { repoId, card: () => ({ repoId, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+        authorizeReplay: async () => true,
+        command: (name, args, caller, context) => w.runtime.command(name, args, caller, context),
+      },
+    });
+    const client = new BatonWebClient({
+      baseUrl: 'https://resident.baton.test', origin, repoId, token: issued.token,
+      commandTimeoutMs: null, pollMs: 10, clock: Date.now,
+      sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+      fetchImpl: async (url, options = {}) => {
+        const req = new EventEmitter();
+        Object.assign(req, { method: options.method ?? 'GET', url: new URL(url).pathname,
+          headers: { origin, 'content-type': 'application/json', ...(options.headers ?? {}) },
+          socket: { encrypted: true, remoteAddress: '127.0.0.1' }, destroy() {},
+        });
+        let status; let raw;
+        const pending = web.handle(req, {
+          writeHead(value) { status = value; }, end(value = '') { raw = value; },
+        });
+        queueMicrotask(() => { if (options.body) req.emit('data', Buffer.from(options.body)); req.emit('end'); });
+        await pending;
+        return { ok: status >= 200 && status < 300, status,
+          headers: { get: () => null }, text: async () => raw };
+      },
+    });
+    for (const extra of [[], ['--dry-run']]) {
+      const refusal = await runBatonCli(parseBatonCli([
+        'swarm', 'integrate', 's1', 'contribution:1', '--onto', 'master', ...extra,
+      ]), client).then(() => null, error => error);
+      assert.equal(refusal?.code, 'integrate_in_flight');
+      assert.equal(refusal.status, 409);
+      assert.match(refusal.message, /contribution:1.*master.*direct:issue296-root/u);
+      const detail = refusal.detail.detail;
+      assert.equal(detail.phase, phase);
+      assert.equal(detail.operationKey, started.idempotencyKey.replace('swarm-integration-start:', ''));
+      assert.equal(detail.started.seq, started.seq);
+      assert.equal(detail.started.scratch, started.payload.scratch);
+      assert.deepEqual(withdrawals, [], 'a duplicate does not withdraw the live landing queue holder');
+    }
+    if (phase === 'queued') {
+      const answer = await w.integrate({ withdraw: true, reason: 'fixture done', idempotencyKey: '622-withdraw' });
+      assert.equal(answer.withdrawn.phase, 'queued', 'the original abort controller remains reachable');
+    }
+    release.resolve();
+    const outcome = await original;
+    if (phase === 'queued') {
+      assert.equal(outcome.error?.code, 'integrate_withdrawn');
+      assert.equal(git(w.repo, 'rev-parse', 'master'), w.targetHead);
+    } else {
+      assert.equal(outcome.error, undefined, outcome.error?.message);
+      assert.notEqual(git(w.repo, 'rev-parse', 'master'), w.targetHead);
+    }
+  });
+}

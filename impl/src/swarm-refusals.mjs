@@ -162,6 +162,7 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   integrate_publish_unreachable: row(409, ['runtime'], 'the declared shared remote does not exist or cannot be reached, so the landing never opens'),
   integrate_publish_unauthenticated: row(409, ['runtime'], 'this environment cannot authenticate to the declared shared remote, so the landing never opens'),
   integrate_withdrawn: row(409, ['runtime'], 'the landing was withdrawn while queued on the verify lease or running its gate set'),
+  integrate_in_flight: row(409, ['runtime'], 'the named contribution already has a queued or running landing'),
   integrate_not_in_flight: row(409, ['runtime'], 'no landing for the named contribution is queued or running, so there is nothing to withdraw'),
   // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
   // `stopRun` port, so a run whose stop could not settle reached the operator as 503

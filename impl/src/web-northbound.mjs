@@ -1,3 +1,4 @@
+import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   FRAME_LIMITS, WEB_WAIT_CEILING_ROW, WEB_WAIT_DEFAULT_MS,
@@ -805,6 +806,17 @@ function dispatchFailure(cause, command = null) {
   // unmapped code (and the command) is narrated on the resident's stderr once per code, so the
   // NEXT unmapped refusal is visible in the serve log, not only on the ledger.
   narrateUnmappedDispatchCode(cause, command);
+  // #622: the operator's 2026-09-28 landing failed before checkout-start. Its
+  // uncoded exception must name the cause in the CLI response.
+  if (command === 'swarm_integrate') {
+    const diagnostic = sanitizeVerifierDiagnosticText(
+      `${cause?.name ?? 'Error'}: ${cause?.message ?? String(cause)}`,
+    ).text;
+    return failure(503, 'temporarily_unavailable', `swarm.integrate failed: ${diagnostic}`, {
+      retryable: false,
+      action: 'inspect the named landing failure before submitting another integration',
+    });
+  }
   return failure(503, 'temporarily_unavailable', 'command dispatch failed', {
     retryable: true,
     action: 'retry once; a refusal that repeats is a resident defect rather than a request fault — inspect the resident (`baton doctor --check`) and report the refusal code',
