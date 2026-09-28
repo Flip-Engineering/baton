@@ -527,3 +527,23 @@ test('#335: a coded application refusal with no detail keeps the fixed class mes
   assert.equal(response.body.error.code, 'application_run_conflict');
   assert.equal(response.body.error.message, 'application state conflict', 'no detail — the fixed class message stands, the internal text never crosses');
 });
+
+
+for (const dryRun of [false, true]) {
+  test(`622: an uncoded landing failure names its cause (dryRun=${dryRun})`, async () => {
+    const { web, context } = fixture({ command: async () => {
+      const cause = new Error('checkout already exists; authorization: Bearer fixture-private-token');
+      cause.name = 'WorktreeAlreadyExistsError';
+      throw cause;
+    } });
+    const response = await web.execute(context(), envelope({
+      command: 'swarm_integrate',
+      args: { swarmId: 's1', contributionId: 'contribution:1', target: 'master', dryRun,
+        idempotencyKey: '622-integrate' },
+    }));
+    assert.equal(response.status, 503);
+    assert.match(response.body.error.message, /WorktreeAlreadyExistsError: checkout already exists/u);
+    assert.doesNotMatch(JSON.stringify(response), /fixture-private-token/u);
+    assert.equal(response.body.error.retryable, false);
+  });
+}
