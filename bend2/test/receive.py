@@ -386,7 +386,7 @@ class Receive(unittest.TestCase):
         self.worker()
         report = self.directory / 'large report'
         report.write_text('retained report\n' * 30000)
-        self.coord('report-file', 'saved-turn', 'parent', report)
+        self.coord('report', 'saved-turn', 'parent', report.read_text())
         self.connect('parent')
         child = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
                            self.directory, self.directory / 'unused task',

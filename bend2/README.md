@@ -36,7 +36,7 @@ ref update; a target that moved meanwhile rebases the candidate once.
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
 .scratch/bend2/baton2 state.db recruit worker1 root omp MODEL high REPO BRANCH WORKTREE BASE
 .scratch/bend2/baton2 state.db bind worker1 NATIVE_SESSION omp OBSERVED_MODEL high
-.scratch/bend2/baton2 state.db report-file turn1 worker1 REPORT_FILE
+.scratch/bend2/baton2 state.db report turn1 worker1 BODY
 .scratch/bend2/baton2 state.db inbox root
 .scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
 .scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
@@ -44,18 +44,18 @@ ref update; a target that moved meanwhile rebases the candidate once.
 .scratch/bend2/baton2 state.db status
 ```
 
-Commands return JSON. `report-file` accepts `-` to read stdin. It saves the full
+Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the first result, including its delivery receipt. Conflicting reuse of
 an ID fails. `ack` records native acceptance after the adapter observes it.
 
-`observe ID WORKER EVENT_JSON` and `observe-file ID WORKER PATH` consume one
+`observe-file ID WORKER PATH` consumes one
 native harness event. An initialization event (type `session`) updates the
 worker's observed native session and model. A terminal event (type `result`
 or a terminal `agent_end`) creates a pending parent report containing the
 extracted result text and records the turn. Non-terminal events are recorded
-without creating a report. `observe-file` reads the JSON from a file; `observe`
-accepts it as a command-line argument. A repeated observe with the same ID
+without creating a report. `observe-file` reads the JSON from a file. A repeated
+observe with the same ID
 and matching content returns the original result.
 
 Requested and observed routes are stored separately. Reading status reports the

@@ -33,6 +33,12 @@ class Coordinator(unittest.TestCase):
         return self.call('worker', name, 'root', 'requested-harness', 'requested-model',
                          'high', '/retained/worktree', 'worker-branch', 'base-commit')
 
+    def observe(self, ident, worker, event, success=True):
+        # One native event, written where the coordinator reads it.
+        path = pathlib.Path(self.temp.name) / (ident + '-event.json')
+        path.write_text(event)
+        return self.call('observe-file', ident, worker, str(path), success=success)
+
     def test_report_survives_process_exit_and_waits_for_native_acceptance(self):
         text = "Question: what's next?\nUnicode λ🙂 and full multiline report.\n" * 100
         report = self.call('report', 'turn-1', 'worker', text)
@@ -47,18 +53,6 @@ class Coordinator(unittest.TestCase):
         retry = self.call('report', 'turn-1', 'worker', text)
         self.assertEqual(retry['receipt'], 'native-accepted-42')
         self.assertEqual(self.call('inbox', 'root'), [])
-
-    def test_report_file_and_stdin_preserve_complete_text(self):
-        text = "Large report with apostrophe ' and unicode λ🙂.\n" * 6000
-        report = pathlib.Path(self.temp.name) / 'report.txt'
-        report.write_text(text)
-        self.assertEqual(self.call('report-file', 'from-file', 'worker', str(report))['body'], text)
-        p = subprocess.run([str(EXE), str(self.db), 'report-file', 'from-stdin', 'worker', '-'],
-                           input=text, text=True, capture_output=True)
-        self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(json.loads(p.stdout)['body'], text)
-        self.call('report-file', 'missing', 'worker', str(report) + '.missing', success=False)
-        self.assertEqual(len(self.call('inbox', 'root')), 2)
 
     def test_guidance_and_question_route_to_the_named_session(self):
         self.call('message', 'guide-1', 'root', 'worker', 'guide', 'Continue the task.')
@@ -113,7 +107,7 @@ class Coordinator(unittest.TestCase):
                   '/retained/codex', 'codex-branch', 'base')
         event = {'type': 'thread.started',
                  'thread_id': '01a0e0cd-18e6-72a1-a46f-88790278891a'}
-        observed = self.call('observe', 'codex-turn', 'codex', json.dumps(event))
+        observed = self.observe('codex-turn', 'codex', json.dumps(event))
         self.assertIsNone(observed['reportId'])
         session = self.call('session', 'codex')
         self.assertEqual(session['native'], event['thread_id'])
@@ -127,7 +121,7 @@ class Coordinator(unittest.TestCase):
         event = {'type': 'response', 'command': 'get_state', 'success': True,
                  'id': 'baton:session', 'data': {'sessionId': 'omp-rpc-native',
                  'model': {'provider': 'deepseek', 'id': 'deepseek-flash'}}}
-        self.assertIsNone(self.call('observe', 'omp-turn', 'omp', json.dumps(event))['reportId'])
+        self.assertIsNone(self.observe('omp-turn', 'omp', json.dumps(event))['reportId'])
         session = self.call('session', 'omp')
         self.assertEqual(session['native'], 'omp-rpc-native')
         self.assertEqual(session['model'], 'requested-model')
@@ -145,7 +139,7 @@ class Coordinator(unittest.TestCase):
         }
         self.call('worker', 'muse', 'root', 'muse', 'requested-muse', 'low',
                   '/retained/muse', 'muse-branch', 'base')
-        self.assertIsNone(self.call('observe', 'muse-turn', 'muse', json.dumps(event))['reportId'])
+        self.assertIsNone(self.observe('muse-turn', 'muse', json.dumps(event))['reportId'])
         session = self.call('session', 'muse')
         self.assertEqual(session['native'], event['stream']['id'])
         self.assertEqual(session['model'], 'requested-muse')
@@ -163,7 +157,7 @@ class Coordinator(unittest.TestCase):
             'payload': {'kind': 'run_terminal', 'terminal': 'completed',
                         'text': 'Resumed Muse receives no task.\nFull report λ', 'reason': None},
         }
-        observed = self.call('observe', 'muse-turn', 'worker', json.dumps(event))
+        observed = self.observe('muse-turn', 'worker', json.dumps(event))
         self.assertEqual(observed['reportId'], 'muse-turn')
         self.assertEqual(observed['eventType'], 'run.terminal.completed')
         self.assertEqual(self.call('inbox', 'root')[0]['body'], event['payload']['text'])
@@ -175,35 +169,35 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(worker['lastTurnId'], 'muse-turn')
         self.assertEqual(worker['lastTurnEvent'], 'run.terminal.completed')
         self.assertEqual(self.call('turns', 'worker')[0]['eventType'], 'run.terminal.completed')
-        self.call('observe', 'muse-turn', 'worker', json.dumps(event))
+        self.observe('muse-turn', 'worker', json.dumps(event))
         self.assertEqual(len(self.call('inbox', 'root')), 1)
 
     def test_native_result_automatically_reports_with_full_source(self):
         init = {'type': 'system', 'subtype': 'init', 'session_id': 'native-1', 'model': 'actual-model'}
-        self.assertIsNone(self.call('observe', 'turn-1', 'worker', json.dumps(init))['reportId'])
+        self.assertIsNone(self.observe('turn-1', 'worker', json.dumps(init))['reportId'])
         self.assertEqual(self.call('session', 'worker')['observedModel'], 'actual-model')
         misleading = {'type': 'assistant', 'message': {'content': '{"type":"result","result":"not done"}'}}
-        self.call('observe', 'turn-1', 'worker', json.dumps(misleading))
+        self.observe('turn-1', 'worker', json.dumps(misleading))
         self.assertEqual(self.call('inbox', 'root'), [])
         result = {'type': 'result', 'session_id': 'native-1', 'result': "Full answer.\nIt's complete. 🙂", 'is_error': False}
         raw = json.dumps(result)
-        seen = self.call('observe', 'turn-1', 'worker', raw)
+        seen = self.observe('turn-1', 'worker', raw)
         self.assertEqual(seen['reportId'], 'turn-1')
         self.assertEqual(self.call('inbox', 'root')[0]['body'], result['result'])
         self.call('ack', 'turn-1', 'root', 'native-acceptance')
-        self.call('observe', 'turn-1', 'worker', raw)
+        self.observe('turn-1', 'worker', raw)
         self.assertEqual(self.call('pending'), [])
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute('SELECT event FROM turns WHERE id=?', ('turn-1',)).fetchone()[0], raw)
         changed = dict(result, session_id='different-session')
-        self.call('observe', 'turn-1', 'worker', json.dumps(changed), success=False)
+        self.observe('turn-1', 'worker', json.dumps(changed), success=False)
         self.assertEqual(self.call('session', 'worker')['native'], 'native-1')
 
     def test_native_failure_is_reported_and_malformed_input_does_not_commit(self):
         raw = json.dumps({'type': 'result', 'is_error': True, 'errors': ['provider unavailable']})
-        self.call('observe', 'failed-turn', 'worker', raw)
+        self.observe('failed-turn', 'worker', raw)
         self.assertEqual(self.call('inbox', 'root')[0]['body'], raw)
-        self.call('observe', 'bad-input', 'worker', '{"type":"result"', success=False)
+        self.observe('bad-input', 'worker', '{"type":"result"', success=False)
         self.assertEqual(len(self.call('inbox', 'root')), 1)
 
     def test_worker_connection_retains_parentage_and_requested_route(self):
@@ -268,9 +262,9 @@ class Coordinator(unittest.TestCase):
     def test_turns_lists_turn_history_for_a_worker(self):
         self.assertEqual(self.call('turns', 'worker'), [])
         result1 = json.dumps({'type': 'result', 'result': 'first answer'})
-        self.call('observe', 'turn-1', 'worker', result1)
+        self.observe('turn-1', 'worker', result1)
         result2 = json.dumps({'type': 'result', 'result': 'second answer'})
-        self.call('observe', 'turn-2', 'worker', result2)
+        self.observe('turn-2', 'worker', result2)
 
         turns = self.call('turns', 'worker')
 

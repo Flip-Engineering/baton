@@ -269,7 +269,9 @@ class McpRoot(unittest.TestCase):
     def test_workers_and_turns_tools_return_coordinator_data(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.coord('worker', 'w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
-        self.coord('observe', 'turn-1', 'w1', json.dumps({'type': 'result', 'result': 'done'}))
+        event = pathlib.Path(self.temp.name) / 'event.json'
+        event.write_text(json.dumps({'type': 'result', 'result': 'done'}))
+        self.coord('observe-file', 'turn-1', 'w1', str(event))
 
         proc = self.start_mcp()
         self.initialize(proc)

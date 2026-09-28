@@ -123,7 +123,7 @@ class OmpRootAdapter(unittest.TestCase):
         self.coord('worker', 'w1', 'root', 'omp', 'model', 'low', str(temp), 'branch', 'base')
         report = temp / 'report.txt'
         report.write_text('Completed task with full report.')
-        self.coord('report-file', 'finished', 'w1', str(report))
+        self.coord('report', 'finished', 'w1', report.read_text())
         self.assertIn(report.read_text(), received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
 
